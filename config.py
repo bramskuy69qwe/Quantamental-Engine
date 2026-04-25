@@ -96,7 +96,7 @@ FRED_API_KEY = os.getenv("FRED_API_KEY", "")
 
 # ── News & Economic Calendar ────────────────────────────────────────────────
 FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "")  # Free key from finnhub.io
-BWE_NEWS_WS_URL = os.getenv("BWE_NEWS_WS_URL", "wss://bwenews-api.bwe-ws.com/ws-subscriber")
+BWE_NEWS_WS_URL = os.getenv("BWE_NEWS_WS_URL", "wss://bwenews-api.bwe-ws.com/ws")
 
 REGIME_MULTIPLIERS = {
     "risk_on_trending":   1.2,

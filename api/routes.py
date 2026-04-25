@@ -245,7 +245,8 @@ def _ctx(request: Request, **extra) -> dict:
 
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    return templates.TemplateResponse(request, "dashboard.html", _ctx(request))
+    from fastapi.responses import FileResponse
+    return FileResponse("static/index.html")
 
 
 @router.get("/calculator", response_class=HTMLResponse)

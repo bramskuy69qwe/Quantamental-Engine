@@ -142,7 +142,16 @@ class FinnhubFetcher:
 # ── BWE News (websocket) ────────────────────────────────────────────────────
 
 class BweWsConsumer:
-    """Long-running asyncio task that consumes BWE News WS messages and writes to DB."""
+    """Long-running asyncio task that consumes BWE News WS messages and writes to DB.
+
+    Protocol (per BWEnews API docs):
+      - Connect to wss://bwenews-api.bwe-ws.com/ws (no auth required)
+      - Send text "ping" periodically; server replies with text "pong"
+      - News messages are JSON: {source_name, news_title, coins_included, url, timestamp}
+    """
+
+    # Application-level ping interval (seconds) — server keepalive
+    _PING_INTERVAL = 30
 
     def __init__(self, url: Optional[str] = None) -> None:
         self.url = url or config.BWE_NEWS_WS_URL
@@ -158,16 +167,28 @@ class BweWsConsumer:
         backoff = 5
         while not self._stop:
             try:
+                # Disable the websockets library's built-in ping so we send our own
+                # application-level "ping" text frame per the BWE protocol spec.
                 async with websockets.connect(
-                    self.url, ping_interval=20, ping_timeout=20, max_size=2**20,
+                    self.url,
+                    ping_interval=None,
+                    max_size=2**20,
                 ) as ws:
                     log.info("BWE WS: connected to %s", self.url)
                     backoff = 5
-                    async for raw in ws:
+                    ping_task = asyncio.ensure_future(self._ping_loop(ws))
+                    try:
+                        async for raw in ws:
+                            try:
+                                await self._handle_message(raw)
+                            except Exception as e:
+                                log.warning("BWE WS: message handler error: %s", e)
+                    finally:
+                        ping_task.cancel()
                         try:
-                            await self._handle_message(raw)
-                        except Exception as e:
-                            log.warning("BWE WS: message handler error: %s", e)
+                            await ping_task
+                        except asyncio.CancelledError:
+                            pass
             except (websockets.exceptions.ConnectionClosedError,
                     websockets.exceptions.ConnectionClosedOK,
                     OSError) as e:
@@ -179,38 +200,67 @@ class BweWsConsumer:
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 60)
 
+    async def _ping_loop(self, ws: Any) -> None:
+        """Send application-level 'ping' frames every _PING_INTERVAL seconds."""
+        try:
+            while True:
+                await asyncio.sleep(self._PING_INTERVAL)
+                try:
+                    await ws.send("ping")
+                except Exception:
+                    break
+        except asyncio.CancelledError:
+            pass
+
     async def _handle_message(self, raw: Any) -> None:
-        """Parse a single BWE message and upsert to news_items."""
+        """Parse a single BWE message and upsert to news_items.
+
+        Expected JSON schema:
+          {
+            "source_name":    str,   // publisher, e.g. "BWENEWS"
+            "news_title":     str,   // headline
+            "coins_included": list,  // e.g. ["BTC", "ETH"]
+            "url":            str,   // article link
+            "timestamp":      int    // Unix epoch seconds
+          }
+        Ignore plain-text "pong" keepalive replies.
+        """
         if isinstance(raw, (bytes, bytearray)):
             try:
                 raw = raw.decode("utf-8", errors="replace")
             except Exception:
                 return
+        # Ignore pong keepalive
+        if isinstance(raw, str) and raw.strip().lower() == "pong":
+            return
         try:
             msg = json.loads(raw) if isinstance(raw, str) else raw
         except json.JSONDecodeError:
             return
+        if not isinstance(msg, dict):
+            return
 
-        # BWE message shape varies; common keys observed: {time/timestamp/created_at,
-        # title/text/content, link/source_url}.
-        ts_raw = msg.get("time") or msg.get("timestamp") or msg.get("created_at")
-        published = _to_iso_utc(ts_raw) or datetime.now(timezone.utc).isoformat()
-        headline = (msg.get("title") or msg.get("text") or msg.get("content") or "").strip()
+        headline = (msg.get("news_title") or "").strip()
         if not headline:
             return
-        ext_id = (str(msg.get("id"))
-                  if msg.get("id") is not None
+
+        ts_raw = msg.get("timestamp")
+        published = _to_iso_utc(ts_raw) or datetime.now(timezone.utc).isoformat()
+
+        # Stable deduplication key: timestamp + headline hash
+        ext_id = (f"{int(ts_raw)}|{hash(headline) & 0xFFFFFFFF:08x}"
+                  if ts_raw is not None
                   else f"{published}|{hash(headline) & 0xFFFFFFFF:08x}")
 
         await db.upsert_news_items([{
             "source":       "bwe",
             "external_id":  ext_id,
             "headline":     headline,
-            "summary":      (msg.get("summary") or "").strip(),
-            "url":          msg.get("link") or msg.get("source_url") or "",
-            "image_url":    msg.get("image") or "",
-            "category":     msg.get("category") or "crypto",
-            "tickers":      _stringify_tickers(msg.get("tickers") or msg.get("symbols")),
+            "summary":      "",
+            "url":          msg.get("url") or "",
+            "image_url":    "",
+            "category":     "crypto",
+            "tickers":      _stringify_tickers(msg.get("coins_included")),
             "published_at": published,
         }])
 
