@@ -1,0 +1,1009 @@
+{% extends "base.html" %}
+{% set active_page = "calculator" %}
+{% block title %}Risk Calculator — Risk Engine{% endblock %}
+
+{% block content %}
+<div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+
+  <!-- ── Input form ──────────────────────────────────────────────────────── -->
+  <div class="panel p-5">
+    <div class="label mb-3">Entry Risk Calculator</div>
+
+    <!-- ── Recent Calculations ───────────────────────────────────────────── -->
+    <div id="calc-history-panel" class="mb-3 hidden">
+      <div class="text-xs text-slate-500 mb-1">Recent</div>
+      <div id="calc-history-list" class="flex flex-col gap-1"></div>
+    </div>
+
+    {% if params.get('weekly_pnl_state') == 'limit' or params.get('dd_state') == 'limit' %}
+    <div class="alert-error mb-3">⛔ Trading HALTED — hard stop active. Review Dashboard.</div>
+    {% endif %}
+
+    <form id="calc-form"
+          hx-post="/calculator/calculate"
+          hx-target="#calc-result"
+          hx-swap="innerHTML"
+          hx-indicator="#calc-spinner">
+
+      <!-- Hidden submitted fields (populated by JS before submit) -->
+      <input type="hidden" name="order_type"             id="order_type_val" value="market" />
+      <input type="hidden" name="average"                id="average_val" />
+      <input type="hidden" name="tp_price"               id="tp_price_val" value="0" />
+      <input type="hidden" name="sl_price"               id="sl_price_val" value="0" />
+      <input type="hidden" name="auto_refresh"           id="auto_refresh_val" value="0" />
+      <input type="hidden" name="apply_regime_multiplier" id="apply_regime_val" value="1" />
+
+      <!-- ── Regime badge + multiplier toggle ─────────────────────────────── -->
+      <div id="regime-bar" class="flex items-center gap-2 mb-3 flex-wrap text-xs">
+        <span class="label text-xs">Regime:</span>
+        <span id="regime-badge" class="px-2 py-0.5 rounded font-bold bg-slate-700 text-slate-300">Loading...</span>
+        <span id="regime-mult"  class="text-slate-400"></span>
+        <label class="flex items-center gap-1 ml-2 cursor-pointer select-none">
+          <input type="checkbox" id="regime-checkbox" checked
+                 onchange="document.getElementById('apply_regime_val').value = this.checked ? '1' : '0'" />
+          <span class="text-slate-400">Apply multiplier</span>
+        </label>
+      </div>
+      <script>
+      (function loadRegime() {
+        fetch('/api/regime/current').then(r => r.json()).then(d => {
+          const badge = document.getElementById('regime-badge');
+          const mult  = document.getElementById('regime-mult');
+          if (!d.label) { badge.textContent = 'No data'; return; }
+          const colors = {
+            risk_on_trending:   'bg-green-900 text-green-300',
+            risk_on_choppy:     'bg-yellow-900 text-yellow-300',
+            neutral:            'bg-slate-700 text-slate-300',
+            risk_off_defensive: 'bg-orange-900 text-orange-300',
+            risk_off_panic:     'bg-red-900 text-red-300',
+          };
+          const labels = {
+            risk_on_trending:   'RISK ON TRENDING',
+            risk_on_choppy:     'RISK ON CHOPPY',
+            neutral:            'NEUTRAL',
+            risk_off_defensive: 'RISK OFF DEFENSIVE',
+            risk_off_panic:     'RISK OFF PANIC',
+          };
+          badge.className = 'px-2 py-0.5 rounded font-bold ' + (colors[d.label] || 'bg-slate-700 text-slate-300');
+          badge.textContent = labels[d.label] || d.label;
+          mult.textContent  = d.multiplier != null ? '×' + d.multiplier.toFixed(1) + ' size' : '';
+        }).catch(() => {
+          document.getElementById('regime-badge').textContent = 'Unavailable';
+        });
+      })();
+      </script>
+
+      <!-- ── Order Type ─────────────────────────────────────────────────── -->
+      <div class="flex items-center gap-2 mb-4 flex-wrap">
+        <span class="label">Order:</span>
+        <button type="button" id="btn-market" onclick="setOrderType('market')"
+                class="btn btn-primary text-xs px-4 py-1.5">MARKET</button>
+        <button type="button" id="btn-limit"  onclick="setOrderType('limit')"
+                class="btn btn-secondary text-xs px-4 py-1.5">LIMIT</button>
+        <button type="button" id="btn-stop"   onclick="setOrderType('stop')"
+                class="btn btn-secondary text-xs px-4 py-1.5">STOP</button>
+        <span id="fee-badge" class="ml-1 px-2 py-0.5 rounded text-xs bg-[#713f12] text-yellow-300">TAKER FEE</span>
+      </div>
+
+      <!-- ── Ticker + Entry Price ───────────────────────────────────────── -->
+      <div class="grid grid-cols-2 gap-3 mb-3">
+        <div>
+          <label class="label">Ticker</label>
+          <input type="text" name="ticker" id="ticker-input" tabindex="1"
+                 required placeholder="BTCUSDT"
+                 oninput="this.value=this.value.toUpperCase(); schedulePricePoll()"
+                 onkeydown="if(event.key==='Enter'){event.preventDefault(); focusNextFromTicker();}" />
+        </div>
+        <div>
+          <label class="label">Entry Price
+            <span id="live-badge" class="text-green-500 text-xs font-normal ml-1" style="visibility:visible;">● LIVE</span>
+          </label>
+          <!-- Market: readonly, live -->
+          <div id="market-price-wrap" class="relative">
+            <input type="number" id="market-price" step="any" readonly
+                   placeholder="waiting for ticker..."
+                   class="cursor-not-allowed pr-12 border-green-800 text-green-300" />
+            <span class="absolute right-2 top-1/2 -translate-y-1/2 text-green-500 text-xs pointer-events-none">LIVE</span>
+          </div>
+          <!-- Limit / Stop: editable, last price shown as placeholder -->
+          <input type="number" id="limit-price" step="any" tabindex="2"
+                 placeholder="enter price"
+                 class="hidden"
+                 onkeydown="if(event.key==='Enter'){event.preventDefault(); focusNextFromEntry();}" />
+        </div>
+      </div>
+
+      <!-- ── TP/SL Mode Toggle ──────────────────────────────────────────── -->
+      <div class="flex items-center gap-2 mb-3 flex-wrap">
+        <span class="label">TP/SL:</span>
+        <button type="button" id="btn-byprice" onclick="setTpSlMode('price')"
+                class="btn btn-primary text-xs px-3 py-1">BY PRICE</button>
+        <button type="button" id="btn-bypct"   onclick="setTpSlMode('pct')"
+                class="btn btn-secondary text-xs px-3 py-1">BY %</button>
+        <!-- Side selector shown only in % mode -->
+        <div id="side-selector" class="hidden flex gap-1 ml-1">
+          <span class="label self-center">Side:</span>
+          <button type="button" id="btn-long"  onclick="setSide('long')"
+                  class="btn btn-secondary text-xs px-3 py-1 text-green-400">LONG</button>
+          <button type="button" id="btn-short" onclick="setSide('short')"
+                  class="btn btn-secondary text-xs px-3 py-1 text-red-400">SHORT</button>
+        </div>
+      </div>
+
+      <!-- ── TP/SL: By Price ────────────────────────────────────────────── -->
+      <div id="tpsl-by-price" class="mb-3">
+        <div class="grid grid-cols-2 gap-3 mb-2">
+          <div>
+            <label class="label">TP Price</label>
+            <input type="number" id="tp-price-input" step="any" tabindex="3" placeholder="0.00"
+                   oninput="updatePricePreview()"
+                   onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('sl-price-input').focus()}" />
+          </div>
+          <div>
+            <label class="label">SL Price</label>
+            <input type="number" id="sl-price-input" step="any" tabindex="4" placeholder="0.00"
+                   oninput="updatePricePreview()"
+                   onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('calc-form').requestSubmit()}" />
+          </div>
+        </div>
+        <div id="price-preview" class="font-mono text-xs text-slate-400 px-1 h-4">
+          TP: — &nbsp;|&nbsp; SL: —
+        </div>
+      </div>
+
+      <!-- ── TP/SL: By % ────────────────────────────────────────────────── -->
+      <div id="tpsl-by-pct" class="hidden mb-1">
+        <div class="grid grid-cols-2 gap-3 mb-2">
+          <div>
+            <label class="label">TP %</label>
+            <input type="number" id="tp-pct-input" step="any" min="0" tabindex="3"
+                   placeholder="e.g. 2.5" oninput="updatePctPreview()"
+                   onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('sl-pct-input').focus();}" />
+          </div>
+          <div>
+            <label class="label">SL %</label>
+            <input type="number" id="sl-pct-input" step="any" min="0" tabindex="4"
+                   placeholder="e.g. 1.5" oninput="updatePctPreview()"
+                   onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('calc-form').requestSubmit()}" />
+          </div>
+        </div>
+        <div id="pct-preview" class="font-mono text-xs text-slate-400 mb-3 px-1 h-4">
+          TP: — &nbsp;|&nbsp; SL: —
+        </div>
+      </div>
+
+      <!-- ── TP/SL Amounts + Model ──────────────────────────────────────── -->
+      <div class="grid grid-cols-2 gap-3 mb-4">
+        <div>
+          <label class="label">TP Amount (%)</label>
+          <input type="number" name="tp_amount_pct" step="1" min="1" max="100" value="100" tabindex="5" />
+        </div>
+        <div>
+          <label class="label">SL Amount (%)</label>
+          <input type="number" name="sl_amount_pct" step="1" min="1" max="100" value="100" tabindex="6" />
+        </div>
+        <div>
+          <label class="label">Model Name (optional)</label>
+          <input type="text" name="model_name" tabindex="7" placeholder="e.g. MA-Cross-V2" />
+        </div>
+        <div>
+          <label class="label">Model Description</label>
+          <input type="text" name="model_desc" tabindex="8" placeholder="optional notes" />
+        </div>
+      </div>
+
+      <div class="flex gap-3 items-center">
+        <button type="submit" class="btn btn-primary" tabindex="9">Calculate</button>
+        <button type="button" onclick="clearCalculator()" class="btn btn-secondary" tabindex="10">Clear</button>
+        <span id="calc-spinner" class="htmx-indicator text-accent text-sm">⟳ fetching live data...</span>
+      </div>
+    </form>
+
+    <div class="mt-2 text-xs text-slate-500">
+      Risk/trade: <strong>{{ fmt(params.individual_risk_per_trade * 100, 2) }}%</strong>
+      &nbsp;|&nbsp; Individual risk % is set in Params.
+    </div>
+
+    <!-- ── Setup Summary ──────────────────────────────────────────────────── -->
+    <div id="setup-summary" class="mt-4 border-t border-slate-700 pt-4">
+      <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
+        <div class="label">Setup Summary</div>
+        <div class="flex gap-2">
+          <button type="button" onclick="setSizeUnit('notional')"  id="su-notional"  class="btn btn-primary  text-xs px-4 py-1.5">NOTIONAL</button>
+          <button type="button" onclick="setSizeUnit('contracts')" id="su-contracts" class="btn btn-secondary text-xs px-4 py-1.5">CONTRACTS</button>
+          <button type="button" onclick="setSizeUnit('lot')"       id="su-lot"       class="btn btn-secondary text-xs px-4 py-1.5">LOT</button>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-2 mb-2">
+        <div>
+          <div class="label text-xs mb-1">Symbol</div>
+          <input type="text" readonly id="ss-ticker" value="—"
+                 class="font-mono text-sm w-full cursor-pointer" onclick="this.select()" />
+        </div>
+        <div>
+          <div class="label text-xs mb-1">Entry Price</div>
+          <input type="text" readonly id="ss-entry" value="—"
+                 class="font-mono text-sm w-full cursor-pointer" onclick="this.select()" />
+        </div>
+        <div>
+          <div class="label text-xs mb-1">TP Price</div>
+          <input type="text" readonly id="ss-tp" value="—"
+                 class="font-mono text-sm w-full cursor-pointer text-green-400" onclick="this.select()" />
+        </div>
+        <div>
+          <div class="label text-xs mb-1">SL Price</div>
+          <input type="text" readonly id="ss-sl" value="—"
+                 class="font-mono text-sm w-full cursor-pointer text-red-400" onclick="this.select()" />
+        </div>
+        <div class="col-span-2">
+          <div class="label text-xs mb-1" id="ss-size-label">Size (NOTIONAL)</div>
+          <input type="text" readonly id="ss-size" value="—"
+                 class="font-mono text-sm w-full cursor-pointer font-bold text-accent" onclick="this.select()" />
+        </div>
+      </div>
+      <div class="flex items-center gap-3">
+        <button type="button" onclick="copySetupSummary()"
+                class="btn btn-secondary text-xs px-3 py-1.5">⧉ Copy All</button>
+        <span id="copy-ok" class="text-green-400 text-xs" style="opacity:0;transition:opacity 0.3s;">✓ Copied!</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Right column wrapper ──────────────────────────────────────────────── -->
+  <div>
+    <!-- ── Result panel (pre-calculate empty state) ───────────────────────── -->
+    <div id="calc-result" class="panel p-5">
+
+      <!-- ATR volatility badge -->
+      <div class="flex items-center gap-3 mb-4 flex-wrap">
+        <div class="label">Volatility (atr_c)</div>
+        <span class="text-slate-500 text-xs">—</span>
+      </div>
+
+      <!-- Main metrics grid -->
+      <div class="grid grid-cols-2 gap-3 mb-4">
+        <div><div class="label">Ticker</div><div class="value text-slate-500">—</div></div>
+        <div><div class="label">Side</div><div class="value text-slate-500">—</div></div>
+        <div><div class="label">Order Type</div><div class="value text-slate-500">—</div></div>
+        <div><div class="label">Avg Entry</div><div class="value text-slate-500">—</div></div>
+        <div><div class="label">Risk USDT</div><div class="value text-slate-500">—</div></div>
+        <div><div class="label">Base Size (USDT)</div><div class="value text-slate-500">—</div></div>
+        <div><div class="label">Est. Fill Price</div><div class="value text-slate-500">—</div></div>
+        <div><div class="label">1% Depth (USDT)</div><div class="value text-slate-500">—</div></div>
+        <div><div class="label">Best Bid / Ask</div><div class="value text-slate-500">—</div></div>
+      </div>
+
+      <!-- Calculated position -->
+      <div class="panel p-4 mb-4 opacity-80">
+        <div class="label mb-2">Calculated Position</div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><div class="label">_size (contracts)</div><div class="text-2xl font-bold text-slate-500">—</div></div>
+          <div><div class="label">Notional / est_size (USDT)</div><div class="value text-slate-500">—</div></div>
+          <div><div class="label">TP → USDT profit</div><div class="value text-slate-500">—</div></div>
+          <div><div class="label">SL → USDT loss</div><div class="value text-slate-500">—</div></div>
+        </div>
+      </div>
+
+      <!-- Estimations -->
+      <div class="panel p-4 mb-4">
+        <div class="label mb-2">Estimations</div>
+        <div class="grid grid-cols-3 gap-3 text-sm">
+          <div><div class="label">Est. Slippage</div><div class="value text-slate-500">—</div></div>
+          <div><div class="label">Est. Slippage USDT</div><div class="value text-slate-500">—</div></div>
+          <div><div class="label">Est. Net Profit</div><div class="value text-slate-500">—</div></div>
+          <div><div class="label">Est. Net Loss</div><div class="value text-slate-500">—</div></div>
+          <div><div class="label">Est. R:R</div><div class="value text-slate-500">—</div></div>
+          <div><div class="label">Est. Portfolio Exposure</div><div class="value text-slate-500">—</div></div>
+          <div><div class="label">Fee (2×)</div><div class="value text-slate-500">—</div></div>
+        </div>
+      </div>
+
+      <!-- Correlated exposure -->
+      <div class="panel p-4 mb-4">
+        <div class="label mb-2">Correlated Sector Exposure</div>
+        <div class="text-slate-500 text-xs">—</div>
+      </div>
+
+    </div>
+
+    <!-- ── Orderbook (persistent — survives calc-result auto-refresh) ──────── -->
+    <div id="orderbook-container" class="mt-4">
+      <div class="panel p-4">
+        <div class="label mb-2">Live Orderbook</div>
+        <div class="grid grid-cols-2 gap-4 text-xs font-mono">
+          <div>
+            <div class="text-green-500 font-bold mb-1">BIDS</div>
+            <div class="flex justify-between"><span class="text-slate-600">—</span><span class="text-slate-600">—</span></div>
+            <div class="flex justify-between"><span class="text-slate-600">—</span><span class="text-slate-600">—</span></div>
+            <div class="flex justify-between"><span class="text-slate-600">—</span><span class="text-slate-600">—</span></div>
+            <div class="flex justify-between"><span class="text-slate-600">—</span><span class="text-slate-600">—</span></div>
+            <div class="flex justify-between"><span class="text-slate-600">—</span><span class="text-slate-600">—</span></div>
+          </div>
+          <div>
+            <div class="text-red-500 font-bold mb-1">ASKS</div>
+            <div class="flex justify-between"><span class="text-slate-600">—</span><span class="text-slate-600">—</span></div>
+            <div class="flex justify-between"><span class="text-slate-600">—</span><span class="text-slate-600">—</span></div>
+            <div class="flex justify-between"><span class="text-slate-600">—</span><span class="text-slate-600">—</span></div>
+            <div class="flex justify-between"><span class="text-slate-600">—</span><span class="text-slate-600">—</span></div>
+            <div class="flex justify-between"><span class="text-slate-600">—</span><span class="text-slate-600">—</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ── Log to History ──────────────────────────────────────────────────────── -->
+<div class="mt-4">
+  <button onclick="document.getElementById('log-forms').classList.toggle('hidden')"
+          class="btn btn-secondary text-sm mb-3">
+    ▼ Log Execution / Trade Close
+  </button>
+
+  <div id="log-forms" class="hidden grid grid-cols-1 md:grid-cols-2 gap-4">
+
+    <!-- Log execution -->
+    <div class="panel p-4">
+      <div class="label mb-3">Log Execution</div>
+      <form hx-post="/history/log_execution" hx-target="#exec-msg" hx-swap="innerHTML">
+        <div class="grid grid-cols-2 gap-2 mb-3 text-sm">
+          <div><label class="label">Ticker</label><input type="text" name="ticker" required /></div>
+          <div><label class="label">Side</label>
+            <select name="side"><option>long</option><option>short</option></select></div>
+          <div><label class="label">Actual Entry</label><input type="number" name="entry_price_actual" step="any" required /></div>
+          <div><label class="label">Size Filled</label><input type="number" name="size_filled" step="any" required /></div>
+          <div><label class="label">Slippage (%)</label><input type="number" name="slippage" step="any" placeholder="0.00" /></div>
+          <div><label class="label">Order Type</label>
+            <select name="order_type"><option>limit</option><option>market</option><option>stop</option></select></div>
+          <div><label class="label">Latency (ms)</label><input type="number" name="latency_snapshot" placeholder="0" /></div>
+        </div>
+        <button type="submit" class="btn btn-primary btn-sm text-sm">Log</button>
+        <div id="exec-msg" class="mt-2"></div>
+      </form>
+    </div>
+
+    <!-- Log close -->
+    <div class="panel p-4">
+      <div class="label mb-3">Log Trade Close</div>
+      <form hx-post="/history/log_close" hx-target="#close-msg" hx-swap="innerHTML">
+        <div class="grid grid-cols-2 gap-2 mb-3 text-sm">
+          <div><label class="label">Ticker</label><input type="text" name="ticker" required /></div>
+          <div><label class="label">Direction</label>
+            <select name="direction"><option>LONG</option><option>SHORT</option></select></div>
+          <div><label class="label">Entry Price</label><input type="number" name="entry_price" step="any" required /></div>
+          <div><label class="label">Exit Price</label><input type="number" name="exit_price" step="any" required /></div>
+          <div><label class="label">Realized PnL</label><input type="number" name="individual_realized" step="any" placeholder="0.00" /></div>
+          <div><label class="label">R Multiple</label><input type="number" name="individual_realized_r" step="any" placeholder="0.00" /></div>
+          <div><label class="label">Funding Fees</label><input type="number" name="total_funding_fees" step="any" placeholder="0.00" /></div>
+          <div><label class="label">Exchange Fees</label><input type="number" name="total_fees" step="any" placeholder="0.00" /></div>
+          <div><label class="label">Slippage Exit</label><input type="number" name="slippage_exit" step="any" placeholder="0.00" /></div>
+          <div><label class="label">Hold Time</label><input type="text" name="holding_time" placeholder="000d 00h 00m 00s" /></div>
+        </div>
+        <div><label class="label">Notes</label><input type="text" name="notes" placeholder="optional" class="w-full mb-2" /></div>
+        <button type="submit" class="btn btn-primary text-sm">Log Close</button>
+        <div id="close-msg" class="mt-2"></div>
+      </form>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────────
+var _orderType           = 'market';
+var _tpslMode            = 'price';
+var _side                = 'long';
+var _livePrice           = 0;
+var _priceInterval       = null;
+var _tickerDebounce      = null;
+var _calcRefreshTimer    = null;
+var _refreshRate         = 1;
+var _autoRefreshEnabled  = true;
+var _hasCalculated       = false;
+var _autoRefreshInFlight = false;
+var _calcTicker          = '';   // ticker of the last successful calculation
+var _obTicker            = '';   // ticker the orderbook is polling for
+var _sizeUnit            = 'notional';  // notional | contracts | lot
+var _emptyCalcResultHtml = '';
+var _emptyOrderbookHtml  = '';
+var _saveDebounce        = null;
+var _calcHistory         = [];   // last 2 manual calculations
+var _pendingManualCalc   = false;
+
+// ── Order type ────────────────────────────────────────────────────────────────
+function setOrderType(t) {
+  _orderType = t;
+  document.getElementById('order_type_val').value = t;
+
+  var isMarket = t === 'market';
+  document.getElementById('market-price-wrap').classList.toggle('hidden', !isMarket);
+  document.getElementById('limit-price').classList.toggle('hidden',        isMarket);
+  document.getElementById('live-badge').style.visibility = isMarket ? 'visible' : 'hidden';
+
+  var fb = document.getElementById('fee-badge');
+  if (t === 'limit') {
+    fb.textContent = 'MAKER FEE';
+    fb.className = 'ml-1 px-2 py-0.5 rounded text-xs bg-[#0f2a1a] text-green-400';
+  } else {
+    fb.textContent = 'TAKER FEE';
+    fb.className = 'ml-1 px-2 py-0.5 rounded text-xs bg-[#713f12] text-yellow-300';
+  }
+
+  ['market', 'limit', 'stop'].forEach(function(x) {
+    document.getElementById('btn-' + x).className =
+      'btn text-xs px-4 py-1.5 ' + (x === t ? 'btn-primary' : 'btn-secondary');
+  });
+
+  if (!isMarket && _livePrice > 0)
+    document.getElementById('limit-price').placeholder = fmtP(_livePrice) + ' (last)';
+
+  updateLivePricePoll();
+
+  // Default refresh rate: market=1s, limit/stop=30s
+  _refreshRate = (t === 'market') ? 1 : 30;
+  if (_hasCalculated) startAutoRefresh();
+}
+
+// ── TP/SL mode ────────────────────────────────────────────────────────────────
+function setTpSlMode(m) {
+  _tpslMode = m;
+  var isPct = m === 'pct';
+  document.getElementById('tpsl-by-price').classList.toggle('hidden',  isPct);
+  document.getElementById('tpsl-by-pct').classList.toggle('hidden',   !isPct);
+  document.getElementById('side-selector').classList.toggle('hidden', !isPct);
+  document.getElementById('btn-byprice').className =
+    'btn text-xs px-3 py-1 ' + (!isPct ? 'btn-primary' : 'btn-secondary');
+  document.getElementById('btn-bypct').className =
+    'btn text-xs px-3 py-1 ' + ( isPct ? 'btn-primary' : 'btn-secondary');
+  updatePctPreview();
+}
+
+function setSide(s) {
+  _side = s;
+  document.getElementById('btn-long').className =
+    'btn text-xs px-3 py-1 text-green-400 ' + (s === 'long'  ? 'btn-primary' : 'btn-secondary');
+  document.getElementById('btn-short').className =
+    'btn text-xs px-3 py-1 text-red-400 '   + (s === 'short' ? 'btn-primary' : 'btn-secondary');
+  updatePctPreview();
+}
+
+// ── Enter key navigation ──────────────────────────────────────────────────────
+function focusNextFromTicker() {
+  if (_orderType !== 'market') {
+    document.getElementById('limit-price').focus();
+  } else {
+    focusNextFromEntry();
+  }
+}
+
+function focusNextFromEntry() {
+  if (_tpslMode === 'price') document.getElementById('tp-price-input').focus();
+  else                       document.getElementById('tp-pct-input').focus();
+}
+
+// ── Live price polling (1 Hz) ─────────────────────────────────────────────────
+function schedulePricePoll() {
+  clearTimeout(_tickerDebounce);
+  _tickerDebounce = setTimeout(updateLivePricePoll, 500);
+}
+
+function updateLivePricePoll() {
+  if (_priceInterval) { clearInterval(_priceInterval); _priceInterval = null; }
+  var ticker = document.getElementById('ticker-input').value.trim();
+  if (!ticker) return;
+  fetchPrice(ticker);
+  _priceInterval = setInterval(function() { fetchPrice(ticker); }, 1000);
+}
+
+async function fetchPrice(ticker) {
+  try {
+    var r = await fetch('/api/price/' + encodeURIComponent(ticker));
+    if (!r.ok) return;
+    var d = await r.json();
+    if (!d.price || d.price <= 0) return;
+    _livePrice = d.price;
+    if (_orderType === 'market') {
+      document.getElementById('market-price').value = d.price;
+    } else {
+      document.getElementById('limit-price').placeholder = fmtP(d.price) + ' (last)';
+    }
+    if (_tpslMode === 'pct') updatePctPreview();
+    if (_tpslMode === 'price') updatePricePreview();
+  } catch(e) {}
+}
+
+// ── % preview ─────────────────────────────────────────────────────────────────
+function updatePctPreview() {
+  var entry = getEffectiveEntry();
+  var tpPct = parseFloat(document.getElementById('tp-pct-input').value) || 0;
+  var slPct = parseFloat(document.getElementById('sl-pct-input').value) || 0;
+  var tpP = 0, slP = 0;
+  if (entry > 0) {
+    var dir = _side === 'long' ? 1 : -1;
+    if (tpPct > 0) tpP = entry * (1 + dir * tpPct / 100);
+    if (slPct > 0) slP = entry * (1 - dir * slPct / 100);
+  }
+  document.getElementById('pct-preview').innerHTML =
+    'TP: <span class="text-green-400">' + (tpP > 0 ? fmtP(tpP) : '—') + '</span>' +
+    ' &nbsp;|&nbsp; SL: <span class="text-red-400">' + (slP > 0 ? fmtP(slP) : '—') + '</span>';
+}
+
+// ── Price → % preview (by-price mode: show real-time % from entry) ───────────
+function updatePricePreview() {
+  var entry = getEffectiveEntry();
+  var tpP = parseFloat(document.getElementById('tp-price-input').value) || 0;
+  var slP = parseFloat(document.getElementById('sl-price-input').value) || 0;
+  var tpStr = '—', slStr = '—';
+  if (entry > 0) {
+    if (tpP > 0) tpStr = Math.abs((tpP - entry) / entry * 100).toFixed(2) + '%';
+    if (slP > 0) slStr = Math.abs((slP - entry) / entry * 100).toFixed(2) + '%';
+  }
+  document.getElementById('price-preview').innerHTML =
+    'TP: <span class="text-green-400">' + tpStr + '</span>' +
+    ' &nbsp;|&nbsp; SL: <span class="text-red-400">' + slStr + '</span>';
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function getEffectiveEntry() {
+  if (_orderType === 'market') return _livePrice || 0;
+  var v = parseFloat(document.getElementById('limit-price').value);
+  return v > 0 ? v : (_livePrice || 0);
+}
+
+function fmtP(p) {
+  if (!p) return '—';
+  var d = p >= 1000 ? 2 : p >= 1 ? 4 : 6;
+  return p.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+}
+
+// ── Orderbook (persistent, independent of calc-result swaps) ──────────────────
+function updateOrderbook(ticker) {
+  if (!ticker || ticker === _obTicker) return;  // same ticker — keep existing poll
+  _obTicker = ticker;
+  var container = document.getElementById('orderbook-container');
+  container.innerHTML =
+    '<div id="orderbook-panel" class="panel p-4"' +
+    ' hx-get="/calculator/refresh/' + encodeURIComponent(ticker) + '"' +
+    ' hx-trigger="load, every 2s"' +
+    ' hx-swap="innerHTML">' +
+    '<div class="label">Live Orderbook — ' + ticker + '</div>' +
+    '<div class="text-slate-500 text-xs">loading...</div></div>';
+  htmx.process(container);
+}
+
+// ── Auto-refresh ─────────────────────────────────────────────────────────────
+function startAutoRefresh() {
+  stopAutoRefresh();
+  if (!_autoRefreshEnabled || !_hasCalculated) return;
+  _calcRefreshTimer = setInterval(autoRefreshCalc, _refreshRate * 1000);
+  highlightRefreshRate();
+}
+
+function stopAutoRefresh() {
+  if (_calcRefreshTimer) { clearInterval(_calcRefreshTimer); _calcRefreshTimer = null; }
+}
+
+function autoRefreshCalc() {
+  if (_autoRefreshInFlight) return;
+  var ticker = document.getElementById('ticker-input').value.trim().toUpperCase();
+  if (!ticker) return;
+  // Ticker changed since last calc — stop auto-refresh, wait for manual Calculate
+  if (ticker !== _calcTicker) {
+    stopAutoRefresh();
+    return;
+  }
+  var entry = getEffectiveEntry();
+  if (!entry || entry <= 0) return;
+  _autoRefreshInFlight = true;
+  document.getElementById('auto_refresh_val').value = '1';
+  document.getElementById('calc-form').requestSubmit();
+}
+
+function setRefreshRate(s) {
+  _refreshRate = s;
+  _autoRefreshEnabled = true;
+  startAutoRefresh();
+}
+
+function toggleAutoRefresh() {
+  _autoRefreshEnabled = !_autoRefreshEnabled;
+  if (_autoRefreshEnabled) startAutoRefresh();
+  else stopAutoRefresh();
+  highlightRefreshRate();
+}
+
+function highlightRefreshRate() {
+  [1, 5, 10, 30].forEach(function(s) {
+    var btn = document.getElementById('rr-' + s);
+    if (btn) btn.className = 'btn text-xs px-2 py-0.5 ' +
+      (s === _refreshRate && _autoRefreshEnabled ? 'btn-primary' : 'btn-secondary');
+  });
+  var pb = document.getElementById('rr-pause');
+  if (pb) {
+    pb.className = 'btn text-xs px-2 py-0.5 ' +
+      (!_autoRefreshEnabled ? 'btn-danger' : 'btn-secondary');
+    pb.textContent = _autoRefreshEnabled ? '⏸' : '▶';
+  }
+}
+
+// ── Before submit: populate hidden fields ─────────────────────────────────────
+document.body.addEventListener('htmx:beforeRequest', function(evt) {
+  if (evt.detail.elt.id !== 'calc-form') return;
+
+  var isAuto = document.getElementById('auto_refresh_val').value === '1';
+  _pendingManualCalc = !isAuto;
+
+  // Manual submit: stop old auto-refresh to prevent race conditions
+  if (!isAuto) {
+    stopAutoRefresh();
+    _autoRefreshInFlight = false;
+  }
+
+  var entry = getEffectiveEntry();
+  if (!entry || entry <= 0) {
+    evt.preventDefault();
+    if (!isAuto)
+      document.getElementById('calc-result').innerHTML =
+        '<div class="alert-error p-3 rounded">No entry price — enter a ticker and wait for live price, or type a price manually.</div>';
+    _autoRefreshInFlight = false;
+    return;
+  }
+  document.getElementById('average_val').value = entry;
+
+  var tpP = 0, slP = 0;
+  if (_tpslMode === 'price') {
+    tpP = parseFloat(document.getElementById('tp-price-input').value) || 0;
+    slP = parseFloat(document.getElementById('sl-price-input').value) || 0;
+  } else {
+    var tpPct = parseFloat(document.getElementById('tp-pct-input').value) || 0;
+    var slPct = parseFloat(document.getElementById('sl-pct-input').value) || 0;
+    var dir   = _side === 'long' ? 1 : -1;
+    if (tpPct > 0) tpP = entry * (1 + dir * tpPct / 100);
+    if (slPct > 0) slP = entry * (1 - dir * slPct / 100);
+  }
+
+  if (!slP || slP <= 0) {
+    evt.preventDefault();
+    if (!isAuto)
+      document.getElementById('calc-result').innerHTML =
+        '<div class="alert-error p-3 rounded">SL is required — enter an SL price or SL %.</div>';
+    _autoRefreshInFlight = false;
+    return;
+  }
+
+  document.getElementById('tp_price_val').value = tpP;
+  document.getElementById('sl_price_val').value = slP;
+});
+
+// ── After calculation completes ───────────────────────────────────────────────
+document.body.addEventListener('htmx:afterSettle', function(evt) {
+  if (evt.detail.target.id !== 'calc-result') return;
+
+  _hasCalculated = true;
+  _autoRefreshInFlight = false;
+  document.getElementById('auto_refresh_val').value = '0';
+
+  // Track the calculated ticker — auto-refresh only runs for this ticker
+  var ticker = document.getElementById('ticker-input').value.trim().toUpperCase();
+  _calcTicker = ticker;
+
+  // Start/restart auto-refresh for this ticker
+  startAutoRefresh();
+
+  // Update orderbook if ticker changed (persistent, won't be killed by calc swaps)
+  updateOrderbook(ticker);
+
+  // Populate left-panel Setup Summary from freshly-rendered #calc-data
+  populateSetupSummary();
+
+  // Save to history on manual calculations only (not auto-refresh)
+  if (_pendingManualCalc) { saveToHistory(); _pendingManualCalc = false; }
+
+  // Persist form state + result for tab-navigation survival
+  saveCalcState();
+});
+
+document.body.addEventListener('htmx:responseError', function(evt) {
+  if (evt.detail.elt && evt.detail.elt.id === 'calc-form') {
+    _autoRefreshInFlight = false;
+    document.getElementById('auto_refresh_val').value = '0';
+  }
+});
+
+// ── Calculation history (last 2 manual calcs, survives Clear) ─────────────────
+function saveToHistory() {
+  var data = document.getElementById('calc-data');
+  if (!data) return;
+  var ticker = data.getAttribute('data-ticker') || '';
+  if (!ticker) return;
+  var entry = parseFloat(data.getAttribute('data-entry') || 0);
+  var tp    = parseFloat(data.getAttribute('data-tp')    || 0);
+  var sl    = parseFloat(data.getAttribute('data-sl')    || 0);
+  var side  = (sl > 0 && sl < entry) ? 'LONG' : 'SHORT';
+  var now   = new Date();
+  var ts    = now.getHours().toString().padStart(2,'0') + ':' + now.getMinutes().toString().padStart(2,'0');
+  var regimeLabel = data.getAttribute('data-regime-label') || 'neutral';
+  var regimeMult  = parseFloat(data.getAttribute('data-regime-mult') || '1.0');
+  var rec = {
+    ts: ts, ticker: ticker, orderType: _orderType, side: side,
+    entry: entry, tp: tp, sl: sl,
+    regimeLabel: regimeLabel, regimeMult: regimeMult,
+    limitPrice:  document.getElementById('limit-price').value,
+    tpslMode:    _tpslMode, pctSide: _side,
+    tpPrice:     document.getElementById('tp-price-input').value,
+    slPrice:     document.getElementById('sl-price-input').value,
+    tpPct:       document.getElementById('tp-pct-input').value,
+    slPct:       document.getElementById('sl-pct-input').value,
+    tpAmountPct: document.querySelector('[name="tp_amount_pct"]').value,
+    slAmountPct: document.querySelector('[name="sl_amount_pct"]').value,
+    modelName:   document.querySelector('[name="model_name"]').value,
+    modelDesc:   document.querySelector('[name="model_desc"]').value,
+    sizeUnit:    _sizeUnit,
+    calcHtml:    document.getElementById('calc-result').innerHTML
+  };
+  // Deduplicate by ticker+entry+tp+sl, keep newest 2
+  _calcHistory = _calcHistory.filter(function(h) {
+    return !(h.ticker === ticker && h.entry === entry && h.tp === tp && h.sl === sl);
+  });
+  _calcHistory.unshift(rec);
+  if (_calcHistory.length > 2) _calcHistory.length = 2;
+  try { localStorage.setItem('calc_history', JSON.stringify(_calcHistory)); } catch(e) {}
+  renderHistory();
+}
+
+function loadHistory() {
+  try { _calcHistory = JSON.parse(localStorage.getItem('calc_history') || '[]'); } catch(e) { _calcHistory = []; }
+  renderHistory();
+}
+
+function renderHistory() {
+  var panel = document.getElementById('calc-history-panel');
+  var list  = document.getElementById('calc-history-list');
+  if (!panel || !list) return;
+  if (_calcHistory.length === 0) { panel.classList.add('hidden'); return; }
+  panel.classList.remove('hidden');
+  list.innerHTML = _calcHistory.map(function(h, i) {
+    var sc  = h.side === 'LONG' ? 'text-green-400' : 'text-red-400';
+    var tpS = h.tp > 0 ? fmtP(h.tp) : '—';
+    var slS = h.sl > 0 ? fmtP(h.sl) : '—';
+    var rl  = (h.regimeLabel || 'neutral').replace(/_/g, ' ').toUpperCase();
+    var rm  = typeof h.regimeMult === 'number' ? h.regimeMult : 1.0;
+    var rc  = rm >= 1.1 ? 'text-green-400' : (rm <= 0.5 ? 'text-red-400' : (rm <= 0.8 ? 'text-yellow-400' : 'text-slate-400'));
+    return '<button type="button" onclick="recallHistory(' + i + ')"' +
+      ' class="w-full text-left px-2.5 py-1.5 rounded border border-slate-700 bg-[#151720] hover:bg-[#1e2130] text-xs transition-colors">' +
+      '<div class="flex items-center gap-2 mb-0.5">' +
+        '<span class="font-bold text-accent">' + h.ticker + '</span>' +
+        '<span class="' + sc + '">' + h.side + '</span>' +
+        '<span class="text-slate-500 uppercase">' + (h.orderType || '') + '</span>' +
+        '<span class="text-slate-500 ml-auto">' + h.ts + '</span>' +
+      '</div>' +
+      '<div class="font-mono text-slate-400 text-xs">' +
+        'Entry ' + fmtP(h.entry) + ' &nbsp;·&nbsp; TP ' + tpS + ' &nbsp;·&nbsp; SL ' + slS +
+      '</div>' +
+      '<div class="text-xs mt-0.5">' +
+        '<span class="' + rc + '">' + rl + '</span>' +
+        '<span class="text-slate-500">&nbsp;×' + rm.toFixed(1) + ' size</span>' +
+      '</div>' +
+      '</button>';
+  }).join('');
+}
+
+function recallHistory(idx) {
+  var h = _calcHistory[idx];
+  if (!h) return;
+  stopAutoRefresh();
+  if (_priceInterval) { clearInterval(_priceInterval); _priceInterval = null; }
+  _obTicker = '';
+
+  setOrderType(h.orderType || 'market');
+  document.getElementById('ticker-input').value = h.ticker;
+  schedulePricePoll();
+  if (h.limitPrice) document.getElementById('limit-price').value = h.limitPrice;
+  setTpSlMode(h.tpslMode || 'price');
+  if (h.pctSide) setSide(h.pctSide);
+  if (h.tpPrice) document.getElementById('tp-price-input').value = h.tpPrice;
+  if (h.slPrice) document.getElementById('sl-price-input').value = h.slPrice;
+  if (h.tpPct)   document.getElementById('tp-pct-input').value   = h.tpPct;
+  if (h.slPct)   document.getElementById('sl-pct-input').value   = h.slPct;
+  document.querySelector('[name="tp_amount_pct"]').value = h.tpAmountPct || '100';
+  document.querySelector('[name="sl_amount_pct"]').value = h.slAmountPct || '100';
+  document.querySelector('[name="model_name"]').value    = h.modelName   || '';
+  document.querySelector('[name="model_desc"]').value    = h.modelDesc   || '';
+  if (h.sizeUnit) _sizeUnit = h.sizeUnit;
+
+  if (h.calcHtml) {
+    document.getElementById('calc-result').innerHTML = h.calcHtml;
+    _hasCalculated = true; _calcTicker = h.ticker;
+    populateSetupSummary();
+    highlightRefreshRate();
+    startAutoRefresh();
+    updateOrderbook(h.ticker);
+  }
+  updatePricePreview();
+  updatePctPreview();
+  saveCalcState();
+}
+
+// ── Commodity detection ───────────────────────────────────────────────────────
+function isCommodityTicker(ticker) {
+  return /^(XAU|XAG|XPT|XPD|WTI|BRN)/i.test(ticker || '');
+}
+
+// ── Setup Summary ─────────────────────────────────────────────────────────────
+function setSizeUnit(unit) {
+  _sizeUnit = unit;
+
+  // Update subtitle label
+  var unitNames = { notional: 'NOTIONAL', contracts: 'CONTRACTS', lot: 'LOT' };
+  var labelEl = document.getElementById('ss-size-label');
+  if (labelEl) labelEl.textContent = 'Size (' + unitNames[unit] + ')';
+
+  // Update value (number only, no unit suffix)
+  var data   = document.getElementById('calc-data');
+  var sizeEl = document.getElementById('ss-size');
+  if (data && sizeEl) {
+    var ticker    = data.getAttribute('data-ticker') || '';
+    var notional  = parseFloat(data.getAttribute('data-notional')  || 0);
+    var contracts = parseFloat(data.getAttribute('data-contracts') || 0);
+    var commodity = isCommodityTicker(ticker);
+    var val;
+    if (unit === 'notional') {
+      val = notional  > 0 ? fmtP(notional)  : '—';
+    } else if (unit === 'contracts') {
+      val = contracts > 0 ? fmtP(contracts) : '—';
+    } else { // lot
+      // For commodities: 1 lot = 1 unit (notional = commodity price) → lots = contracts
+      // For crypto: lot size is not standardised
+      val = (commodity && contracts > 0) ? fmtP(contracts) : '—';
+    }
+    sizeEl.value = val;
+  }
+
+  ['notional', 'contracts', 'lot'].forEach(function(u) {
+    var btn = document.getElementById('su-' + u);
+    if (btn) btn.className = 'btn text-xs px-4 py-1.5 ' + (u === unit ? 'btn-primary' : 'btn-secondary');
+  });
+}
+
+function populateSetupSummary() {
+  var data = document.getElementById('calc-data');
+  if (!data) return;
+  var entry = parseFloat(data.getAttribute('data-entry') || 0);
+  var tp    = parseFloat(data.getAttribute('data-tp')    || 0);
+  var sl    = parseFloat(data.getAttribute('data-sl')    || 0);
+  document.getElementById('ss-ticker').value = data.getAttribute('data-ticker') || '—';
+  document.getElementById('ss-entry').value  = entry > 0 ? fmtP(entry) : '—';
+  document.getElementById('ss-tp').value     = tp    > 0 ? fmtP(tp)    : '—';
+  document.getElementById('ss-sl').value     = sl    > 0 ? fmtP(sl)    : '—';
+  setSizeUnit(_sizeUnit);
+}
+
+function copySetupSummary() {
+  var text = [
+    'Symbol:  ' + (document.getElementById('ss-ticker').value || '—'),
+    'Entry:   ' + (document.getElementById('ss-entry').value  || '—'),
+    'TP:      ' + (document.getElementById('ss-tp').value     || '—'),
+    'SL:      ' + (document.getElementById('ss-sl').value     || '—'),
+    'Size:    ' + (document.getElementById('ss-size').value   || '—')
+  ].join('\n');
+  navigator.clipboard.writeText(text).then(function() {
+    var ok = document.getElementById('copy-ok');
+    if (ok) { ok.style.opacity = '1'; setTimeout(function() { ok.style.opacity = '0'; }, 2000); }
+  }).catch(function() {});
+}
+
+// ── Clear calculator ───────────────────────────────────────────────────────────
+function clearCalculator() {
+  stopAutoRefresh();
+  if (_priceInterval) { clearInterval(_priceInterval); _priceInterval = null; }
+  _hasCalculated = false; _calcTicker = ''; _livePrice = 0;
+  _obTicker = ''; _autoRefreshInFlight = false;
+  document.getElementById('auto_refresh_val').value = '0';
+
+  document.getElementById('ticker-input').value         = '';
+  document.getElementById('market-price').value          = '';
+  document.getElementById('limit-price').value           = '';
+  document.getElementById('tp-price-input').value        = '';
+  document.getElementById('sl-price-input').value        = '';
+  document.getElementById('tp-pct-input').value          = '';
+  document.getElementById('sl-pct-input').value          = '';
+  document.querySelector('[name="tp_amount_pct"]').value = '100';
+  document.querySelector('[name="sl_amount_pct"]').value = '100';
+  document.querySelector('[name="model_name"]').value    = '';
+  document.querySelector('[name="model_desc"]').value    = '';
+
+  document.getElementById('price-preview').innerHTML  = 'TP: — &nbsp;|&nbsp; SL: —';
+  document.getElementById('pct-preview').innerHTML    = 'TP: — &nbsp;|&nbsp; SL: —';
+
+  document.getElementById('calc-result').innerHTML         = _emptyCalcResultHtml;
+  document.getElementById('orderbook-container').innerHTML = _emptyOrderbookHtml;
+
+  // Reset setup summary to blank state (always visible)
+  ['ss-ticker','ss-entry','ss-tp','ss-sl','ss-size'].forEach(function(id) {
+    document.getElementById(id).value = '—';
+  });
+  _sizeUnit = 'notional';
+  setSizeUnit('notional'); // re-highlight the default button
+
+  setOrderType('market');
+  setTpSlMode('price');
+
+  try { localStorage.removeItem('calc_state'); sessionStorage.removeItem('calc_result'); } catch(e) {}
+}
+
+// ── State persistence (localStorage + sessionStorage) ─────────────────────────
+function saveCalcState() {
+  try {
+    localStorage.setItem('calc_state', JSON.stringify({
+      orderType:   _orderType,
+      ticker:      document.getElementById('ticker-input').value,
+      limitPrice:  document.getElementById('limit-price').value,
+      tpslMode:    _tpslMode,
+      side:        _side,
+      tpPrice:     document.getElementById('tp-price-input').value,
+      slPrice:     document.getElementById('sl-price-input').value,
+      tpPct:       document.getElementById('tp-pct-input').value,
+      slPct:       document.getElementById('sl-pct-input').value,
+      tpAmountPct: document.querySelector('[name="tp_amount_pct"]').value,
+      slAmountPct: document.querySelector('[name="sl_amount_pct"]').value,
+      modelName:   document.querySelector('[name="model_name"]').value,
+      modelDesc:   document.querySelector('[name="model_desc"]').value,
+      sizeUnit:    _sizeUnit
+    }));
+    if (_hasCalculated)
+      sessionStorage.setItem('calc_result', document.getElementById('calc-result').innerHTML);
+  } catch(e) {}
+}
+
+function restoreCalcState() {
+  try {
+    var raw = localStorage.getItem('calc_state');
+    if (!raw) return;
+    var s = JSON.parse(raw);
+
+    if (s.orderType)   setOrderType(s.orderType);
+    if (s.ticker)      { document.getElementById('ticker-input').value = s.ticker; schedulePricePoll(); }
+    if (s.limitPrice)  document.getElementById('limit-price').value = s.limitPrice;
+    if (s.tpslMode)    setTpSlMode(s.tpslMode);
+    if (s.side)        setSide(s.side);
+    if (s.tpPrice)     document.getElementById('tp-price-input').value = s.tpPrice;
+    if (s.slPrice)     document.getElementById('sl-price-input').value = s.slPrice;
+    if (s.tpPct)       document.getElementById('tp-pct-input').value   = s.tpPct;
+    if (s.slPct)       document.getElementById('sl-pct-input').value   = s.slPct;
+    if (s.tpAmountPct) document.querySelector('[name="tp_amount_pct"]').value = s.tpAmountPct;
+    if (s.slAmountPct) document.querySelector('[name="sl_amount_pct"]').value = s.slAmountPct;
+    if (s.modelName)   document.querySelector('[name="model_name"]').value = s.modelName;
+    if (s.modelDesc)   document.querySelector('[name="model_desc"]').value = s.modelDesc;
+    if (s.sizeUnit)    _sizeUnit = s.sizeUnit;
+
+    var savedHtml = sessionStorage.getItem('calc_result');
+    if (savedHtml) {
+      document.getElementById('calc-result').innerHTML = savedHtml;
+      _hasCalculated = true;
+      _calcTicker    = s.ticker || '';
+      populateSetupSummary();  // reads from restored #calc-data
+      highlightRefreshRate();
+      startAutoRefresh();
+      _obTicker = '';
+      if (s.ticker) updateOrderbook(s.ticker);
+    }
+    updatePricePreview();
+    updatePctPreview();
+  } catch(e) {}
+}
+
+// Auto-save on any form input change
+document.getElementById('calc-form').addEventListener('input', function() {
+  clearTimeout(_saveDebounce);
+  _saveDebounce = setTimeout(saveCalcState, 300);
+});
+
+// Capture empty states and restore persisted state on load
+_emptyCalcResultHtml  = document.getElementById('calc-result').innerHTML;
+_emptyOrderbookHtml   = document.getElementById('orderbook-container').innerHTML;
+restoreCalcState();
+loadHistory();
+</script>
+
+{% endblock %}

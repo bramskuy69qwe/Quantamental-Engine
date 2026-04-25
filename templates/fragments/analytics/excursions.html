@@ -1,0 +1,114 @@
+<div class="panel p-4">
+  <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+    <div class="label">MFE / MAE Excursions — {{ period_label }}</div>
+
+    <!-- Filter buttons -->
+    <div class="flex gap-1">
+      {% for val, label in [('all','All'), ('LONG','Long'), ('SHORT','Short')] %}
+      <button onclick="filterExcursions('{{ val }}')"
+              id="exc-f-{{ val }}"
+              class="preset-btn text-xs {{ 'active' if filter_dir == val else '' }}">{{ label }}</button>
+      {% endfor %}
+    </div>
+  </div>
+
+  {% if trades %}
+  <div id="excursions-chart"></div>
+
+  <!-- Summary stats -->
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
+    <div class="flex flex-col gap-0.5">
+      <span class="label">Avg MFE</span>
+      <span class="value pos-long">${{ fmt(avg_mfe) }}</span>
+    </div>
+    <div class="flex flex-col gap-0.5">
+      <span class="label">Avg |MAE|</span>
+      <span class="value pos-short">${{ fmt(avg_mae_abs) }}</span>
+    </div>
+    <div class="flex flex-col gap-0.5">
+      <span class="label">Avg ME-Ratio</span>
+      <span class="value text-white">{{ fmt(avg_mer, 2) }}</span>
+    </div>
+    <div class="flex flex-col gap-0.5">
+      <span class="label" title="Trades where MFE > 2× |MAE|">MFE &gt; 2× MAE</span>
+      <span class="value pos-long">{{ pct_favorable }}%</span>
+    </div>
+  </div>
+
+  <!-- Per-trade table -->
+  <div class="overflow-x-auto mt-4">
+    <table>
+      <thead><tr>
+        <th>Symbol</th><th>Dir</th><th>Entry</th><th>MFE</th><th>MAE</th>
+        <th title="MFE / |MAE|">ME-R</th><th>Realized PnL</th><th>Hold</th>
+      </tr></thead>
+      <tbody>
+        {% for t in trades %}
+        {% set mer = (t.mfe / (t.mae | abs)) if t.mae != 0 else 0 %}
+        <tr>
+          <td class="font-bold">{{ t.symbol }}</td>
+          <td class="{{ 'pos-long' if t.direction == 'LONG' else 'pos-short' }}">{{ t.direction }}</td>
+          <td>{{ fmt(t.entry_price, 4) if t.entry_price else '—' }}</td>
+          <td class="pos-long">{{ fmt(t.mfe, 2) }}</td>
+          <td class="pos-short">{{ fmt(t.mae, 2) }}</td>
+          <td class="text-white">{{ fmt(mer, 2) if mer else '—' }}</td>
+          <td class="{{ 'pos-long' if t.income >= 0 else 'pos-short' }}">{{ fmt(t.income) }}</td>
+          <td class="text-slate-500 text-xs">
+            {% if t.hold_ms %}{{ fmt_duration(t.hold_ms) }}{% else %}—{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% else %}
+  <div class="text-slate-500 text-sm py-6">No reconciled MFE/MAE data for this period.</div>
+  {% endif %}
+</div>
+
+{% if trades %}
+<script>
+(function() {
+  const data = {{ scatter_data | tojson }};
+  // Pre-split into the same order used by each series so dataPointIndex
+  // (which is series-local) maps to the correct trade in the tooltip.
+  const seriesData = [
+    data.filter(d => d.z >= 0),
+    data.filter(d => d.z <  0),
+  ];
+  const opts = {
+    chart: { type: 'scatter', height: 280, background: 'transparent', foreColor: '#94a3b8',
+             toolbar: { show: false }, zoom: { enabled: true } },
+    theme: { mode: 'dark' },
+    series: [
+      { name: 'Profitable',  data: seriesData[0].map(d => ({ x: d.x, y: d.y })) },
+      { name: 'Loss',        data: seriesData[1].map(d => ({ x: d.x, y: d.y })) },
+    ],
+    colors: ['#4ade80', '#f87171'],
+    markers: { size: 5, strokeWidth: 0 },
+    xaxis: { title: { text: 'MFE ($)', style: { color: '#64748b' } }, labels: { formatter: v => '$' + parseFloat(v).toFixed(0) } },
+    yaxis: { title: { text: 'MAE ($)', style: { color: '#64748b' } }, labels: { formatter: v => '$' + parseFloat(v).toFixed(0) } },
+    grid: { borderColor: '#2a2d3a' },
+    tooltip: { theme: 'dark', custom: function({series, seriesIndex, dataPointIndex, w}) {
+      const d = seriesData[seriesIndex][dataPointIndex];
+      return '<div style="padding:6px 10px;font-size:11px">' +
+        '<b>' + (d?.sym||'') + '</b><br>' +
+        'MFE: $' + (d?.x||0).toFixed(2) + '<br>' +
+        'MAE: $' + (d?.y||0).toFixed(2) + '<br>' +
+        'PnL: $' + (d?.z||0).toFixed(2) + '</div>';
+    }},
+    dataLabels: { enabled: false },
+  };
+  new ApexCharts(document.querySelector('#excursions-chart'), opts).render();
+})();
+
+function filterExcursions(dir) {
+  const month = document.getElementById('month-display')?.textContent.trim() || '';
+  const allTime = month === 'All Time';
+  const qs = (allTime ? 'all=1' : 'month=' + encodeURIComponent(month)) + '&dir=' + dir;
+  htmx.ajax('GET', '/fragments/analytics/excursions?' + qs,
+            { target: '#analytics-content', swap: 'innerHTML' });
+}
+</script>
+{% endif %}

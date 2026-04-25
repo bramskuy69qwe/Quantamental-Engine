@@ -1,0 +1,29 @@
+{#
+  Per-table search + filter toolbar.
+  Usage: {{ table_controls(endpoint, target_id, search, filters, extra_qs) }}
+  filters is a list of dicts: [{"name": "side", "label": "Side", "options": ["long","short"]}]
+#}
+{% macro table_controls(endpoint, target_id, search, filters=[], extra_qs="") %}
+<div class="flex items-center gap-3 mb-2 flex-wrap">
+  <input type="text" placeholder="Search ticker…"
+         class="hist-input text-xs w-40"
+         value="{{ search }}"
+         hx-get="{{ endpoint }}?page=1&{{ extra_qs }}"
+         hx-target="#{{ target_id }}" hx-swap="innerHTML"
+         hx-trigger="keyup changed delay:300ms"
+         name="search">
+  {% for f in filters %}
+  <select class="hist-select text-xs"
+          name="{{ f.name }}"
+          hx-get="{{ endpoint }}?page=1&{{ extra_qs }}"
+          hx-target="#{{ target_id }}" hx-swap="innerHTML"
+          hx-trigger="change"
+          hx-include="closest div">
+    <option value="">All {{ f.label }}</option>
+    {% for opt in f.options %}
+    <option value="{{ opt }}" {{ "selected" if f.current == opt }}>{{ opt | upper }}</option>
+    {% endfor %}
+  </select>
+  {% endfor %}
+</div>
+{% endmacro %}

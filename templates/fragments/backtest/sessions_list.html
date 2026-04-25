@@ -1,0 +1,35 @@
+{% if not sessions %}
+<p class="text-slate-600 text-xs">No sessions yet.</p>
+{% else %}
+<table>
+  <thead>
+    <tr>
+      <th>#</th><th>Name</th><th>Type</th><th>Date Range</th>
+      <th>Status</th><th>Trades</th><th>Return</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for s in sessions %}
+    {% set smry = s.summary %}
+    {% set ret_pct = (smry.total_return_pct or 0) * 100 %}
+    <tr>
+      <td class="text-slate-500">{{ s.id }}</td>
+      <td class="text-slate-200">{{ s.name }}</td>
+      <td class="text-slate-500 text-xs">{{ s.type }}</td>
+      <td class="text-slate-500 text-xs">{{ s.date_from or '—' }} → {{ s.date_to or '—' }}</td>
+      <td class="text-xs font-semibold
+        {% if s.status == 'completed' %}text-green-400
+        {% elif s.status == 'running' %}text-yellow-400
+        {% elif s.status == 'failed' %}text-red-400
+        {% else %}text-slate-400{% endif %}">
+        {{ s.status }}
+      </td>
+      <td>{{ smry.total_trades or '—' }}</td>
+      <td class="{{ 'pos-long' if ret_pct >= 0 else 'pos-short' }}">
+        {{ ret_pct|round(2) }}%
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}

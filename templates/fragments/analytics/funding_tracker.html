@@ -1,0 +1,73 @@
+<div class="panel p-4"
+     hx-get="/fragments/analytics/funding"
+     hx-trigger="every 30s"
+     hx-swap="outerHTML">
+
+  <div class="flex items-center justify-between mb-3">
+    <div class="label">Funding Rate Exposure — Live</div>
+    <span class="text-slate-600 text-xs">Auto-refreshes every 30s</span>
+  </div>
+
+  {% if rows %}
+  <div class="overflow-x-auto">
+    <table>
+      <thead><tr>
+        <th>Symbol</th>
+        <th>Dir</th>
+        <th>Notional</th>
+        <th>Funding Rate</th>
+        <th>Per 8h</th>
+        <th>Per Day</th>
+        <th>Per Week (est.)</th>
+        <th>Next Funding</th>
+        <th>Impact</th>
+      </tr></thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td class="font-bold">{{ r.ticker }}</td>
+          <td class="{{ 'pos-long' if r.direction == 'LONG' else 'pos-short' }}">{{ r.direction }}</td>
+          <td class="text-slate-400">${{ fmt(r.notional, 0) }}</td>
+          <td class="{{ 'pos-short' if r.adverse else 'pos-long' }}">
+            {{ fmt(r.funding_rate * 100, 4) }}%
+          </td>
+          <td class="{{ 'pos-short' if r.adverse else 'pos-long' }}">
+            ${{ fmt(r.per_8h, 4) }}
+          </td>
+          <td class="{{ 'pos-short' if r.adverse else 'pos-long' }}">
+            ${{ fmt(r.per_day, 3) }}
+          </td>
+          <td class="{{ 'pos-short' if r.adverse else 'pos-long' }} text-slate-400">
+            ${{ fmt(r.per_week, 2) }}
+          </td>
+          <td class="text-slate-400 text-xs">{{ r.next_funding }}</td>
+          <td>
+            {% if r.adverse %}
+            <span class="badge-limit text-xs px-1.5 py-0.5 rounded">Pay</span>
+            {% else %}
+            <span class="badge-ok text-xs px-1.5 py-0.5 rounded">Earn</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr class="border-t border-[#2a2d3a] font-bold text-slate-300">
+          <td colspan="4">TOTAL EXPOSURE</td>
+          <td class="text-slate-300">${{ fmt(total_8h, 4) }}</td>
+          <td class="text-slate-300">${{ fmt(total_day, 3) }}</td>
+          <td colspan="3"></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+
+  <p class="text-slate-600 text-xs mt-3">
+    Binance settles funding every 8h (00:00, 08:00, 16:00 UTC).
+    LONG pays funding when rate &gt; 0; SHORT pays when rate &lt; 0.
+  </p>
+
+  {% else %}
+  <div class="text-slate-500 text-sm py-6">No open positions — no funding exposure.</div>
+  {% endif %}
+</div>

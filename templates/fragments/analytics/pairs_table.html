@@ -1,0 +1,74 @@
+{% from "fragments/history/_sort_header.html" import sort_th %}
+{% set ep  = "/fragments/analytics/pairs" %}
+{% set tid = "pairs-table" %}
+{% set qs  = "month=" ~ month ~ "&sort_by=" ~ sort_by ~ "&sort_dir=" ~ sort_dir %}
+
+<div class="panel p-4" id="{{ tid }}">
+  <div class="label mb-3">Traded Pairs — {{ period_label }} ({{ rows | length }} symbols)</div>
+
+  {% if rows %}
+  <div class="overflow-x-auto">
+    <table>
+      <thead><tr>
+        {{ sort_th("Symbol",      "symbol",     ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Trades",      "total",      ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Longs",       "longs",      ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Shorts",      "shorts",     ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("PnL (Long)",  "pnl_long",   ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("PnL (Short)", "pnl_short",  ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("PnL Total",   "pnl_total",  ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Win Rate",    "win_rate",   ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Avg Win",     "avg_win",    ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Avg Loss",    "avg_loss",   ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Fees",        "fees_total", ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Volume",      "volume",     ep, tid, sort_by, sort_dir, qs) }}
+      </tr></thead>
+      <tbody>
+        {% for r in rows %}
+        {% set total_pnl = r.pnl_total | float %}
+        <tr>
+          <td class="font-bold">{{ r.symbol }}</td>
+          <td>{{ r.total }}</td>
+          <td class="pos-long">{{ r.longs }}</td>
+          <td class="pos-short">{{ r.shorts }}</td>
+          <td class="{{ 'pos-long' if r.pnl_long >= 0 else 'pos-short' }}">
+            {{ fmt(r.pnl_long) if r.pnl_long else '—' }}
+          </td>
+          <td class="{{ 'pos-long' if r.pnl_short >= 0 else 'pos-short' }}">
+            {{ fmt(r.pnl_short) if r.pnl_short else '—' }}
+          </td>
+          <td class="{{ 'pos-long' if total_pnl >= 0 else 'pos-short' }} font-bold">
+            {{ fmt(total_pnl) }}
+          </td>
+          <td class="{{ 'pos-long' if r.win_rate >= 0.5 else 'pos-short' }}">
+            {{ fmt(r.win_rate * 100, 1) }}%
+          </td>
+          <td class="pos-long">{{ fmt(r.avg_win) if r.avg_win else '—' }}</td>
+          <td class="pos-short">{{ fmt(r.avg_loss) if r.avg_loss else '—' }}</td>
+          <td class="text-slate-400">{{ fmt(r.fees_total) if r.fees_total else '—' }}</td>
+          <td class="text-slate-400">{{ fmt(r.volume, 0) if r.volume else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <!-- Totals row -->
+      {% set t_pnl = rows | sum(attribute='pnl_total') %}
+      {% set t_fees = rows | sum(attribute='fees_total') %}
+      {% set t_vol = rows | sum(attribute='volume') %}
+      {% set t_trades = rows | sum(attribute='total') %}
+      <tfoot>
+        <tr class="border-t border-[#2a2d3a] font-bold text-slate-300">
+          <td>TOTAL</td>
+          <td>{{ t_trades }}</td>
+          <td colspan="4"></td>
+          <td class="{{ 'pos-long' if t_pnl >= 0 else 'pos-short' }}">{{ fmt(t_pnl) }}</td>
+          <td colspan="3"></td>
+          <td class="text-slate-400">{{ fmt(t_fees) }}</td>
+          <td class="text-slate-400">{{ fmt(t_vol, 0) }}</td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+  {% else %}
+  <div class="text-slate-500 text-sm py-6">No closed trades found for this period.</div>
+  {% endif %}
+</div>

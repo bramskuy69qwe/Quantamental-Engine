@@ -1,0 +1,75 @@
+<div class="panel p-4">
+  <div class="label mb-3">R-Multiple Distribution — {{ period_label }}</div>
+
+  {% if r_values %}
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+
+    <!-- Chart -->
+    <div class="md:col-span-2">
+      <div id="r-hist-chart"></div>
+    </div>
+
+    <!-- Stats panel -->
+    <div class="flex flex-col gap-3">
+      {% macro rstat(label, val, cls='text-slate-200') %}
+      <div class="flex flex-col gap-0.5">
+        <span class="label">{{ label }}</span>
+        <span class="value {{ cls }}">{{ val }}</span>
+      </div>
+      {% endmacro %}
+
+      {% set wr_pct = (r_stats.win_rate * 100) | round(1) %}
+      {{ rstat("Total Trades",    r_stats.count) }}
+      {{ rstat("Win Rate",        wr_pct ~ "%",
+               'pos-long' if r_stats.win_rate >= 0.5 else 'pos-short') }}
+      {{ rstat("Expectancy",      fmt(r_stats.expectancy, 3) ~ "R",
+               'pos-long' if r_stats.expectancy > 0 else 'pos-short') }}
+      {{ rstat("Profit Factor",   fmt(r_stats.profit_factor, 2),
+               'pos-long' if r_stats.profit_factor >= 1.5 else ('text-yellow-400' if r_stats.profit_factor >= 1 else 'pos-short')) }}
+      {{ rstat("Avg Win R",       fmt(r_stats.avg_win_r, 2) ~ "R",  'pos-long') }}
+      {{ rstat("Avg Loss R",      fmt(r_stats.avg_loss_r, 2) ~ "R", 'pos-short') }}
+      {{ rstat("Best R",          fmt(r_stats.best, 2)  ~ "R", 'pos-long') }}
+      {{ rstat("Worst R",         fmt(r_stats.worst, 2) ~ "R", 'pos-short') }}
+      {{ rstat("Median R",        fmt(r_stats.median, 2) ~ "R") }}
+      {{ rstat("Mean R",          fmt(r_stats.mean, 3)   ~ "R") }}
+    </div>
+  </div>
+
+  {% else %}
+  <div class="text-slate-500 text-sm py-6">
+    No R-multiple data for this period.
+    R-multiples come from the manual Trade History log (<span class="text-slate-400">individual_realized_r</span> field).
+  </div>
+  {% endif %}
+</div>
+
+{% if r_values %}
+<script>
+(function() {
+  const bins  = {{ histogram | tojson }};
+  const colors = bins.map(b => b.pos ? '#4ade80' : '#f87171');
+  const opts = {
+    chart: { type: 'bar', height: 260, background: 'transparent', foreColor: '#94a3b8',
+             toolbar: { show: false } },
+    theme: { mode: 'dark' },
+    series: [{ name: 'Trades', data: bins.map(b => b.count) }],
+    colors: colors,
+    plotOptions: { bar: { distributed: true, borderRadius: 3, columnWidth: '70%' } },
+    legend: { show: false },
+    xaxis: {
+      categories: bins.map(b => b.label),
+      title: { text: 'R-Multiple', style: { color: '#64748b', fontSize: '11px' } },
+    },
+    yaxis: { title: { text: 'Count', style: { color: '#64748b', fontSize: '11px' } } },
+    grid: { borderColor: '#2a2d3a' },
+    dataLabels: {
+      enabled: true,
+      formatter: v => v > 0 ? v : '',
+      style: { fontSize: '11px', colors: ['#e2e8f0'] },
+    },
+    tooltip: { theme: 'dark' },
+  };
+  new ApexCharts(document.querySelector('#r-hist-chart'), opts).render();
+})();
+</script>
+{% endif %}

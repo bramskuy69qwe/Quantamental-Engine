@@ -1,0 +1,30 @@
+<div id="exchange-info"
+     hx-get="/fragments/dashboard/exchange_info"
+     hx-trigger="every 500ms"
+     hx-swap="outerHTML"
+     class="panel p-3 mb-3">
+  <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+    <div>
+      <div class="label">Exchange</div>
+      <div class="value text-sm">{{ ex.name }}</div>
+    </div>
+    <div>
+      <div class="label">Server Time</div>
+      <div class="value text-sm font-mono">{{ ex.server_time or "—" }}</div>
+    </div>
+    <div>
+      <div class="label">Latency</div>
+      <div class="value text-sm {{ 'pos-short' if ex.latency_ms > 200 else ('text-yellow-400' if ex.latency_ms > 100 else 'pos-long') }}">
+        {{ fmt(ex.latency_ms, 1) }} ms
+      </div>
+    </div>
+    <div>
+      <div class="label">Maker Fee</div>
+      <div class="value text-sm">{{ fmt(ex.maker_fee * 100, 3) }}%</div>
+    </div>
+    <div>
+      <div class="label">Taker Fee</div>
+      <div class="value text-sm">{{ fmt(ex.taker_fee * 100, 3) }}%</div>
+    </div>
+  </div>
+</div>

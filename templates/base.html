@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}Quantamental Risk Engine v2.1{% endblock %}</title>
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            surface: '#0f1117',
+            panel:   '#1a1d27',
+            border:  '#2a2d3a',
+            accent:  '#3b82f6',
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- HTMX -->
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+
+  <!-- ApexCharts (analytics page) -->
+  <script src="https://cdn.jsdelivr.net/npm/apexcharts@3.54.0/dist/apexcharts.min.js"></script>
+
+  <style>
+    body { background: #0f1117; color: #e2e8f0; font-family: 'Consolas', monospace; }
+    .panel { background: #1a1d27; border: 1px solid #2a2d3a; border-radius: 8px; }
+    .label { color: #64748b; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .value { font-size: 1.05rem; font-weight: 600; }
+    .badge-ok      { background: #14532d; color: #4ade80; }
+    .badge-warning { background: #713f12; color: #fbbf24; }
+    .badge-limit   { background: #7f1d1d; color: #f87171; }
+    .badge-unknown { background: #1e293b; color: #94a3b8; }
+    .alert-success { background: #14532d; color: #4ade80; padding: .5rem 1rem; border-radius: 6px; }
+    .alert-error   { background: #7f1d1d; color: #f87171; padding: .5rem 1rem; border-radius: 6px; }
+    .alert-warning { background: #713f12; color: #fbbf24; padding: .5rem 1rem; border-radius: 6px; }
+    .htmx-indicator { opacity: 0; transition: opacity 200ms; }
+    .htmx-request .htmx-indicator { opacity: 1; }
+    .htmx-request.htmx-indicator  { opacity: 1; }
+    input[type=number], input[type=text], input[type=password],select {
+      background: #0f1117; border: 1px solid #2a2d3a; color: #e2e8f0;
+      border-radius: 6px; padding: 6px 10px; width: 100%; height: 38px;
+    }
+    input:focus, select:focus { outline: none; border-color: #3b82f6; }
+    .btn { padding: 8px 18px; border-radius: 6px; font-weight: 600; cursor: pointer; transition: opacity .15s; }
+    .btn:hover { opacity: .85; }
+    .btn-primary   { background: #3b82f6; color: #fff; }
+    .btn-secondary { background: #2a2d3a; color: #e2e8f0; }
+    .btn-danger    { background: #991b1b; color: #fff; }
+    table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+    th { color: #64748b; text-transform: uppercase; font-size: .70rem; padding: 8px 10px; border-bottom: 1px solid #2a2d3a; text-align: left; }
+    td { padding: 7px 10px; border-bottom: 1px solid #1e293b; }
+    tr:hover td { background: #1e293b; }
+    .pos-long  { color: #4ade80; }
+    .pos-short { color: #f87171; }
+
+    /* ── History tab: sort headers ─────────────────────────────────────── */
+    th.cursor-pointer:hover { color: #93c5fd; }
+    .sort-arrow { font-size: .60rem; margin-left: 2px; }
+
+    /* ── History tab: filter inputs ───────────────────────────────────── */
+    .hist-input {
+      background: #0f1117; border: 1px solid #2a2d3a; color: #e2e8f0;
+      border-radius: 5px; padding: 4px 8px; width: auto;
+    }
+    .hist-input:focus { outline: none; border-color: #3b82f6; }
+    .hist-select {
+      background: #0f1117; border: 1px solid #2a2d3a; color: #e2e8f0;
+      border-radius: 5px; padding: 4px 8px; width: auto;
+    }
+    .hist-select:focus { outline: none; border-color: #3b82f6; }
+
+    /* ── History tab: date range picker ───────────────────────────────── */
+    .date-range-display {
+      background: #0f1117; border: 1px solid #2a2d3a; border-radius: 6px;
+      padding: 5px 12px; font-size: .80rem; color: #e2e8f0;
+      display: inline-flex; align-items: center; gap: 2px;
+    }
+    .date-range-display:hover { border-color: #3b82f6; }
+    .preset-btn {
+      padding: 4px 10px; border-radius: 5px; cursor: pointer;
+      background: #2a2d3a; color: #94a3b8; border: 1px solid #2a2d3a;
+      transition: all .15s;
+    }
+    .preset-btn:hover { background: #3b4459; color: #e2e8f0; }
+    .preset-btn.active { background: #1d3a6e; color: #93c5fd; border-color: #3b82f6; }
+
+    /* ── Calendar ─────────────────────────────────────────────────────── */
+    #calendar-dropdown {
+      background: #1a1d27; border: 1px solid #2a2d3a;
+      border-radius: 8px; padding: 12px;
+    }
+    .cal-month { min-width: 220px; }
+    .cal-header { text-align: center; font-weight: 600; font-size: .82rem; color: #e2e8f0; margin-bottom: 6px; }
+    .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; }
+    .cal-day-name { text-align: center; font-size: .65rem; color: #64748b;
+                    text-transform: uppercase; padding: 3px 0; }
+    .cal-cell {
+      text-align: center; padding: 5px 2px; font-size: .76rem; color: #94a3b8;
+      cursor: pointer; border-radius: 4px; transition: background .1s;
+    }
+    .cal-cell:hover { background: #2a2d3a; color: #e2e8f0; }
+    .cal-cell.empty { cursor: default; }
+    .cal-cell.cal-today { color: #3b82f6; font-weight: 700; }
+    .cal-cell.cal-selected { background: #1d4ed8; color: #fff; border-radius: 4px; }
+    .cal-cell.cal-in-range { background: #1e3a5f; color: #bfdbfe; }
+
+    /* ── Notes inline edit ────────────────────────────────────────────── */
+    .notes-cell { min-width: 140px; max-width: 260px; }
+    .note-textarea {
+      width: 100%; background: #0f1117; border: 1px solid #3b82f6;
+      color: #e2e8f0; border-radius: 4px; padding: 4px 6px;
+      font-family: 'Consolas', monospace; font-size: .78rem; resize: vertical;
+    }
+    .note-textarea:focus { outline: none; }
+  </style>
+</head>
+
+<body class="min-h-screen">
+
+{% if is_initializing %}
+<!-- ── Startup overlay (server-side conditional — never shown between tabs) ── -->
+<style>
+  @keyframes _sba { 0%{left:-55%;width:55%} 100%{left:100%;width:55%} }
+  #_sbi { position:absolute;top:0;height:100%;background:#3b82f6;border-radius:99px;animation:_sba 1.2s ease-in-out infinite; }
+</style>
+<div id="startup-overlay"
+     style="position:fixed;inset:0;z-index:9999;
+            background:rgba(15,17,23,0.70);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+            display:flex;flex-direction:column;align-items:center;justify-content:center">
+  <span style="color:#3b82f6;font-weight:700;font-size:1.15rem;letter-spacing:.05em;margin-bottom:4px">
+    QUANTAMENTAL ENGINE <span style="color:#64748b;font-weight:400;font-size:.8rem">v2.1</span>
+  </span>
+  <p style="color:#94a3b8;font-size:.83rem;margin-bottom:22px">Connecting to exchange...</p>
+  <div style="position:relative;width:220px;height:3px;background:#1e293b;border-radius:99px;overflow:hidden">
+    <div id="_sbi"></div>
+  </div>
+</div>
+<script>
+(function p(){fetch('/api/ready').then(function(r){return r.json();}).then(function(d){
+  if(d.ready){var e=document.getElementById('startup-overlay');if(e)e.remove();}
+  else{setTimeout(p,600);}
+}).catch(function(){setTimeout(p,600);});})();
+</script>
+{% endif %}
+
+<!-- ── Top bar ────────────────────────────────────────────────────────────── -->
+<header class="flex items-center justify-between px-6 py-3 border-b border-[#2a2d3a] bg-[#1a1d27]">
+  <div class="flex items-center gap-6">
+    <span class="text-accent font-bold text-lg tracking-tight">QUANTAMENTAL ENGINE <span class="text-slate-400 font-normal text-sm">v2.1</span></span>
+    <nav class="flex gap-1 text-sm">
+      <a href="/"           class="px-3 py-1 rounded hover:bg-[#2a2d3a] {% if active_page=='dashboard'  %}bg-[#2a2d3a] text-accent{% else %}text-slate-400{% endif %}">Dashboard</a>
+      <a href="/calculator" class="px-3 py-1 rounded hover:bg-[#2a2d3a] {% if active_page=='calculator' %}bg-[#2a2d3a] text-accent{% else %}text-slate-400{% endif %}">Calculator</a>
+      <a href="/history"    class="px-3 py-1 rounded hover:bg-[#2a2d3a] {% if active_page=='history'    %}bg-[#2a2d3a] text-accent{% else %}text-slate-400{% endif %}">History</a>
+      <a href="/params"     class="px-3 py-1 rounded hover:bg-[#2a2d3a] {% if active_page=='params'     %}bg-[#2a2d3a] text-accent{% else %}text-slate-400{% endif %}">Params</a>
+      <a href="/analytics" class="px-3 py-1 rounded hover:bg-[#2a2d3a] {% if active_page=='analytics'  %}bg-[#2a2d3a] text-accent{% else %}text-slate-400{% endif %}">Analytics</a>
+      <a href="/backtest"  class="px-3 py-1 rounded hover:bg-[#2a2d3a] {% if active_page=='backtest'   %}bg-[#2a2d3a] text-accent{% else %}text-slate-400{% endif %}">Backtest</a>
+      <a href="/regime"   class="px-3 py-1 rounded hover:bg-[#2a2d3a] {% if active_page=='regime'    %}bg-[#2a2d3a] text-accent{% else %}text-slate-400{% endif %}">Regime</a>
+    </nav>
+  </div>
+
+  <!-- Right side: account selector + platform selector + WS status -->
+  <div class="flex items-center gap-2">
+
+    <!-- Account selector -->
+    <div class="relative flex items-center gap-1">
+      <select id="account-selector"
+              style="background:#0f1117;border:1px solid #2a2d3a;color:#e2e8f0;border-radius:6px;padding:4px 28px 4px 8px;font-size:.78rem;cursor:pointer;width:125px; text-overflow: ellipsis; white-space: nowrap; overflow: hidden;"
+              hx-post="/accounts/activate-selected"
+              hx-trigger="change"
+              hx-target="#account-switch-msg"
+              hx-include="select[name='account_id']"
+              name="account_id"
+              hx-vals="js:{account_id: this.value}"
+              onchange="this.setAttribute('name','account_id')">
+        {% for acct in accounts %}
+        <option value="{{ acct.id }}"
+                {% if acct.id == active_account_id %}selected{% endif %}>
+          {{ acct.name }}
+        </option>
+        {% endfor %}
+      </select>
+      <button title="Add account"
+        onclick="document.getElementById('add-account-modal').style.display='flex'"
+        style="background:#2a2d3a;border:1px solid #2a2d3a;color:#94a3b8;border-radius:6px;padding:4px 8px;font-size:.85rem;cursor:pointer;line-height:1;"
+        onmouseover="this.style.color='#e2e8f0'" onmouseout="this.style.color='#94a3b8'">+</button>
+      <span id="account-switch-msg" class="text-xs text-slate-500 htmx-indicator"></span>
+    </div>
+
+    <!-- Platform selector -->
+    <select id="platform-selector"
+            style="background:#0f1117;border:1px solid #2a2d3a;color:#e2e8f0;border-radius:6px;padding:4px 8px;font-size:.78rem;cursor:pointer;width:125px;"
+            hx-post="/api/settings/platform"
+            hx-trigger="change"
+            hx-swap="none"
+            name="platform">
+      <option value="standalone"  {% if active_platform == 'standalone'  %}selected{% endif %}>Standalone</option>
+      <option value="quantower"   {% if active_platform == 'quantower'   %}selected{% endif %}>Quantower</option>
+    </select>
+
+    <!-- WS status — auto-polls every 1s for real-time latency -->
+    <div id="ws-status-bar"
+         hx-get="/fragments/ws_status"
+         hx-trigger="load, every 1s"
+         hx-swap="innerHTML">
+      <span class="text-slate-500 text-xs">connecting...</span>
+    </div>
+  </div>
+</header>
+
+<!-- ── Add Account Modal ───────────────────────────────────────────────────── -->
+<div id="add-account-modal"
+     style="display:none;position:fixed;inset:0;z-index:9998;align-items:center;justify-content:center;background:rgba(15,17,23,0.75);backdrop-filter:blur(6px);">
+  <div class="panel p-6" style="width:100%;max-width:420px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+      <span class="label" style="font-size:.85rem;text-transform:uppercase;letter-spacing:.05em;">Add Account</span>
+      <button onclick="document.getElementById('add-account-modal').style.display='none'"
+              style="color:#64748b;background:none;border:none;font-size:1.1rem;cursor:pointer;">✕</button>
+    </div>
+    <form hx-post="/accounts"
+          hx-target="#add-account-result"
+          hx-swap="innerHTML"
+          class="space-y-3">
+      <div>
+        <label class="label">Account Name</label>
+        <input type="text" name="name" placeholder="e.g. Binance Main" required style="margin-top:4px;" />
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="label">Exchange</label>
+          <select name="exchange" style="margin-top:4px;">
+            <option value="binance">Binance</option>
+          </select>
+        </div>
+        <div>
+          <label class="label">Market Type</label>
+          <select name="market_type" style="margin-top:4px;">
+            <option value="future">USD-M Futures</option>
+            <option value="spot">Spot</option>
+          </select>
+        </div>
+      </div>
+      <div>
+        <label class="label">API Key</label>
+        <input type="text" name="api_key" placeholder="API Key" required autocomplete="off" style="margin-top:4px;" />
+      </div>
+      <div>
+        <label class="label">API Secret</label>
+        <input type="password" name="api_secret" placeholder="API Secret" required autocomplete="off" style="margin-top:4px;" />
+      </div>
+      <div style="display:flex;gap:.5rem;margin-top:.5rem;">
+        <button type="submit" class="btn btn-primary" style="flex:1;"
+                hx-post="/accounts/add-and-reload"
+                hx-target="#add-account-result"
+                hx-swap="innerHTML"
+                hx-include="closest form">Add Account</button>
+        <button type="button" class="btn btn-secondary"
+                hx-post="/accounts/test-preview"
+                hx-include="closest form"
+                hx-target="#add-account-result"
+                hx-swap="innerHTML">Test</button>
+      </div>
+      <div id="add-account-result" style="margin-top:.5rem;"></div>
+    </form>
+  </div>
+</div>
+
+<script>
+// Reload the account selector after a new account is added
+document.body.addEventListener("account-added", function() {
+  document.getElementById("add-account-modal").style.display = "none";
+  // Reload page to refresh account dropdown
+  window.location.reload();
+});
+</script>
+
+<!-- ── Main content ───────────────────────────────────────────────────────── -->
+<main class="max-w-screen-2xl mx-auto px-4 py-4">
+  {% block content %}{% endblock %}
+</main>
+
+<footer class="text-center text-slate-600 text-xs py-3">
+  Quantamental Risk Engine v2.1 &mdash; Binance USD-M Futures &mdash; UTC+7 &mdash; {{ now }}
+</footer>
+
+</body>
+</html>

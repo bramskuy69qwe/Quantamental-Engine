@@ -1,0 +1,174 @@
+{% macro kv(label, value, cls='') %}
+<div class="flex flex-col gap-0.5">
+  <span class="label">{{ label }}</span>
+  <span class="value {{ cls }}">{{ value }}</span>
+</div>
+{% endmacro %}
+
+{% macro kv_pnl(label, value) %}
+{% set fval = value | float %}
+<div class="flex flex-col gap-0.5">
+  <span class="label">{{ label }}</span>
+  <span class="value {{ 'pos-long' if fval > 0 else ('pos-short' if fval < 0 else 'text-slate-400') }}">
+    {{ fmt(value) if value != 0 else '—' }}
+  </span>
+</div>
+{% endmacro %}
+
+<div class="space-y-4">
+
+  <!-- ── Volume & Activity ──────────────────────────────────────────────── -->
+  <div class="panel p-4">
+    <div class="label mb-3">Volume &amp; Activity — {{ period_label }}</div>
+    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
+      {{ kv("Monthly Trading Volume", "$" ~ fmt(stats.trading_volume, 0)) }}
+      {{ kv("Est. Broker Fee",        "$" ~ fmt(stats.total_fees, 2)) }}
+      {{ kv("No. of Longs",           stats.num_longs | int) }}
+      {{ kv("No. of Shorts",          stats.num_shorts | int) }}
+      <div class="flex flex-col gap-0.5">
+        <span class="label">Most Traded Pairs</span>
+        <span class="value text-slate-300 text-sm">
+          {% if top_pairs %}{{ top_pairs | join(', ') }}{% else %}—{% endif %}
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Equity & PnL ────────────────────────────────────────────────────── -->
+  <div class="panel p-4">
+    <div class="label mb-3">Equity &amp; PnL</div>
+    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-4">
+      {{ kv("Initial Equity",       "$" ~ fmt(boundaries.initial_equity)) }}
+      {% set monthly_pnl = boundaries.final_equity - boundaries.initial_equity %}
+      {% set monthly_pct = (monthly_pnl / boundaries.initial_equity * 100) if boundaries.initial_equity > 0 else 0 %}
+      <div class="flex flex-col gap-0.5">
+        <span class="label">Monthly Total PNL</span>
+        <span class="value {{ 'pos-long' if monthly_pnl >= 0 else 'pos-short' }}">
+          ${{ fmt(monthly_pnl) }}
+        </span>
+      </div>
+      <div class="flex flex-col gap-0.5">
+        <span class="label">Monthly PNL %</span>
+        <span class="value {{ 'pos-long' if monthly_pct >= 0 else 'pos-short' }}">
+          {{ fmt(monthly_pct, 2) }}%
+        </span>
+      </div>
+      {{ kv("Final Equity",         "$" ~ fmt(boundaries.final_equity)) }}
+      {% set avg_daily_pnl = (monthly_pnl / trading_days) if trading_days > 0 else 0 %}
+      {% set avg_daily_pct = (monthly_pct / trading_days) if trading_days > 0 else 0 %}
+      <div class="flex flex-col gap-0.5">
+        <span class="label">Daily Avg PNL</span>
+        <span class="value {{ 'pos-long' if avg_daily_pnl >= 0 else 'pos-short' }}">
+          ${{ fmt(avg_daily_pnl) }}
+        </span>
+      </div>
+      <div class="flex flex-col gap-0.5">
+        <span class="label">Daily Avg PNL %</span>
+        <span class="value {{ 'pos-long' if avg_daily_pct >= 0 else 'pos-short' }}">
+          {{ fmt(avg_daily_pct, 3) }}%
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Trade Statistics ─────────────────────────────────────────────────── -->
+  <div class="panel p-4">
+    <div class="label mb-3">Trade Statistics</div>
+    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
+      {{ kv("Total Trades",   stats.total_trades | int) }}
+      {{ kv("Winning Trades", stats.winning_trades | int, 'pos-long') }}
+      {{ kv("Losing Trades",  stats.losing_trades | int, 'pos-short') }}
+      {% set wr = (stats.winning_trades / stats.total_trades * 100) if stats.total_trades > 0 else 0 %}
+      <div class="flex flex-col gap-0.5">
+        <span class="label">Win Rate</span>
+        <span class="value {{ 'pos-long' if wr >= 50 else 'pos-short' }}">{{ fmt(wr, 1) }}%</span>
+      </div>
+      {{ kv_pnl("Average Profit",   stats.avg_profit) }}
+      {{ kv_pnl("Average Loss",     stats.avg_loss) }}
+      {% set rr = (stats.avg_profit / stats.avg_loss | abs) if stats.avg_loss and stats.avg_loss != 0 else 0 %}
+      {{ kv("Avg Risk to Reward",   fmt(rr, 2) ~ "R" if rr else "—") }}
+      {{ kv_pnl("Biggest Profit",   stats.biggest_profit) }}
+      {{ kv_pnl("Biggest Loss",     stats.biggest_loss) }}
+      {% set max_dd_pct = boundaries.max_drawdown * 100 %}
+      <div class="flex flex-col gap-0.5">
+        <span class="label">Maximum Drawdown</span>
+        <span class="value pos-short">{{ fmt(max_dd_pct, 2) }}%</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Cash Flows ──────────────────────────────────────────────────────── -->
+  <div class="panel p-4">
+    <div class="label mb-3">Cash &amp; Cumulative</div>
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      {{ kv("Deposit",       "$" ~ fmt(stats.deposits,     2)) }}
+      {{ kv("Withdrawal",    "$" ~ fmt(stats.withdrawals,  2)) }}
+      <div class="flex flex-col gap-0.5">
+        <span class="label">Cumulative PNL</span>
+        <span class="value {{ 'pos-long' if cumulative.total_pnl >= 0 else 'pos-short' }}">
+          ${{ fmt(cumulative.total_pnl) }}
+        </span>
+      </div>
+      {% set cum_capital = cumulative.total_deposits - cumulative.total_withdrawals %}
+      {% set cum_pct = (cumulative.total_pnl / cum_capital * 100) if cum_capital > 0 else 0 %}
+      <div class="flex flex-col gap-0.5">
+        <span class="label">Cumulative PNL %</span>
+        <span class="value {{ 'pos-long' if cum_pct >= 0 else 'pos-short' }}">
+          {{ fmt(cum_pct, 2) }}%
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Ratio Cards ─────────────────────────────────────────────────────── -->
+  <div class="panel p-4">
+    <div class="label mb-3">Performance Ratios</div>
+    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-4">
+
+      {% macro ratio_card(label, val, desc) %}
+      <div class="flex flex-col gap-0.5" title="{{ desc }}">
+        <span class="label">{{ label }}</span>
+        {% set fval = val | float %}
+        {% if fval >= 2.0 %}
+          <span class="value pos-long">{{ fmt(val, 2) }}</span>
+        {% elif fval >= 1.0 %}
+          <span class="value text-yellow-400">{{ fmt(val, 2) }}</span>
+        {% elif fval > 0 %}
+          <span class="value pos-short">{{ fmt(val, 2) }}</span>
+        {% else %}
+          <span class="value text-slate-500">—</span>
+        {% endif %}
+      </div>
+      {% endmacro %}
+
+      {{ ratio_card("Sharpe",          ratios.sharpe,        "Annualised Sharpe ratio from daily equity returns") }}
+      {{ ratio_card("Sharpe (MFE)",    ratios.sharpe_mfe,    "Sharpe computed on MFE/notional per trade — opportunity quality") }}
+      {{ ratio_card("Sortino",         ratios.sortino,       "Annualised Sortino ratio — only penalises downside deviation") }}
+      {{ ratio_card("Sortino (MAE)",   ratios.sortino_mae,   "Sortino computed on MAE/notional per trade — adverse excursion quality") }}
+
+      {% set pf = ratios.profit_factor %}
+      <div class="flex flex-col gap-0.5" title="Gross profit / |Gross loss|">
+        <span class="label">Profit Factor</span>
+        {% if pf >= 2.0 %}
+          <span class="value pos-long">{{ fmt(pf, 2) }}</span>
+        {% elif pf >= 1.0 %}
+          <span class="value text-yellow-400">{{ fmt(pf, 2) }}</span>
+        {% elif pf > 0 %}
+          <span class="value pos-short">{{ fmt(pf, 2) }}</span>
+        {% else %}
+          <span class="value text-slate-500">—</span>
+        {% endif %}
+      </div>
+
+      <div class="flex flex-col gap-0.5" title="Mean R-multiple across all closed trades">
+        <span class="label">Expectancy (R)</span>
+        {% set exp = ratios.expectancy %}
+        <span class="value {{ 'pos-long' if exp > 0 else ('pos-short' if exp < 0 else 'text-slate-500') }}">
+          {{ fmt(exp, 3) ~ "R" if exp != 0 else "—" }}
+        </span>
+      </div>
+
+    </div>
+  </div>
+
+</div>

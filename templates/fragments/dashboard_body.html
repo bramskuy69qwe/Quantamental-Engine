@@ -1,0 +1,167 @@
+<!-- ── Cluster C: Risk & Exposure ────────────────────────────────────────── -->
+<div class="panel p-4 mb-3">
+  <div class="label mb-3">Risk &amp; Exposure</div>
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
+
+    <div>
+      <div class="label">Total Exposure</div>
+      <div class="value {{ 'pos-short' if pf.total_exposure > params.max_exposure else '' }}">
+        {{ fmt(pf.total_exposure, 2) }}<span class="text-slate-500 text-xs">× equity</span>
+      </div>
+      <div class="text-xs text-slate-500">max: {{ fmt(params.max_exposure, 1) }}×</div>
+    </div>
+
+    <div>
+      <div class="label">Drawdown</div>
+      <div class="value {{ 'pos-short' if pf.drawdown > 0.05 else '' }}">
+        {{ fmt(pf.drawdown * 100, 2) }}<span class="text-slate-500 text-xs">%</span>
+      </div>
+      <div class="text-xs text-slate-500">max: {{ fmt(params.max_dd_percent * 100, 1) }}%</div>
+    </div>
+
+    <div>
+      <div class="label mb-1">Weekly PnL State</div>
+      <span class="badge-{{ pf.weekly_pnl_state }} px-2 py-1 rounded text-xs font-bold uppercase">
+        {{ pf.weekly_pnl_state }}
+      </span>
+    </div>
+
+    <div>
+      <div class="label mb-1">Drawdown State</div>
+      <span class="badge-{{ pf.dd_state }} px-2 py-1 rounded text-xs font-bold uppercase">
+        {{ pf.dd_state }}
+      </span>
+    </div>
+  </div>
+
+  <div class="border-t border-[#2a2d3a] pt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
+
+    <!-- Funding totals (Binance API cached 60s) -->
+    <div>
+      <div class="label mb-2">Funding Rate Exposure <span class="text-slate-600 text-xs">(cached 60s)</span></div>
+      {% if funding.rows %}
+      <div class="flex flex-col gap-1">
+        {% for item in funding.rows %}
+        <div class="flex items-center gap-3 text-xs">
+          <span class="font-bold text-slate-200 w-24">{{ item.ticker }}</span>
+          <span class="{{ 'pos-long' if item.direction == 'LONG' else 'pos-short' }} w-10">{{ item.direction }}</span>
+          <span class="{{ 'pos-short' if item.adverse else 'pos-long' }}">{{ fmt(item.rate * 100, 4) }}%</span>
+          <span class="{{ 'pos-short' if item.adverse else 'pos-long' }} font-semibold">
+            {{ ('−' if item.adverse else '+') }}${{ fmt(item.per_8h | abs, 3) }}/8h
+          </span>
+          <span class="text-slate-500">next: {{ item.next }}</span>
+        </div>
+        {% endfor %}
+        <div class="mt-1 pt-1 border-t border-[#2a2d3a] flex gap-6 text-sm">
+          <div>
+            <span class="label">Total /8h</span>
+            <span class="ml-1 {{ 'pos-short' if funding.total_8h < 0 else 'pos-long' }}">
+              {{ ('−' if funding.total_8h < 0 else '+') }}${{ fmt(funding.total_8h | abs, 3) }}
+            </span>
+          </div>
+          <div>
+            <span class="label">Est. /day</span>
+            <span class="ml-1 {{ 'pos-short' if funding.total_day < 0 else 'pos-long' }}">
+              {{ ('−' if funding.total_day < 0 else '+') }}${{ fmt(funding.total_day | abs, 2) }}
+            </span>
+          </div>
+        </div>
+      </div>
+      {% else %}
+      <span class="text-slate-600 text-xs">No open positions.</span>
+      {% endif %}
+    </div>
+
+    <!-- Correlated sector exposure -->
+    <div>
+      <div class="label mb-2">Correlated Sector Exposure</div>
+      {% if pf.total_correlated_exposure %}
+      {% set max_corr = params.max_correlated_exposure * acc.total_equity %}
+      <div class="grid grid-cols-2 gap-2">
+        {% for sector, net in pf.total_correlated_exposure.items() %}
+        <div>
+          <div class="text-xs text-slate-400">{{ sector }}</div>
+          <div class="value text-sm {{ 'pos-short' if net | abs > max_corr else '' }}">{{ fmt(net) }} <span class="text-slate-500 text-xs">USDT</span></div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <span class="text-slate-600 text-xs">No correlated exposure.</span>
+      {% endif %}
+    </div>
+
+  </div>
+</div>
+
+<!-- ── Risk warnings ─────────────────────────────────────────────────────── -->
+{% if pf.weekly_pnl_state == 'warning' %}
+<div class="alert-warning mb-3">
+  ⚠ Weekly loss approaching limit ({{ fmt(pf.total_weekly_pnl_percent * 100, 2) }}% of {{ fmt(params.max_w_loss_percent * 100, 1) }}% max).
+</div>
+{% elif pf.weekly_pnl_state == 'limit' %}
+<div class="alert-error mb-3">
+  ⛔ Weekly loss LIMIT REACHED. No new positions allowed.
+</div>
+{% endif %}
+
+{% if pf.dd_state == 'warning' %}
+<div class="alert-warning mb-3">
+  ⚠ Drawdown approaching limit ({{ fmt(pf.drawdown * 100, 2) }}% of {{ fmt(params.max_dd_percent * 100, 1) }}% max).
+</div>
+{% elif pf.dd_state == 'limit' %}
+<div class="alert-error mb-3">
+  ⛔ Max drawdown LIMIT REACHED. No new positions allowed.
+</div>
+{% endif %}
+
+<!-- ── Positions table ───────────────────────────────────────────────────── -->
+<div class="panel p-4 mb-3">
+  <div class="label mb-3">Open Positions ({{ positions | length }}/{{ params.max_position_count }})</div>
+  {% if positions %}
+  <div class="overflow-x-auto">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th><th>Ticker</th><th>Dir</th><th>Avg Entry</th>
+          <th>Fair Price</th><th>Size</th><th>Notional (USDT)</th>
+          <th>Unrealized</th><th>Margin Used</th>
+          <th>TP Price</th><th>SL Price</th>
+          <th>Liq. Price</th><th>Model</th>
+          <th title="Current session only, resets on restart">Ses. MFE</th>
+          <th title="Current session only, resets on restart">Ses. MAE</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in positions %}
+        <tr>
+          <td class="text-slate-500">{{ loop.index }}</td>
+          <td class="font-bold">{{ p.ticker }}</td>
+          <td class="{{ 'pos-long' if p.direction == 'LONG' else 'pos-short' }}">{{ p.direction }}</td>
+          <td>{{ fmt(p.average, 4) }}</td>
+          <td>{{ fmt(p.fair_price, 4) }}</td>
+          <td>{{ fmt(p.contract_amount, 4) }}</td>
+          <td>{{ fmt(p.position_value_usdt) }}</td>
+          <td class="{{ 'pos-long' if p.individual_unrealized >= 0 else 'pos-short' }}">{{ fmt(p.individual_unrealized) }}</td>
+          <td>{{ fmt(p.individual_margin_used) }}</td>
+          <td class="pos-long">{{ fmt(p.individual_tp_price, 4) if p.individual_tp_price else "—" }}</td>
+          <td class="pos-short">{{ fmt(p.individual_sl_price, 4) if p.individual_sl_price else "—" }}</td>
+          <td class="text-yellow-500">{{ fmt(p.liquidation_price, 4) }}</td>
+          <td class="text-slate-400 text-xs">{{ p.model_name or "—" }}</td>
+          <td class="{{ 'pos-long' if p.session_mfe > 0 else 'text-slate-500' }}"
+              title="Current session only, resets on restart">
+            {{ fmt(p.session_mfe, 2) if p.session_mfe else "—" }}
+          </td>
+          <td class="{{ 'pos-short' if p.session_mae < 0 else ('pos-long' if p.session_mae > 0 else 'text-slate-500') }}"
+              title="Current session only, resets on restart">
+            {{ fmt(p.session_mae, 2) if p.session_mae else "—" }}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="text-slate-500 text-sm py-4 text-center">No open positions.</div>
+  {% endif %}
+</div>
+<!-- end dashboard_body — active parameters rendered below in journal_stats fragment -->

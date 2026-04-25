@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <AssemblyName>QuantowerRiskPlugin</AssemblyName>
+    <RootNamespace>QuantowerRiskPlugin</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <Description>Risk Engine integration plugin for Quantower</Description>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+
+  <!--
+    Reference the Quantower plugin SDK DLL.
+    Set QUANTOWER_SDK_PATH to your Quantower installation directory,
+    e.g. C:\Program Files\Quantower\Bin
+    or copy TradingPlatform.BusinessLayer.dll to a local Lib/ folder.
+  -->
+  <ItemGroup>
+    <Reference Include="TradingPlatform.BusinessLayer">
+      <HintPath>$(QUANTOWER_SDK_PATH)\TradingPlatform.BusinessLayer.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!--
+    All required types are in the .NET 6 BCL — no NuGet packages needed.
+    System.Net.WebSockets  — ClientWebSocket
+    System.Text.Json       — JsonSerializer
+  -->
+
+</Project>

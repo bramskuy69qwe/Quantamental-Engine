@@ -1,0 +1,66 @@
+{# HTMX fragment: accounts management table rows #}
+{% if accounts %}
+<table style="width:100%;border-collapse:collapse;font-size:.80rem;">
+  <thead>
+    <tr>
+      <th style="color:#64748b;text-transform:uppercase;font-size:.68rem;padding:6px 10px;border-bottom:1px solid #2a2d3a;text-align:left;">Name</th>
+      <th style="color:#64748b;text-transform:uppercase;font-size:.68rem;padding:6px 10px;border-bottom:1px solid #2a2d3a;text-align:left;">Exchange</th>
+      <th style="color:#64748b;text-transform:uppercase;font-size:.68rem;padding:6px 10px;border-bottom:1px solid #2a2d3a;text-align:left;">Type</th>
+      <th style="color:#64748b;text-transform:uppercase;font-size:.68rem;padding:6px 10px;border-bottom:1px solid #2a2d3a;text-align:left;">Status</th>
+      <th style="color:#64748b;text-transform:uppercase;font-size:.68rem;padding:6px 10px;border-bottom:1px solid #2a2d3a;text-align:left;">Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for acct in accounts %}
+    <tr id="acct-row-{{ acct.id }}" style="border-bottom:1px solid #1e293b;">
+      <td style="padding:7px 10px;color:#e2e8f0;">{{ acct.name }}</td>
+      <td style="padding:7px 10px;color:#94a3b8;">{{ acct.exchange | capitalize }}</td>
+      <td style="padding:7px 10px;color:#94a3b8;">{{ "Futures" if acct.market_type == "future" else acct.market_type | capitalize }}</td>
+      <td style="padding:7px 10px;">
+        {% if acct.id == active_account_id %}
+        <span style="background:#14532d;color:#4ade80;padding:2px 8px;border-radius:99px;font-size:.70rem;">● Active</span>
+        {% else %}
+        <span style="color:#475569;font-size:.75rem;">—</span>
+        {% endif %}
+      </td>
+      <td style="padding:7px 10px;">
+        <div style="display:flex;gap:.4rem;flex-wrap:wrap;">
+          {% if acct.id != active_account_id %}
+          <button class="btn btn-secondary"
+                  style="font-size:.72rem;padding:3px 10px;"
+                  hx-post="/accounts/{{ acct.id }}/activate-frag"
+                  hx-target="#accounts-table-body"
+                  hx-swap="innerHTML"
+                  hx-trigger="click">
+            Activate
+          </button>
+          {% endif %}
+          <button class="btn btn-secondary"
+                  style="font-size:.72rem;padding:3px 10px;"
+                  hx-post="/accounts/{{ acct.id }}/test"
+                  hx-target="#test-result-{{ acct.id }}"
+                  hx-swap="innerHTML"
+                  hx-trigger="click">
+            Test
+          </button>
+          {% if acct.id != active_account_id %}
+          <button class="btn btn-danger"
+                  style="font-size:.72rem;padding:3px 10px;"
+                  hx-delete="/accounts/{{ acct.id }}"
+                  hx-target="#accounts-table-body"
+                  hx-swap="innerHTML"
+                  hx-trigger="click"
+                  hx-confirm="Delete account '{{ acct.name }}'? This cannot be undone.">
+            Delete
+          </button>
+          {% endif %}
+        </div>
+        <div id="test-result-{{ acct.id }}" style="font-size:.72rem;margin-top:3px;color:#94a3b8;"></div>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="text-slate-500 text-xs">No accounts configured. Click "+ Add Account" to get started.</div>
+{% endif %}

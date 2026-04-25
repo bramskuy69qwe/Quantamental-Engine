@@ -1,0 +1,203 @@
+{% set c = calc %}
+
+<!-- ── Refresh rate control ──────────────────────────────────────────────── -->
+<div class="flex items-center gap-2 mb-3 flex-wrap">
+  <span class="label">⟳ AUTO-REFRESH</span>
+  <button type="button" onclick="setRefreshRate(1)"  id="rr-1"  class="btn btn-secondary text-xs px-2 py-0.5">1s</button>
+  <button type="button" onclick="setRefreshRate(5)"  id="rr-5"  class="btn btn-secondary text-xs px-2 py-0.5">5s</button>
+  <button type="button" onclick="setRefreshRate(10)" id="rr-10" class="btn btn-secondary text-xs px-2 py-0.5">10s</button>
+  <button type="button" onclick="setRefreshRate(30)" id="rr-30" class="btn btn-secondary text-xs px-2 py-0.5">30s</button>
+  <button type="button" onclick="toggleAutoRefresh()" id="rr-pause" class="btn btn-secondary text-xs px-2 py-0.5">⏸</button>
+</div>
+
+<!-- ── Hard stops ──────────────────────────────────────────────────────────── -->
+{% if c.weekly_pnl_state == 'limit' %}
+<div class="alert-error mb-3">⛔ Weekly loss LIMIT — trading halted.</div>
+{% elif c.weekly_pnl_state == 'warning' %}
+<div class="alert-warning mb-3">⚠ Weekly loss WARNING.</div>
+{% endif %}
+
+{% if c.dd_state == 'limit' %}
+<div class="alert-error mb-3">⛔ Drawdown LIMIT — trading halted.</div>
+{% elif c.dd_state == 'warning' %}
+<div class="alert-warning mb-3">⚠ Drawdown WARNING.</div>
+{% endif %}
+
+<!-- ── Ineligibility notice ───────────────────────────────────────────────── -->
+{% if not c.eligible %}
+  {% if c.at_max_positions %}
+  <div class="alert-error mb-3">⛔ Max position count reached ({{ params.max_position_count }}). Close a position first.</div>
+  {% elif c.at_max_exposure %}
+  <div class="alert-error mb-3">⛔ Estimated exposure {{ fmt(c.est_exposure, 2) }}× exceeds max {{ fmt(params.max_exposure, 1) }}×.</div>
+  {% elif c.exceeds_corr_limit %}
+  <div class="alert-error mb-3">⛔ Sector correlated exposure limit exceeded. Cannot add position.</div>
+  {% elif c.ineligible_reason %}
+  <div class="alert-error mb-3">⛔ {{ c.ineligible_reason }}</div>
+  {% endif %}
+{% endif %}
+
+<!-- ── Regime badge ──────────────────────────────────────────────────────────── -->
+<div class="flex items-center gap-3 mb-4 flex-wrap">
+  <div class="label">Regime</div>
+  {% set rl = c.regime_label %}
+  {% if rl == 'risk_on_trending' %}
+    <span class="badge-ok px-2 py-0.5 rounded text-xs font-bold">RISK ON TRENDING</span>
+  {% elif rl == 'risk_on_choppy' %}
+    <span class="badge-warning px-2 py-0.5 rounded text-xs font-bold">RISK ON CHOPPY</span>
+  {% elif rl == 'risk_off_defensive' %}
+    <span class="badge-limit px-2 py-0.5 rounded text-xs font-bold">RISK OFF DEFENSIVE</span>
+  {% elif rl == 'risk_off_panic' %}
+    <span class="badge-limit px-2 py-0.5 rounded text-xs font-bold">RISK OFF PANIC</span>
+  {% else %}
+    <span class="px-2 py-0.5 rounded text-xs font-bold bg-slate-700 text-slate-300">NEUTRAL</span>
+  {% endif %}
+  <span class="text-slate-400 text-xs">×{{ fmt(c.regime_multiplier, 1) }} size</span>
+  {% if not c.apply_regime_multiplier %}
+    <span class="text-slate-500 text-xs">(multiplier overridden)</span>
+  {% endif %}
+</div>
+
+<!-- ── ATR volatility badge + raw values ─────────────────────────────────── -->
+<div class="flex items-center gap-3 mb-4 flex-wrap">
+  <div class="label">Volatility (atr_c)</div>
+  {% if c.atr_c is not none %}
+    <span class="font-bold">{{ fmt(c.atr_c, 3) }}</span>
+    {% if c.atr_category == 'too_volatile' %}
+      <span class="badge-limit px-2 py-0.5 rounded text-xs font-bold">TOO VOLATILE</span>
+    {% elif c.atr_category == 'volatile' %}
+      <span class="badge-warning px-2 py-0.5 rounded text-xs font-bold">VOLATILE</span>
+    {% elif c.atr_category == 'not_volatile' %}
+      <span class="badge-ok px-2 py-0.5 rounded text-xs font-bold">NOT VOLATILE</span>
+    {% else %}
+      <span class="badge-ok px-2 py-0.5 rounded text-xs font-bold">NORMAL</span>
+    {% endif %}
+    <span class="text-slate-500 text-xs ml-2">
+      ATR(100,4h)&nbsp;=&nbsp;{{ fmt(c.atr100, 4) if c.atr100 else "—" }}
+      &nbsp;/&nbsp;
+      ATR(14,4h)&nbsp;=&nbsp;{{ fmt(c.atr14, 4) if c.atr14 else "—" }}
+    </span>
+  {% else %}
+    <span class="text-slate-500 text-xs">OHLCV not yet loaded</span>
+  {% endif %}
+</div>
+
+<!-- ── Main metrics grid ─────────────────────────────────────────────────── -->
+<div class="grid grid-cols-2 gap-3 mb-4">
+  {% macro kv(label, val, cls="") %}
+  <div>
+    <div class="label">{{ label }}</div>
+    <div class="value {{ cls }}">{{ val }}</div>
+  </div>
+  {% endmacro %}
+
+  {{ kv("Ticker",           c.ticker) }}
+  {{ kv("Side",             c.side | upper, "pos-long" if c.side == "long" else "pos-short") }}
+  {{ kv("Order Type",       c.order_type | upper) }}
+  {{ kv("Avg Entry",        fmt(c.average, 4)) }}
+  {{ kv("Risk USDT",        fmt(c.risk_usdt) ~ " USDT") }}
+  {{ kv("Base Size (USDT)", fmt(c.base_size)) }}
+  {{ kv("Est. Fill Price",  fmt(c.est_fill_price, 4)) }}
+  {{ kv("1% Depth (USDT)",  fmt(c.one_percent_depth)) }}
+  {{ kv("Best Bid / Ask",   fmt(c.best_bid, 4) ~ " / " ~ fmt(c.best_ask, 4)) }}
+</div>
+
+<!-- ── Calculated position (always visible) ───────────────────────────────── -->
+<div class="panel p-4 mb-4 {{ 'border-accent' if c.eligible else 'opacity-80' }}">
+  <div class="label mb-2">Calculated Position
+    {% if not c.eligible %}<span class="badge-limit px-2 py-0.5 rounded text-xs ml-2">INELIGIBLE</span>{% endif %}
+  </div>
+  <div class="grid grid-cols-2 gap-3">
+    <div>
+      <div class="label">_size (contracts)
+        {% if c.regime_multiplier != 1.0 and c.apply_regime_multiplier %}
+          <span class="text-slate-500 text-xs font-normal ml-1">×{{ fmt(c.regime_multiplier, 1) }} regime</span>
+        {% endif %}
+      </div>
+      <div class="text-2xl font-bold {{ 'text-accent' if c.eligible else 'text-slate-500' }}">{{ fmt(c.size, 4) }}</div>
+      {% if c.regime_multiplier != 1.0 and c.apply_regime_multiplier %}
+        <div class="text-slate-500 text-xs mt-0.5">without regime: {{ fmt(c.size_raw, 4) }}</div>
+      {% endif %}
+    </div>
+    <div>
+      <div class="label">Notional / est_size (USDT)</div>
+      <div class="value">{{ fmt(c.notional) }}</div>
+    </div>
+    <div>
+      <div class="label">TP → USDT profit</div>
+      <div class="value pos-long">{{ fmt(c.tp_usdt) }}</div>
+    </div>
+    <div>
+      <div class="label">SL → USDT loss</div>
+      <div class="value pos-short">{{ fmt(c.sl_usdt) }}</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Estimations (always visible) ──────────────────────────────────────── -->
+<div class="panel p-4 mb-4">
+  <div class="label mb-2">Estimations
+    <span class="text-yellow-600 text-xs font-normal">&nbsp;* Slippage estimates are indicative only.</span>
+  </div>
+  <div class="grid grid-cols-3 gap-3 text-sm">
+    <div>
+      <div class="label">Est. Slippage</div>
+      <div class="value">{{ fmt(c.est_slippage * 100, 4) }} %</div>
+    </div>
+    <div>
+      <div class="label">Est. Slippage USDT</div>
+      <div class="value">{{ fmt(c.est_slippage_usdt) }}</div>
+    </div>
+    <div>
+      <div class="label">Est. Net Profit</div>
+      <div class="value {{ 'pos-long' if c.est_profit >= 0 else 'pos-short' }}">{{ fmt(c.est_profit) }}</div>
+    </div>
+    <div>
+      <div class="label">Est. Net Loss</div>
+      <div class="value pos-short">{{ fmt(c.est_loss) }}</div>
+    </div>
+    <div>
+      <div class="label">Est. R:R</div>
+      <div class="value {{ 'pos-long' if c.est_r >= 1 else 'badge-warning' }}">{{ fmt(c.est_r, 2) }}</div>
+    </div>
+    <div>
+      <div class="label">Est. Portfolio Exposure</div>
+      <div class="value {{ 'pos-short' if c.est_exposure > params.max_exposure else '' }}">{{ fmt(c.est_exposure, 2) }}×</div>
+    </div>
+    <div>
+      <div class="label">{{ "Taker" if c.order_type in ("market", "stop") else "Maker" }} Fee (2×)</div>
+      <div class="value">{{ fmt(c.fee_rate * 2 * 100, 3) }}%</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Correlated exposure (always visible) ──────────────────────────────── -->
+<div class="panel p-4 mb-4">
+  <div class="label mb-2">Correlated Sector Exposure</div>
+  <div class="grid grid-cols-2 gap-2 text-sm">
+    {% for sector, net in c.correlated_exposure.items() %}
+    <div>
+      <span class="text-slate-500">{{ sector }}:</span>
+      <span class="{{ 'pos-short' if net | abs > params.max_correlated_exposure * 100000 else '' }}">
+        {{ fmt(net) }} USDT
+      </span>
+    </div>
+    {% endfor %}
+    <div>
+      <span class="text-slate-500">New sector ({{ c.ticker }}):</span>
+      <span>+{{ fmt(c.new_sector_exposure) }} USDT</span>
+    </div>
+  </div>
+</div>
+
+<!-- ── Hidden data for left-panel Setup Summary ──────────────────────────── -->
+<div id="calc-data" class="hidden"
+     data-ticker="{{ c.ticker }}"
+     data-entry="{{ c.average }}"
+     data-tp="{{ c.tp_price if c.tp_price else 0 }}"
+     data-sl="{{ c.sl_price if c.sl_price else 0 }}"
+     data-notional="{{ c.notional | round(2) }}"
+     data-contracts="{{ c.size | round(4) }}"
+     data-regime-label="{{ c.regime_label }}"
+     data-regime-mult="{{ c.regime_multiplier }}"></div>
+
+<!-- Orderbook is managed in a persistent container outside #calc-result -->

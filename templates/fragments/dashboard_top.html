@@ -1,0 +1,41 @@
+{% macro kv(label, val, cls="") %}
+<div class="panel p-3">
+  <div class="label">{{ label }}</div>
+  <div class="value {{ cls }}">{{ val }}</div>
+</div>
+{% endmacro %}
+
+<!-- ── Cluster A: Account State ──────────────────────────────────────────── -->
+<div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 mb-3">
+  {% set dpnl_cls = "pos-long" if acc.daily_pnl >= 0 else "pos-short" %}
+  {% set wpnl_cls = "pos-long" if pf.total_weekly_pnl >= 0 else "pos-short" %}
+
+  <div class="panel p-3">
+    <div class="label">Total Equity</div>
+    <div class="value text-lg">{{ fmt(acc.total_equity) }} <span class="text-slate-500 text-sm">USDT</span></div>
+  </div>
+  {{ kv("Available Margin", fmt(acc.available_margin)) }}
+  {{ kv("Margin Used",      fmt(acc.total_margin_used)) }}
+  <div class="panel p-3">
+    <div class="label">Unrealized PnL</div>
+    <div class="value {{ 'pos-long' if acc.total_unrealized >= 0 else 'pos-short' }}">{{ fmt(acc.total_unrealized) }}</div>
+  </div>
+  <div class="panel p-3">
+    <div class="label">Daily PnL</div>
+    <div class="value {{ dpnl_cls }}">{{ fmt(acc.daily_pnl) }} <span class="text-slate-500 text-xs">({{ fmt(acc.daily_pnl_percent * 100, 2) }}%)</span></div>
+  </div>
+  <div class="panel p-3">
+    <div class="label">Weekly PnL</div>
+    <div class="value {{ wpnl_cls }}">{{ fmt(pf.total_weekly_pnl) }} <span class="text-slate-500 text-xs">({{ fmt(pf.total_weekly_pnl_percent * 100, 2) }}%)</span></div>
+  </div>
+</div>
+
+<!-- ── Cluster B: BOD / SOW + TP / SL ───────────────────────────────────── -->
+<div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 mb-3">
+  {{ kv("BOD Equity",       fmt(acc.bod_equity)) }}
+  {{ kv("SOW Equity",       fmt(acc.sow_equity)) }}
+  {{ kv("Max Equity (BOD)", fmt(acc.max_total_equity)) }}
+  {{ kv("Min Equity (BOD)", fmt(acc.min_total_equity)) }}
+  {{ kv("Total TP",         fmt(acc.total_tp_usdt) ~ " USDT", "pos-long") }}
+  {{ kv("Total SL",         fmt(acc.total_sl_usdt) ~ " USDT", "pos-short") }}
+</div>

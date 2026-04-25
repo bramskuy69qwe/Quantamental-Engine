@@ -1,0 +1,257 @@
+<div class="panel p-4">
+  <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
+    <div class="label">Equity Curve — {{ period_label }}</div>
+
+    <!-- Timeframe buttons -->
+    <div class="flex gap-1 flex-wrap">
+      {% for tf, label in [('1W','1W'),('2W','2W'),('1M','1M'),('3M','3M'),('6M','6M'),('1Y','1Y'),('all','All')] %}
+      <button onclick="reloadEquity('{{ tf }}')"
+              id="eq-tf-{{ tf }}"
+              class="preset-btn text-xs {{ 'active' if tf == active_tf else '' }}">{{ label }}</button>
+      {% endfor %}
+    </div>
+
+    <!-- Display toggles -->
+    <div class="flex gap-3 items-center">
+      <label class="flex items-center gap-1 text-xs text-slate-400 cursor-pointer">
+        <input type="checkbox" id="eq-log-scale" onchange="toggleLogScale()"
+               class="accent-blue-500" {% if log_scale %}checked{% endif %}>
+        Log scale
+      </label>
+      <label class="flex items-center gap-1 text-xs text-slate-400 cursor-pointer">
+        <input type="checkbox" id="eq-show-dd" onchange="toggleDrawdown()"
+               class="accent-blue-500" {% if show_dd %}checked{% endif %}>
+        Drawdown %
+      </label>
+    </div>
+  </div>
+
+  {% if candles %}
+  <!-- Live OHLC + Change + Range stats bar -->
+  <div id="eq-ohlc-stats"
+       class="flex flex-wrap gap-x-4 gap-y-1 text-xs font-mono mb-2 px-1 select-none min-h-[1.25rem]">
+  </div>
+  <div id="equity-chart"></div>
+  {% else %}
+  <div class="text-slate-500 text-sm py-10 text-center">No equity data found for this period.</div>
+  {% endif %}
+</div>
+
+<script>
+function reloadEquity(tf) {
+  const log = document.getElementById('eq-log-scale')?.checked ? '&log=1' : '';
+  const dd  = document.getElementById('eq-show-dd')?.checked   ? '&dd=1'  : '';
+  htmx.ajax('GET', '/fragments/analytics/equity_curve?tf=' + tf + log + dd,
+            { target: '#analytics-content', swap: 'innerHTML' });
+}
+function toggleLogScale() { reloadEquity('{{ active_tf }}'); }
+function toggleDrawdown()  { reloadEquity('{{ active_tf }}'); }
+</script>
+
+{% if candles %}
+<script>
+(function() {
+  const raw      = {{ candles | tojson }};
+  const showDD   = {{ 'true' if show_dd   else 'false' }};
+  const logScale = {{ 'true' if log_scale else 'false' }};
+
+  // ── Half-period offset: centre crosshair on each candle ─────────────────
+  const halfMs = raw.length >= 2 ? Math.round((raw[1].x - raw[0].x) / 2) : 0;
+
+  // ── Timestamp label for tooltip header ──────────────────────────────────
+  function fmtTs(ms) {
+    const d = new Date(ms);
+    return d.toLocaleDateString('en', { year: 'numeric', month: 'short', day: 'numeric' });
+  }
+
+  // ── Stats bar helpers ────────────────────────────────────────────────────
+  function fmt(v)    { return '$' + v.toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function fmtAbs(v) { return '$' + Math.abs(v).toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+
+  function renderStats(c) {
+    const chg       = c.c - c.o;
+    const chgPct    = c.o !== 0 ? (chg / c.o) * 100 : 0;
+    const rng       = c.h - c.l;
+    const rngPct    = c.l !== 0 ? (rng / c.l) * 100 : 0;
+    const cf        = c.cf || 0;
+    const adjChg    = chg - cf;
+    const adjChgPct = c.o !== 0 ? (adjChg / c.o) * 100 : 0;
+    const sign      = chg >= 0 ? '+' : '-';
+    const adjSign   = adjChg >= 0 ? '+' : '-';
+    const cfSign    = cf >= 0 ? '+' : '-';
+    const chgCls    = chg >= 0 ? 'text-green-400' : 'text-red-400';
+    const adjCls    = adjChg >= 0 ? 'text-green-400' : 'text-red-400';
+    const cfCls     = cf >= 0 ? 'text-blue-400' : 'text-orange-400';
+    document.getElementById('eq-ohlc-stats').innerHTML =
+      `<span><span class="text-slate-500">O</span> <span class="text-slate-300">${fmt(c.o)}</span></span>` +
+      `<span><span class="text-slate-500">H</span> <span class="text-green-400">${fmt(c.h)}</span></span>` +
+      `<span><span class="text-slate-500">L</span> <span class="text-red-400">${fmt(c.l)}</span></span>` +
+      `<span><span class="text-slate-500">C</span> <span class="text-slate-300">${fmt(c.c)}</span></span>` +
+      `<span><span class="text-slate-500">Chg</span> <span class="${chgCls}">${sign}${fmtAbs(chg)} (${sign}${Math.abs(chgPct).toFixed(2)}%)</span></span>` +
+      `<span><span class="text-slate-500">Range</span> <span class="text-slate-300">${fmt(rng)} (${rngPct.toFixed(2)}%)</span></span>` +
+      `<span><span class="text-slate-500">CF</span> <span class="${cfCls}">${cfSign}${fmtAbs(cf)}</span></span>` +
+      `<span><span class="text-slate-500">Adj Chg</span> <span class="${adjCls}">${adjSign}${fmtAbs(adjChg)} (${adjSign}${Math.abs(adjChgPct).toFixed(2)}%)</span></span>`;
+  }
+  if (raw.length) renderStats(raw[raw.length - 1]);
+
+  // ── Drawdown series (negative, so 0% = top of axis) ─────────────────────
+  // Running peak is computed from the full dataset so zooming doesn't reset it.
+  let runningPeak = -Infinity;
+  const ddData = raw.map(c => {
+    if (c.c > runningPeak) runningPeak = c.c;
+    const dd = runningPeak > 0 ? -((runningPeak - c.c) / runningPeak) * 100 : 0;
+    return { x: c.x + halfMs, y: parseFloat(dd.toFixed(3)) };
+  });
+
+  // ── Y-axis builders ──────────────────────────────────────────────────────
+  const eqFmt  = v => '$' + v.toLocaleString('en', { maximumFractionDigits: 0 });
+  const eqLabels = { formatter: eqFmt, style: { fontSize: '11px' } };
+  const ddLabels = { formatter: v => Math.abs(v).toFixed(1) + '%', style: { fontSize: '11px', colors: ['#f87171'] } };
+
+  function buildEqAxis(lo, hi) {
+    if (logScale) {
+      return { logarithmic: true, forceNiceScale: true, labels: eqLabels };
+    }
+    const pad = Math.max((hi - lo) * 0.04, 1);
+    return { min: lo - pad, max: hi + pad, forceNiceScale: false, labels: eqLabels };
+  }
+
+  function buildDdAxis(visibleDd) {
+    const ddMin = visibleDd.length ? Math.min(...visibleDd.map(d => d.y)) : -10;
+    const pad   = Math.abs(ddMin) * 0.1 || 1;
+    return {
+      opposite: true,
+      max: 0,
+      min: ddMin - pad,
+      forceNiceScale: false,
+      labels: ddLabels,
+    };
+  }
+
+  function fitY(visibleRaw) {
+    if (!visibleRaw.length) return;
+    const lo    = Math.min(...visibleRaw.map(c => c.l));
+    const hi    = Math.max(...visibleRaw.map(c => c.h));
+    const eqY   = buildEqAxis(lo, hi);
+    if (!showDD) {
+      chart.updateOptions({ yaxis: eqY }, false, false);
+      return;
+    }
+    const xSet = new Set(visibleRaw.map(c => c.x));
+    const visDd = ddData.filter(d => xSet.has(d.x - halfMs));
+    chart.updateOptions({ yaxis: [eqY, buildDdAxis(visDd)] }, false, false);
+  }
+
+  // ── Initial Y bounds ─────────────────────────────────────────────────────
+  const yMin = Math.min(...raw.map(c => c.l));
+  const yMax = Math.max(...raw.map(c => c.h));
+
+  // ── Series ───────────────────────────────────────────────────────────────
+  const candleSeries = { name: 'Equity', type: 'candlestick',
+    data: raw.map(c => ({ x: c.x + halfMs, y: [c.o, c.h, c.l, c.c] })) };
+  const ddSeries = { name: 'Drawdown %', type: 'line', data: ddData };
+  const series = showDD ? [candleSeries, ddSeries] : [candleSeries];
+
+  // ── Chart ────────────────────────────────────────────────────────────────
+  const opts = {
+    chart: {
+      type: 'candlestick',
+      height: 360,
+      background: 'transparent',
+      foreColor: '#94a3b8',
+      toolbar: { show: true, tools: { download: true, zoom: true, pan: true, reset: true } },
+      zoom: { enabled: true },
+      animations: { enabled: false },
+      events: {
+        dataPointMouseEnter: (_evt, _ctx, cfg) => {
+          // series 0 = candles; series 1 = drawdown (ignore for stats)
+          if (cfg.seriesIndex === 0 && raw[cfg.dataPointIndex])
+            renderStats(raw[cfg.dataPointIndex]);
+        },
+        mouseLeave: () => { if (raw.length) renderStats(raw[raw.length - 1]); },
+        zoomed: (_ctx, { xaxis }) => {
+          if (!xaxis || xaxis.min == null) return;
+          const vis = raw.filter(c => (c.x + halfMs) >= xaxis.min && (c.x + halfMs) <= xaxis.max);
+          if (vis.length) fitY(vis);
+        },
+        scrolled: (_ctx, { xaxis }) => {
+          if (!xaxis || xaxis.min == null) return;
+          const vis = raw.filter(c => (c.x + halfMs) >= xaxis.min && (c.x + halfMs) <= xaxis.max);
+          if (vis.length) fitY(vis);
+        },
+      },
+    },
+    theme: { mode: 'dark' },
+    series,
+    xaxis: {
+      type: 'datetime',
+      datetimeUTC: false,
+      labels: {
+        rotate: -45,
+        hideOverlappingLabels: true,
+        style: { fontSize: '10px' },
+        datetimeFormatter: { year: 'yyyy', month: "MMM 'yy", day: 'MMM dd', hour: 'MMM dd HH:mm' },
+      },
+    },
+    yaxis: showDD
+      ? [buildEqAxis(yMin, yMax), buildDdAxis(ddData)]
+      : buildEqAxis(yMin, yMax),
+    plotOptions: {
+      candlestick: {
+        colors: { upward: '#4ade80', downward: '#f87171' },
+        wick: { useFillColor: true },
+      },
+    },
+    stroke: { width: [1, 1.5], curve: 'smooth' },
+    colors: ['transparent', '#f87171'],
+    grid: { borderColor: '#2a2d3a' },
+    legend: { show: false },
+    tooltip: {
+      theme: 'dark',
+      custom: ({ seriesIndex, dataPointIndex }) => {
+        // Only show rich tooltip when hovering the candle series
+        if (seriesIndex !== 0) return '';
+        const c = raw[dataPointIndex];
+        if (!c) return '';
+        const chg       = c.c - c.o;
+        const chgPct    = c.o !== 0 ? (chg / c.o) * 100 : 0;
+        const rng       = c.h - c.l;
+        const rngPct    = c.l !== 0 ? (rng / c.l) * 100 : 0;
+        const cf        = c.cf || 0;
+        const adjChg    = chg - cf;
+        const adjChgPct = c.o !== 0 ? (adjChg / c.o) * 100 : 0;
+        const sign      = chg >= 0 ? '+' : '-';
+        const adjSign   = adjChg >= 0 ? '+' : '-';
+        const cfSign    = cf >= 0 ? '+' : '-';
+        const chgCol    = chg >= 0 ? '#4ade80' : '#f87171';
+        const adjCol    = adjChg >= 0 ? '#4ade80' : '#f87171';
+        const cfCol     = cf >= 0 ? '#60a5fa' : '#fb923c';
+        const ddVal     = showDD ? ddData[dataPointIndex]?.y ?? 0 : null;
+        const row = (lbl, val, col) =>
+          `<div style="display:flex;justify-content:space-between;gap:16px">` +
+          `<span style="color:#64748b">${lbl}</span>` +
+          `<span style="color:${col || '#cbd5e1'}">${val}</span></div>`;
+        return `<div style="padding:10px 12px;background:#1e2130;border:1px solid #2a2d3a;font-size:11px;font-family:monospace;line-height:1.9;min-width:200px">` +
+          `<div style="color:#475569;margin-bottom:2px">${fmtTs(c.x)}</div>` +
+          row('Open',  fmt(c.o)) +
+          row('High',  fmt(c.h), '#4ade80') +
+          row('Low',   fmt(c.l), '#f87171') +
+          row('Close', fmt(c.c)) +
+          `<div style="border-top:1px solid #2a2d3a;margin:4px 0"></div>` +
+          row('Change', `${sign}${fmtAbs(chg)} (${sign}${Math.abs(chgPct).toFixed(2)}%)`, chgCol) +
+          row('Range',  `${fmt(rng)} (${rngPct.toFixed(2)}%)`) +
+          `<div style="border-top:1px solid #2a2d3a;margin:4px 0"></div>` +
+          row('Cashflow', `${cfSign}${fmtAbs(cf)}`, cfCol) +
+          row('Adj Chg',  `${adjSign}${fmtAbs(adjChg)} (${adjSign}${Math.abs(adjChgPct).toFixed(2)}%)`, adjCol) +
+          (ddVal !== null ? row('Drawdown', Math.abs(ddVal).toFixed(2) + '%', '#f87171') : '') +
+          `</div>`;
+      },
+    },
+    dataLabels: { enabled: false },
+  };
+
+  const chart = new ApexCharts(document.querySelector('#equity-chart'), opts);
+  chart.render();
+})();
+</script>
+{% endif %}

@@ -1,0 +1,34 @@
+# --- Python Environment ---
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+.env
+
+# --- Database & Persistence ---
+# Ignore local TimescaleDB/Postgres data dumps or logs
+*.sql
+*.dump
+*.log
+
+# Redis persistence files
+*.rdb
+*.aof
+
+# --- IDE & System (WSL2/Windows) ---
+.vscode/
+.claude/
+.cursor/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Large Data / Trading Logs ---
+# Since you're doing quant work, ignore massive CSVs or Parquet files
+data/
+*.csv
+*.parquet
+*.log

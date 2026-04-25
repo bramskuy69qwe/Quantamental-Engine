@@ -1,0 +1,189 @@
+<!-- ── Exchange Realized PnL (from Binance) ───────────────────────────────── -->
+<div class="panel p-4 mb-5">
+  <div class="label mb-2">Binance Realized PnL — Last 200 Trades</div>
+  {% if exchange_trades %}
+  <div class="overflow-x-auto">
+    <table>
+      <thead><tr>
+        <th>Time</th><th>Symbol</th><th>Income Type</th>
+        <th>Income (USDT)</th><th>Asset</th><th>Trade ID</th>
+      </tr></thead>
+      <tbody>
+        {% for r in exchange_trades %}
+        {% set income_val = r.income | float %}
+        <tr>
+          <td class="text-slate-500">
+            {% set ts_ms = r.time | int %}
+            {{ (ts_ms / 1000) | int | string }}
+            {# Display as readable date using JS (server-side we just show raw) #}
+            <span class="text-slate-600 text-xs" title="{{ ts_ms }}">
+              {{ r.time }}
+            </span>
+          </td>
+          <td class="font-bold">{{ r.symbol or "—" }}</td>
+          <td class="text-slate-400 text-xs">{{ r.incomeType }}</td>
+          <td class="{{ 'pos-long' if income_val >= 0 else 'pos-short' }} font-bold">
+            {{ fmt(income_val) }}
+          </td>
+          <td class="text-slate-500">{{ r.asset }}</td>
+          <td class="text-slate-600 text-xs">{{ r.tradeId or "—" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <script>
+    // Convert ms timestamps to readable dates in the exchange trades table
+    document.querySelectorAll('[title]').forEach(function(el) {
+      var ms = parseInt(el.getAttribute('title'));
+      if (ms > 1000000000000) {
+        el.parentElement.childNodes[0].textContent = new Date(ms).toLocaleString();
+      }
+    });
+  </script>
+  {% else %}
+  <div class="text-slate-500 text-sm">No exchange trades fetched yet — refreshes every 5 min.</div>
+  {% endif %}
+</div>
+
+<!-- ── Pre-trade log ──────────────────────────────────────────────────────── -->
+<div class="panel p-4 mb-5">
+  <div class="label mb-2">Pre-Trade Log ({{ pre_trade_log | length }} entries)</div>
+  {% if pre_trade_log %}
+  <div class="overflow-x-auto">
+    <table>
+      <thead><tr>
+        <th>Time</th><th>Ticker</th><th>Side</th><th>Avg</th>
+        <th>SL</th><th>TP</th><th>ATR_c</th><th>Size</th>
+        <th>Notional</th><th>R:R</th><th>Eligible</th><th>Model</th>
+      </tr></thead>
+      <tbody>
+        {% for r in pre_trade_log | reverse %}
+        <tr>
+          <td class="text-slate-500">{{ r.timestamp[:19] }}</td>
+          <td class="font-bold">{{ r.ticker }}</td>
+          <td class="{{ 'pos-long' if r.side == 'long' else 'pos-short' }}">{{ r.side | upper }}</td>
+          <td>{{ fmt(r.average, 4) }}</td>
+          <td>{{ fmt(r.sl_price, 4) }}</td>
+          <td>{{ fmt(r.tp_price, 4) }}</td>
+          <td>{{ fmt(r.atr_c, 3) if r.atr_c else "—" }}</td>
+          <td>{{ fmt(r.size, 4) }}</td>
+          <td>{{ fmt(r.notional) }}</td>
+          <td>{{ fmt(r.est_r, 2) }}</td>
+          <td>
+            {% if r.eligible %}
+              <span class="badge-ok px-1 rounded text-xs">Y</span>
+            {% else %}
+              <span class="badge-limit px-1 rounded text-xs">N</span>
+            {% endif %}
+          </td>
+          <td class="text-slate-400">{{ r.model_name }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="text-slate-500 text-sm">No pre-trade entries yet.</div>
+  {% endif %}
+</div>
+
+<!-- ── Execution log ──────────────────────────────────────────────────────── -->
+<div class="panel p-4 mb-5">
+  <div class="label mb-2">Execution Log ({{ execution_log | length }})</div>
+  {% if execution_log %}
+  <div class="overflow-x-auto">
+    <table>
+      <thead><tr>
+        <th>Entry Time</th><th>Ticker</th><th>Side</th>
+        <th>Actual Entry</th><th>Size Filled</th><th>Slippage</th>
+        <th>Order Type</th><th>Maker Fee</th><th>Latency ms</th>
+      </tr></thead>
+      <tbody>
+        {% for r in execution_log | reverse %}
+        <tr>
+          <td class="text-slate-500">{{ r.entry_timestamp[:19] }}</td>
+          <td>{{ r.ticker }}</td>
+          <td class="{{ 'pos-long' if r.side == 'long' else 'pos-short' }}">{{ r.side | upper }}</td>
+          <td>{{ fmt(r.entry_price_actual, 4) }}</td>
+          <td>{{ fmt(r.size_filled, 4) }}</td>
+          <td>{{ fmt(r.slippage * 100, 4) }}%</td>
+          <td>{{ r.order_type }}</td>
+          <td>{{ fmt(r.maker_fee * 100, 3) }}%</td>
+          <td>{{ fmt(r.latency_snapshot, 1) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="text-slate-500 text-sm">No execution entries yet.</div>
+  {% endif %}
+</div>
+
+<!-- ── Live trades ────────────────────────────────────────────────────────── -->
+<div class="panel p-4 mb-5">
+  <div class="label mb-2">Live Trades ({{ live_trades | length }})</div>
+  {% if live_trades %}
+  <div class="overflow-x-auto">
+    <table>
+      <thead><tr>
+        <th>Ticker</th><th>Dir</th><th>Entry Time</th>
+        <th>Max Profit</th><th>Max Loss</th><th>Hold Time</th><th>Stop Adj.</th>
+      </tr></thead>
+      <tbody>
+        {% for r in live_trades %}
+        <tr>
+          <td>{{ r.ticker }}</td>
+          <td class="{{ 'pos-long' if r.direction == 'LONG' else 'pos-short' }}">{{ r.direction }}</td>
+          <td class="text-slate-500">{{ r.entry_timestamp[:19] if r.entry_timestamp else "—" }}</td>
+          <td class="pos-long">{{ fmt(r.max_profit) }}</td>
+          <td class="pos-short">{{ fmt(r.max_loss) }}</td>
+          <td>{{ r.hold_time }}</td>
+          <td>{{ r.stop_adjustments }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="text-slate-500 text-sm">No live trades logged yet.</div>
+  {% endif %}
+</div>
+
+<!-- ── Closed trade history (manual log) ──────────────────────────────────── -->
+<div class="panel p-4 mb-5">
+  <div class="label mb-2">Trade History — Closed / Manual ({{ trade_history | length }})</div>
+  {% if trade_history %}
+  <div class="overflow-x-auto">
+    <table>
+      <thead><tr>
+        <th>Exit Time</th><th>Ticker</th><th>Dir</th>
+        <th>Entry</th><th>Exit</th><th>Realized</th><th>R</th>
+        <th>Funding</th><th>Fees</th><th>Slip Exit</th>
+        <th>Hold Time</th><th>Notes</th>
+      </tr></thead>
+      <tbody>
+        {% for r in trade_history | reverse %}
+        <tr>
+          <td class="text-slate-500">{{ r.exit_timestamp[:19] }}</td>
+          <td>{{ r.ticker }}</td>
+          <td class="{{ 'pos-long' if r.direction == 'LONG' else 'pos-short' }}">{{ r.direction }}</td>
+          <td>{{ fmt(r.entry_price, 4) }}</td>
+          <td>{{ fmt(r.exit_price, 4) }}</td>
+          <td class="{{ 'pos-long' if r.individual_realized|float >= 0 else 'pos-short' }}">{{ fmt(r.individual_realized) }}</td>
+          <td>{{ fmt(r.individual_realized_r, 2) }}R</td>
+          <td>{{ fmt(r.total_funding_fees) }}</td>
+          <td>{{ fmt(r.total_fees) }}</td>
+          <td>{{ fmt(r.slippage_exit * 100, 4) }}%</td>
+          <td>{{ r.holding_time }}</td>
+          <td class="text-slate-400">{{ r.notes }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="text-slate-500 text-sm">No closed trades logged yet. Use Calculator → Log Execution / Trade Close.</div>
+  {% endif %}
+</div>

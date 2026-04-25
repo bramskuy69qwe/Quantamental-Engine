@@ -1,0 +1,120 @@
+{% set smry = session.summary %}
+{% set r = smry.r_stats or {} %}
+
+<!-- Summary stats row -->
+<div class="grid grid-cols-4 gap-3 mb-4">
+  {% set stats = [
+    ("Return",       ((smry.total_return_pct or 0) * 100)|round(2)|string + "%",  (smry.total_return_pct or 0) >= 0),
+    ("Max Drawdown", ((smry.max_drawdown or 0) * 100)|round(2)|string + "%",       false),
+    ("Sharpe",       (smry.sharpe or 0)|round(3)|string,                            (smry.sharpe or 0) >= 0),
+    ("Sortino",      (smry.sortino or 0)|round(3)|string,                           (smry.sortino or 0) >= 0),
+    ("Trades",       smry.total_trades or 0,                                        true),
+    ("Win Rate",     ((r.win_rate or 0) * 100)|round(1)|string + "%",              (r.win_rate or 0) >= 0.5),
+    ("Expectancy",   (r.expectancy or 0)|round(3)|string + "R",                    (r.expectancy or 0) >= 0),
+    ("Profit Factor",(r.profit_factor or 0)|round(2)|string,                       (r.profit_factor or 0) >= 1),
+  ] %}
+  {% for label, val, good in stats %}
+  <div class="panel p-3">
+    <div class="label">{{ label }}</div>
+    <div class="value {{ 'pos-long' if good else 'pos-short' }}">{{ val }}</div>
+  </div>
+  {% endfor %}
+</div>
+
+<!-- Type badge -->
+{% if session.type == 'microstructure' %}
+<div class="mb-3 text-xs text-yellow-400 bg-yellow-900/20 border border-yellow-800 rounded px-3 py-1.5 inline-block">
+  Quantower microstructure import — {{ smry.avg_slippage_bps|default(0)|round(2) }} bps avg slippage
+</div>
+{% endif %}
+
+<!-- Regime breakdown -->
+{% if smry.regime_breakdown %}
+<div class="mb-4">
+  <h3 class="text-xs font-semibold text-slate-400 uppercase mb-2">Regime Breakdown</h3>
+  <table>
+    <thead><tr><th>Regime</th><th>Trades</th><th>Win Rate</th><th>Expectancy</th><th>Profit Factor</th></tr></thead>
+    <tbody>
+    {% for label, rs in smry.regime_breakdown.items() %}
+    <tr>
+      <td class="text-slate-300">{{ label or 'unlabelled' }}</td>
+      <td>{{ rs.count }}</td>
+      <td class="{{ 'pos-long' if rs.win_rate >= 0.5 else 'pos-short' }}">{{ (rs.win_rate * 100)|round(1) }}%</td>
+      <td class="{{ 'pos-long' if rs.expectancy >= 0 else 'pos-short' }}">{{ rs.expectancy }}R</td>
+      <td class="{{ 'pos-long' if rs.profit_factor >= 1 else 'pos-short' }}">{{ rs.profit_factor }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<!-- Equity curve chart -->
+{% if equity %}
+<div class="mb-4">
+  <h3 class="text-xs font-semibold text-slate-400 uppercase mb-2">Equity Curve</h3>
+  <div id="bt-equity-chart-{{ session.id }}" style="height:180px;"></div>
+  <script>
+  (function() {
+    const eq = {{ equity | tojson }};
+    const series = eq.map(p => ({ x: p.dt, y: parseFloat(p.equity.toFixed(2)) }));
+    new ApexCharts(document.getElementById('bt-equity-chart-{{ session.id }}'), {
+      chart: { type: 'area', height: 180, background: 'transparent',
+               toolbar: { show: false }, animations: { enabled: false } },
+      series: [{ name: 'Equity', data: series }],
+      dataLabels: { enabled: false },
+      stroke: { curve: 'smooth', width: 1.5 },
+      fill: { type: 'gradient', gradient: { opacityFrom: 0.25, opacityTo: 0.02 } },
+      colors: ['#3b82f6'],
+      xaxis: { type: 'category', labels: { show: false }, axisBorder: { show: false } },
+      yaxis: { labels: { style: { colors: '#64748b', fontSize: '10px' },
+                         formatter: v => '$' + v.toLocaleString() } },
+      grid: { borderColor: '#2a2d3a', strokeDashArray: 3 },
+      tooltip: { theme: 'dark', x: { show: true } },
+    }).render();
+  })();
+  </script>
+</div>
+{% endif %}
+
+<!-- Trade log (last 50) -->
+{% if trades %}
+<div>
+  <h3 class="text-xs font-semibold text-slate-400 uppercase mb-2">
+    Trade Log
+    <span class="text-slate-600">
+      (showing {{ [trades|length, 50]|min }} of {{ trades|length }})
+    </span>
+  </h3>
+  <div style="max-height:280px;overflow-y:auto;">
+    <table>
+      <thead><tr>
+        <th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th>
+        <th>Entry $</th><th>Exit $</th><th>R</th><th>PnL</th><th>Regime</th><th>Exit</th>
+      </tr></thead>
+      <tbody>
+      {% for t in trades[:50] %}
+      <tr>
+        <td class="text-slate-300">{{ t.symbol }}</td>
+        <td class="{{ 'pos-long' if t.side == 'long' else 'pos-short' }}">{{ t.side }}</td>
+        <td class="text-slate-500 text-xs">{{ t.entry_dt[:10] }}</td>
+        <td class="text-slate-500 text-xs">{{ t.exit_dt[:10] }}</td>
+        <td>{{ t.entry_price|round(4) }}</td>
+        <td>{{ t.exit_price|round(4) }}</td>
+        <td class="{{ 'pos-long' if t.r_multiple >= 0 else 'pos-short' }} font-semibold">
+          {{ t.r_multiple|round(2) }}R
+        </td>
+        <td class="{{ 'pos-long' if t.pnl_usdt >= 0 else 'pos-short' }}">
+          ${{ t.pnl_usdt|round(2) }}
+        </td>
+        <td class="text-slate-600 text-xs">{{ t.regime_label or '—' }}</td>
+        <td class="text-slate-600 text-xs">{{ t.exit_reason }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<p class="text-slate-600 text-xs text-center py-4">No trades generated.</p>
+{% endif %}

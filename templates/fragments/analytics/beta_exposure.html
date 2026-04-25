@@ -1,0 +1,77 @@
+<div class="space-y-4">
+
+  <div class="panel p-4">
+    <div class="flex items-center justify-between mb-3">
+      <div class="label">Beta-Weighted Exposure vs BTC</div>
+      <span class="text-slate-600 text-xs">Beta estimated from 30-day OHLCV; falls back to sector presets</span>
+    </div>
+
+    {% if rows %}
+    <div class="overflow-x-auto mb-4">
+      <table>
+        <thead><tr>
+          <th>Symbol</th>
+          <th>Direction</th>
+          <th>Sector</th>
+          <th>Notional ($)</th>
+          <th title="Correlation-based sensitivity to BTC daily returns">Beta (vs BTC)</th>
+          <th title="Notional × Beta — BTC-equivalent exposure">Beta-Adj. Exp. ($)</th>
+        </tr></thead>
+        <tbody>
+          {% for r in rows %}
+          <tr>
+            <td class="font-bold">{{ r.ticker }}</td>
+            <td class="{{ 'pos-long' if r.direction == 'LONG' else 'pos-short' }}">{{ r.direction }}</td>
+            <td class="text-slate-400 text-xs">{{ r.sector }}</td>
+            <td class="text-slate-300">${{ fmt(r.notional, 0) }}</td>
+            <td class="{{ 'text-yellow-400' if r.beta > 1.5 else ('pos-long' if r.beta <= 1 else 'text-slate-300') }}">
+              {{ fmt(r.beta, 2) }}
+            </td>
+            <td class="font-bold text-slate-200">${{ fmt(r.beta_adj_exp, 0) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr class="border-t border-[#2a2d3a] font-bold text-slate-300">
+            <td colspan="3">PORTFOLIO TOTAL</td>
+            <td>${{ fmt(total_notional, 0) }}</td>
+            <td class="{{ 'text-yellow-400' if port_beta > 1.5 else 'text-slate-300' }}">
+              β = {{ fmt(port_beta, 2) }}
+            </td>
+            <td>${{ fmt(total_beta_exp, 0) }}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+
+    <!-- Sector breakdown — computed server-side via sector_totals context var -->
+
+    <div class="label mb-2">Sector Beta-Adjusted Breakdown</div>
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      {% for sec, exp in sector_totals.items() %}
+      <div class="flex flex-col gap-0.5 p-2 rounded bg-[#0f1117] border border-[#2a2d3a]">
+        <span class="label">{{ sec or 'unknown' }}</span>
+        <span class="value text-slate-200">${{ fmt(exp, 0) }}</span>
+        {% if total_beta_exp > 0 %}
+        <span class="text-xs text-slate-500">{{ fmt(exp / total_beta_exp * 100, 1) }}%</span>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+
+    {% else %}
+    <div class="text-slate-500 text-sm py-6">No open positions.</div>
+    {% endif %}
+  </div>
+
+  <div class="panel p-4">
+    <div class="label mb-2">Sector Preset Betas (fallback)</div>
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+      <div><span class="text-slate-400">BTC/ETH:</span> <span class="text-slate-200">1.0</span></div>
+      <div><span class="text-slate-400">Top-20 Alts:</span> <span class="text-slate-200">1.5</span></div>
+      <div><span class="text-slate-400">Commodities:</span> <span class="text-slate-200">0.4</span></div>
+      <div><span class="text-slate-400">Other Alts:</span> <span class="text-slate-200">2.0</span></div>
+    </div>
+  </div>
+
+</div>

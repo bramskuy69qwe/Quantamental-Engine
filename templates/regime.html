@@ -1,0 +1,938 @@
+{% extends "base.html" %}
+{% set active_page = "regime" %}
+{% block title %}Regime Classifier — Quantamental Risk Engine v2.1{% endblock %}
+
+{% block content %}
+<div class="mb-4 flex items-center justify-between">
+  <h1 class="text-lg font-bold text-slate-200 tracking-tight">Macro Regime Classifier</h1>
+  <div class="flex items-center gap-1">
+    <button onclick="showPanel('overview')" id="tab-overview"
+      class="rg-tab px-4 py-1.5 text-sm rounded-l border border-[#2a2d3a] text-slate-400 hover:text-white flex items-center gap-1.5">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+      Overview
+    </button>
+    <button onclick="showPanel('backfill')" id="tab-backfill"
+      class="rg-tab px-4 py-1.5 text-sm border border-l-0 border-[#2a2d3a] text-slate-400 hover:text-white flex items-center gap-1.5">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+      Backfill
+    </button>
+    <button onclick="showPanel('news')" id="tab-news"
+      class="rg-tab px-4 py-1.5 text-sm border border-l-0 border-[#2a2d3a] text-slate-400 hover:text-white flex items-center gap-1.5">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z"/></svg>
+      News
+    </button>
+    <button onclick="showPanel('config')" id="tab-config"
+      class="rg-tab px-4 py-1.5 text-sm rounded-r border border-l-0 border-[#2a2d3a] text-slate-400 hover:text-white flex items-center gap-1.5">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+      Config
+    </button>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast-container" class="fixed top-4 right-4 z-50 flex flex-col gap-2"></div>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     OVERVIEW PANEL — full-width dashboard with all signals
+     ══════════════════════════════════════════════════════════════════════ -->
+<div id="panel-overview">
+
+  <!-- Row 1: Current regime badge + distribution + multipliers -->
+  <div class="grid grid-cols-4 gap-3 mb-4">
+
+    <!-- Current regime -->
+    <div class="panel p-4 flex flex-col items-center justify-center">
+      <div class="label mb-2">Current Regime</div>
+      <div id="regime-badge" class="px-5 py-2 rounded-lg text-sm font-bold tracking-wide"
+           style="background:#1e293b;color:#94a3b8;">Loading...</div>
+      <div id="regime-date" class="text-xs text-slate-600 mt-1.5"></div>
+      <div id="regime-mode" class="text-xs text-slate-600"></div>
+    </div>
+
+    <!-- Distribution (spans 2 cols) -->
+    <div class="panel p-4 col-span-2">
+      <div class="label mb-2">Regime Distribution</div>
+      <div id="regime-dist" class="grid grid-cols-5 gap-1.5">
+        <div class="text-center py-2 text-xs text-slate-600">No data</div>
+      </div>
+    </div>
+
+    <!-- Multipliers -->
+    <div class="panel p-4">
+      <div class="label mb-2">Sizing Multipliers</div>
+      <div class="grid grid-cols-1 gap-0.5 text-xs">
+        <div class="flex justify-between"><span class="text-green-400">Trending</span><span class="text-slate-300 font-mono">1.2x</span></div>
+        <div class="flex justify-between"><span class="text-emerald-400">Choppy</span><span class="text-slate-300 font-mono">1.0x</span></div>
+        <div class="flex justify-between"><span class="text-slate-400">Neutral</span><span class="text-slate-300 font-mono">1.0x</span></div>
+        <div class="flex justify-between"><span class="text-amber-400">Defensive</span><span class="text-slate-300 font-mono">0.7x</span></div>
+        <div class="flex justify-between"><span class="text-red-400">Panic</span><span class="text-slate-300 font-mono">0.4x</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Row 2: Regime timeline -->
+  <div class="panel p-4 mb-4">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-sm font-semibold text-slate-300">Regime Timeline</h2>
+      <div class="flex gap-1">
+        <button onclick="setTimelineRange(30)" class="tl-range-btn preset-btn text-xs">30d</button>
+        <button onclick="setTimelineRange(90)" class="tl-range-btn preset-btn text-xs">90d</button>
+        <button onclick="setTimelineRange(365)" class="tl-range-btn preset-btn text-xs active">1y</button>
+        <button onclick="setTimelineRange(0)" class="tl-range-btn preset-btn text-xs">All</button>
+      </div>
+    </div>
+    <div id="timeline-chart" style="height:140px;"></div>
+    <div id="timeline-empty" class="text-center text-xs text-slate-600 py-6 hidden">
+      No regime data yet. Use the Backfill tab to fetch historical macro signals.
+    </div>
+  </div>
+
+  <!-- Row 3: Global timeframe selector + All 7 signal cards -->
+  <div class="flex items-center justify-between mb-2">
+    <h2 class="text-sm font-semibold text-slate-300">Macro Signals</h2>
+    <div class="flex items-center gap-2">
+      <span class="text-xs text-slate-500">All signals:</span>
+      <div class="flex gap-0.5">
+        <button onclick="setAllCardRanges(30,this)" class="global-range-btn preset-btn text-xs">30d</button>
+        <button onclick="setAllCardRanges(90,this)" class="global-range-btn preset-btn text-xs">90d</button>
+        <button onclick="setAllCardRanges(365,this)" class="global-range-btn preset-btn text-xs active">1y</button>
+        <button onclick="setAllCardRanges(1825,this)" class="global-range-btn preset-btn text-xs">5y</button>
+        <button onclick="setAllCardRanges(0,this)" class="global-range-btn preset-btn text-xs">All</button>
+      </div>
+    </div>
+  </div>
+  <div class="grid grid-cols-2 gap-3 mb-4" id="signal-cards">
+    <!-- Populated by JS -->
+  </div>
+
+  <!-- Row 4: Recent regime changes -->
+  <div class="panel p-4">
+    <h2 class="text-sm font-semibold text-slate-300 mb-2">Recent Regime Changes</h2>
+    <div style="max-height:180px;overflow-y:auto;">
+      <table>
+        <thead><tr><th>Date</th><th>Regime</th><th>Mode</th><th>VIX</th><th>HY Spread</th><th>RVol</th><th>Funding</th></tr></thead>
+        <tbody id="changes-body">
+          <tr><td colspan="7" class="text-center text-slate-600 text-xs py-2">No data</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     BACKFILL PANEL
+     ══════════════════════════════════════════════════════════════════════ -->
+<div id="panel-backfill" class="hidden">
+  <div class="grid grid-cols-3 gap-4">
+    <div class="col-span-1">
+      <div class="panel p-4">
+        <div class="flex items-center gap-2 mb-3">
+          <div class="w-6 h-6 rounded bg-emerald-500/20 flex items-center justify-center">
+            <svg class="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+          </div>
+          <h2 class="text-sm font-semibold text-slate-300">Backfill Macro Data</h2>
+        </div>
+        <p class="text-xs text-slate-500 mb-3">
+          Fetch historical macro signals from free data sources. Macro-only works for deep history (5-30+ years). Full adds Binance OI/funding (~2-3 years).
+        </p>
+        <form id="backfill-form" onsubmit="submitBackfill(event)">
+          <div class="mb-2">
+            <label class="label block mb-1">Mode</label>
+            <select id="bf-mode">
+              <option value="macro_only">Macro Only (VIX, FRED, BTC dom)</option>
+              <option value="full">Full (+ Binance OI, Funding)</option>
+            </select>
+          </div>
+          <div class="grid grid-cols-2 gap-2 mb-2">
+            <div><label class="label block mb-1">From</label><input type="date" id="bf-since" value="2020-01-01" /></div>
+            <div><label class="label block mb-1">To</label><input type="date" id="bf-until" /></div>
+          </div>
+          <button type="submit" class="btn btn-primary w-full mt-2" id="bf-submit">Start Backfill</button>
+        </form>
+        <div id="bf-progress" class="hidden mt-3">
+          <div class="flex justify-between text-xs text-slate-400 mb-1">
+            <span id="bf-progress-msg">Starting...</span>
+            <span id="bf-progress-pct">0%</span>
+          </div>
+          <div class="w-full bg-[#2a2d3a] rounded-full h-1.5">
+            <div id="bf-progress-bar" class="bg-blue-500 h-1.5 rounded-full transition-all" style="width:0%"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-span-2">
+      <div class="panel p-4">
+        <h3 class="text-sm font-semibold text-slate-300 mb-2">Signal Coverage</h3>
+        <table>
+          <thead><tr><th>Signal</th><th>Source</th><th>From</th><th>To</th><th>Rows</th></tr></thead>
+          <tbody id="coverage-body">
+            <tr><td colspan="5" class="text-center text-slate-600 text-xs py-2">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     CONFIG PANEL
+     ══════════════════════════════════════════════════════════════════════ -->
+<div id="panel-config" class="hidden">
+  <div class="grid grid-cols-3 gap-4">
+    <div class="col-span-1">
+      <div class="panel p-4">
+        <h2 class="text-sm font-semibold text-slate-300 mb-3">Classifier Thresholds</h2>
+        <p class="text-xs text-slate-500 mb-3">Current threshold values used by the rule-based regime classifier.</p>
+        <div id="thresholds-display" class="grid grid-cols-1 gap-1.5">
+          <div class="text-xs text-slate-600 text-center py-2">Loading...</div>
+        </div>
+        <div class="mt-4 pt-3 border-t border-[#2a2d3a]">
+          <button onclick="reclassify()" class="btn btn-secondary w-full" id="reclassify-btn">Reclassify All Dates</button>
+          <p id="reclassify-status" class="text-xs text-slate-500 mt-2 text-center"></p>
+        </div>
+      </div>
+    </div>
+    <div class="col-span-2">
+      <div class="panel p-4">
+        <h2 class="text-sm font-semibold text-slate-300 mb-3">Decision Tree Rules</h2>
+        <div class="text-xs text-slate-400 space-y-2">
+          <div class="p-2 rounded bg-red-900/10 border border-red-900/30">
+            <span class="text-red-400 font-semibold">Panic:</span> VIX &gt; <span class="text-slate-200" id="rule-vix-panic">30</span>
+            AND (HY Spread &gt; <span class="text-slate-200" id="rule-hy-panic">5.0</span>
+            OR Funding &lt; <span class="text-slate-200" id="rule-fund-panic">-0.01</span>)
+          </div>
+          <div class="p-2 rounded bg-amber-900/10 border border-amber-900/30">
+            <span class="text-amber-400 font-semibold">Defensive:</span> VIX &gt; <span class="text-slate-200" id="rule-vix-def">25</span>
+            OR HY Spread &gt; <span class="text-slate-200" id="rule-hy-def">4.5</span>
+            OR BTC Dom rising &gt; <span class="text-slate-200" id="rule-dom-bear">0.5</span>%/wk
+          </div>
+          <div class="p-2 rounded bg-green-900/10 border border-green-900/30">
+            <span class="text-green-400 font-semibold">Trending:</span> VIX &lt; <span class="text-slate-200" id="rule-vix-on">20</span>
+            AND RVol &lt; <span class="text-slate-200" id="rule-rvol-trend">1.2</span>
+            <span class="text-slate-500">(+ OI rising, funding &gt; 0 in full mode)</span>
+          </div>
+          <div class="p-2 rounded bg-teal-900/10 border border-teal-900/30">
+            <span class="text-emerald-400 font-semibold">Choppy:</span> VIX &lt; <span class="text-slate-200" id="rule-vix-chop">22</span>
+            AND RVol &gt; <span class="text-slate-200" id="rule-rvol-chop">1.3</span>
+          </div>
+          <div class="p-2 rounded bg-slate-800/50 border border-slate-700">
+            <span class="text-slate-400 font-semibold">Neutral:</span> default fallback when no other rule triggers
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     NEWS PANEL — economic calendar (top) + news feed + detail (bottom)
+     ══════════════════════════════════════════════════════════════════════ -->
+<div id="panel-news" class="hidden">
+
+  <!-- Top: Economic Calendar -->
+  <div class="panel p-4 mb-4">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-sm font-semibold text-slate-300">Economic Calendar — Next 7 Days</h2>
+      <div class="flex items-center gap-2">
+        <span class="text-xs text-slate-500">Impact:</span>
+        <select id="cal-impact" onchange="loadCalendar()"
+                class="bg-[#0f1117] border border-[#2a2d3a] text-xs text-slate-200 rounded px-2 py-1">
+          <option value="">All</option>
+          <option value="high">High only</option>
+          <option value="high,medium">High + Medium</option>
+        </select>
+        <button onclick="refreshNews()"
+                class="btn btn-secondary text-xs px-2 py-1">↻ Refresh</button>
+      </div>
+    </div>
+    <div class="overflow-x-auto" style="max-height: 360px;">
+      <table class="w-full text-xs">
+        <thead class="sticky top-0 bg-[#0f1117] border-b border-[#2a2d3a]">
+          <tr class="text-slate-500 text-left">
+            <th class="py-1.5 px-2">Time (UTC)</th>
+            <th class="py-1.5 px-2">Country</th>
+            <th class="py-1.5 px-2">Event</th>
+            <th class="py-1.5 px-2">Impact</th>
+            <th class="py-1.5 px-2 text-right">Previous</th>
+            <th class="py-1.5 px-2 text-right">Estimate</th>
+            <th class="py-1.5 px-2 text-right">Actual</th>
+          </tr>
+        </thead>
+        <tbody id="calendar-body">
+          <tr><td colspan="7" class="text-center text-slate-600 py-4">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Bottom: news feed (left 1/3) + detail (right 2/3) -->
+  <div class="grid grid-cols-3 gap-4">
+
+    <!-- Feed list -->
+    <div class="col-span-1">
+      <div class="panel p-4">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-sm font-semibold text-slate-300">News Feed</h2>
+          <span id="news-count" class="text-xs text-slate-500"></span>
+        </div>
+        <div id="news-list" class="flex flex-col gap-1.5 overflow-y-auto"
+             style="max-height: 60vh;">
+          <div class="text-center text-slate-600 text-xs py-4">Loading...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Detail pane -->
+    <div class="col-span-2">
+      <div id="news-detail" class="panel p-4" style="min-height: 60vh;">
+        <div class="flex items-center justify-center h-full text-slate-600 text-xs">
+          Select a news item to view details.
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ── Constants ──────────────────────────────────────────────────────────────
+const REGIME_COLORS = {
+  risk_on_trending:   { bg: '#14532d', text: '#4ade80', label: 'Risk-On Trending' },
+  risk_on_choppy:     { bg: '#064e3b', text: '#34d399', label: 'Risk-On Choppy' },
+  neutral:            { bg: '#1e293b', text: '#94a3b8', label: 'Neutral' },
+  risk_off_defensive: { bg: '#713f12', text: '#fbbf24', label: 'Risk-Off Defensive' },
+  risk_off_panic:     { bg: '#7f1d1d', text: '#f87171', label: 'Risk-Off Panic' },
+};
+
+// All 7 signals: key, label, unit, color, decimals, thresholdLines (for reference lines on chart)
+const SIGNALS = [
+  { key: 'vix_close',      label: 'VIX',                  unit: '',    color: '#f87171', decimals: 1, thresholds: [{v:30,c:'#f87171',l:'Panic'},{v:25,c:'#fbbf24',l:'Defensive'},{v:20,c:'#4ade80',l:'Risk-On'}] },
+  { key: 'us10y_yield',    label: 'US 10Y Yield',         unit: '%',   color: '#60a5fa', decimals: 2, thresholds: [] },
+  { key: 'hy_spread',      label: 'HY Spread',            unit: '%',   color: '#fbbf24', decimals: 2, thresholds: [{v:5.0,c:'#f87171',l:'Panic'},{v:4.5,c:'#fbbf24',l:'Defensive'},{v:4.0,c:'#94a3b8',l:'Neutral'},{v:3.5,c:'#4ade80',l:'Risk-On'}] },
+{ key: 'btc_rvol_ratio', label: 'BTC RVol (30d/7d)',    unit: '',    color: '#a78bfa', decimals: 2, thresholds: [{v:1.3,c:'#fbbf24',l:'Choppy'},{v:1.2,c:'#4ade80',l:'Trending'}] },
+  { key: 'agg_oi_change',  label: 'Aggregate OI Change',  unit: '%',   color: '#34d399', decimals: 2, thresholds: [{v:0,c:'#64748b',l:'Zero'}] },
+  { key: 'avg_funding',    label: 'Avg Funding Rate',     unit: '',    color: '#38bdf8', decimals: 5, thresholds: [{v:0,c:'#64748b',l:'Zero'},{v:-0.01,c:'#f87171',l:'Panic'}] },
+];
+
+let currentTimelineRange = 365;
+let signalCharts = {};       // key -> ApexCharts instance
+let signalRanges = {};       // key -> days (default 365)
+let timelineChart = null;
+let signalCoverage = {};     // key -> {min_date, max_date, count} from coverage API
+
+// ── Panel switching ──────────────────────────────────────────────────────
+function showPanel(name) {
+  ['overview','backfill','config','news'].forEach(p => {
+    const el = document.getElementById('panel-' + p);
+    if (el) el.classList.toggle('hidden', p !== name);
+  });
+  document.querySelectorAll('.rg-tab').forEach(el => {
+    el.classList.remove('bg-[#1a1d27]', 'text-accent');
+    el.classList.add('text-slate-400');
+  });
+  const tab = document.getElementById('tab-' + name);
+  if (tab) { tab.classList.add('bg-[#1a1d27]', 'text-accent'); tab.classList.remove('text-slate-400'); }
+
+  if (name === 'backfill') loadCoverage();
+  if (name === 'config') loadThresholds();
+  if (name === 'overview') { loadAllSignalCharts(); loadTimeline(); }
+  if (name === 'news') { loadCalendar(); loadNewsFeed(); startNewsAutoRefresh(); }
+  else { stopNewsAutoRefresh(); }
+}
+
+function showToast(msg, type = 'success') {
+  const container = document.getElementById('toast-container');
+  const cls = type === 'error' ? 'alert-error' : type === 'warning' ? 'alert-warning' : 'alert-success';
+  const el = document.createElement('div');
+  el.className = cls + ' text-xs shadow-lg';
+  el.textContent = msg;
+  container.appendChild(el);
+  setTimeout(() => el.remove(), 6000);
+}
+
+// ── Build signal cards HTML ─────────────────────────────────────────────
+function buildSignalCards() {
+  const container = document.getElementById('signal-cards');
+  container.innerHTML = SIGNALS.map(sig => `
+    <div class="panel p-3">
+      <div class="flex items-center justify-between mb-1">
+        <div class="flex items-center gap-2">
+          <div class="w-2 h-2 rounded-full" style="background:${sig.color}"></div>
+          <span class="text-xs font-semibold text-slate-300">${sig.label}</span>
+          <span id="val-${sig.key}" class="text-xs font-mono text-slate-400">--</span>
+        </div>
+        <div class="flex gap-0.5">
+          <button onclick="setCardRange('${sig.key}',30,this)" class="sc-btn-${sig.key} preset-btn text-xs" style="padding:2px 6px;font-size:0.6rem;">30d</button>
+          <button onclick="setCardRange('${sig.key}',90,this)" class="sc-btn-${sig.key} preset-btn text-xs" style="padding:2px 6px;font-size:0.6rem;">90d</button>
+          <button onclick="setCardRange('${sig.key}',365,this)" class="sc-btn-${sig.key} preset-btn text-xs active" style="padding:2px 6px;font-size:0.6rem;">1y</button>
+          <button onclick="setCardRange('${sig.key}',1825,this)" class="sc-btn-${sig.key} preset-btn text-xs" style="padding:2px 6px;font-size:0.6rem;">5y</button>
+          <button onclick="setCardRange('${sig.key}',0,this)" class="sc-btn-${sig.key} preset-btn text-xs" style="padding:2px 6px;font-size:0.6rem;">All</button>
+        </div>
+      </div>
+      <div id="chart-${sig.key}" style="height:130px;"></div>
+    </div>
+  `).join('');
+
+  // Init default ranges
+  SIGNALS.forEach(s => { signalRanges[s.key] = 365; });
+}
+
+// ── Load single signal chart ────────────────────────────────────────────
+async function loadSignalCard(sig) {
+  const days = signalRanges[sig.key] || 365;
+  const params = new URLSearchParams({ signal_name: sig.key });
+  if (days > 0) {
+    const from = new Date();
+    from.setDate(from.getDate() - days);
+    params.set('from_date', from.toISOString().slice(0, 10));
+  }
+
+  try {
+    const resp = await fetch('/api/regime/signals?' + params.toString());
+    const data = await resp.json();
+
+    const valEl = document.getElementById('val-' + sig.key);
+    const chartEl = document.getElementById('chart-' + sig.key);
+
+    if (!data.length) {
+      if (signalCharts[sig.key]) { signalCharts[sig.key].destroy(); delete signalCharts[sig.key]; }
+      const cov = signalCoverage[sig.key];
+      if (cov && cov.count > 0) {
+        valEl.textContent = 'no data in range';
+        chartEl.innerHTML = `<div class="flex flex-col items-center justify-center h-full text-xs text-slate-600">
+          <div>No data for selected range</div>
+          <div class="mt-1 text-slate-500">Available: ${cov.min_date} to ${cov.max_date} (${cov.count} rows)</div>
+        </div>`;
+      } else {
+        valEl.textContent = 'not backfilled';
+        const hints = {
+          vix_close: 'Requires yfinance. Run Backfill (macro_only).',
+          us10y_yield: 'Requires FRED_API_KEY in .env. Run Backfill.',
+          hy_spread: 'Requires FRED_API_KEY in .env. Run Backfill.',
+          btc_dominance: 'CoinGecko API. Run Backfill (macro_only).',
+          btc_rvol_ratio: 'Derived from BTCUSDT OHLCV cache. Run Backfill.',
+          agg_oi_change: 'Binance futures API. Run Backfill (full mode).',
+          avg_funding: 'Binance futures API. Run Backfill (full mode).',
+        };
+        chartEl.innerHTML = `<div class="flex flex-col items-center justify-center h-full text-xs text-slate-600">
+          <div>No data — signal not yet backfilled</div>
+          <div class="mt-1 text-slate-500">${hints[sig.key] || 'Run Backfill to fetch.'}</div>
+        </div>`;
+      }
+      return;
+    }
+
+    // Update current value
+    const latest = data[data.length - 1];
+    valEl.textContent = latest.value.toFixed(sig.decimals) + (sig.unit ? ' ' + sig.unit : '');
+
+    const series = data.map(d => ({ x: d.date, y: d.value }));
+
+    // Build threshold annotations
+    const yAnnotations = sig.thresholds.map(t => ({
+      y: t.v, borderColor: t.c, strokeDashArray: 3,
+      label: { text: t.l, style: { color: t.c, background: 'transparent', fontSize: '8px', padding: { left: 2, right: 2, top: 0, bottom: 0 } }, position: 'left' },
+    }));
+
+    const opts = {
+      chart: { type: 'area', height: 130, background: 'transparent', sparkline: { enabled: false },
+               toolbar: { show: false }, animations: { enabled: false },
+               zoom: { enabled: false } },
+      series: [{ name: sig.label, data: series }],
+      stroke: { curve: 'smooth', width: 1.5 },
+      fill: { type: 'gradient', gradient: { opacityFrom: 0.2, opacityTo: 0.02 } },
+      colors: [sig.color],
+      dataLabels: { enabled: false },
+      xaxis: { type: 'category', labels: { show: true, rotate: 0,
+               style: { colors: '#475569', fontSize: '8px' },
+               formatter: v => v ? v.slice(5,10) : '' },
+               axisBorder: { show: false }, axisTicks: { show: false },
+               tickAmount: 6 },
+      yaxis: { labels: { style: { colors: '#475569', fontSize: '9px' },
+               formatter: v => v != null ? v.toLocaleString(undefined, { maximumFractionDigits: sig.decimals }) : '' },
+               tickAmount: 3 },
+      grid: { borderColor: '#1e293b', strokeDashArray: 2, padding: { left: 2, right: 2, top: 0, bottom: 0 } },
+      tooltip: { theme: 'dark', x: { show: true },
+                 y: { formatter: v => v != null ? v.toFixed(sig.decimals) + (sig.unit ? ' ' + sig.unit : '') : '' } },
+      annotations: { yaxis: yAnnotations },
+    };
+
+    if (signalCharts[sig.key]) signalCharts[sig.key].destroy();
+    chartEl.innerHTML = '';
+    signalCharts[sig.key] = new ApexCharts(chartEl, opts);
+    signalCharts[sig.key].render();
+
+  } catch (e) {
+    console.error('Failed to load signal', sig.key, e);
+  }
+}
+
+async function loadAllSignalCharts() {
+  // Load coverage first so cards can show why data is missing
+  try {
+    const resp = await fetch('/api/regime/coverage');
+    const data = await resp.json();
+    signalCoverage = {};
+    (data || []).forEach(c => { signalCoverage[c.signal_name] = c; });
+  } catch (e) { console.error('Coverage load error:', e); }
+  SIGNALS.forEach(sig => loadSignalCard(sig));
+}
+
+function setCardRange(key, days, btn) {
+  signalRanges[key] = days;
+  document.querySelectorAll('.sc-btn-' + key).forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  // Clear global active since this card now has its own range
+  document.querySelectorAll('.global-range-btn').forEach(b => b.classList.remove('active'));
+  const sig = SIGNALS.find(s => s.key === key);
+  if (sig) loadSignalCard(sig);
+}
+
+function setAllCardRanges(days, btn) {
+  document.querySelectorAll('.global-range-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  SIGNALS.forEach(sig => {
+    signalRanges[sig.key] = days;
+    // Update per-card active buttons to match
+    document.querySelectorAll('.sc-btn-' + sig.key).forEach(b => b.classList.remove('active'));
+    const label = days === 0 ? 'All' : days === 1825 ? '5y' : days === 365 ? '1y' : days === 90 ? '90d' : '30d';
+    document.querySelectorAll('.sc-btn-' + sig.key).forEach(b => {
+      if (b.textContent.trim() === label) b.classList.add('active');
+    });
+    loadSignalCard(sig);
+  });
+}
+
+// ── Current regime ──────────────────────────────────────────────────────
+async function loadCurrentRegime() {
+  try {
+    const resp = await fetch('/api/regime/current');
+    const data = await resp.json();
+    const badge = document.getElementById('regime-badge');
+    const dateEl = document.getElementById('regime-date');
+    const modeEl = document.getElementById('regime-mode');
+
+    if (data.label) {
+      const rc = REGIME_COLORS[data.label] || REGIME_COLORS.neutral;
+      badge.textContent = rc.label;
+      badge.style.background = rc.bg;
+      badge.style.color = rc.text;
+      dateEl.textContent = 'As of ' + data.date;
+      modeEl.textContent = data.mode + ' mode';
+    } else {
+      badge.textContent = 'No Data';
+      badge.style.background = '#1e293b';
+      badge.style.color = '#64748b';
+      dateEl.textContent = 'Run a backfill first';
+      modeEl.textContent = '';
+    }
+  } catch (e) { console.error('Failed to load current regime:', e); }
+}
+
+// ── Timeline ────────────────────────────────────────────────────────────
+function setTimelineRange(days) {
+  currentTimelineRange = days;
+  document.querySelectorAll('.tl-range-btn').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+  loadTimeline();
+}
+
+async function loadTimeline() {
+  const params = new URLSearchParams();
+  if (currentTimelineRange > 0) {
+    const from = new Date();
+    from.setDate(from.getDate() - currentTimelineRange);
+    params.set('from_date', from.toISOString().slice(0, 10));
+  }
+
+  try {
+    const resp = await fetch('/api/regime/timeline?' + params.toString());
+    const data = await resp.json();
+
+    if (!data.length) {
+      document.getElementById('timeline-chart').style.display = 'none';
+      document.getElementById('timeline-empty').classList.remove('hidden');
+      document.getElementById('regime-dist').innerHTML = '<div class="text-center py-2 text-xs text-slate-600 col-span-5">No data</div>';
+      document.getElementById('changes-body').innerHTML = '<tr><td colspan="7" class="text-center text-slate-600 text-xs py-2">No data</td></tr>';
+      return;
+    }
+
+    document.getElementById('timeline-chart').style.display = 'block';
+    document.getElementById('timeline-empty').classList.add('hidden');
+
+    const regimeOrder = ['risk_on_trending','risk_on_choppy','neutral','risk_off_defensive','risk_off_panic'];
+    const regimeY = { risk_on_trending: 5, risk_on_choppy: 4, neutral: 3, risk_off_defensive: 2, risk_off_panic: 1 };
+    const colorMap = { risk_on_trending: '#4ade80', risk_on_choppy: '#34d399', neutral: '#94a3b8', risk_off_defensive: '#fbbf24', risk_off_panic: '#f87171' };
+
+    const series = data.map(d => ({
+      x: d.date, y: regimeY[d.label] || 3, fillColor: colorMap[d.label] || '#94a3b8',
+    }));
+
+    const chartOpts = {
+      chart: { type: 'bar', height: 140, background: 'transparent', toolbar: { show: false }, animations: { enabled: false } },
+      series: [{ name: 'Regime', data: series }],
+      plotOptions: { bar: { horizontal: false, columnWidth: '100%', borderRadius: 0, distributed: true } },
+      colors: series.map(s => s.fillColor),
+      dataLabels: { enabled: false },
+      legend: { show: false },
+      xaxis: { type: 'category', labels: { show: true, rotate: -45, style: { colors: '#64748b', fontSize: '8px' },
+               formatter: v => v ? v.slice(5) : '' }, axisBorder: { show: false }, tickAmount: Math.min(20, series.length) },
+      yaxis: { labels: { style: { colors: '#64748b', fontSize: '9px' },
+               formatter: v => ({ 5:'Trend', 4:'Chop', 3:'Neut', 2:'Def', 1:'Panic' }[v] || '') },
+               min: 0.5, max: 5.5, tickAmount: 5 },
+      grid: { borderColor: '#2a2d3a', strokeDashArray: 3 },
+      tooltip: { theme: 'dark', custom: ({ dataPointIndex }) => {
+        const d = data[dataPointIndex]; const rc = REGIME_COLORS[d.label] || REGIME_COLORS.neutral;
+        return `<div style="padding:6px 10px;font-size:11px;"><b>${d.date}</b><br/><span style="color:${rc.text}">${rc.label}</span> (${d.mode})</div>`;
+      }},
+    };
+
+    if (timelineChart) timelineChart.destroy();
+    timelineChart = new ApexCharts(document.getElementById('timeline-chart'), chartOpts);
+    timelineChart.render();
+
+    // Distribution
+    const counts = {};
+    data.forEach(d => { counts[d.label] = (counts[d.label] || 0) + 1; });
+    const total = data.length;
+    document.getElementById('regime-dist').innerHTML = regimeOrder.map(r => {
+      const c = counts[r] || 0;
+      const pct = (c / total * 100).toFixed(1);
+      const rc = REGIME_COLORS[r];
+      return `<div class="text-center p-1.5 rounded" style="background:${rc.bg}30">
+        <div class="text-xs font-semibold" style="color:${rc.text}">${rc.label.replace('Risk-On ','').replace('Risk-Off ','')}</div>
+        <div class="text-sm font-bold text-slate-200">${pct}%</div>
+        <div class="text-xs text-slate-500">${c}d</div>
+      </div>`;
+    }).join('');
+
+    // Recent changes
+    const changes = [];
+    for (let i = 1; i < data.length; i++) {
+      if (data[i].label !== data[i-1].label) changes.push(data[i]);
+    }
+    const recent = changes.slice(-25).reverse();
+    if (recent.length) {
+      document.getElementById('changes-body').innerHTML = recent.map(d => {
+        const rc = REGIME_COLORS[d.label] || REGIME_COLORS.neutral;
+        const s = d.signals || {};
+        return `<tr>
+          <td class="text-slate-300 text-xs">${d.date}</td>
+          <td><span class="text-xs font-semibold" style="color:${rc.text}">${rc.label}</span></td>
+          <td class="text-slate-500 text-xs">${d.mode}</td>
+          <td class="text-slate-400 text-xs">${s.vix_close != null ? s.vix_close.toFixed(1) : '-'}</td>
+          <td class="text-slate-400 text-xs">${s.hy_spread != null ? s.hy_spread.toFixed(2) : '-'}</td>
+          <td class="text-slate-400 text-xs">${s.btc_rvol_ratio != null ? s.btc_rvol_ratio.toFixed(2) : '-'}</td>
+          <td class="text-slate-400 text-xs">${s.avg_funding != null ? (s.avg_funding * 100).toFixed(3) + '%' : '-'}</td>
+        </tr>`;
+      }).join('');
+    }
+  } catch (e) { console.error('Failed to load timeline:', e); }
+}
+
+// ── Coverage ────────────────────────────────────────────────────────────
+async function loadCoverage() {
+  try {
+    const resp = await fetch('/api/regime/coverage');
+    const data = await resp.json();
+    const tbody = document.getElementById('coverage-body');
+    const sigLabels = {}; SIGNALS.forEach(s => { sigLabels[s.key] = s.label; });
+    const sources = {
+      vix_close: 'yfinance', us10y_yield: 'FRED', hy_spread: 'FRED',
+      btc_dominance: 'CoinGecko', btc_rvol_ratio: 'derived',
+      agg_oi_change: 'Binance', avg_funding: 'Binance',
+    };
+    const covMap = {};
+    (data || []).forEach(r => { covMap[r.signal_name] = r; });
+    // Show all 7 signals, mark missing ones
+    tbody.innerHTML = SIGNALS.map(sig => {
+      const r = covMap[sig.key];
+      if (r) {
+        return `<tr>
+          <td class="text-slate-300">${sig.label}</td>
+          <td class="text-slate-500 text-xs">${r.source}</td>
+          <td class="text-slate-500 text-xs">${r.min_date}</td>
+          <td class="text-slate-500 text-xs">${r.max_date}</td>
+          <td class="text-green-400">${r.count.toLocaleString()}</td>
+        </tr>`;
+      } else {
+        return `<tr class="opacity-50">
+          <td class="text-slate-500">${sig.label}</td>
+          <td class="text-slate-600 text-xs">${sources[sig.key] || '—'}</td>
+          <td colspan="2" class="text-center text-slate-600 text-xs">Not backfilled</td>
+          <td class="text-slate-600">0</td>
+        </tr>`;
+      }
+    }).join('');
+  } catch (e) { console.error('Failed to load coverage:', e); }
+}
+
+// ── Backfill ────────────────────────────────────────────────────────────
+async function submitBackfill(e) {
+  e.preventDefault();
+  const mode = document.getElementById('bf-mode').value;
+  const since = document.getElementById('bf-since').value;
+  const until = document.getElementById('bf-until').value || new Date().toISOString().slice(0, 10);
+  document.getElementById('bf-submit').disabled = true;
+  document.getElementById('bf-progress').classList.remove('hidden');
+  try {
+    const resp = await fetch('/api/regime/backfill', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode, since_date: since, until_date: until }),
+    });
+    const data = await resp.json();
+    if (data.job_id) pollBackfill(data.job_id);
+  } catch (err) {
+    showToast('Backfill failed: ' + err.message, 'error');
+    document.getElementById('bf-submit').disabled = false;
+  }
+}
+
+function pollBackfill(jobId) {
+  const iv = setInterval(async () => {
+    try {
+      const resp = await fetch('/api/regime/backfill-status/' + jobId);
+      const data = await resp.json();
+      document.getElementById('bf-progress-msg').textContent = data.detail || '';
+      document.getElementById('bf-progress-pct').textContent = data.pct.toFixed(0) + '%';
+      document.getElementById('bf-progress-bar').style.width = data.pct + '%';
+      if (data.status === 'completed' || data.status === 'failed') {
+        clearInterval(iv);
+        document.getElementById('bf-submit').disabled = false;
+        if (data.status === 'completed') {
+          const r = data.results || {};
+          const parts = Object.entries(r).filter(([k,v]) => k !== 'labels_classified').map(([k,v]) => `${k}: ${v}`);
+          showToast(`Backfill complete — ${parts.join(', ')}${r.labels_classified ? ' | ' + r.labels_classified + ' classified' : ''}`);
+          loadCoverage(); loadCurrentRegime(); loadTimeline(); loadAllSignalCharts();
+        } else { showToast('Backfill failed: ' + data.detail, 'error'); }
+      }
+    } catch (err) { clearInterval(iv); document.getElementById('bf-submit').disabled = false; }
+  }, 1500);
+}
+
+// ── Thresholds ──────────────────────────────────────────────────────────
+async function loadThresholds() {
+  try {
+    const resp = await fetch('/api/regime/thresholds');
+    const t = await resp.json();
+    const labels = {
+      vix_panic:'VIX Panic', vix_defensive:'VIX Defensive', vix_risk_on:'VIX Risk-On', vix_choppy:'VIX Choppy',
+      hy_spread_panic:'HY Spread Panic', hy_spread_defensive:'HY Spread Defensive',
+      hy_spread_neutral:'HY Spread Neutral', hy_spread_risk_on:'HY Spread Risk-On',
+      rvol_ratio_choppy:'RVol Choppy', rvol_ratio_trending:'RVol Trending', funding_panic:'Funding Panic',
+    };
+    document.getElementById('thresholds-display').innerHTML = Object.entries(t).map(([k, v]) => `
+      <div class="flex justify-between items-center py-1 px-2 rounded hover:bg-[#1e293b]">
+        <span class="text-xs text-slate-400">${labels[k] || k}</span>
+        <span class="text-xs font-mono text-slate-200">${v}</span>
+      </div>
+    `).join('');
+    // Update rule displays
+    const s = (id, key) => { const el = document.getElementById(id); if (el && t[key] != null) el.textContent = t[key]; };
+    s('rule-vix-panic','vix_panic'); s('rule-hy-panic','hy_spread_panic'); s('rule-fund-panic','funding_panic');
+    s('rule-vix-def','vix_defensive'); s('rule-hy-def','hy_spread_defensive'); s('rule-dom-bear','btc_dom_change_bear');
+    s('rule-vix-on','vix_risk_on'); s('rule-rvol-trend','rvol_ratio_trending');
+    s('rule-vix-chop','vix_choppy'); s('rule-rvol-chop','rvol_ratio_choppy');
+  } catch (e) { console.error('Failed to load thresholds:', e); }
+}
+
+// ── Reclassify ──────────────────────────────────────────────────────────
+async function reclassify() {
+  const btn = document.getElementById('reclassify-btn');
+  const status = document.getElementById('reclassify-status');
+  btn.disabled = true; status.textContent = 'Reclassifying...';
+  try {
+    const resp = await fetch('/api/regime/reclassify', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+    });
+    const data = await resp.json();
+    status.textContent = `Classified ${data.labels_classified} dates`;
+    showToast(`Reclassified ${data.labels_classified} dates`);
+    loadTimeline(); loadCurrentRegime();
+  } catch (e) {
+    status.textContent = 'Error: ' + e.message;
+    showToast('Reclassify failed', 'error');
+  } finally { btn.disabled = false; }
+}
+
+// ── News & Economic Calendar ────────────────────────────────────────────
+let _newsRefreshTimer = null;
+let _activeNewsId = null;
+
+function fmtUtcTime(iso) {
+  if (!iso) return '—';
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+  } catch (e) { return iso; }
+}
+function fmtRelTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const diff = (Date.now() - d.getTime()) / 1000;
+  if (diff < 60)    return Math.floor(diff) + 's ago';
+  if (diff < 3600)  return Math.floor(diff / 60) + 'm ago';
+  if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+  return Math.floor(diff / 86400) + 'd ago';
+}
+function fmtNum(v) {
+  if (v === null || v === undefined) return '—';
+  const n = Number(v);
+  if (!isFinite(n)) return '—';
+  return Math.abs(n) < 0.01 ? n.toExponential(2) : n.toFixed(2);
+}
+function impactBadge(level) {
+  const l = (level || '').toLowerCase();
+  if (l === 'high')   return '<span class="px-1.5 py-0.5 rounded text-xs" style="background:#7f1d1d;color:#f87171;">HIGH</span>';
+  if (l === 'medium') return '<span class="px-1.5 py-0.5 rounded text-xs" style="background:#78350f;color:#fbbf24;">MED</span>';
+  if (l === 'low')    return '<span class="px-1.5 py-0.5 rounded text-xs" style="background:#1e293b;color:#94a3b8;">low</span>';
+  return '<span class="text-slate-600 text-xs">—</span>';
+}
+function sourceBadge(s) {
+  if (s === 'finnhub') return '<span class="px-1.5 py-0.5 rounded text-xs font-bold" style="background:#1e3a8a;color:#93c5fd;">FH</span>';
+  if (s === 'bwe')     return '<span class="px-1.5 py-0.5 rounded text-xs font-bold" style="background:#7c2d12;color:#fdba74;">BWE</span>';
+  return '<span class="px-1.5 py-0.5 rounded text-xs" style="background:#1e293b;color:#94a3b8;">' + (s || '?') + '</span>';
+}
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+async function loadCalendar() {
+  const tbody = document.getElementById('calendar-body');
+  if (!tbody) return;
+  const today = new Date().toISOString().slice(0, 10);
+  const plus7 = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+  const impact = document.getElementById('cal-impact').value;
+  try {
+    const url = `/api/calendar?from_date=${today}&to_date=${plus7}` + (impact ? `&impact=${encodeURIComponent(impact)}` : '');
+    const resp = await fetch(url);
+    const events = await resp.json();
+    if (!events || events.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" class="text-center text-slate-600 py-4">No events. Set FINNHUB_API_KEY and refresh.</td></tr>';
+      return;
+    }
+    const nowMs = Date.now();
+    tbody.innerHTML = events.map(e => {
+      const evMs = new Date(e.event_time).getTime();
+      const upcoming = !isNaN(evMs) && (evMs - nowMs) > 0 && (evMs - nowMs) < 4 * 3600 * 1000;
+      const rowCls = upcoming ? 'border-l-2 border-yellow-500' : '';
+      const surprise = (e.actual !== null && e.estimate !== null && Math.abs(e.estimate) > 0)
+        ? Math.abs(e.actual - e.estimate) / Math.abs(e.estimate) : 0;
+      const actualCls = e.actual === null ? '' :
+        (surprise > 0.10 ? (e.actual > e.estimate ? 'text-green-400 font-bold' : 'text-red-400 font-bold')
+                         : 'text-slate-200');
+      return `<tr class="border-b border-[#1a1d27] hover:bg-[#1a1d27] ${rowCls}">
+        <td class="py-1 px-2 font-mono text-slate-400">${fmtUtcTime(e.event_time)}</td>
+        <td class="py-1 px-2 text-slate-300">${escapeHtml(e.country)}</td>
+        <td class="py-1 px-2 text-slate-200">${escapeHtml(e.event_name)}${e.unit ? ' <span class="text-slate-600 text-xs">(' + escapeHtml(e.unit) + ')</span>' : ''}</td>
+        <td class="py-1 px-2">${impactBadge(e.impact)}</td>
+        <td class="py-1 px-2 text-right font-mono text-slate-400">${fmtNum(e.previous)}</td>
+        <td class="py-1 px-2 text-right font-mono text-slate-400">${fmtNum(e.estimate)}</td>
+        <td class="py-1 px-2 text-right font-mono ${actualCls}">${fmtNum(e.actual)}</td>
+      </tr>`;
+    }).join('');
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-red-400 py-4">Calendar load failed: ' + escapeHtml(e.message) + '</td></tr>';
+  }
+}
+
+async function loadNewsFeed() {
+  const list = document.getElementById('news-list');
+  if (!list) return;
+  try {
+    const resp = await fetch('/api/news/feed?limit=80');
+    const items = await resp.json();
+    document.getElementById('news-count').textContent = items.length + ' items';
+    if (!items.length) {
+      list.innerHTML = '<div class="text-center text-slate-600 text-xs py-4">No news yet. Set FINNHUB_API_KEY and refresh.</div>';
+      return;
+    }
+    list.innerHTML = items.map(n => {
+      const active = _activeNewsId === n.id ? 'bg-[#1e2130] border-accent' : 'bg-[#151720] border-slate-800 hover:bg-[#1e2130]';
+      return `<button type="button" onclick="showNewsDetail(${n.id})"
+        class="text-left px-2 py-1.5 rounded border ${active} text-xs transition-colors">
+        <div class="flex items-center gap-1.5 mb-0.5">
+          ${sourceBadge(n.source)}
+          <span class="text-slate-600 text-xs ml-auto" title="${escapeHtml(n.published_at)}">${fmtRelTime(n.published_at)}</span>
+        </div>
+        <div class="text-slate-200 leading-tight" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">
+          ${escapeHtml(n.headline)}
+        </div>
+      </button>`;
+    }).join('');
+  } catch (e) {
+    list.innerHTML = '<div class="text-center text-red-400 text-xs py-4">Feed load failed</div>';
+  }
+}
+
+async function showNewsDetail(id) {
+  _activeNewsId = id;
+  const detail = document.getElementById('news-detail');
+  if (!detail) return;
+  detail.innerHTML = '<div class="text-center text-slate-600 text-xs py-8">Loading...</div>';
+  try {
+    const resp = await fetch('/api/news/' + id);
+    if (!resp.ok) throw new Error('not found');
+    const n = await resp.json();
+    const tickers = (n.tickers || '').split(',').map(s => s.trim()).filter(Boolean);
+    detail.innerHTML = `
+      <div class="flex items-center gap-2 mb-3">
+        ${sourceBadge(n.source)}
+        <span class="text-slate-500 text-xs font-mono">${escapeHtml(fmtUtcTime(n.published_at))} UTC</span>
+        <span class="text-slate-600 text-xs">·</span>
+        <span class="text-slate-500 text-xs">${fmtRelTime(n.published_at)}</span>
+        ${n.url ? `<a href="${escapeHtml(n.url)}" target="_blank" rel="noopener"
+                  class="ml-auto text-accent text-xs hover:underline">Open original →</a>` : ''}
+      </div>
+      <h2 class="text-base font-bold text-slate-100 mb-2 leading-snug">${escapeHtml(n.headline)}</h2>
+      ${n.image_url ? `<img src="${escapeHtml(n.image_url)}" alt="" class="rounded mb-3 max-h-64 object-cover w-full"
+                       onerror="this.style.display='none'"/>` : ''}
+      ${n.summary ? `<p class="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">${escapeHtml(n.summary)}</p>` : ''}
+      ${tickers.length ? `<div class="mt-3 flex flex-wrap gap-1.5">
+        ${tickers.map(t => `<span class="px-1.5 py-0.5 rounded text-xs font-mono"
+          style="background:#1e293b;color:#94a3b8;">${escapeHtml(t)}</span>`).join('')}
+      </div>` : ''}
+    `;
+    // Refresh list to show active highlight
+    loadNewsFeed();
+  } catch (e) {
+    detail.innerHTML = '<div class="text-center text-red-400 text-xs py-8">Failed to load item</div>';
+  }
+}
+
+async function refreshNews() {
+  showToast('Refreshing news + calendar...', 'info');
+  try {
+    const resp = await fetch('/api/news/refresh', { method: 'POST' });
+    const r = await resp.json();
+    showToast(`+${r.news_added || 0} news, +${r.calendar_added || 0} events`, 'success');
+    loadCalendar(); loadNewsFeed();
+  } catch (e) {
+    showToast('Refresh failed', 'error');
+  }
+}
+
+function startNewsAutoRefresh() {
+  stopNewsAutoRefresh();
+  _newsRefreshTimer = setInterval(loadNewsFeed, 10000);
+}
+function stopNewsAutoRefresh() {
+  if (_newsRefreshTimer) { clearInterval(_newsRefreshTimer); _newsRefreshTimer = null; }
+}
+
+// ── Init ────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('bf-until').value = new Date().toISOString().slice(0, 10);
+  buildSignalCards();
+  showPanel('overview');
+  loadCurrentRegime();
+  loadTimeline();
+  loadAllSignalCharts();
+});
+</script>
+{% endblock %}

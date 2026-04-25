@@ -1,0 +1,21 @@
+<div class="label mb-2">Live Orderbook — {{ ticker }}</div>
+<div class="grid grid-cols-2 gap-4 text-xs font-mono">
+  <div>
+    <div class="text-green-500 font-bold mb-1">BIDS</div>
+    {% for price, qty in bids %}
+    <div class="flex justify-between">
+      <span class="pos-long">{{ fmt(price, 4) }}</span>
+      <span class="text-slate-400">{{ fmt(qty, 4) }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  <div>
+    <div class="text-red-500 font-bold mb-1">ASKS</div>
+    {% for price, qty in asks %}
+    <div class="flex justify-between">
+      <span class="pos-short">{{ fmt(price, 4) }}</span>
+      <span class="text-slate-400">{{ fmt(qty, 4) }}</span>
+    </div>
+    {% endfor %}
+  </div>
+</div>

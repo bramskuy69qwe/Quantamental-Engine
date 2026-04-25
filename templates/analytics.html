@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% set active_page = "analytics" %}
+{% block title %}Analytics — Quantamental Risk Engine v2.1{% endblock %}
+
+{% block content %}
+<div class="mb-4 flex items-center justify-between">
+  <h1 class="text-lg font-bold text-slate-200 tracking-tight">Portfolio Analytics</h1>
+
+  <!-- Month picker -->
+  <div class="flex items-center gap-2">
+    <button onclick="shiftMonth(-1)"
+            class="px-2 py-1 rounded bg-[#2a2d3a] text-slate-400 hover:text-white text-sm">&#8249;</button>
+    <span id="month-display" class="text-sm font-semibold text-slate-200 min-w-[80px] text-center">
+      {{ current_month }}
+    </span>
+    <button onclick="shiftMonth(1)"
+            class="px-2 py-1 rounded bg-[#2a2d3a] text-slate-400 hover:text-white text-sm">&#8250;</button>
+    <span class="text-slate-600 text-xs mx-1">|</span>
+    <button onclick="setMonthPreset(0)"  class="preset-btn text-xs" id="pb-cur">This Month</button>
+    <button onclick="setMonthPreset(-1)" class="preset-btn text-xs" id="pb-1">Last Month</button>
+    <button onclick="setMonthAll()"      class="preset-btn text-xs" id="pb-all">All Time</button>
+  </div>
+</div>
+
+<!-- Tab bar -->
+<div class="flex gap-1 mb-4 border-b border-[#2a2d3a] pb-0">
+  {% set tabs = [
+    ("overview",   "Overview"),
+    ("equity",     "Equity Curve"),
+    ("calendar",   "Calendar PnL"),
+    ("pairs",      "Traded Pairs"),
+    ("excursions", "MFE / MAE"),
+    ("rmultiples", "R-Multiples"),
+    ("risk",       "Risk Metrics"),
+    ("live",       "Funding"),
+    ("beta",       "Beta Exposure"),
+  ] %}
+  {% for tid, label in tabs %}
+  <button id="tab-{{ tid }}"
+          onclick="switchTab('{{ tid }}')"
+          class="tab-btn px-4 py-2 text-sm rounded-t border border-b-0 border-[#2a2d3a]
+                 text-slate-400 hover:text-white transition-colors
+                 {% if loop.first %}bg-[#1a1d27] text-white border-b-[#1a1d27]{% else %}bg-transparent{% endif %}">
+    {{ label }}
+  </button>
+  {% endfor %}
+</div>
+
+<!-- Tab content area -->
+<div id="analytics-content">
+  <div id="loading-spinner" class="text-slate-500 text-sm py-6 text-center">Loading...</div>
+</div>
+
+<style>
+  .tab-btn.active-tab { background: #1a1d27; color: #e2e8f0; border-color: #2a2d3a; border-bottom-color: #1a1d27; }
+  .tab-btn:not(.active-tab) { border-color: transparent; }
+</style>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────
+let _activeTab   = 'overview';
+let _activeMonth = '{{ current_month }}';  // "YYYY-MM"
+let _allTime     = false;
+
+// ── Month navigation ───────────────────────────────────────────────────────
+function shiftMonth(delta) {
+  _allTime = false;
+  const [y, m] = _activeMonth.split('-').map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  _activeMonth = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+  document.getElementById('month-display').textContent = _activeMonth;
+  _clearPresets();
+  loadTab(_activeTab);
+}
+
+function setMonthPreset(offsetMonths) {
+  _allTime = false;
+  const now  = new Date();
+  const d    = new Date(now.getFullYear(), now.getMonth() + offsetMonths, 1);
+  _activeMonth = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+  document.getElementById('month-display').textContent = _activeMonth;
+  _clearPresets();
+  const pid = offsetMonths === 0 ? 'pb-cur' : 'pb-1';
+  document.getElementById(pid)?.classList.add('active');
+  loadTab(_activeTab);
+}
+
+function setMonthAll() {
+  _allTime = true;
+  document.getElementById('month-display').textContent = 'All Time';
+  _clearPresets();
+  document.getElementById('pb-all')?.classList.add('active');
+  loadTab(_activeTab);
+}
+
+function _clearPresets() {
+  ['pb-cur','pb-1','pb-all'].forEach(id => document.getElementById(id)?.classList.remove('active'));
+}
+
+// ── Tab routing ────────────────────────────────────────────────────────────
+const TAB_ENDPOINTS = {
+  overview:   '/fragments/analytics/overview',
+  equity:     '/fragments/analytics/equity_curve',
+  calendar:   '/fragments/analytics/calendar',
+  pairs:      '/fragments/analytics/pairs',
+  excursions: '/fragments/analytics/excursions',
+  rmultiples: '/fragments/analytics/r_multiples',
+  risk:       '/fragments/analytics/var',
+  live:       '/fragments/analytics/funding',
+  beta:       '/fragments/analytics/beta',
+};
+
+function switchTab(tid) {
+  if (_activeTab === tid) return;
+  _activeTab = tid;
+  // Visual state
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active-tab'));
+  document.getElementById('tab-' + tid)?.classList.add('active-tab');
+  loadTab(tid);
+}
+
+function loadTab(tid) {
+  const ep  = TAB_ENDPOINTS[tid];
+  if (!ep) return;
+  const qs  = _allTime ? 'all=1' : 'month=' + encodeURIComponent(_activeMonth);
+  const url = ep + '?' + qs;
+  const el  = document.getElementById('analytics-content');
+  el.innerHTML = '<div class="text-slate-500 text-sm py-6 text-center">Loading...</div>';
+  htmx.ajax('GET', url, { target: '#analytics-content', swap: 'innerHTML' });
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', function() {
+  document.getElementById('tab-overview')?.classList.add('active-tab');
+  document.getElementById('pb-cur')?.classList.add('active');
+  loadTab('overview');
+});
+</script>
+{% endblock %}

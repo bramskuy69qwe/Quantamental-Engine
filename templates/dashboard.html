@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% set active_page = "dashboard" %}
+{% block title %}Dashboard — Risk Engine{% endblock %}
+
+{% block content %}
+<!-- Exchange info: 500ms refresh for smooth server time -->
+<div hx-get="/fragments/dashboard/exchange_info"
+     hx-trigger="load, every 500ms"
+     hx-swap="outerHTML">
+  <div class="panel p-3 mb-3 text-slate-500 text-sm text-center">Connecting...</div>
+</div>
+
+<!-- Account Clusters A+B (Total Equity row, BOD Equity row): 2s refresh -->
+<div id="dash-top"
+     hx-get="/fragments/dashboard/top"
+     hx-trigger="load, every 2s"
+     hx-swap="innerHTML"
+     hx-indicator="#dash-spinner">
+  <div class="text-slate-500 text-sm py-4 text-center">Loading...</div>
+</div>
+
+<!-- OHLC Equity Chart: above risk cluster, user switches TF via buttons -->
+<div hx-get="/fragments/dashboard/equity_ohlc?tf=1h"
+     hx-trigger="load"
+     hx-swap="outerHTML">
+  <div class="panel p-4 mb-3 text-slate-500 text-sm text-center py-8">Loading equity chart...</div>
+</div>
+
+<!-- Risk/Exposure + Warnings + Positions: 2s refresh -->
+<div id="dashboard-body"
+     hx-get="/fragments/dashboard"
+     hx-trigger="load, every 2s"
+     hx-swap="innerHTML"
+     hx-indicator="#dash-spinner">
+  <div class="text-slate-500 text-sm py-8 text-center">Loading dashboard...</div>
+</div>
+<div id="dash-spinner" class="htmx-indicator fixed top-4 right-4 text-accent text-xs">⟳ refreshing</div>
+
+<!-- Monthly Journal Stats (Vol & Activity, Trade Stats, Active Params): 30s refresh -->
+<div hx-get="/fragments/dashboard/journal_stats"
+     hx-trigger="load"
+     hx-swap="outerHTML">
+  <div class="text-slate-500 text-sm py-4 text-center">Loading monthly stats...</div>
+</div>
+{% endblock %}
