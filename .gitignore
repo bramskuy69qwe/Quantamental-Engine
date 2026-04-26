@@ -32,3 +32,8 @@ data/
 *.csv
 *.parquet
 *.log
+
+# --- Frontend ---
+node_modules/
+dist/
+.env.local
