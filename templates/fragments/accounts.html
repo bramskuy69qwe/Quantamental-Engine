@@ -6,6 +6,7 @@
       <th style="color:#64748b;text-transform:uppercase;font-size:.68rem;padding:6px 10px;border-bottom:1px solid #2a2d3a;text-align:left;">Name</th>
       <th style="color:#64748b;text-transform:uppercase;font-size:.68rem;padding:6px 10px;border-bottom:1px solid #2a2d3a;text-align:left;">Exchange</th>
       <th style="color:#64748b;text-transform:uppercase;font-size:.68rem;padding:6px 10px;border-bottom:1px solid #2a2d3a;text-align:left;">Type</th>
+      <th style="color:#64748b;text-transform:uppercase;font-size:.68rem;padding:6px 10px;border-bottom:1px solid #2a2d3a;text-align:left;">Broker Account ID</th>
       <th style="color:#64748b;text-transform:uppercase;font-size:.68rem;padding:6px 10px;border-bottom:1px solid #2a2d3a;text-align:left;">Status</th>
       <th style="color:#64748b;text-transform:uppercase;font-size:.68rem;padding:6px 10px;border-bottom:1px solid #2a2d3a;text-align:left;">Actions</th>
     </tr>
@@ -16,6 +17,22 @@
       <td style="padding:7px 10px;color:#e2e8f0;">{{ acct.name }}</td>
       <td style="padding:7px 10px;color:#94a3b8;">{{ acct.exchange | capitalize }}</td>
       <td style="padding:7px 10px;color:#94a3b8;">{{ "Futures" if acct.market_type == "future" else acct.market_type | capitalize }}</td>
+      <td style="padding:7px 10px;">
+        {# Inline edit: HTMX PUT on blur/enter #}
+        <input type="text"
+               value="{{ acct.broker_account_id or '' }}"
+               placeholder="e.g. binancefutures_1234"
+               style="background:#0f1117;border:1px solid #2a2d3a;color:#94a3b8;border-radius:4px;padding:2px 6px;font-size:.70rem;font-family:monospace;width:160px;"
+               hx-put="/accounts/{{ acct.id }}"
+               hx-trigger="change, keydown[key=='Enter']"
+               hx-include="[name='broker_account_id_{{ acct.id }}']"
+               hx-vals='{"broker_account_id": ""}'
+               hx-swap="none"
+               onkeydown="if(event.key==='Enter'){this.blur();}"
+               oninput="this.setAttribute('hx-vals', JSON.stringify({broker_account_id: this.value}))"
+               title="Quantower account ID for fill routing (e.g. value of account.Id in Quantower SDK)"
+        />
+      </td>
       <td style="padding:7px 10px;">
         {% if acct.id == active_account_id %}
         <span style="background:#14532d;color:#4ade80;padding:2px 8px;border-radius:99px;font-size:.70rem;">● Active</span>

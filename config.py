@@ -98,6 +98,8 @@ FRED_API_KEY = os.getenv("FRED_API_KEY", "")
 FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "")  # Free key from finnhub.io
 BWE_NEWS_WS_URL = os.getenv("BWE_NEWS_WS_URL", "wss://bwenews-api.bwe-ws.com/ws-subscriber")
 
+REGIME_STALE_MINUTES = 90   # current_regime older than this is treated as stale
+
 REGIME_MULTIPLIERS = {
     "risk_on_trending":   1.2,
     "risk_on_choppy":     1.0,

@@ -204,6 +204,11 @@
       <option value="standalone"  {% if active_platform == 'standalone'  %}selected{% endif %}>Standalone</option>
       <option value="quantower"   {% if active_platform == 'quantower'   %}selected{% endif %}>Quantower</option>
     </select>
+    <!-- Plugin connection badge (only shown in Quantower mode) -->
+    <span id="plugin-status" class="text-xs"
+          {% if active_platform != 'quantower' %}style="display:none"{% endif %}>
+      <span id="plugin-dot" style="color:#475569;">◌ Plugin</span>
+    </span>
 
     <!-- WS status — auto-polls every 1s for real-time latency -->
     <div id="ws-status-bar"
@@ -214,6 +219,14 @@
     </div>
   </div>
 </header>
+
+<!-- ── Standalone / disconnected banner ────────────────────────────────────── -->
+<div id="standalone-banner" style="display:none;background:#422006;border-bottom:1px solid #92400e;padding:6px 20px;font-size:.75rem;color:#fbbf24;display:flex;align-items:center;gap:8px;">
+  <svg xmlns="http://www.w3.org/2000/svg" style="width:14px;height:14px;flex-shrink:0;" viewBox="0 0 20 20" fill="currentColor">
+    <path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 6a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 6zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/>
+  </svg>
+  <span id="standalone-banner-msg">Standalone mode — P&amp;L and positions are estimated from Binance WS, not broker truth.</span>
+</div>
 
 <!-- ── Add Account Modal ───────────────────────────────────────────────────── -->
 <div id="add-account-modal"
@@ -289,6 +302,71 @@ document.body.addEventListener("account-added", function() {
 <footer class="text-center text-slate-600 text-xs py-3">
   Quantamental Risk Engine v2.1 &mdash; Binance USD-M Futures &mdash; UTC+7 &mdash; {{ now }}
 </footer>
+
+<script>
+// ── Plugin connection status polling ─────────────────────────────────────────
+(function() {
+  var _platformSelector = document.getElementById('platform-selector');
+  var _pluginStatus     = document.getElementById('plugin-status');
+  var _pluginDot        = document.getElementById('plugin-dot');
+  var _banner           = document.getElementById('standalone-banner');
+  var _bannerMsg        = document.getElementById('standalone-banner-msg');
+
+  function getPlatform() {
+    return _platformSelector ? _platformSelector.value : '{{ active_platform }}';
+  }
+
+  function updateUI(connected) {
+    var platform = getPlatform();
+    // Plugin badge
+    if (_pluginStatus) {
+      _pluginStatus.style.display = platform === 'quantower' ? '' : 'none';
+    }
+    if (_pluginDot) {
+      if (connected) {
+        _pluginDot.textContent = '● Plugin';
+        _pluginDot.style.color = '#4ade80';
+      } else {
+        _pluginDot.textContent = '◌ Plugin';
+        _pluginDot.style.color = '#475569';
+      }
+    }
+    // Standalone banner
+    if (_banner) {
+      var showBanner = platform === 'standalone' || (platform === 'quantower' && !connected);
+      _banner.style.display = showBanner ? 'flex' : 'none';
+      if (_bannerMsg) {
+        _bannerMsg.textContent = platform === 'standalone'
+          ? 'Standalone mode — P&L and positions are estimated from Binance WS, not broker truth.'
+          : 'Quantower plugin not connected — showing last-known positions. P&L may be stale.';
+      }
+    }
+  }
+
+  async function pollConnection() {
+    try {
+      var r = await fetch('/api/platform/connection');
+      if (r.ok) {
+        var d = await r.json();
+        updateUI(d.connected);
+      }
+    } catch (e) { /* engine may be starting */ }
+  }
+
+  // Initial paint, then poll every 5s
+  updateUI(false);
+  pollConnection();
+  setInterval(pollConnection, 5000);
+
+  // React immediately when user switches platform
+  if (_platformSelector) {
+    _platformSelector.addEventListener('change', function() {
+      updateUI(false);   // optimistic: show disconnected until next poll
+      setTimeout(pollConnection, 500);
+    });
+  }
+})();
+</script>
 
 </body>
 </html>

@@ -37,6 +37,14 @@
 {% endif %}
 
 <!-- ── Regime badge ──────────────────────────────────────────────────────────── -->
+{% if c.regime_stale %}
+<div class="flex items-center gap-2 mb-3 px-3 py-2 rounded bg-amber-950/40 border border-amber-700/40 text-amber-400 text-xs">
+  <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+    <path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 6a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 6zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/>
+  </svg>
+  Regime data is stale — multiplier not applied (using 1.0×)
+</div>
+{% endif %}
 <div class="flex items-center gap-3 mb-4 flex-wrap">
   <div class="label">Regime</div>
   {% set rl = c.regime_label %}
@@ -51,8 +59,10 @@
   {% else %}
     <span class="px-2 py-0.5 rounded text-xs font-bold bg-slate-700 text-slate-300">NEUTRAL</span>
   {% endif %}
-  <span class="text-slate-400 text-xs">×{{ fmt(c.regime_multiplier, 1) }} size</span>
-  {% if not c.apply_regime_multiplier %}
+  {% if not c.regime_stale %}
+    <span class="text-slate-400 text-xs">×{{ fmt(c.regime_multiplier, 1) }} size</span>
+  {% endif %}
+  {% if not c.apply_regime_multiplier and not c.regime_stale %}
     <span class="text-slate-500 text-xs">(multiplier overridden)</span>
   {% endif %}
 </div>
@@ -109,13 +119,17 @@
   <div class="grid grid-cols-2 gap-3">
     <div>
       <div class="label">_size (contracts)
-        {% if c.regime_multiplier != 1.0 and c.apply_regime_multiplier %}
+        {% if c.regime_multiplier != 1.0 and c.apply_regime_multiplier and not c.regime_stale %}
           <span class="text-slate-500 text-xs font-normal ml-1">×{{ fmt(c.regime_multiplier, 1) }} regime</span>
         {% endif %}
       </div>
       <div class="text-2xl font-bold {{ 'text-accent' if c.eligible else 'text-slate-500' }}">{{ fmt(c.size, 4) }}</div>
-      {% if c.regime_multiplier != 1.0 and c.apply_regime_multiplier %}
-        <div class="text-slate-500 text-xs mt-0.5">without regime: {{ fmt(c.size_raw, 4) }}</div>
+      {% if c.regime_multiplier != 1.0 and not c.regime_stale %}
+        {% if c.apply_regime_multiplier %}
+          <div class="text-slate-500 text-xs mt-0.5">without regime: {{ fmt(c.size_raw, 4) }}</div>
+        {% else %}
+          <div class="text-slate-500 text-xs mt-0.5">with regime (×{{ fmt(c.regime_multiplier, 1) }}): {{ fmt(c.size_raw * c.regime_multiplier, 4) }}</div>
+        {% endif %}
       {% endif %}
     </div>
     <div>

@@ -35,25 +35,6 @@ _backfill_lock = asyncio.Lock()
 _backfill_earliest_ms: Dict[int, Optional[int]] = {}
 
 
-def _debug_log(hypothesis_id: str, location: str, message: str, data: Dict[str, Any]) -> None:
-    # #region agent log
-    try:
-        payload = {
-            "sessionId": "3bf805",
-            "runId": "equity-jump-debug",
-            "hypothesisId": hypothesis_id,
-            "location": location,
-            "message": message,
-            "data": data,
-            "timestamp": int(_time.time() * 1000),
-        }
-        with open("debug-3bf805.log", "a", encoding="utf-8") as f:
-            f.write(json.dumps(payload, ensure_ascii=True) + "\n")
-    except Exception:
-        pass
-    # #endregion
-
-
 async def _maybe_backfill_equity(needed_start_ms: int, account_id: Optional[int] = None) -> None:
     """
     Backfill account_snapshots from Binance income history if the DB does not
@@ -114,19 +95,6 @@ async def _maybe_backfill_equity(needed_start_ms: int, account_id: Optional[int]
         if cashflow_records:
             cf_count = await db.insert_cashflow_events(cashflow_records, account_id=aid)
             log.info("Equity backfill: inserted %d cashflow events", cf_count)
-        _debug_log(
-            "H3",
-            "api/routes.py:_maybe_backfill_equity",
-            "Backfill write summary",
-            {
-                "needed_start_ms": int(needed_start_ms),
-                "real_earliest_ms": int(real_earliest_ms) if real_earliest_ms else None,
-                "end_for_backfill": int(end_for_backfill),
-                "records_count": len(records),
-                "cashflow_count": len(cashflow_records),
-                "cached_earliest_after": int(_backfill_earliest_ms[aid]) if _backfill_earliest_ms.get(aid) is not None else None,
-            },
-        )
 
 
 # ── Funding rate cache ────────────────────────────────────────────────────────
@@ -1400,9 +1368,13 @@ async def update_account(
     name: Optional[str] = Form(None),
     api_key: Optional[str] = Form(None),
     api_secret: Optional[str] = Form(None),
+    broker_account_id: Optional[str] = Form(None),
 ):
     from core.account_registry import account_registry
-    await account_registry.update_account(account_id, name=name, api_key=api_key, api_secret=api_secret)
+    await account_registry.update_account(
+        account_id, name=name, api_key=api_key, api_secret=api_secret,
+        broker_account_id=broker_account_id,
+    )
     return JSONResponse({"status": "ok"})
 
 
@@ -1625,6 +1597,16 @@ async def platform_state(request: Request):
     """JSON risk state snapshot for external consumers (Quantower plugin)."""
     from core.platform_bridge import platform_bridge
     return JSONResponse(platform_bridge.get_state_json())
+
+
+@router.get("/api/platform/connection", response_class=JSONResponse)
+async def platform_connection(request: Request):
+    """Live plugin connection status — polled by the UI banner."""
+    from core.platform_bridge import platform_bridge
+    return JSONResponse({
+        "connected":    platform_bridge.is_connected,
+        "client_count": platform_bridge.client_count,
+    })
 
 
 @router.post("/api/platform/event", response_class=JSONResponse)
@@ -2035,6 +2017,31 @@ async def api_regime_current():
         "multiplier": _cfg.REGIME_MULTIPLIERS.get(label["label"], 1.0),
         "source": "db",
     })
+
+
+@router.get("/api/regime/transitions", response_class=JSONResponse)
+async def api_regime_transitions():
+    """5×5 regime transition probability matrix from the full regime_labels history."""
+    from core.database import db
+    rows = await db.get_all_regime_labels()
+    REGIMES = [
+        "risk_on_trending", "risk_on_choppy", "neutral",
+        "risk_off_defensive", "risk_off_panic",
+    ]
+    counts: dict = {r: {r2: 0 for r2 in REGIMES} for r in REGIMES}
+    for i in range(1, len(rows)):
+        frm = rows[i - 1]["label"]
+        to  = rows[i]["label"]
+        if frm in counts and to in counts[frm]:
+            counts[frm][to] += 1
+    matrix: dict = {}
+    for frm in REGIMES:
+        total = sum(counts[frm].values())
+        matrix[frm] = {
+            to: round(counts[frm][to] / total * 100, 1) if total else 0.0
+            for to in REGIMES
+        }
+    return JSONResponse({"regimes": REGIMES, "matrix": matrix, "total_days": len(rows)})
 
 
 @router.post("/api/regime/backfill", response_class=JSONResponse)

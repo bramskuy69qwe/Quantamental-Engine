@@ -43,6 +43,13 @@ class RegimeState:
     mode:           str   = "macro_only"   # full / macro_only
     signals:        Dict[str, float] = field(default_factory=dict)
 
+    @property
+    def is_stale(self) -> bool:
+        if self.computed_at is None:
+            return True
+        age_min = (datetime.now(timezone.utc) - self.computed_at).total_seconds() / 60
+        return age_min > config.REGIME_STALE_MINUTES
+
 
 @dataclass
 class PositionInfo:

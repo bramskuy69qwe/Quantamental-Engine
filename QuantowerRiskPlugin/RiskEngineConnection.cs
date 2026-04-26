@@ -36,6 +36,9 @@ public sealed class RiskEngineConnection : IDisposable
     /// <summary>Fired when the engine pushes a risk_state payload.</summary>
     public event Action<JsonElement>? RiskStateReceived;
 
+    /// <summary>Fired when the engine sends a request_positions message (reconciliation on connect).</summary>
+    public event Action? PositionsRequested;
+
     public RiskEngineConnection(string engineUrl)
     {
         // Accept either ws:// or http:// — normalise both
@@ -129,10 +132,18 @@ public sealed class RiskEngineConnection : IDisposable
                 try
                 {
                     var doc = JsonDocument.Parse(sb.ToString());
-                    if (doc.RootElement.TryGetProperty("type", out var t) &&
-                        t.GetString() == "risk_state")
+                    if (doc.RootElement.TryGetProperty("type", out var t))
                     {
-                        RiskStateReceived?.Invoke(doc.RootElement.Clone());
+                        switch (t.GetString())
+                        {
+                            case "risk_state":
+                                RiskStateReceived?.Invoke(doc.RootElement.Clone());
+                                break;
+                            case "request_positions":
+                                // Engine is asking for a fresh position snapshot (reconciliation on connect)
+                                PositionsRequested?.Invoke();
+                                break;
+                        }
                     }
                 }
                 catch { /* ignore malformed JSON */ }

@@ -53,13 +53,14 @@ class AccountRegistry:
                 api_key    = decrypt(full.get("api_key_enc", ""))
                 api_secret = decrypt(full.get("api_secret_enc", ""))
                 self._cache[acct_id] = {
-                    "id":          acct_id,
-                    "name":        full["name"],
-                    "exchange":    full["exchange"],
-                    "market_type": full["market_type"],
-                    "api_key":     api_key,
-                    "api_secret":  api_secret,
-                    "is_active":   full.get("is_active", 0),
+                    "id":                acct_id,
+                    "name":              full["name"],
+                    "exchange":          full["exchange"],
+                    "market_type":       full["market_type"],
+                    "api_key":           api_key,
+                    "api_secret":        api_secret,
+                    "is_active":         full.get("is_active", 0),
+                    "broker_account_id": full.get("broker_account_id") or "",
                 }
             if active_id in self._cache:
                 self._active_id = active_id
@@ -117,22 +118,27 @@ class AccountRegistry:
         market_type: str,
         api_key: str,
         api_secret: str,
+        broker_account_id: str = "",
     ) -> int:
         from core.database import db
         from core.crypto import encrypt
 
         key_enc = encrypt(api_key)
         sec_enc = encrypt(api_secret)
-        new_id = await db.insert_account(name, exchange, market_type, key_enc, sec_enc)
+        new_id = await db.insert_account(
+            name, exchange, market_type, key_enc, sec_enc,
+            broker_account_id=broker_account_id,
+        )
         async with self._lock:
             self._cache[new_id] = {
-                "id":          new_id,
-                "name":        name,
-                "exchange":    exchange,
-                "market_type": market_type,
-                "api_key":     api_key,
-                "api_secret":  api_secret,
-                "is_active":   0,
+                "id":                new_id,
+                "name":              name,
+                "exchange":          exchange,
+                "market_type":       market_type,
+                "api_key":           api_key,
+                "api_secret":        api_secret,
+                "is_active":         0,
+                "broker_account_id": broker_account_id,
             }
         log.info("AccountRegistry: added account id=%d name=%r", new_id, name)
         return new_id
@@ -143,6 +149,7 @@ class AccountRegistry:
         name: Optional[str] = None,
         api_key: Optional[str] = None,
         api_secret: Optional[str] = None,
+        broker_account_id: Optional[str] = None,
     ) -> None:
         from core.database import db
         from core.crypto import encrypt
@@ -154,6 +161,8 @@ class AccountRegistry:
             kwargs["api_key_enc"] = encrypt(api_key)
         if api_secret is not None:
             kwargs["api_secret_enc"] = encrypt(api_secret)
+        if broker_account_id is not None:
+            kwargs["broker_account_id"] = broker_account_id
         if kwargs:
             await db.update_account(account_id, **kwargs)
 
@@ -165,6 +174,8 @@ class AccountRegistry:
                     self._cache[account_id]["api_key"] = api_key
                 if api_secret is not None:
                     self._cache[account_id]["api_secret"] = api_secret
+                if broker_account_id is not None:
+                    self._cache[account_id]["broker_account_id"] = broker_account_id
 
     async def delete_account(self, account_id: int) -> None:
         from core.database import db
@@ -177,11 +188,12 @@ class AccountRegistry:
         async with self._lock:
             return [
                 {
-                    "id":          v["id"],
-                    "name":        v["name"],
-                    "exchange":    v["exchange"],
-                    "market_type": v["market_type"],
-                    "is_active":   v["is_active"],
+                    "id":                v["id"],
+                    "name":              v["name"],
+                    "exchange":          v["exchange"],
+                    "market_type":       v["market_type"],
+                    "is_active":         v["is_active"],
+                    "broker_account_id": v.get("broker_account_id", ""),
                 }
                 for v in self._cache.values()
             ]
@@ -190,14 +202,28 @@ class AccountRegistry:
         """Synchronous version for _ctx() template helper."""
         return [
             {
-                "id":          v["id"],
-                "name":        v["name"],
-                "exchange":    v["exchange"],
-                "market_type": v["market_type"],
-                "is_active":   v["is_active"],
+                "id":                v["id"],
+                "name":              v["name"],
+                "exchange":          v["exchange"],
+                "market_type":       v["market_type"],
+                "is_active":         v["is_active"],
+                "broker_account_id": v.get("broker_account_id", ""),
             }
             for v in self._cache.values()
         ]
+
+    def find_by_broker_id(self, broker_id: str) -> Optional[Dict[str, Any]]:
+        """Find account by broker_account_id (used for Quantower fill routing)."""
+        if not broker_id:
+            return None
+        for v in self._cache.values():
+            if v.get("broker_account_id") == broker_id:
+                return {
+                    "id":      v["id"],
+                    "name":    v["name"],
+                    "exchange": v["exchange"],
+                }
+        return None
 
     async def test_connection(self, account_id: int) -> Dict[str, Any]:
         """Test API key by making a lightweight REST call. Returns latency or error."""

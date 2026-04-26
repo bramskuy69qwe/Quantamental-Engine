@@ -311,9 +311,14 @@ def run_risk_calculator(
     sizing = calculate_position_size(ticker, average, sl_price, total_equity, side)
 
     # Regime multiplier
-    regime       = app_state.current_regime
-    regime_label = regime.label      if regime else "neutral"
-    regime_mult  = regime.multiplier if regime else 1.0
+    regime        = app_state.current_regime
+    regime_stale  = regime.is_stale if regime else True
+    regime_label  = regime.label      if regime else "neutral"
+    # Stale regime → fall back to 1.0 (safer than applying a stale label)
+    if regime and not regime_stale:
+        regime_mult = regime.multiplier
+    else:
+        regime_mult = 1.0
     if not apply_regime_multiplier:
         regime_mult = 1.0
 
@@ -383,6 +388,7 @@ def run_risk_calculator(
         "regime_label":              regime_label,
         "regime_multiplier":         regime_mult,
         "apply_regime_multiplier":   apply_regime_multiplier,
+        "regime_stale":              regime_stale,
         "size_raw":                  size_raw,       # contracts, without regime multiplier
         # Sizing chain
         "base_size":           base_size,           # USDT notional, pre-slippage

@@ -1521,12 +1521,14 @@ class DatabaseManager:
         market_type: str,
         api_key_enc: str,
         api_secret_enc: str,
+        broker_account_id: str = "",
     ) -> int:
         """Insert new account, return new id."""
         async with self._conn.execute(
-            "INSERT INTO accounts (name, exchange, market_type, api_key_enc, api_secret_enc, is_active)"
-            " VALUES (?, ?, ?, ?, ?, 0)",
-            (name, exchange, market_type, api_key_enc, api_secret_enc),
+            "INSERT INTO accounts"
+            " (name, exchange, market_type, api_key_enc, api_secret_enc, is_active, broker_account_id)"
+            " VALUES (?, ?, ?, ?, ?, 0, ?)",
+            (name, exchange, market_type, api_key_enc, api_secret_enc, broker_account_id),
         ) as cur:
             new_id = cur.lastrowid
         await self._conn.commit()
@@ -1534,7 +1536,11 @@ class DatabaseManager:
 
     async def update_account(self, account_id: int, **kwargs) -> None:
         """Update arbitrary columns on accounts row."""
-        allowed = {"name", "exchange", "market_type", "api_key_enc", "api_secret_enc", "is_active"}
+        allowed = {
+            "name", "exchange", "market_type",
+            "api_key_enc", "api_secret_enc", "is_active",
+            "broker_account_id",
+        }
         cols = {k: v for k, v in kwargs.items() if k in allowed}
         if not cols:
             return
@@ -1903,6 +1909,14 @@ class DatabaseManager:
         """Return the N most recent regime labels, sorted date DESC."""
         async with self._conn.execute(
             "SELECT date, label FROM regime_labels ORDER BY date DESC LIMIT ?", (n,)
+        ) as cur:
+            rows = await cur.fetchall()
+        return [{"date": r[0], "label": r[1]} for r in rows]
+
+    async def get_all_regime_labels(self) -> List[Dict[str, Any]]:
+        """Return all regime labels sorted date ASC — used for transition matrix."""
+        async with self._conn.execute(
+            "SELECT date, label FROM regime_labels ORDER BY date ASC"
         ) as cur:
             rows = await cur.fetchall()
         return [{"date": r[0], "label": r[1]} for r in rows]

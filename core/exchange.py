@@ -7,7 +7,6 @@ from __future__ import annotations
 import logging
 import time
 import asyncio
-import json
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional
 from datetime import datetime, timezone, timedelta
@@ -18,24 +17,6 @@ from core.state import app_state, PositionInfo, TZ_LOCAL
 
 log = logging.getLogger("exchange")
 
-
-def _debug_log(hypothesis_id: str, location: str, message: str, data: Dict) -> None:
-    # #region agent log
-    try:
-        payload = {
-            "sessionId": "3bf805",
-            "runId": "equity-jump-debug",
-            "hypothesisId": hypothesis_id,
-            "location": location,
-            "message": message,
-            "data": data,
-            "timestamp": int(time.time() * 1000),
-        }
-        with open("debug-3bf805.log", "a", encoding="utf-8") as f:
-            f.write(json.dumps(payload, ensure_ascii=True) + "\n")
-    except Exception:
-        pass
-    # #endregion
 
 # Dedicated thread pool for all blocking CCXT REST calls.
 # Keeps REST I/O isolated from the default executor used by the event loop,
@@ -904,31 +885,6 @@ async def build_equity_backfill(
         key=lambda e: abs(float(e["income"])),
         reverse=True,
     )[:5]
-    _debug_log(
-        "H1",
-        "core/exchange.py:build_equity_backfill",
-        "Backfill reconstruction summary",
-        {
-            "start_ms": int(start_ms),
-            "end_ms": int(end_ms),
-            "current_equity": float(current_equity),
-            "events_count": len(events_sorted),
-            "type_counts": type_counts,
-            "transfer_abs_sum": round(transfer_abs_sum, 4),
-            "records_count": len(records),
-            "filled_count": len(filled),
-            "cashflow_records_count": len(cashflow_records),
-            "max_step": round(max_step, 4),
-            "max_step_ts": max_step_ts,
-            "alt_max_step_realized_only": alt_max_step_realized_only,
-            "alt_max_step_realized_plus_funding": alt_max_step_realized_plus_funding,
-            "alt_max_step_post_event_realized_plus_funding": alt_max_step_post_event_realized_plus_funding,
-            "alt_summary_with_commission": alt_summary_with_commission,
-            "alt_summary_no_commission": alt_summary_no_commission,
-            "top_non_transfer_events": top_non_transfer_events,
-        },
-    )
-
     return filled, cashflow_records
 
 

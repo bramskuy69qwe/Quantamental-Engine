@@ -54,6 +54,9 @@ public class RiskEnginePlugin : Plugin
                 Log("RISK ALERT: Drawdown limit reached!", LoggingLevel.Error);
         };
 
+        // Engine requests positions on WS connect for reconciliation
+        _conn.PositionsRequested += SendPositionSnapshot;
+
         // Subscribe to account events
         Core.Instance.Accounts.AddedItem    += OnAccountAdded;
         Core.Instance.Accounts.RemovedItem  += OnAccountRemoved;
@@ -134,6 +137,14 @@ public class RiskEnginePlugin : Plugin
 
     private void OnPositionChanged(Position position)
     {
+        try { SendPositionSnapshot(); }
+        catch (Exception ex) { Log($"OnPositionChanged error: {ex.Message}", LoggingLevel.Error); }
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private void SendPositionSnapshot()
+    {
         if (_conn is null || _activeAccount is null) return;
         try
         {
@@ -143,11 +154,9 @@ public class RiskEnginePlugin : Plugin
         }
         catch (Exception ex)
         {
-            Log($"OnPositionChanged error: {ex.Message}", LoggingLevel.Error);
+            Log($"SendPositionSnapshot error: {ex.Message}", LoggingLevel.Error);
         }
     }
-
-    // ── Helpers ───────────────────────────────────────────────────────────────
 
     private void Log(string message, LoggingLevel level = LoggingLevel.Trading)
         => Core.Instance.Loggers.Log(message, level);

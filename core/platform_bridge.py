@@ -68,7 +68,7 @@ def _map_position_snapshot(msg: dict) -> Optional[Dict[str, Any]]:
                 "ticker":       _normalize_symbol(p.get("symbol", p.get("ticker", ""))),
                 "direction":    "LONG" if qty >= 0 else "SHORT",
                 "quantity":     abs(qty),
-                "avg_price":    float(p.get("avgPrice", p.get("avg_price", p.get("open_price", 0)))),
+                "avg_price":    float(p.get("avgPrice", p.get("avg_price", p.get("openPrice", 0)))),
                 "unrealized":   float(p.get("unrealizedPnL", p.get("unrealized_pnl", 0))),
             })
         return {"positions": mapped, "account_id": msg.get("accountId")}
@@ -84,13 +84,30 @@ class PlatformBridge:
         self._ws_clients: Set[Any] = set()   # FastAPI WebSocket objects
         self._last_push: float = 0.0
 
+    @property
+    def is_connected(self) -> bool:
+        return len(self._ws_clients) > 0
+
+    @property
+    def client_count(self) -> int:
+        return len(self._ws_clients)
+
     # ── WebSocket server (Quantower plugin connects here) ─────────────────────
 
     async def handle_ws(self, websocket) -> None:
         """FastAPI WebSocket handler — call from /ws/platform endpoint."""
         await websocket.accept()
         self._ws_clients.add(websocket)
-        log.info("PlatformBridge: Quantower plugin connected (total=%d)", len(self._ws_clients))
+        log.info("PlatformBridge: plugin connected (total=%d)", len(self._ws_clients))
+
+        # On first connection: request a position snapshot for immediate reconciliation
+        try:
+            await websocket.send_text(json.dumps({"type": "request_positions"}))
+        except Exception:
+            pass
+
+        # Push the current risk state so the plugin has fresh data immediately
+        await self.push_risk_state()
 
         try:
             async for raw in websocket.iter_text():
@@ -103,7 +120,14 @@ class PlatformBridge:
             pass
         finally:
             self._ws_clients.discard(websocket)
-            log.info("PlatformBridge: plugin disconnected (remaining=%d)", len(self._ws_clients))
+            remaining = len(self._ws_clients)
+            if remaining == 0:
+                log.info(
+                    "PlatformBridge: last plugin client disconnected — "
+                    "engine now in standalone monitoring mode"
+                )
+            else:
+                log.info("PlatformBridge: plugin disconnected (remaining=%d)", remaining)
 
     # ── Message dispatch ──────────────────────────────────────────────────────
 
@@ -125,22 +149,36 @@ class PlatformBridge:
         if fill is None:
             return
 
-        # Guard: ignore fills from accounts other than the active one
         from core.state import app_state
-        raw_acct = fill.get("account_id")
-        if raw_acct is not None:
-            try:
-                if int(raw_acct) != app_state.active_account_id:
-                    log.debug("PlatformBridge: ignoring fill from non-active account %r", raw_acct)
+        from core.account_registry import account_registry
+
+        # Route Quantower fill to internal account via broker_account_id
+        qt_account_id = fill.get("account_id")
+        if qt_account_id is not None:
+            matched = account_registry.find_by_broker_id(str(qt_account_id))
+            if matched:
+                if matched["id"] != app_state.active_account_id:
+                    log.debug(
+                        "PlatformBridge: fill from non-active account "
+                        "broker_id=%r (matched id=%d, active=%d) — ignoring",
+                        qt_account_id, matched["id"], app_state.active_account_id,
+                    )
                     return
-            except (TypeError, ValueError):
-                # Empty string or non-numeric account_id means the platform sent an
-                # unknown/null account — reject rather than silently accept.
-                log.warning(
-                    "PlatformBridge: fill rejected — invalid account_id %r (expected int)",
-                    raw_acct,
+            else:
+                # No broker_account_id configured — accept only in single-account setups
+                all_accounts = account_registry.list_accounts_sync()
+                if len(all_accounts) > 1:
+                    log.warning(
+                        "PlatformBridge: fill rejected — broker_account_id %r did not match "
+                        "any account. Set broker_account_id on the target account.",
+                        qt_account_id,
+                    )
+                    return
+                log.debug(
+                    "PlatformBridge: broker_account_id %r not configured — "
+                    "accepting fill in single-account setup",
+                    qt_account_id,
                 )
-                return
 
         log.info(
             "PlatformBridge: fill received ticker=%s dir=%s qty=%s price=%s",
@@ -155,16 +193,43 @@ class PlatformBridge:
             log.error("PlatformBridge: position refresh after fill failed: %r", exc)
 
     async def _handle_position_snapshot(self, msg: dict) -> None:
-        """Quantower pushes its full position list — use for reconciliation."""
+        """Quantower pushes its full position list — reconcile against engine state.
+
+        Broker truth always wins. This overwrites app_state.positions with the
+        authoritative snapshot so P&L / exposure calculations reflect reality.
+        """
         snap = _map_position_snapshot(msg)
         if snap is None:
             return
+
+        from core.state import app_state, PositionInfo
+        import config as _cfg
+
+        new_positions = []
+        for p in snap["positions"]:
+            ticker    = p["ticker"]
+            direction = p["direction"]
+            qty       = p["quantity"]
+            avg       = p["avg_price"]
+            unreal    = p["unrealized"]
+            notional  = avg * qty
+
+            pi = PositionInfo(
+                ticker               = ticker,
+                direction            = direction,
+                contract_amount      = qty,
+                average              = avg,
+                individual_unrealized = unreal,
+                position_value_usdt  = notional,
+                sector               = _cfg.get_sector(ticker),
+            )
+            new_positions.append(pi)
+
+        app_state.positions = new_positions
         log.info(
-            "PlatformBridge: position snapshot received %d positions",
-            len(snap.get("positions", [])),
+            "PlatformBridge: reconciled %d position(s) from broker snapshot",
+            len(new_positions),
         )
-        # Future: reconcile snap["positions"] against app_state.positions
-        # For now we rely on _refresh_positions_after_fill for live updates
 
     # ── Push risk state to plugin ─────────────────────────────────────────────
 

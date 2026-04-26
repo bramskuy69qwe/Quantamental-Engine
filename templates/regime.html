@@ -45,8 +45,11 @@
       <div class="label mb-2">Current Regime</div>
       <div id="regime-badge" class="px-5 py-2 rounded-lg text-sm font-bold tracking-wide"
            style="background:#1e293b;color:#94a3b8;">Loading...</div>
-      <div id="regime-date" class="text-xs text-slate-600 mt-1.5"></div>
-      <div id="regime-mode" class="text-xs text-slate-600"></div>
+      <div id="regime-date"       class="text-xs text-slate-600 mt-1.5"></div>
+      <div id="regime-mode"       class="text-xs text-slate-600"></div>
+      <div id="regime-confidence" class="text-xs mt-1"></div>
+      <div id="regime-age"        class="text-xs text-slate-600 mt-0.5"></div>
+      <div id="regime-source"     class="text-xs text-slate-700 mt-0.5"></div>
     </div>
 
     <!-- Distribution (spans 2 cols) -->
@@ -116,6 +119,14 @@
         </tbody>
       </table>
     </div>
+  </div>
+
+  <!-- Row 5: Transition matrix -->
+  <div class="panel p-4 mt-4">
+    <div class="label mb-3">Regime Transition Matrix
+      <span class="text-slate-600 font-normal text-xs ml-1">— row = from, col = to, values = % probability</span>
+    </div>
+    <div id="regime-transitions" class="overflow-x-auto text-xs text-slate-400">Loading…</div>
   </div>
 </div>
 
@@ -335,7 +346,7 @@ function showPanel(name) {
 
   if (name === 'backfill') loadCoverage();
   if (name === 'config') loadThresholds();
-  if (name === 'overview') { loadAllSignalCharts(); loadTimeline(); }
+  if (name === 'overview') { loadAllSignalCharts(); loadTimeline(); loadTransitions(); }
   if (name === 'news') { loadCalendar(); loadNewsFeed(); startNewsAutoRefresh(); }
   else { stopNewsAutoRefresh(); }
 }
@@ -508,25 +519,90 @@ async function loadCurrentRegime() {
   try {
     const resp = await fetch('/api/regime/current');
     const data = await resp.json();
-    const badge = document.getElementById('regime-badge');
-    const dateEl = document.getElementById('regime-date');
-    const modeEl = document.getElementById('regime-mode');
+    const badge   = document.getElementById('regime-badge');
+    const dateEl  = document.getElementById('regime-date');
+    const modeEl  = document.getElementById('regime-mode');
+    const confEl  = document.getElementById('regime-confidence');
+    const ageEl   = document.getElementById('regime-age');
+    const srcEl   = document.getElementById('regime-source');
 
     if (data.label) {
       const rc = REGIME_COLORS[data.label] || REGIME_COLORS.neutral;
       badge.textContent = rc.label;
       badge.style.background = rc.bg;
       badge.style.color = rc.text;
-      dateEl.textContent = 'As of ' + data.date;
-      modeEl.textContent = data.mode + ' mode';
+      dateEl.textContent = data.date ? 'As of ' + data.date : '';
+      modeEl.textContent = data.mode ? data.mode + ' mode' : '';
+
+      // Confidence + stability
+      if (confEl) {
+        const confColors = {high:'#34d399', medium:'#fbbf24', low:'#64748b'};
+        const conf = data.confidence || 'low';
+        const stab = data.stability_bars || 0;
+        confEl.innerHTML = `<span style="color:${confColors[conf] || '#64748b'}">${conf} confidence</span>` +
+                           (stab > 0 ? ` · ${stab}d stable` : '');
+      }
+      // Computed-at age
+      if (ageEl && data.computed_at) {
+        const ago = Math.round((Date.now() - new Date(data.computed_at).getTime()) / 60000);
+        ageEl.textContent = ago < 2 ? 'Updated just now' : `Updated ${ago} min ago`;
+      } else if (ageEl) { ageEl.textContent = ''; }
+      // Source badge
+      if (srcEl) {
+        srcEl.textContent = data.source === 'live' ? 'live' : 'from DB';
+        srcEl.style.color = data.source === 'live' ? '#22d3ee' : '#475569';
+      }
     } else {
       badge.textContent = 'No Data';
       badge.style.background = '#1e293b';
       badge.style.color = '#64748b';
       dateEl.textContent = 'Run a backfill first';
       modeEl.textContent = '';
+      if (confEl) confEl.textContent = '';
+      if (ageEl)  ageEl.textContent  = '';
+      if (srcEl)  srcEl.textContent  = '';
     }
   } catch (e) { console.error('Failed to load current regime:', e); }
+}
+
+async function loadTransitions() {
+  const el = document.getElementById('regime-transitions');
+  if (!el) return;
+  try {
+    const resp = await fetch('/api/regime/transitions');
+    if (!resp.ok) { el.textContent = 'No data'; return; }
+    const data = await resp.json();
+    if (!data.total_days) { el.textContent = 'No regime labels yet — run a backfill first.'; return; }
+    const LABELS = {
+      risk_on_trending:   'Trending',
+      risk_on_choppy:     'Choppy',
+      neutral:            'Neutral',
+      risk_off_defensive: 'Defensive',
+      risk_off_panic:     'Panic',
+    };
+    const regs = data.regimes;
+    let html = `<table class="w-full border-collapse text-center" style="min-width:360px">`;
+    html += `<thead><tr><th class="text-slate-600 text-left pr-2 py-1">From \\ To</th>`;
+    regs.forEach(r => { html += `<th class="py-1 px-1 text-slate-400">${LABELS[r] || r}</th>`; });
+    html += `</tr></thead><tbody>`;
+    regs.forEach(frm => {
+      html += `<tr><td class="text-left text-slate-400 pr-2 py-1 font-medium">${LABELS[frm] || frm}</td>`;
+      regs.forEach(to => {
+        const pct = data.matrix[frm]?.[to] ?? 0;
+        const isDiag = frm === to;
+        const alpha = Math.min(pct / 80, 1);  // max opacity at 80%
+        const bg = isDiag
+          ? `rgba(71,85,105,${alpha.toFixed(2)})`   // slate for self-transitions
+          : `rgba(34,211,238,${alpha.toFixed(2)})`;  // cyan for regime changes
+        const color = pct > 30 ? '#f1f5f9' : '#64748b';
+        html += `<td class="py-1 px-1 rounded" style="background:${bg};color:${color}">${pct > 0 ? pct + '%' : '—'}</td>`;
+      });
+      html += `</tr>`;
+    });
+    html += `</tbody></table>`;
+    html += `<div class="text-slate-600 mt-2">${data.total_days} days of history</div>`;
+    el.innerHTML = html;
+  } catch (e) { if (el) el.textContent = 'Failed to load.'; console.error(e); }
 }
 
 // ── Timeline ────────────────────────────────────────────────────────────
@@ -933,6 +1009,7 @@ document.addEventListener('DOMContentLoaded', () => {
   loadCurrentRegime();
   loadTimeline();
   loadAllSignalCharts();
+  loadTransitions();
 });
 </script>
 {% endblock %}
