@@ -9,26 +9,6 @@ const REGIMES = {
   risk_off_panic:     {label:'RISK OFF PANIC',    color:QEC.red,    bg:'#250808', mult:0.4},
 };
 
-const MOCK_RESULT = {
-  ticker:'BTCUSDT', side:'SHORT', orderType:'MARKET', avgEntry:'77,521.9500',
-  riskUsdt:'0.82', baseSize:'133.30', estFill:'77,521.9000', depth:'1,254,771.90',
-  bestBid:'77,521.9000', bestAsk:'77,522.0000',
-  size:'0.0017', notional:'133.30', tpProfit:'0.21', slLoss:'0.82',
-  slippage:'0.0000%', slippageUsdt:'0.00', netProfit:'0.08',
-  netLoss:'0.96', rr:'0.08', exposure:'1.62k', fee:'0.100%',
-  sector:'New sector (BTCUSDT): +133.30 USDT',
-  eligible: false,
-};
-
-const BIDS = [
-  ['77,521.9000','6.0460'], ['77,521.8000','0.8110'],
-  ['77,521.7000','0.8830'], ['77,521.6000','0.8010'], ['77,521.5000','0.8070'],
-];
-const ASKS = [
-  ['77,522.0000','5.3080'], ['77,522.1000','0.8090'],
-  ['77,522.0000','0.8010'], ['77,522.6000','0.8040'], ['77,522.6000','0.8630'],
-];
-
 const HISTORY = [
   {ts:'19:14', ticker:'BTCUSDT', side:'SHORT', entry:'77,638.55', tp:'77,400.00', sl:'78,000.00', regime:'RISK OFF DEFENSIVE', mult:0.7},
   {ts:'10:58', ticker:'BTCUSDT', side:'SHORT', entry:'77,621.05', tp:'77,400.00', sl:'78,000.00', regime:'NEUTRAL',            mult:1.0},
@@ -41,6 +21,7 @@ export const CalculatorPage = () => {
   const [applyMult, setApplyMult]   = React.useState(true);
   const [sizeUnit, setSizeUnit]     = React.useState('notional');
   const [result, setResult]         = React.useState(null);
+  const [loading, setLoading]       = React.useState(false);
   const [autoRefresh, setAutoRefresh] = React.useState(false);
   const [ticker, setTicker]         = React.useState('BTCUSDT');
   const [entry, setEntry]           = React.useState('77521.95');
@@ -58,6 +39,72 @@ export const CalculatorPage = () => {
   const tpPct  = entryF > 0 && tpF > 0 ? Math.abs((tpF - entryF)/entryF*100).toFixed(2)+'%' : '—';
   const slPct  = entryF > 0 && slF > 0 ? Math.abs((slF - entryF)/entryF*100).toFixed(2)+'%' : '—';
 
+  const fmt = (n, d=2) => n == null ? '—' :
+    Number(n).toLocaleString(undefined, {minimumFractionDigits:d, maximumFractionDigits:d});
+  const fmtExp = (v) => {
+    if (v == null) return '—';
+    const pct = v * 100;
+    return pct >= 1000 ? (pct/1000).toFixed(2)+'k%' : pct.toFixed(2)+'%';
+  };
+  const mapResult = (d) => ({
+    ticker:       d.ticker,
+    side:         d.side?.toUpperCase(),
+    orderType:    d.order_type?.toUpperCase(),
+    avgEntry:     fmt(d.average, 4),
+    riskUsdt:     fmt(d.risk_usdt),
+    baseSize:     fmt(d.base_size),
+    estFill:      fmt(d.est_fill_price, 4),
+    depth:        fmt(d.one_percent_depth),
+    bestBid:      fmt(d.best_bid, 4),
+    bestAsk:      fmt(d.best_ask, 4),
+    size:         fmt(d.size, 4),
+    notional:     fmt(d.notional),
+    tpProfit:     fmt(d.tp_usdt),
+    slLoss:       fmt(d.sl_usdt),
+    slippage:     (d.est_slippage * 100).toFixed(4) + '%',
+    slippageUsdt: fmt(d.est_slippage_usdt),
+    netProfit:    fmt(d.est_profit),
+    netLoss:      fmt(d.est_loss),
+    rr:           fmt(d.est_r, 3),
+    exposure:     fmtExp(d.est_exposure),
+    fee:          d.fee_rate != null ? (d.fee_rate * 100).toFixed(3) + '%' : '—',
+    sector:       d.new_sector_exposure != null
+                    ? `${d.ticker} sector: ${fmt(d.new_sector_exposure)} USDT`
+                    : '—',
+    eligible:     d.eligible,
+    atrC:         d.atr_c,
+    atrCategory:  d.atr_category,
+    atr14:        d.atr14 != null ? fmt(d.atr14, 4) : '—',
+    atr100:       d.atr100 != null ? fmt(d.atr100, 4) : '—',
+    bids:         (d.bids || []).map(([p,s]) => [fmt(p,4), fmt(s,4)]),
+    asks:         (d.asks || []).map(([p,s]) => [fmt(p,4), fmt(s,4)]),
+  });
+
+  const handleCalculate = async () => {
+    setLoading(true);
+    try {
+      const fd = new FormData();
+      fd.append('ticker', ticker);
+      fd.append('average', entry);
+      fd.append('sl_price', sl);
+      fd.append('tp_price', tp);
+      fd.append('tp_amount_pct', tpAmt);
+      fd.append('sl_amount_pct', slAmt);
+      fd.append('model_name', modelName);
+      fd.append('model_desc', modelDesc);
+      fd.append('order_type', orderType);
+      fd.append('apply_regime_multiplier', applyMult ? '1' : '0');
+      const res = await fetch('/api/calculate', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      setResult(mapResult(data));
+    } catch (err) {
+      console.error('Calculate failed:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const inpRow = {display:'grid',gridTemplateColumns:'1fr 1fr',gap:'6px'};
 
   const OTypeBtn = ({id,label}) => (
@@ -67,6 +114,8 @@ export const CalculatorPage = () => {
   const TFBtn = ({id,label}) => (
     <Btn variant={tpslMode===id?'primary':'secondary'} size="sm" onClick={() => setTpslMode(id)}>{label}</Btn>
   );
+
+  const EMPTY_OB = [['—','—'],['—','—'],['—','—'],['—','—'],['—','—']];
 
   return (
     <div style={{display:'grid',gridTemplateColumns:'minmax(0,1fr) minmax(0,1fr)',gap:'6px',padding:'8px',alignItems:'start'}}>
@@ -171,7 +220,9 @@ export const CalculatorPage = () => {
             <Inp label="Model Description"     value={modelDesc} onChange={e=>setModelDesc(e.target.value)} placeholder="optional notes"/>
           </div>
           <div style={{display:'flex',gap:'6px',alignItems:'center',marginTop:'8px'}}>
-            <Btn variant="primary" size="md" onClick={() => setResult(MOCK_RESULT)}>Calculate</Btn>
+            <Btn variant="primary" size="md" onClick={handleCalculate} disabled={loading}>
+              {loading ? 'Calculating…' : 'Calculate'}
+            </Btn>
             <Btn variant="secondary" size="md" onClick={() => {setResult(null);setTicker('');setEntry('');setTp('');setSl('');}}>Clear</Btn>
             <span style={{fontSize:'0.65rem',color:QEC.sub,marginLeft:'4px'}}>Risk/trade: <strong style={{color:QEC.text}}>1.00%</strong></span>
           </div>
@@ -243,9 +294,9 @@ export const CalculatorPage = () => {
             <SecLabel style={{marginBottom:0}}>Volatility (ATR_C)</SecLabel>
             {result && (
               <>
-                <Mono size="0.88rem">1.000</Mono>
-                <Badge color={QEC.amber} bg="#251500">NOT VOLATILE</Badge>
-                <span style={{fontSize:'0.62rem',color:QEC.sub,fontFamily:'monospace'}}>ATR(100,4h): 933.3025 / ATR(14,4h): 002.2216</span>
+                <Mono size="0.88rem">{result.atrC ?? '—'}</Mono>
+                <Badge color={QEC.amber} bg="#251500">{result.atrCategory ?? 'UNKNOWN'}</Badge>
+                <span style={{fontSize:'0.62rem',color:QEC.sub,fontFamily:'monospace'}}>ATR(100,4h): {result.atr100} / ATR(14,4h): {result.atr14}</span>
               </>
             )}
           </div>
@@ -323,19 +374,19 @@ export const CalculatorPage = () => {
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px'}}>
             <div>
               <div style={{fontSize:'0.65rem',fontWeight:700,color:QEC.green,marginBottom:'4px'}}>BIDS</div>
-              {(result ? BIDS : [['—','—'],['—','—'],['—','—'],['—','—'],['—','—']]).map(([p,s],i) => (
+              {(result?.bids?.length ? result.bids : EMPTY_OB).map(([p,s],i) => (
                 <div key={i} style={{display:'flex',justifyContent:'space-between',fontFamily:'JetBrains Mono,monospace',fontSize:'0.68rem',marginBottom:'2px'}}>
-                  <span style={{color:result?QEC.green:QEC.muted}}>{p}</span>
-                  <span style={{color:result?QEC.sub:QEC.muted}}>{s}</span>
+                  <span style={{color:result?.bids?.length?QEC.green:QEC.muted}}>{p}</span>
+                  <span style={{color:result?.bids?.length?QEC.sub:QEC.muted}}>{s}</span>
                 </div>
               ))}
             </div>
             <div>
               <div style={{fontSize:'0.65rem',fontWeight:700,color:QEC.red,marginBottom:'4px'}}>ASKS</div>
-              {(result ? ASKS : [['—','—'],['—','—'],['—','—'],['—','—'],['—','—']]).map(([p,s],i) => (
+              {(result?.asks?.length ? result.asks : EMPTY_OB).map(([p,s],i) => (
                 <div key={i} style={{display:'flex',justifyContent:'space-between',fontFamily:'JetBrains Mono,monospace',fontSize:'0.68rem',marginBottom:'2px'}}>
-                  <span style={{color:result?QEC.red:QEC.muted}}>{p}</span>
-                  <span style={{color:result?QEC.sub:QEC.muted}}>{s}</span>
+                  <span style={{color:result?.asks?.length?QEC.red:QEC.muted}}>{p}</span>
+                  <span style={{color:result?.asks?.length?QEC.sub:QEC.muted}}>{s}</span>
                 </div>
               ))}
             </div>

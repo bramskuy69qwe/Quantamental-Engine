@@ -443,6 +443,51 @@ async def calculate_risk(
     )
 
 
+@router.post("/api/calculate", response_class=JSONResponse)
+async def api_calculate(
+    request:                 Request,
+    ticker:                  str   = Form(...),
+    average:                 float = Form(...),
+    sl_price:                float = Form(...),
+    tp_price:                float = Form(0.0),
+    tp_amount_pct:           float = Form(100.0),
+    sl_amount_pct:           float = Form(100.0),
+    model_name:              str   = Form(""),
+    model_desc:              str   = Form(""),
+    order_type:              str   = Form("market"),
+    auto_refresh:            str   = Form("0"),
+    apply_regime_multiplier: str   = Form("1"),
+):
+    ticker = ticker.upper().strip()
+    from core.exchange import fetch_orderbook, fetch_ohlcv
+    ws_manager.set_calculator_symbol(ticker)
+
+    try:
+        await fetch_orderbook(ticker)
+        if ticker not in app_state.ohlcv_cache:
+            await fetch_ohlcv(ticker)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+    calc = run_risk_calculator(
+        ticker=ticker, average=average, sl_price=sl_price,
+        tp_price=tp_price, tp_amount_pct=tp_amount_pct,
+        sl_amount_pct=sl_amount_pct, model_name=model_name, model_desc=model_desc,
+        order_type=order_type,
+        apply_regime_multiplier=(apply_regime_multiplier == "1"),
+    )
+
+    if auto_refresh != "1":
+        from core.event_bus import event_bus
+        await event_bus.publish("risk:risk_calculated", calc)
+
+    ob = app_state.orderbook_cache.get(ticker, {})
+    calc["bids"] = ob.get("bids", [])[:5]
+    calc["asks"] = ob.get("asks", [])[:5]
+
+    return JSONResponse(calc)
+
+
 @router.get("/calculator/refresh/{ticker}", response_class=HTMLResponse)
 async def calculator_refresh(request: Request, ticker: str):
     ticker = ticker.upper()
