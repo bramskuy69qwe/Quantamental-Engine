@@ -11,6 +11,8 @@ MODULES = [
     "core.regime_fetcher",
     "core.news_fetcher",
     "core.event_bus",
+    "core.db_router",
+    "core.migrations.000_split_databases",
     "core.account_registry",
     "core.crypto",
     "core.data_logger",

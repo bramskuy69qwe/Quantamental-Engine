@@ -165,9 +165,27 @@ public sealed class RiskEngineConnection : IDisposable
 
     // ── Send helpers ──────────────────────────────────────────────────────────
 
+    public async Task SendHelloAsync(HelloEvent hello)
+    {
+        var json = JsonSerializer.Serialize(hello);
+        if (_wsConnected)
+            await SendTextAsync(json);
+        else
+            await PostRestAsync("/api/platform/event", json);
+    }
+
     public async Task SendFillAsync(FillEvent fill)
     {
         var json = JsonSerializer.Serialize(fill);
+        if (_wsConnected)
+            await SendTextAsync(json);
+        else
+            await PostRestAsync("/api/platform/event", json);
+    }
+
+    public async Task SendAccountStateAsync(AccountStateEvent state)
+    {
+        var json = JsonSerializer.Serialize(state);
         if (_wsConnected)
             await SendTextAsync(json);
         else

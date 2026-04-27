@@ -253,31 +253,134 @@ When Quantower fills arrive, the bridge maps `(exchange, broker_account_id)` to 
 - Account selector shows connection status (live via plugin / standalone / disconnected).
 - A persistent banner appears when in standalone mode so you never confuse estimated P&L with broker-truth P&L.
 
-### Phase D — PWA shell
+### Phase D — Refactor (clean the vibecode before extending)
 
-**D1. Install minimal PWA**
+**Why now, not later:** Phases 0–C were built at velocity. That's the right approach for getting features working. But before adding PWA (which bakes route paths into a service worker cache) and before any future Claude Code session touches this codebase, the structure needs to be legible and consistent. Refactoring after PWA means invalidating cache configs. Refactoring after more features means more code to untangle. Now is the cheapest moment.
+
+**The goal is NOT rewriting.** It's splitting, naming, and tightening what exists. Every refactor step should pass the test: "does the app behave identically before and after?" If behavior changes, that's a bug, not a refactor.
+
+#### D1. Split `api/routes.py` (2,139 lines → 6–8 domain modules)
+
+This is the single biggest improvement. One file with 80+ route handlers covering dashboard, calculator, history, params, accounts, backtest, regime, platform bridge, and models is the #1 source of "Claude Code touches the wrong thing."
+
+Target structure:
+```
+api/
+├── __init__.py
+├── router.py              # imports and mounts all sub-routers
+├── routes_dashboard.py    # /, /fragments/dashboard/*, /fragments/ws_status
+├── routes_calculator.py   # /calculator, /calculator/calculate, /calculator/refresh
+├── routes_history.py      # /history, /fragments/history/*, /history/log_*, /history/notes/*
+├── routes_params.py       # /params, /params/update, /export
+├── routes_accounts.py     # /accounts, /api/accounts, /api/settings/platform
+├── routes_backtest.py     # /backtest, /api/backtest/*, /fragments/backtest/*
+├── routes_regime.py       # /regime, /api/regime/*
+├── routes_platform.py     # /api/platform/*, /ws/platform
+├── routes_models.py       # /api/models/*
+└── helpers.py             # _ctx(), _fmt(), _fmt_duration(), _paginate_list(), _table_ctx()
+```
+
+Rules for Claude Code:
+- Move helper functions (`_ctx`, `_fmt`, `_fmt_duration`, `_paginate_list`, `_table_ctx`, `_maybe_backfill_equity`, `_get_funding_cached`) into `api/helpers.py`. These are shared across multiple route files.
+- Each route file creates its own `router = APIRouter()` with an appropriate prefix/tag.
+- `api/router.py` imports and `.include_router()` for each sub-router. `main.py` imports only `api/router.py`.
+- Do NOT change any URL paths, response types, or template references. Purely structural.
+- Verify every route still works after the split (manual smoke test or automated — see D6).
+
+#### D2. Split `core/database.py` (1,919 lines, 74 methods in one class)
+
+`DatabaseManager` is a god object. Split by domain. The class can stay as a thin coordinator that holds the connection, but query logic moves into domain-specific modules.
+
+Target structure:
+```
+core/
+├── database.py            # DatabaseManager with __init__, initialize(), connection mgmt, migrations
+├── db_snapshots.py        # account_snapshots, position_changes queries
+├── db_trades.py           # pre_trade_log, execution_log, trade_history, position_notes queries
+├── db_exchange.py         # exchange_history queries (upsert, MFE/MAE, query)
+├── db_analytics.py        # journal_stats, daily_equity_series, daily_trade_stats, traded_pairs_stats
+├── db_backtest.py         # backtest_sessions, backtest_trades, backtest_equity queries
+├── db_regime.py           # regime_signals, regime_labels queries
+├── db_ohlcv.py            # ohlcv_cache queries
+├── db_settings.py         # settings, accounts table queries
+└── db_equity.py           # equity_cashflow queries
+```
+
+Approach:
+- Each `db_*.py` module contains standalone async functions that accept the `aiosqlite.Connection` as their first argument (dependency injection, not inheritance).
+- `DatabaseManager` keeps `self._conn` and delegates: `self.insert_pre_trade_log(data)` becomes `await db_trades.insert_pre_trade_log(self._conn, data)`.
+- Alternatively, `DatabaseManager` can compose the domain modules as attributes: `self.trades = TradesDB(self._conn)`. Either pattern is fine — pick one and be consistent.
+- Schema DDL (`CREATE TABLE` statements) stays in `database.py` near `initialize()`.
+- The `_debug_log()` function at the top of `database.py` — delete it entirely (Phase 0 cleanup item that may still be pending).
+
+#### D3. Tighten error handling
+
+114 `except Exception` blocks in project code. Most are vibecoded catch-alls that silently swallow errors or log generic messages. This makes debugging nearly impossible.
+
+Rules for Claude Code:
+- Audit each `except Exception as exc` block. For each one, decide:
+  - **Catch specific exceptions** if you know what can fail (e.g. `except aiosqlite.OperationalError`, `except ccxt.NetworkError`, `except KeyError`)
+  - **Re-raise after logging** if the caller needs to know (`log.error(...); raise`)
+  - **Keep broad catch only** if this is a top-level handler where crashing would be worse (e.g. WS reconnect loops, background task wrappers, event bus dispatch). Add a comment: `# broad catch intentional: <reason>`
+- Never silently swallow. Every `except` block must either re-raise, return a meaningful error, or log at WARNING+ level with the exception info.
+- Target: reduce broad catches from 114 to ~20–30 (the ones that are genuinely top-level fault barriers).
+
+#### D4. Consistent imports and module boundaries
+
+Vibecoded projects tend to have circular-import-avoidance hacks (lazy imports inside functions). Audit and fix:
+- Grep for `from core.X import` inside function bodies. Each is a sign of a circular dependency. Fix by restructuring, not by adding more lazy imports.
+- Establish a clear dependency direction: `config` ← `core/*` ← `api/*` ← `main.py`. No module in `core/` should import from `api/`. `main.py` imports from both but nothing imports from `main.py`.
+- Move any shared types/dataclasses into `core/types.py` or `core/models.py` if they're currently defined inline in route handlers or scattered across modules.
+
+#### D5. Naming and consistency pass
+
+- Function names: all async DB functions should follow `verb_noun` pattern (`insert_trade`, `query_snapshots`, `get_regime_labels`). Fix any inconsistencies.
+- Variable names: `data` as a parameter name is too generic — rename to `trade_data`, `snapshot_data`, etc. where the type isn't obvious.
+- Return types: add return type annotations to every public function. Private helpers can stay untyped for now.
+- Docstrings: every public function gets a one-line docstring. Not a novel — just what it does, what it returns.
+
+#### D6. Post-refactor verification
+
+After D1–D5, before moving to Phase E:
+- Run `python -c "from api.router import router; from core.database import DatabaseManager; print('OK')"` — confirms no import errors.
+- Run the full test suite from Phase 0/A (if tests exist). If they don't exist yet, write the smoke test now: start the app against a fixture DB, hit every page route, assert 200.
+- Manual walkthrough: open the PWA (or localhost), click through every page (dashboard, calculator, history, params, backtest, regime, accounts). Verify nothing broke.
+- `grep -rn "from core.redis_bus" --include="*.py"` should return zero results (Phase 0.2 cleanup confirmed).
+- `wc -l api/routes*.py core/database.py core/db_*.py` — no single file should exceed ~500 lines. If any do, split further.
+
+**What this phase is NOT:**
+- Not a rewrite. No new features, no new endpoints, no schema changes.
+- Not a framework migration. HTMX stays. Jinja2 stays. FastAPI stays. SQLite stays.
+- Not performance optimization. If something is slow, note it for later — don't fix it now.
+- Not UI redesign. Templates are untouched except for fixing broken imports if route modules moved.
+
+**Estimated effort:** 4–8 hours of focused Claude Code work. D1 (routes split) is the biggest chunk (~2–3 hours). D2 (database split) is ~1–2 hours. D3–D5 are mechanical passes (~1–2 hours total). D6 is verification (~30 min).
+
+### Phase E — PWA shell
+
+**E1. Install minimal PWA**
 - `templates/manifest.json` — name, icons (192, 512 PNG, generate from existing favicon if any), `display: standalone`, theme color matching dark UI
 - `static/service-worker.js` — network-first for `/api/*`, `/hx/*`, `/ws/*`; cache-first for `/static/*`
 - `<head>` of `base.html`: link manifest, register SW
 - Two FastAPI routes: `GET /manifest.json` and `GET /service-worker.js` with correct MIME types and `Service-Worker-Allowed: /` header
 
-**D2. Install + autostart**
+**E2. Install + autostart**
 - Install via Chrome/Edge address bar.
 - Document Windows autostart: drop the installed PWA shortcut into `shell:startup` (or write a `.bat` that starts uvicorn then opens the PWA).
 
-### Phase E — Hygiene (after the above)
+### Phase F — Hygiene (after the above)
 
-**E1. Tests broaden out**
+**F1. Tests broaden out**
 - Beyond Phase A8 unit tests: add `tests/test_database.py` covering migrations, upserts, regime queries
 - Smoke test: spin engine in test mode against a fixture SQLite DB, assert all routes return 200
 - Optional: GitHub Actions yaml for CI even if you don't run it remotely
 
-**E2. Documentation**
+**F2. Documentation**
 - Create `ARCHITECTURE.md` at repo root: a one-page tour of `core/`, `api/`, `templates/`, `data/` — for future-Aryo and any AI assistant joining the project
 - Move this spec into the repo as `SPEC_v2.1.md`
 - Add a "Migrations" section to `ARCHITECTURE.md` explaining the `core/migrations/` lightweight pattern
 
-**E3. Lock file maintenance**
+**F3. Lock file maintenance**
 - Schedule a monthly `uv pip compile --upgrade` to keep deps current
 - Document in `ARCHITECTURE.md` how to update deps safely
 

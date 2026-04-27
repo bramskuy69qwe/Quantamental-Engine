@@ -137,10 +137,98 @@ class PlatformBridge:
             await self._handle_fill(msg)
         elif event_type == "position_snapshot":
             await self._handle_position_snapshot(msg)
+        elif event_type == "hello":
+            await self._handle_hello(msg)
         elif event_type == "heartbeat":
             pass  # just keep-alive — no action needed
         else:
             log.debug("PlatformBridge: unknown event type %r", event_type)
+
+    async def _handle_hello(self, msg: dict) -> None:
+        """Plugin introduces itself on connect — auto-populate broker_account_id
+        on the matching account row so the user does not have to type it.
+
+        Match policy:
+          1. If any account already has this broker_account_id, just activate it.
+          2. Otherwise, find accounts with empty broker_account_id. If exactly
+             one exists, fill it in. If multiple, log and require manual setup.
+        """
+        terminal          = str(msg.get("terminal", "quantower")).strip().lower()
+        broker            = str(msg.get("broker", "")).strip()
+        broker_account_id = str(msg.get("broker_account_id", "")).strip()
+        account_name      = str(msg.get("account_name", "")).strip()
+
+        # AdditionalInfo (full broker-side dump) is logged at DEBUG only — it's
+        # noisy (~70 keys for Binance) and we already know what's in it.
+        # Bump the logger to DEBUG if you need to inspect a new broker.
+        add_info = msg.get("additional_info") or {}
+        if isinstance(add_info, dict) and add_info and log.isEnabledFor(logging.DEBUG):
+            log.debug("PlatformBridge: hello AdditionalInfo dump (%d keys):", len(add_info))
+            for k, v in add_info.items():
+                log.debug("    %r = %r", k, v)
+
+        if not broker_account_id:
+            log.warning("PlatformBridge: hello missing broker_account_id; ignoring")
+            return
+
+        from core.account_registry import account_registry
+        from core.state import app_state
+
+        # Already configured?
+        existing = account_registry.find_by_broker_id(broker_account_id)
+        if existing is not None:
+            app_state.active_account_id = existing["id"]
+            log.info(
+                "PlatformBridge: hello received - %s/%s/%s -> existing account_id=%d (%s)",
+                terminal, broker, broker_account_id, existing["id"], existing["name"],
+            )
+            return
+
+        # Auto-populate path:
+        #   1. Prefer empty broker_account_id rows (clean first-time setup).
+        #   2. Fallback: single-account setup -> overwrite whatever's there
+        #      (handles the case where a previous hello wrote a wrong value
+        #      like the connection alias instead of the real UID).
+        all_accounts = account_registry.list_accounts_sync()
+        empty = [a for a in all_accounts if not (a.get("broker_account_id") or "").strip()]
+        target: Optional[Dict[str, Any]] = None
+        if len(empty) == 1:
+            target = empty[0]
+        elif len(empty) == 0 and len(all_accounts) == 1:
+            target = all_accounts[0]
+            log.info(
+                "PlatformBridge: single-account setup - replacing existing "
+                "broker_account_id=%r with %r from hello",
+                target.get("broker_account_id"), broker_account_id,
+            )
+
+        if target is not None:
+            try:
+                await account_registry.update_account(
+                    target["id"], broker_account_id=broker_account_id,
+                )
+                app_state.active_account_id = target["id"]
+                log.info(
+                    "PlatformBridge: hello populated broker_account_id=%s on "
+                    "account_id=%d (%s) - %s/%s",
+                    broker_account_id, target["id"], target["name"], terminal, broker,
+                )
+            except Exception as exc:
+                log.error("PlatformBridge: failed to populate broker_account_id: %r", exc)
+        elif len(empty) == 0:
+            log.warning(
+                "PlatformBridge: hello broker_account_id=%s did not match any account "
+                "and no empty rows are available. Set the field manually in "
+                "Settings -> Accounts.",
+                broker_account_id,
+            )
+        else:
+            log.warning(
+                "PlatformBridge: hello broker_account_id=%s ambiguous - %d accounts have "
+                "empty broker_account_id. Set the field manually in Settings -> Accounts. "
+                "(name=%s)",
+                broker_account_id, len(empty), account_name,
+            )
 
     async def _handle_fill(self, msg: dict) -> None:
         """A Quantower trade fill arrived — refresh positions the same way a

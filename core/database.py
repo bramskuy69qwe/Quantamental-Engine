@@ -306,16 +306,22 @@ CREATE INDEX IF NOT EXISTS idx_calendar_time ON economic_calendar (event_time AS
 
 
 class DatabaseManager:
-    """Async SQLite manager. Keep open for app lifetime; use WAL for concurrency."""
+    """Async SQLite manager. Keep open for app lifetime; use WAL for concurrency.
 
-    def __init__(self) -> None:
+    Multiple instances are now supported — pass a custom `path` to point at a
+    different SQLite file. Used by `core.db_router` to route per-account vs
+    global vs OHLCV-cache traffic to separate files.
+    """
+
+    def __init__(self, path: Optional[str] = None) -> None:
         self._conn: Optional[aiosqlite.Connection] = None
+        self.path: str = path if path is not None else config.DB_PATH
 
     async def initialize(self) -> None:
         """Create DB file + all tables (idempotent). Call once in lifespan startup."""
         import os
-        os.makedirs(config.DATA_DIR, exist_ok=True)
-        self._conn = await aiosqlite.connect(config.DB_PATH)
+        os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+        self._conn = await aiosqlite.connect(self.path)
         self._conn.row_factory = aiosqlite.Row
         await self._conn.execute("PRAGMA journal_mode=WAL")
         for stmt in _CREATE_STATEMENTS.strip().split(";"):
@@ -2060,5 +2066,8 @@ class DatabaseManager:
             self._conn = None
 
 
-# Module-level singleton
+# Module-level singleton — points at the legacy combined DB (config.DB_PATH).
+# Will be deprecated once `core.db_router` becomes the canonical entry point
+# (R1b of the data-route refactor). Until then, all existing callers continue
+# to import `db` from here and operate on the combined file.
 db = DatabaseManager()

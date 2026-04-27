@@ -21,6 +21,12 @@ public class RiskEnginePlugin : Strategy
     private RiskEngineConnection? _conn;
     private Account? _activeAccount;
 
+    // Throttle Account.Updated -> account_state events. Quantower fires Updated
+    // on every quote tick that touches unrealized PnL; 5 Hz is plenty for the
+    // engine's risk dashboard.
+    private long _lastAccountStateMs;
+    private const int AccountStateMinIntervalMs = 200;
+
     public RiskEnginePlugin() : base()
     {
         this.Name = "Risk Engine Plugin";
@@ -49,8 +55,35 @@ public class RiskEnginePlugin : Strategy
         Core.Instance.PositionAdded  += OnPositionChanged;
         Core.Instance.PositionRemoved += OnPositionChanged;
 
-        _ = _conn.ConnectAsync();
+        _ = ConnectAndIntroduceAsync();
         Log("Risk Engine Plugin started.", StrategyLoggingLevel.Info);
+    }
+
+    /// <summary>
+    /// Connect, then send the hello payload so the engine can auto-populate
+    /// broker_account_id from Quantower's Account.Id.
+    /// </summary>
+    private async Task ConnectAndIntroduceAsync()
+    {
+        if (_conn is null) return;
+        await _conn.ConnectAsync();
+        await SendHelloAsync();
+    }
+
+    private async Task SendHelloAsync()
+    {
+        if (_conn is null || _activeAccount is null) return;
+        try
+        {
+            var hello = RiskEngineEventMapper.MapHello(_activeAccount);
+            await _conn.SendHelloAsync(hello);
+            Log($"Hello sent: {hello.Broker}/{hello.BrokerAccountId} ({hello.AccountName})",
+                StrategyLoggingLevel.Info);
+        }
+        catch (Exception ex)
+        {
+            Log($"SendHelloAsync error: {ex.Message}", StrategyLoggingLevel.Error);
+        }
     }
 
     protected override void OnStop()
