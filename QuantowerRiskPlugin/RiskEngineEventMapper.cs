@@ -10,52 +10,45 @@ namespace QuantowerRiskPlugin;
 internal static class RiskEngineEventMapper
 {
     /// <summary>
-    /// Map a filled Quantower Order to a FillEvent for the engine.
-    /// Returns null if the order is missing a required field (account, symbol).
-    /// Callers must null-check the return value.
+    /// Map a Quantower Trade (a fill report) to a FillEvent for the engine.
+    /// Returns null if the trade is missing a required field (account, symbol).
     /// </summary>
-    public static FillEvent? MapFill(Order order)
+    public static FillEvent? MapFill(Trade trade)
     {
-        // Reject fills with no account — the engine uses account_id for routing
-        if (order.Account is null)
+        if (trade.Account is null)
         {
-            System.Diagnostics.Debug.WriteLine("[RiskEngine] MapFill: skipping fill — order.Account is null");
+            System.Diagnostics.Debug.WriteLine("[RiskEngine] MapFill: skipping — trade.Account is null");
             return null;
         }
 
-        string symbol = NormalizeSymbol(order.Symbol?.Name ?? "");
+        string symbol = NormalizeSymbol(trade.Symbol?.Name ?? "");
         if (string.IsNullOrEmpty(symbol))
         {
-            System.Diagnostics.Debug.WriteLine("[RiskEngine] MapFill: skipping fill — symbol is null/empty");
+            System.Diagnostics.Debug.WriteLine("[RiskEngine] MapFill: skipping — symbol is null/empty");
             return null;
         }
 
-        bool isBuy = order.Side == Side.Buy;
-        double grossPnl = 0.0;
-        try { grossPnl = (double)(order.GrossPnl ?? 0); }
-        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[RiskEngine] GrossPnl conversion failed: {ex.Message}"); }
+        bool isBuy = trade.Side == Side.Buy;
 
-        double fee = 0.0;
-        try { fee = Math.Abs((double)(order.TotalFee ?? 0)); }
-        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[RiskEngine] TotalFee conversion failed: {ex.Message}"); }
+        long timestampMs;
+        try { timestampMs = ((DateTimeOffset)trade.DateTime).ToUnixTimeMilliseconds(); }
+        catch { timestampMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(); }
 
         return new FillEvent
         {
             Symbol    = symbol,
             Side      = isBuy ? "BUY" : "SELL",
-            Price     = order.AverageFilledPrice.HasValue
-                            ? (double)order.AverageFilledPrice.Value
-                            : (double)order.Price,
-            Quantity  = Math.Abs((double)order.FilledQuantity),
-            GrossPnL  = grossPnl,
-            Fee       = fee,
-            Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-            AccountId = order.Account.Id,
+            Price     = trade.Price,
+            Quantity  = Math.Abs(trade.Quantity),
+            GrossPnL  = (double)trade.GrossPnl.Value,
+            Fee       = Math.Abs((double)trade.Fee.Value),
+            Timestamp = timestampMs,
+            AccountId = trade.Account.Id,
         };
     }
 
     /// <summary>
-    /// Build a position snapshot from the account's current open positions.
+    /// Build a position snapshot from the given positions belonging to the account.
     /// </summary>
     public static PositionSnapshot MapPositions(Account account, IEnumerable<Position> positions)
     {
@@ -64,21 +57,15 @@ internal static class RiskEngineEventMapper
         {
             // Signed quantity: positive for LONG, negative for SHORT
             double signedQty = p.Side == Side.Buy
-                ? (double)p.Quantity
-                : -(double)p.Quantity;
-
-            double avgPrice = 0.0;
-            try { avgPrice = (double)p.OpenPrice; } catch { }
-
-            double unrealized = 0.0;
-            try { unrealized = (double)(p.GrossPnl ?? 0); } catch { }
+                ? p.Quantity
+                : -p.Quantity;
 
             snap.Positions.Add(new PositionItem
             {
-                Symbol       = NormalizeSymbol(p.Symbol?.Name ?? ""),
-                Quantity     = signedQty,
-                AvgPrice     = avgPrice,
-                UnrealizedPnL = unrealized,
+                Symbol        = NormalizeSymbol(p.Symbol?.Name ?? ""),
+                Quantity      = signedQty,
+                AvgPrice      = p.OpenPrice,
+                UnrealizedPnL = (double)p.GrossPnL.Value,
             });
         }
         return snap;

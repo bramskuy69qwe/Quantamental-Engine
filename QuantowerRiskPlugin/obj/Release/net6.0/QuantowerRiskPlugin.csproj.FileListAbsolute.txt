@@ -1,0 +1,6 @@
+E:\Quantamental Models\Quantamental Engine v2.0\Quantamental Engine v2.0 Code Base 1\QuantowerRiskPlugin\obj\Release\net6.0\QuantowerRiskPlugin.csproj.AssemblyReference.cache
+E:\Quantamental Models\Quantamental Engine v2.0\Quantamental Engine v2.0 Code Base 1\QuantowerRiskPlugin\obj\Release\net6.0\QuantowerRiskPlugin.GeneratedMSBuildEditorConfig.editorconfig
+E:\Quantamental Models\Quantamental Engine v2.0\Quantamental Engine v2.0 Code Base 1\QuantowerRiskPlugin\obj\Release\net6.0\QuantowerRiskPlugin.AssemblyInfoInputs.cache
+E:\Quantamental Models\Quantamental Engine v2.0\Quantamental Engine v2.0 Code Base 1\QuantowerRiskPlugin\obj\Release\net6.0\QuantowerRiskPlugin.AssemblyInfo.cs
+E:\Quantamental Models\Quantamental Engine v2.0\Quantamental Engine v2.0 Code Base 1\QuantowerRiskPlugin\obj\Release\net6.0\QuantowerRiskPlugin.csproj.CoreCompileInputs.cache
+E:\Quantamental Models\Quantamental Engine v2.0\Quantamental Engine v2.0 Code Base 1\QuantowerRiskPlugin\obj\Release\net6.0\QuantowerRiskPlugin.sourcelink.json

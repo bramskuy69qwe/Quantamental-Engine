@@ -4,160 +4,114 @@ using QuantowerRiskPlugin.Models;
 namespace QuantowerRiskPlugin;
 
 /// <summary>
-/// Quantower plugin entry point.
+/// Quantower strategy entry point — bridges fill/position events to the risk engine.
 ///
 /// HOW TO INSTALL:
 ///   1. Build this project (Release configuration).
 ///   2. Copy QuantowerRiskPlugin.dll to:
-///        %AppData%\Quantower\Settings\Plugins\
-///      (or the custom plugins folder set in Quantower → General Settings → Plugins Path)
+///        %AppData%\Quantower\Settings\Strategies\
 ///   3. Restart Quantower.
-///   4. Go to Settings → Plugins → "Risk Engine Plugin" → configure Engine URL.
-///
-/// HOW IT WORKS:
-///   - On Init(), subscribes to Quantower's order-fill and position-change events.
-///   - Each event maps to a JSON payload and is sent to the risk engine over WebSocket.
-///   - If WebSocket is unavailable (e.g., engine not running), falls back to REST.
-///   - On Dispose(), cleanly disconnects.
+///   4. Open the Strategies panel, find "Risk Engine Plugin", set Engine URL, click Run.
 /// </summary>
-[PluginInfo(
-    Name        = "Risk Engine Plugin",
-    Version     = "1.0.0",
-    Description = "Sends fills and positions to the Quantamental Risk Engine in real-time.",
-    Author      = "Quantamental"
-)]
-public class RiskEnginePlugin : Plugin
+public class RiskEnginePlugin : Strategy
 {
-    // ── Plugin settings (editable in Quantower Settings panel) ───────────────
-
-    [InputParameter("Engine URL", 0,
-        Description = "WebSocket URL of the risk engine (e.g. ws://localhost:8000/ws/platform)")]
+    [InputParameter("Engine URL", 0)]
     public string EngineUrl { get; set; } = "ws://localhost:8000/ws/platform";
-
-    // ── Runtime fields ────────────────────────────────────────────────────────
 
     private RiskEngineConnection? _conn;
     private Account? _activeAccount;
 
-    // ── Plugin lifecycle ──────────────────────────────────────────────────────
-
-    public override void Init()
+    public RiskEnginePlugin() : base()
     {
-        Log($"Risk Engine Plugin initializing — connecting to {EngineUrl}");
+        this.Name = "Risk Engine Plugin";
+    }
+
+    protected override void OnRun()
+    {
+        Log($"Risk Engine Plugin starting — connecting to {EngineUrl}", StrategyLoggingLevel.Info);
 
         _conn = new RiskEngineConnection(EngineUrl);
 
-        // Wire risk-state push → log (extend this to chart overlays as needed)
         _conn.RiskStateReceived += state =>
         {
             if (state.TryGetProperty("dd_state", out var dd) && dd.GetString() == "limit")
-                Log("RISK ALERT: Drawdown limit reached!", LoggingLevel.Error);
+                Log("RISK ALERT: Drawdown limit reached!", StrategyLoggingLevel.Error);
         };
 
-        // Engine requests positions on WS connect for reconciliation
         _conn.PositionsRequested += SendPositionSnapshot;
 
-        // Subscribe to account events
-        Core.Instance.Accounts.AddedItem    += OnAccountAdded;
-        Core.Instance.Accounts.RemovedItem  += OnAccountRemoved;
-
-        // Subscribe to whichever account is currently active
+        // Pick the first available account as the active one.
         _activeAccount = Core.Instance.Accounts.FirstOrDefault();
-        if (_activeAccount != null)
-            SubscribeToAccount(_activeAccount);
 
-        // Subscribe to new order fills (fired for all accounts)
-        Core.Instance.TradeHistory.AddedItem += OnOrderFilled;
+        // Wire engine-wide events
+        Core.Instance.AccountAdded   += OnAccountAdded;
+        Core.Instance.TradeAdded     += OnTradeAdded;
+        Core.Instance.PositionAdded  += OnPositionChanged;
+        Core.Instance.PositionRemoved += OnPositionChanged;
 
         _ = _conn.ConnectAsync();
-        Log("Risk Engine Plugin started.");
+        Log("Risk Engine Plugin started.", StrategyLoggingLevel.Info);
     }
 
-    public override void Dispose()
+    protected override void OnStop()
     {
-        Core.Instance.Accounts.AddedItem   -= OnAccountAdded;
-        Core.Instance.Accounts.RemovedItem -= OnAccountRemoved;
-        Core.Instance.TradeHistory.AddedItem -= OnOrderFilled;
-
-        if (_activeAccount != null)
-            UnsubscribeFromAccount(_activeAccount);
+        Core.Instance.AccountAdded    -= OnAccountAdded;
+        Core.Instance.TradeAdded      -= OnTradeAdded;
+        Core.Instance.PositionAdded   -= OnPositionChanged;
+        Core.Instance.PositionRemoved -= OnPositionChanged;
 
         _conn?.Dispose();
-        Log("Risk Engine Plugin stopped.");
-        base.Dispose();
-    }
-
-    // ── Account wiring ────────────────────────────────────────────────────────
-
-    private void SubscribeToAccount(Account account)
-    {
-        account.PositionList.AddedItem   += OnPositionChanged;
-        account.PositionList.RemovedItem += OnPositionChanged;
-        account.PositionList.UpdatedItem += OnPositionChanged;
-    }
-
-    private void UnsubscribeFromAccount(Account account)
-    {
-        account.PositionList.AddedItem   -= OnPositionChanged;
-        account.PositionList.RemovedItem -= OnPositionChanged;
-        account.PositionList.UpdatedItem -= OnPositionChanged;
+        _conn = null;
+        Log("Risk Engine Plugin stopped.", StrategyLoggingLevel.Info);
     }
 
     private void OnAccountAdded(Account account)
     {
-        SubscribeToAccount(account);
+        // If we didn't have an account at startup, latch onto the first one that arrives.
+        if (_activeAccount is null)
+            _activeAccount = account;
     }
 
-    private void OnAccountRemoved(Account account)
-    {
-        UnsubscribeFromAccount(account);
-    }
-
-    // ── Event handlers ────────────────────────────────────────────────────────
-
-    private void OnOrderFilled(HistoryItem item)
+    private void OnTradeAdded(Trade trade)
     {
         if (_conn is null) return;
         try
         {
-            // HistoryItem wraps a filled Order — cast to access order fields
-            if (item is not Order order) return;
-            if (order.Status != OrderStatus.Filled && order.Status != OrderStatus.PartiallyFilled)
-                return;
-
-            var fill = RiskEngineEventMapper.MapFill(order);
-            if (fill is null) return;   // MapFill returns null when account/symbol is missing
+            var fill = RiskEngineEventMapper.MapFill(trade);
+            if (fill is null) return;
             _ = _conn.SendFillAsync(fill);
         }
         catch (Exception ex)
         {
-            Log($"OnOrderFilled error: {ex.Message}", LoggingLevel.Error);
+            Log($"OnTradeAdded error: {ex.Message}", StrategyLoggingLevel.Error);
         }
     }
 
     private void OnPositionChanged(Position position)
     {
         try { SendPositionSnapshot(); }
-        catch (Exception ex) { Log($"OnPositionChanged error: {ex.Message}", LoggingLevel.Error); }
+        catch (Exception ex) { Log($"OnPositionChanged error: {ex.Message}", StrategyLoggingLevel.Error); }
     }
-
-    // ── Helpers ───────────────────────────────────────────────────────────────
 
     private void SendPositionSnapshot()
     {
-        if (_conn is null || _activeAccount is null) return;
+        if (_conn is null) return;
         try
         {
-            var positions = _activeAccount.PositionList.ToArray();
-            var snap = RiskEngineEventMapper.MapPositions(_activeAccount, positions);
+            // Filter Core.Positions to those belonging to the active account.
+            var account = _activeAccount ?? Core.Instance.Accounts.FirstOrDefault();
+            if (account is null) return;
+
+            var positions = Core.Instance.Positions
+                .Where(p => p.Account?.Id == account.Id)
+                .ToArray();
+
+            var snap = RiskEngineEventMapper.MapPositions(account, positions);
             _ = _conn.SendPositionSnapshotAsync(snap);
         }
         catch (Exception ex)
         {
-            Log($"SendPositionSnapshot error: {ex.Message}", LoggingLevel.Error);
+            Log($"SendPositionSnapshot error: {ex.Message}", StrategyLoggingLevel.Error);
         }
     }
-
-    private void Log(string message, LoggingLevel level = LoggingLevel.Trading)
-        => Core.Instance.Loggers.Log(message, level);
 }
