@@ -83,6 +83,7 @@ class PlatformBridge:
     def __init__(self) -> None:
         self._ws_clients: Set[Any] = set()   # FastAPI WebSocket objects
         self._last_push: float = 0.0
+        self._historical_fill_count: int = 0   # session counter for backfill
 
     @property
     def is_connected(self) -> bool:
@@ -137,12 +138,122 @@ class PlatformBridge:
             await self._handle_fill(msg)
         elif event_type == "position_snapshot":
             await self._handle_position_snapshot(msg)
+        elif event_type == "account_state":
+            await self._handle_account_state(msg)
+        elif event_type == "historical_fill":
+            await self._handle_historical_fill(msg)
         elif event_type == "hello":
             await self._handle_hello(msg)
+        elif event_type == "ohlcv_bar":
+            self._handle_ohlcv_bar(msg)
+        elif event_type == "mark_price":
+            self._handle_mark_price(msg)
+        elif event_type == "depth_snapshot":
+            self._handle_depth_snapshot(msg)
         elif event_type == "heartbeat":
             pass  # just keep-alive — no action needed
         else:
             log.debug("PlatformBridge: unknown event type %r", event_type)
+
+    async def _handle_historical_fill(self, msg: dict) -> None:
+        """One historical Quantower trade arrived (from Core.GetTrades on
+        plugin connect). Idempotent upsert into exchange_history keyed by
+        a stable trade_key derived from Quantower's Trade.Id."""
+        from core.db_router import db_router
+        from core.state import app_state
+
+        trade_id = str(msg.get("trade_id", "")).strip()
+        if not trade_id:
+            return
+
+        symbol     = _normalize_symbol(str(msg.get("symbol", "")))
+        side_str   = str(msg.get("side", "")).upper()
+        direction  = "LONG" if side_str == "BUY" else "SHORT"
+        impact     = str(msg.get("position_impact_type", "")).lower()
+        is_close   = "close" in impact or "reverse" in impact
+
+        try:    price = float(msg.get("price") or 0)
+        except: price = 0.0
+        try:    qty = float(msg.get("quantity") or 0)
+        except: qty = 0.0
+        try:    gross_pnl = float(msg.get("gross_pnl") or 0)
+        except: gross_pnl = 0.0
+        try:    fee = float(msg.get("fee") or 0)
+        except: fee = 0.0
+        try:    ts = int(msg.get("timestamp") or 0)
+        except: ts = 0
+
+        row = {
+            "trade_key":   f"qt:{trade_id}",
+            "time":        ts,
+            "symbol":      symbol,
+            # Closing fills carry realized PnL — opens are pure entries.
+            "incomeType":  "REALIZED_PNL" if is_close else "OPEN",
+            "income":      gross_pnl,
+            "direction":   direction,
+            "entry_price": 0.0 if is_close else price,
+            "exit_price":  price if is_close else 0.0,
+            "qty":         qty,
+            "notional":    price * qty,
+            "open_time":   0 if is_close else ts,
+            "fee":         fee,
+            "asset":       "USDT",  # default for Binance Futures perps
+        }
+
+        try:
+            await db_router.account.upsert_exchange_history(
+                [row], account_id=app_state.active_account_id,
+            )
+            self._historical_fill_count += 1
+            # First one + every 25th — visibility without spam
+            if self._historical_fill_count == 1 or self._historical_fill_count % 25 == 0:
+                log.info(
+                    "PlatformBridge: historical_fill received (cumulative=%d) "
+                    "symbol=%s direction=%s ts=%d",
+                    self._historical_fill_count, symbol, direction, ts,
+                )
+        except Exception as exc:
+            log.warning(
+                "PlatformBridge: historical_fill upsert failed (trade_id=%s): %r",
+                trade_id, exc,
+            )
+
+    async def _handle_account_state(self, msg: dict) -> None:
+        """Plugin pushed an account-state snapshot (broker truth).
+
+        Replaces what `core/exchange.py:fetch_account()` would write, but
+        triggered by Quantower's Account.Updated event instead of polled REST.
+        Throttled on the plugin side to ~5 Hz.
+        """
+        from core.state import app_state
+
+        def _f(key: str) -> float:
+            try:
+                return float(msg.get(key, 0) or 0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        acc = app_state.account_state
+        acc.balance_usdt        = _f("balance")
+        acc.total_equity        = _f("total_equity")
+        acc.total_unrealized    = _f("unrealized_pnl")
+        acc.available_margin    = _f("available_margin")
+        # Maintenance margin is not a direct AccountState field; treat the
+        # gap between equity and available as margin-used (matches the
+        # Binance-direct calculation in fetch_account).
+        acc.total_margin_used   = max(0.0, acc.total_equity - acc.available_margin)
+        acc.total_margin_ratio  = _f("margin_ratio")
+
+        # Derived metrics (drawdown, daily_pnl, weekly_pnl, exposure) recompute
+        # against the new equity. recalculate_portfolio expects the positions
+        # list too — that's already maintained via position_snapshot.
+        try:
+            app_state.recalculate_portfolio()
+        except Exception as exc:
+            log.error("PlatformBridge: recalculate_portfolio after account_state failed: %r", exc)
+
+        # Push fresh risk_state to the plugin so its UI overlays stay in sync.
+        await self.push_risk_state()
 
     async def _handle_hello(self, msg: dict) -> None:
         """Plugin introduces itself on connect — auto-populate broker_account_id
@@ -229,6 +340,123 @@ class PlatformBridge:
                 "(name=%s)",
                 broker_account_id, len(empty), account_name,
             )
+
+    # ── R4: market data handlers (inbound from plugin) ────────────────────────
+
+    def _handle_ohlcv_bar(self, msg: dict) -> None:
+        """Plugin streamed one OHLCV bar. Updates ohlcv_cache in-place."""
+        from core.state import app_state
+        import config as _cfg
+
+        symbol = _normalize_symbol(str(msg.get("symbol", "")))
+        if not symbol:
+            return
+        try:
+            candle = [
+                int(msg.get("open_time", 0)),
+                float(msg.get("open", 0)),
+                float(msg.get("high", 0)),
+                float(msg.get("low", 0)),
+                float(msg.get("close", 0)),
+                float(msg.get("volume", 0)),
+            ]
+        except (TypeError, ValueError):
+            return
+
+        cache = app_state.ohlcv_cache.get(symbol, [])
+        if cache and cache[-1][0] == candle[0]:
+            cache[-1] = candle          # replace in-progress bar
+        else:
+            cache.append(candle)
+            if len(cache) > _cfg.ATR_FETCH_LIMIT + 10:
+                cache = cache[-(_cfg.ATR_FETCH_LIMIT + 10):]
+        app_state.ohlcv_cache[symbol] = cache
+
+    def _handle_mark_price(self, msg: dict) -> None:
+        """Plugin pushed a mark-price update for a symbol."""
+        from core.state import app_state
+
+        symbol = _normalize_symbol(str(msg.get("symbol", "")))
+        try:
+            price = float(msg.get("price", 0) or 0)
+        except (TypeError, ValueError):
+            price = 0.0
+        if not symbol or not price:
+            return
+
+        app_state.mark_price_cache[symbol] = price
+        for pos in app_state.positions:
+            if pos.ticker != symbol:
+                continue
+            pos.fair_price = price
+            if pos.average > 0:
+                if pos.direction == "LONG":
+                    pos.individual_unrealized = (price - pos.average) * pos.contract_amount
+                else:
+                    pos.individual_unrealized = (pos.average - price) * pos.contract_amount
+                unreal = pos.individual_unrealized
+                if unreal > pos.session_mfe:
+                    pos.session_mfe = round(unreal, 2)
+                if pos.session_mae == 0.0 or unreal < pos.session_mae:
+                    pos.session_mae = round(unreal, 2)
+            break
+
+        app_state.account_state.total_unrealized = sum(
+            p.individual_unrealized for p in app_state.positions
+        )
+        try:
+            app_state.recalculate_portfolio()
+        except Exception:
+            pass
+
+    def _handle_depth_snapshot(self, msg: dict) -> None:
+        """Plugin pushed an order-book snapshot."""
+        from core.state import app_state
+
+        symbol = _normalize_symbol(str(msg.get("symbol", "")))
+        if not symbol:
+            return
+        try:
+            app_state.orderbook_cache[symbol] = {
+                "bids": [[float(p), float(q)] for p, q in (msg.get("bids") or [])],
+                "asks": [[float(p), float(q)] for p, q in (msg.get("asks") or [])],
+            }
+        except (TypeError, ValueError):
+            pass
+
+    # ── R4: outbound requests to plugin ──────────────────────────────────────
+
+    async def _send_to_clients(self, payload: dict) -> None:
+        """Send a JSON message to all connected plugin clients."""
+        if not self._ws_clients:
+            return
+        text = json.dumps(payload)
+        dead: Set[Any] = set()
+        for ws in list(self._ws_clients):
+            try:
+                await ws.send_text(text)
+            except Exception:
+                dead.add(ws)
+        self._ws_clients -= dead
+
+    async def request_ohlcv(self, symbol: str, interval: str = "1m") -> None:
+        """Ask the plugin to start streaming OHLCV bars for a symbol."""
+        await self._send_to_clients(
+            {"type": "request_ohlcv", "symbol": symbol, "interval": interval}
+        )
+        log.info("PlatformBridge: request_ohlcv -> plugin symbol=%s interval=%s", symbol, interval)
+
+    async def unsubscribe_ohlcv(self, symbol: str) -> None:
+        """Tell the plugin to stop streaming OHLCV bars for a symbol."""
+        await self._send_to_clients({"type": "unsubscribe_ohlcv", "symbol": symbol})
+        log.debug("PlatformBridge: unsubscribe_ohlcv -> plugin symbol=%s", symbol)
+
+    async def request_depth(self, symbol: str) -> None:
+        """Ask the plugin to start streaming depth snapshots for a symbol."""
+        await self._send_to_clients({"type": "request_depth", "symbol": symbol})
+
+    async def unsubscribe_depth(self, symbol: str) -> None:
+        await self._send_to_clients({"type": "unsubscribe_depth", "symbol": symbol})
 
     async def _handle_fill(self, msg: dict) -> None:
         """A Quantower trade fill arrived — refresh positions the same way a

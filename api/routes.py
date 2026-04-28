@@ -52,7 +52,8 @@ async def _maybe_backfill_equity(needed_start_ms: int, account_id: Optional[int]
         return
 
     # Slow path: read DB once to populate / verify the cache
-    earliest_ms = await db.get_earliest_snapshot_ms(account_id=aid)
+    from core.db_router import db_router
+    earliest_ms = await db_router.account_db(account_id=aid).get_earliest_snapshot_ms(account_id=aid)
     # Update cache to the true DB minimum (may be earlier than cached value)
     if earliest_ms is not None:
         if cached is None or earliest_ms < cached:
@@ -74,18 +75,21 @@ async def _maybe_backfill_equity(needed_start_ms: int, account_id: Optional[int]
 
         # Clear stale backfill data so the improved gap-fill logic applies cleanly.
         # Only synthetic rows are deleted — real snapshots are never touched.
-        await db.clear_backfill_snapshots(account_id=aid)
-        await db.clear_cashflow_events(account_id=aid)
+        from core.db_router import db_router
+        await db_router.account.clear_backfill_snapshots(account_id=aid)
+        await db_router.account.clear_cashflow_events(account_id=aid)
 
         # Re-read the real earliest snapshot now that backfill rows are gone.
-        real_earliest_ms = await db.get_earliest_snapshot_ms(account_id=aid)
+        real_earliest_ms = await db_router.account_db(account_id=aid).get_earliest_snapshot_ms(account_id=aid)
         end_for_backfill  = real_earliest_ms if real_earliest_ms else int(_time.time() * 1000)
 
         records, cashflow_records = await build_equity_backfill(
             needed_start_ms, end_for_backfill, current_equity
         )
         if records:
-            count = await db.insert_backfill_snapshots(records, before_ms=end_for_backfill, account_id=aid)
+            count = await db_router.account.insert_backfill_snapshots(
+                records, before_ms=end_for_backfill, account_id=aid,
+            )
             log.info("Equity backfill: inserted %d synthetic snapshots", count)
             _backfill_earliest_ms[aid] = records[0][0]
         else:
@@ -93,7 +97,9 @@ async def _maybe_backfill_equity(needed_start_ms: int, account_id: Optional[int]
             _backfill_earliest_ms[aid] = real_earliest_ms
 
         if cashflow_records:
-            cf_count = await db.insert_cashflow_events(cashflow_records, account_id=aid)
+            cf_count = await db_router.account.insert_cashflow_events(
+                cashflow_records, account_id=aid,
+            )
             log.info("Equity backfill: inserted %d cashflow events", cf_count)
 
 
@@ -357,9 +363,14 @@ async def frag_dashboard_journal_stats(request: Request):
 
 @router.get("/fragments/ws_status", response_class=HTMLResponse)
 async def frag_ws_status(request: Request):
+    from core.platform_bridge import platform_bridge
     return templates.TemplateResponse(
         request, "fragments/ws_status.html",
-        {"ws": app_state.ws_status, "ex": app_state.exchange_info},
+        {
+            "ws": app_state.ws_status,
+            "ex": app_state.exchange_info,
+            "plugin_connected": platform_bridge.is_connected,
+        },
     )
 
 
@@ -433,10 +444,11 @@ async def calculator_refresh(request: Request, ticker: str):
 @router.get("/fragments/history", response_class=HTMLResponse)
 async def frag_history(request: Request):
     try:
-        from core.database import db
-        pre_trade_rows = await db.get_all_pre_trade_log(days=30)
-        execution_rows = await db.get_all_execution_log(days=30)
-        history_rows   = await db.get_all_trade_history(days=30)
+        from core.db_router import db_router
+        per = db_router.account_read
+        pre_trade_rows = await per.get_all_pre_trade_log(days=30)
+        execution_rows = await per.get_all_execution_log(days=30)
+        history_rows   = await per.get_all_trade_history(days=30)
         # live_trades still uses CSV (no DB table in Phase 1)
         live_trades    = load_recent_history(config.LIVE_TRADES)
 
@@ -476,9 +488,9 @@ async def post_execution(
         "maker_fee": config.MAKER_FEE, "taker_fee": config.TAKER_FEE,
         "latency_snapshot": latency_snapshot, "orderbook_depth_snapshot": "",
     }
-    from core.database import db
+    from core.db_router import db_router
     try:
-        await db.insert_execution_log(row)
+        await db_router.account.insert_execution_log(row)
     except Exception as exc:
         log.error("insert_execution_log failed: %r", exc)
         return HTMLResponse('<div class="alert-error p-2 rounded">Failed to log execution — database error.</div>')

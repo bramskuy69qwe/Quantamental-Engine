@@ -61,12 +61,15 @@ internal static class RiskEngineEventMapper
                 ? p.Quantity
                 : -p.Quantity;
 
+            double unreal = 0.0;
+            try { if (p.GrossPnL != null) unreal = (double)p.GrossPnL.Value; } catch { }
+
             snap.Positions.Add(new PositionItem
             {
                 Symbol        = NormalizeSymbol(p.Symbol?.Name ?? ""),
                 Quantity      = signedQty,
                 AvgPrice      = p.OpenPrice,
-                UnrealizedPnL = (double)p.GrossPnL.Value,
+                UnrealizedPnL = unreal,
             });
         }
         return snap;
@@ -164,6 +167,44 @@ internal static class RiskEngineEventMapper
             return complexId;
 
         return id;
+    }
+
+    /// <summary>
+    /// Map a Quantower historical Trade (from Core.GetTrades) to a
+    /// HistoricalFillEvent for the engine's exchange_history backfill.
+    /// Returns null when required fields are missing.
+    /// </summary>
+    public static HistoricalFillEvent? MapHistoricalFill(Trade trade)
+    {
+        if (trade.Account is null) return null;
+        string symbol = NormalizeSymbol(trade.Symbol?.Name ?? "");
+        if (string.IsNullOrEmpty(symbol)) return null;
+
+        long ts;
+        try { ts = ((DateTimeOffset)trade.DateTime).ToUnixTimeMilliseconds(); }
+        catch { ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(); }
+
+        double grossPnl = 0.0; try { grossPnl = (double)trade.GrossPnl.Value; } catch { }
+        double netPnl   = 0.0; try { netPnl   = (double)trade.NetPnl.Value;   } catch { }
+        double fee      = 0.0; try { fee      = Math.Abs((double)trade.Fee.Value); } catch { }
+
+        return new HistoricalFillEvent
+        {
+            Type               = "historical_fill",
+            TradeId            = trade.Id ?? "",
+            AccountId          = trade.Account.Id ?? "",
+            Symbol             = symbol,
+            Side               = trade.Side == Side.Buy ? "BUY" : "SELL",
+            Price              = trade.Price,
+            Quantity           = Math.Abs(trade.Quantity),
+            GrossPnL           = grossPnl,
+            NetPnL             = netPnl,
+            Fee                = fee,
+            Timestamp          = ts,
+            OrderId            = trade.OrderId ?? "",
+            PositionId         = trade.PositionId ?? "",
+            PositionImpactType = trade.PositionImpactType.ToString() ?? "",
+        };
     }
 
     /// <summary>

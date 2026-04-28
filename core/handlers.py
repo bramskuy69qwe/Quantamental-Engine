@@ -67,7 +67,8 @@ async def handle_account_updated(payload: Dict[str, Any]) -> None:
     app_state.recalculate_portfolio()
     snap = _build_account_snapshot("risk:account_updated")
     try:
-        await db.insert_account_snapshot(snap)
+        from core.db_router import db_router
+        await db_router.account.insert_account_snapshot(snap)
     except Exception as exc:
         log.error(f"handle_account_updated DB write failed: {exc}", exc_info=True)
 
@@ -121,12 +122,15 @@ async def handle_positions_refreshed(payload: Dict[str, Any]) -> None:
     ]
 
     try:
-        await db.insert_position_changes(
+        from core.db_router import db_router
+        await db_router.account.insert_position_changes(
             position_records,
             trigger=f"risk:positions_refreshed:{trigger}",
             account_id=app_state.active_account_id,
         )
-        await db.insert_account_snapshot(_build_account_snapshot("risk:positions_refreshed"))
+        await db_router.account.insert_account_snapshot(
+            _build_account_snapshot("risk:positions_refreshed")
+        )
     except Exception as exc:
         log.error(f"handle_positions_refreshed DB write failed: {exc}", exc_info=True)
 
@@ -146,7 +150,10 @@ async def handle_risk_calculated(payload: Dict[str, Any]) -> None:
        preserves the contract that /fragments/history and UI depend on
     """
     try:
-        await db.insert_pre_trade_log({**payload, "account_id": app_state.active_account_id})
+        from core.db_router import db_router
+        await db_router.account.insert_pre_trade_log(
+            {**payload, "account_id": app_state.active_account_id}
+        )
     except Exception as exc:
         log.error(f"handle_risk_calculated DB write failed: {exc}", exc_info=True)
 

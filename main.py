@@ -365,12 +365,25 @@ async def lifespan(app: FastAPI):
 
     # ── SQLite init (fast — local file) ──────────────────────────────────────
     from core.database import db
+    from core.db_router import split_done, GLOBAL_DB_PATH
+    if split_done():
+        log.info("db_router: split layout active — primary path=%s", GLOBAL_DB_PATH)
+    else:
+        log.info("db_router: pre-split layout — using legacy combined DB at %s", db.path)
     await db.initialize()
 
     # ── Load account registry (fast — local DB) ───────────────────────────────
     from core.account_registry import account_registry
     await account_registry.load_all()
     app_state.active_account_id = account_registry.active_id
+
+    # Post-split: open the active account's per-account DB so dual-write
+    # mirrors land in a ready file. No-op pre-split.
+    if split_done():
+        from core.db_router import db_router
+        per_acc = await db_router.initialize_account(account_registry.active_id)
+        if per_acc is not None:
+            log.info("db_router: per-account DB ready at %s", per_acc.path)
 
     # ── Load active platform from settings ────────────────────────────────────
     platform = await db.get_setting("active_platform")

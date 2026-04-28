@@ -308,6 +308,18 @@ async def fetch_open_orders_tpsl() -> None:
 
 async def fetch_ohlcv(symbol: str, timeframe: str = config.ATR_TIMEFRAME,
                       limit: int = config.ATR_FETCH_LIMIT) -> List:
+    # Fallback path only — when plugin is connected it streams bars via ohlcv_bar events.
+    try:
+        from core.platform_bridge import platform_bridge
+        if platform_bridge.is_connected:
+            cached = app_state.ohlcv_cache.get(symbol, [])
+            if not cached:
+                # Plugin hasn't sent bars yet — ask for them now.
+                asyncio.create_task(platform_bridge.request_ohlcv(symbol, timeframe))
+            return cached
+    except Exception:
+        pass
+
     loop = asyncio.get_event_loop()
     ex   = get_exchange()
 
@@ -537,6 +549,17 @@ def calc_mfe_mae(
 # ── Orderbook ─────────────────────────────────────────────────────────────────
 
 async def fetch_orderbook(symbol: str, limit: int = 20) -> Dict:
+    # Fallback path only — when plugin is connected it streams depth via depth_snapshot events.
+    try:
+        from core.platform_bridge import platform_bridge
+        if platform_bridge.is_connected:
+            cached = app_state.orderbook_cache.get(symbol)
+            if not cached:
+                asyncio.create_task(platform_bridge.request_depth(symbol))
+            return cached or {"bids": [], "asks": []}
+    except Exception:
+        pass
+
     loop = asyncio.get_event_loop()
     ex   = get_exchange()
 
@@ -908,7 +931,22 @@ async def fetch_exchange_trade_history(limit: int = 200) -> None:
     Fetch recent realized-PnL income entries from Binance, then augment each
     row with direction, exit_price, entry_price (computed), and fee (from
     COMMISSION income events matched by tradeId).  Stores newest-first.
+
+    Fallback path only — when the Quantower plugin is connected, exchange_history
+    is populated by the plugin's historical_fill events instead. Skipping the
+    Binance fetch avoids duplicate / divergent rows.
     """
+    try:
+        from core.platform_bridge import platform_bridge
+        if platform_bridge.is_connected:
+            log.debug(
+                "fetch_exchange_trade_history: plugin connected — skipping "
+                "Binance backfill (Quantower is canonical)"
+            )
+            return
+    except Exception:
+        pass
+
     try:
         # Primary: REALIZED_PNL events
         raw_pnl = await fetch_income_history(income_type="REALIZED_PNL", limit=limit)
@@ -1039,8 +1077,10 @@ async def fetch_exchange_trade_history(limit: int = 200) -> None:
         app_state.exchange_trade_history = raw_pnl
 
         try:
-            from core.database import db
-            await db.upsert_exchange_history(raw_pnl, account_id=app_state.active_account_id)
+            from core.db_router import db_router
+            await db_router.account.upsert_exchange_history(
+                raw_pnl, account_id=app_state.active_account_id
+            )
         except Exception as e:
             app_state.ws_status.add_log(f"exchange_history DB upsert error: {e}")
     except Exception as e:

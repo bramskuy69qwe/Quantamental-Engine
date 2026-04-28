@@ -24,10 +24,10 @@ class ReconcilerWorker:
 
     async def _reconcile_symbol(self, ticker: str, direction: str = "") -> None:
         """Process all uncalculated exchange_history rows for one symbol."""
-        from core.database import db
+        from core.db_router import db_router
         from core.exchange import fetch_hl_for_trade, calc_mfe_mae
 
-        rows = await db.get_uncalculated_exchange_rows(ticker)
+        rows = await db_router.account_read.get_uncalculated_exchange_rows(ticker)
         if not rows:
             log.info(f"Reconciler: no uncalculated rows for {ticker}")
             return
@@ -51,7 +51,7 @@ class ReconcilerWorker:
                 continue
 
             mfe, mae = calc_mfe_mae(trade_high, trade_low, entry_price, row_dir, quantity)
-            await db.update_exchange_mfe_mae(trade_key, mfe, mae)
+            await db_router.account.update_exchange_mfe_mae(trade_key, mfe, mae)
             log.info(
                 f"Reconciler: {trade_key} hold={duration_s:.0f}s "
                 f"high={trade_high} low={trade_low} mfe={mfe} mae={mae}"
@@ -89,7 +89,7 @@ class ReconcilerWorker:
         2. Symbols are processed concurrently with a semaphore (_BACKFILL_SEM)
            to exploit I/O overlap while respecting Binance rate limits.
         """
-        from core.database import db
+        from core.db_router import db_router
         from core.exchange import fetch_exchange_trade_history
 
         # Single up-front history refresh — corrects open_time for all symbols
@@ -98,9 +98,14 @@ class ReconcilerWorker:
         except Exception as e:
             log.warning(f"Backfill: history pre-fetch failed: {e}")
 
-        async with db._conn.execute(
+        per = db_router.account_read
+        # Exclude Quantower-sourced rows (trade_key starts with 'qt:') — these
+        # are individual fills, not round-trip trades, so MFE/MAE pairing
+        # doesn't apply. Only Binance-income REALIZED_PNL rows qualify.
+        async with per._conn.execute(
             "SELECT DISTINCT symbol FROM exchange_history"
             " WHERE (mfe=0 OR mae=0) AND open_time>0"
+            " AND trade_key NOT LIKE 'qt:%'"
         ) as cur:
             symbols = [r[0] for r in await cur.fetchall()]
 

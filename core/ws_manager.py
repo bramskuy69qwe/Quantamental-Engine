@@ -97,6 +97,19 @@ async def _refresh_positions_after_fill() -> None:
 
 
 async def _user_data_loop(listen_key: str, attempt: int = 0) -> None:
+    # Gate: plugin provides account/position truth — no need for Binance user-data WS.
+    # Sleep and retry until the plugin disconnects, then re-enter normally.
+    try:
+        from core.platform_bridge import platform_bridge
+        if platform_bridge.is_connected:
+            app_state.ws_status.add_log("User-data WS: plugin connected — standing by (30s)")
+            await asyncio.sleep(30)
+            if not _stopping:
+                asyncio.create_task(_user_data_loop(listen_key, 0))
+            return
+    except Exception:
+        pass
+
     url = f"{config.FSTREAM_WS}/{listen_key}"
     ws  = app_state.ws_status
     ws.add_log(f"User-data WS connecting (attempt {attempt+1})")
@@ -321,8 +334,15 @@ async def _fallback_loop() -> None:
 
         if ws.using_fallback:
             try:
-                await fetch_account()
-                await fetch_positions()
+                # Skip account/position REST fetch if plugin is providing live data.
+                try:
+                    from core.platform_bridge import platform_bridge
+                    _plugin_up = platform_bridge.is_connected
+                except Exception:
+                    _plugin_up = False
+                if not _plugin_up:
+                    await fetch_account()
+                    await fetch_positions()
                 if _calculator_symbol:
                     await fetch_orderbook(_calculator_symbol)
                 ws.last_update = datetime.now(timezone.utc)

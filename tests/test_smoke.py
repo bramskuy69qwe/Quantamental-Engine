@@ -30,3 +30,15 @@ MODULES = [
 @pytest.mark.parametrize("module", MODULES)
 def test_import(module):
     importlib.import_module(module)
+
+
+def test_db_router_pre_split_returns_legacy():
+    """Pre-split, every db_router accessor returns the legacy combined DB."""
+    from core.db_router import db_router, split_done
+    from core.database import db as legacy
+    if split_done():
+        # Skip when split already executed — different invariants apply post-split.
+        return
+    assert db_router.global_db is legacy
+    assert db_router.account_db() is legacy
+    assert db_router.ohlcv_db("binancefutures") is legacy

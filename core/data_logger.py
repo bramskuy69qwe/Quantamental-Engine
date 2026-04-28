@@ -220,15 +220,16 @@ def load_recent_history(path: str, days: int = 30) -> List[Dict]:
 
 async def export_all_to_excel(path: Optional[str] = None) -> str:
     """Export all log tables from SQLite to a multi-sheet XLSX file."""
-    from core.database import db
+    from core.db_router import db_router
     _ensure_dirs()
     if path is None:
         ts = datetime.now(TZ_LOCAL).strftime("%Y%m%d_%H%M%S")
         path = os.path.join(config.DATA_DIR, f"risk_engine_export_{ts}.xlsx")
 
-    pre_trade_df = pd.DataFrame(await db.get_all_pre_trade_log(days=365))
-    execution_df = pd.DataFrame(await db.get_all_execution_log(days=365))
-    history_df   = pd.DataFrame(await db.get_all_trade_history(days=365))
+    per = db_router.account_read
+    pre_trade_df = pd.DataFrame(await per.get_all_pre_trade_log(days=365))
+    execution_df = pd.DataFrame(await per.get_all_execution_log(days=365))
+    history_df   = pd.DataFrame(await per.get_all_trade_history(days=365))
     # live_trades still on CSV (no DB table in Phase 1)
     live_df = pd.read_csv(config.LIVE_TRADES) if os.path.exists(config.LIVE_TRADES) else pd.DataFrame()
 

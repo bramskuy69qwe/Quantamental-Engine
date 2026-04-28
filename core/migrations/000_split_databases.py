@@ -240,11 +240,29 @@ def execute(plan: Dict) -> None:
     src = sqlite3.connect(plan["legacy_path"])
 
     # Global DB
+    # Holds canonical global tables PLUS a backwards-compatibility copy of every
+    # per-account table (full unfiltered set). This keeps existing callers like
+    # `db.insert_account_snapshot(...)` working post-split without forcing the
+    # whole codebase to migrate to db_router.account_db() in one shot.
+    # Future cleanup: drop per-account tables from global.db once all writers
+    # have moved to db_router.
     g = sqlite3.connect(plan["global"]["path"])
     g.execute("PRAGMA journal_mode=WAL")
     for table in GLOBAL_TABLES:
         n = _copy_table_filtered(src, g, table)
         print(f"  global: {table} <- {n} rows")
+    print("  global: copying per-account tables as compatibility shim")
+    for table in PER_ACCOUNT_TABLES:
+        n = _copy_table_filtered(src, g, table)
+        print(f"  global (compat): {table} <- {n} rows")
+    if _table_exists(src, "position_history_notes"):
+        n = _copy_table_filtered(src, g, "position_history_notes")
+        print(f"  global (compat): position_history_notes <- {n} rows")
+    if _table_exists(src, "ohlcv_cache"):
+        # Some callers query ohlcv_cache via the legacy db handle. Keep a copy
+        # in global.db too — the canonical home is data/ohlcv/<broker>.db.
+        n = _copy_table_filtered(src, g, "ohlcv_cache")
+        print(f"  global (compat): ohlcv_cache <- {n} rows")
     g.commit()
     g.close()
 

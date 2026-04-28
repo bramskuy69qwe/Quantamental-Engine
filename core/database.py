@@ -930,9 +930,15 @@ class DatabaseManager:
     async def get_uncalculated_exchange_rows(self, symbol: str) -> List[Dict]:
         """Return exchange_history rows for symbol where mfe or mae is still 0
         and open_time is known.  Catches both never-calculated rows (mfe=0) and
-        partially-written rows (mfe written but mae left at 0 from a prior bug)."""
+        partially-written rows (mfe written but mae left at 0 from a prior bug).
+
+        Excludes Quantower-sourced rows (trade_key starts with 'qt:') — those
+        are individual fills, not paired round-trip trades, so MFE/MAE math
+        doesn't apply (and would needlessly hammer Binance for price ranges).
+        """
         async with self._conn.execute(
-            "SELECT * FROM exchange_history WHERE symbol=? AND (mfe=0 OR mae=0) AND open_time>0",
+            "SELECT * FROM exchange_history WHERE symbol=? AND (mfe=0 OR mae=0)"
+            " AND open_time>0 AND trade_key NOT LIKE 'qt:%'",
             (symbol,),
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
@@ -2066,8 +2072,21 @@ class DatabaseManager:
             self._conn = None
 
 
-# Module-level singleton — points at the legacy combined DB (config.DB_PATH).
-# Will be deprecated once `core.db_router` becomes the canonical entry point
-# (R1b of the data-route refactor). Until then, all existing callers continue
-# to import `db` from here and operate on the combined file.
-db = DatabaseManager()
+# Module-level singleton.
+#
+# Pre-split: points at the legacy combined DB (config.DB_PATH).
+# Post-split: auto-resolves to data/global.db (which carries the global tables
+#             AND a backwards-compat copy of all per-account tables, so legacy
+#             callers continue to work without changes).
+#
+# Detection is path-based to avoid a circular import between core.database and
+# core.db_router. The marker file is the same one db_router checks.
+def _resolve_default_db_path() -> str:
+    import os
+    split_marker = os.path.join(config.DATA_DIR, ".split-complete-v1")
+    if os.path.exists(split_marker):
+        return os.path.join(config.DATA_DIR, "global.db")
+    return config.DB_PATH
+
+
+db = DatabaseManager(path=_resolve_default_db_path())
