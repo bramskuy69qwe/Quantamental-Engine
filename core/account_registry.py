@@ -16,6 +16,10 @@ import asyncio
 import logging
 from typing import Dict, List, Optional, Any
 
+from core.database import db
+from core.crypto import decrypt, encrypt
+from core.exchange_factory import exchange_factory
+
 log = logging.getLogger("account_registry")
 
 
@@ -31,9 +35,6 @@ class AccountRegistry:
 
     async def load_all(self) -> None:
         """Read all accounts from DB, decrypt credentials, populate cache."""
-        from core.database import db
-        from core.crypto import decrypt
-
         rows = await db.get_all_accounts()   # metadata only (no secrets)
 
         # Determine active_id from settings
@@ -101,7 +102,6 @@ class AccountRegistry:
 
     async def set_active(self, account_id: int) -> None:
         """Mark account as active in DB + cache."""
-        from core.database import db
         await db.set_active_account(account_id)
         async with self._lock:
             self._active_id = account_id
@@ -120,9 +120,6 @@ class AccountRegistry:
         api_secret: str,
         broker_account_id: str = "",
     ) -> int:
-        from core.database import db
-        from core.crypto import encrypt
-
         key_enc = encrypt(api_key)
         sec_enc = encrypt(api_secret)
         new_id = await db.insert_account(
@@ -151,9 +148,6 @@ class AccountRegistry:
         api_secret: Optional[str] = None,
         broker_account_id: Optional[str] = None,
     ) -> None:
-        from core.database import db
-        from core.crypto import encrypt
-
         kwargs: Dict[str, Any] = {}
         if name is not None:
             kwargs["name"] = name
@@ -178,7 +172,6 @@ class AccountRegistry:
                     self._cache[account_id]["broker_account_id"] = broker_account_id
 
     async def delete_account(self, account_id: int) -> None:
-        from core.database import db
         await db.delete_account(account_id)
         async with self._lock:
             self._cache.pop(account_id, None)
@@ -228,7 +221,6 @@ class AccountRegistry:
     async def test_connection(self, account_id: int) -> Dict[str, Any]:
         """Test API key by making a lightweight REST call. Returns latency or error."""
         import time
-        from core.exchange_factory import exchange_factory
 
         async with self._lock:
             creds = self._cache.get(account_id)

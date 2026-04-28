@@ -13,6 +13,8 @@ import logging
 from typing import Dict
 
 from core.state import app_state
+from core.database import db
+from core.exchange import fetch_hl_for_trade, calc_mfe_mae, fetch_exchange_trade_history
 
 log = logging.getLogger("reconciler")
 
@@ -24,9 +26,6 @@ class ReconcilerWorker:
 
     async def _reconcile_symbol(self, ticker: str, direction: str = "") -> None:
         """Process all uncalculated exchange_history rows for one symbol."""
-        from core.database import db
-        from core.exchange import fetch_hl_for_trade, calc_mfe_mae
-
         rows = await db.get_uncalculated_exchange_rows(ticker)
         if not rows:
             log.info(f"Reconciler: no uncalculated rows for {ticker}")
@@ -72,7 +71,6 @@ class ReconcilerWorker:
         await asyncio.sleep(_SETTLE_DELAY)
 
         try:
-            from core.exchange import fetch_exchange_trade_history
             await fetch_exchange_trade_history()
             await self._reconcile_symbol(ticker, direction)
         except Exception as e:
@@ -89,9 +87,6 @@ class ReconcilerWorker:
         2. Symbols are processed concurrently with a semaphore (_BACKFILL_SEM)
            to exploit I/O overlap while respecting Binance rate limits.
         """
-        from core.database import db
-        from core.exchange import fetch_exchange_trade_history
-
         # Single up-front history refresh — corrects open_time for all symbols
         try:
             await fetch_exchange_trade_history()

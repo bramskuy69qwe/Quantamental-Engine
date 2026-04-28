@@ -65,6 +65,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from core.database import db
 from core.analytics import daily_returns, sharpe, sortino, r_multiple_stats
+from core.regime_classifier import classify_regime, ALL_SIGNALS
 
 log = logging.getLogger("backtest_runner")
 
@@ -543,8 +544,6 @@ class BacktestRunner:
 
     def _get_regime_label(self, ts_ms: int, macro_data: Dict[str, List[Dict]]) -> str:
         """Classify regime for a given bar timestamp using stored macro signals."""
-        from core.regime_classifier import classify_regime
-
         bar_date = datetime.utcfromtimestamp(ts_ms / 1000).strftime("%Y-%m-%d")
         signals: Dict[str, float] = {}
         for sig_name, series in macro_data.items():
@@ -570,7 +569,6 @@ class BacktestRunner:
     ) -> Dict[str, List[Dict]]:
         """Load all regime signals from DB for the given time range."""
         try:
-            from core.regime_classifier import ALL_SIGNALS
             from_date = datetime.utcfromtimestamp(since_ms / 1000).strftime("%Y-%m-%d")
             to_date   = datetime.utcfromtimestamp(until_ms / 1000).strftime("%Y-%m-%d")
             return await db.get_regime_signals(ALL_SIGNALS, from_date, to_date)
@@ -602,7 +600,7 @@ def _date_to_ms(date_str: str, end_of_day: bool = False) -> int:
         if end_of_day:
             dt = dt + timedelta(hours=23, minutes=59, seconds=59)
         return int(dt.timestamp() * 1000)
-    except Exception:
+    except (ValueError, OverflowError, OSError):
         return 0
 
 

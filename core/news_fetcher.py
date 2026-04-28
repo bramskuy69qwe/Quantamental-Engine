@@ -142,7 +142,13 @@ class FinnhubFetcher:
 # ── BWE News (websocket) ────────────────────────────────────────────────────
 
 class BweWsConsumer:
-    """Long-running asyncio task that consumes BWE News WS messages and writes to DB."""
+    """Long-running asyncio task that consumes BWE News WS messages and writes to DB.
+
+    BWE protocol: plaintext "ping" sent every 20s, server replies with plaintext "pong".
+    Protocol-level WebSocket pings are disabled — the server rejects them with HTTP 403.
+    """
+
+    _PING_INTERVAL = 20  # seconds between plaintext ping sends
 
     def __init__(self, url: Optional[str] = None) -> None:
         self.url = url or config.BWE_NEWS_WS_URL
@@ -159,15 +165,31 @@ class BweWsConsumer:
         while not self._stop:
             try:
                 async with websockets.connect(
-                    self.url, ping_interval=20, ping_timeout=20, max_size=2**20,
+                    self.url,
+                    # BWE server rejects protocol-level WS ping frames — use plaintext ping loop
+                    ping_interval=None,
+                    ping_timeout=None,
+                    max_size=2**20,
+                    additional_headers={
+                        "Origin":     "https://bwenews-api.bwe-ws.com",
+                        "User-Agent": "Mozilla/5.0",
+                    },
                 ) as ws:
                     log.info("BWE WS: connected to %s", self.url)
                     backoff = 5
-                    async for raw in ws:
+                    ping_task = asyncio.create_task(self._ping_loop(ws))
+                    try:
+                        async for raw in ws:
+                            try:
+                                await self._handle_message(raw)
+                            except Exception as e:
+                                log.warning("BWE WS: message handler error: %s", e)
+                    finally:
+                        ping_task.cancel()
                         try:
-                            await self._handle_message(raw)
-                        except Exception as e:
-                            log.warning("BWE WS: message handler error: %s", e)
+                            await ping_task
+                        except asyncio.CancelledError:
+                            pass
             except (websockets.exceptions.ConnectionClosedError,
                     websockets.exceptions.ConnectionClosedOK,
                     OSError) as e:
@@ -179,6 +201,15 @@ class BweWsConsumer:
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 60)
 
+    async def _ping_loop(self, ws) -> None:
+        """Send plaintext 'ping' every _PING_INTERVAL seconds. BWE expects text ping, not WS frames."""
+        while True:
+            await asyncio.sleep(self._PING_INTERVAL)
+            try:
+                await ws.send("ping")
+            except Exception:
+                break
+
     async def _handle_message(self, raw: Any) -> None:
         """Parse a single BWE message and upsert to news_items."""
         if isinstance(raw, (bytes, bytearray)):
@@ -186,16 +217,20 @@ class BweWsConsumer:
                 raw = raw.decode("utf-8", errors="replace")
             except Exception:
                 return
+
+        # Ignore plaintext heartbeat replies
+        if isinstance(raw, str) and raw.strip().lower() == "pong":
+            return
+
         try:
             msg = json.loads(raw) if isinstance(raw, str) else raw
         except json.JSONDecodeError:
             return
 
-        # BWE message shape varies; common keys observed: {time/timestamp/created_at,
-        # title/text/content, link/source_url}.
-        ts_raw = msg.get("time") or msg.get("timestamp") or msg.get("created_at")
+        # BWE message shape: {news_title, source_name, coins_included, url, timestamp}
+        ts_raw   = msg.get("timestamp") or msg.get("time") or msg.get("created_at")
         published = _to_iso_utc(ts_raw) or datetime.now(timezone.utc).isoformat()
-        headline = (msg.get("title") or msg.get("text") or msg.get("content") or "").strip()
+        headline  = (msg.get("news_title") or msg.get("title") or msg.get("text") or "").strip()
         if not headline:
             return
         ext_id = (str(msg.get("id"))
@@ -207,10 +242,10 @@ class BweWsConsumer:
             "external_id":  ext_id,
             "headline":     headline,
             "summary":      (msg.get("summary") or "").strip(),
-            "url":          msg.get("link") or msg.get("source_url") or "",
+            "url":          msg.get("url") or msg.get("link") or msg.get("source_url") or "",
             "image_url":    msg.get("image") or "",
-            "category":     msg.get("category") or "crypto",
-            "tickers":      _stringify_tickers(msg.get("tickers") or msg.get("symbols")),
+            "category":     "crypto",
+            "tickers":      _stringify_tickers(msg.get("coins_included") or msg.get("tickers")),
             "published_at": published,
         }])
 

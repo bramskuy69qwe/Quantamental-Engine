@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import config
 from core.database import db
+from core.state import RegimeState
 
 log = logging.getLogger("regime_classifier")
 
@@ -257,8 +258,6 @@ async def compute_current_regime():
     This ensures the calculator badge always agrees with the timeline chart, both
     of which are ultimately sourced from regime_labels when a backfill has run.
     """
-    from core.state import RegimeState
-
     # ── 1. Try the backfilled regime_labels table first ──────────────────────
     recent_db = await db.get_latest_regime_label()
     cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")

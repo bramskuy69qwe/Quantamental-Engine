@@ -233,7 +233,7 @@ class AppState:
                 with open(config.PARAMS_FILE) as f:
                     saved = json.load(f)
                 self.params.update(saved)
-            except Exception:
+            except (ValueError, OSError, KeyError):
                 pass
 
     def save_params(self):

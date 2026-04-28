@@ -22,6 +22,7 @@ import pandas as pd
 
 import config
 from core.state import app_state, TZ_LOCAL
+from core.database import db
 
 
 # ── Ensure data dirs exist ────────────────────────────────────────────────────
@@ -220,7 +221,6 @@ def load_recent_history(path: str, days: int = 30) -> List[Dict]:
 
 async def export_all_to_excel(path: Optional[str] = None) -> str:
     """Export all log tables from SQLite to a multi-sheet XLSX file."""
-    from core.database import db
     _ensure_dirs()
     if path is None:
         ts = datetime.now(TZ_LOCAL).strftime("%Y%m%d_%H%M%S")

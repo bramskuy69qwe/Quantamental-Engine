@@ -273,6 +273,27 @@ class PlatformBridge:
             fill["ticker"], fill["direction"], fill["quantity"], fill["price"],
         )
 
+        # Record fill in execution_log tagged as quantower for post-hoc analysis
+        try:
+            from core.database import db
+            import config as _cfg
+            await db.insert_execution_log({
+                "account_id":               app_state.active_account_id,
+                "ticker":                   fill["ticker"],
+                "side":                     fill["direction"],
+                "entry_price_actual":       fill["price"],
+                "size_filled":              fill["quantity"],
+                "slippage":                 0,
+                "order_type":               "market",
+                "maker_fee":                _cfg.MAKER_FEE,
+                "taker_fee":                _cfg.TAKER_FEE,
+                "latency_snapshot":         0,
+                "orderbook_depth_snapshot": "",
+                "source_terminal":          "quantower",
+            })
+        except Exception as exc:
+            log.warning("PlatformBridge: execution_log write failed: %r", exc)
+
         # Trigger position refresh via the same path as Binance WS
         try:
             from core.ws_manager import _refresh_positions_after_fill

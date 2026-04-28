@@ -41,7 +41,7 @@ from core.exchange import (
 )
 from core import ws_manager
 from core.data_logger import take_daily_snapshot, take_monthly_snapshot
-from api.routes import router
+from api.router import router
 
 # ── Logging setup ─────────────────────────────────────────────────────────────
 logging.basicConfig(

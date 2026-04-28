@@ -21,6 +21,11 @@ import websockets
 
 import config
 from core.state import app_state
+from core.event_bus import event_bus
+from core.exchange import (
+    fetch_account, fetch_positions, fetch_orderbook, fetch_ohlcv,
+    create_listen_key, keepalive_listen_key,
+)
 
 log = logging.getLogger("ws_manager")
 
@@ -75,7 +80,6 @@ async def _handle_user_event(msg: dict) -> None:
         asyncio.create_task(_refresh_positions_after_fill())
 
     ws.last_update = datetime.now(timezone.utc)
-    from core.event_bus import event_bus
     await event_bus.publish(
         "risk:account_updated",
         {"event": ev, "ts": datetime.now(timezone.utc).isoformat()},
@@ -84,10 +88,8 @@ async def _handle_user_event(msg: dict) -> None:
 
 async def _refresh_positions_after_fill() -> None:
     try:
-        from core.exchange import fetch_positions, fetch_account
         await fetch_account()
         await fetch_positions()
-        from core.event_bus import event_bus
         await event_bus.publish(
             "risk:positions_refreshed",
             {"trigger": "fill", "ts": datetime.now(timezone.utc).isoformat()},
@@ -148,7 +150,6 @@ async def _reconnect_user(attempt: int) -> None:
 
     # Refresh listen key
     try:
-        from core.exchange import create_listen_key
         _listen_key = await create_listen_key()
     except Exception as e:
         ws.add_log(f"Failed to refresh listen key: {e}")
@@ -298,7 +299,6 @@ async def _keepalive_loop() -> None:
         await asyncio.sleep(25 * 60)   # 25 minutes
         if _listen_key:
             try:
-                from core.exchange import keepalive_listen_key
                 await keepalive_listen_key(_listen_key)
                 app_state.ws_status.add_log("Listen key refreshed.")
             except Exception as e:
@@ -309,8 +309,6 @@ async def _keepalive_loop() -> None:
 
 async def _fallback_loop() -> None:
     """Poll REST API when WS is stale for > WS_FALLBACK_TIMEOUT seconds."""
-    from core.exchange import fetch_account, fetch_positions, fetch_orderbook, fetch_ohlcv
-
     while True:
         await asyncio.sleep(5)
         ws = app_state.ws_status

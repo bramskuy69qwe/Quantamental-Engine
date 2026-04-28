@@ -191,6 +191,8 @@
         onclick="document.getElementById('add-account-modal').style.display='flex'"
         style="background:#2a2d3a;border:1px solid #2a2d3a;color:#94a3b8;border-radius:6px;padding:4px 8px;font-size:.85rem;cursor:pointer;line-height:1;"
         onmouseover="this.style.color='#e2e8f0'" onmouseout="this.style.color='#94a3b8'">+</button>
+      <!-- Account connection status badge -->
+      <span id="account-conn-badge" style="display:none;font-size:.70rem;padding:2px 7px;border-radius:99px;white-space:nowrap;"></span>
       <span id="account-switch-msg" class="text-xs text-slate-500 htmx-indicator"></span>
     </div>
 
@@ -311,6 +313,7 @@ document.body.addEventListener("account-added", function() {
   var _pluginDot        = document.getElementById('plugin-dot');
   var _banner           = document.getElementById('standalone-banner');
   var _bannerMsg        = document.getElementById('standalone-banner-msg');
+  var _connBadge        = document.getElementById('account-conn-badge');
 
   function getPlatform() {
     return _platformSelector ? _platformSelector.value : '{{ active_platform }}';
@@ -318,7 +321,7 @@ document.body.addEventListener("account-added", function() {
 
   function updateUI(connected) {
     var platform = getPlatform();
-    // Plugin badge
+    // Plugin badge (platform selector area)
     if (_pluginStatus) {
       _pluginStatus.style.display = platform === 'quantower' ? '' : 'none';
     }
@@ -329,6 +332,22 @@ document.body.addEventListener("account-added", function() {
       } else {
         _pluginDot.textContent = '◌ Plugin';
         _pluginDot.style.color = '#475569';
+      }
+    }
+    // Account connection status badge (next to account selector)
+    if (_connBadge) {
+      if (platform === 'quantower' && connected) {
+        _connBadge.style.display = '';
+        _connBadge.textContent   = '● Live';
+        _connBadge.style.background = '#14532d';
+        _connBadge.style.color      = '#4ade80';
+      } else if (platform === 'quantower' && !connected) {
+        _connBadge.style.display = '';
+        _connBadge.textContent   = '◌ Offline';
+        _connBadge.style.background = '#422006';
+        _connBadge.style.color      = '#fbbf24';
+      } else {
+        _connBadge.style.display = 'none';  // standalone: banner is enough
       }
     }
     // Standalone banner
