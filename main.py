@@ -122,10 +122,14 @@ async def _auto_export_scheduler():
 # ── Periodic account refresh (belt-and-suspenders alongside WS) ───────────────
 
 async def _account_refresh_loop():
-    """Refresh account + positions via REST every 60 seconds as a safety net."""
+    """Refresh account + positions via REST every 60 seconds as a safety net.
+    Skipped when the Quantower plugin is connected — plugin provides live data."""
     from core.event_bus import event_bus
+    from core.platform_bridge import platform_bridge
     while True:
         await asyncio.sleep(60)
+        if platform_bridge.is_connected:
+            continue
         try:
             await fetch_account()
             await fetch_positions()
@@ -140,9 +144,13 @@ async def _account_refresh_loop():
 # ── Latency ping loop ──────────────────────────────────────────────────────────
 
 async def _ping_loop():
-    """Measure REST round-trip latency every 5 seconds."""
+    """Measure REST round-trip latency every 5 seconds.
+    Skipped when the Quantower plugin is connected — avoids hammering Binance REST."""
+    from core.platform_bridge import platform_bridge
     while True:
         await asyncio.sleep(5)
+        if platform_bridge.is_connected:
+            continue
         try:
             await fetch_exchange_info()
         except Exception as e:
@@ -152,9 +160,13 @@ async def _ping_loop():
 # ── BOD/SOW + exchange history refresh ────────────────────────────────────────
 
 async def _history_refresh_loop():
-    """Refresh BOD/SOW equity and exchange trade history every 5 minutes."""
+    """Refresh BOD/SOW equity and exchange trade history every 5 minutes.
+    Skipped when the Quantower plugin is connected."""
+    from core.platform_bridge import platform_bridge
     while True:
         await asyncio.sleep(300)
+        if platform_bridge.is_connected:
+            continue
         try:
             await fetch_bod_sow_equity()
         except Exception as e:
