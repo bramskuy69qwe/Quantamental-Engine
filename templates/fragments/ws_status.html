@@ -1,43 +1,37 @@
-<div class="flex items-center gap-3 text-xs">
-  <!-- Data source: Quantower plugin takes priority -->
+<!-- fragment: ws_status — polled every 1s from base.html header -->
+<div style="display:flex;align-items:center;gap:10px;font-size:.72rem;font-family:var(--font-mono);">
+
+  <!-- Connection state indicator -->
   {% if plugin_connected %}
-    <span class="inline-block w-2 h-2 rounded-full bg-green-500"></span>
-    <span class="text-green-400">Quantower Live</span>
+    <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);"></span>
+    <span style="color:var(--green);">Quantower Live</span>
   {% elif ws.connected and not ws.is_stale %}
-    <span class="inline-block w-2 h-2 rounded-full bg-green-500"></span>
-    <span class="text-green-400">Binance WS</span>
+    <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);"></span>
+    <span style="color:var(--green);">Binance WS</span>
   {% elif ws.using_fallback %}
-    <span class="inline-block w-2 h-2 rounded-full bg-yellow-500"></span>
-    <span class="text-yellow-400">REST Fallback</span>
+    <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--amber);"></span>
+    <span style="color:var(--amber);">REST Fallback</span>
   {% else %}
-    <span class="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
-    <span class="text-red-400">Offline</span>
+    <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--red);animation:pulse 1.2s infinite;"></span>
+    <span style="color:var(--red);">Offline</span>
   {% endif %}
 
-  <!-- REST ping latency (updated every 10s by ping loop) -->
-  <span class="text-slate-400" title="REST round-trip latency">
-    {{ fmt(ex.latency_ms, 0) }} ms
-  </span>
+  <!-- REST latency -->
+  <span style="color:var(--muted);">{{ fmt(ex.latency_ms, 0) }} ms</span>
 
-  <!-- WS event lag (only meaningful when Binance WS is live) -->
+  <!-- WS event lag (Binance only) -->
   {% if not plugin_connected and ws.connected and ws.latency_ms > 0 %}
-  <span class="text-slate-500" title="WS event lag">
-    WS {{ fmt(ws.latency_ms, 0) }} ms lag
-  </span>
+  <span style="color:var(--muted);">WS {{ fmt(ws.latency_ms, 0) }} ms lag</span>
   {% endif %}
 
+  <!-- Last update age -->
   {% if ws.seconds_since_update < 9999 %}
-  <span class="text-slate-500">{{ ws.seconds_since_update | int }}s ago</span>
+  <span style="color:var(--muted);">{{ ws.seconds_since_update | int }}s ago</span>
   {% endif %}
 
+  <!-- Reconnect attempts -->
   {% if ws.reconnect_attempts > 0 %}
-  <span class="text-yellow-500">retries: {{ ws.reconnect_attempts }}</span>
+  <span style="color:var(--amber);">retries: {{ ws.reconnect_attempts }}</span>
   {% endif %}
 
-  <!-- Recent log (last 3) -->
-  <div class="hidden xl:flex flex-col gap-0.5 max-w-xs">
-    {% for entry in ws.logs[-3:] %}
-    <div class="text-slate-600 truncate">{{ entry }}</div>
-    {% endfor %}
-  </div>
 </div>

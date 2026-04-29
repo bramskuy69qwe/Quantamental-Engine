@@ -5,17 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{% block title %}Quantamental Risk Engine v2.1{% endblock %}</title>
 
-  <!-- Tailwind (backward compat for legacy fragments during migration) -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: { extend: {
-        colors: { accent: '#3c8ff5' },
-      }},
-    };
-  </script>
-
   <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -92,8 +81,6 @@
       padding: 10px 12px;
     }
     .card-p8 { padding: 8px 10px; }
-    /* Backward-compat alias for legacy fragments that use .panel */
-    .panel { background: var(--card); border: 1px solid var(--border); border-radius: 5px; }
 
     /* ── Section label ───────────────────────────────────────────────────── */
     .sec-lbl {
@@ -229,6 +216,7 @@
     .gauge-fill  { height: 100%; border-radius: 2px; transition: width 0.3s; }
 
     /* ── Tab bars ────────────────────────────────────────────────────────── */
+    /* style=line (default) */
     .tabs-line {
       display: flex; border-bottom: 1px solid var(--border);
       overflow-x: auto; scrollbar-width: none; margin-bottom: 6px;
@@ -247,6 +235,7 @@
       border-bottom: 2px solid var(--blue);
     }
 
+    /* style=pill */
     .tabs-pill {
       display: flex; gap: 4px; overflow-x: auto;
       scrollbar-width: none; margin-bottom: 6px; flex-wrap: wrap;
@@ -267,7 +256,7 @@
     @keyframes _sba { 0%{left:-55%;width:55%} 100%{left:100%;width:55%} }
     #_sbi { position:absolute;top:0;height:100%;background:var(--blue);border-radius:99px;animation:_sba 1.2s ease-in-out infinite; }
 
-    /* ── Preset buttons ──────────────────────────────────────────────────── */
+    /* ── Preset buttons (analytics date range) ───────────────────────────── */
     .preset-btn {
       padding: 3px 9px; border-radius: 3px; cursor: pointer;
       border: 1px solid var(--border); background: var(--panel);
@@ -294,7 +283,7 @@
     .cal-cell.cal-selected { background: #1d4ed8; color: #fff; }
     .cal-cell.cal-in-range { background: #1e3a5f; color: #bfdbfe; }
 
-    /* ── Notes textarea ──────────────────────────────────────────────────── */
+    /* ── Notes ───────────────────────────────────────────────────────────── */
     .note-textarea {
       width: 100%; background: var(--panel); border: 1px solid var(--blue);
       color: var(--text); border-radius: 4px; padding: 4px 6px;
@@ -318,16 +307,6 @@
     .cursor-pointer { cursor: pointer; }
     .w-full { width: 100%; }
     .hidden { display: none !important; }
-
-    /* ── Legacy Tailwind compatibility overrides ─────────────────────────── */
-    .panel { background: var(--card); border: 1px solid var(--border); border-radius: 5px; }
-    .label { font-size: 0.6rem; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--sub); }
-    .value { font-family: var(--font-mono); font-size: 0.92rem; font-weight: 700; color: var(--text); }
-    .date-range-display {
-      background: var(--panel); border: 1px solid var(--border); border-radius: 4px;
-      padding: 4px 10px; font-size: .78rem; color: var(--text); cursor: pointer;
-      display: inline-flex; align-items: center; gap: 4px;
-    }
   </style>
 
   {% block extra_head %}{% endblock %}
@@ -366,7 +345,7 @@
     <!-- Logo -->
     <span style="font-family:var(--font-ui);font-size:.72rem;font-weight:800;
                  color:var(--blue);letter-spacing:.06em;white-space:nowrap;flex-shrink:0;">
-      Quantamental Engine <span style="color:var(--sub);font-weight:400;font-size:.65rem">v2.1</span>
+      QE <span style="color:var(--sub);font-weight:400;font-size:.65rem">v2.1</span>
     </span>
 
     <!-- Nav links -->

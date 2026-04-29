@@ -57,6 +57,14 @@ async def update_params(
     return HTMLResponse('<div class="alert-success p-2 rounded">Parameters saved.</div>')
 
 
+@router.get("/fragments/ws_log", response_class=HTMLResponse)
+async def frag_ws_log(request: Request):
+    return templates.TemplateResponse(
+        request, "fragments/ws_log.html",
+        {"ws_log": app_state.ws_status.logs},
+    )
+
+
 @router.get("/export")
 async def manual_export():
     path = await export_all_to_excel()

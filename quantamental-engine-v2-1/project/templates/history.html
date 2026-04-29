@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% set active_page = "history" %}
+{% block title %}History — Risk Engine{% endblock %}
+
+{% block content %}
+<div style="display:flex;flex-direction:column;gap:6px;">
+
+  <!-- ── Toolbar ──────────────────────────────────────────────────────── -->
+  <div class="card card-p8">
+    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+      <a href="/history/export" class="btn btn-primary btn-sm">Export All to Excel</a>
+      <button class="btn btn-secondary btn-sm"
+              hx-get="/fragments/history/table"
+              hx-target="#history-table-wrap"
+              hx-swap="innerHTML"
+              hx-include="#hist-filters">Refresh Now</button>
+      <span style="font-size:.62rem;color:var(--sub);">Auto-refreshes every 30s</span>
+
+      <!-- Date range display -->
+      <div style="margin-left:auto;display:flex;align-items:center;gap:4px;">
+        <div id="date-range-display" class="date-range-display"
+             onclick="document.getElementById('calendar-dropdown').classList.toggle('hidden')"
+             style="background:var(--panel);border:1px solid var(--border);border-radius:4px;
+                    padding:4px 10px;font-size:.78rem;color:var(--text);cursor:pointer;
+                    display:inline-flex;align-items:center;gap:4px;">
+          <span id="date-range-text">{{ date_from }} → {{ date_to }}</span>
+          <span style="color:var(--sub);font-size:.65rem;">▾</span>
+        </div>
+        <button onclick="resetDateRange()" class="btn btn-ghost btn-sm">Reset</button>
+      </div>
+    </div>
+
+    <!-- Presets -->
+    <div style="display:flex;gap:4px;margin-top:7px;flex-wrap:wrap;" id="hist-filters">
+      <input type="hidden" name="date_from" id="hf-from" value="{{ date_from }}" />
+      <input type="hidden" name="date_to"   id="hf-to"   value="{{ date_to }}" />
+      {% for label in ['Last 90 days','Last 30 days','Last 15 days','Last 7 days','Yesterday','Today'] %}
+      <button onclick="setPreset('{{ label }}')" id="preset-{{ loop.index }}"
+              class="preset-btn {% if loop.index == 2 %}active{% endif %}">{{ label }}</button>
+      {% endfor %}
+    </div>
+
+    <!-- Calendar dropdown -->
+    <div id="calendar-dropdown" class="hidden" style="margin-top:8px;position:relative;z-index:100;"></div>
+  </div>
+
+  <!-- ── Position History ──────────────────────────────────────────────── -->
+  <div class="card card-p8"
+       hx-get="/fragments/history/table"
+       hx-trigger="load, every 30s"
+       hx-swap="innerHTML"
+       hx-include="#hist-filters"
+       id="history-table-wrap">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:8px;flex-wrap:wrap;">
+      <span class="sec-lbl" style="margin-bottom:0;">Position History</span>
+      <div style="display:flex;gap:4px;align-items:center;">
+        <input type="text" placeholder="Search symbol..." class="hist-input"
+               oninput="filterHistoryTable(this.value)" />
+        <select class="hist-select" onchange="filterHistorySide(this.value)">
+          <option value="">All Sides</option>
+          <option value="LONG">Long</option>
+          <option value="SHORT">Short</option>
+        </select>
+      </div>
+    </div>
+    <div style="overflow-x:auto;">
+      <table>
+        <thead><tr>
+          <th>Open</th><th>Close</th><th>Hold</th>
+          <th class="cursor-pointer" onclick="sortHistory('symbol')">Symbol <span class="sort-arrow">↕</span></th>
+          <th>Dir</th>
+          <th class="cursor-pointer" onclick="sortHistory('entry')">Entry <span class="sort-arrow">↕</span></th>
+          <th>Exit</th><th>Notional</th>
+          <th class="cursor-pointer" onclick="sortHistory('pnl')">PnL <span class="sort-arrow">↕</span></th>
+          <th>TP/SL</th><th>Fees</th><th>MFE</th><th>MAE</th><th>M·R</th>
+          <th>Notes</th>
+        </tr></thead>
+        <tbody id="history-tbody">
+          <tr><td colspan="15" style="text-align:center;color:var(--muted);padding:24px;">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <!-- Pagination -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;flex-wrap:wrap;gap:6px;">
+      <span id="hist-count" style="font-size:.65rem;color:var(--sub);">—</span>
+      <div style="display:flex;gap:3px;align-items:center;">
+        <div id="hist-pagination" style="display:flex;gap:2px;"></div>
+        <select style="height:24px;padding:2px 6px;font-size:.65rem;width:auto;"
+                onchange="setPageSize(this.value)">
+          <option value="20">20 / page</option>
+          <option value="50">50 / page</option>
+          <option value="100">100 / page</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Pre-trade log ────────────────────────────────────────────────── -->
+  <div class="card card-p8"
+       hx-get="/fragments/history/pretrade"
+       hx-trigger="load"
+       hx-swap="innerHTML"
+       hx-include="#hist-filters"
+       id="pretrade-wrap">
+    <span class="sec-lbl">Pre-Trade Log</span>
+    <div style="text-align:center;color:var(--muted);padding:20px;font-size:.78rem;">Loading...</div>
+  </div>
+
+</div>
+
+<script>
+var _histPage=1,_histPageSize=20,_histSort='open',_histSortDir=-1,_histSearch='',_histSide='';
+var _histData=[];
+
+function setPreset(label){
+  document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('active'));
+  event.target.classList.add('active');
+  var now=new Date(),from=new Date(),to=new Date();
+  if(label==='Today'){from=to=now;}
+  else if(label==='Yesterday'){from.setDate(from.getDate()-1);to.setDate(to.getDate()-1);}
+  else if(label==='Last 7 days')from.setDate(from.getDate()-7);
+  else if(label==='Last 15 days')from.setDate(from.getDate()-15);
+  else if(label==='Last 30 days')from.setDate(from.getDate()-30);
+  else if(label==='Last 90 days')from.setDate(from.getDate()-90);
+  var fmt=d=>d.toISOString().slice(0,10);
+  document.getElementById('hf-from').value=fmt(from);
+  document.getElementById('hf-to').value=fmt(to);
+  document.getElementById('date-range-text').textContent=fmt(from)+' → '+fmt(to);
+  htmx.ajax('GET','/fragments/history/table?date_from='+fmt(from)+'&date_to='+fmt(to),{target:'#history-table-wrap',swap:'innerHTML'});
+}
+function resetDateRange(){
+  document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelector('.preset-btn:nth-child(2)').classList.add('active');
+  setPreset('Last 30 days');
+}
+function filterHistoryTable(q){_histSearch=q.toLowerCase();}
+function filterHistorySide(s){_histSide=s;}
+function sortHistory(col){if(_histSort===col)_histSortDir*=-1;else{_histSort=col;_histSortDir=-1;}}
+function setPageSize(n){_histPageSize=parseInt(n);}
+</script>
+{% endblock %}

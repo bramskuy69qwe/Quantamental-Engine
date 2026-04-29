@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% set active_page = "backtest" %}
+{% block title %}Backtest — Risk Engine{% endblock %}
+
+{% block content %}
+<div style="display:flex;flex-direction:column;gap:6px;">
+  <span style="font-family:var(--font-mono);font-size:1rem;font-weight:700;color:var(--text);">Backtest</span>
+  <div class="card" style="min-height:200px;display:flex;align-items:center;justify-content:center;">
+    <div hx-get="/fragments/backtest"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+      <span style="color:var(--muted);font-size:.85rem;">Loading backtest module...</span>
+    </div>
+  </div>
+</div>
+{% endblock %}

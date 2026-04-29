@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% set active_page = "params" %}
-{% block title %}Parameters — Quantamental Engine v2.1{% endblock %}
+{% block title %}Parameters — Risk Engine{% endblock %}
 
 {% block content %}
 <div style="display:flex;flex-direction:column;gap:6px;">
@@ -8,74 +8,74 @@
   <!-- ── Risk Parameters ──────────────────────────────────────────────── -->
   <div class="card">
     <span class="sec-lbl">Risk Parameters</span>
-    <form hx-post="/params/update" hx-target="#params-result" hx-swap="innerHTML"
+    <form hx-post="/params/save" hx-target="#params-result" hx-swap="innerHTML"
           style="display:flex;flex-direction:column;gap:10px;">
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;">
         <div>
           <label class="lbl" style="display:block;margin-bottom:3px;">Individual Risk / Trade (%)</label>
-          <input type="number" name="individual_risk_per_trade" step="0.001" min="0.001" max="0.5"
-                 value="{{ params.individual_risk_per_trade }}" required />
+          <input type="number" name="individual_risk_per_trade" step="0.001" min="0" max="1"
+                 value="{{ params.individual_risk_per_trade }}" />
           <div style="font-size:.6rem;color:var(--sub);margin-top:2px;">Fraction of equity (e.g. 0.01 = 1%)</div>
         </div>
         <div>
           <label class="lbl" style="display:block;margin-bottom:3px;">Max Weekly Loss (%)</label>
-          <input type="number" name="max_w_loss_percent" step="0.001" min="0.001" max="1"
-                 value="{{ params.max_w_loss_percent }}" required />
+          <input type="number" name="max_weekly_loss_pct" step="0.01" min="0"
+                 value="{{ params.max_weekly_loss_pct }}" />
           <div style="font-size:.6rem;color:var(--sub);margin-top:2px;">e.g. 0.05 = 5% — resets every Monday BOD</div>
         </div>
         <div>
           <label class="lbl" style="display:block;margin-bottom:3px;">Max Drawdown (%)</label>
-          <input type="number" name="max_dd_percent" step="0.001" min="0.001" max="1"
-                 value="{{ params.max_dd_percent }}" required />
+          <input type="number" name="max_drawdown_pct" step="0.01" min="0"
+                 value="{{ params.max_drawdown_pct }}" />
         </div>
         <div>
           <label class="lbl" style="display:block;margin-bottom:3px;">Max Exposure (×Equity)</label>
-          <input type="number" name="max_exposure" step="0.1" min="0.1" max="20"
-                 value="{{ params.max_exposure }}" required />
+          <input type="number" name="max_exposure_multiple" step="0.1" min="0"
+                 value="{{ params.max_exposure_multiple }}" />
         </div>
         <div>
           <label class="lbl" style="display:block;margin-bottom:3px;">Max Open Positions</label>
-          <input type="number" name="max_position_count" step="1" min="1" max="100"
-                 value="{{ params.max_position_count }}" required />
+          <input type="number" name="max_open_positions" step="1" min="1"
+                 value="{{ params.max_open_positions }}" />
         </div>
         <div>
           <label class="lbl" style="display:block;margin-bottom:3px;">Max Correlated Exposure</label>
-          <input type="number" name="max_correlated_exposure" step="0.05" min="0.05" max="5"
-                 value="{{ params.max_correlated_exposure }}" required />
+          <input type="number" name="max_correlated_exposure" step="0.05" min="0" max="1"
+                 value="{{ params.max_correlated_exposure }}" />
           <div style="font-size:.6rem;color:var(--sub);margin-top:2px;">Default 0.5 = 50% of equity per sector</div>
         </div>
         <div>
           <label class="lbl" style="display:block;margin-bottom:3px;">Auto Export Every (Hours)</label>
-          <input type="number" name="auto_export_hours" step="1" min="1" max="720"
-                 value="{{ params.auto_export_hours }}" required />
+          <input type="number" name="auto_export_hours" step="1" min="1"
+                 value="{{ params.get('auto_export_hours', 24) }}" />
         </div>
       </div>
 
-      <hr style="border:none;border-top:1px solid var(--border);margin:4px 0;" />
-      <span class="sec-lbl" style="margin-bottom:4px;">Soft / Hard Stop Thresholds</span>
-      <div style="font-size:.65rem;color:var(--sub);margin-bottom:6px;">
+      <hr class="div" />
+      <span class="sec-lbl" style="margin-bottom:6px;">Soft / Hard Stop Thresholds</span>
+      <div style="font-size:.65rem;color:var(--sub);margin-bottom:8px;">
         Warning triggers at X% of the limit. Hard stop triggers at Y% of the limit.
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;">
         <div>
           <label class="lbl" style="display:block;margin-bottom:3px;">Weekly Loss Warning (% of Max)</label>
-          <input type="number" name="weekly_loss_warning_pct" step="0.01" min="0.1" max="0.99"
-                 value="{{ params.weekly_loss_warning_pct }}" />
+          <input type="number" name="weekly_loss_warning_pct" step="0.05"
+                 value="{{ params.get('weekly_loss_warning_pct', 0.8) }}" />
         </div>
         <div>
           <label class="lbl" style="display:block;margin-bottom:3px;">Weekly Loss Hard Stop (% of Max)</label>
-          <input type="number" name="weekly_loss_limit_pct" step="0.01" min="0.5" max="1.0"
-                 value="{{ params.weekly_loss_limit_pct }}" />
+          <input type="number" name="weekly_loss_hard_stop_pct" step="0.05"
+                 value="{{ params.get('weekly_loss_hard_stop_pct', 0.95) }}" />
         </div>
         <div>
           <label class="lbl" style="display:block;margin-bottom:3px;">DD Warning (% of Max)</label>
-          <input type="number" name="max_dd_warning_pct" step="0.01" min="0.1" max="0.99"
-                 value="{{ params.max_dd_warning_pct }}" />
+          <input type="number" name="dd_warning_pct" step="0.05"
+                 value="{{ params.get('dd_warning_pct', 0.8) }}" />
         </div>
         <div>
           <label class="lbl" style="display:block;margin-bottom:3px;">DD Hard Stop (% of Max)</label>
-          <input type="number" name="max_dd_limit_pct" step="0.01" min="0.5" max="1.0"
-                 value="{{ params.max_dd_limit_pct }}" />
+          <input type="number" name="dd_hard_stop_pct" step="0.05"
+                 value="{{ params.get('dd_hard_stop_pct', 0.95) }}" />
         </div>
       </div>
 
@@ -131,11 +131,11 @@
     <span class="sec-lbl">WebSocket Log (Last 30 entries)</span>
     <div id="ws-log"
          hx-get="/fragments/ws_log"
-         hx-trigger="load, every 2s"
+         hx-trigger="load, every 5s"
          hx-swap="innerHTML"
          style="font-family:var(--font-mono);font-size:.65rem;color:var(--sub);
                 background:var(--panel);border-radius:4px;padding:8px;
-                max-height:200px;overflow-y:auto;line-height:1.7;">
+                max-height:150px;overflow-y:auto;line-height:1.7;">
       <span style="color:var(--muted);">Loading...</span>
     </div>
   </div>

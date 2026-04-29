@@ -1,45 +1,85 @@
 {% extends "base.html" %}
 {% set active_page = "dashboard" %}
-{% block title %}Dashboard — Risk Engine{% endblock %}
+{% block title %}Dashboard — Quantamental Engine v2.1{% endblock %}
 
 {% block content %}
-<!-- Exchange info: 500ms refresh for smooth server time -->
-<div hx-get="/fragments/dashboard/exchange_info"
-     hx-trigger="load, every 500ms"
-     hx-swap="outerHTML">
-  <div class="panel p-3 mb-3 text-slate-500 text-sm text-center">Connecting...</div>
-</div>
+<div style="display:flex;flex-direction:column;gap:6px;">
 
-<!-- Account Clusters A+B (Total Equity row, BOD Equity row): 2s refresh -->
-<div id="dash-top"
-     hx-get="/fragments/dashboard/top"
-     hx-trigger="load, every 2s"
-     hx-swap="innerHTML"
-     hx-indicator="#dash-spinner">
-  <div class="text-slate-500 text-sm py-4 text-center">Loading...</div>
-</div>
+  <!-- ── Exchange strip: 1s refresh ────────────────────────────────── -->
+  <div hx-get="/fragments/dashboard/exchange_info"
+       hx-trigger="load, every 1s"
+       hx-swap="outerHTML">
+    <div class="card" style="display:flex;align-items:center;flex-wrap:wrap;padding:6px 12px;gap:0;">
+      <div style="display:flex;align-items:center;gap:6px;padding:0 12px;border-right:1px solid var(--border);">
+        <span class="lbl" style="margin-bottom:0;">Exchange</span>
+        <span class="mono" style="font-size:.8rem;">—</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;padding:0 12px;border-right:1px solid var(--border);">
+        <span class="lbl" style="margin-bottom:0;">Server Time</span>
+        <span class="mono" style="font-size:.78rem;color:var(--sub);">connecting...</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;padding:0 12px;">
+        <span class="lbl" style="margin-bottom:0;">Latency</span>
+        <span class="mono" style="font-size:.8rem;color:var(--sub);">—</span>
+      </div>
+    </div>
+  </div>
 
-<!-- OHLC Equity Chart: above risk cluster, user switches TF via buttons -->
-<div hx-get="/fragments/dashboard/equity_ohlc?tf=1h"
-     hx-trigger="load"
-     hx-swap="outerHTML">
-  <div class="panel p-4 mb-3 text-slate-500 text-sm text-center py-8">Loading equity chart...</div>
-</div>
+  <!-- ── Hero card: equity stats (left) + OHLC curve (right) ──────── -->
+  <div class="card" style="display:grid;grid-template-columns:220px 1fr;gap:0;overflow:hidden;min-height:200px;">
 
-<!-- Risk/Exposure + Warnings + Positions: 2s refresh -->
-<div id="dashboard-body"
-     hx-get="/fragments/dashboard"
-     hx-trigger="load, every 2s"
-     hx-swap="innerHTML"
-     hx-indicator="#dash-spinner">
-  <div class="text-slate-500 text-sm py-8 text-center">Loading dashboard...</div>
-</div>
-<div id="dash-spinner" class="htmx-indicator fixed top-4 right-4 text-accent text-xs">⟳ refreshing</div>
+    <!-- Left: equity numbers — 1s refresh, innerHTML only -->
+    <div id="dash-top"
+         hx-get="/fragments/dashboard/top"
+         hx-trigger="load, every 1s"
+         hx-swap="innerHTML"
+         style="border-right:1px solid var(--border);">
+      <div style="padding:14px 16px;">
+        <span class="lbl">Total Equity</span>
+        <div class="mono" style="font-size:2rem;line-height:1;color:var(--sub);">—</div>
+      </div>
+    </div>
 
-<!-- Monthly Journal Stats (Vol & Activity, Trade Stats, Active Params): 30s refresh -->
-<div hx-get="/fragments/dashboard/journal_stats"
-     hx-trigger="load"
-     hx-swap="outerHTML">
-  <div class="text-slate-500 text-sm py-4 text-center">Loading monthly stats...</div>
+    <!-- Right: OHLC chart — load once, reload on TF button -->
+    <div id="ohlc-top"
+         hx-get="/fragments/dashboard/equity_ohlc?tf=1h"
+         hx-trigger="load"
+         hx-swap="outerHTML">
+      <div style="padding:10px 12px;display:flex;align-items:center;justify-content:center;">
+        <span style="color:var(--muted);font-size:.78rem;">Loading chart...</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── Risk / Exposure + Positions + secondary stats (1s refresh) ── -->
+  <div id="dashboard-body"
+       hx-get="/fragments/dashboard"
+       hx-trigger="load, every 1s"
+       hx-swap="innerHTML"
+       hx-indicator="#dash-spinner">
+    <div style="display:grid;grid-template-columns:1fr 2fr;gap:6px;">
+      <div class="card" style="min-height:160px;display:flex;align-items:center;justify-content:center;">
+        <span style="color:var(--muted);font-size:.78rem;">Loading risk...</span>
+      </div>
+      <div class="card" style="min-height:160px;display:flex;align-items:center;justify-content:center;">
+        <span style="color:var(--muted);font-size:.78rem;">Loading positions...</span>
+      </div>
+    </div>
+  </div>
+  <div id="dash-spinner" class="htmx-indicator" style="position:fixed;top:56px;right:12px;
+       background:var(--card);border:1px solid var(--border);border-radius:4px;padding:2px 8px;">
+    ⟳ refreshing
+  </div>
+
+  <!-- ── Monthly stats + Active params (5s refresh) ───────────────────── -->
+  <div hx-get="/fragments/dashboard/journal_stats"
+       hx-trigger="load, every 5s"
+       hx-swap="outerHTML">
+    <div class="card" style="min-height:60px;display:flex;align-items:center;justify-content:center;">
+      <span style="color:var(--muted);font-size:.78rem;">Loading monthly stats...</span>
+    </div>
+  </div>
+
 </div>
 {% endblock %}

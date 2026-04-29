@@ -1,80 +1,90 @@
+<!-- fragment: dashboard/journal_stats -->
 <div id="journal-stats-widget"
      hx-get="/fragments/dashboard/journal_stats"
      hx-trigger="every 30s"
-     hx-swap="outerHTML">
+     hx-swap="outerHTML"
+     style="display:flex;flex-direction:column;gap:6px;">
 
-  {% macro kv(label, val, cls='') %}
-  <div class="flex flex-col gap-0.5">
-    <span class="label">{{ label }}</span>
-    <span class="value {{ cls }}">{{ val }}</span>
-  </div>
-  {% endmacro %}
+  {% set monthly_pnl = (boundaries.final_equity - boundaries.initial_equity) if boundaries else 0 %}
+  {% set monthly_pnl_pct = (monthly_pnl / boundaries.initial_equity * 100) if (boundaries and boundaries.initial_equity > 0) else 0 %}
+  {% set total_trades = (stats.total_trades | int) if stats else 0 %}
+  {% set win_count    = (stats.winning_trades | int) if stats else 0 %}
+  {% set loss_count   = (stats.losing_trades | int) if stats else 0 %}
+  {% set win_rate     = (win_count / total_trades * 100) if total_trades > 0 else 0 %}
+  {% set avg_profit   = (stats.avg_profit | float) if (stats and stats.avg_profit) else 0 %}
+  {% set avg_loss     = (stats.avg_loss | float) if (stats and stats.avg_loss) else 0 %}
+  {% set avg_rr       = (avg_profit / (avg_loss | abs)) if avg_loss and avg_loss != 0 else 0 %}
+  {% set max_dd_month = ((boundaries.max_drawdown | float) * 100) if (boundaries and boundaries.max_drawdown) else 0 %}
+  {% set monthly_vol  = (stats.trading_volume | float) if (stats and stats.trading_volume) else 0 %}
+  {% set broker_fee   = (stats.total_fees | float) if (stats and stats.total_fees) else 0 %}
+  {% set long_count   = (stats.num_longs | int) if stats else 0 %}
+  {% set short_count  = (stats.num_shorts | int) if stats else 0 %}
 
-  <!-- ── Volume & Activity ──────────────────────────────── -->
-  <div class="panel p-4 mb-3">
-    <div class="label mb-3">Volume &amp; Activity — {{ period_label }}</div>
-    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
-      {{ kv("Monthly Volume",   "$" ~ fmt(stats.trading_volume, 0)) }}
-      {{ kv("Est. Broker Fee",  "$" ~ fmt(stats.total_fees, 2)) }}
-      {{ kv("No. of Longs",     stats.num_longs | int) }}
-      {{ kv("No. of Shorts",    stats.num_shorts | int) }}
-      <div class="flex flex-col gap-0.5">
-        <span class="label">Top Pairs</span>
-        <span class="value text-slate-300 text-sm">
-          {% if top_pairs %}{{ top_pairs | join(', ') }}{% else %}—{% endif %}
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+
+    <!-- Monthly summary -->
+    <div class="card">
+      <span class="sec-lbl">{{ period_label | default('This Month') }} — Summary</span>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:4px;">
+        <span class="mono" style="font-size:.92rem;color:{{ 'var(--green)' if monthly_pnl >= 0 else 'var(--red)' }};">
+          {{ '+' if monthly_pnl >= 0 else '' }}{{ fmt(monthly_pnl, 2) }}
+          <span style="font-size:.72rem;color:var(--sub);">({{ fmt(monthly_pnl_pct, 2) }}%)</span>
         </span>
       </div>
-    </div>
-  </div>
-
-  <!-- ── Trade Statistics ───────────────────────────────── -->
-  <div class="panel p-4 mb-3">
-    <div class="label mb-3">Trade Statistics — {{ period_label }}</div>
-    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
-      {{ kv("Total Trades",   stats.total_trades | int) }}
-      {{ kv("Winning",        stats.winning_trades | int, 'pos-long') }}
-      {{ kv("Losing",         stats.losing_trades | int, 'pos-short') }}
-      {% set wr = (stats.winning_trades / stats.total_trades * 100) if stats.total_trades > 0 else 0 %}
-      <div class="flex flex-col gap-0.5">
-        <span class="label">Win Rate</span>
-        <span class="value {{ 'pos-long' if wr >= 50 else 'pos-short' }}">{{ fmt(wr, 1) }}%</span>
+      <!-- Win/loss bar -->
+      <div class="gauge-track" style="height:5px;margin-bottom:10px;">
+        <div class="gauge-fill" style="width:{{ win_rate }}%;background:var(--green);"></div>
       </div>
-      {% set monthly_pnl = boundaries.final_equity - boundaries.initial_equity %}
-      {% set monthly_pct = (monthly_pnl / boundaries.initial_equity * 100) if boundaries.initial_equity > 0 else 0 %}
-      <div class="flex flex-col gap-0.5">
-        <span class="label">Monthly PnL</span>
-        <span class="value {{ 'pos-long' if monthly_pnl >= 0 else 'pos-short' }}">
-          ${{ fmt(monthly_pnl) }} ({{ fmt(monthly_pct, 2) }}%)
-        </span>
-      </div>
-      {% set rr = (stats.avg_profit / (stats.avg_loss | abs)) if stats.avg_loss and stats.avg_loss != 0 else 0 %}
-      {{ kv("Avg R:R",          fmt(rr, 2) ~ "R" if rr else "—") }}
-      <div class="flex flex-col gap-0.5">
-        <span class="label">Avg Profit</span>
-        <span class="value pos-long">{{ fmt(stats.avg_profit) if stats.avg_profit else '—' }}</span>
-      </div>
-      <div class="flex flex-col gap-0.5">
-        <span class="label">Avg Loss</span>
-        <span class="value pos-short">{{ fmt(stats.avg_loss) if stats.avg_loss else '—' }}</span>
-      </div>
-      <div class="flex flex-col gap-0.5">
-        <span class="label">Max Drawdown</span>
-        <span class="value pos-short">{{ fmt(boundaries.max_drawdown * 100, 2) }}%</span>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:6px 12px;">
+        {% for label, value, color in [
+          ('Total Trades', total_trades | string, 'var(--text)'),
+          ('Winning',      win_count | string,    'var(--green)'),
+          ('Losing',       loss_count | string,   'var(--red)'),
+          ('Win Rate',     fmt(win_rate, 1) + '%', 'var(--text)'),
+          ('Avg R:R',      (fmt(avg_rr, 2) + 'R') if avg_rr else '—', 'var(--text)'),
+          ('Avg Profit',   fmt(avg_profit, 2) if avg_profit else '—', 'var(--green)'),
+          ('Avg Loss',     fmt(avg_loss, 2) if avg_loss else '—', 'var(--red)'),
+          ('Max DD',       fmt(max_dd_month, 2) + '%', 'var(--red)'),
+          ('Monthly Vol',  '$' + fmt(monthly_vol, 0), 'var(--text)'),
+          ('Broker Fee',   '$' + fmt(broker_fee, 2), 'var(--sub)'),
+          ('No. Longs',    long_count | string, 'var(--green)'),
+          ('No. Shorts',   short_count | string, 'var(--red)'),
+        ] %}
+        <div>
+          <span class="lbl" style="font-size:.55rem;color:var(--muted);">{{ label }}</span>
+          <div class="mono" style="font-size:.88rem;color:{{ color }};">{{ value }}</div>
+        </div>
+        {% endfor %}
+        {% if top_pairs %}
+        <div style="grid-column:1/-1;">
+          <span class="lbl" style="font-size:.55rem;color:var(--muted);">Top Pairs</span>
+          <div class="mono" style="font-size:.75rem;color:var(--sub);">{{ top_pairs | join(' · ') }}</div>
+        </div>
+        {% endif %}
       </div>
     </div>
-  </div>
 
-  <!-- ── Active Parameters ─────────────────────────────────────── -->
-  <div class="panel p-4 mt-3">
-    <div class="label mb-2">Active Parameters (view-only)</div>
-    <div class="grid grid-cols-3 md:grid-cols-6 gap-2 text-sm">
-      <div><span class="text-slate-500">Risk/trade:</span> {{ fmt(params.individual_risk_per_trade * 100, 2) }}%</div>
-      <div><span class="text-slate-500">Max W-loss:</span> {{ fmt(params.max_w_loss_percent * 100, 1) }}%</div>
-      <div><span class="text-slate-500">Max DD:</span> {{ fmt(params.max_dd_percent * 100, 1) }}%</div>
-      <div><span class="text-slate-500">Max exposure:</span> {{ fmt(params.max_exposure, 1) }}×</div>
-      <div><span class="text-slate-500">Max positions:</span> {{ params.max_position_count }}</div>
-      <div><span class="text-slate-500">Max corr. exp:</span> {{ fmt(params.max_correlated_exposure * 100, 0) }}%</div>
+    <!-- Active params (view-only) -->
+    <div class="card">
+      <span class="sec-lbl">Active Parameters <span style="text-transform:none;letter-spacing:0;font-size:.58rem;color:var(--muted);">(view-only)</span></span>
+      <div style="display:flex;flex-wrap:wrap;gap:0;">
+        {% for label, value, color in [
+          ('Risk/trade',    fmt(params.individual_risk_per_trade * 100, 2) + '%', 'var(--blue)'),
+          ('Max W-loss',    fmt(params.max_w_loss_percent * 100, 1) + '%', 'var(--text)'),
+          ('Max DD',        fmt(params.max_dd_percent * 100, 1) + '%', 'var(--text)'),
+          ('Max exposure',  fmt(params.max_exposure, 1) + '×', 'var(--text)'),
+          ('Max positions', params.max_position_count | string, 'var(--text)'),
+          ('Max corr. exp', fmt(params.max_correlated_exposure * 100, 0) + '%', 'var(--text)'),
+        ] %}
+        <div style="display:flex;align-items:center;gap:5px;padding:3px 12px;
+                    {% if not loop.last %}border-right:1px solid var(--border);{% endif %}
+                    margin-bottom:4px;">
+          <span style="font-size:.65rem;color:var(--sub);">{{ label }}:</span>
+          <span class="mono" style="font-size:.78rem;color:{{ color }};">{{ value }}</span>
+        </div>
+        {% endfor %}
+      </div>
     </div>
-  </div>
 
+  </div>
 </div>

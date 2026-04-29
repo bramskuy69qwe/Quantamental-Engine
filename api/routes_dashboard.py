@@ -12,6 +12,7 @@ import config
 from core.state import app_state, TZ_LOCAL
 from core import ws_manager
 from core.database import db
+from core.platform_bridge import platform_bridge
 from api.helpers import templates, _ctx, _get_funding_cached, _maybe_backfill_equity
 
 log = logging.getLogger("routes.dashboard")
@@ -105,7 +106,8 @@ async def frag_dashboard_journal_stats(request: Request):
 async def frag_ws_status(request: Request):
     return templates.TemplateResponse(
         request, "fragments/ws_status.html",
-        {"ws": app_state.ws_status, "ex": app_state.exchange_info},
+        {"ws": app_state.ws_status, "ex": app_state.exchange_info,
+         "plugin_connected": platform_bridge.is_connected},
     )
 
 

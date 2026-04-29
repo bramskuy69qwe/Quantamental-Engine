@@ -1,55 +1,39 @@
-<div id="ohlc-widget" class="panel p-4 mb-3">
-  <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
-    <div class="label">Equity Curve (OHLC)</div>
-    <div class="flex gap-1">
+<div id="ohlc-top" style="padding:10px 12px;display:flex;flex-direction:column;height:100%;box-sizing:border-box;">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;flex-wrap:wrap;gap:4px;flex-shrink:0;">
+
+    <!-- OHLC stats bar -->
+    <div id="ohlc-stats"
+         style="display:flex;flex-wrap:wrap;gap:6px 14px;font-size:.68rem;font-family:var(--font-mono);min-height:1.1rem;">
+    </div>
+
+    <!-- TF buttons -->
+    <div style="display:flex;gap:3px;">
       {% for tf, label in [('1h','1H'),('4h','4H'),('1d','1D'),('1w','1W')] %}
       <button onclick="reloadOhlc('{{ tf }}')"
               id="ohlc-tf-{{ tf }}"
-              class="preset-btn text-xs {{ 'active' if tf == active_tf else '' }}">{{ label }}</button>
+              class="preset-btn {{ 'active' if tf == active_tf else '' }}">{{ label }}</button>
       {% endfor %}
     </div>
-    <span class="text-slate-600 text-xs">Last 100 candles · from account snapshots</span>
   </div>
 
   {% if candles %}
-  <!-- Live OHLC + Change + Range stats bar — shows last candle, updates on hover -->
-  <div id="ohlc-stats"
-       class="flex flex-wrap gap-x-4 gap-y-1 text-xs font-mono mb-2 px-1 select-none min-h-[1.25rem]">
-  </div>
-  <div id="ohlc-chart"></div>
+  <div id="ohlc-chart" style="flex:1;min-height:0;"></div>
   {% else %}
-  <div class="text-slate-500 text-sm py-8 text-center">No snapshot data available yet.</div>
+  <div style="color:var(--sub);font-size:.78rem;padding:24px;text-align:center;flex:1;min-height:0;display:flex;align-items:center;justify-content:center;">No snapshot data yet.</div>
   {% endif %}
 </div>
 
 <script>
 function reloadOhlc(tf) {
   htmx.ajax('GET', '/fragments/dashboard/equity_ohlc?tf=' + tf,
-            { target: '#ohlc-widget', swap: 'outerHTML' });
+            { target: '#ohlc-top', swap: 'outerHTML' });
 }
 
 {% if candles %}
 (function() {
   const raw = {{ candles | tojson }};
   const TF  = '{{ active_tf }}';
-  // #region agent log
-  try {
-    let maxJump = 0;
-    let maxJumpTs = null;
-    let maxJumpCf = 0;
-    for (let i = 1; i < raw.length; i++) {
-      const jump = Math.abs(Number(raw[i].c) - Number(raw[i - 1].c));
-      if (jump > maxJump) {
-        maxJump = jump;
-        maxJumpTs = raw[i].x;
-        maxJumpCf = Number(raw[i].cf || 0);
-      }
-    }
-    fetch('http://127.0.0.1:7477/ingest/730a7f11-9c49-4c5a-97db-1b3e0d77bb4e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'3bf805'},body:JSON.stringify({sessionId:'3bf805',runId:'equity-jump-debug',hypothesisId:'H4',location:'templates/fragments/dashboard_ohlc.html:inline',message:'Frontend OHLC payload jump summary',data:{tf:TF,count:raw.length,maxJump:maxJump,maxJumpTs:maxJumpTs,maxJumpCf:maxJumpCf},timestamp:Date.now()})}).catch(()=>{});
-  } catch (_) {}
-  // #endregion
 
-  // ── Label formatter ──────────────────────────────────────────────────────
   function fmtLabel(ms) {
     const d  = new Date(ms);
     const mo = d.toLocaleString('en', { month: 'short' });
@@ -60,9 +44,8 @@ function reloadOhlc(tf) {
     return mo + ' ' + dd + ' ' + hh + ':' + mm;
   }
 
-  // ── Auto Y-axis: tight fit to a slice of candles with 4% padding ────────
   const yAxisFormatter = v => '$' + v.toLocaleString('en', { maximumFractionDigits: 2 });
-  const yAxisLabels    = { formatter: yAxisFormatter, style: { fontSize: '11px' } };
+  const yAxisLabels    = { formatter: yAxisFormatter, style: { fontSize: '10px' } };
 
   function fitY(candles) {
     if (!candles.length) return;
@@ -79,62 +62,46 @@ function reloadOhlc(tf) {
   const yMax = Math.max(...raw.map(c => c.h));
   const yPad = (yMax - yMin) * 0.04;
 
-  // ── Stats helpers ────────────────────────────────────────────────────────
-  function fmt(v)  { return '$' + v.toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function fmt(v)    { return '$' + v.toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
   function fmtAbs(v) { return '$' + Math.abs(v).toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
   function renderStats(c) {
-    const chg       = c.c - c.o;
-    const chgPct    = c.o !== 0 ? (chg / c.o) * 100 : 0;
-    const rng       = c.h - c.l;
-    const rngPct    = c.l !== 0 ? (rng / c.l) * 100 : 0;
-    const cf        = c.cf || 0;
-    const adjChg    = chg - cf;
-    const adjChgPct = c.o !== 0 ? (adjChg / c.o) * 100 : 0;
-    const sign      = chg >= 0 ? '+' : '-';
-    const adjSign   = adjChg >= 0 ? '+' : '-';
-    const cfSign    = cf >= 0 ? '+' : '-';
-    const chgCls    = chg >= 0 ? 'text-green-400' : 'text-red-400';
-    const adjCls    = adjChg >= 0 ? 'text-green-400' : 'text-red-400';
-    const cfCls     = cf >= 0 ? 'text-blue-400' : 'text-orange-400';
+    const chg    = c.c - c.o;
+    const chgPct = c.o !== 0 ? (chg / c.o) * 100 : 0;
+    const cf     = c.cf || 0;
+    const sign   = chg >= 0 ? '+' : '-';
+    const cfSign = cf >= 0 ? '+' : '-';
+    const chgCol = chg >= 0 ? 'var(--green)' : 'var(--red)';
+    const cfCol  = cf >= 0 ? 'var(--blue)' : 'var(--amber)';
+    const sub    = 'var(--sub)', txt = 'var(--text)';
     document.getElementById('ohlc-stats').innerHTML =
-      `<span><span class="text-slate-500">O</span> <span class="text-slate-300">${fmt(c.o)}</span></span>` +
-      `<span><span class="text-slate-500">H</span> <span class="text-green-400">${fmt(c.h)}</span></span>` +
-      `<span><span class="text-slate-500">L</span> <span class="text-red-400">${fmt(c.l)}</span></span>` +
-      `<span><span class="text-slate-500">C</span> <span class="text-slate-300">${fmt(c.c)}</span></span>` +
-      `<span><span class="text-slate-500">Chg</span> <span class="${chgCls}">${sign}${fmtAbs(chg)} (${sign}${Math.abs(chgPct).toFixed(2)}%)</span></span>` +
-      `<span><span class="text-slate-500">Range</span> <span class="text-slate-300">${fmt(rng)} (${rngPct.toFixed(2)}%)</span></span>` +
-      `<span><span class="text-slate-500">CF</span> <span class="${cfCls}">${cfSign}${fmtAbs(cf)}</span></span>` +
-      `<span><span class="text-slate-500">Adj Chg</span> <span class="${adjCls}">${adjSign}${fmtAbs(adjChg)} (${adjSign}${Math.abs(adjChgPct).toFixed(2)}%)</span></span>`;
+      `<span><span style="color:${sub}">O</span> <span style="color:${txt}">${fmt(c.o)}</span></span>` +
+      `<span><span style="color:${sub}">H</span> <span style="color:var(--green)">${fmt(c.h)}</span></span>` +
+      `<span><span style="color:${sub}">L</span> <span style="color:var(--red)">${fmt(c.l)}</span></span>` +
+      `<span><span style="color:${sub}">C</span> <span style="color:${txt}">${fmt(c.c)}</span></span>` +
+      `<span><span style="color:${sub}">Chg</span> <span style="color:${chgCol}">${sign}${fmtAbs(chg)} (${sign}${Math.abs(chgPct).toFixed(2)}%)</span></span>` +
+      `<span><span style="color:${sub}">CF</span> <span style="color:${cfCol}">${cfSign}${fmtAbs(cf)}</span></span>`;
   }
 
-  // Initialise stats bar with the most recent candle
   if (raw.length) renderStats(raw[raw.length - 1]);
 
-  // ── Chart options ────────────────────────────────────────────────────────
   const series = [{ data: raw.map(c => ({ x: fmtLabel(c.x), y: [c.o, c.h, c.l, c.c] })) }];
 
   const opts = {
     chart: {
       type: 'candlestick',
-      height: 280,
+      height: '100%',
       background: 'transparent',
       foreColor: '#94a3b8',
-      toolbar: { show: true, tools: { download: true, zoom: true, pan: true, reset: true } },
+      toolbar: { show: true, tools: { download: false, zoom: true, pan: true, reset: true } },
       zoom: { enabled: true },
       animations: { enabled: false },
       events: {
-        // Update stats bar as user hovers over candles
         dataPointMouseEnter: (_evt, _ctx, cfg) => {
           const idx = cfg.dataPointIndex;
           if (idx >= 0 && raw[idx]) renderStats(raw[idx]);
         },
-        // Reset to last candle when mouse leaves the chart
-        mouseLeave: () => {
-          if (raw.length) renderStats(raw[raw.length - 1]);
-        },
-        // Re-fit Y-axis to visible candles on zoom or pan.
-        // Category axis passes numeric indices (0-based) in xaxis.min/max.
+        mouseLeave: () => { if (raw.length) renderStats(raw[raw.length - 1]); },
         zoomed: (_ctx, { xaxis }) => {
           if (!xaxis || xaxis.min == null) return;
           const lo = Math.max(0, Math.round(xaxis.min));
@@ -157,9 +124,9 @@ function reloadOhlc(tf) {
         rotate: -45,
         rotateAlways: false,
         hideOverlappingLabels: true,
-        style: { fontSize: '10px' },
+        style: { fontSize: '9px' },
       },
-      tickAmount: Math.min(12, raw.length),
+      tickAmount: Math.min(10, raw.length),
     },
     yaxis: {
       min: yMin - yPad,
@@ -179,34 +146,23 @@ function reloadOhlc(tf) {
       custom: ({ dataPointIndex }) => {
         const c = raw[dataPointIndex];
         if (!c) return '';
-        const chg       = c.c - c.o;
-        const chgPct    = c.o !== 0 ? (chg / c.o) * 100 : 0;
-        const rng       = c.h - c.l;
-        const rngPct    = c.l !== 0 ? (rng / c.l) * 100 : 0;
-        const cf        = c.cf || 0;
-        const adjChg    = chg - cf;
-        const adjChgPct = c.o !== 0 ? (adjChg / c.o) * 100 : 0;
-        const sign      = chg >= 0 ? '+' : '-';
-        const adjSign   = adjChg >= 0 ? '+' : '-';
-        const cfSign    = cf >= 0 ? '+' : '-';
-        const chgCol    = chg >= 0 ? '#4ade80' : '#f87171';
-        const adjCol    = adjChg >= 0 ? '#4ade80' : '#f87171';
-        const cfCol     = cf >= 0 ? '#60a5fa' : '#fb923c';
-        const row = (label, val, col) =>
+        const chg    = c.c - c.o;
+        const chgPct = c.o !== 0 ? (chg / c.o) * 100 : 0;
+        const cf     = c.cf || 0;
+        const adjChg = chg - cf;
+        const sign   = chg >= 0 ? '+' : '-';
+        const cfSign = cf >= 0 ? '+' : '-';
+        const chgCol = chg >= 0 ? '#4ade80' : '#f87171';
+        const cfCol  = cf >= 0 ? '#60a5fa' : '#fb923c';
+        const row    = (label, val, col) =>
           `<div style="display:flex;justify-content:space-between;gap:16px">` +
           `<span style="color:#64748b">${label}</span>` +
           `<span style="color:${col || '#cbd5e1'}">${val}</span></div>`;
-        return `<div style="padding:10px 12px;background:#1e2130;border:1px solid #2a2d3a;font-size:11px;font-family:monospace;line-height:1.9;min-width:200px">` +
-          row('Open',  fmt(c.o)) +
-          row('High',  fmt(c.h), '#4ade80') +
-          row('Low',   fmt(c.l), '#f87171') +
-          row('Close', fmt(c.c)) +
-          `<div style="border-top:1px solid #2a2d3a;margin:4px 0"></div>` +
-          row('Change', `${sign}${fmtAbs(chg)} (${sign}${Math.abs(chgPct).toFixed(2)}%)`, chgCol) +
-          row('Range',  `${fmt(rng)} (${rngPct.toFixed(2)}%)`) +
-          `<div style="border-top:1px solid #2a2d3a;margin:4px 0"></div>` +
-          row('Cashflow', `${cfSign}${fmtAbs(cf)}`, cfCol) +
-          row('Adj Chg',  `${adjSign}${fmtAbs(adjChg)} (${adjSign}${Math.abs(adjChgPct).toFixed(2)}%)`, adjCol) +
+        return `<div style="padding:8px 10px;background:#1e2130;border:1px solid #2a2d3a;font-size:11px;font-family:monospace;line-height:1.8;min-width:180px">` +
+          row('O', fmt(c.o)) + row('H', fmt(c.h), '#4ade80') + row('L', fmt(c.l), '#f87171') + row('C', fmt(c.c)) +
+          `<div style="border-top:1px solid #2a2d3a;margin:3px 0"></div>` +
+          row('Chg', `${sign}${fmtAbs(chg)} (${sign}${Math.abs(chgPct).toFixed(2)}%)`, chgCol) +
+          row('CF', `${cfSign}${fmtAbs(cf)}`, cfCol) +
           `</div>`;
       },
     },

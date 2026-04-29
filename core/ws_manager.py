@@ -36,8 +36,10 @@ _user_ws_task:    Optional[asyncio.Task] = None
 _market_ws_task:  Optional[asyncio.Task] = None
 _keepalive_task:  Optional[asyncio.Task] = None
 _fallback_task:   Optional[asyncio.Task] = None
+_upnl_task:       Optional[asyncio.Task] = None
 _calculator_symbol: Optional[str]        = None   # symbol currently open in calc
 _stopping: bool = False   # set by stop() to prevent reconnect tasks after teardown
+_subscribed_position_symbols: set[str] = set()    # symbols in current market WS
 
 
 # ── User data stream ──────────────────────────────────────────────────────────
@@ -90,6 +92,14 @@ async def _refresh_positions_after_fill() -> None:
     try:
         await fetch_account()
         await fetch_positions()
+        # Restart market streams if new position symbols appeared so they get
+        # markPrice@1s subscriptions immediately rather than waiting for next reconnect.
+        new_symbols = {p.ticker for p in app_state.positions}
+        if new_symbols != _subscribed_position_symbols:
+            app_state.ws_status.add_log(
+                f"New position symbols detected {new_symbols - _subscribed_position_symbols} — restarting market streams."
+            )
+            await restart_market_streams()
         await event_bus.publish(
             "risk:positions_refreshed",
             {"trigger": "fill", "ts": datetime.now(timezone.utc).isoformat()},
@@ -182,20 +192,20 @@ async def _reconnect_user(attempt: int) -> None:
 
 def _build_market_streams() -> list[str]:
     """Build the combined stream list for all active position symbols + calculator."""
-    symbols = {p.ticker for p in app_state.positions}
-    if _calculator_symbol:
-        symbols.add(_calculator_symbol)
+    global _subscribed_position_symbols
+    pos_symbols = {p.ticker for p in app_state.positions}
+    _subscribed_position_symbols = pos_symbols.copy()
+
+    all_symbols = pos_symbols | ({_calculator_symbol} if _calculator_symbol else set())
 
     streams = []
-    for sym in symbols:
+    for sym in all_symbols:
         s = sym.lower()
         streams.append(f"{s}@kline_{config.ATR_TIMEFRAME}")
-        # Mark price stream at 1s cadence for real-time unrealized PnL
-        if sym in {p.ticker for p in app_state.positions}:
+        if sym in pos_symbols:
             streams.append(f"{s}@markPrice@1s")
     if _calculator_symbol:
-        s = _calculator_symbol.lower()
-        streams.append(f"{s}@depth20")
+        streams.append(f"{_calculator_symbol.lower()}@depth20")
 
     return streams
 
@@ -211,12 +221,12 @@ def _apply_mark_price(msg: dict) -> None:
     for pos in app_state.positions:
         if pos.ticker == sym:
             pos.fair_price = mark
+            pos.position_value_usdt = mark * pos.contract_amount
             if pos.average > 0:
                 if pos.direction == "LONG":
                     pos.individual_unrealized = (mark - pos.average) * pos.contract_amount
                 else:
                     pos.individual_unrealized = (pos.average - mark) * pos.contract_amount
-                # Session MFE/MAE in USDT — track running max/min of unrealized PnL
                 unreal = pos.individual_unrealized
                 if unreal > pos.session_mfe:
                     pos.session_mfe = round(unreal, 2)
@@ -305,6 +315,46 @@ async def _market_stream_loop(attempt: int = 0) -> None:
         asyncio.create_task(_market_stream_loop(attempt + 1))
 
 
+# ── UPNL sync loop ───────────────────────────────────────────────────────────
+
+async def _upnl_sync_loop() -> None:
+    """
+    Every 1 s, recompute UPNL + notional from the mark price cache for every
+    open position.  Primary update path is still markPrice@1s WS events via
+    _apply_mark_price(); this loop is a belt-and-suspenders guard that covers:
+      - positions opened after the market WS connected (not yet subscribed)
+      - any brief gap between WS events
+    """
+    while True:
+        await asyncio.sleep(1)
+        try:
+            cache   = app_state.mark_price_cache
+            updated = False
+            for pos in app_state.positions:
+                mark = cache.get(pos.ticker, 0.0)
+                if not mark or not pos.average:
+                    continue
+                pos.fair_price          = mark
+                pos.position_value_usdt = mark * pos.contract_amount
+                if pos.direction == "LONG":
+                    upnl = (mark - pos.average) * pos.contract_amount
+                else:
+                    upnl = (pos.average - mark) * pos.contract_amount
+                pos.individual_unrealized = upnl
+                if upnl > pos.session_mfe:
+                    pos.session_mfe = round(upnl, 2)
+                if pos.session_mae == 0.0 or upnl < pos.session_mae:
+                    pos.session_mae = round(upnl, 2)
+                updated = True
+            if updated:
+                app_state.account_state.total_unrealized = sum(
+                    p.individual_unrealized for p in app_state.positions
+                )
+                app_state.recalculate_portfolio()
+        except Exception:
+            pass
+
+
 # ── Keepalive for listen key (must ping every 30 min) ────────────────────────
 
 async def _keepalive_loop() -> None:
@@ -355,7 +405,7 @@ async def _fallback_loop() -> None:
 # ── Public API ────────────────────────────────────────────────────────────────
 
 async def start(listen_key: str) -> None:
-    global _listen_key, _user_ws_task, _market_ws_task, _keepalive_task, _fallback_task, _stopping
+    global _listen_key, _user_ws_task, _market_ws_task, _keepalive_task, _fallback_task, _upnl_task, _stopping
     _stopping = False
     _listen_key = listen_key
 
@@ -363,6 +413,7 @@ async def start(listen_key: str) -> None:
     _market_ws_task = asyncio.create_task(_market_stream_loop())
     _keepalive_task = asyncio.create_task(_keepalive_loop())
     _fallback_task  = asyncio.create_task(_fallback_loop())
+    _upnl_task      = asyncio.create_task(_upnl_sync_loop())
 
     app_state.ws_status.add_log("WebSocket manager started.")
 
@@ -381,23 +432,24 @@ async def restart_market_streams() -> None:
 
 async def stop() -> None:
     """Cancel all WS tasks. Call before account switch to cleanly teardown streams."""
-    global _listen_key, _user_ws_task, _market_ws_task, _keepalive_task, _fallback_task, _stopping
+    global _listen_key, _user_ws_task, _market_ws_task, _keepalive_task, _fallback_task, _upnl_task, _stopping
 
     # Signal before cancelling so _reconnect_user aborts if it wakes during teardown
     _stopping = True
 
-    tasks = [t for t in (_user_ws_task, _market_ws_task, _keepalive_task, _fallback_task)
+    tasks = [t for t in (_user_ws_task, _market_ws_task, _keepalive_task, _fallback_task, _upnl_task)
              if t is not None and not t.done()]
     for t in tasks:
         t.cancel()
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
 
-    _listen_key    = None
-    _user_ws_task  = None
+    _listen_key     = None
+    _user_ws_task   = None
     _market_ws_task = None
     _keepalive_task = None
     _fallback_task  = None
+    _upnl_task      = None
 
     app_state.ws_status.connected = False
     app_state.ws_status.using_fallback = False
