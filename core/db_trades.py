@@ -80,7 +80,8 @@ class TradesMixin:
             rows = await cur.fetchall()
             return [dict(r) for r in rows], total
 
-    async def insert_pre_trade_log(self, data: Dict[str, Any]) -> None:
+    async def insert_pre_trade_log(self, row: Dict[str, Any]) -> None:
+        """Insert a pre_trade_log row from a risk-calculator result dict."""
         try:
             await self._conn.execute(
                 """INSERT INTO pre_trade_log (
@@ -97,33 +98,33 @@ class TradesMixin:
                     :est_profit, :est_loss, :est_r, :est_exposure, :eligible
                 )""",
                 {
-                    "account_id":        data.get("account_id", 1),
-                    "timestamp":         data.get("timestamp", datetime.now(timezone.utc).isoformat()),
-                    "ticker":            data.get("ticker", ""),
-                    "average":           data.get("average", 0),
-                    "side":              data.get("side", ""),
-                    "one_percent_depth": data.get("one_percent_depth", 0),
-                    "individual_risk":   data.get("individual_risk_pct", data.get("individual_risk", 0)),
-                    "tp_price":          data.get("tp_price", 0),
-                    "tp_amount_pct":     data.get("tp_amount_pct", 0),
-                    "tp_usdt":           data.get("tp_usdt", 0),
-                    "sl_price":          data.get("sl_price", 0),
-                    "sl_amount_pct":     data.get("sl_amount_pct", 0),
-                    "sl_usdt":           data.get("sl_usdt", 0),
-                    "model_name":        data.get("model_name", ""),
-                    "model_desc":        data.get("model_desc", ""),
-                    "risk_usdt":         data.get("risk_usdt", 0),
-                    "atr_c":             str(data.get("atr_c", "")),
-                    "atr_category":      data.get("atr_category", ""),
-                    "est_slippage":      data.get("est_slippage", 0),
-                    "effective_entry":   data.get("effective_entry", 0),
-                    "size":              data.get("size", 0),
-                    "notional":          data.get("notional", 0),
-                    "est_profit":        data.get("est_profit", 0),
-                    "est_loss":          data.get("est_loss", 0),
-                    "est_r":             data.get("est_r", 0),
-                    "est_exposure":      data.get("est_exposure", 0),
-                    "eligible":          1 if data.get("eligible") else 0,
+                    "account_id":        row.get("account_id", 1),
+                    "timestamp":         row.get("timestamp", datetime.now(timezone.utc).isoformat()),
+                    "ticker":            row.get("ticker", ""),
+                    "average":           row.get("average", 0),
+                    "side":              row.get("side", ""),
+                    "one_percent_depth": row.get("one_percent_depth", 0),
+                    "individual_risk":   row.get("individual_risk_pct", row.get("individual_risk", 0)),
+                    "tp_price":          row.get("tp_price", 0),
+                    "tp_amount_pct":     row.get("tp_amount_pct", 0),
+                    "tp_usdt":           row.get("tp_usdt", 0),
+                    "sl_price":          row.get("sl_price", 0),
+                    "sl_amount_pct":     row.get("sl_amount_pct", 0),
+                    "sl_usdt":           row.get("sl_usdt", 0),
+                    "model_name":        row.get("model_name", ""),
+                    "model_desc":        row.get("model_desc", ""),
+                    "risk_usdt":         row.get("risk_usdt", 0),
+                    "atr_c":             str(row.get("atr_c", "")),
+                    "atr_category":      row.get("atr_category", ""),
+                    "est_slippage":      row.get("est_slippage", 0),
+                    "effective_entry":   row.get("effective_entry", 0),
+                    "size":              row.get("size", 0),
+                    "notional":          row.get("notional", 0),
+                    "est_profit":        row.get("est_profit", 0),
+                    "est_loss":          row.get("est_loss", 0),
+                    "est_r":             row.get("est_r", 0),
+                    "est_exposure":      row.get("est_exposure", 0),
+                    "eligible":          1 if row.get("eligible") else 0,
                 },
             )
             await self._conn.commit()
@@ -135,7 +136,8 @@ class TradesMixin:
                 pass
             raise
 
-    async def insert_execution_log(self, data: Dict[str, Any]) -> None:
+    async def insert_execution_log(self, row: Dict[str, Any]) -> None:
+        """Insert an execution_log row for a manually-logged fill."""
         try:
             await self._conn.execute(
                 """INSERT INTO execution_log (
@@ -148,19 +150,19 @@ class TradesMixin:
                     :latency_snapshot, :orderbook_depth_snapshot, :source_terminal
                 )""",
                 {
-                    "account_id":               data.get("account_id", 1),
-                    "entry_timestamp":          data.get("entry_timestamp", datetime.now(timezone.utc).isoformat()),
-                    "ticker":                   data.get("ticker", ""),
-                    "side":                     data.get("side", ""),
-                    "entry_price_actual":       data.get("entry_price_actual", 0),
-                    "size_filled":              data.get("size_filled", 0),
-                    "slippage":                 data.get("slippage", 0),
-                    "order_type":               data.get("order_type", "limit"),
-                    "maker_fee":                data.get("maker_fee", 0),
-                    "taker_fee":                data.get("taker_fee", 0),
-                    "latency_snapshot":         data.get("latency_snapshot", 0),
-                    "orderbook_depth_snapshot": str(data.get("orderbook_depth_snapshot", "")),
-                    "source_terminal":          data.get("source_terminal", "manual"),
+                    "account_id":               row.get("account_id", 1),
+                    "entry_timestamp":          row.get("entry_timestamp", datetime.now(timezone.utc).isoformat()),
+                    "ticker":                   row.get("ticker", ""),
+                    "side":                     row.get("side", ""),
+                    "entry_price_actual":       row.get("entry_price_actual", 0),
+                    "size_filled":              row.get("size_filled", 0),
+                    "slippage":                 row.get("slippage", 0),
+                    "order_type":               row.get("order_type", "limit"),
+                    "maker_fee":                row.get("maker_fee", 0),
+                    "taker_fee":                row.get("taker_fee", 0),
+                    "latency_snapshot":         row.get("latency_snapshot", 0),
+                    "orderbook_depth_snapshot": str(row.get("orderbook_depth_snapshot", "")),
+                    "source_terminal":          row.get("source_terminal", "manual"),
                 },
             )
             await self._conn.commit()
@@ -172,7 +174,8 @@ class TradesMixin:
                 pass
             raise
 
-    async def insert_trade_history(self, data: Dict[str, Any]) -> None:
+    async def insert_trade_history(self, row: Dict[str, Any]) -> None:
+        """Insert a trade_history row for a manually-logged closed trade."""
         try:
             await self._conn.execute(
                 """INSERT INTO trade_history (
@@ -185,19 +188,19 @@ class TradesMixin:
                     :total_fees, :slippage_exit, :holding_time, :notes
                 )""",
                 {
-                    "account_id":            data.get("account_id", 1),
-                    "exit_timestamp":        data.get("exit_timestamp", datetime.now(timezone.utc).isoformat()),
-                    "ticker":                data.get("ticker", ""),
-                    "direction":             data.get("direction", ""),
-                    "entry_price":           data.get("entry_price", 0),
-                    "exit_price":            data.get("exit_price", 0),
-                    "individual_realized":   data.get("individual_realized", 0),
-                    "individual_realized_r": data.get("individual_realized_r", 0),
-                    "total_funding_fees":    data.get("total_funding_fees", 0),
-                    "total_fees":            data.get("total_fees", 0),
-                    "slippage_exit":         data.get("slippage_exit", 0),
-                    "holding_time":          str(data.get("holding_time", "")),
-                    "notes":                 data.get("notes", ""),
+                    "account_id":            row.get("account_id", 1),
+                    "exit_timestamp":        row.get("exit_timestamp", datetime.now(timezone.utc).isoformat()),
+                    "ticker":                row.get("ticker", ""),
+                    "direction":             row.get("direction", ""),
+                    "entry_price":           row.get("entry_price", 0),
+                    "exit_price":            row.get("exit_price", 0),
+                    "individual_realized":   row.get("individual_realized", 0),
+                    "individual_realized_r": row.get("individual_realized_r", 0),
+                    "total_funding_fees":    row.get("total_funding_fees", 0),
+                    "total_fees":            row.get("total_fees", 0),
+                    "slippage_exit":         row.get("slippage_exit", 0),
+                    "holding_time":          str(row.get("holding_time", "")),
+                    "notes":                 row.get("notes", ""),
                 },
             )
             await self._conn.commit()
@@ -210,6 +213,7 @@ class TradesMixin:
             raise
 
     async def get_all_pre_trade_log(self, days: int = 365, account_id: int = 1) -> List[Dict[str, Any]]:
+        """Return pre_trade_log rows within the last N days, newest first."""
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         async with self._conn.execute(
             "SELECT * FROM pre_trade_log WHERE account_id=? AND timestamp >= ? ORDER BY timestamp DESC",
@@ -219,6 +223,7 @@ class TradesMixin:
             return [dict(r) for r in rows]
 
     async def get_all_execution_log(self, days: int = 365, account_id: int = 1) -> List[Dict[str, Any]]:
+        """Return execution_log rows within the last N days, newest first."""
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         async with self._conn.execute(
             "SELECT * FROM execution_log WHERE account_id=? AND entry_timestamp >= ? ORDER BY entry_timestamp DESC",
@@ -228,6 +233,7 @@ class TradesMixin:
             return [dict(r) for r in rows]
 
     async def get_all_trade_history(self, days: int = 365, account_id: int = 1) -> List[Dict[str, Any]]:
+        """Return trade_history rows within the last N days, newest first."""
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         async with self._conn.execute(
             "SELECT * FROM trade_history WHERE account_id=? AND exit_timestamp >= ? ORDER BY exit_timestamp DESC",
@@ -243,6 +249,7 @@ class TradesMixin:
         sort_dir: str = "DESC", page: int = 1, per_page: int = 20,
         account_id: int = 1,
     ) -> tuple:
+        """Return paginated, filtered pre_trade_log rows as (rows, total)."""
         return await self._paginated_query(
             "pre_trade_log", "timestamp", self._PRE_TRADE_SORT_COLS,
             date_from, date_to, search, {"ticker": ticker, "side": side},
@@ -256,6 +263,7 @@ class TradesMixin:
         sort_dir: str = "DESC", page: int = 1, per_page: int = 20,
         account_id: int = 1,
     ) -> tuple:
+        """Return paginated, filtered execution_log rows as (rows, total)."""
         return await self._paginated_query(
             "execution_log", "entry_timestamp", self._EXECUTION_SORT_COLS,
             date_from, date_to, search, {"ticker": ticker, "side": side},
@@ -269,6 +277,7 @@ class TradesMixin:
         sort_dir: str = "DESC", page: int = 1, per_page: int = 20,
         account_id: int = 1,
     ) -> tuple:
+        """Return paginated, filtered trade_history rows as (rows, total)."""
         return await self._paginated_query(
             "trade_history", "exit_timestamp", self._TRADE_HISTORY_SORT_COLS,
             date_from, date_to, search, {"ticker": ticker, "direction": direction},
@@ -276,6 +285,7 @@ class TradesMixin:
         )
 
     async def update_pre_trade_notes(self, row_id: int, notes: str) -> None:
+        """Update the notes field on a single pre_trade_log row."""
         await self._conn.execute(
             "UPDATE pre_trade_log SET notes = ? WHERE id = ?", (notes, row_id)
         )
@@ -300,6 +310,7 @@ class TradesMixin:
         return {r["trade_key"]: r["notes"] for r in rows}
 
     async def upsert_position_note(self, trade_key: str, notes: str) -> None:
+        """Insert or replace the note for a trade_key in position_history_notes."""
         await self._conn.execute(
             "INSERT INTO position_history_notes (trade_key, notes) VALUES (?, ?)"
             " ON CONFLICT(trade_key) DO UPDATE SET notes = excluded.notes",
