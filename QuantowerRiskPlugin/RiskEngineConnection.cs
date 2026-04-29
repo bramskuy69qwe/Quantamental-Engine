@@ -39,6 +39,18 @@ public sealed class RiskEngineConnection : IDisposable
     /// <summary>Fired when the engine sends a request_positions message (reconciliation on connect).</summary>
     public event Action? PositionsRequested;
 
+    /// <summary>Fired when the engine requests OHLCV bars for a symbol.</summary>
+    public event Action<JsonElement>? OhlcvRequested;
+
+    /// <summary>Fired when the engine requests order-book depth for a symbol.</summary>
+    public event Action<JsonElement>? DepthRequested;
+
+    /// <summary>Fired when the engine cancels an OHLCV subscription.</summary>
+    public event Action<JsonElement>? OhlcvUnsubscribed;
+
+    /// <summary>Fired when the engine cancels a depth subscription.</summary>
+    public event Action<JsonElement>? DepthUnsubscribed;
+
     public RiskEngineConnection(string engineUrl)
     {
         // Accept either ws:// or http:// — normalise both
@@ -140,8 +152,19 @@ public sealed class RiskEngineConnection : IDisposable
                                 RiskStateReceived?.Invoke(doc.RootElement.Clone());
                                 break;
                             case "request_positions":
-                                // Engine is asking for a fresh position snapshot (reconciliation on connect)
                                 PositionsRequested?.Invoke();
+                                break;
+                            case "request_ohlcv":
+                                OhlcvRequested?.Invoke(doc.RootElement.Clone());
+                                break;
+                            case "request_depth":
+                                DepthRequested?.Invoke(doc.RootElement.Clone());
+                                break;
+                            case "unsubscribe_ohlcv":
+                                OhlcvUnsubscribed?.Invoke(doc.RootElement.Clone());
+                                break;
+                            case "unsubscribe_depth":
+                                DepthUnsubscribed?.Invoke(doc.RootElement.Clone());
                                 break;
                         }
                     }
@@ -190,6 +213,33 @@ public sealed class RiskEngineConnection : IDisposable
             await SendTextAsync(json);
         else
             await PostRestAsync("/api/platform/event", json);
+    }
+
+    public async Task SendHistoricalFillAsync(HistoricalFillEvent fill)
+    {
+        var json = JsonSerializer.Serialize(fill);
+        if (_wsConnected)
+            await SendTextAsync(json);
+        else
+            await PostRestAsync("/api/platform/event", json);
+    }
+
+    public async Task SendOhlcvBarAsync(OhlcvBarEvent bar)
+    {
+        var json = JsonSerializer.Serialize(bar);
+        if (_wsConnected) await SendTextAsync(json);
+    }
+
+    public async Task SendMarkPriceAsync(MarkPriceEvent mp)
+    {
+        var json = JsonSerializer.Serialize(mp);
+        if (_wsConnected) await SendTextAsync(json);
+    }
+
+    public async Task SendDepthSnapshotAsync(DepthSnapshotEvent depth)
+    {
+        var json = JsonSerializer.Serialize(depth);
+        if (_wsConnected) await SendTextAsync(json);
     }
 
     public async Task SendPositionSnapshotAsync(PositionSnapshot snap)

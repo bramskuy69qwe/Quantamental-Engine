@@ -93,9 +93,12 @@ class ReconcilerWorker:
         except Exception as e:
             log.warning(f"Backfill: history pre-fetch failed: {e}")
 
+        # Exclude Quantower-sourced rows (trade_key starts with 'qt:') — these
+        # are individual fills, not round-trip trades, so MFE/MAE pairing doesn't apply.
         async with db._conn.execute(
             "SELECT DISTINCT symbol FROM exchange_history"
             " WHERE (mfe=0 OR mae=0) AND open_time>0"
+            " AND trade_key NOT LIKE 'qt:%'"
         ) as cur:
             symbols = [r[0] for r in await cur.fetchall()]
 

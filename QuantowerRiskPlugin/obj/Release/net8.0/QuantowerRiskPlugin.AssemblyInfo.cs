@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyDescriptionAttribute("Risk Engine integration plugin for Quantower")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+e1fe08920786d72571f8f6367bc8a73abeff2c7c")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+fc0e73783d60551672f7470c404f194c53073973")]
 [assembly: System.Reflection.AssemblyProductAttribute("QuantowerRiskPlugin")]
 [assembly: System.Reflection.AssemblyTitleAttribute("QuantowerRiskPlugin")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

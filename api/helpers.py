@@ -163,9 +163,11 @@ templates.env.globals["fmt_duration"] = _fmt_duration
 
 def _ctx(request: Request, **extra) -> dict:
     """Base template context for every page render."""
+    from core.platform_bridge import platform_bridge
     return {
         "now":               datetime.now(TZ_LOCAL).strftime("%Y-%m-%d %H:%M:%S"),
         "ws_status":         app_state.ws_status,
+        "plugin_connected":  platform_bridge.is_connected,
         "params":            app_state.params,
         "is_initializing":   app_state.is_initializing,
         "active_account_id": app_state.active_account_id,
