@@ -20,7 +20,8 @@ from core.exchange import (
     fetch_exchange_trade_history,
 )
 from core import ws_manager
-from api.helpers import templates, _ctx, _backfill_earliest_ms
+from api.helpers import templates, _ctx
+from api.cache import _backfill_earliest_ms
 
 log = logging.getLogger("routes.accounts")
 router = APIRouter()

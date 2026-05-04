@@ -12,7 +12,8 @@ import config
 from core.state import app_state, TZ_LOCAL
 from core import ws_manager
 from core.database import db
-from api.helpers import templates, _ctx, _ensure_funding_rates, get_funding_lines, _maybe_backfill_equity
+from api.helpers import templates, _ctx
+from api.cache import _ensure_funding_rates, get_funding_lines, _maybe_backfill_equity
 
 log = logging.getLogger("routes.dashboard")
 router = APIRouter()

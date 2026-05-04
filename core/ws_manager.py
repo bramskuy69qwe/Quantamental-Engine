@@ -20,9 +20,10 @@ from typing import Optional
 import websockets
 
 import config
-from core.state import app_state
+from core.state import app_state, PositionInfo
 from core.event_bus import event_bus
 from core.exchange import (
+    get_exchange, _REST_POOL,
     fetch_account, fetch_positions, fetch_orderbook, fetch_ohlcv,
     create_listen_key, keepalive_listen_key,
 )
@@ -43,6 +44,88 @@ _stopping: bool = False   # set by stop() to prevent reconnect tasks after teard
 
 # ── User data stream ──────────────────────────────────────────────────────────
 
+async def _apply_account_update(msg: dict) -> None:
+    """Apply ACCOUNT_UPDATE event: update balances and positions under lock,
+    then fire side effects (stream restart, portfolio recalc) outside lock."""
+    global _last_ws_position_update
+    balances = msg.get("a", {}).get("B", [])
+    raw_positions = msg.get("a", {}).get("P", [])
+    closed_syms: set = set()
+    new_syms: set = set()
+
+    async with app_state._lock:
+        for b in balances:
+            if b.get("a") == "USDT":
+                app_state.account_state.balance_usdt = float(b.get("wb") or 0)
+                app_state.account_state.total_equity = float(b.get("cw") or 0)
+
+        if raw_positions:
+            existing = {p.ticker: p for p in app_state.positions}
+            closed_syms, new_syms = _apply_position_updates(existing, raw_positions)
+            if closed_syms:
+                app_state.positions = [p for p in app_state.positions if p.ticker not in closed_syms]
+            _last_ws_position_update = time.monotonic()
+
+        app_state.account_state.total_unrealized = sum(
+            p.individual_unrealized for p in app_state.positions
+        )
+
+    # Outside lock: side effects
+    if not raw_positions:
+        return
+    if closed_syms or new_syms:
+        asyncio.create_task(restart_market_streams())
+    for sym in new_syms:
+        asyncio.create_task(_on_new_position(sym))
+    app_state.recalculate_portfolio()
+
+
+def _apply_position_updates(existing: dict, raw_positions: list) -> tuple[set, set]:
+    """Process raw position updates. Returns (closed_syms, new_syms)."""
+    closed_syms: set = set()
+    new_syms: set = set()
+
+    for p_raw in raw_positions:
+        sym  = p_raw.get("s", "")
+        amt  = float(p_raw.get("pa") or 0)
+        upnl = float(p_raw.get("up") or 0)
+        ep   = float(p_raw.get("ep") or 0)
+
+        if amt == 0:
+            if sym in existing:
+                closed_syms.add(sym)
+            continue
+
+        if sym in existing:
+            pos = existing[sym]
+            pos.individual_unrealized = upnl
+            pos.contract_amount = abs(amt)
+            pos.direction = "LONG" if amt > 0 else "SHORT"
+            if ep > 0:
+                pos.average = ep
+            mark = app_state.mark_price_cache.get(sym, 0)
+            if mark:
+                pos.position_value_usdt = abs(amt) * mark
+            continue
+
+        # New position
+        mark = app_state.mark_price_cache.get(sym, ep) or ep
+        app_state.positions.append(PositionInfo(
+            ticker=sym,
+            direction="LONG" if amt > 0 else "SHORT",
+            contract_amount=abs(amt),
+            average=ep,
+            fair_price=mark,
+            individual_unrealized=upnl,
+            position_value_usdt=abs(amt) * mark,
+            entry_timestamp=datetime.now(timezone.utc).isoformat(),
+            sector=config.get_sector(sym),
+        ))
+        new_syms.add(sym)
+
+    return closed_syms, new_syms
+
+
 async def _handle_user_event(msg: dict) -> None:
     """Parse and apply a user-data stream event."""
     ev = msg.get("e", "")
@@ -54,77 +137,7 @@ async def _handle_user_event(msg: dict) -> None:
         ws.latency_ms = round(time.time() * 1000 - event_time_ms, 1)
 
     if ev == "ACCOUNT_UPDATE":
-        global _last_ws_position_update
-        balances = msg.get("a", {}).get("B", [])
-        positions = msg.get("a", {}).get("P", [])
-
-        async with app_state._lock:
-            for b in balances:
-                if b.get("a") == "USDT":
-                    app_state.account_state.balance_usdt = float(b.get("wb") or 0)
-                    app_state.account_state.total_equity = float(b.get("cw") or 0)
-
-            if positions:
-                existing = {p.ticker: p for p in app_state.positions}
-                closed_syms = set()
-                new_syms = set()
-
-                for p_raw in positions:
-                    sym  = p_raw.get("s", "")
-                    amt  = float(p_raw.get("pa") or 0)
-                    upnl = float(p_raw.get("up") or 0)
-                    ep   = float(p_raw.get("ep") or 0)
-
-                    if amt == 0:
-                        if sym in existing:
-                            closed_syms.add(sym)
-                    elif sym in existing:
-                        pos = existing[sym]
-                        pos.individual_unrealized = upnl
-                        pos.contract_amount = abs(amt)
-                        pos.direction = "LONG" if amt > 0 else "SHORT"
-                        if ep > 0:
-                            pos.average = ep
-                        mark = app_state.mark_price_cache.get(sym, 0)
-                        if mark:
-                            pos.position_value_usdt = abs(amt) * mark
-                    else:
-                        from core.state import PositionInfo
-                        mark = app_state.mark_price_cache.get(sym, ep) or ep
-                        app_state.positions.append(PositionInfo(
-                            ticker=sym,
-                            direction="LONG" if amt > 0 else "SHORT",
-                            contract_amount=abs(amt),
-                            average=ep,
-                            fair_price=mark,
-                            individual_unrealized=upnl,
-                            position_value_usdt=abs(amt) * mark,
-                            entry_timestamp=datetime.now(timezone.utc).isoformat(),
-                            sector=config.get_sector(sym),
-                        ))
-                        new_syms.add(sym)
-
-                if closed_syms:
-                    app_state.positions = [p for p in app_state.positions if p.ticker not in closed_syms]
-
-                _last_ws_position_update = time.monotonic()
-
-            app_state.account_state.total_unrealized = sum(
-                p.individual_unrealized for p in app_state.positions
-            )
-
-        # Outside lock: side effects
-        if positions:
-            if closed_syms or new_syms:
-                asyncio.create_task(restart_market_streams())
-            for sym in new_syms:
-                asyncio.create_task(_on_new_position(sym))
-            app_state.recalculate_portfolio()
-
-    elif ev == "ORDER_TRADE_UPDATE":
-        # ACCOUNT_UPDATE handles position state via WS.
-        # REST reconciliation happens in _account_refresh_loop as safety net.
-        pass
+        await _apply_account_update(msg)
 
     ws.last_update = datetime.now(timezone.utc)
     await event_bus.publish(
@@ -141,7 +154,6 @@ async def _on_new_position(sym: str) -> None:
         pass
     # Fetch real fill timestamp from Binance trades
     try:
-        from core.exchange import get_exchange, _REST_POOL
         loop = asyncio.get_event_loop()
         ex = get_exchange()
         trades = await loop.run_in_executor(
@@ -186,7 +198,7 @@ async def _user_data_loop(listen_key: str, attempt: int = 0) -> None:
     # Gate: plugin provides account/position truth — no need for Binance user-data WS.
     # Sleep and retry until the plugin disconnects, then re-enter normally.
     try:
-        from core.platform_bridge import platform_bridge
+        from core.platform_bridge import platform_bridge  # late import: circular dep
         if platform_bridge.is_connected:
             app_state.ws_status.add_log("User-data WS: plugin connected — standing by (30s)")
             await asyncio.sleep(30)
@@ -435,7 +447,7 @@ async def _fallback_loop() -> None:
             try:
                 # Skip account/position REST fetch if plugin is providing live data.
                 try:
-                    from core.platform_bridge import platform_bridge
+                    from core.platform_bridge import platform_bridge  # late import: circular dep
                     _plugin_up = platform_bridge.is_connected
                 except Exception:
                     _plugin_up = False

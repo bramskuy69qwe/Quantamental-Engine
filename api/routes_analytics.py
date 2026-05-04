@@ -17,7 +17,8 @@ from core.analytics import (
     compute_funding_exposure, compute_beta, daily_returns,
 )
 from core.exchange import fetch_funding_rates
-from api.helpers import templates, _ctx, _maybe_backfill_equity
+from api.helpers import templates, _ctx
+from api.cache import _maybe_backfill_equity
 
 log = logging.getLogger("routes.analytics")
 router = APIRouter()

@@ -26,6 +26,11 @@ import logging
 import time
 from typing import Any, Dict, Optional, Set
 
+import config as _cfg
+from core.state import app_state, PositionInfo
+from core.database import db
+from core.account_registry import account_registry
+
 log = logging.getLogger("platform_bridge")
 
 
@@ -159,9 +164,6 @@ class PlatformBridge:
         """One historical Quantower trade arrived (from Core.GetTrades on
         plugin connect). Idempotent upsert into exchange_history keyed by
         a stable trade_key derived from Quantower's Trade.Id."""
-        from core.database import db
-        from core.state import app_state
-
         trade_id = str(msg.get("trade_id", "")).strip()
         if not trade_id:
             return
@@ -298,8 +300,6 @@ class PlatformBridge:
         triggered by Quantower's Account.Updated event instead of polled REST.
         Throttled on the plugin side to ~5 Hz.
         """
-        from core.state import app_state
-
         def _f(key: str) -> float:
             try:
                 return float(msg.get(key, 0) or 0)
@@ -347,9 +347,6 @@ class PlatformBridge:
         if not broker_account_id:
             log.warning("PlatformBridge: hello missing broker_account_id; ignoring")
             return
-
-        from core.account_registry import account_registry
-        from core.state import app_state
 
         # Already configured?
         existing = account_registry.find_by_broker_id(broker_account_id)
@@ -414,9 +411,6 @@ class PlatformBridge:
         if fill is None:
             return
 
-        from core.state import app_state
-        from core.account_registry import account_registry
-
         # Route Quantower fill to internal account via broker_account_id
         qt_account_id = fill.get("account_id")
         if qt_account_id is not None:
@@ -452,8 +446,6 @@ class PlatformBridge:
 
         # Record fill in execution_log tagged as quantower for post-hoc analysis
         try:
-            from core.database import db
-            import config as _cfg
             await db.insert_execution_log({
                 "account_id":               app_state.active_account_id,
                 "ticker":                   fill["ticker"],
@@ -473,7 +465,7 @@ class PlatformBridge:
 
         # Trigger position refresh via the same path as Binance WS
         try:
-            from core.ws_manager import _refresh_positions_after_fill
+            from core.ws_manager import _refresh_positions_after_fill  # late import: circular dep
             await _refresh_positions_after_fill()
         except Exception as exc:
             log.error("PlatformBridge: position refresh after fill failed: %r", exc)
@@ -487,9 +479,6 @@ class PlatformBridge:
         snap = _map_position_snapshot(msg)
         if snap is None:
             return
-
-        from core.state import app_state, PositionInfo
-        import config as _cfg
 
         new_positions = []
         for p in snap["positions"]:
@@ -521,9 +510,6 @@ class PlatformBridge:
 
     def _handle_ohlcv_bar(self, msg: dict) -> None:
         """Plugin streamed one OHLCV bar. Updates ohlcv_cache in-place."""
-        from core.state import app_state
-        import config as _cfg
-
         symbol = _normalize_symbol(str(msg.get("symbol", "")))
         if not symbol:
             return
@@ -550,8 +536,6 @@ class PlatformBridge:
 
     def _handle_mark_price(self, msg: dict) -> None:
         """Plugin pushed a mark-price update for a symbol."""
-        from core.state import app_state
-
         symbol = _normalize_symbol(str(msg.get("symbol", "")))
         try:
             price = float(msg.get("price", 0) or 0)
@@ -587,8 +571,6 @@ class PlatformBridge:
 
     def _handle_depth_snapshot(self, msg: dict) -> None:
         """Plugin pushed an order-book snapshot."""
-        from core.state import app_state
-
         symbol = _normalize_symbol(str(msg.get("symbol", "")))
         if not symbol:
             return
@@ -653,7 +635,6 @@ class PlatformBridge:
 
     def get_state_json(self) -> dict:
         """Build a risk-state payload for GET /api/platform/state."""
-        from core.state import app_state
         acc = app_state.account_state
         pf  = app_state.portfolio
         return {
