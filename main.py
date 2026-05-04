@@ -22,7 +22,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, FileResponse
 
 import config
 
@@ -115,7 +115,22 @@ if os.path.exists("static"):
 app.include_router(router)
 
 
+@app.get("/manifest.json", include_in_schema=False)
+async def pwa_manifest():
+    return FileResponse("static/manifest.json", media_type="application/manifest+json")
+
+
+@app.get("/service-worker.js", include_in_schema=False)
+async def pwa_service_worker():
+    return FileResponse(
+        "static/service-worker.js",
+        media_type="application/javascript",
+        headers={"Service-Worker-Allowed": "/"},
+    )
+
+
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
-    return RedirectResponse(url="/static/favicon.ico") if os.path.exists("static/favicon.ico") \
-        else RedirectResponse(url="/")
+    if os.path.exists("static/icon-192.png"):
+        return FileResponse("static/icon-192.png", media_type="image/png")
+    return RedirectResponse(url="/")
