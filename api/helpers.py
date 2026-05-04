@@ -2,8 +2,8 @@
 Shared helpers for all API route modules.
 
 Exports: templates, _fmt, _fmt_duration, _ctx, _paginate_list, _table_ctx,
-         _maybe_backfill_equity, _get_funding_cached,
-         _backfill_lock, _backfill_earliest_ms, _FUNDING_CACHE
+         _maybe_backfill_equity, _ensure_funding_rates, get_funding_lines,
+         _backfill_lock, _backfill_earliest_ms
 """
 from __future__ import annotations
 
@@ -77,51 +77,45 @@ async def _maybe_backfill_equity(needed_start_ms: int, account_id: Optional[int]
 
 
 # ── Funding rate cache ────────────────────────────────────────────────────────
-_FUNDING_CACHE: Dict[str, Any] = {
-    "total_8h": 0.0, "total_day": 0.0, "rows": [], "ts": 0.0,
-}
+# Raw rates from REST (refresh every 60s). Exposure computed at render time
+# from cached rates + live notional so the dashboard gets 0.5 Hz updates.
+_FUNDING_RATES: Dict[str, Dict] = {}   # symbol → {funding_rate, next_funding_time}
+_FUNDING_RATES_TS: float = 0.0
+_FUNDING_REFRESHING = False
 
 
-async def _get_funding_cached() -> Dict[str, Any]:
-    """Return cached funding totals; refreshes at most every 60 seconds."""
-    if _time.monotonic() - _FUNDING_CACHE["ts"] < 60.0:
-        return _FUNDING_CACHE
-    positions = app_state.positions
-    if not positions:
-        _FUNDING_CACHE.update({"total_8h": 0.0, "total_day": 0.0, "rows": [], "ts": _time.monotonic()})
-        return _FUNDING_CACHE
-    symbols = [p.ticker for p in positions]
+async def _ensure_funding_rates() -> None:
+    """Trigger background funding rate refresh if stale. Non-blocking."""
+    global _FUNDING_REFRESHING
+    if _time.monotonic() - _FUNDING_RATES_TS >= 60.0 and not _FUNDING_REFRESHING:
+        _FUNDING_REFRESHING = True
+        import asyncio
+        asyncio.create_task(_refresh_funding_rates_bg())
+
+
+async def _refresh_funding_rates_bg() -> None:
+    global _FUNDING_REFRESHING, _FUNDING_RATES, _FUNDING_RATES_TS
     try:
-        funding_data = await fetch_funding_rates(symbols)
+        positions = app_state.positions
+        if not positions:
+            return
+        data = await fetch_funding_rates([p.ticker for p in positions])
+        _FUNDING_RATES = data
+        _FUNDING_RATES_TS = _time.monotonic()
     except Exception:
-        funding_data = {}
-    from datetime import timezone as _tz
-    total_8h = 0.0
-    total_day = 0.0
-    items: List[Dict[str, Any]] = []
-    for p in positions:
-        fd = funding_data.get(p.ticker, {})
-        rate = fd.get("funding_rate", 0.0)
-        nft = fd.get("next_funding_time", 0)
-        notional = abs(p.position_value_usdt)
-        exp = compute_funding_exposure(notional, rate)
-        adverse = (rate > 0) if p.direction == "LONG" else (rate < 0)
-        nft_str = "—"
-        if nft > 0:
-            nft_dt = datetime.fromtimestamp(nft / 1000, tz=_tz.utc).astimezone(TZ_LOCAL)
-            nft_str = nft_dt.strftime("%H:%M")
-        total_8h += exp["per_8h"]
-        total_day += exp["per_day"]
-        items.append({
-            "ticker": p.ticker, "direction": p.direction,
-            "rate": rate, "next": nft_str,
-            "adverse": adverse, "per_8h": exp["per_8h"],
-        })
-    _FUNDING_CACHE.update({
-        "total_8h": total_8h, "total_day": total_day,
-        "rows": items, "ts": _time.monotonic(),
-    })
-    return _FUNDING_CACHE
+        pass
+    finally:
+        _FUNDING_REFRESHING = False
+
+
+def get_funding_lines() -> List[str]:
+    """Build funding lines from cached rates + live positions. O(n), no I/O."""
+    lines = []
+    for p in app_state.positions:
+        rate = _FUNDING_RATES.get(p.ticker, {}).get("funding_rate", 0.0)
+        sign = "+" if rate >= 0 else ""
+        lines.append(f"{p.ticker} {sign}{rate * 100:.4f}%")
+    return lines
 
 
 # ── Templates ─────────────────────────────────────────────────────────────────
@@ -157,8 +151,35 @@ def _fmt_duration(ms) -> str:
     return " ".join(parts)
 
 
+def _hold_time(entry_iso: str) -> str:
+    """Compact hold time from ISO entry_timestamp to now."""
+    if not entry_iso:
+        return "—"
+    try:
+        from datetime import timezone as _tz
+        entry = datetime.fromisoformat(entry_iso)
+        if entry.tzinfo is None:
+            entry = entry.replace(tzinfo=_tz.utc)
+        delta_s = max(0, int((datetime.now(_tz.utc) - entry).total_seconds()))
+        d = delta_s // 86400
+        h = (delta_s % 86400) // 3600
+        m = (delta_s % 3600) // 60
+        s = delta_s % 60
+        parts = []
+        if d:
+            parts.append(f"{d}d")
+        if d or h:
+            parts.append(f"{h:02d}h")
+        parts.append(f"{m:02d}m")
+        parts.append(f"{s:02d}s")
+        return " ".join(parts)
+    except Exception:
+        return "—"
+
+
 templates.env.globals["fmt"] = _fmt
 templates.env.globals["fmt_duration"] = _fmt_duration
+templates.env.globals["hold_time"] = _hold_time
 
 
 def _ctx(request: Request, **extra) -> dict:

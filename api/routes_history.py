@@ -30,20 +30,10 @@ async def history_page(request: Request):
     ex_notes = await db.get_position_notes([r["trade_key"] for r in ex_rows])
     ex_pages  = max(1, (ex_total + 19) // 20)
 
-    th_rows, th_total = await db.query_trade_history(
-        date_from=date_from, date_to=date_to, account_id=aid,
-    )
-    th_pages = max(1, (th_total + 19) // 20)
-
     pt_rows, pt_total = await db.query_pre_trade_log(
         date_from=date_from, date_to=date_to, account_id=aid,
     )
     pt_pages = max(1, (pt_total + 19) // 20)
-
-    el_rows, el_total = await db.query_execution_log(
-        date_from=date_from, date_to=date_to, account_id=aid,
-    )
-    el_pages = max(1, (el_total + 19) // 20)
 
     return templates.TemplateResponse(
         request, "history.html",
@@ -52,12 +42,8 @@ async def history_page(request: Request):
              _init_date_to=date_to,
              _init_ex_rows=ex_rows,   _init_ex_total=ex_total,
              _init_ex_pages=ex_pages, _init_ex_notes=ex_notes,
-             _init_th_rows=th_rows,   _init_th_total=th_total,
-             _init_th_pages=th_pages,
              _init_pt_rows=pt_rows,   _init_pt_total=pt_total,
              _init_pt_pages=pt_pages,
-             _init_el_rows=el_rows,   _init_el_total=el_total,
-             _init_el_pages=el_pages,
         ),
     )
 
@@ -171,6 +157,17 @@ async def frag_history_exchange(
                    per_page=per_page, total_pages=total_pages,
                    sort_by=sort_by, sort_dir=sort_dir, search=search,
                    date_from=date_from, date_to=date_to, notes_map=notes_map),
+    )
+
+
+@router.get("/fragments/history/open_positions", response_class=HTMLResponse)
+async def frag_history_open_positions(request: Request):
+    prm = app_state.params
+    return templates.TemplateResponse(
+        request, "fragments/history/open_positions.html",
+        _ctx(request,
+             positions=app_state.positions,
+             max_positions=prm["max_position_count"]),
     )
 
 

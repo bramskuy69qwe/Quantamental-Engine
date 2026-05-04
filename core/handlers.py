@@ -102,6 +102,18 @@ async def handle_positions_refreshed(payload: Dict[str, Any]) -> None:
     """
     app_state.recalculate_portfolio()
 
+    # Rebuild market WS streams if position symbols changed (new open/close)
+    current_syms = {p.ticker for p in app_state.positions}
+    if not hasattr(handle_positions_refreshed, "_prev_syms"):
+        handle_positions_refreshed._prev_syms = set()
+    if current_syms != handle_positions_refreshed._prev_syms:
+        handle_positions_refreshed._prev_syms = current_syms
+        try:
+            from core import ws_manager
+            await ws_manager.restart_market_streams()
+        except Exception:
+            pass
+
     trigger = payload.get("trigger", "unknown")
 
     # Snapshot all current positions

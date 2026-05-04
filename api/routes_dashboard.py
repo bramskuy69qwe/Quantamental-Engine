@@ -12,7 +12,7 @@ import config
 from core.state import app_state, TZ_LOCAL
 from core import ws_manager
 from core.database import db
-from api.helpers import templates, _ctx, _get_funding_cached, _maybe_backfill_equity
+from api.helpers import templates, _ctx, _ensure_funding_rates, get_funding_lines, _maybe_backfill_equity
 
 log = logging.getLogger("routes.dashboard")
 router = APIRouter()
@@ -25,20 +25,20 @@ async def index(request: Request):
 
 @router.get("/fragments/dashboard", response_class=HTMLResponse)
 async def frag_dashboard(request: Request):
-    funding = await _get_funding_cached()
+    await _ensure_funding_rates()
     acc = app_state.account_state
     pf  = app_state.portfolio
     prm = app_state.params
 
-    # Funding exposure lines
-    funding_lines = []
-    for sym, rate in (funding or {}).items():
-        if any(p.ticker == sym for p in app_state.positions):
-            sign = "+" if rate >= 0 else ""
-            funding_lines.append(f"{sym} {sign}{rate*100:.4f}%")
+    # Funding lines from cached rates + live positions (refreshes every render)
+    funding_lines = get_funding_lines()
 
-    # Sector exposure lines (placeholder — no sector map yet)
-    sector_lines = []
+    # Sector exposure lines from open positions
+    sector_totals: dict = {}
+    for p in app_state.positions:
+        if p.sector:
+            sector_totals[p.sector] = sector_totals.get(p.sector, 0.0) + abs(p.position_value_usdt)
+    sector_lines = [f"{s}: ${v:,.0f}" for s, v in sorted(sector_totals.items(), key=lambda x: -x[1])]
 
     return templates.TemplateResponse(
         request, "fragments/dashboard_body.html",

@@ -514,14 +514,17 @@ function editNote(el, id, table){
   ta.className='note-textarea'; ta.rows=2; ta.value=el.textContent==='+ Add note'?'':el.textContent;
   td.innerHTML=''; td.appendChild(ta); ta.focus();
   ta.addEventListener('blur',function(){
-    fetch('/history/notes/'+id,{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({notes:ta.value,table:table})
-    }).then(function(){
-      var sp=document.createElement('span');
-      sp.style.cssText='color:var(--sub);font-size:.65rem;cursor:pointer;';
-      sp.textContent=ta.value||'+ Add note';
-      sp.onclick=function(){ editNote(sp,id,table); };
-      td.innerHTML=''; td.appendChild(sp);
+    var fd = new FormData();
+    fd.append('notes', ta.value);
+    var url;
+    if (table === 'position') {
+      url = '/history/notes/position';
+      fd.append('trade_key', id);
+    } else {
+      url = '/history/notes/' + table + '/' + id;
+    }
+    fetch(url, {method:'PUT', body:fd}).then(function(resp){ return resp.text(); }).then(function(html){
+      td.innerHTML = html;
     });
   });
 }

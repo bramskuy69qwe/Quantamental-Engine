@@ -361,60 +361,6 @@
 
 </div>
 
-<!-- ── Log to History ──────────────────────────────────────────────────── -->
-<div style="margin-top:6px;">
-  <button onclick="document.getElementById('log-forms').classList.toggle('hidden')"
-          class="btn btn-secondary btn-md" style="margin-bottom:6px;">
-    ▼ Log Execution / Trade Close
-  </button>
-  <div id="log-forms" class="hidden" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
-
-    <!-- Log execution -->
-    <div class="card card-p8">
-      <span class="sec-lbl">Log Execution</span>
-      <form hx-post="/history/log_execution" hx-target="#exec-msg" hx-swap="innerHTML">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px;">
-          <div><label class="lbl" style="display:block;margin-bottom:3px;">Ticker</label><input type="text" name="ticker" required /></div>
-          <div><label class="lbl" style="display:block;margin-bottom:3px;">Side</label>
-            <select name="side"><option>long</option><option>short</option></select></div>
-          <div><label class="lbl" style="display:block;margin-bottom:3px;">Actual Entry</label><input type="number" name="entry_price_actual" step="any" required /></div>
-          <div><label class="lbl" style="display:block;margin-bottom:3px;">Size Filled</label><input type="number" name="size_filled" step="any" required /></div>
-          <div><label class="lbl" style="display:block;margin-bottom:3px;">Slippage (%)</label><input type="number" name="slippage" step="any" placeholder="0.00" /></div>
-          <div><label class="lbl" style="display:block;margin-bottom:3px;">Order Type</label>
-            <select name="order_type"><option>limit</option><option>market</option><option>stop</option></select></div>
-          <div><label class="lbl" style="display:block;margin-bottom:3px;">Latency (ms)</label><input type="number" name="latency_snapshot" placeholder="0" /></div>
-        </div>
-        <button type="submit" class="btn btn-primary btn-sm">Log</button>
-        <div id="exec-msg" style="margin-top:6px;"></div>
-      </form>
-    </div>
-
-    <!-- Log close -->
-    <div class="card card-p8">
-      <span class="sec-lbl">Log Trade Close</span>
-      <form hx-post="/history/log_close" hx-target="#close-msg" hx-swap="innerHTML">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px;">
-          <div><label class="lbl" style="display:block;margin-bottom:3px;">Ticker</label><input type="text" name="ticker" required /></div>
-          <div><label class="lbl" style="display:block;margin-bottom:3px;">Direction</label>
-            <select name="direction"><option>LONG</option><option>SHORT</option></select></div>
-          <div><label class="lbl" style="display:block;margin-bottom:3px;">Entry Price</label><input type="number" name="entry_price" step="any" required /></div>
-          <div><label class="lbl" style="display:block;margin-bottom:3px;">Exit Price</label><input type="number" name="exit_price" step="any" required /></div>
-          <div><label class="lbl" style="display:block;margin-bottom:3px;">Realized PnL</label><input type="number" name="individual_realized" step="any" placeholder="0.00" /></div>
-          <div><label class="lbl" style="display:block;margin-bottom:3px;">R Multiple</label><input type="number" name="individual_realized_r" step="any" placeholder="0.00" /></div>
-          <div><label class="lbl" style="display:block;margin-bottom:3px;">Funding Fees</label><input type="number" name="total_funding_fees" step="any" placeholder="0.00" /></div>
-          <div><label class="lbl" style="display:block;margin-bottom:3px;">Exchange Fees</label><input type="number" name="total_fees" step="any" placeholder="0.00" /></div>
-          <div><label class="lbl" style="display:block;margin-bottom:3px;">Slippage Exit</label><input type="number" name="slippage_exit" step="any" placeholder="0.00" /></div>
-          <div><label class="lbl" style="display:block;margin-bottom:3px;">Hold Time</label><input type="text" name="holding_time" placeholder="000d 00h 00m 00s" /></div>
-        </div>
-        <div style="margin-bottom:6px;"><label class="lbl" style="display:block;margin-bottom:3px;">Notes</label>
-          <input type="text" name="notes" placeholder="optional" /></div>
-        <button type="submit" class="btn btn-primary btn-sm">Log Close</button>
-        <div id="close-msg" style="margin-top:6px;"></div>
-      </form>
-    </div>
-
-  </div>
-</div>
 
 <script>
 // ── State ─────────────────────────────────────────────────────────────────

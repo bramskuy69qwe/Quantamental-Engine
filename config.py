@@ -62,8 +62,8 @@ WS_RECONNECT_ATTEMPTS = 15
 WS_FALLBACK_TIMEOUT   = 30            # fall back to REST after N seconds stale
 
 # Binance Futures WebSocket base
-FSTREAM_WS   = "wss://fstream.binance.com/ws"
-FSTREAM_COMB = "wss://fstream.binance.com/stream"
+FSTREAM_WS   = "wss://fstream.binance.com/private/ws"
+FSTREAM_COMB = "wss://fstream.binance.com/market/stream"
 
 # ── Data paths ────────────────────────────────────────────────────────────────
 DATA_DIR       = "data"

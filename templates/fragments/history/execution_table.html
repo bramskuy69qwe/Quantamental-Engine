@@ -12,14 +12,17 @@
     <div style="display:flex;gap:4px;">
       <input type="text" placeholder="Search ticker…" class="hist-input" style="width:130px;"
              value="{{ search }}"
-             hx-get="{{ ep }}?page=1&per_page={{ per_page }}&ticker={{ ticker }}&side={{ side }}&sort_by={{ sort_by }}&sort_dir={{ sort_dir }}&date_from={{ date_from }}&date_to={{ date_to }}"
+             hx-get="{{ ep }}?page=1&per_page={{ per_page }}&sort_by={{ sort_by }}&sort_dir={{ sort_dir }}&date_from={{ df }}&date_to={{ dt }}"
              hx-target="#{{ tid }}" hx-swap="innerHTML"
              hx-trigger="keyup[key=='Enter']"
+             hx-include="closest div"
              name="search">
       <select class="hist-select"
-              hx-get="{{ ep }}?page=1&per_page={{ per_page }}&search={{ search }}&ticker={{ ticker }}&sort_by={{ sort_by }}&sort_dir={{ sort_dir }}&date_from={{ date_from }}&date_to={{ date_to }}"
+              hx-get="{{ ep }}?page=1&per_page={{ per_page }}&sort_by={{ sort_by }}&sort_dir={{ sort_dir }}&date_from={{ df }}&date_to={{ dt }}"
               hx-target="#{{ tid }}" hx-swap="innerHTML"
-              hx-trigger="change" name="side">
+              hx-trigger="change"
+              hx-include="closest div"
+              name="side">
         <option value="">All Sides</option>
         <option value="long"  {{ "selected" if side == "long"  }}>LONG</option>
         <option value="short" {{ "selected" if side == "short" }}>SHORT</option>

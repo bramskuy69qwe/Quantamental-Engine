@@ -1,0 +1,48 @@
+<!-- fragment: history/open_positions -->
+<div class="card">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+    <span class="sec-lbl" style="margin-bottom:0;">Open Positions</span>
+    <span class="mono" style="font-size:.72rem;color:var(--sub);">{{ positions | length }} / {{ max_positions }}</span>
+  </div>
+
+  <!-- Capacity bar -->
+  <div class="gauge-track" style="margin-bottom:10px;">
+    <div class="gauge-fill"
+         style="width:{{ [positions|length / max_positions * 100, 100]|min }}%;background:var(--blue);"></div>
+  </div>
+
+  {% if positions %}
+  <div style="overflow-x:auto;">
+    <table>
+      <thead><tr>
+        <th>Symbol</th><th>Dir</th><th>Hold</th><th>Entry</th><th>Mark</th>
+        <th>Size</th><th>Notional</th><th>uPnL</th><th>MFE</th><th>MAE</th><th>TP</th><th>SL</th>
+      </tr></thead>
+      <tbody>
+        {% for p in positions %}
+        <tr>
+          <td style="color:var(--blue);font-weight:700;">{{ p.ticker }}</td>
+          <td class="{{ 'pos-long' if p.direction=='LONG' else 'pos-short' }}">{{ p.direction }}</td>
+          <td style="color:var(--sub);font-size:.68rem;">{{ hold_time(p.entry_timestamp) }}</td>
+          <td>{{ fmt(p.average, 4) }}</td>
+          <td>{{ fmt(p.fair_price, 4) }}</td>
+          <td>{{ fmt(p.contract_amount, 4) }}</td>
+          <td>{{ fmt(p.position_value_usdt, 2) }}</td>
+          <td style="color:{{ 'var(--green)' if p.individual_unrealized >= 0 else 'var(--red)' }};">
+            {{ fmt(p.individual_unrealized, 2) }}
+          </td>
+          <td style="color:var(--green);">{{ fmt(p.session_mfe, 2) }}</td>
+          <td style="color:var(--red);">{{ fmt(p.session_mae, 2) }}</td>
+          <td style="color:var(--green);">{{ fmt(p.individual_tp_price, 4) if p.individual_tp_price else '—' }}</td>
+          <td style="color:var(--red);">{{ fmt(p.individual_sl_price, 4) if p.individual_sl_price else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div style="text-align:center;padding:24px 0;color:var(--muted);font-size:.78rem;">
+    No open positions.
+  </div>
+  {% endif %}
+</div>

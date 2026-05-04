@@ -38,6 +38,7 @@ from core.exchange import (
     fetch_exchange_info, fetch_account, fetch_positions,
     fetch_ohlcv, create_listen_key,
     fetch_bod_sow_equity, fetch_exchange_trade_history,
+    populate_open_position_metadata,
 )
 from core import ws_manager
 from core.data_logger import take_daily_snapshot, take_monthly_snapshot
@@ -121,15 +122,28 @@ async def _auto_export_scheduler():
 
 # ── Periodic account refresh (belt-and-suspenders alongside WS) ───────────────
 
+_account_refresh_in_flight = False
+
 async def _account_refresh_loop():
-    """Refresh account + positions via REST every 60 seconds as a safety net.
-    Skipped when the Quantower plugin is connected — plugin provides live data."""
+    """Refresh account + positions via REST every 2 seconds.
+    Skipped when the Quantower plugin is connected — plugin provides live data.
+    Guards against overlap if a single refresh takes longer than 2s."""
+    global _account_refresh_in_flight
     from core.event_bus import event_bus
     from core.platform_bridge import platform_bridge
     while True:
-        await asyncio.sleep(60)
-        if platform_bridge.is_connected:
+        # WS handles real-time position/mark price updates.
+        # REST is just a safety net: 30s when WS healthy, 5s when WS down.
+        interval = 30 if app_state.ws_status.connected else 5
+        await asyncio.sleep(interval)
+        if platform_bridge.is_connected or _account_refresh_in_flight:
             continue
+        # Skip REST refresh if WS updated positions recently (avoid race)
+        import time as _t
+        from core.ws_manager import _last_ws_position_update
+        if _t.monotonic() - _last_ws_position_update < 5:
+            continue
+        _account_refresh_in_flight = True
         try:
             await fetch_account()
             await fetch_positions()
@@ -139,6 +153,8 @@ async def _account_refresh_loop():
             )
         except Exception as e:
             log.warning(f"Periodic account refresh failed: {e}")
+        finally:
+            _account_refresh_in_flight = False
 
 
 # ── Latency ping loop ──────────────────────────────────────────────────────────
@@ -213,6 +229,7 @@ async def _startup_fetch():
         await fetch_exchange_info()
         await fetch_account()
         await fetch_positions()
+        await populate_open_position_metadata()
         log.info(f"Connected — equity: {app_state.account_state.total_equity:.2f} USDT")
     except Exception as e:
         log.error(f"Initial data fetch failed (is .env set?): {e}")

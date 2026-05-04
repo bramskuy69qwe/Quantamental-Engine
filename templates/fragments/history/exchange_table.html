@@ -15,7 +15,7 @@
     <input type="text" placeholder="Search…" class="hist-input"
            style="width:9rem;"
            value="{{ search }}"
-           hx-get="{{ ep }}?page=1&per_page={{ per_page }}&sort_by={{ sort_by }}&sort_dir={{ sort_dir }}&date_from={{ date_from }}&date_to={{ date_to }}"
+           hx-get="{{ ep }}?page=1&per_page={{ per_page }}&sort_by={{ sort_by }}&sort_dir={{ sort_dir }}&date_from={{ df }}&date_to={{ dt }}"
            hx-target="#{{ tid }}" hx-swap="innerHTML"
            hx-trigger="keyup[key=='Enter']"
            name="search">

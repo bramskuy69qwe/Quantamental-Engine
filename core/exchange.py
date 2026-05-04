@@ -209,6 +209,10 @@ async def fetch_positions() -> None:
             # Preserve WS-sourced unrealized PnL if it is more recent than REST snapshot
             if old.individual_unrealized != 0.0:
                 p.individual_unrealized = old.individual_unrealized
+        elif not p.entry_timestamp:
+            # New position — WS _on_new_position handles real fill time lookup.
+            # Set now() as placeholder so hold time shows immediately.
+            p.entry_timestamp = datetime.now(timezone.utc).isoformat()
 
     # Detect closed positions and fire trade_closed events (outside lock — I/O)
     for ticker, old_pos in existing.items():
@@ -246,6 +250,82 @@ async def fetch_positions() -> None:
 
     # Attach TP/SL from open orders (outside lock — REST call)
     await fetch_open_orders_tpsl()
+
+
+# ── Open position metadata (entry time, MFE/MAE from history) ────────────────
+
+async def populate_open_position_metadata() -> None:
+    """
+    For each open position, fetch recent trades to determine entry time,
+    then fetch OHLCV to compute true MFE/MAE since position open.
+    Called once on startup so MFE/MAE reflect the full hold, not just
+    the current engine session.
+    """
+    loop = asyncio.get_event_loop()
+    ex   = get_exchange()
+
+    for i, pos in enumerate(app_state.positions):
+        if i > 0:
+            await asyncio.sleep(0.5)  # pace REST calls to avoid 429
+        try:
+            # ── 1. Find position open time from recent trades ────────────
+            def _fetch_trades(sym=pos.ticker):
+                return ex.fapiPrivateGetUserTrades({"symbol": sym, "limit": 200}) or []
+
+            trades = await loop.run_in_executor(_REST_POOL, _fetch_trades)
+            if not trades:
+                continue
+
+            # Walk trades newest→oldest to find the opening fill cluster.
+            # The position opened when cumulative qty (same side) first
+            # reaches the current position amount.
+            buy_side = "BUY" if pos.direction == "LONG" else "SELL"
+            trades.sort(key=lambda t: int(t.get("time", 0)), reverse=True)
+
+            cumulative = 0.0
+            open_time_ms = 0
+            for t in trades:
+                if t.get("side") != buy_side:
+                    break  # hit a trade on the opposite side → position boundary
+                cumulative += abs(float(t.get("qty", 0) or 0))
+                open_time_ms = int(t.get("time", 0))
+                if cumulative >= pos.contract_amount - 1e-8:
+                    break
+
+            if not open_time_ms:
+                continue
+
+            pos.entry_timestamp = datetime.fromtimestamp(
+                open_time_ms / 1000, tz=timezone.utc
+            ).isoformat()
+
+            # ── 2. Fetch OHLCV to compute MFE/MAE since open ────────────
+            now_ms = int(time.time() * 1000)
+            hold_ms = now_ms - open_time_ms
+
+            # Pick timeframe based on hold duration
+            if hold_ms < 12 * 3600 * 1000:      # < 12h → 1m candles
+                tf = "1m"
+            else:                                 # ≥ 12h → 1h candles
+                tf = "1h"
+
+            max_price, min_price = await _ohlcv_hl(pos.ticker, open_time_ms, now_ms, tf)
+            if max_price is None or min_price is None:
+                continue
+
+            if pos.direction == "LONG":
+                pos.session_mfe = round((max_price - pos.average) * pos.contract_amount, 2)
+                pos.session_mae = round((min_price - pos.average) * pos.contract_amount, 2)
+            else:
+                pos.session_mfe = round((pos.average - min_price) * pos.contract_amount, 2)
+                pos.session_mae = round((pos.average - max_price) * pos.contract_amount, 2)
+
+            log.info(
+                "Position metadata: %s open=%s mfe=%.2f mae=%.2f",
+                pos.ticker, pos.entry_timestamp, pos.session_mfe, pos.session_mae,
+            )
+        except Exception as e:
+            log.warning("populate_open_position_metadata failed for %s: %s", pos.ticker, e)
 
 
 # ── Open orders → TP/SL ──────────────────────────────────────────────────────
@@ -1088,7 +1168,7 @@ async def fetch_exchange_trade_history(limit: int = 200) -> None:
 async def fetch_funding_rates(symbols: List[str]) -> Dict[str, Dict]:
     """
     Fetch current funding rate + next funding time for each symbol.
-    Uses Binance /fapi/v1/premiumIndex — one call per symbol, concurrent.
+    Single batch call to /fapi/v1/premiumIndex (no symbol param = all symbols).
 
     Returns:
         {symbol: {"funding_rate": float, "next_funding_time": int, "mark_price": float}}
@@ -1098,22 +1178,28 @@ async def fetch_funding_rates(symbols: List[str]) -> Dict[str, Dict]:
 
     exchange = get_exchange()
     loop     = asyncio.get_event_loop()
-    results: Dict[str, Dict] = {}
+    wanted   = set(symbols)
 
-    async def _fetch_one(sym: str) -> None:
-        try:
-            raw = await loop.run_in_executor(
-                _REST_POOL,
-                lambda: exchange.fapiPublicGetPremiumIndex({"symbol": sym}),
-            )
+    try:
+        raw_list = await loop.run_in_executor(
+            _REST_POOL,
+            lambda: exchange.fapiPublicGetPremiumIndex() or [],
+        )
+    except Exception as e:
+        log.warning("fetch_funding_rates batch failed: %r", e)
+        return {s: {"funding_rate": 0.0, "next_funding_time": 0, "mark_price": 0.0} for s in symbols}
+
+    results: Dict[str, Dict] = {}
+    for raw in raw_list:
+        sym = raw.get("symbol", "")
+        if sym in wanted:
             results[sym] = {
                 "funding_rate":      float(raw.get("lastFundingRate", 0) or 0),
                 "next_funding_time": int(raw.get("nextFundingTime",   0) or 0),
                 "mark_price":        float(raw.get("markPrice",        0) or 0),
             }
-        except Exception as e:
-            log.warning("fetch_funding_rates: failed for %s: %r", sym, e)
-            results[sym] = {"funding_rate": 0.0, "next_funding_time": 0, "mark_price": 0.0}
-
-    await asyncio.gather(*[_fetch_one(s) for s in symbols], return_exceptions=True)
+    # Fill missing
+    for s in symbols:
+        if s not in results:
+            results[s] = {"funding_rate": 0.0, "next_funding_time": 0, "mark_price": 0.0}
     return results

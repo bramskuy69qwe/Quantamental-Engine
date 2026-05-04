@@ -64,10 +64,10 @@
     </div>
   </div>
 
-  <!-- ── Risk / Exposure + Positions (2s refresh) ─────────────────────── -->
+  <!-- ── Risk / Exposure + Positions (1s refresh) ─────────────────────── -->
   <div id="dashboard-body"
        hx-get="/fragments/dashboard"
-       hx-trigger="load, every 2s"
+       hx-trigger="load, every 1s"
        hx-swap="innerHTML"
        hx-indicator="#dash-spinner">
     <div style="display:grid;grid-template-columns:1fr 2fr;gap:6px;">

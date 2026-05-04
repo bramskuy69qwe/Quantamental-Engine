@@ -96,7 +96,7 @@ class ExchangeMixin:
         account_id: int = 1,
     ) -> tuple:
         """Paginated SQL query of exchange_history with search + date filters."""
-        clauses: list = ["account_id = ?"]
+        clauses: list = ["account_id = ?", "income_type != 'OPEN'"]
         params: list = [account_id]
 
         if search:

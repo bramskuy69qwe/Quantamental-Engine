@@ -48,6 +48,17 @@
   </div>
 
   <!-- ── Table containers ──────────────────────────────────────────────── -->
+  <!-- ── Open Positions (2s refresh — mirrors dashboard) ─────────────── -->
+  <div id="open-positions-panel"
+       hx-get="/fragments/history/open_positions"
+       hx-trigger="load, every 1s"
+       hx-swap="innerHTML">
+    <div class="card" style="min-height:60px;display:flex;align-items:center;justify-content:center;">
+      <span style="color:var(--muted);font-size:.78rem;">Loading positions...</span>
+    </div>
+  </div>
+
+  <!-- ── Position History (exchange) ──────────────────────────────────── -->
   <div id="exchange-table"
        hx-get="/fragments/history/exchange"
        hx-trigger="every 30s"
@@ -58,19 +69,6 @@
             search="", notes_map=_init_ex_notes,
             date_from=_init_date_from, date_to=_init_date_to %}
       {% include "fragments/history/exchange_table.html" %}
-    {% endwith %}
-  </div>
-
-  <div id="trade-history-table"
-       hx-get="/fragments/history/trade_history"
-       hx-trigger="every 30s"
-       hx-swap="innerHTML"
-       hx-timeout="25000">
-    {% with rows=_init_th_rows, total=_init_th_total, page=1, per_page=20,
-            total_pages=_init_th_pages, sort_by="exit_timestamp", sort_dir="DESC",
-            search="", ticker="", direction="",
-            date_from=_init_date_from, date_to=_init_date_to %}
-      {% include "fragments/history/trade_history_table.html" %}
     {% endwith %}
   </div>
 
@@ -87,25 +85,13 @@
     {% endwith %}
   </div>
 
-  <div id="execution-table"
-       hx-get="/fragments/history/execution"
-       hx-trigger="every 30s"
-       hx-swap="innerHTML"
-       hx-timeout="25000">
-    {% with rows=_init_el_rows, total=_init_el_total, page=1, per_page=20,
-            total_pages=_init_el_pages, sort_by="entry_timestamp", sort_dir="DESC",
-            search="", ticker="", side="",
-            date_from=_init_date_from, date_to=_init_date_to %}
-      {% include "fragments/history/execution_table.html" %}
-    {% endwith %}
-  </div>
 
 </div>
 
 <script>
 var _dateFrom='', _dateTo='';
-var _HIST_IDS=['exchange-table','trade-history-table','pre-trade-table','execution-table'];
-var _HIST_EPS={'exchange-table':'/fragments/history/exchange','trade-history-table':'/fragments/history/trade_history','pre-trade-table':'/fragments/history/pre_trade','execution-table':'/fragments/history/execution'};
+var _HIST_IDS=['exchange-table','pre-trade-table'];
+var _HIST_EPS={'exchange-table':'/fragments/history/exchange','pre-trade-table':'/fragments/history/pre_trade'};
 
 // Inject dates into every HTMX request from a history table
 document.body.addEventListener('htmx:configRequest',function(evt){

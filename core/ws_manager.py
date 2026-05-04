@@ -37,6 +37,7 @@ _market_ws_task:  Optional[asyncio.Task] = None
 _keepalive_task:  Optional[asyncio.Task] = None
 _fallback_task:   Optional[asyncio.Task] = None
 _calculator_symbol: Optional[str]        = None   # symbol currently open in calc
+_last_ws_position_update: float = 0.0   # monotonic ts of last WS position change
 _stopping: bool = False   # set by stop() to prevent reconnect tasks after teardown
 
 
@@ -53,6 +54,7 @@ async def _handle_user_event(msg: dict) -> None:
         ws.latency_ms = round(time.time() * 1000 - event_time_ms, 1)
 
     if ev == "ACCOUNT_UPDATE":
+        global _last_ws_position_update
         balances = msg.get("a", {}).get("B", [])
         positions = msg.get("a", {}).get("P", [])
 
@@ -62,28 +64,110 @@ async def _handle_user_event(msg: dict) -> None:
                     app_state.account_state.balance_usdt = float(b.get("wb") or 0)
                     app_state.account_state.total_equity = float(b.get("cw") or 0)
 
-            # Update unrealized from position updates
-            for p_raw in positions:
-                sym = p_raw.get("s", "")
-                upnl = float(p_raw.get("up") or 0)
-                for pos in app_state.positions:
-                    if pos.ticker == sym:
+            if positions:
+                existing = {p.ticker: p for p in app_state.positions}
+                closed_syms = set()
+                new_syms = set()
+
+                for p_raw in positions:
+                    sym  = p_raw.get("s", "")
+                    amt  = float(p_raw.get("pa") or 0)
+                    upnl = float(p_raw.get("up") or 0)
+                    ep   = float(p_raw.get("ep") or 0)
+
+                    if amt == 0:
+                        if sym in existing:
+                            closed_syms.add(sym)
+                    elif sym in existing:
+                        pos = existing[sym]
                         pos.individual_unrealized = upnl
-                        break
+                        pos.contract_amount = abs(amt)
+                        pos.direction = "LONG" if amt > 0 else "SHORT"
+                        if ep > 0:
+                            pos.average = ep
+                        mark = app_state.mark_price_cache.get(sym, 0)
+                        if mark:
+                            pos.position_value_usdt = abs(amt) * mark
+                    else:
+                        from core.state import PositionInfo
+                        mark = app_state.mark_price_cache.get(sym, ep) or ep
+                        app_state.positions.append(PositionInfo(
+                            ticker=sym,
+                            direction="LONG" if amt > 0 else "SHORT",
+                            contract_amount=abs(amt),
+                            average=ep,
+                            fair_price=mark,
+                            individual_unrealized=upnl,
+                            position_value_usdt=abs(amt) * mark,
+                            entry_timestamp=datetime.now(timezone.utc).isoformat(),
+                            sector=config.get_sector(sym),
+                        ))
+                        new_syms.add(sym)
+
+                if closed_syms:
+                    app_state.positions = [p for p in app_state.positions if p.ticker not in closed_syms]
+
+                _last_ws_position_update = time.monotonic()
 
             app_state.account_state.total_unrealized = sum(
                 p.individual_unrealized for p in app_state.positions
             )
 
+        # Outside lock: side effects
+        if positions:
+            if closed_syms or new_syms:
+                asyncio.create_task(restart_market_streams())
+            for sym in new_syms:
+                asyncio.create_task(_on_new_position(sym))
+            app_state.recalculate_portfolio()
+
     elif ev == "ORDER_TRADE_UPDATE":
-        # Trigger a position refresh so new fills appear immediately
-        asyncio.create_task(_refresh_positions_after_fill())
+        # ACCOUNT_UPDATE handles position state via WS.
+        # REST reconciliation happens in _account_refresh_loop as safety net.
+        pass
 
     ws.last_update = datetime.now(timezone.utc)
     await event_bus.publish(
         "risk:account_updated",
         {"event": ev, "ts": datetime.now(timezone.utc).isoformat()},
     )
+
+
+async def _on_new_position(sym: str) -> None:
+    """Background: restart market streams + fetch real entry time for a new position."""
+    try:
+        await restart_market_streams()
+    except Exception:
+        pass
+    # Fetch real fill timestamp from Binance trades
+    try:
+        from core.exchange import get_exchange, _REST_POOL
+        loop = asyncio.get_event_loop()
+        ex = get_exchange()
+        trades = await loop.run_in_executor(
+            _REST_POOL,
+            lambda: ex.fapiPrivateGetUserTrades({"symbol": sym, "limit": 50}) or [],
+        )
+        if trades:
+            for pos in app_state.positions:
+                if pos.ticker != sym:
+                    continue
+                buy = "BUY" if pos.direction == "LONG" else "SELL"
+                trades.sort(key=lambda t: int(t.get("time", 0)), reverse=True)
+                cum = 0.0
+                for t in trades:
+                    if t.get("side") != buy:
+                        break
+                    cum += abs(float(t.get("qty", 0) or 0))
+                    open_ms = int(t.get("time", 0))
+                    if cum >= pos.contract_amount - 1e-8:
+                        pos.entry_timestamp = datetime.fromtimestamp(
+                            open_ms / 1000, tz=timezone.utc
+                        ).isoformat()
+                        break
+                break
+    except Exception as e:
+        log.warning("_on_new_position trade lookup failed for %s: %s", sym, e)
 
 
 async def _refresh_positions_after_fill() -> None:
@@ -128,15 +212,16 @@ async def _user_data_loop(listen_key: str, attempt: int = 0) -> None:
             ws.add_log("User-data WS connected.")
 
             async for raw in sock:
-                t0  = time.monotonic()
-                msg = json.loads(raw)
-                await _handle_user_event(msg)
-                ws.latency_ms   = round((time.monotonic() - t0) * 1000, 2)
+                try:
+                    t0  = time.monotonic()
+                    msg = json.loads(raw)
+                    await _handle_user_event(msg)
+                    ws.latency_ms   = round((time.monotonic() - t0) * 1000, 2)
+                except Exception as exc:
+                    log.warning("User-data WS message error: %s", exc)
                 ws.last_update  = datetime.now(timezone.utc)
 
-    except (websockets.exceptions.ConnectionClosedError,
-            websockets.exceptions.ConnectionClosedOK,
-            OSError) as exc:
+    except Exception as exc:
         ws.connected = False
         ws.add_log(f"User-data WS disconnected: {exc}")
         await _reconnect_user(attempt)
@@ -211,6 +296,9 @@ def _apply_mark_price(msg: dict) -> None:
     for pos in app_state.positions:
         if pos.ticker == sym:
             pos.fair_price = mark
+            # Update notional and margin from mark price
+            pos.position_value_usdt = abs(mark * pos.contract_amount * pos.contract_size)
+            pos.position_value_asset = abs(pos.contract_amount * pos.contract_size)
             if pos.average > 0:
                 if pos.direction == "LONG":
                     pos.individual_unrealized = (mark - pos.average) * pos.contract_amount
@@ -224,9 +312,20 @@ def _apply_mark_price(msg: dict) -> None:
                     pos.session_mae = round(unreal, 2)
             break
 
-    app_state.account_state.total_unrealized = sum(
+    acc = app_state.account_state
+    acc.total_unrealized = sum(
         p.individual_unrealized for p in app_state.positions
     )
+    acc.total_position_value = sum(
+        p.position_value_usdt for p in app_state.positions
+    )
+    acc.total_margin_used = sum(
+        p.individual_margin_used for p in app_state.positions
+    )
+    # Equity = balance + unrealized (real-time from mark price)
+    if acc.balance_usdt > 0:
+        acc.total_equity = acc.balance_usdt + acc.total_unrealized
+        acc.available_margin = acc.total_equity - acc.total_margin_used
     app_state.recalculate_portfolio()
 
 
@@ -285,24 +384,26 @@ async def _market_stream_loop(attempt: int = 0) -> None:
         ) as sock:
             ws.add_log("Market WS connected.")
             async for raw in sock:
-                msg_outer = json.loads(raw)
-                msg  = msg_outer.get("data", msg_outer)
-                ev   = msg.get("e", "")
-                if ev == "kline":
-                    _apply_kline(msg)
-                elif ev == "depthUpdate":
-                    _apply_depth(msg)
-                elif ev == "markPriceUpdate":
-                    _apply_mark_price(msg)
+                try:
+                    msg_outer = json.loads(raw)
+                    msg  = msg_outer.get("data", msg_outer)
+                    ev   = msg.get("e", "")
+                    if ev == "kline":
+                        _apply_kline(msg)
+                    elif ev == "depthUpdate":
+                        _apply_depth(msg)
+                    elif ev == "markPriceUpdate":
+                        _apply_mark_price(msg)
+                except Exception as exc:
+                    log.warning("Market WS message error: %s", exc)
                 ws.last_update = datetime.now(timezone.utc)
 
-    except (websockets.exceptions.ConnectionClosedError,
-            websockets.exceptions.ConnectionClosedOK,
-            OSError) as exc:
+    except Exception as exc:
         ws.add_log(f"Market WS disconnected: {exc}")
         delay = min(config.WS_RECONNECT_BASE * (2 ** attempt), config.WS_RECONNECT_MAX)
         await asyncio.sleep(delay)
-        asyncio.create_task(_market_stream_loop(attempt + 1))
+        if not _stopping:
+            asyncio.create_task(_market_stream_loop(attempt + 1))
 
 
 # ── Keepalive for listen key (must ping every 30 min) ────────────────────────
