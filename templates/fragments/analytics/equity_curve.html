@@ -1,26 +1,27 @@
-<div class="panel p-4">
-  <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
-    <div class="label">Equity Curve — {{ period_label }}</div>
+<div class="card">
+  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
+    <div class="lbl" style="margin-bottom:0;">Equity Curve — {{ period_label }}</div>
 
     <!-- Timeframe buttons -->
-    <div class="flex gap-1 flex-wrap">
+    <div style="display:flex;gap:4px;flex-wrap:wrap;">
       {% for tf, label in [('1W','1W'),('2W','2W'),('1M','1M'),('3M','3M'),('6M','6M'),('1Y','1Y'),('all','All')] %}
       <button onclick="reloadEquity('{{ tf }}')"
               id="eq-tf-{{ tf }}"
-              class="preset-btn text-xs {{ 'active' if tf == active_tf else '' }}">{{ label }}</button>
+              class="preset-btn {{ 'active' if tf == active_tf else '' }}"
+              style="font-size:.66rem;">{{ label }}</button>
       {% endfor %}
     </div>
 
     <!-- Display toggles -->
-    <div class="flex gap-3 items-center">
-      <label class="flex items-center gap-1 text-xs text-slate-400 cursor-pointer">
+    <div style="display:flex;gap:12px;align-items:center;">
+      <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--sub);cursor:pointer;">
         <input type="checkbox" id="eq-log-scale" onchange="toggleLogScale()"
-               class="accent-blue-500" {% if log_scale %}checked{% endif %}>
+               {% if log_scale %}checked{% endif %}>
         Log scale
       </label>
-      <label class="flex items-center gap-1 text-xs text-slate-400 cursor-pointer">
+      <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--sub);cursor:pointer;">
         <input type="checkbox" id="eq-show-dd" onchange="toggleDrawdown()"
-               class="accent-blue-500" {% if show_dd %}checked{% endif %}>
+               {% if show_dd %}checked{% endif %}>
         Drawdown %
       </label>
     </div>
@@ -29,11 +30,11 @@
   {% if candles %}
   <!-- Live OHLC + Change + Range stats bar -->
   <div id="eq-ohlc-stats"
-       class="flex flex-wrap gap-x-4 gap-y-1 text-xs font-mono mb-2 px-1 select-none min-h-[1.25rem]">
+       style="display:flex;flex-wrap:wrap;gap:12px 16px;font-size:.72rem;font-family:var(--font-mono);margin-bottom:8px;padding:0 2px;user-select:none;min-height:1.25rem;">
   </div>
   <div id="equity-chart"></div>
   {% else %}
-  <div class="text-slate-500 text-sm py-10 text-center">No equity data found for this period.</div>
+  <div style="color:var(--muted);font-size:.78rem;padding:40px 0;text-align:center;">No equity data found for this period.</div>
   {% endif %}
 </div>
 
@@ -55,16 +56,13 @@ function toggleDrawdown()  { reloadEquity('{{ active_tf }}'); }
   const showDD   = {{ 'true' if show_dd   else 'false' }};
   const logScale = {{ 'true' if log_scale else 'false' }};
 
-  // ── Half-period offset: centre crosshair on each candle ─────────────────
   const halfMs = raw.length >= 2 ? Math.round((raw[1].x - raw[0].x) / 2) : 0;
 
-  // ── Timestamp label for tooltip header ──────────────────────────────────
   function fmtTs(ms) {
     const d = new Date(ms);
     return d.toLocaleDateString('en', { year: 'numeric', month: 'short', day: 'numeric' });
   }
 
-  // ── Stats bar helpers ────────────────────────────────────────────────────
   function fmt(v)    { return '$' + v.toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
   function fmtAbs(v) { return '$' + Math.abs(v).toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
@@ -79,23 +77,21 @@ function toggleDrawdown()  { reloadEquity('{{ active_tf }}'); }
     const sign      = chg >= 0 ? '+' : '-';
     const adjSign   = adjChg >= 0 ? '+' : '-';
     const cfSign    = cf >= 0 ? '+' : '-';
-    const chgCls    = chg >= 0 ? 'text-green-400' : 'text-red-400';
-    const adjCls    = adjChg >= 0 ? 'text-green-400' : 'text-red-400';
-    const cfCls     = cf >= 0 ? 'text-blue-400' : 'text-orange-400';
+    const chgCls    = chg >= 0 ? 'color:#00c855' : 'color:#e83535';
+    const adjCls    = adjChg >= 0 ? 'color:#00c855' : 'color:#e83535';
+    const cfCls     = cf >= 0 ? 'color:#3c8ff5' : 'color:#e89020';
     document.getElementById('eq-ohlc-stats').innerHTML =
-      `<span><span class="text-slate-500">O</span> <span class="text-slate-300">${fmt(c.o)}</span></span>` +
-      `<span><span class="text-slate-500">H</span> <span class="text-green-400">${fmt(c.h)}</span></span>` +
-      `<span><span class="text-slate-500">L</span> <span class="text-red-400">${fmt(c.l)}</span></span>` +
-      `<span><span class="text-slate-500">C</span> <span class="text-slate-300">${fmt(c.c)}</span></span>` +
-      `<span><span class="text-slate-500">Chg</span> <span class="${chgCls}">${sign}${fmtAbs(chg)} (${sign}${Math.abs(chgPct).toFixed(2)}%)</span></span>` +
-      `<span><span class="text-slate-500">Range</span> <span class="text-slate-300">${fmt(rng)} (${rngPct.toFixed(2)}%)</span></span>` +
-      `<span><span class="text-slate-500">CF</span> <span class="${cfCls}">${cfSign}${fmtAbs(cf)}</span></span>` +
-      `<span><span class="text-slate-500">Adj Chg</span> <span class="${adjCls}">${adjSign}${fmtAbs(adjChg)} (${adjSign}${Math.abs(adjChgPct).toFixed(2)}%)</span></span>`;
+      `<span><span style="color:var(--muted)">O</span> <span style="color:var(--text)">${fmt(c.o)}</span></span>` +
+      `<span><span style="color:var(--muted)">H</span> <span style="color:#00c855">${fmt(c.h)}</span></span>` +
+      `<span><span style="color:var(--muted)">L</span> <span style="color:#e83535">${fmt(c.l)}</span></span>` +
+      `<span><span style="color:var(--muted)">C</span> <span style="color:var(--text)">${fmt(c.c)}</span></span>` +
+      `<span><span style="color:var(--muted)">Chg</span> <span style="${chgCls}">${sign}${fmtAbs(chg)} (${sign}${Math.abs(chgPct).toFixed(2)}%)</span></span>` +
+      `<span><span style="color:var(--muted)">Range</span> <span style="color:var(--text)">${fmt(rng)} (${rngPct.toFixed(2)}%)</span></span>` +
+      `<span><span style="color:var(--muted)">CF</span> <span style="${cfCls}">${cfSign}${fmtAbs(cf)}</span></span>` +
+      `<span><span style="color:var(--muted)">Adj Chg</span> <span style="${adjCls}">${adjSign}${fmtAbs(adjChg)} (${adjSign}${Math.abs(adjChgPct).toFixed(2)}%)</span></span>`;
   }
   if (raw.length) renderStats(raw[raw.length - 1]);
 
-  // ── Drawdown series (negative, so 0% = top of axis) ─────────────────────
-  // Running peak is computed from the full dataset so zooming doesn't reset it.
   let runningPeak = -Infinity;
   const ddData = raw.map(c => {
     if (c.c > runningPeak) runningPeak = c.c;
@@ -103,10 +99,9 @@ function toggleDrawdown()  { reloadEquity('{{ active_tf }}'); }
     return { x: c.x + halfMs, y: parseFloat(dd.toFixed(3)) };
   });
 
-  // ── Y-axis builders ──────────────────────────────────────────────────────
   const eqFmt  = v => '$' + v.toLocaleString('en', { maximumFractionDigits: 0 });
   const eqLabels = { formatter: eqFmt, style: { fontSize: '11px' } };
-  const ddLabels = { formatter: v => Math.abs(v).toFixed(1) + '%', style: { fontSize: '11px', colors: ['#f87171'] } };
+  const ddLabels = { formatter: v => Math.abs(v).toFixed(1) + '%', style: { fontSize: '11px', colors: ['#e83535'] } };
 
   function buildEqAxis(lo, hi) {
     if (logScale) {
@@ -119,54 +114,36 @@ function toggleDrawdown()  { reloadEquity('{{ active_tf }}'); }
   function buildDdAxis(visibleDd) {
     const ddMin = visibleDd.length ? Math.min(...visibleDd.map(d => d.y)) : -10;
     const pad   = Math.abs(ddMin) * 0.1 || 1;
-    return {
-      opposite: true,
-      max: 0,
-      min: ddMin - pad,
-      forceNiceScale: false,
-      labels: ddLabels,
-    };
+    return { opposite: true, max: 0, min: ddMin - pad, forceNiceScale: false, labels: ddLabels };
   }
 
   function fitY(visibleRaw) {
     if (!visibleRaw.length) return;
-    const lo    = Math.min(...visibleRaw.map(c => c.l));
-    const hi    = Math.max(...visibleRaw.map(c => c.h));
-    const eqY   = buildEqAxis(lo, hi);
-    if (!showDD) {
-      chart.updateOptions({ yaxis: eqY }, false, false);
-      return;
-    }
+    const lo  = Math.min(...visibleRaw.map(c => c.l));
+    const hi  = Math.max(...visibleRaw.map(c => c.h));
+    const eqY = buildEqAxis(lo, hi);
+    if (!showDD) { chart.updateOptions({ yaxis: eqY }, false, false); return; }
     const xSet = new Set(visibleRaw.map(c => c.x));
     const visDd = ddData.filter(d => xSet.has(d.x - halfMs));
     chart.updateOptions({ yaxis: [eqY, buildDdAxis(visDd)] }, false, false);
   }
 
-  // ── Initial Y bounds ─────────────────────────────────────────────────────
   const yMin = Math.min(...raw.map(c => c.l));
   const yMax = Math.max(...raw.map(c => c.h));
 
-  // ── Series ───────────────────────────────────────────────────────────────
   const candleSeries = { name: 'Equity', type: 'candlestick',
     data: raw.map(c => ({ x: c.x + halfMs, y: [c.o, c.h, c.l, c.c] })) };
   const ddSeries = { name: 'Drawdown %', type: 'line', data: ddData };
   const series = showDD ? [candleSeries, ddSeries] : [candleSeries];
 
-  // ── Chart ────────────────────────────────────────────────────────────────
   const opts = {
     chart: {
-      type: 'candlestick',
-      height: 360,
-      background: 'transparent',
-      foreColor: '#94a3b8',
+      type: 'candlestick', height: 360, background: 'transparent', foreColor: '#96b4d0',
       toolbar: { show: true, tools: { download: true, zoom: true, pan: true, reset: true } },
-      zoom: { enabled: true },
-      animations: { enabled: false },
+      zoom: { enabled: true }, animations: { enabled: false },
       events: {
         dataPointMouseEnter: (_evt, _ctx, cfg) => {
-          // series 0 = candles; series 1 = drawdown (ignore for stats)
-          if (cfg.seriesIndex === 0 && raw[cfg.dataPointIndex])
-            renderStats(raw[cfg.dataPointIndex]);
+          if (cfg.seriesIndex === 0 && raw[cfg.dataPointIndex]) renderStats(raw[cfg.dataPointIndex]);
         },
         mouseLeave: () => { if (raw.length) renderStats(raw[raw.length - 1]); },
         zoomed: (_ctx, { xaxis }) => {
@@ -184,32 +161,24 @@ function toggleDrawdown()  { reloadEquity('{{ active_tf }}'); }
     theme: { mode: 'dark' },
     series,
     xaxis: {
-      type: 'datetime',
-      datetimeUTC: false,
+      type: 'datetime', datetimeUTC: false,
       labels: {
-        rotate: -45,
-        hideOverlappingLabels: true,
+        rotate: -45, hideOverlappingLabels: true,
         style: { fontSize: '10px' },
         datetimeFormatter: { year: 'yyyy', month: "MMM 'yy", day: 'MMM dd', hour: 'MMM dd HH:mm' },
       },
     },
-    yaxis: showDD
-      ? [buildEqAxis(yMin, yMax), buildDdAxis(ddData)]
-      : buildEqAxis(yMin, yMax),
+    yaxis: showDD ? [buildEqAxis(yMin, yMax), buildDdAxis(ddData)] : buildEqAxis(yMin, yMax),
     plotOptions: {
-      candlestick: {
-        colors: { upward: '#4ade80', downward: '#f87171' },
-        wick: { useFillColor: true },
-      },
+      candlestick: { colors: { upward: '#00c855', downward: '#e83535' }, wick: { useFillColor: true } },
     },
     stroke: { width: [1, 1.5], curve: 'smooth' },
-    colors: ['transparent', '#f87171'],
-    grid: { borderColor: '#2a2d3a' },
+    colors: ['transparent', '#e83535'],
+    grid: { borderColor: '#18253a' },
     legend: { show: false },
     tooltip: {
       theme: 'dark',
       custom: ({ seriesIndex, dataPointIndex }) => {
-        // Only show rich tooltip when hovering the candle series
         if (seriesIndex !== 0) return '';
         const c = raw[dataPointIndex];
         if (!c) return '';
@@ -223,27 +192,27 @@ function toggleDrawdown()  { reloadEquity('{{ active_tf }}'); }
         const sign      = chg >= 0 ? '+' : '-';
         const adjSign   = adjChg >= 0 ? '+' : '-';
         const cfSign    = cf >= 0 ? '+' : '-';
-        const chgCol    = chg >= 0 ? '#4ade80' : '#f87171';
-        const adjCol    = adjChg >= 0 ? '#4ade80' : '#f87171';
-        const cfCol     = cf >= 0 ? '#60a5fa' : '#fb923c';
+        const chgCol    = chg >= 0 ? '#00c855' : '#e83535';
+        const adjCol    = adjChg >= 0 ? '#00c855' : '#e83535';
+        const cfCol     = cf >= 0 ? '#3c8ff5' : '#e89020';
         const ddVal     = showDD ? ddData[dataPointIndex]?.y ?? 0 : null;
         const row = (lbl, val, col) =>
           `<div style="display:flex;justify-content:space-between;gap:16px">` +
-          `<span style="color:#64748b">${lbl}</span>` +
-          `<span style="color:${col || '#cbd5e1'}">${val}</span></div>`;
-        return `<div style="padding:10px 12px;background:#1e2130;border:1px solid #2a2d3a;font-size:11px;font-family:monospace;line-height:1.9;min-width:200px">` +
-          `<div style="color:#475569;margin-bottom:2px">${fmtTs(c.x)}</div>` +
+          `<span style="color:#526a88">${lbl}</span>` +
+          `<span style="color:${col || '#e8f2ff'}">${val}</span></div>`;
+        return `<div style="padding:10px 12px;background:#0c1118;border:1px solid #18253a;font-size:11px;font-family:JetBrains Mono,monospace;line-height:1.9;min-width:200px">` +
+          `<div style="color:#526a88;margin-bottom:2px">${fmtTs(c.x)}</div>` +
           row('Open',  fmt(c.o)) +
-          row('High',  fmt(c.h), '#4ade80') +
-          row('Low',   fmt(c.l), '#f87171') +
+          row('High',  fmt(c.h), '#00c855') +
+          row('Low',   fmt(c.l), '#e83535') +
           row('Close', fmt(c.c)) +
-          `<div style="border-top:1px solid #2a2d3a;margin:4px 0"></div>` +
+          `<div style="border-top:1px solid #18253a;margin:4px 0"></div>` +
           row('Change', `${sign}${fmtAbs(chg)} (${sign}${Math.abs(chgPct).toFixed(2)}%)`, chgCol) +
           row('Range',  `${fmt(rng)} (${rngPct.toFixed(2)}%)`) +
-          `<div style="border-top:1px solid #2a2d3a;margin:4px 0"></div>` +
+          `<div style="border-top:1px solid #18253a;margin:4px 0"></div>` +
           row('Cashflow', `${cfSign}${fmtAbs(cf)}`, cfCol) +
           row('Adj Chg',  `${adjSign}${fmtAbs(adjChg)} (${adjSign}${Math.abs(adjChgPct).toFixed(2)}%)`, adjCol) +
-          (ddVal !== null ? row('Drawdown', Math.abs(ddVal).toFixed(2) + '%', '#f87171') : '') +
+          (ddVal !== null ? row('Drawdown', Math.abs(ddVal).toFixed(2) + '%', '#e83535') : '') +
           `</div>`;
       },
     },

@@ -6,25 +6,22 @@
 {% set dt = date_to   | replace(":", "%3A") | replace("+", "%2B") %}
 {% set qs = "per_page=" ~ per_page ~ "&search=" ~ search ~ "&ticker=" ~ ticker ~ "&side=" ~ side ~ "&sort_by=" ~ sort_by ~ "&sort_dir=" ~ sort_dir ~ "&date_from=" ~ df ~ "&date_to=" ~ dt %}
 
-<div class="panel p-4 mb-5"
-     data-page="{{ page }}" data-per_page="{{ per_page }}"
-     data-sort_by="{{ sort_by }}" data-sort_dir="{{ sort_dir }}"
-     data-search="{{ search }}" data-ticker="{{ ticker }}" data-side="{{ side }}">
-  <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
-    <div class="label">Execution Log ({{ total }} entries)</div>
-    <div class="flex items-center gap-2">
-      <input type="text" placeholder="Search ticker…" class="hist-input text-xs w-32"
+<div class="card card-p8">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
+    <span class="sec-lbl" style="margin-bottom:0;">Execution Log ({{ total }} entries)</span>
+    <div style="display:flex;gap:4px;">
+      <input type="text" placeholder="Search ticker…" class="hist-input" style="width:130px;"
              value="{{ search }}"
              hx-get="{{ ep }}?page=1&per_page={{ per_page }}&ticker={{ ticker }}&side={{ side }}&sort_by={{ sort_by }}&sort_dir={{ sort_dir }}&date_from={{ date_from }}&date_to={{ date_to }}"
              hx-target="#{{ tid }}" hx-swap="innerHTML"
              hx-trigger="keyup[key=='Enter']"
              name="search">
-      <select class="hist-select text-xs"
+      <select class="hist-select"
               hx-get="{{ ep }}?page=1&per_page={{ per_page }}&search={{ search }}&ticker={{ ticker }}&sort_by={{ sort_by }}&sort_dir={{ sort_dir }}&date_from={{ date_from }}&date_to={{ date_to }}"
               hx-target="#{{ tid }}" hx-swap="innerHTML"
               hx-trigger="change" name="side">
         <option value="">All Sides</option>
-        <option value="long" {{ "selected" if side == "long" }}>LONG</option>
+        <option value="long"  {{ "selected" if side == "long"  }}>LONG</option>
         <option value="short" {{ "selected" if side == "short" }}>SHORT</option>
       </select>
     </div>
@@ -34,28 +31,28 @@
   <div class="overflow-x-auto">
     <table>
       <thead><tr>
-        {{ sort_th("Entry Time", "entry_timestamp", ep, tid, sort_by, sort_dir, qs) }}
-        {{ sort_th("Ticker", "ticker", ep, tid, sort_by, sort_dir, qs) }}
-        {{ sort_th("Side", "side", ep, tid, sort_by, sort_dir, qs) }}
-        {{ sort_th("Actual Entry", "entry_price_actual", ep, tid, sort_by, sort_dir, qs) }}
-        {{ sort_th("Size Filled", "size_filled", ep, tid, sort_by, sort_dir, qs) }}
-        {{ sort_th("Slippage", "slippage", ep, tid, sort_by, sort_dir, qs) }}
-        {{ sort_th("Order Type", "order_type", ep, tid, sort_by, sort_dir, qs) }}
-        {{ sort_th("Maker Fee", "maker_fee", ep, tid, sort_by, sort_dir, qs) }}
-        {{ sort_th("Latency ms", "latency_snapshot", ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Entry Time",   "entry_timestamp",   ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Ticker",       "ticker",            ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Side",         "side",              ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Actual Entry", "entry_price_actual",ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Size Filled",  "size_filled",       ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Slippage",     "slippage",          ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Order Type",   "order_type",        ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Maker Fee",    "maker_fee",         ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Latency ms",   "latency_snapshot",  ep, tid, sort_by, sort_dir, qs) }}
       </tr></thead>
       <tbody>
         {% for r in rows %}
         <tr>
-          <td class="text-slate-500">{{ r.entry_timestamp[:19] }}</td>
-          <td class="font-bold">{{ r.ticker }}</td>
-          <td class="{{ 'pos-long' if r.side == 'long' else 'pos-short' }}">{{ r.side | upper }}</td>
+          <td style="color:var(--sub);">{{ r.entry_timestamp[:19] }}</td>
+          <td style="color:var(--blue);font-weight:700;">{{ r.ticker }}</td>
+          <td class="{{ 'pos-long' if r.side == 'long' else 'pos-short' }}">{{ r.side|upper }}</td>
           <td>{{ fmt(r.entry_price_actual, 4) }}</td>
           <td>{{ fmt(r.size_filled, 4) }}</td>
-          <td>{{ fmt(r.slippage * 100, 4) }}%</td>
-          <td>{{ r.order_type }}</td>
-          <td>{{ fmt(r.maker_fee * 100, 3) }}%</td>
-          <td>{{ fmt(r.latency_snapshot, 1) }}</td>
+          <td style="color:var(--sub);">{{ fmt(r.slippage * 100, 4) }}%</td>
+          <td style="color:var(--sub);">{{ r.order_type }}</td>
+          <td style="color:var(--sub);">{{ fmt(r.maker_fee * 100, 3) }}%</td>
+          <td style="color:var(--sub);">{{ fmt(r.latency_snapshot, 1) }}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -63,6 +60,6 @@
   </div>
   {{ pagination(ep, tid, page, per_page, total, total_pages, qs) }}
   {% else %}
-  <div class="text-slate-500 text-sm py-4">No execution entries found for this period.</div>
+  <div style="color:var(--muted);padding:20px 0;text-align:center;font-size:.78rem;">No execution entries found for this period.</div>
   {% endif %}
 </div>

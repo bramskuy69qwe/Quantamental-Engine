@@ -30,6 +30,11 @@ async def history_page(request: Request):
     ex_notes = await db.get_position_notes([r["trade_key"] for r in ex_rows])
     ex_pages  = max(1, (ex_total + 19) // 20)
 
+    th_rows, th_total = await db.query_trade_history(
+        date_from=date_from, date_to=date_to, account_id=aid,
+    )
+    th_pages = max(1, (th_total + 19) // 20)
+
     pt_rows, pt_total = await db.query_pre_trade_log(
         date_from=date_from, date_to=date_to, account_id=aid,
     )
@@ -47,6 +52,8 @@ async def history_page(request: Request):
              _init_date_to=date_to,
              _init_ex_rows=ex_rows,   _init_ex_total=ex_total,
              _init_ex_pages=ex_pages, _init_ex_notes=ex_notes,
+             _init_th_rows=th_rows,   _init_th_total=th_total,
+             _init_th_pages=th_pages,
              _init_pt_rows=pt_rows,   _init_pt_total=pt_total,
              _init_pt_pages=pt_pages,
              _init_el_rows=el_rows,   _init_el_total=el_total,
@@ -74,8 +81,8 @@ async def frag_history(request: Request):
         )
     except Exception as e:
         return HTMLResponse(
-            f'<div class="alert-error p-4 rounded">History load error: {e} &mdash; '
-            f'<button class="ml-2 btn btn-secondary btn-sm text-xs" '
+            f'<div class="alert alert-error">History load error: {e} &mdash; '
+            f'<button class="btn btn-secondary btn-sm" style="margin-left:8px;" '
             f'hx-get="/fragments/history" hx-target="#history-tables" hx-swap="innerHTML">Retry</button></div>'
         )
 
@@ -104,9 +111,9 @@ async def post_execution(
         await db.insert_execution_log(row)
     except Exception as exc:
         log.error("insert_execution_log failed: %r", exc)
-        return HTMLResponse('<div class="alert-error p-2 rounded">Failed to log execution — database error.</div>')
+        return HTMLResponse('<div class="alert alert-error">Failed to log execution — database error.</div>')
     log_execution(row)
-    return HTMLResponse('<div class="alert-success p-2 rounded">Execution logged.</div>')
+    return HTMLResponse('<div class="alert alert-success">Execution logged.</div>')
 
 
 @router.post("/history/log_close", response_class=HTMLResponse)
@@ -137,9 +144,9 @@ async def post_trade_close(
         await db.insert_trade_history(row)
     except Exception as exc:
         log.error("insert_trade_history failed: %r", exc)
-        return HTMLResponse('<div class="alert-error p-2 rounded">Failed to log trade close — database error.</div>')
+        return HTMLResponse('<div class="alert alert-error">Failed to log trade close — database error.</div>')
     log_trade_close(row)
-    return HTMLResponse('<div class="alert-success p-2 rounded">Trade close logged.</div>')
+    return HTMLResponse('<div class="alert alert-success">Trade close logged.</div>')
 
 
 @router.get("/fragments/history/exchange", response_class=HTMLResponse)
@@ -273,7 +280,7 @@ async def update_pre_trade_note(row_id: int, notes: str = Form("")):
     await db.update_pre_trade_notes(row_id, notes)
     safe = escape(notes)
     return HTMLResponse(
-        f'<span class="text-slate-400 cursor-pointer" '
+        f'<span class="text-sub cursor-pointer" '
         f'onclick="editNote(this,{row_id},\'pre_trade\')" '
         f'title="Click to edit">{safe or "+ Add note"}</span>'
     )
@@ -284,7 +291,7 @@ async def update_trade_history_note(row_id: int, notes: str = Form("")):
     await db.update_trade_history_notes(row_id, notes)
     safe = escape(notes)
     return HTMLResponse(
-        f'<span class="text-slate-400 cursor-pointer" '
+        f'<span class="text-sub cursor-pointer" '
         f'onclick="editNote(this,{row_id},\'trade_history\')" '
         f'title="Click to edit">{safe or "+ Add note"}</span>'
     )
@@ -296,7 +303,7 @@ async def update_position_note(trade_key: str = Form(""), notes: str = Form(""))
     safe_notes = escape(notes)
     safe_key   = escape(trade_key)
     return HTMLResponse(
-        f'<span class="text-slate-400 cursor-pointer" '
+        f'<span class="text-sub cursor-pointer" '
         f'onclick="editNote(this,\'{safe_key}\',\'position\')" '
         f'title="Click to edit">{safe_notes or "+ Add note"}</span>'
     )

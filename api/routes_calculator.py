@@ -44,7 +44,7 @@ async def calculate_risk(
         if ticker not in app_state.ohlcv_cache:
             await fetch_ohlcv(ticker)
     except Exception as e:
-        return HTMLResponse(f'<div class="alert-error p-3 rounded">Data fetch error: {e}</div>')
+        return HTMLResponse(f'<div class="alert alert-error">Data fetch error: {e}</div>')
 
     calc = run_risk_calculator(
         ticker=ticker, average=average, sl_price=sl_price,

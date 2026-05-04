@@ -1,0 +1,35 @@
+<!-- fragment: dashboard_secondary -->
+<div class="card" style="display:flex;overflow:hidden;">
+  <div style="flex:1;padding:7px 10px;border-right:1px solid var(--border);min-width:0;">
+    <span class="lbl">SOW Equity</span>
+    <div class="mono" style="font-size:.82rem;font-weight:700;color:var(--sub);white-space:nowrap;">
+      {% if acc.sow_equity > 0 %}{{ "%.2f"|format(acc.sow_equity) }} USDT{% else %}—{% endif %}
+    </div>
+  </div>
+  <div style="flex:1;padding:7px 10px;border-right:1px solid var(--border);min-width:0;">
+    <span class="lbl">Max Equity (BOD)</span>
+    <div class="mono" style="font-size:.82rem;font-weight:700;color:var(--sub);white-space:nowrap;">
+      {% if acc.max_total_equity > 0 %}{{ "%.2f"|format(acc.max_total_equity) }} USDT{% else %}—{% endif %}
+    </div>
+  </div>
+  <div style="flex:1;padding:7px 10px;border-right:1px solid var(--border);min-width:0;">
+    <span class="lbl">Min Equity (BOD)</span>
+    <div class="mono" style="font-size:.82rem;font-weight:700;color:var(--sub);white-space:nowrap;">
+      {% if acc.min_total_equity > 0 %}{{ "%.2f"|format(acc.min_total_equity) }} USDT{% else %}—{% endif %}
+    </div>
+  </div>
+  <div style="flex:1;padding:7px 10px;border-right:1px solid var(--border);min-width:0;">
+    <span class="lbl">Total Unrealized</span>
+    <div class="mono" style="font-size:.82rem;font-weight:700;white-space:nowrap;
+      {% if acc.total_unrealized > 0 %}color:var(--green){% elif acc.total_unrealized < 0 %}color:var(--red){% else %}color:var(--sub){% endif %};">
+      {{ "%.2f"|format(acc.total_unrealized) }} USDT
+    </div>
+  </div>
+  <div style="flex:1;padding:7px 10px;min-width:0;">
+    <span class="lbl">Daily P&amp;L</span>
+    <div class="mono" style="font-size:.82rem;font-weight:700;white-space:nowrap;
+      {% if acc.daily_pnl > 0 %}color:var(--green){% elif acc.daily_pnl < 0 %}color:var(--red){% else %}color:var(--sub){% endif %};">
+      {{ "%.2f"|format(acc.daily_pnl) }} USDT
+    </div>
+  </div>
+</div>

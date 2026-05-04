@@ -6,13 +6,14 @@
 {% set dt = date_to   | replace(":", "%3A") | replace("+", "%2B") %}
 {% set qs = "per_page=" ~ per_page ~ "&search=" ~ search ~ "&sort_by=" ~ sort_by ~ "&sort_dir=" ~ sort_dir ~ "&date_from=" ~ df ~ "&date_to=" ~ dt %}
 
-<div class="panel p-4 mb-5"
+<div class="card"
      data-page="{{ page }}" data-per_page="{{ per_page }}"
      data-sort_by="{{ sort_by }}" data-sort_dir="{{ sort_dir }}"
      data-search="{{ search }}">
-  <div class="flex items-center justify-between mb-2">
-    <div class="label">Position History ({{ total }} entries)</div>
-    <input type="text" placeholder="Search…" class="hist-input text-xs w-36"
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+    <div class="lbl" style="margin-bottom:0;">Position History ({{ total }} entries)</div>
+    <input type="text" placeholder="Search…" class="hist-input"
+           style="width:9rem;"
            value="{{ search }}"
            hx-get="{{ ep }}?page=1&per_page={{ per_page }}&sort_by={{ sort_by }}&sort_dir={{ sort_dir }}&date_from={{ date_from }}&date_to={{ date_to }}"
            hx-target="#{{ tid }}" hx-swap="innerHTML"
@@ -21,23 +22,23 @@
   </div>
 
   {% if rows %}
-  <div class="overflow-x-auto">
+  <div style="overflow-x:auto;">
     <table>
       <thead><tr>
-        {{ sort_th("Open", "open_time", ep, tid, sort_by, sort_dir, qs) }}
-        {{ sort_th("Close", "time", ep, tid, sort_by, sort_dir, qs) }}
-        {{ sort_th("Hold", "hold_ms", ep, tid, sort_by, sort_dir, qs) }}
-        {{ sort_th("Symbol", "symbol", ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Open",        "open_time",   ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Close",       "time",        ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Hold",        "hold_ms",     ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Symbol",      "symbol",      ep, tid, sort_by, sort_dir, qs) }}
         <th>Dir</th>
-        {{ sort_th("Entry", "entry_price", ep, tid, sort_by, sort_dir, qs) }}
-        {{ sort_th("Exit", "exit_price", ep, tid, sort_by, sort_dir, qs) }}
-        {{ sort_th("Notional", "notional", ep, tid, sort_by, sort_dir, qs) }}
-        {{ sort_th("Realized PnL", "income", ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Entry",       "entry_price", ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Exit",        "exit_price",  ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Notional",    "notional",    ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Realized PnL","income",      ep, tid, sort_by, sort_dir, qs) }}
         <th>TP/SL</th>
         <th>R</th>
-        {{ sort_th("Fees", "fee", ep, tid, sort_by, sort_dir, qs) }}
-        {{ sort_th("MFE", "mfe", ep, tid, sort_by, sort_dir, qs) }}
-        {{ sort_th("MAE", "mae", ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Fees",        "fee",         ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("MFE",         "mfe",         ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("MAE",         "mae",         ep, tid, sort_by, sort_dir, qs) }}
         <th title="Maximum Excursion Ratio: MFE / |MAE|">ME-R</th>
         <th>Notes</th>
       </tr></thead>
@@ -46,47 +47,51 @@
         {% set income_val = r.income | float %}
         {% set tkey = r.trade_key %}
         <tr>
-          <td class="text-slate-500">
+          <td style="color:var(--muted);">
             {% if r.open_time %}
             <span class="ts-ms" data-ms="{{ r.open_time }}">{{ r.open_time }}</span>
             {% else %}—{% endif %}
           </td>
-          <td class="text-slate-500">
+          <td style="color:var(--muted);">
             <span class="ts-ms" data-ms="{{ r.time }}">{{ r.time }}</span>
           </td>
-          <td class="text-slate-500 text-xs whitespace-nowrap">
+          <td style="color:var(--muted);font-size:.66rem;white-space:nowrap;">
             {% if r.open_time %}{{ fmt_duration(r.time - r.open_time) }}{% else %}—{% endif %}
           </td>
-          <td class="font-bold">{{ r.symbol or "—" }}</td>
-          <td class="{{ 'pos-long' if r.direction == 'LONG' else ('pos-short' if r.direction == 'SHORT' else 'text-slate-500') }}">
+          <td style="font-weight:700;">{{ r.symbol or "—" }}</td>
+          <td class="{{ 'pos-long' if r.direction == 'LONG' else ('pos-short' if r.direction == 'SHORT' else '') }}"
+              style="{% if r.direction not in ('LONG','SHORT') %}color:var(--muted);{% endif %}">
             {{ r.direction or "—" }}
           </td>
           <td>{{ fmt(r.entry_price, 4) if r.entry_price else "—" }}</td>
           <td>{{ fmt(r.exit_price, 4) if r.exit_price else "—" }}</td>
-          <td class="text-slate-400">{{ fmt(r.notional) if r.notional else "—" }}</td>
-          <td class="{{ 'pos-long' if income_val >= 0 else 'pos-short' }} font-bold">
+          <td style="color:var(--sub);">{{ fmt(r.notional) if r.notional else "—" }}</td>
+          <td class="{{ 'pos-long' if income_val >= 0 else 'pos-short' }}" style="font-weight:700;">
             {{ fmt(income_val) }}
           </td>
-          <td class="text-slate-500 text-xs">—</td>
-          <td class="text-slate-500 text-xs">—</td>
-          <td class="text-slate-400">{{ fmt(r.fee) if r.fee else "—" }}</td>
+          <td style="color:var(--muted);font-size:.66rem;">—</td>
+          <td style="color:var(--muted);font-size:.66rem;">—</td>
+          <td style="color:var(--sub);">{{ fmt(r.fee) if r.fee else "—" }}</td>
           {% set _calc = r.mfe or r.mae %}
-          <td class="{{ 'pos-long' if r.mfe > 0 else 'text-slate-500' }}">
+          <td class="{{ 'pos-long' if r.mfe > 0 else '' }}"
+              style="{% if not (r.mfe and r.mfe > 0) %}color:var(--muted);{% endif %}">
             {{ fmt(r.mfe, 2) if _calc else "—" }}
           </td>
-          <td class="{{ 'pos-short' if r.mae < 0 else ('pos-long' if r.mae > 0 else 'text-slate-500') }}">
+          <td class="{{ 'pos-short' if r.mae < 0 else ('pos-long' if r.mae > 0 else '') }}"
+              style="{% if not r.mae %}color:var(--muted);{% endif %}">
             {{ fmt(r.mae, 2) if _calc else "—" }}
           </td>
           {% if _calc and r.mae %}
           {% set mer = (r.mfe / (r.mae | abs)) | round(2) %}
-          <td class="{{ 'text-white' if mer > 0 else 'text-slate-500' }}" title="MFE {{ fmt(r.mfe, 2) }} / |MAE| {{ fmt(r.mae | abs, 2) }}">
+          <td style="color:{% if mer > 0 %}var(--text){% else %}var(--muted){% endif %};"
+              title="MFE {{ fmt(r.mfe, 2) }} / |MAE| {{ fmt(r.mae | abs, 2) }}">
             {{ mer }}
           </td>
           {% else %}
-          <td class="text-slate-500">—</td>
+          <td style="color:var(--muted);">—</td>
           {% endif %}
           <td class="notes-cell" id="notes-pos-{{ tkey }}">
-            <span class="text-slate-400 cursor-pointer"
+            <span style="color:var(--sub);font-size:.65rem;cursor:pointer;"
                   onclick="editNote(this,'{{ tkey }}','position')"
                   title="Click to edit">{{ notes_map.get(tkey, '') or '+ Add note' }}</span>
           </td>
@@ -108,6 +113,6 @@
     });
   </script>
   {% else %}
-  <div class="text-slate-500 text-sm py-4">No position history found for this period.</div>
+  <div style="color:var(--muted);font-size:.78rem;padding:16px 0;">No position history found for this period.</div>
   {% endif %}
 </div>

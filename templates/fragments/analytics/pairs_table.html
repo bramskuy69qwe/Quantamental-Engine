@@ -3,11 +3,11 @@
 {% set tid = "pairs-table" %}
 {% set qs  = "month=" ~ month ~ "&sort_by=" ~ sort_by ~ "&sort_dir=" ~ sort_dir %}
 
-<div class="panel p-4" id="{{ tid }}">
-  <div class="label mb-3">Traded Pairs — {{ period_label }} ({{ rows | length }} symbols)</div>
+<div class="card" id="{{ tid }}">
+  <div class="lbl" style="margin-bottom:10px;">Traded Pairs — {{ period_label }} ({{ rows | length }} symbols)</div>
 
   {% if rows %}
-  <div class="overflow-x-auto">
+  <div style="overflow-x:auto;">
     <table>
       <thead><tr>
         {{ sort_th("Symbol",      "symbol",     ep, tid, sort_by, sort_dir, qs) }}
@@ -27,7 +27,7 @@
         {% for r in rows %}
         {% set total_pnl = r.pnl_total | float %}
         <tr>
-          <td class="font-bold">{{ r.symbol }}</td>
+          <td style="font-weight:700;">{{ r.symbol }}</td>
           <td>{{ r.total }}</td>
           <td class="pos-long">{{ r.longs }}</td>
           <td class="pos-short">{{ r.shorts }}</td>
@@ -37,7 +37,7 @@
           <td class="{{ 'pos-long' if r.pnl_short >= 0 else 'pos-short' }}">
             {{ fmt(r.pnl_short) if r.pnl_short else '—' }}
           </td>
-          <td class="{{ 'pos-long' if total_pnl >= 0 else 'pos-short' }} font-bold">
+          <td class="{{ 'pos-long' if total_pnl >= 0 else 'pos-short' }}" style="font-weight:700;">
             {{ fmt(total_pnl) }}
           </td>
           <td class="{{ 'pos-long' if r.win_rate >= 0.5 else 'pos-short' }}">
@@ -45,30 +45,29 @@
           </td>
           <td class="pos-long">{{ fmt(r.avg_win) if r.avg_win else '—' }}</td>
           <td class="pos-short">{{ fmt(r.avg_loss) if r.avg_loss else '—' }}</td>
-          <td class="text-slate-400">{{ fmt(r.fees_total) if r.fees_total else '—' }}</td>
-          <td class="text-slate-400">{{ fmt(r.volume, 0) if r.volume else '—' }}</td>
+          <td style="color:var(--sub);">{{ fmt(r.fees_total) if r.fees_total else '—' }}</td>
+          <td style="color:var(--sub);">{{ fmt(r.volume, 0) if r.volume else '—' }}</td>
         </tr>
         {% endfor %}
       </tbody>
-      <!-- Totals row -->
       {% set t_pnl = rows | sum(attribute='pnl_total') %}
       {% set t_fees = rows | sum(attribute='fees_total') %}
       {% set t_vol = rows | sum(attribute='volume') %}
       {% set t_trades = rows | sum(attribute='total') %}
       <tfoot>
-        <tr class="border-t border-[#2a2d3a] font-bold text-slate-300">
+        <tr style="border-top:1px solid var(--border);font-weight:700;color:var(--text);">
           <td>TOTAL</td>
           <td>{{ t_trades }}</td>
           <td colspan="4"></td>
           <td class="{{ 'pos-long' if t_pnl >= 0 else 'pos-short' }}">{{ fmt(t_pnl) }}</td>
           <td colspan="3"></td>
-          <td class="text-slate-400">{{ fmt(t_fees) }}</td>
-          <td class="text-slate-400">{{ fmt(t_vol, 0) }}</td>
+          <td style="color:var(--sub);">{{ fmt(t_fees) }}</td>
+          <td style="color:var(--sub);">{{ fmt(t_vol, 0) }}</td>
         </tr>
       </tfoot>
     </table>
   </div>
   {% else %}
-  <div class="text-slate-500 text-sm py-6">No closed trades found for this period.</div>
+  <div style="color:var(--muted);font-size:.78rem;padding:20px 0;">No closed trades found for this period.</div>
   {% endif %}
 </div>

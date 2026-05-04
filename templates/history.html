@@ -3,426 +3,203 @@
 {% block title %}Trade & Risk History — Risk Engine{% endblock %}
 
 {% block content %}
+<div style="display:flex;flex-direction:column;gap:6px;">
 
-<!-- Top bar -->
-<div class="flex gap-3 mb-4 flex-wrap items-center">
-  <a href="/export" class="btn btn-primary text-sm">Export All to Excel</a>
-  <button class="btn btn-secondary text-sm" onclick="refreshAllTables()">Refresh Now</button>
-  <span class="text-slate-500 text-xs self-center">Auto-refreshes every 30s</span>
-</div>
-
-<!-- ── Date Range Picker ─────────────────────────────────────────────────── -->
-<div class="panel p-3 mb-5">
-  <div class="flex items-center gap-3 flex-wrap">
-    <div class="flex items-center gap-2 text-sm">
-      <span class="text-slate-500">Close Time</span>
-      <div class="date-range-display cursor-pointer" onclick="toggleCalendar()">
-        <span id="date-from-display" class="text-slate-300"></span>
-        <span class="text-slate-600 px-1">&rarr;</span>
-        <span id="date-to-display" class="text-slate-300"></span>
-        <span class="text-slate-600 ml-1">&#128197;</span>
+  <!-- ── Toolbar ──────────────────────────────────────────────────────── -->
+  <div class="card card-p8">
+    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+      <a href="/export" class="btn btn-primary btn-sm">Export All to Excel</a>
+      <button class="btn btn-secondary btn-sm" onclick="refreshAllTables()">↺ Refresh Now</button>
+      <span style="font-size:.62rem;color:var(--muted);">Auto-refreshes every 30s</span>
+      <div style="margin-left:auto;display:flex;align-items:center;gap:4px;">
+        <div class="date-range-display" onclick="toggleCalendar()">
+          <span style="font-size:.65rem;color:var(--sub);">Close Time</span>
+          <span id="date-from-display" style="color:var(--text);"></span>
+          <span style="color:var(--muted);">→</span>
+          <span id="date-to-display" style="color:var(--text);"></span>
+          <span style="color:var(--muted);font-size:.7rem;">▾</span>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="resetDateRange()">Reset</button>
       </div>
-      <button class="btn btn-secondary text-xs px-2 py-0.5" onclick="resetDateRange()">Reset</button>
     </div>
-    <div class="flex gap-1 flex-wrap">
-      <button class="preset-btn text-xs" data-preset="90d"       onclick="setPreset('90d')">Last 90 days</button>
-      <button class="preset-btn text-xs" data-preset="30d"       onclick="setPreset('30d')">Last 30 days</button>
-      <button class="preset-btn text-xs" data-preset="15d"       onclick="setPreset('15d')">Last 15 days</button>
-      <button class="preset-btn text-xs" data-preset="7d"        onclick="setPreset('7d')">Last 7 days</button>
-      <button class="preset-btn text-xs" data-preset="yesterday" onclick="setPreset('yesterday')">Yesterday</button>
-      <button class="preset-btn text-xs" data-preset="today"     onclick="setPreset('today')">Today</button>
+
+    <!-- Presets -->
+    <div style="display:flex;gap:3px;margin-top:7px;flex-wrap:wrap;">
+      <button class="preset-btn" data-preset="90d"       onclick="setPreset('90d')">Last 90 days</button>
+      <button class="preset-btn" data-preset="30d"       onclick="setPreset('30d')">Last 30 days</button>
+      <button class="preset-btn" data-preset="15d"       onclick="setPreset('15d')">Last 15 days</button>
+      <button class="preset-btn" data-preset="7d"        onclick="setPreset('7d')">Last 7 days</button>
+      <button class="preset-btn" data-preset="yesterday" onclick="setPreset('yesterday')">Yesterday</button>
+      <button class="preset-btn" data-preset="today"     onclick="setPreset('today')">Today</button>
+    </div>
+
+    <!-- Calendar dropdown -->
+    <div id="calendar-dropdown" class="hidden" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);">
+      <div style="display:flex;gap:16px;justify-content:center;flex-wrap:wrap;">
+        <div class="cal-month" id="cal-left"></div>
+        <div class="cal-month" id="cal-right"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
+        <button class="btn btn-ghost btn-sm" onclick="shiftMonths(-1)">‹ Prev</button>
+        <button class="btn btn-primary btn-sm" onclick="applyCustomRange()">Apply</button>
+        <button class="btn btn-ghost btn-sm" onclick="shiftMonths(1)">Next ›</button>
+      </div>
     </div>
   </div>
 
-  <!-- Calendar dropdown -->
-  <div id="calendar-dropdown" class="hidden mt-3">
-    <div class="flex gap-4 justify-center flex-wrap">
-      <div class="cal-month" id="cal-left"></div>
-      <div class="cal-month" id="cal-right"></div>
-    </div>
-    <div class="flex justify-between items-center mt-2 px-2">
-      <button class="btn btn-secondary text-xs" onclick="shiftMonths(-1)">&laquo; Prev</button>
-      <button class="btn btn-primary text-xs"   onclick="applyCustomRange()">Apply</button>
-      <button class="btn btn-secondary text-xs" onclick="shiftMonths(1)">Next &raquo;</button>
-    </div>
+  <!-- ── Table containers ──────────────────────────────────────────────── -->
+  <div id="exchange-table"
+       hx-get="/fragments/history/exchange"
+       hx-trigger="every 30s"
+       hx-swap="innerHTML"
+       hx-timeout="25000">
+    {% with rows=_init_ex_rows, total=_init_ex_total, page=1, per_page=20,
+            total_pages=_init_ex_pages, sort_by="time", sort_dir="DESC",
+            search="", notes_map=_init_ex_notes,
+            date_from=_init_date_from, date_to=_init_date_to %}
+      {% include "fragments/history/exchange_table.html" %}
+    {% endwith %}
   </div>
-</div>
 
-<!-- ── Table Containers ────────────────────────────────────────────────── -->
-<!-- Tables are pre-rendered server-side on first load (no loading spinners). -->
-<!-- every 30s polling refreshes in the background via HTMX.                 -->
-<div id="exchange-table"
-     hx-get="/fragments/history/exchange"
-     hx-trigger="every 30s"
-     hx-swap="innerHTML"
-     hx-timeout="25000">
-  {% with rows=_init_ex_rows, total=_init_ex_total, page=1, per_page=20,
-          total_pages=_init_ex_pages, sort_by="time", sort_dir="DESC",
-          search="", date_from=_init_date_from, date_to=_init_date_to,
-          notes_map=_init_ex_notes %}
-    {% include "fragments/history/exchange_table.html" %}
-  {% endwith %}
-</div>
+  <div id="trade-history-table"
+       hx-get="/fragments/history/trade_history"
+       hx-trigger="every 30s"
+       hx-swap="innerHTML"
+       hx-timeout="25000">
+    {% with rows=_init_th_rows, total=_init_th_total, page=1, per_page=20,
+            total_pages=_init_th_pages, sort_by="exit_timestamp", sort_dir="DESC",
+            search="", ticker="", direction="",
+            date_from=_init_date_from, date_to=_init_date_to %}
+      {% include "fragments/history/trade_history_table.html" %}
+    {% endwith %}
+  </div>
 
-<div id="pre-trade-table"
-     hx-get="/fragments/history/pre_trade"
-     hx-trigger="every 30s"
-     hx-swap="innerHTML"
-     hx-timeout="25000">
-  {% with rows=_init_pt_rows, total=_init_pt_total, page=1, per_page=20,
-          total_pages=_init_pt_pages, sort_by="timestamp", sort_dir="DESC",
-          search="", ticker="", side="",
-          date_from=_init_date_from, date_to=_init_date_to %}
-    {% include "fragments/history/pre_trade_table.html" %}
-  {% endwith %}
-</div>
+  <div id="pre-trade-table"
+       hx-get="/fragments/history/pre_trade"
+       hx-trigger="every 30s"
+       hx-swap="innerHTML"
+       hx-timeout="25000">
+    {% with rows=_init_pt_rows, total=_init_pt_total, page=1, per_page=20,
+            total_pages=_init_pt_pages, sort_by="timestamp", sort_dir="DESC",
+            search="", ticker="", side="",
+            date_from=_init_date_from, date_to=_init_date_to %}
+      {% include "fragments/history/pre_trade_table.html" %}
+    {% endwith %}
+  </div>
 
-<div id="execution-table"
-     hx-get="/fragments/history/execution"
-     hx-trigger="every 30s"
-     hx-swap="innerHTML"
-     hx-timeout="25000">
-  {% with rows=_init_el_rows, total=_init_el_total, page=1, per_page=20,
-          total_pages=_init_el_pages, sort_by="entry_timestamp", sort_dir="DESC",
-          search="", ticker="", side="",
-          date_from=_init_date_from, date_to=_init_date_to %}
-    {% include "fragments/history/execution_table.html" %}
-  {% endwith %}
-</div>
+  <div id="execution-table"
+       hx-get="/fragments/history/execution"
+       hx-trigger="every 30s"
+       hx-swap="innerHTML"
+       hx-timeout="25000">
+    {% with rows=_init_el_rows, total=_init_el_total, page=1, per_page=20,
+            total_pages=_init_el_pages, sort_by="entry_timestamp", sort_dir="DESC",
+            search="", ticker="", side="",
+            date_from=_init_date_from, date_to=_init_date_to %}
+      {% include "fragments/history/execution_table.html" %}
+    {% endwith %}
+  </div>
 
+</div>
 
 <script>
-// ─────────────────────────────────────────────────────────────────────────
-// Date state — plain JS vars, injected into every HTMX request via
-// htmx:configRequest (fires synchronously before the request is sent).
-// ─────────────────────────────────────────────────────────────────────────
-var _dateFrom = '';
-var _dateTo   = '';
+var _dateFrom='', _dateTo='';
+var _HIST_IDS=['exchange-table','trade-history-table','pre-trade-table','execution-table'];
+var _HIST_EPS={'exchange-table':'/fragments/history/exchange','trade-history-table':'/fragments/history/trade_history','pre-trade-table':'/fragments/history/pre_trade','execution-table':'/fragments/history/execution'};
 
-var _HIST_IDS = ['exchange-table','pre-trade-table','execution-table'];
-
-// Inject date_from / date_to into every request from a history table.
-// Works for load, every 30s, sort clicks, pagination, and manual refresh.
-document.body.addEventListener('htmx:configRequest', function(evt) {
-  var el = evt.detail.elt;
-  if (!el) return;
-  // Match the container div itself OR any element inside it (sort/pagination clicks)
-  var inHistory = _HIST_IDS.indexOf(el.id) !== -1;
-  if (!inHistory) {
-    var parent = el.closest
-      ? (_HIST_IDS.some(function(id){ return el.closest('#' + id); }))
-      : false;
-    inHistory = parent;
-  }
-  if (inHistory && _dateFrom) {
-    evt.detail.parameters['date_from'] = _dateFrom;
-    evt.detail.parameters['date_to']   = _dateTo;
-  }
+// Inject dates into every HTMX request from a history table
+document.body.addEventListener('htmx:configRequest',function(evt){
+  var el=evt.detail.elt;if(!el)return;
+  var inHistory=_HIST_IDS.indexOf(el.id)!==-1;
+  if(!inHistory&&el.closest){inHistory=_HIST_IDS.some(function(id){return el.closest&&el.closest('#'+id);});}
+  if(inHistory&&_dateFrom){evt.detail.parameters['date_from']=_dateFrom;evt.detail.parameters['date_to']=_dateTo;}
 });
 
-// ─────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────
-function _pad(n) { return String(n).padStart(2, '0'); }
-function _isoDate(d) {
-  return d.getFullYear() + '-' + _pad(d.getMonth() + 1) + '-' + _pad(d.getDate());
-}
-function _addDays(d, n) { var r = new Date(d); r.setDate(r.getDate() + n); return r; }
+function _pad(n){return String(n).padStart(2,'0');}
+function _isoDate(d){return d.getFullYear()+'-'+_pad(d.getMonth()+1)+'-'+_pad(d.getDate());}
+function _addDays(d,n){var r=new Date(d);r.setDate(r.getDate()+n);return r;}
 
-function setDates(from, to) {
-  _dateFrom = _isoDate(from) + 'T00:00:00';
-  _dateTo   = _isoDate(to)   + 'T23:59:59';
-  document.getElementById('date-from-display').textContent = _isoDate(from);
-  document.getElementById('date-to-display').textContent   = _isoDate(to);
-  _calSelStart = from; _calSelEnd = to;
+function setDates(from,to){
+  _dateFrom=_isoDate(from)+'T00:00:00';_dateTo=_isoDate(to)+'T23:59:59';
+  document.getElementById('date-from-display').textContent=_isoDate(from);
+  document.getElementById('date-to-display').textContent=_isoDate(to);
+  _calSelStart=from;_calSelEnd=to;
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Session cache — prevents full reload on tab/page re-navigation.
-// Each table's HTML is saved to sessionStorage with the date range and a
-// timestamp. On DOMContentLoaded, tables that are fresh (< 60s) and match
-// the current date range are restored instantly; stale ones are fetched.
-// ─────────────────────────────────────────────────────────────────────────
-function _saveCached(id, html) {
-  try {
-    sessionStorage.setItem('_hc_' + id, JSON.stringify({
-      ts: Date.now(), df: _dateFrom, dt: _dateTo, html: html
-    }));
-  } catch(e) {}
+function refreshAllTables(){
+  var qs='date_from='+encodeURIComponent(_dateFrom)+'&date_to='+encodeURIComponent(_dateTo);
+  _HIST_IDS.forEach(function(id){ htmx.ajax('GET',_HIST_EPS[id]+'?'+qs,{target:'#'+id,swap:'innerHTML'}); });
 }
 
-function _restoreCached(id) {
-  try {
-    var stored = sessionStorage.getItem('_hc_' + id);
-    if (!stored) return false;
-    var c = JSON.parse(stored);
-    if (Date.now() - c.ts > 60000) return false;           // older than 60s
-    if (c.df !== _dateFrom || c.dt !== _dateTo) return false; // date changed
-    var el = document.getElementById(id);
-    if (!el) return false;
-    el.innerHTML = c.html;
-    htmx.process(el);   // re-bind HTMX sort/pagination/search attributes
-    return true;
-  } catch(e) { return false; }
+function updatePerPage(endpoint,targetId,perPage,extraQs){
+  var url=endpoint+'?page=1&per_page='+perPage+'&'+extraQs+'&date_from='+encodeURIComponent(_dateFrom)+'&date_to='+encodeURIComponent(_dateTo);
+  htmx.ajax('GET',url,{target:'#'+targetId,swap:'innerHTML'});
 }
 
-// Save cache after every HTMX swap on a history table
-document.body.addEventListener('htmx:afterSwap', function(evt) {
-  var el = evt.detail.target;
-  if (el && _HIST_IDS.indexOf(el.id) !== -1) {
-    _saveCached(el.id, el.innerHTML);
+function setPreset(preset){
+  var now=new Date(),from,to=now;
+  switch(preset){
+    case'today':    from=now;break;
+    case'yesterday':from=_addDays(now,-1);to=_addDays(now,-1);break;
+    case'7d':       from=_addDays(now,-7);break;
+    case'15d':      from=_addDays(now,-15);break;
+    case'90d':      from=_addDays(now,-90);break;
+    default:        from=_addDays(now,-30);break;
   }
-});
-
-// ─────────────────────────────────────────────────────────────────────────
-// Manual refresh — re-triggers each table's hx-get
-// ─────────────────────────────────────────────────────────────────────────
-var _HIST_EPS = {
-  'exchange-table':  '/fragments/history/exchange',
-  'pre-trade-table': '/fragments/history/pre_trade',
-  'execution-table': '/fragments/history/execution',
-};
-
-function refreshAllTables() {
-  var qs = 'date_from=' + encodeURIComponent(_dateFrom) +
-           '&date_to='  + encodeURIComponent(_dateTo);
-  _HIST_IDS.forEach(function(id) {
-    htmx.ajax('GET', _HIST_EPS[id] + '?' + qs, { target: '#' + id, swap: 'innerHTML' });
-  });
+  setDates(from,to);highlightPreset(preset);refreshAllTables();
 }
+function resetDateRange(){setPreset('30d');}
+function highlightPreset(active){document.querySelectorAll('.preset-btn').forEach(function(b){b.classList.toggle('active',b.dataset.preset===active);});}
 
-// Called from _pagination.html per-page selector
-function updatePerPage(endpoint, targetId, perPage, extraQs) {
-  var url = endpoint + '?page=1&per_page=' + perPage + '&' + extraQs +
-            '&date_from=' + encodeURIComponent(_dateFrom) +
-            '&date_to='   + encodeURIComponent(_dateTo);
-  htmx.ajax('GET', url, { target: '#' + targetId, swap: 'innerHTML' });
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// Presets
-// ─────────────────────────────────────────────────────────────────────────
-function setPreset(preset) {
-  var now = new Date();
-  var from, to;
-  switch (preset) {
-    case 'today':     from = now;               to = now;              break;
-    case 'yesterday': from = _addDays(now, -1); to = _addDays(now,-1); break;
-    case '7d':        from = _addDays(now, -7); to = now;              break;
-    case '15d':       from = _addDays(now,-15); to = now;              break;
-    case '90d':       from = _addDays(now,-90); to = now;              break;
-    default:          from = _addDays(now,-30); to = now;              break;
+// Calendar
+var _calViewYear,_calViewMonth,_calSelStart=null,_calSelEnd=null,_calPicking=0;
+function initCalendar(){var now=new Date();_calViewYear=now.getFullYear();_calViewMonth=now.getMonth();_calSelStart=_addDays(now,-30);_calSelEnd=now;renderCalendar();}
+function toggleCalendar(){var dd=document.getElementById('calendar-dropdown');dd.classList.toggle('hidden');if(!dd.classList.contains('hidden'))renderCalendar();}
+function shiftMonths(delta){_calViewMonth+=delta;if(_calViewMonth>11){_calViewMonth=0;_calViewYear++;}if(_calViewMonth<0){_calViewMonth=11;_calViewYear--;}renderCalendar();}
+function renderCalendar(){renderMonth('cal-left',_calViewYear,_calViewMonth);var ry=_calViewYear,rm=_calViewMonth+1;if(rm>11){rm=0;ry++;}renderMonth('cal-right',ry,rm);}
+function renderMonth(containerId,year,month){
+  var el=document.getElementById(containerId);if(!el)return;
+  var mNames=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],dNames=['Su','Mo','Tu','We','Th','Fr','Sa'];
+  var firstDay=new Date(year,month,1).getDay(),daysInMonth=new Date(year,month+1,0).getDate();
+  var today=_isoDate(new Date()),selS=_calSelStart?_isoDate(_calSelStart):'',selE=_calSelEnd?_isoDate(_calSelEnd):'';
+  var html='<div class="cal-header">'+mNames[month]+' '+year+'</div><div class="cal-grid">';
+  dNames.forEach(function(d){html+='<div class="cal-day-name">'+d+'</div>';});
+  for(var i=0;i<firstDay;i++) html+='<div class="cal-cell" style="cursor:default;"></div>';
+  for(var d=1;d<=daysInMonth;d++){
+    var iso=year+'-'+_pad(month+1)+'-'+_pad(d),cls='cal-cell';
+    if(iso===selS||iso===selE) cls+=' cal-selected';
+    else if(selS&&selE&&iso>selS&&iso<selE) cls+=' cal-in-range';
+    if(iso===today) cls+=' cal-today';
+    html+='<div class="'+cls+'" onclick="pickDate('+year+','+month+','+d+')">'+d+'</div>';
   }
-  setDates(from, to);
-  highlightPreset(preset);
-  refreshAllTables();
+  html+='</div>';el.innerHTML=html;
 }
-
-function resetDateRange() { setPreset('30d'); }
-
-function highlightPreset(active) {
-  document.querySelectorAll('.preset-btn').forEach(function(btn) {
-    btn.classList.toggle('active', btn.dataset.preset === active);
-  });
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// Calendar (Dual-Month)
-// ─────────────────────────────────────────────────────────────────────────
-var _calViewYear, _calViewMonth;
-var _calSelStart = null, _calSelEnd = null, _calPicking = 0;
-
-function initCalendar() {
-  var now = new Date();
-  _calViewYear  = now.getFullYear();
-  _calViewMonth = now.getMonth();
-  _calSelStart  = _addDays(now, -30);
-  _calSelEnd    = now;
+function pickDate(year,month,day){
+  var date=new Date(year,month,day);
+  if(_calPicking===0){_calSelStart=date;_calSelEnd=null;_calPicking=1;}
+  else{if(date<_calSelStart){_calSelEnd=_calSelStart;_calSelStart=date;}else{_calSelEnd=date;}_calPicking=0;}
   renderCalendar();
 }
-
-function toggleCalendar() {
-  var dd = document.getElementById('calendar-dropdown');
-  dd.classList.toggle('hidden');
-  if (!dd.classList.contains('hidden')) renderCalendar();
+function applyCustomRange(){
+  if(_calSelStart&&_calSelEnd){setDates(_calSelStart,_calSelEnd);highlightPreset('');document.getElementById('calendar-dropdown').classList.add('hidden');refreshAllTables();}
 }
 
-function shiftMonths(delta) {
-  _calViewMonth += delta;
-  if (_calViewMonth > 11) { _calViewMonth = 0; _calViewYear++; }
-  if (_calViewMonth < 0)  { _calViewMonth = 11; _calViewYear--; }
-  renderCalendar();
-}
-
-function renderCalendar() {
-  renderMonth('cal-left', _calViewYear, _calViewMonth);
-  var ry = _calViewYear, rm = _calViewMonth + 1;
-  if (rm > 11) { rm = 0; ry++; }
-  renderMonth('cal-right', ry, rm);
-}
-
-function renderMonth(containerId, year, month) {
-  var el = document.getElementById(containerId);
-  if (!el) return;
-  var mNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  var dNames = ['Su','Mo','Tu','We','Th','Fr','Sa'];
-  var firstDay    = new Date(year, month, 1).getDay();
-  var daysInMonth = new Date(year, month + 1, 0).getDate();
-  var today = _isoDate(new Date());
-  var selS = _calSelStart ? _isoDate(_calSelStart) : '';
-  var selE = _calSelEnd   ? _isoDate(_calSelEnd)   : '';
-
-  var html = '<div class="cal-header">' + mNames[month] + ' ' + year + '</div>';
-  html += '<div class="cal-grid">';
-  dNames.forEach(function(d) { html += '<div class="cal-day-name">' + d + '</div>'; });
-  for (var i = 0; i < firstDay; i++) html += '<div class="cal-cell empty"></div>';
-  for (var d = 1; d <= daysInMonth; d++) {
-    var iso = year + '-' + _pad(month + 1) + '-' + _pad(d);
-    var cls = 'cal-cell';
-    if (iso === selS || iso === selE)                   cls += ' cal-selected';
-    else if (selS && selE && iso > selS && iso < selE) cls += ' cal-in-range';
-    if (iso === today) cls += ' cal-today';
-    html += '<div class="' + cls + '" onclick="pickDate(' + year + ',' + month + ',' + d + ')">' + d + '</div>';
-  }
-  html += '</div>';
-  el.innerHTML = html;
-}
-
-function pickDate(year, month, day) {
-  var date = new Date(year, month, day);
-  if (_calPicking === 0) {
-    _calSelStart = date; _calSelEnd = null; _calPicking = 1;
-  } else {
-    if (date < _calSelStart) { _calSelEnd = _calSelStart; _calSelStart = date; }
-    else                     { _calSelEnd = date; }
-    _calPicking = 0;
-  }
-  renderCalendar();
-}
-
-function applyCustomRange() {
-  if (_calSelStart && _calSelEnd) {
-    setDates(_calSelStart, _calSelEnd);
-    highlightPreset('');
-    document.getElementById('calendar-dropdown').classList.add('hidden');
-    refreshAllTables();
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// Inline note editing
-// ─────────────────────────────────────────────────────────────────────────
-function editNote(el, rowId, tableType) {
-  var cell = el.parentElement;
-  var current = el.textContent.trim();
-  if (current === '+ Add note') current = '';
-
-  // Build textarea
-  var textarea = document.createElement('textarea');
-  textarea.className = 'note-textarea w-full text-xs';
-  textarea.rows = 2;
-  textarea.value = current;
-
-  // Build buttons
-  var saveBtn = document.createElement('button');
-  saveBtn.className = 'btn btn-primary text-xs';
-  saveBtn.textContent = 'Save';
-
-  var cancelBtn = document.createElement('button');
-  cancelBtn.className = 'btn btn-secondary text-xs';
-  cancelBtn.textContent = 'Cancel';
-
-  var btnDiv = document.createElement('div');
-  btnDiv.className = 'flex gap-1 mt-1';
-  btnDiv.appendChild(saveBtn);
-  btnDiv.appendChild(cancelBtn);
-
-  // Save: POST to server, replace cell content with returned span
-  saveBtn.addEventListener('click', function() {
-    var notes = textarea.value.trim();
-    var fd = new FormData();
-    fd.append('notes', notes);
-    var url;
-    if (tableType === 'position') {
-      url = '/history/notes/position';
-      fd.append('trade_key', rowId);
-    } else {
-      url = '/history/notes/' + tableType + '/' + rowId;
-    }
-    fetch(url, { method: 'PUT', body: fd })
-      .then(function(r) { return r.text(); })
-      .then(function(html) { cell.innerHTML = html; });
-  });
-
-  // Cancel: restore original span with a fresh event listener
-  cancelBtn.addEventListener('click', function() {
-    var span = document.createElement('span');
-    span.className = 'text-slate-400 cursor-pointer';
-    span.title = 'Click to edit';
-    span.textContent = current || '+ Add note';
-    span.addEventListener('click', function() { editNote(span, rowId, tableType); });
-    cell.innerHTML = '';
-    cell.appendChild(span);
-  });
-
-  cell.innerHTML = '';
-  cell.appendChild(textarea);
-  cell.appendChild(btnDiv);
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// Error handling — show server error text so we can debug
-// ─────────────────────────────────────────────────────────────────────────
-document.body.addEventListener('htmx:responseError', function(evt) {
-  var el = evt.detail.elt;
-  if (el && _HIST_IDS.indexOf(el.id) !== -1) {
-    var status  = evt.detail.xhr ? evt.detail.xhr.status : '?';
-    var snippet = evt.detail.xhr ? evt.detail.xhr.responseText.slice(0, 500) : '';
-    el.innerHTML =
-      '<div class="alert-error p-3 rounded text-sm">Server error ' + status + '.' +
-      '<button class="ml-2 btn btn-secondary text-xs" onclick="refreshAllTables()">Retry</button>' +
-      '<pre class="text-xs mt-2 opacity-60 whitespace-pre-wrap">' + snippet + '</pre></div>';
+// Error handling
+document.body.addEventListener('htmx:responseError',function(evt){
+  var el=evt.detail.elt;
+  if(el&&_HIST_IDS.indexOf(el.id)!==-1){
+    var status=evt.detail.xhr?evt.detail.xhr.status:'?';
+    el.innerHTML='<div class="card card-p8"><div class="alert alert-error">Server error '+status+'. <button class="btn btn-secondary btn-sm" style="margin-left:6px;" onclick="refreshAllTables()">Retry</button></div></div>';
   }
 });
 
-document.body.addEventListener('htmx:sendError', function(evt) {
-  var el = evt.detail.elt;
-  if (el && _HIST_IDS.indexOf(el.id) !== -1)
-    el.innerHTML = '<div class="alert-error p-3 rounded text-sm">Network error. ' +
-      '<button class="ml-2 btn btn-secondary text-xs" onclick="refreshAllTables()">Retry</button></div>';
-});
-
-// ─────────────────────────────────────────────────────────────────────────
-// Init — set dates synchronously, then fire initial table load on
-// DOMContentLoaded (HTMX is guaranteed ready by then, and dates are set).
-// ─────────────────────────────────────────────────────────────────────────
-(function() {
-  var now  = new Date();
-  var from = _addDays(now, -30);
-  _dateFrom = _isoDate(from) + 'T00:00:00';
-  _dateTo   = _isoDate(now)  + 'T23:59:59';
-  document.getElementById('date-from-display').textContent = _isoDate(from);
-  document.getElementById('date-to-display').textContent   = _isoDate(now);
-  highlightPreset('30d');
-  initCalendar();
-  document.addEventListener('DOMContentLoaded', function() {
-    _HIST_IDS.forEach(function(id) {
-      var el = document.getElementById(id);
-      // Server pre-rendered content — just save to sessionStorage so
-      // subsequent tab-navigations restore instantly without any fetch.
-      if (el && el.querySelector('.panel')) {
-        _saveCached(id, el.innerHTML);
-        return;
-      }
-      // No pre-rendered content (e.g. startup race) — try cache or fetch.
-      if (!_restoreCached(id)) {
-        var qs = 'date_from=' + encodeURIComponent(_dateFrom) +
-                 '&date_to='  + encodeURIComponent(_dateTo);
-        htmx.ajax('GET', _HIST_EPS[id] + '?' + qs, { target: '#' + id, swap: 'innerHTML' });
-      }
-    });
-  });
+// Init
+(function(){
+  var now=new Date(),from=_addDays(now,-30);
+  _dateFrom=_isoDate(from)+'T00:00:00';_dateTo=_isoDate(now)+'T23:59:59';
+  document.getElementById('date-from-display').textContent=_isoDate(from);
+  document.getElementById('date-to-display').textContent=_isoDate(now);
+  highlightPreset('30d');initCalendar();
 })();
 </script>
-
 {% endblock %}

@@ -1,43 +1,7 @@
-<div class="flex items-center gap-3 text-xs">
-  <!-- Data source: Quantower plugin takes priority -->
-  {% if plugin_connected %}
-    <span class="inline-block w-2 h-2 rounded-full bg-green-500"></span>
-    <span class="text-green-400">Quantower Live</span>
-  {% elif ws.connected and not ws.is_stale %}
-    <span class="inline-block w-2 h-2 rounded-full bg-green-500"></span>
-    <span class="text-green-400">Binance WS</span>
-  {% elif ws.using_fallback %}
-    <span class="inline-block w-2 h-2 rounded-full bg-yellow-500"></span>
-    <span class="text-yellow-400">REST Fallback</span>
-  {% else %}
-    <span class="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
-    <span class="text-red-400">Offline</span>
-  {% endif %}
-
-  <!-- REST ping latency (updated every 10s by ping loop) -->
-  <span class="text-slate-400" title="REST round-trip latency">
-    {{ fmt(ex.latency_ms, 0) }} ms
-  </span>
-
-  <!-- WS event lag (only meaningful when Binance WS is live) -->
-  {% if not plugin_connected and ws.connected and ws.latency_ms > 0 %}
-  <span class="text-slate-500" title="WS event lag">
-    WS {{ fmt(ws.latency_ms, 0) }} ms lag
-  </span>
-  {% endif %}
-
-  {% if ws.seconds_since_update < 9999 %}
-  <span class="text-slate-500">{{ ws.seconds_since_update | int }}s ago</span>
-  {% endif %}
-
-  {% if ws.reconnect_attempts > 0 %}
-  <span class="text-yellow-500">retries: {{ ws.reconnect_attempts }}</span>
-  {% endif %}
-
-  <!-- Recent log (last 3) -->
-  <div class="hidden xl:flex flex-col gap-0.5 max-w-xs">
-    {% for entry in ws.logs[-3:] %}
-    <div class="text-slate-600 truncate">{{ entry }}</div>
-    {% endfor %}
-  </div>
+<!-- fragment: ws_status -->
+<div style="display:flex;align-items:center;gap:4px;font-size:.65rem;color:var(--sub);white-space:nowrap;">
+  <span style="width:5px;height:5px;border-radius:50%;background:var(--green);display:inline-block;flex-shrink:0;"></span>
+  <span style="color:var(--green);font-weight:700;">WS</span>
+  <span style="font-family:var(--font-mono);">{{ latency_ms|default('—') }}ms</span>
+  <span>1s</span>
 </div>

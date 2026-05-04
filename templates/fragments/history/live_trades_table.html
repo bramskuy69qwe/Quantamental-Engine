@@ -6,13 +6,10 @@
 {% set dt = date_to   | replace(":", "%3A") | replace("+", "%2B") %}
 {% set qs = "per_page=" ~ per_page ~ "&search=" ~ search ~ "&sort_by=" ~ sort_by ~ "&sort_dir=" ~ sort_dir ~ "&date_from=" ~ df ~ "&date_to=" ~ dt %}
 
-<div class="panel p-4 mb-5"
-     data-page="{{ page }}" data-per_page="{{ per_page }}"
-     data-sort_by="{{ sort_by }}" data-sort_dir="{{ sort_dir }}"
-     data-search="{{ search }}">
-  <div class="flex items-center justify-between mb-2">
-    <div class="label">Live Trades ({{ total }} entries)</div>
-    <input type="text" placeholder="Search ticker…" class="hist-input text-xs w-36"
+<div class="card card-p8">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
+    <span class="sec-lbl" style="margin-bottom:0;">Live Trades ({{ total }} entries)</span>
+    <input type="text" placeholder="Search ticker…" class="hist-input" style="width:140px;"
            value="{{ search }}"
            hx-get="{{ ep }}?page=1&per_page={{ per_page }}&sort_by={{ sort_by }}&sort_dir={{ sort_dir }}&date_from={{ date_from }}&date_to={{ date_to }}"
            hx-target="#{{ tid }}" hx-swap="innerHTML"
@@ -24,24 +21,24 @@
   <div class="overflow-x-auto">
     <table>
       <thead><tr>
-        {{ sort_th("Ticker", "ticker", ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Ticker",     "ticker",          ep, tid, sort_by, sort_dir, qs) }}
         <th>Dir</th>
         {{ sort_th("Entry Time", "entry_timestamp", ep, tid, sort_by, sort_dir, qs) }}
-        {{ sort_th("Max Profit", "max_profit", ep, tid, sort_by, sort_dir, qs) }}
-        {{ sort_th("Max Loss", "max_loss", ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Max Profit", "max_profit",      ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Max Loss",   "max_loss",        ep, tid, sort_by, sort_dir, qs) }}
         <th>Hold Time</th>
         <th>Stop Adj.</th>
       </tr></thead>
       <tbody>
         {% for r in rows %}
         <tr>
-          <td class="font-bold">{{ r.ticker }}</td>
+          <td style="color:var(--blue);font-weight:700;">{{ r.ticker }}</td>
           <td class="{{ 'pos-long' if r.direction == 'LONG' else 'pos-short' }}">{{ r.direction }}</td>
-          <td class="text-slate-500">{{ r.entry_timestamp[:19] if r.entry_timestamp else "—" }}</td>
+          <td style="color:var(--sub);">{{ r.entry_timestamp[:19] if r.entry_timestamp else '—' }}</td>
           <td class="pos-long">{{ fmt(r.max_profit) }}</td>
           <td class="pos-short">{{ fmt(r.max_loss) }}</td>
-          <td>{{ r.hold_time }}</td>
-          <td>{{ r.stop_adjustments }}</td>
+          <td style="color:var(--sub);">{{ r.hold_time }}</td>
+          <td style="color:var(--sub);">{{ r.stop_adjustments }}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -49,6 +46,6 @@
   </div>
   {{ pagination(ep, tid, page, per_page, total, total_pages, qs) }}
   {% else %}
-  <div class="text-slate-500 text-sm py-4">No live trades logged yet.</div>
+  <div style="color:var(--muted);padding:20px 0;text-align:center;font-size:.78rem;">No live trades logged yet.</div>
   {% endif %}
 </div>

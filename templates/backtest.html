@@ -3,97 +3,71 @@
 {% block title %}Backtest — Quantamental Risk Engine v2.1{% endblock %}
 
 {% block content %}
-<div class="mb-4 flex items-center justify-between">
-  <h1 class="text-lg font-bold text-slate-200 tracking-tight">Backtesting</h1>
-  <div class="flex items-center gap-1">
-    <button onclick="showPanel('run')" id="tab-run"
-      class="bt-tab px-4 py-1.5 text-sm rounded-l border border-[#2a2d3a] text-slate-400 hover:text-white flex items-center gap-1.5">
-      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-      Run Backtest
-    </button>
-    <button onclick="showPanel('fetch')" id="tab-fetch"
-      class="bt-tab px-4 py-1.5 text-sm border border-l-0 border-[#2a2d3a] text-slate-400 hover:text-white flex items-center gap-1.5">
-      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-      Fetch Data
-    </button>
-    <button onclick="showPanel('qt')" id="tab-qt"
-      class="bt-tab px-4 py-1.5 text-sm border border-l-0 border-[#2a2d3a] text-slate-400 hover:text-white flex items-center gap-1.5">
-      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
-      QT Import
-    </button>
-    <button onclick="showPanel('models')" id="tab-models"
-      class="bt-tab px-4 py-1.5 text-sm rounded-r border border-l-0 border-[#2a2d3a] text-slate-400 hover:text-white flex items-center gap-1.5">
-      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"/></svg>
-      Models
-    </button>
-  </div>
-</div>
+<div style="display:grid;grid-template-columns:minmax(280px,1fr) 2fr;gap:6px;align-items:start;">
 
-<!-- Toast notification container -->
-<div id="toast-container" class="fixed top-4 right-4 z-50 flex flex-col gap-2"></div>
+  <!-- ── Left: config panels ─────────────────────────────────────────────── -->
+  <div style="display:flex;flex-direction:column;gap:6px;">
 
-<div class="grid grid-cols-3 gap-4">
+    <!-- Tab switcher -->
+    <div class="tabs-line" style="margin-bottom:0;">
+      <button onclick="showPanel('run')"    id="bt-tab-run"    class="tab-btn active">Run</button>
+      <button onclick="showPanel('fetch')"  id="bt-tab-fetch"  class="tab-btn">Fetch Data</button>
+      <button onclick="showPanel('qt')"     id="bt-tab-qt"     class="tab-btn">QT Import</button>
+      <button onclick="showPanel('models')" id="bt-tab-models" class="tab-btn">Models</button>
+    </div>
 
-  <!-- ── Left: Config panels ─────────────────────────────────────────────── -->
-  <div class="col-span-1 flex flex-col gap-4">
+    <!-- ── Run Backtest ────────────────────────────────────────────────── -->
+    <div id="panel-run" class="card card-p8">
+      <span class="sec-lbl">Strategy Config</span>
+      <form id="run-form" onsubmit="submitRun(event)" style="display:flex;flex-direction:column;gap:7px;">
 
-    <!-- Run Backtest panel -->
-    <div id="panel-run" class="panel p-4">
-      <div class="flex items-center gap-2 mb-3">
-        <div class="w-6 h-6 rounded bg-blue-500/20 flex items-center justify-center">
-          <svg class="w-3.5 h-3.5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/></svg>
-        </div>
-        <h2 class="text-sm font-semibold text-slate-300">Strategy Config</h2>
-      </div>
-      <form id="run-form" onsubmit="submitRun(event)">
-
-        <div class="mb-2">
-          <label class="label block mb-1">Name</label>
+        <div>
+          <label class="lbl" style="display:block;margin-bottom:3px;">Name</label>
           <input type="text" name="name" value="Backtest {{ now[:10] }}" />
         </div>
 
-        <!-- Date Range Picker -->
-        <div class="mb-2">
-          <label class="label block mb-1">Date Range</label>
-          <div class="date-range-display cursor-pointer" onclick="btToggleCalendar()">
-            <span id="bt-date-from-display" class="text-slate-300"></span>
-            <span class="text-slate-600 px-1">&rarr;</span>
-            <span id="bt-date-to-display" class="text-slate-300"></span>
-            <span class="text-slate-600 ml-1">&#128197;</span>
+        <!-- Date range -->
+        <div>
+          <label class="lbl" style="display:block;margin-bottom:3px;">Date Range</label>
+          <div class="date-range-display" onclick="btToggleCalendar()">
+            <span id="bt-date-from-display" style="color:var(--text);"></span>
+            <span style="color:var(--muted);padding:0 3px;">→</span>
+            <span id="bt-date-to-display" style="color:var(--text);"></span>
+            <span style="color:var(--muted);margin-left:4px;font-size:.7rem;">▾</span>
           </div>
           <input type="hidden" name="date_from" id="bt-date-from-val" />
           <input type="hidden" name="date_to"   id="bt-date-to-val" />
         </div>
 
         <!-- Presets -->
-        <div class="flex gap-1 flex-wrap mb-2">
-          <button type="button" class="preset-btn text-xs" data-btpreset="1y"  onclick="btSetPreset('1y')">1 Year</button>
-          <button type="button" class="preset-btn text-xs" data-btpreset="6m"  onclick="btSetPreset('6m')">6 Month</button>
-          <button type="button" class="preset-btn text-xs" data-btpreset="3m"  onclick="btSetPreset('3m')">3 Month</button>
-          <button type="button" class="preset-btn text-xs" data-btpreset="1m"  onclick="btSetPreset('1m')">1 Month</button>
+        <div style="display:flex;gap:3px;flex-wrap:wrap;">
+          <button type="button" class="preset-btn" data-btpreset="1y" onclick="btSetPreset('1y')">1Y</button>
+          <button type="button" class="preset-btn" data-btpreset="6m" onclick="btSetPreset('6m')">6M</button>
+          <button type="button" class="preset-btn active" data-btpreset="3m" onclick="btSetPreset('3m')">3M</button>
+          <button type="button" class="preset-btn" data-btpreset="1m" onclick="btSetPreset('1m')">1M</button>
         </div>
 
         <!-- Calendar dropdown -->
-        <div id="bt-calendar-dropdown" class="hidden mb-3 panel p-3">
-          <div class="flex gap-3 justify-center flex-wrap">
+        <div id="bt-calendar-dropdown" class="hidden card card-p8">
+          <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
             <div class="cal-month" id="bt-cal-left"></div>
             <div class="cal-month" id="bt-cal-right"></div>
           </div>
-          <div class="flex justify-between items-center mt-2 px-1">
-            <button type="button" class="btn btn-secondary text-xs" onclick="btShiftMonths(-1)">&laquo; Prev</button>
-            <button type="button" class="btn btn-primary text-xs"   onclick="btApplyRange()">Apply</button>
-            <button type="button" class="btn btn-secondary text-xs" onclick="btShiftMonths(1)">Next &raquo;</button>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
+            <button type="button" class="btn btn-ghost btn-sm" onclick="btShiftMonths(-1)">‹ Prev</button>
+            <button type="button" class="btn btn-primary btn-sm" onclick="btApplyRange()">Apply</button>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="btShiftMonths(1)">Next ›</button>
           </div>
         </div>
 
-        <div class="mb-2">
-          <label class="label block mb-1">Symbols (comma-separated)</label>
+        <div>
+          <label class="lbl" style="display:block;margin-bottom:3px;">Symbols (comma-separated)</label>
           <input type="text" name="symbols" value="BTCUSDT,ETHUSDT" />
         </div>
 
-        <div class="grid grid-cols-2 gap-2 mb-2">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
           <div>
-            <label class="label block mb-1">Timeframe</label>
+            <label class="lbl" style="display:block;margin-bottom:3px;">Timeframe</label>
             <select name="timeframe">
               <option value="1h">1h</option>
               <option value="4h" selected>4h</option>
@@ -101,43 +75,29 @@
             </select>
           </div>
           <div>
-            <label class="label block mb-1">Initial Equity ($)</label>
+            <label class="lbl" style="display:block;margin-bottom:3px;">Initial Equity ($)</label>
             <input type="number" name="initial_equity" value="10000" min="100" />
           </div>
         </div>
 
-        <!-- Model selector (populated from saved models) -->
-        <div class="mb-2">
-          <label class="label block mb-1">Load Model</label>
+        <!-- Model selector -->
+        <div>
+          <label class="lbl" style="display:block;margin-bottom:3px;">Load Model</label>
           <select id="model-selector" onchange="loadModelConfig(this.value)">
             <option value="">— Custom —</option>
           </select>
         </div>
 
-        <h3 class="text-xs font-semibold text-slate-400 uppercase mt-3 mb-2">Entry Signals</h3>
-        <div class="grid grid-cols-2 gap-2 mb-2">
+        <hr class="div" />
+        <span style="font-size:.6rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--sub);">Entry Signals</span>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">EMA Fast</label><input type="number" name="ema_fast" value="20" min="2" /></div>
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">EMA Slow</label><input type="number" name="ema_slow" value="50" min="2" /></div>
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">ATR SL Mult</label><input type="number" name="atr_sl_mult" value="1.5" step="0.1" min="0.1" /></div>
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">ATR TP Mult</label><input type="number" name="atr_tp_mult" value="3.0" step="0.1" min="0.1" /></div>
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">Min ATR-C</label><input type="number" name="min_atr_c" value="0.2" step="0.05" min="0" max="1" /></div>
           <div>
-            <label class="label block mb-1">EMA Fast</label>
-            <input type="number" name="ema_fast" value="20" min="2" />
-          </div>
-          <div>
-            <label class="label block mb-1">EMA Slow</label>
-            <input type="number" name="ema_slow" value="50" min="2" />
-          </div>
-          <div>
-            <label class="label block mb-1">ATR SL Mult</label>
-            <input type="number" name="atr_sl_mult" value="1.5" step="0.1" min="0.1" />
-          </div>
-          <div>
-            <label class="label block mb-1">ATR TP Mult</label>
-            <input type="number" name="atr_tp_mult" value="3.0" step="0.1" min="0.1" />
-          </div>
-          <div>
-            <label class="label block mb-1">Min ATR-C</label>
-            <input type="number" name="min_atr_c" value="0.2" step="0.05" min="0" max="1" />
-          </div>
-          <div>
-            <label class="label block mb-1">Direction</label>
+            <label class="lbl" style="display:block;margin-bottom:3px;">Direction</label>
             <select name="direction">
               <option value="both">Both</option>
               <option value="long">Long only</option>
@@ -146,256 +106,142 @@
           </div>
         </div>
 
-        <h3 class="text-xs font-semibold text-slate-400 uppercase mt-3 mb-2">Risk Parameters</h3>
-        <div class="grid grid-cols-2 gap-2 mb-2">
-          <div>
-            <label class="label block mb-1">Risk / Trade (%)</label>
-            <input type="number" name="risk_pct" value="1.0" step="0.1" min="0.1" max="10" />
-          </div>
-          <div>
-            <label class="label block mb-1">Max Positions</label>
-            <input type="number" name="max_positions" value="5" min="1" max="20" />
-          </div>
+        <hr class="div" />
+        <span style="font-size:.6rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--sub);">Risk Parameters</span>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">Risk / Trade (%)</label><input type="number" name="risk_pct" value="1.0" step="0.1" min="0.1" max="10" /></div>
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">Max Positions</label><input type="number" name="max_positions" value="5" min="1" max="20" /></div>
         </div>
 
-        <div class="mt-3">
-          <button type="submit" class="btn btn-primary w-full">
-            <span id="run-btn-label">Run Backtest</span>
-          </button>
-        </div>
-        <p id="run-status" class="text-xs text-slate-500 mt-2 text-center"></p>
+        <button type="submit" class="btn btn-primary btn-md" style="margin-top:4px;">
+          <span id="run-btn-label">▶ Run Backtest</span>
+        </button>
+        <p id="run-status" style="font-size:.65rem;color:var(--sub);text-align:center;"></p>
       </form>
     </div>
 
-    <!-- Fetch OHLCV panel -->
-    <div id="panel-fetch" class="panel p-4 hidden">
-      <div class="flex items-center gap-2 mb-3">
-        <div class="w-6 h-6 rounded bg-emerald-500/20 flex items-center justify-center">
-          <svg class="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-        </div>
-        <h2 class="text-sm font-semibold text-slate-300">Fetch Historical Data</h2>
-      </div>
-      <form onsubmit="submitFetch(event)">
-        <div class="mb-2">
-          <label class="label block mb-1">Symbols (comma-separated)</label>
+    <!-- ── Fetch OHLCV ──────────────────────────────────────────────────── -->
+    <div id="panel-fetch" class="card card-p8 hidden">
+      <span class="sec-lbl">Fetch Historical Data</span>
+      <form onsubmit="submitFetch(event)" style="display:flex;flex-direction:column;gap:7px;">
+        <div>
+          <label class="lbl" style="display:block;margin-bottom:3px;">Symbols (comma-separated)</label>
           <input type="text" id="fetch-symbols" value="BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT" />
         </div>
-        <div class="grid grid-cols-2 gap-2 mb-2">
-          <div>
-            <label class="label block mb-1">Timeframe</label>
-            <select id="fetch-tf">
-              <option value="1h">1h</option>
-              <option value="4h" selected>4h</option>
-              <option value="1d">1d</option>
-            </select>
-          </div>
-          <div>
-            <label class="label block mb-1">Days Back</label>
-            <input type="number" id="fetch-days" value="730" min="30" max="1825" />
-          </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">Timeframe</label>
+            <select id="fetch-tf"><option value="1h">1h</option><option value="4h" selected>4h</option><option value="1d">1d</option></select></div>
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">Days Back</label>
+            <input type="number" id="fetch-days" value="730" min="30" max="1825" /></div>
         </div>
-        <button type="submit" id="fetch-btn" class="btn btn-primary w-full">Start Fetch</button>
-        <p id="fetch-status" class="text-xs text-slate-500 mt-2 text-center"></p>
-        <!-- Progress bar -->
-        <div id="fetch-progress-wrap" class="hidden mt-2">
-          <div class="w-full bg-[#1a1d27] rounded-full h-2">
-            <div id="fetch-progress-bar" class="bg-emerald-500 h-2 rounded-full transition-all duration-300" style="width:0%"></div>
-          </div>
-          <p id="fetch-progress-text" class="text-xs text-slate-500 mt-1 text-center"></p>
+        <button type="submit" id="fetch-btn" class="btn btn-primary btn-md">Start Fetch</button>
+        <p id="fetch-status" style="font-size:.65rem;color:var(--sub);text-align:center;"></p>
+        <div id="fetch-progress-wrap" class="hidden">
+          <div class="gauge-track"><div id="fetch-progress-bar" class="gauge-fill" style="width:0%;background:var(--green);"></div></div>
+          <p id="fetch-progress-text" style="font-size:.62rem;color:var(--sub);margin-top:3px;text-align:center;"></p>
         </div>
       </form>
-
-      <!-- Fetch job history -->
-      <div class="mt-4 border-t border-[#2a2d3a] pt-3">
-        <h3 class="text-xs font-semibold text-slate-400 uppercase mb-2">Recent Fetch Jobs</h3>
-        <div id="fetch-jobs-list" class="text-xs text-slate-500">No jobs yet.</div>
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
+        <span class="lbl" style="display:block;margin-bottom:5px;">Recent Fetch Jobs</span>
+        <div id="fetch-jobs-list" style="font-size:.68rem;color:var(--muted);">No jobs yet.</div>
       </div>
     </div>
 
-    <!-- Quantower Import panel -->
-    <div id="panel-qt" class="panel p-4 hidden">
-      <div class="flex items-center gap-2 mb-3">
-        <div class="w-6 h-6 rounded bg-purple-500/20 flex items-center justify-center">
-          <svg class="w-3.5 h-3.5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
-        </div>
-        <h2 class="text-sm font-semibold text-slate-300">Import Quantower Results</h2>
-      </div>
-      <p class="text-xs text-slate-500 mb-3">
+    <!-- ── Quantower Import ─────────────────────────────────────────────── -->
+    <div id="panel-qt" class="card card-p8 hidden">
+      <span class="sec-lbl">Import Quantower Results</span>
+      <p style="font-size:.7rem;color:var(--sub);margin-bottom:10px;line-height:1.5;">
         Paste the JSON export from Quantower Strategy Manager, or use the
-        <code class="text-accent">BacktestUploader</code> plugin button.
+        <span style="color:var(--blue);font-family:var(--font-mono);">BacktestUploader</span> plugin button.
       </p>
-      <div class="mb-2">
-        <label class="label block mb-1">Session Name</label>
-        <input type="text" id="qt-name" value="Quantower Import" />
+      <div style="display:flex;flex-direction:column;gap:7px;">
+        <div><label class="lbl" style="display:block;margin-bottom:3px;">Session Name</label><input type="text" id="qt-name" value="Quantower Import" /></div>
+        <div>
+          <label class="lbl" style="display:block;margin-bottom:3px;">JSON Payload</label>
+          <textarea id="qt-json" rows="7" style='background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:6px 8px;font-size:.72rem;font-family:var(--font-mono);resize:vertical;width:100%;height:auto;' placeholder='{"trades":[...],"summary":{}}'></textarea>
+        </div>
+        <button onclick="submitQtImport()" class="btn btn-primary btn-md">Import</button>
+        <p id="qt-status" style="font-size:.65rem;color:var(--sub);text-align:center;"></p>
       </div>
-      <div class="mb-2">
-        <label class="label block mb-1">JSON Payload</label>
-        <textarea id="qt-json" rows="8"
-          style="width:100%;background:#0f1117;border:1px solid #2a2d3a;color:#e2e8f0;border-radius:6px;padding:8px;font-size:.78rem;font-family:Consolas,monospace;resize:vertical;"
-          placeholder='{"trades":[...],"summary":{}}'></textarea>
-      </div>
-      <button onclick="submitQtImport()" class="btn btn-primary w-full">Import</button>
-      <p id="qt-status" class="text-xs text-slate-500 mt-2 text-center"></p>
     </div>
 
-    <!-- Potential Models panel -->
-    <div id="panel-models" class="panel p-4 hidden">
-      <div class="flex items-center gap-2 mb-3">
-        <div class="w-6 h-6 rounded bg-amber-500/20 flex items-center justify-center">
-          <svg class="w-3.5 h-3.5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"/></svg>
+    <!-- ── Models ──────────────────────────────────────────────────────── -->
+    <div id="panel-models" class="card card-p8 hidden">
+      <span class="sec-lbl">Add / Edit Model</span>
+      <form id="model-form" onsubmit="submitModel(event)" style="display:flex;flex-direction:column;gap:7px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">Model Name</label><input type="text" id="mdl-name" placeholder="e.g. EMA Trend v2" required /></div>
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">Type</label>
+            <select id="mdl-type"><option value="both">Both</option><option value="macro">Macro</option><option value="micro">Micro</option></select></div>
         </div>
-        <h2 class="text-sm font-semibold text-slate-300">Add Potential Model</h2>
-      </div>
-      <p class="text-xs text-slate-500 mb-3">
-        Define a model configuration. Saved models appear in the Run Backtest tab's model selector.
-      </p>
-      <form id="model-form" onsubmit="submitModel(event)">
-        <div class="mb-2">
-          <label class="label block mb-1">Model Name</label>
-          <input type="text" id="mdl-name" placeholder="e.g. EMA Trend v2" required />
-        </div>
-        <div class="mb-2">
-          <label class="label block mb-1">Type</label>
-          <select id="mdl-type">
-            <option value="both">Both (Macro + Micro)</option>
-            <option value="macro">Macro</option>
-            <option value="micro">Micro</option>
-          </select>
-        </div>
-        <div class="mb-2">
-          <label class="label block mb-1">Description</label>
-          <textarea id="mdl-desc" rows="2"
-            style="width:100%;background:#0f1117;border:1px solid #2a2d3a;color:#e2e8f0;border-radius:6px;padding:8px;font-size:.78rem;resize:vertical;"
-            placeholder="Brief description of this model's strategy…"></textarea>
+        <div><label class="lbl" style="display:block;margin-bottom:3px;">Description</label>
+          <textarea id="mdl-desc" rows="2" style="background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:5px 8px;font-size:.78rem;resize:vertical;width:100%;height:auto;" placeholder="Brief description…"></textarea></div>
+
+        <span style="font-size:.6rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--sub);">Signals</span>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">EMA Fast</label><input type="number" id="mdl-ema-fast" value="20" min="2" /></div>
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">EMA Slow</label><input type="number" id="mdl-ema-slow" value="50" min="2" /></div>
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">ATR SL Mult</label><input type="number" id="mdl-atr-sl" value="1.5" step="0.1" min="0.1" /></div>
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">ATR TP Mult</label><input type="number" id="mdl-atr-tp" value="3.0" step="0.1" min="0.1" /></div>
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">Min ATR-C</label><input type="number" id="mdl-min-atr" value="0.2" step="0.05" min="0" max="1" /></div>
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">Direction</label>
+            <select id="mdl-direction"><option value="both">Both</option><option value="long">Long only</option><option value="short">Short only</option></select></div>
         </div>
 
-        <h3 class="text-xs font-semibold text-slate-400 uppercase mt-3 mb-2">Macro Signals</h3>
-        <div class="grid grid-cols-2 gap-2 mb-2">
-          <div>
-            <label class="label block mb-1">EMA Fast</label>
-            <input type="number" id="mdl-ema-fast" value="20" min="2" />
-          </div>
-          <div>
-            <label class="label block mb-1">EMA Slow</label>
-            <input type="number" id="mdl-ema-slow" value="50" min="2" />
-          </div>
-          <div>
-            <label class="label block mb-1">ATR SL Mult</label>
-            <input type="number" id="mdl-atr-sl" value="1.5" step="0.1" min="0.1" />
-          </div>
-          <div>
-            <label class="label block mb-1">ATR TP Mult</label>
-            <input type="number" id="mdl-atr-tp" value="3.0" step="0.1" min="0.1" />
-          </div>
-          <div>
-            <label class="label block mb-1">Min ATR-C</label>
-            <input type="number" id="mdl-min-atr" value="0.2" step="0.05" min="0" max="1" />
-          </div>
-          <div>
-            <label class="label block mb-1">Direction</label>
-            <select id="mdl-direction">
-              <option value="both">Both</option>
-              <option value="long">Long only</option>
-              <option value="short">Short only</option>
-            </select>
-          </div>
+        <span style="font-size:.6rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--sub);">Risk</span>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;">
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">Risk / Trade (%)</label><input type="number" id="mdl-risk-pct" value="1.0" step="0.1" min="0.1" max="10" /></div>
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">Max Positions</label><input type="number" id="mdl-max-pos" value="5" min="1" max="20" /></div>
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">Max Exposure</label><input type="number" id="mdl-max-exp" value="3.0" step="0.5" min="0.5" max="20" /></div>
         </div>
 
-        <h3 class="text-xs font-semibold text-slate-400 uppercase mt-3 mb-2">Risk Parameters</h3>
-        <div class="grid grid-cols-2 gap-2 mb-2">
-          <div>
-            <label class="label block mb-1">Risk / Trade (%)</label>
-            <input type="number" id="mdl-risk-pct" value="1.0" step="0.1" min="0.1" max="10" />
-          </div>
-          <div>
-            <label class="label block mb-1">Max Positions</label>
-            <input type="number" id="mdl-max-pos" value="5" min="1" max="20" />
-          </div>
-          <div>
-            <label class="label block mb-1">Max Exposure</label>
-            <input type="number" id="mdl-max-exp" value="3.0" step="0.5" min="0.5" max="20" />
-          </div>
+        <span style="font-size:.6rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--sub);">Regime</span>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">Max VIX</label><input type="number" id="mdl-max-vix" value="30" step="1" min="0" /></div>
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">Regime Multiplier</label><input type="number" id="mdl-regime-mult" value="1.0" step="0.1" min="0.1" max="2.0" /></div>
         </div>
 
-        <div id="mdl-micro-section">
-          <h3 class="text-xs font-semibold text-slate-400 uppercase mt-3 mb-2">Micro Parameters</h3>
-          <div class="grid grid-cols-2 gap-2 mb-2">
-            <div>
-              <label class="label block mb-1">Strategy</label>
-              <input type="text" id="mdl-micro-strategy" placeholder="e.g. VWAP Reversion" />
-            </div>
-            <div>
-              <label class="label block mb-1">Timeframe</label>
-              <select id="mdl-micro-tf">
-                <option value="1m">1m</option>
-                <option value="5m">5m</option>
-                <option value="15m" selected>15m</option>
-                <option value="1h">1h</option>
-              </select>
-            </div>
-          </div>
-        </div>
-
-        <h3 class="text-xs font-semibold text-slate-400 uppercase mt-3 mb-2">Regime Filters</h3>
-        <div class="grid grid-cols-2 gap-2 mb-2">
-          <div>
-            <label class="label block mb-1">Max VIX</label>
-            <input type="number" id="mdl-max-vix" value="30" step="1" min="0" />
-          </div>
-          <div>
-            <label class="label block mb-1">Regime Multiplier</label>
-            <input type="number" id="mdl-regime-mult" value="1.0" step="0.1" min="0.1" max="2.0" />
-          </div>
-        </div>
-
-        <div class="mt-3 flex gap-2">
-          <button type="submit" class="btn btn-primary flex-1">Save Model</button>
-          <button type="button" onclick="clearModelForm()" class="btn btn-secondary flex-1">Clear</button>
-        </div>
         <input type="hidden" id="mdl-edit-id" value="" />
-        <p id="model-status" class="text-xs text-slate-500 mt-2 text-center"></p>
+        <div style="display:flex;gap:6px;margin-top:4px;">
+          <button type="submit" class="btn btn-primary btn-md" style="flex:1;">Save Model</button>
+          <button type="button" onclick="clearModelForm()" class="btn btn-secondary btn-md" style="flex:1;">Clear</button>
+        </div>
+        <p id="model-status" style="font-size:.65rem;color:var(--sub);text-align:center;"></p>
       </form>
     </div>
 
   </div>
 
-  <!-- ── Right: Sessions list + Results / Models list ────────────────────── -->
-  <div class="col-span-2 flex flex-col gap-4">
+  <!-- ── Right: sessions + results / models list ─────────────────────────── -->
+  <div style="display:flex;flex-direction:column;gap:6px;">
 
-    <!-- Session list (shown for run/fetch/qt tabs) -->
+    <!-- Sessions -->
     <div id="sessions-container">
-      <div class="panel p-4">
-        <div class="flex items-center justify-between mb-3">
-          <h2 class="text-sm font-semibold text-slate-300">Sessions</h2>
-          <button onclick="loadSessions()" class="text-xs text-slate-500 hover:text-white">Refresh</button>
+      <div class="card card-p8">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <span class="sec-lbl" style="margin-bottom:0;">Sessions</span>
+          <button onclick="loadSessions()" class="btn btn-ghost btn-sm">↺ Refresh</button>
         </div>
-        <div id="sessions-list">
-          <p class="text-slate-500 text-xs">Loading...</p>
-        </div>
+        <div id="sessions-list" style="color:var(--muted);font-size:.78rem;">Loading...</div>
       </div>
 
-      <!-- Results panel -->
-      <div id="results-panel" class="panel p-4 hidden mt-4">
-        <div class="flex items-center justify-between mb-3">
-          <h2 class="text-sm font-semibold text-slate-300" id="results-title">Results</h2>
+      <div id="results-panel" class="card card-p8 hidden" style="margin-top:6px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <span class="sec-lbl" id="results-title" style="margin-bottom:0;">Results</span>
           <button onclick="document.getElementById('results-panel').classList.add('hidden')"
-                  class="text-xs text-slate-500 hover:text-white">Close</button>
+                  class="btn btn-ghost btn-sm">✕</button>
         </div>
         <div id="results-content"></div>
       </div>
     </div>
 
-    <!-- Models list (shown for models tab) -->
-    <div id="models-container" class="hidden">
-      <div class="panel p-4">
-        <div class="flex items-center justify-between mb-3">
-          <h2 class="text-sm font-semibold text-slate-300">Saved Models</h2>
-          <button onclick="loadModels()" class="text-xs text-slate-500 hover:text-white">Refresh</button>
-        </div>
-        <div id="models-list">
-          <p class="text-slate-500 text-xs">Loading...</p>
-        </div>
+    <!-- Models list -->
+    <div id="models-container" class="hidden card card-p8">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <span class="sec-lbl" style="margin-bottom:0;">Saved Models</span>
+        <button onclick="loadModels()" class="btn btn-ghost btn-sm">↺ Refresh</button>
       </div>
+      <div id="models-list" style="color:var(--muted);font-size:.78rem;">Loading...</div>
     </div>
 
   </div>
@@ -403,654 +249,316 @@
 
 <script>
 // ── Panel switching ────────────────────────────────────────────────────────
-function showPanel(name) {
-  ['run','fetch','qt','models'].forEach(p => {
-    document.getElementById('panel-' + p)?.classList.add('hidden');
-    var tab = document.getElementById('tab-' + p);
-    if (tab) {
-      tab.classList.remove('text-accent','bg-[#1a1d27]','border-accent');
-      tab.classList.add('text-slate-400','border-[#2a2d3a]');
-    }
+function showPanel(name){
+  ['run','fetch','qt','models'].forEach(function(p){
+    var panel=document.getElementById('panel-'+p);
+    var tab=document.getElementById('bt-tab-'+p);
+    if(panel) panel.classList.add('hidden');
+    if(tab){ tab.classList.remove('active'); }
   });
-  document.getElementById('panel-' + name)?.classList.remove('hidden');
-  var activeTab = document.getElementById('tab-' + name);
-  if (activeTab) {
-    activeTab.classList.add('text-accent','bg-[#1a1d27]','border-accent');
-    activeTab.classList.remove('text-slate-400','border-[#2a2d3a]');
-  }
-
-  // Toggle right-side content
-  var sessionsContainer = document.getElementById('sessions-container');
-  var modelsContainer   = document.getElementById('models-container');
-  if (name === 'models') {
-    sessionsContainer.classList.add('hidden');
-    modelsContainer.classList.remove('hidden');
-    loadModels();
-  } else {
-    sessionsContainer.classList.remove('hidden');
-    modelsContainer.classList.add('hidden');
-  }
+  var active=document.getElementById('panel-'+name);
+  var activeTab=document.getElementById('bt-tab-'+name);
+  if(active) active.classList.remove('hidden');
+  if(activeTab) activeTab.classList.add('active');
+  var sess=document.getElementById('sessions-container');
+  var mods=document.getElementById('models-container');
+  if(name==='models'){ sess.classList.add('hidden'); mods.classList.remove('hidden'); loadModels(); }
+  else { sess.classList.remove('hidden'); mods.classList.add('hidden'); }
 }
 
-// ── Toast notifications ────────────────────────────────────────────────────
-function showToast(message, type) {
-  var container = document.getElementById('toast-container');
-  var colors = {
-    success: 'bg-emerald-600 border-emerald-400',
-    error:   'bg-red-600 border-red-400',
-    info:    'bg-blue-600 border-blue-400',
-  };
-  var toast = document.createElement('div');
-  toast.className = 'px-4 py-3 rounded border text-white text-sm shadow-lg transition-all duration-300 opacity-0 transform translate-x-4 ' + (colors[type] || colors.info);
-  toast.textContent = message;
-  container.appendChild(toast);
-  // Animate in
-  requestAnimationFrame(function() {
-    toast.classList.remove('opacity-0','translate-x-4');
-  });
-  // Auto-remove after 6s
-  setTimeout(function() {
-    toast.classList.add('opacity-0','translate-x-4');
-    setTimeout(function() { toast.remove(); }, 300);
-  }, 6000);
-}
-
-// ── Run Backtest ────────────────────────────────────────────────────────────
-async function submitRun(e) {
+// ── Run Backtest ──────────────────────────────────────────────────────────
+async function submitRun(e){
   e.preventDefault();
-  var fd = new FormData(e.target);
-  var direction = fd.get('direction');
-  var cfg = {
-    name:           fd.get('name'),
-    date_from:      fd.get('date_from'),
-    date_to:        fd.get('date_to'),
-    symbols:        fd.get('symbols').split(',').map(function(s){return s.trim().toUpperCase()}).filter(Boolean),
-    timeframe:      fd.get('timeframe'),
-    initial_equity: parseFloat(fd.get('initial_equity')) || 10000,
-    signals: {
-      trend_ema_fast: parseInt(fd.get('ema_fast'))  || 20,
-      trend_ema_slow: parseInt(fd.get('ema_slow'))  || 50,
-      atr_sl_mult:    parseFloat(fd.get('atr_sl_mult')) || 1.5,
-      atr_tp_mult:    parseFloat(fd.get('atr_tp_mult')) || 3.0,
-      min_atr_c:      parseFloat(fd.get('min_atr_c'))   || 0.0,
-      allow_long:     direction !== 'short',
-      allow_short:    direction !== 'long',
-    },
-    risk: {
-      individual_risk_per_trade: parseFloat(fd.get('risk_pct')) / 100 || 0.01,
-      max_position_count:        parseInt(fd.get('max_positions')) || 5,
-      max_exposure:              3.0,
-      maker_fee:                 0.0002,
-      taker_fee:                 0.0005,
-    },
-    macro_filters:      [],
-    regime_multipliers: {},
+  var fd=new FormData(e.target),direction=fd.get('direction');
+  var cfg={
+    name:fd.get('name'),date_from:fd.get('date_from'),date_to:fd.get('date_to'),
+    symbols:fd.get('symbols').split(',').map(function(s){return s.trim().toUpperCase();}).filter(Boolean),
+    timeframe:fd.get('timeframe'),initial_equity:parseFloat(fd.get('initial_equity'))||10000,
+    signals:{trend_ema_fast:parseInt(fd.get('ema_fast'))||20,trend_ema_slow:parseInt(fd.get('ema_slow'))||50,
+             atr_sl_mult:parseFloat(fd.get('atr_sl_mult'))||1.5,atr_tp_mult:parseFloat(fd.get('atr_tp_mult'))||3.0,
+             min_atr_c:parseFloat(fd.get('min_atr_c'))||0,allow_long:direction!=='short',allow_short:direction!=='long'},
+    risk:{individual_risk_per_trade:parseFloat(fd.get('risk_pct'))/100||0.01,
+          max_position_count:parseInt(fd.get('max_positions'))||5,
+          max_exposure:3.0,maker_fee:0.0002,taker_fee:0.0005},
+    macro_filters:[],regime_multipliers:{},
   };
-
-  document.getElementById('run-btn-label').textContent = 'Starting...';
-  document.getElementById('run-status').textContent = '';
-
-  try {
-    var r = await fetch('/api/backtest/run', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(cfg),
-    });
-    var d = await r.json();
-    if (d.session_id) {
-      document.getElementById('run-status').textContent = 'Session #' + d.session_id + ' running...';
-      pollSession(d.session_id);
-      loadSessions();
-    } else {
-      document.getElementById('run-status').textContent = d.error || 'Error';
-    }
-  } catch(err) {
-    document.getElementById('run-status').textContent = err.message;
-  } finally {
-    document.getElementById('run-btn-label').textContent = 'Run Backtest';
-  }
+  document.getElementById('run-btn-label').textContent='Starting...';
+  try{
+    var r=await fetch('/api/backtest/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});
+    var d=await r.json();
+    if(d.session_id){
+      document.getElementById('run-status').textContent='Session #'+d.session_id+' running...';
+      pollSession(d.session_id); loadSessions();
+    } else { document.getElementById('run-status').textContent=d.error||'Error'; }
+  }catch(err){ document.getElementById('run-status').textContent=err.message; }
+  finally{ document.getElementById('run-btn-label').textContent='▶ Run Backtest'; }
 }
 
-// ── Fetch OHLCV ─────────────────────────────────────────────────────────────
-async function submitFetch(e) {
+// ── Fetch OHLCV ───────────────────────────────────────────────────────────
+async function submitFetch(e){
   e.preventDefault();
-  var symbols   = document.getElementById('fetch-symbols').value.split(',').map(function(s){return s.trim().toUpperCase()}).filter(Boolean);
-  var timeframe = document.getElementById('fetch-tf').value;
-  var days      = parseInt(document.getElementById('fetch-days').value) || 730;
-  var status    = document.getElementById('fetch-status');
-  var btn       = document.getElementById('fetch-btn');
-
-  status.textContent = 'Starting...';
-  btn.disabled = true;
-  btn.textContent = 'Fetching...';
-
-  try {
-    var r = await fetch('/api/backtest/fetch-ohlcv', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({symbols: symbols, timeframe: timeframe, days: days}),
-    });
-    var d = await r.json();
-    if (d.job_id) {
-      status.textContent = 'Fetching ' + symbols.length + ' symbol(s)...';
-      document.getElementById('fetch-progress-wrap').classList.remove('hidden');
-      pollFetchJob(d.job_id);
-    } else {
-      status.textContent = d.error || 'Error';
-      btn.disabled = false;
-      btn.textContent = 'Start Fetch';
-    }
-  } catch(err) {
-    status.textContent = err.message;
-    btn.disabled = false;
-    btn.textContent = 'Start Fetch';
-  }
+  var symbols=document.getElementById('fetch-symbols').value.split(',').map(function(s){return s.trim().toUpperCase();}).filter(Boolean);
+  var tf=document.getElementById('fetch-tf').value,days=parseInt(document.getElementById('fetch-days').value)||730;
+  var btn=document.getElementById('fetch-btn');
+  btn.disabled=true; btn.textContent='Fetching...';
+  document.getElementById('fetch-status').textContent='Starting...';
+  try{
+    var r=await fetch('/api/backtest/fetch-ohlcv',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbols:symbols,timeframe:tf,days:days})});
+    var d=await r.json();
+    if(d.job_id){ document.getElementById('fetch-progress-wrap').classList.remove('hidden'); pollFetchJob(d.job_id); }
+    else{ document.getElementById('fetch-status').textContent=d.error||'Error'; btn.disabled=false; btn.textContent='Start Fetch'; }
+  }catch(err){ document.getElementById('fetch-status').textContent=err.message; btn.disabled=false; btn.textContent='Start Fetch'; }
 }
 
-function pollFetchJob(jobId) {
-  var interval = setInterval(async function() {
-    try {
-      var r = await fetch('/api/backtest/fetch-status/' + jobId);
-      var d = await r.json();
-
-      var progressText = document.getElementById('fetch-progress-text');
-      var progressBar  = document.getElementById('fetch-progress-bar');
-      var status       = document.getElementById('fetch-status');
-
-      // Update progress
-      var completed = Object.keys(d.results || {}).length;
-      // Estimate total from the detail text or use completed
-      progressText.textContent = d.detail || '';
-      status.textContent = d.detail || '';
-
-      if (d.status === 'completed') {
-        clearInterval(interval);
-        progressBar.style.width = '100%';
-        status.textContent = d.detail;
-        document.getElementById('fetch-btn').disabled = false;
-        document.getElementById('fetch-btn').textContent = 'Start Fetch';
-        showToast('Data fetch complete: ' + d.detail, 'success');
-        // Update fetch jobs list
-        updateFetchJobsList(jobId, d);
-        // Hide progress after delay
-        setTimeout(function() {
-          document.getElementById('fetch-progress-wrap').classList.add('hidden');
-          progressBar.style.width = '0%';
-        }, 3000);
-      } else if (d.status === 'failed') {
-        clearInterval(interval);
-        status.textContent = 'Failed: ' + d.detail;
-        document.getElementById('fetch-btn').disabled = false;
-        document.getElementById('fetch-btn').textContent = 'Start Fetch';
-        showToast('Data fetch failed: ' + d.detail, 'error');
-        document.getElementById('fetch-progress-wrap').classList.add('hidden');
-      } else {
-        // Running — estimate progress from results count
-        if (completed > 0) {
-          // Can't know total from here, but estimate from detail
-          progressBar.style.width = Math.min(95, completed * 20) + '%';
-        }
+var _fetchJobs=[];
+function pollFetchJob(jobId){
+  var iv=setInterval(async function(){
+    try{
+      var r=await fetch('/api/backtest/fetch-status/'+jobId);var d=await r.json();
+      document.getElementById('fetch-progress-text').textContent=d.detail||'';
+      document.getElementById('fetch-status').textContent=d.detail||'';
+      if(d.status==='completed'||d.status==='failed'){
+        clearInterval(iv);
+        document.getElementById('fetch-btn').disabled=false; document.getElementById('fetch-btn').textContent='Start Fetch';
+        document.getElementById('fetch-progress-bar').style.width='100%';
+        if(d.status==='completed'){ showToast('Data fetch complete: '+d.detail,'success'); _fetchJobs.unshift({id:jobId,status:'completed',detail:d.detail}); renderFetchJobs(); }
+        else showToast('Data fetch failed: '+d.detail,'error');
+        setTimeout(function(){ document.getElementById('fetch-progress-wrap').classList.add('hidden'); document.getElementById('fetch-progress-bar').style.width='0%'; },3000);
       }
-    } catch(err) {
-      // Silently retry
-    }
-  }, 2000);
+    }catch(e){}
+  },2000);
 }
-
-var _fetchJobHistory = [];
-function updateFetchJobsList(jobId, data) {
-  _fetchJobHistory.unshift({id: jobId, status: data.status, detail: data.detail, results: data.results});
-  if (_fetchJobHistory.length > 5) _fetchJobHistory.pop();
-  renderFetchJobs();
-}
-
-function renderFetchJobs() {
-  var el = document.getElementById('fetch-jobs-list');
-  if (!_fetchJobHistory.length) { el.textContent = 'No jobs yet.'; return; }
-  var html = _fetchJobHistory.map(function(j) {
-    var sc = j.status === 'completed' ? 'text-green-400' : (j.status === 'failed' ? 'text-red-400' : 'text-yellow-400');
-    var symbols = Object.keys(j.results || {}).join(', ') || '—';
-    return '<div class="flex justify-between items-center py-1 border-b border-[#1a1d27]">'
-      + '<span class="text-slate-400">#' + j.id + '</span>'
-      + '<span class="text-slate-300 truncate mx-2 flex-1" title="' + symbols + '">' + symbols + '</span>'
-      + '<span class="' + sc + ' font-semibold">' + j.status + '</span>'
-      + '</div>';
+function renderFetchJobs(){
+  var el=document.getElementById('fetch-jobs-list');
+  if(!_fetchJobs.length){ el.textContent='No jobs yet.'; return; }
+  el.innerHTML=_fetchJobs.slice(0,5).map(function(j){
+    return '<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--border);font-size:.65rem;">'
+      +'<span style="color:var(--sub);">#'+j.id+'</span>'
+      +'<span style="color:var(--text);flex:1;margin:0 8px;overflow:hidden;text-overflow:ellipsis;">'+j.detail+'</span>'
+      +'<span style="color:'+(j.status==='completed'?'var(--green)':'var(--red)')+';">'+j.status+'</span>'
+      +'</div>';
   }).join('');
-  el.innerHTML = html;
 }
 
-// ── QT Import ───────────────────────────────────────────────────────────────
-async function submitQtImport() {
-  var name    = document.getElementById('qt-name').value;
-  var rawJson = document.getElementById('qt-json').value;
-  var status  = document.getElementById('qt-status');
-  var payload;
-  try { payload = JSON.parse(rawJson); } catch(e) { status.textContent = 'Invalid JSON'; return; }
-  payload.session_name = name;
-  status.textContent = 'Importing...';
-  try {
-    var r = await fetch('/api/backtest/qt-import', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(payload),
-    });
-    var d = await r.json();
-    status.textContent = d.session_id
-      ? 'Imported ' + d.trade_count + ' trades -> session #' + d.session_id
-      : (d.error || 'Error');
-    loadSessions();
-  } catch(err) {
-    status.textContent = err.message;
-  }
+// ── QT Import ────────────────────────────────────────────────────────────
+async function submitQtImport(){
+  var name=document.getElementById('qt-name').value,raw=document.getElementById('qt-json').value,status=document.getElementById('qt-status');
+  var payload; try{ payload=JSON.parse(raw); }catch(e){ status.textContent='Invalid JSON'; return; }
+  payload.session_name=name; status.textContent='Importing...';
+  try{
+    var r=await fetch('/api/backtest/qt-import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    var d=await r.json();
+    status.textContent=d.session_id?'Imported '+d.trade_count+' trades → session #'+d.session_id:(d.error||'Error');
+    if(d.session_id){ showToast('Imported '+d.trade_count+' trades','success'); loadSessions(); }
+  }catch(err){ status.textContent=err.message; }
 }
 
-// ── Sessions list ───────────────────────────────────────────────────────────
-async function loadSessions() {
-  var el = document.getElementById('sessions-list');
-  try {
-    var r = await fetch('/api/backtest/sessions');
-    var sessions = await r.json();
-    if (!sessions.length) {
-      el.innerHTML = '<p class="text-slate-600 text-xs">No sessions yet.</p>';
-      return;
+// ── Sessions ──────────────────────────────────────────────────────────────
+async function loadSessions(){
+  var el=document.getElementById('sessions-list');
+  try{
+    var r=await fetch('/api/backtest/sessions');var sessions=await r.json();
+    if(!sessions.length){ el.innerHTML='<div style="color:var(--muted);font-size:.72rem;padding:12px 0;text-align:center;">No sessions yet.</div>'; return; }
+    var statusColor={completed:'var(--green)',running:'var(--amber)',failed:'var(--red)',pending:'var(--sub)'};
+    el.innerHTML='<div style="overflow-x:auto;"><table><thead><tr>'
+      +'<th>#</th><th>Name</th><th>Type</th><th>Range</th><th>Status</th><th>Trades</th><th>Return</th><th></th>'
+      +'</tr></thead><tbody>'
+      +sessions.map(function(s){
+        var sum=s.summary||{};
+        var ret=sum.total_return_pct!=null?((sum.total_return_pct*100).toFixed(2)+'%'):'—';
+        var cnt=sum.total_trades!=null?sum.total_trades:'—';
+        var sc=statusColor[s.status]||'var(--sub)';
+        var retColor=parseFloat(ret)>=0?'var(--green)':'var(--red)';
+        return '<tr style="cursor:pointer;" onclick="loadResults('+s.id+',\''+s.name.replace(/'/g,"\\'")+'\')">'+
+          '<td style="color:var(--muted);">'+s.id+'</td>'+
+          '<td style="color:var(--text);font-weight:600;">'+s.name+'</td>'+
+          '<td style="color:var(--sub);">'+s.type+'</td>'+
+          '<td style="color:var(--sub);">'+(s.date_from||'—')+' → '+(s.date_to||'—')+'</td>'+
+          '<td style="color:'+sc+';font-weight:700;">'+s.status+'</td>'+
+          '<td>'+cnt+'</td>'+
+          '<td style="color:'+retColor+';font-weight:700;">'+ret+'</td>'+
+          '<td><button onclick="event.stopPropagation();deleteSession('+s.id+')" class="btn btn-danger btn-sm">✕</button></td>'+
+          '</tr>';
+      }).join('')
+      +'</tbody></table></div>';
+  }catch(err){ el.innerHTML='<div class="alert alert-error">'+err.message+'</div>'; }
+}
+async function deleteSession(id){ if(!confirm('Delete session #'+id+'?'))return; await fetch('/api/backtest/sessions/'+id,{method:'DELETE'}); loadSessions(); }
+function pollSession(id){
+  var iv=setInterval(async function(){
+    var r=await fetch('/api/backtest/sessions/'+id);var d=await r.json();
+    if(d.session&&d.session.status!=='running'){
+      clearInterval(iv); loadSessions();
+      document.getElementById('run-status').textContent='Session #'+id+' '+d.session.status;
+      showToast('Backtest #'+id+' '+d.session.status,d.session.status==='completed'?'success':'error');
     }
-    var statusColor = {completed:'text-green-400', running:'text-yellow-400', failed:'text-red-400', pending:'text-slate-400'};
-    el.innerHTML = '<table>' +
-      '<thead><tr>' +
-        '<th>#</th><th>Name</th><th>Type</th><th>Date Range</th><th>Status</th><th>Trades</th><th>Return</th><th></th>' +
-      '</tr></thead>' +
-      '<tbody>' +
-      sessions.map(function(s) {
-        var sum = s.summary || {};
-        var ret = sum.total_return_pct != null ? (sum.total_return_pct * 100).toFixed(2) + '%' : '—';
-        var cnt = sum.total_trades != null ? sum.total_trades : '—';
-        var sc  = statusColor[s.status] || 'text-slate-400';
-        return '<tr class="cursor-pointer hover:bg-[#1e293b]" onclick="loadResults(' + s.id + ', \'' + s.name.replace(/'/g, "\\'") + '\')">' +
-          '<td class="text-slate-500">' + s.id + '</td>' +
-          '<td class="text-slate-200">' + s.name + '</td>' +
-          '<td class="text-slate-500 text-xs">' + s.type + '</td>' +
-          '<td class="text-slate-500 text-xs">' + (s.date_from || '—') + ' -> ' + (s.date_to || '—') + '</td>' +
-          '<td class="' + sc + ' text-xs font-semibold">' + s.status + '</td>' +
-          '<td>' + cnt + '</td>' +
-          '<td class="' + (parseFloat(ret) >= 0 ? 'pos-long' : 'pos-short') + '">' + ret + '</td>' +
-          '<td><button onclick="event.stopPropagation();deleteSession(' + s.id + ')"' +
-                      ' class="text-xs text-red-500 hover:text-red-300 px-1">x</button></td>' +
-        '</tr>';
-      }).join('') +
-      '</tbody></table>';
-  } catch(err) {
-    el.innerHTML = '<p class="text-red-400 text-xs">' + err.message + '</p>';
-  }
+  },3000);
 }
-
-async function deleteSession(id) {
-  if (!confirm('Delete session #' + id + '?')) return;
-  await fetch('/api/backtest/sessions/' + id, {method: 'DELETE'});
-  loadSessions();
-}
-
-function pollSession(id) {
-  var interval = setInterval(async function() {
-    var r = await fetch('/api/backtest/sessions/' + id);
-    var d = await r.json();
-    if (d.session && d.session.status !== 'running') {
-      clearInterval(interval);
-      loadSessions();
-      document.getElementById('run-status').textContent = 'Session #' + id + ' ' + d.session.status;
-      if (d.session.status === 'completed') {
-        showToast('Backtest #' + id + ' completed', 'success');
-      } else {
-        showToast('Backtest #' + id + ' ' + d.session.status, 'error');
-      }
-    }
-  }, 3000);
-}
-
-// ── Results viewer ──────────────────────────────────────────────────────────
-async function loadResults(id, name) {
-  document.getElementById('results-title').textContent = 'Results — ' + name;
+async function loadResults(id,name){
+  document.getElementById('results-title').textContent='Results — '+name;
   document.getElementById('results-panel').classList.remove('hidden');
-  document.getElementById('results-content').innerHTML = '<p class="text-slate-500 text-xs text-center py-4">Loading...</p>';
-  var r   = await fetch('/fragments/backtest/results/' + id);
-  var html = await r.text();
-  document.getElementById('results-content').innerHTML = html;
+  document.getElementById('results-content').innerHTML='<div style="text-align:center;color:var(--muted);padding:20px;">Loading...</div>';
+  var r=await fetch('/fragments/backtest/results/'+id);
+  document.getElementById('results-content').innerHTML=await r.text();
 }
 
-// ── Potential Models ────────────────────────────────────────────────────────
-var _allModels = [];
-
-async function loadModels() {
-  var el = document.getElementById('models-list');
-  try {
-    var r = await fetch('/api/models');
-    _allModels = await r.json();
-    renderModelsList();
-    populateModelSelector();
-  } catch(err) {
-    el.innerHTML = '<p class="text-red-400 text-xs">' + err.message + '</p>';
-  }
+// ── Models ────────────────────────────────────────────────────────────────
+var _allModels=[];
+async function loadModels(){
+  var el=document.getElementById('models-list');
+  try{
+    var r=await fetch('/api/models');_allModels=await r.json();renderModelsList();populateModelSelector();
+  }catch(err){ el.innerHTML='<div class="alert alert-error">'+err.message+'</div>'; }
 }
-
-function renderModelsList() {
-  var el = document.getElementById('models-list');
-  if (!_allModels.length) {
-    el.innerHTML = '<p class="text-slate-600 text-xs">No models defined yet. Create one using the form.</p>';
-    return;
-  }
-  var typeColors = {
-    macro: 'bg-blue-500/20 text-blue-400',
-    micro: 'bg-purple-500/20 text-purple-400',
-    both:  'bg-amber-500/20 text-amber-400',
-  };
-  el.innerHTML = _allModels.map(function(m) {
-    var tc = typeColors[m.type] || typeColors.both;
-    var cfg = m.config || {};
-    var signals = cfg.signals || {};
-    var risk = cfg.risk || {};
-    return '<div class="border border-[#2a2d3a] rounded p-3 mb-2 hover:border-slate-600 transition-colors">'
-      + '<div class="flex items-center justify-between mb-1">'
-        + '<div class="flex items-center gap-2">'
-          + '<span class="font-semibold text-sm text-slate-200">' + m.name + '</span>'
-          + '<span class="text-xs px-2 py-0.5 rounded ' + tc + '">' + m.type + '</span>'
-        + '</div>'
-        + '<div class="flex gap-1">'
-          + '<button onclick="editModel(' + m.id + ')" class="text-xs text-slate-500 hover:text-blue-400 px-1">Edit</button>'
-          + '<button onclick="deleteModel(' + m.id + ')" class="text-xs text-red-500 hover:text-red-300 px-1">x</button>'
-        + '</div>'
-      + '</div>'
-      + (m.description ? '<p class="text-xs text-slate-500 mb-1">' + m.description + '</p>' : '')
-      + '<div class="flex gap-3 text-xs text-slate-400 flex-wrap">'
-        + (signals.trend_ema_fast ? '<span>EMA ' + signals.trend_ema_fast + '/' + signals.trend_ema_slow + '</span>' : '')
-        + (signals.atr_sl_mult ? '<span>SL ' + signals.atr_sl_mult + 'x ATR</span>' : '')
-        + (signals.atr_tp_mult ? '<span>TP ' + signals.atr_tp_mult + 'x ATR</span>' : '')
-        + (risk.individual_risk_per_trade ? '<span>Risk ' + (risk.individual_risk_per_trade * 100).toFixed(1) + '%</span>' : '')
-      + '</div>'
-    + '</div>';
+function renderModelsList(){
+  var el=document.getElementById('models-list');
+  if(!_allModels.length){ el.innerHTML='<div style="color:var(--muted);font-size:.72rem;padding:12px 0;text-align:center;">No models defined. Create one using the form.</div>'; return; }
+  var typeColor={macro:'var(--blue)',micro:'var(--purple)',both:'var(--amber)'};
+  el.innerHTML=_allModels.map(function(m){
+    var cfg=m.config||{},sig=cfg.signals||{},risk=cfg.risk||{};
+    return '<div style="border:1px solid var(--border);border-radius:4px;padding:8px 10px;margin-bottom:5px;transition:border-color .1s;" onmouseover="this.style.borderColor=\'var(--bfoc)\'" onmouseout="this.style.borderColor=\'var(--border)\'">'
+      +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">'
+        +'<div style="display:flex;align-items:center;gap:6px;">'
+          +'<span style="font-weight:700;color:var(--text);">'+m.name+'</span>'
+          +'<span class="badge" style="background:var(--panel);color:'+typeColor[m.type]+';border:1px solid var(--border);">'+m.type+'</span>'
+        +'</div>'
+        +'<div style="display:flex;gap:4px;">'
+          +'<button onclick="editModel('+m.id+')" class="btn btn-ghost btn-sm">Edit</button>'
+          +'<button onclick="deleteModel('+m.id+')" class="btn btn-danger btn-sm">✕</button>'
+        +'</div>'
+      +'</div>'
+      +(m.description?'<div style="font-size:.65rem;color:var(--sub);margin-bottom:4px;">'+m.description+'</div>':'')
+      +'<div style="display:flex;gap:10px;font-size:.65rem;color:var(--muted);font-family:var(--font-mono);">'
+        +(sig.trend_ema_fast?'<span>EMA '+sig.trend_ema_fast+'/'+sig.trend_ema_slow+'</span>':'')
+        +(sig.atr_sl_mult?'<span>SL '+sig.atr_sl_mult+'×ATR</span>':'')
+        +(sig.atr_tp_mult?'<span>TP '+sig.atr_tp_mult+'×ATR</span>':'')
+        +(risk.individual_risk_per_trade?'<span>Risk '+(risk.individual_risk_per_trade*100).toFixed(1)+'%</span>':'')
+      +'</div>'
+      +'</div>';
   }).join('');
 }
-
-function populateModelSelector() {
-  var sel = document.getElementById('model-selector');
-  if (!sel) return;
-  // Keep first option (Custom)
-  while (sel.options.length > 1) sel.remove(1);
-  _allModels.forEach(function(m) {
-    var opt = document.createElement('option');
-    opt.value = m.id;
-    opt.textContent = m.name + ' (' + m.type + ')';
-    sel.appendChild(opt);
-  });
+function populateModelSelector(){
+  var sel=document.getElementById('model-selector');
+  while(sel.options.length>1) sel.remove(1);
+  _allModels.forEach(function(m){ var opt=document.createElement('option');opt.value=m.id;opt.textContent=m.name+' ('+m.type+')';sel.appendChild(opt); });
 }
-
-function loadModelConfig(modelId) {
-  if (!modelId) return; // Custom selected
-  var m = _allModels.find(function(x) { return x.id == modelId; });
-  if (!m) return;
-  var cfg = m.config || {};
-  var signals = cfg.signals || {};
-  var risk = cfg.risk || {};
-  var form = document.getElementById('run-form');
-
-  if (signals.trend_ema_fast) form.ema_fast.value = signals.trend_ema_fast;
-  if (signals.trend_ema_slow) form.ema_slow.value = signals.trend_ema_slow;
-  if (signals.atr_sl_mult)    form.atr_sl_mult.value = signals.atr_sl_mult;
-  if (signals.atr_tp_mult)    form.atr_tp_mult.value = signals.atr_tp_mult;
-  if (signals.min_atr_c != null) form.min_atr_c.value = signals.min_atr_c;
-  if (signals.direction)      form.direction.value = signals.direction;
-
-  if (risk.individual_risk_per_trade) form.risk_pct.value = (risk.individual_risk_per_trade * 100).toFixed(1);
-  if (risk.max_position_count)        form.max_positions.value = risk.max_position_count;
-
-  showToast('Loaded model: ' + m.name, 'info');
+function loadModelConfig(modelId){
+  if(!modelId)return;
+  var m=_allModels.find(function(x){return x.id==modelId;});if(!m)return;
+  var cfg=m.config||{},sig=cfg.signals||{},risk=cfg.risk||{};
+  var f=document.getElementById('run-form');
+  if(sig.trend_ema_fast) f.ema_fast.value=sig.trend_ema_fast;
+  if(sig.trend_ema_slow) f.ema_slow.value=sig.trend_ema_slow;
+  if(sig.atr_sl_mult)    f.atr_sl_mult.value=sig.atr_sl_mult;
+  if(sig.atr_tp_mult)    f.atr_tp_mult.value=sig.atr_tp_mult;
+  if(sig.min_atr_c!=null) f.min_atr_c.value=sig.min_atr_c;
+  if(sig.direction)      f.direction.value=sig.direction;
+  if(risk.individual_risk_per_trade) f.risk_pct.value=(risk.individual_risk_per_trade*100).toFixed(1);
+  if(risk.max_position_count) f.max_positions.value=risk.max_position_count;
+  showToast('Loaded: '+m.name,'info');
 }
-
-async function submitModel(e) {
+async function submitModel(e){
   e.preventDefault();
-  var editId = document.getElementById('mdl-edit-id').value;
-  var direction = document.getElementById('mdl-direction').value;
-  var body = {
-    name:        document.getElementById('mdl-name').value.trim(),
-    type:        document.getElementById('mdl-type').value,
-    description: document.getElementById('mdl-desc').value.trim(),
-    config: {
-      signals: {
-        trend_ema_fast: parseInt(document.getElementById('mdl-ema-fast').value) || 20,
-        trend_ema_slow: parseInt(document.getElementById('mdl-ema-slow').value) || 50,
-        atr_sl_mult:    parseFloat(document.getElementById('mdl-atr-sl').value) || 1.5,
-        atr_tp_mult:    parseFloat(document.getElementById('mdl-atr-tp').value) || 3.0,
-        min_atr_c:      parseFloat(document.getElementById('mdl-min-atr').value) || 0.0,
-        direction:      direction,
-        allow_long:     direction !== 'short',
-        allow_short:    direction !== 'long',
-      },
-      risk: {
-        individual_risk_per_trade: parseFloat(document.getElementById('mdl-risk-pct').value) / 100 || 0.01,
-        max_position_count:        parseInt(document.getElementById('mdl-max-pos').value) || 5,
-        max_exposure:              parseFloat(document.getElementById('mdl-max-exp').value) || 3.0,
-      },
-      micro: {
-        strategy:  document.getElementById('mdl-micro-strategy').value.trim(),
-        timeframe: document.getElementById('mdl-micro-tf').value,
-      },
-      regime: {
-        max_vix:          parseFloat(document.getElementById('mdl-max-vix').value) || 30,
-        regime_multiplier: parseFloat(document.getElementById('mdl-regime-mult').value) || 1.0,
-      },
-    },
-  };
-
-  if (!body.name) {
-    document.getElementById('model-status').textContent = 'Name is required';
-    return;
-  }
-
-  var status = document.getElementById('model-status');
-  try {
-    var url = editId ? '/api/models/' + editId : '/api/models';
-    var method = editId ? 'PUT' : 'POST';
-    var r = await fetch(url, {
-      method: method,
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(body),
-    });
-    var d = await r.json();
-    if (d.error) {
-      status.textContent = d.error;
-    } else {
-      status.textContent = editId ? 'Model updated' : 'Model saved (#' + d.model_id + ')';
-      showToast(editId ? 'Model updated: ' + body.name : 'Model saved: ' + body.name, 'success');
-      clearModelForm();
-      loadModels();
-    }
-  } catch(err) {
-    status.textContent = err.message;
-  }
+  var editId=document.getElementById('mdl-edit-id').value;
+  var direction=document.getElementById('mdl-direction').value;
+  var body={name:document.getElementById('mdl-name').value.trim(),type:document.getElementById('mdl-type').value,description:document.getElementById('mdl-desc').value.trim(),
+    config:{
+      signals:{trend_ema_fast:parseInt(document.getElementById('mdl-ema-fast').value)||20,trend_ema_slow:parseInt(document.getElementById('mdl-ema-slow').value)||50,atr_sl_mult:parseFloat(document.getElementById('mdl-atr-sl').value)||1.5,atr_tp_mult:parseFloat(document.getElementById('mdl-atr-tp').value)||3.0,min_atr_c:parseFloat(document.getElementById('mdl-min-atr').value)||0,direction:direction,allow_long:direction!=='short',allow_short:direction!=='long'},
+      risk:{individual_risk_per_trade:parseFloat(document.getElementById('mdl-risk-pct').value)/100||0.01,max_position_count:parseInt(document.getElementById('mdl-max-pos').value)||5,max_exposure:parseFloat(document.getElementById('mdl-max-exp').value)||3.0},
+      regime:{max_vix:parseFloat(document.getElementById('mdl-max-vix').value)||30,regime_multiplier:parseFloat(document.getElementById('mdl-regime-mult').value)||1.0},
+    }};
+  if(!body.name){document.getElementById('model-status').textContent='Name is required';return;}
+  var status=document.getElementById('model-status');
+  try{
+    var url=editId?'/api/models/'+editId:'/api/models',method=editId?'PUT':'POST';
+    var r=await fetch(url,{method:method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var d=await r.json();
+    if(d.error){status.textContent=d.error;}
+    else{status.textContent=editId?'Model updated':'Model saved (#'+d.model_id+')';showToast((editId?'Updated: ':'Saved: ')+body.name,'success');clearModelForm();loadModels();}
+  }catch(err){status.textContent=err.message;}
+}
+async function editModel(id){
+  var m=_allModels.find(function(x){return x.id==id;});if(!m)return;
+  var cfg=m.config||{},sig=cfg.signals||{},risk=cfg.risk||{},regime=cfg.regime||{};
+  document.getElementById('mdl-edit-id').value=m.id;document.getElementById('mdl-name').value=m.name;document.getElementById('mdl-type').value=m.type;document.getElementById('mdl-desc').value=m.description||'';
+  document.getElementById('mdl-ema-fast').value=sig.trend_ema_fast||20;document.getElementById('mdl-ema-slow').value=sig.trend_ema_slow||50;
+  document.getElementById('mdl-atr-sl').value=sig.atr_sl_mult||1.5;document.getElementById('mdl-atr-tp').value=sig.atr_tp_mult||3.0;document.getElementById('mdl-min-atr').value=sig.min_atr_c||0.2;document.getElementById('mdl-direction').value=sig.direction||'both';
+  document.getElementById('mdl-risk-pct').value=risk.individual_risk_per_trade?(risk.individual_risk_per_trade*100).toFixed(1):'1.0';document.getElementById('mdl-max-pos').value=risk.max_position_count||5;document.getElementById('mdl-max-exp').value=risk.max_exposure||3.0;
+  document.getElementById('mdl-max-vix').value=regime.max_vix||30;document.getElementById('mdl-regime-mult').value=regime.regime_multiplier||1.0;
+  document.getElementById('model-status').textContent='Editing model #'+m.id;
+  showPanel('models');
+}
+async function deleteModel(id){ if(!confirm('Delete model #'+id+'?'))return; await fetch('/api/models/'+id,{method:'DELETE'}); showToast('Model deleted','info'); loadModels(); }
+function clearModelForm(){
+  ['mdl-edit-id','mdl-name','mdl-desc','mdl-micro-strategy'].forEach(function(id){var e=document.getElementById(id);if(e)e.value='';});
+  document.getElementById('mdl-type').value='both';document.getElementById('mdl-direction').value='both';
+  document.getElementById('mdl-ema-fast').value='20';document.getElementById('mdl-ema-slow').value='50';
+  document.getElementById('mdl-atr-sl').value='1.5';document.getElementById('mdl-atr-tp').value='3.0';
+  document.getElementById('mdl-min-atr').value='0.2';document.getElementById('mdl-risk-pct').value='1.0';
+  document.getElementById('mdl-max-pos').value='5';document.getElementById('mdl-max-exp').value='3.0';
+  document.getElementById('mdl-max-vix').value='30';document.getElementById('mdl-regime-mult').value='1.0';
+  document.getElementById('model-status').textContent='';
 }
 
-async function editModel(id) {
-  var m = _allModels.find(function(x) { return x.id == id; });
-  if (!m) return;
-  var cfg = m.config || {};
-  var signals = cfg.signals || {};
-  var risk = cfg.risk || {};
-  var micro = cfg.micro || {};
-  var regime = cfg.regime || {};
-
-  document.getElementById('mdl-edit-id').value = m.id;
-  document.getElementById('mdl-name').value = m.name;
-  document.getElementById('mdl-type').value = m.type;
-  document.getElementById('mdl-desc').value = m.description || '';
-  document.getElementById('mdl-ema-fast').value = signals.trend_ema_fast || 20;
-  document.getElementById('mdl-ema-slow').value = signals.trend_ema_slow || 50;
-  document.getElementById('mdl-atr-sl').value = signals.atr_sl_mult || 1.5;
-  document.getElementById('mdl-atr-tp').value = signals.atr_tp_mult || 3.0;
-  document.getElementById('mdl-min-atr').value = signals.min_atr_c || 0.2;
-  document.getElementById('mdl-direction').value = signals.direction || 'both';
-  document.getElementById('mdl-risk-pct').value = risk.individual_risk_per_trade ? (risk.individual_risk_per_trade * 100).toFixed(1) : '1.0';
-  document.getElementById('mdl-max-pos').value = risk.max_position_count || 5;
-  document.getElementById('mdl-max-exp').value = risk.max_exposure || 3.0;
-  document.getElementById('mdl-micro-strategy').value = micro.strategy || '';
-  document.getElementById('mdl-micro-tf').value = micro.timeframe || '15m';
-  document.getElementById('mdl-max-vix').value = regime.max_vix || 30;
-  document.getElementById('mdl-regime-mult').value = regime.regime_multiplier || 1.0;
-
-  document.getElementById('model-status').textContent = 'Editing model #' + m.id;
-  // Scroll to form
-  document.getElementById('panel-models').scrollIntoView({behavior: 'smooth'});
+// ── Date range calendar ────────────────────────────────────────────────────
+var _btDateFrom='',_btDateTo='',_btCalViewYear,_btCalViewMonth,_btCalSelStart=null,_btCalSelEnd=null,_btCalPicking=0;
+function _btPad(n){return String(n).padStart(2,'0');}
+function _btIsoDate(d){return d.getFullYear()+'-'+_btPad(d.getMonth()+1)+'-'+_btPad(d.getDate());}
+function _btAddDays(d,n){var r=new Date(d);r.setDate(r.getDate()+n);return r;}
+function btSetDates(from,to){
+  _btDateFrom=_btIsoDate(from);_btDateTo=_btIsoDate(to);
+  document.getElementById('bt-date-from-display').textContent=_btDateFrom;
+  document.getElementById('bt-date-to-display').textContent=_btDateTo;
+  document.getElementById('bt-date-from-val').value=_btDateFrom;
+  document.getElementById('bt-date-to-val').value=_btDateTo;
+  _btCalSelStart=from;_btCalSelEnd=to;
 }
-
-async function deleteModel(id) {
-  if (!confirm('Delete model #' + id + '?')) return;
-  await fetch('/api/models/' + id, {method: 'DELETE'});
-  showToast('Model deleted', 'info');
-  loadModels();
-}
-
-function clearModelForm() {
-  document.getElementById('mdl-edit-id').value = '';
-  document.getElementById('mdl-name').value = '';
-  document.getElementById('mdl-type').value = 'both';
-  document.getElementById('mdl-desc').value = '';
-  document.getElementById('mdl-ema-fast').value = '20';
-  document.getElementById('mdl-ema-slow').value = '50';
-  document.getElementById('mdl-atr-sl').value = '1.5';
-  document.getElementById('mdl-atr-tp').value = '3.0';
-  document.getElementById('mdl-min-atr').value = '0.2';
-  document.getElementById('mdl-direction').value = 'both';
-  document.getElementById('mdl-risk-pct').value = '1.0';
-  document.getElementById('mdl-max-pos').value = '5';
-  document.getElementById('mdl-max-exp').value = '3.0';
-  document.getElementById('mdl-micro-strategy').value = '';
-  document.getElementById('mdl-micro-tf').value = '15m';
-  document.getElementById('mdl-max-vix').value = '30';
-  document.getElementById('mdl-regime-mult').value = '1.0';
-  document.getElementById('model-status').textContent = '';
-}
-
-// ── Date Range Calendar (backtest) ──────────────────────────────────────────
-var _btDateFrom = '';
-var _btDateTo   = '';
-var _btCalViewYear, _btCalViewMonth;
-var _btCalSelStart = null, _btCalSelEnd = null, _btCalPicking = 0;
-
-function _btPad(n) { return String(n).padStart(2, '0'); }
-function _btIsoDate(d) {
-  return d.getFullYear() + '-' + _btPad(d.getMonth() + 1) + '-' + _btPad(d.getDate());
-}
-function _btAddDays(d, n) { var r = new Date(d); r.setDate(r.getDate() + n); return r; }
-
-function btSetDates(from, to) {
-  _btDateFrom = _btIsoDate(from);
-  _btDateTo   = _btIsoDate(to);
-  document.getElementById('bt-date-from-display').textContent = _btDateFrom;
-  document.getElementById('bt-date-to-display').textContent   = _btDateTo;
-  document.getElementById('bt-date-from-val').value = _btDateFrom;
-  document.getElementById('bt-date-to-val').value   = _btDateTo;
-  _btCalSelStart = from;
-  _btCalSelEnd   = to;
-}
-
-function btSetPreset(preset) {
-  var now = new Date();
-  var from, to = now;
-  switch (preset) {
-    case '1y': from = _btAddDays(now, -365); break;
-    case '6m': from = _btAddDays(now, -182); break;
-    case '3m': from = _btAddDays(now, -90);  break;
-    default:   from = _btAddDays(now, -30);  break;
-  }
-  btSetDates(from, to);
-  btHighlightPreset(preset);
+function btSetPreset(preset){
+  var now=new Date(),from,to=now;
+  switch(preset){case'1y':from=_btAddDays(now,-365);break;case'6m':from=_btAddDays(now,-182);break;case'3m':from=_btAddDays(now,-90);break;default:from=_btAddDays(now,-30);}
+  btSetDates(from,to);
+  document.querySelectorAll('[data-btpreset]').forEach(function(b){b.classList.toggle('active',b.dataset.btpreset===preset);});
   document.getElementById('bt-calendar-dropdown').classList.add('hidden');
 }
-
-function btHighlightPreset(active) {
-  document.querySelectorAll('[data-btpreset]').forEach(function(btn) {
-    btn.classList.toggle('active', btn.dataset.btpreset === active);
-  });
-}
-
-function btToggleCalendar() {
-  var dd = document.getElementById('bt-calendar-dropdown');
-  dd.classList.toggle('hidden');
-  if (!dd.classList.contains('hidden')) btRenderCalendar();
-}
-
-function btShiftMonths(delta) {
-  _btCalViewMonth += delta;
-  if (_btCalViewMonth > 11) { _btCalViewMonth = 0; _btCalViewYear++; }
-  if (_btCalViewMonth < 0)  { _btCalViewMonth = 11; _btCalViewYear--; }
+function btToggleCalendar(){document.getElementById('bt-calendar-dropdown').classList.toggle('hidden');btRenderCalendar();}
+function btShiftMonths(delta){
+  _btCalViewMonth+=delta;
+  if(_btCalViewMonth>11){_btCalViewMonth=0;_btCalViewYear++;}
+  if(_btCalViewMonth<0){_btCalViewMonth=11;_btCalViewYear--;}
   btRenderCalendar();
 }
-
-function btRenderCalendar() {
-  btRenderMonth('bt-cal-left', _btCalViewYear, _btCalViewMonth);
-  var ry = _btCalViewYear, rm = _btCalViewMonth + 1;
-  if (rm > 11) { rm = 0; ry++; }
-  btRenderMonth('bt-cal-right', ry, rm);
+function btRenderCalendar(){
+  btRenderMonth('bt-cal-left',_btCalViewYear,_btCalViewMonth);
+  var ry=_btCalViewYear,rm=_btCalViewMonth+1;if(rm>11){rm=0;ry++;}
+  btRenderMonth('bt-cal-right',ry,rm);
 }
-
-function btRenderMonth(containerId, year, month) {
-  var el = document.getElementById(containerId);
-  if (!el) return;
-  var mNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  var dNames = ['Su','Mo','Tu','We','Th','Fr','Sa'];
-  var firstDay    = new Date(year, month, 1).getDay();
-  var daysInMonth = new Date(year, month + 1, 0).getDate();
-  var today = _btIsoDate(new Date());
-  var selS  = _btCalSelStart ? _btIsoDate(_btCalSelStart) : '';
-  var selE  = _btCalSelEnd   ? _btIsoDate(_btCalSelEnd)   : '';
-
-  var html = '<div class="cal-header">' + mNames[month] + ' ' + year + '</div>';
-  html += '<div class="cal-grid">';
-  dNames.forEach(function(d) { html += '<div class="cal-day-name">' + d + '</div>'; });
-  for (var i = 0; i < firstDay; i++) html += '<div class="cal-cell empty"></div>';
-  for (var d = 1; d <= daysInMonth; d++) {
-    var iso = year + '-' + _btPad(month + 1) + '-' + _btPad(d);
-    var cls = 'cal-cell';
-    if (iso === selS || iso === selE)                    cls += ' cal-selected';
-    else if (selS && selE && iso > selS && iso < selE)  cls += ' cal-in-range';
-    if (iso === today) cls += ' cal-today';
-    html += '<div class="' + cls + '" onclick="btPickDate(' + year + ',' + month + ',' + d + ')">' + d + '</div>';
+function btRenderMonth(containerId,year,month){
+  var el=document.getElementById(containerId);if(!el)return;
+  var mNames=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  var dNames=['Su','Mo','Tu','We','Th','Fr','Sa'];
+  var firstDay=new Date(year,month,1).getDay(),daysInMonth=new Date(year,month+1,0).getDate();
+  var today=_btIsoDate(new Date()),selS=_btCalSelStart?_btIsoDate(_btCalSelStart):'',selE=_btCalSelEnd?_btIsoDate(_btCalSelEnd):'';
+  var html='<div class="cal-header">'+mNames[month]+' '+year+'</div><div class="cal-grid">';
+  dNames.forEach(function(d){html+='<div class="cal-day-name">'+d+'</div>';});
+  for(var i=0;i<firstDay;i++) html+='<div class="cal-cell" style="cursor:default;"></div>';
+  for(var d=1;d<=daysInMonth;d++){
+    var iso=year+'-'+_btPad(month+1)+'-'+_btPad(d),cls='cal-cell';
+    if(iso===selS||iso===selE) cls+=' cal-selected';
+    else if(selS&&selE&&iso>selS&&iso<selE) cls+=' cal-in-range';
+    if(iso===today) cls+=' cal-today';
+    html+='<div class="'+cls+'" onclick="btPickDate('+year+','+month+','+d+')">'+d+'</div>';
   }
-  html += '</div>';
-  el.innerHTML = html;
+  html+='</div>';el.innerHTML=html;
 }
-
-function btPickDate(year, month, day) {
-  var date = new Date(year, month, day);
-  if (_btCalPicking === 0) {
-    _btCalSelStart = date; _btCalSelEnd = null; _btCalPicking = 1;
-  } else {
-    if (date < _btCalSelStart) { _btCalSelEnd = _btCalSelStart; _btCalSelStart = date; }
-    else                       { _btCalSelEnd = date; }
-    _btCalPicking = 0;
-  }
+function btPickDate(year,month,day){
+  var date=new Date(year,month,day);
+  if(_btCalPicking===0){_btCalSelStart=date;_btCalSelEnd=null;_btCalPicking=1;}
+  else{if(date<_btCalSelStart){_btCalSelEnd=_btCalSelStart;_btCalSelStart=date;}else{_btCalSelEnd=date;}_btCalPicking=0;}
   btRenderCalendar();
 }
+function btApplyRange(){if(_btCalSelStart&&_btCalSelEnd){btSetDates(_btCalSelStart,_btCalSelEnd);document.querySelectorAll('[data-btpreset]').forEach(function(b){b.classList.remove('active');});document.getElementById('bt-calendar-dropdown').classList.add('hidden');}}
+function btInitCalendar(){var now=new Date();_btCalViewYear=now.getFullYear();_btCalViewMonth=now.getMonth();btSetPreset('3m');}
 
-function btApplyRange() {
-  if (_btCalSelStart && _btCalSelEnd) {
-    btSetDates(_btCalSelStart, _btCalSelEnd);
-    btHighlightPreset('');
-    document.getElementById('bt-calendar-dropdown').classList.add('hidden');
-  }
-}
-
-function btInitCalendar() {
-  var now = new Date();
-  _btCalViewYear  = now.getFullYear();
-  _btCalViewMonth = now.getMonth();
-  btSetPreset('3m');
-}
-
-// ── Init ────────────────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', function() {
-  showPanel('run');
-  btInitCalendar();
-  loadSessions();
-  // Pre-load models for the selector dropdown
-  loadModels();
-});
+document.addEventListener('DOMContentLoaded',function(){ showPanel('run'); btInitCalendar(); loadSessions(); loadModels(); });
 </script>
 {% endblock %}

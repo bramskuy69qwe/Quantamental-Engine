@@ -44,7 +44,7 @@ async def frag_backtest_sessions(request: Request):
 async def frag_backtest_results(request: Request, session_id: int):
     session = await db.get_backtest_session(session_id)
     if not session:
-        return HTMLResponse("<p class='text-red-400'>Session not found.</p>", status_code=404)
+        return HTMLResponse("<p class='text-red'>Session not found.</p>", status_code=404)
     trades = await db.get_backtest_trades(session_id)
     equity = await db.get_backtest_equity(session_id)
     return templates.TemplateResponse(

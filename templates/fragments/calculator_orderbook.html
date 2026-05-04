@@ -1,0 +1,34 @@
+<!-- fragment: calculator/refresh/{ticker} — orderbook -->
+<span class="sec-lbl">Live Orderbook — {{ ticker }}</span>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+  <div>
+    <div style="font-size:.65rem;font-weight:700;color:var(--green);margin-bottom:4px;">BIDS</div>
+    {% for bid in bids | default([]) %}
+    <div style="display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:.68rem;margin-bottom:2px;">
+      <span style="color:var(--green);">{{ bid[0] }}</span>
+      <span style="color:var(--sub);">{{ bid[1] }}</span>
+    </div>
+    {% else %}
+    {% for _ in range(5) %}
+    <div style="display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:.68rem;margin-bottom:2px;">
+      <span style="color:var(--muted);">—</span><span style="color:var(--muted);">—</span>
+    </div>
+    {% endfor %}
+    {% endfor %}
+  </div>
+  <div>
+    <div style="font-size:.65rem;font-weight:700;color:var(--red);margin-bottom:4px;">ASKS</div>
+    {% for ask in asks | default([]) %}
+    <div style="display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:.68rem;margin-bottom:2px;">
+      <span style="color:var(--red);">{{ ask[0] }}</span>
+      <span style="color:var(--sub);">{{ ask[1] }}</span>
+    </div>
+    {% else %}
+    {% for _ in range(5) %}
+    <div style="display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:.68rem;margin-bottom:2px;">
+      <span style="color:var(--muted);">—</span><span style="color:var(--muted);">—</span>
+    </div>
+    {% endfor %}
+    {% endfor %}
+  </div>
+</div>

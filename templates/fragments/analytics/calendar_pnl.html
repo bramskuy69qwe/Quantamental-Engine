@@ -1,61 +1,59 @@
-<div class="panel p-4">
+<div class="card">
   <!-- Month navigation header -->
-  <div class="flex items-center justify-between mb-4">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
     <button hx-get="/fragments/analytics/calendar?month={{ prev_month }}"
             hx-target="#analytics-content" hx-swap="innerHTML"
-            class="px-3 py-1 rounded bg-[#2a2d3a] text-slate-400 hover:text-white text-sm">&#8249; Prev</button>
+            class="btn btn-secondary btn-sm">&#8249; Prev</button>
 
-    <span class="font-bold text-slate-200">{{ month_label }}</span>
+    <span style="font-weight:700;color:var(--text);">{{ month_label }}</span>
 
     <button hx-get="/fragments/analytics/calendar?month={{ next_month }}"
             hx-target="#analytics-content" hx-swap="innerHTML"
-            class="px-3 py-1 rounded bg-[#2a2d3a] text-slate-400 hover:text-white text-sm">Next &#8250;</button>
+            class="btn btn-secondary btn-sm">Next &#8250;</button>
   </div>
 
   <!-- Day-of-week header -->
-  <div class="grid grid-cols-7 gap-1 mb-1">
+  <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:4px;">
     {% for dn in ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'] %}
-    <div class="text-center text-xs text-slate-600 uppercase py-1">{{ dn }}</div>
+    <div style="text-align:center;font-size:.62rem;color:var(--muted);text-transform:uppercase;padding:4px 0;">{{ dn }}</div>
     {% endfor %}
   </div>
 
   <!-- Calendar grid -->
-  <div class="grid grid-cols-7 gap-1">
+  <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;">
     {% for week in calendar_grid %}
       {% for cell in week %}
         {% if cell.day is none %}
-        <div class="aspect-[4/3] w-full rounded"></div>
+        <div style="aspect-ratio:4/3;width:100%;border-radius:4px;"></div>
         {% else %}
           {% set pnl = cell.pnl %}
           {% if pnl is not none %}
             {% if pnl > 0 %}
               {% set intensity = [pnl / max_abs_pnl, 1.0] | min %}
-              {% set bg = 'rgba(74,222,128,' ~ (0.15 + intensity * 0.65) ~ ')' %}
-              {% set tc = '#4ade80' %}
+              {% set bg = 'rgba(0,200,85,' ~ (0.15 + intensity * 0.65) ~ ')' %}
+              {% set tc = '#00c855' %}
             {% elif pnl < 0 %}
               {% set intensity = [pnl | abs / max_abs_pnl, 1.0] | min %}
-              {% set bg = 'rgba(248,113,113,' ~ (0.15 + intensity * 0.65) ~ ')' %}
-              {% set tc = '#f87171' %}
+              {% set bg = 'rgba(232,53,53,' ~ (0.15 + intensity * 0.65) ~ ')' %}
+              {% set tc = '#e83535' %}
             {% else %}
-              {% set bg = '#1e293b' %}
-              {% set tc = '#64748b' %}
+              {% set bg = '#101826' %}
+              {% set tc = '#526a88' %}
             {% endif %}
           {% else %}
-            {% set bg = '#1a1d27' %}
-            {% set tc = '#334155' %}
+            {% set bg = '#07080f' %}
+            {% set tc = '#18253a' %}
           {% endif %}
 
-          <div class="aspect-[4/3] w-full rounded p-1.5 flex flex-col cursor-default overflow-hidden"
-               style="background:{{ bg }}"
+          <div style="aspect-ratio:4/3;width:100%;border-radius:4px;padding:6px;display:flex;flex-direction:column;cursor:default;overflow:hidden;background:{{ bg }};"
                title="{{ cell.date }}: {{ ('$' ~ fmt(pnl, 2)) if pnl is not none else 'No data' }}{{ (' | ' ~ cell.trades ~ ' trades | ' ~ (cell.win_rate * 100) | round | int ~ '% WR') if cell.trades else '' }}">
             <!-- Top row: day number + win rate -->
-            <div class="flex items-start justify-between">
-              <span class="text-xs font-semibold leading-none" style="color:{{ tc }}">{{ cell.day }}</span>
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;">
+              <span style="font-size:.72rem;font-weight:600;line-height:1;color:{{ tc }};">{{ cell.day }}</span>
               {% if cell.trades %}
-              <span class="text-[10px] leading-none font-medium" style="color:{{ tc }}; opacity:0.85">{{ (cell.win_rate * 100) | round | int }}%</span>
+              <span style="font-size:.6rem;line-height:1;font-weight:600;color:{{ tc }};opacity:.85;">{{ (cell.win_rate * 100) | round | int }}%</span>
               {% endif %}
             </div>
-            <!-- PnL — fixed position directly under header -->
             {% if pnl is not none %}
               {% set pnl_abs_str = fmt(pnl | abs, 2) %}
               {% if pnl_abs_str == '0.00' %}
@@ -65,15 +63,13 @@
               {% else %}
                 {% set pnl_label = '-$' ~ pnl_abs_str %}
               {% endif %}
-            <span class="text-xs font-bold leading-tight mt-1" style="color:{{ tc }}">{{ pnl_label }}</span>
+            <span style="font-size:.72rem;font-weight:700;line-height:1.2;margin-top:4px;color:{{ tc }};">{{ pnl_label }}</span>
             {% endif %}
-            <!-- Spacer keeps trade stats pinned to bottom -->
-            <div class="flex-1"></div>
-            <!-- Bottom: trades + volume -->
+            <div style="flex:1;"></div>
             {% if cell.trades %}
-            <div class="flex items-end justify-between">
-              <span class="text-[10px] leading-none" style="color:{{ tc }}; opacity:0.75">{{ cell.trades }}T</span>
-              <span class="text-[10px] leading-none" style="color:{{ tc }}; opacity:0.75">${{ fmt(cell.volume, 0) }}</span>
+            <div style="display:flex;align-items:flex-end;justify-content:space-between;">
+              <span style="font-size:.6rem;line-height:1;color:{{ tc }};opacity:.75;">{{ cell.trades }}T</span>
+              <span style="font-size:.6rem;line-height:1;color:{{ tc }};opacity:.75;">${{ fmt(cell.volume, 0) }}</span>
             </div>
             {% endif %}
           </div>
@@ -83,24 +79,24 @@
   </div>
 
   <!-- Monthly summary row -->
-  <div class="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
-    <div class="flex flex-col gap-0.5">
-      <span class="label">Trading Days</span>
-      <span class="value">{{ trading_days }}</span>
+  <div style="margin-top:14px;display:grid;grid-template-columns:repeat(4,1fr);gap:10px;">
+    <div style="display:flex;flex-direction:column;gap:2px;">
+      <span class="lbl">Trading Days</span>
+      <span class="mono" style="font-size:.82rem;">{{ trading_days }}</span>
     </div>
-    <div class="flex flex-col gap-0.5">
-      <span class="label">Avg Daily PnL</span>
-      <span class="value {{ 'pos-long' if avg_daily >= 0 else 'pos-short' }}">
+    <div style="display:flex;flex-direction:column;gap:2px;">
+      <span class="lbl">Avg Daily PnL</span>
+      <span class="mono" style="font-size:.82rem;{% if avg_daily >= 0 %}color:var(--green){% else %}color:var(--red){% endif %};">
         ${{ fmt(avg_daily) }}
       </span>
     </div>
-    <div class="flex flex-col gap-0.5">
-      <span class="label">Best Day</span>
-      <span class="value pos-long">${{ fmt(best_day) }}</span>
+    <div style="display:flex;flex-direction:column;gap:2px;">
+      <span class="lbl">Best Day</span>
+      <span class="mono pos-long" style="font-size:.82rem;">${{ fmt(best_day) }}</span>
     </div>
-    <div class="flex flex-col gap-0.5">
-      <span class="label">Worst Day</span>
-      <span class="value pos-short">${{ fmt(worst_day) }}</span>
+    <div style="display:flex;flex-direction:column;gap:2px;">
+      <span class="lbl">Worst Day</span>
+      <span class="mono pos-short" style="font-size:.82rem;">${{ fmt(worst_day) }}</span>
     </div>
   </div>
 </div>

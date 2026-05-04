@@ -21,6 +21,14 @@ async def params_page(request: Request):
     return templates.TemplateResponse(request, "params.html", _ctx(request))
 
 
+@router.get("/fragments/ws_log", response_class=HTMLResponse)
+async def frag_ws_log(request: Request):
+    return templates.TemplateResponse(
+        request, "fragments/ws_log.html",
+        _ctx(request, ws_log=list(app_state.ws_status.logs)),
+    )
+
+
 @router.post("/params/update", response_class=HTMLResponse)
 async def update_params(
     request:                   Request,
@@ -54,7 +62,7 @@ async def update_params(
         "risk:params_updated",
         {"ts": datetime.now(TZ_LOCAL).isoformat()},
     )
-    return HTMLResponse('<div class="alert-success p-2 rounded">Parameters saved.</div>')
+    return HTMLResponse('<div class="alert alert-success">Parameters saved.</div>')
 
 
 @router.get("/export")

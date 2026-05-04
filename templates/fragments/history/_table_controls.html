@@ -4,16 +4,18 @@
   filters is a list of dicts: [{"name": "side", "label": "Side", "options": ["long","short"]}]
 #}
 {% macro table_controls(endpoint, target_id, search, filters=[], extra_qs="") %}
-<div class="flex items-center gap-3 mb-2 flex-wrap">
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap;">
   <input type="text" placeholder="Search ticker…"
-         class="hist-input text-xs w-40"
+         class="hist-input"
+         style="font-size:.72rem;width:10rem;"
          value="{{ search }}"
          hx-get="{{ endpoint }}?page=1&{{ extra_qs }}"
          hx-target="#{{ target_id }}" hx-swap="innerHTML"
          hx-trigger="keyup changed delay:300ms"
          name="search">
   {% for f in filters %}
-  <select class="hist-select text-xs"
+  <select class="hist-select"
+          style="font-size:.72rem;"
           name="{{ f.name }}"
           hx-get="{{ endpoint }}?page=1&{{ extra_qs }}"
           hx-target="#{{ target_id }}" hx-swap="innerHTML"

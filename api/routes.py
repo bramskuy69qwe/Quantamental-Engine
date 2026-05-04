@@ -389,7 +389,7 @@ async def calculate_risk(
         if ticker not in app_state.ohlcv_cache:
             await fetch_ohlcv(ticker)
     except Exception as e:
-        return HTMLResponse(f'<div class="alert-error p-3 rounded">Data fetch error: {e}</div>')
+        return HTMLResponse(f'<div class="alert alert-error">Data fetch error: {e}</div>')
 
     calc = run_risk_calculator(
         ticker=ticker, average=average, sl_price=sl_price,
@@ -451,8 +451,8 @@ async def frag_history(request: Request):
         )
     except Exception as e:
         return HTMLResponse(
-            f'<div class="alert-error p-4 rounded">History load error: {e} &mdash; '
-            f'<button class="ml-2 btn btn-secondary btn-sm text-xs" '
+            f'<div class="alert alert-error">History load error: {e} &mdash; '
+            f'<button class="btn btn-secondary btn-sm" style="margin-left:8px;" '
             f'hx-get="/fragments/history" hx-target="#history-tables" hx-swap="innerHTML">Retry</button></div>'
         )
 
@@ -481,9 +481,9 @@ async def post_execution(
         await db.insert_execution_log(row)
     except Exception as exc:
         log.error("insert_execution_log failed: %r", exc)
-        return HTMLResponse('<div class="alert-error p-2 rounded">Failed to log execution — database error.</div>')
+        return HTMLResponse('<div class="alert alert-error">Failed to log execution — database error.</div>')
     log_execution(row)   # secondary CSV backup after DB succeeds
-    return HTMLResponse('<div class="alert-success p-2 rounded">Execution logged.</div>')
+    return HTMLResponse('<div class="alert alert-success">Execution logged.</div>')
 
 
 @router.post("/history/log_close", response_class=HTMLResponse)
@@ -515,9 +515,9 @@ async def post_trade_close(
         await db.insert_trade_history(row)
     except Exception as exc:
         log.error("insert_trade_history failed: %r", exc)
-        return HTMLResponse('<div class="alert-error p-2 rounded">Failed to log trade close — database error.</div>')
+        return HTMLResponse('<div class="alert alert-error">Failed to log trade close — database error.</div>')
     log_trade_close(row)   # secondary CSV backup after DB succeeds
-    return HTMLResponse('<div class="alert-success p-2 rounded">Trade close logged.</div>')
+    return HTMLResponse('<div class="alert alert-success">Trade close logged.</div>')
 
 
 # ── Per-table history fragments ──────────────────────────────────────────
@@ -706,7 +706,7 @@ async def update_pre_trade_note(row_id: int, notes: str = Form("")):
     from markupsafe import escape
     safe = escape(notes)
     return HTMLResponse(
-        f'<span class="text-slate-400 cursor-pointer" '
+        f'<span class="text-sub cursor-pointer" '
         f'onclick="editNote(this,{row_id},\'pre_trade\')" '
         f'title="Click to edit">{safe or "+ Add note"}</span>'
     )
@@ -719,7 +719,7 @@ async def update_trade_history_note(row_id: int, notes: str = Form("")):
     from markupsafe import escape
     safe = escape(notes)
     return HTMLResponse(
-        f'<span class="text-slate-400 cursor-pointer" '
+        f'<span class="text-sub cursor-pointer" '
         f'onclick="editNote(this,{row_id},\'trade_history\')" '
         f'title="Click to edit">{safe or "+ Add note"}</span>'
     )
@@ -733,7 +733,7 @@ async def update_position_note(trade_key: str = Form(""), notes: str = Form(""))
     safe_notes = escape(notes)
     safe_key   = escape(trade_key)
     return HTMLResponse(
-        f'<span class="text-slate-400 cursor-pointer" '
+        f'<span class="text-sub cursor-pointer" '
         f'onclick="editNote(this,\'{safe_key}\',\'position\')" '
         f'title="Click to edit">{safe_notes or "+ Add note"}</span>'
     )
@@ -775,7 +775,7 @@ async def update_params(
         "risk:params_updated",
         {"ts": datetime.now(TZ_LOCAL).isoformat()},
     )
-    return HTMLResponse('<div class="alert-success p-2 rounded">Parameters saved.</div>')
+    return HTMLResponse('<div class="alert alert-success">Parameters saved.</div>')
 
 
 # ── Export ────────────────────────────────────────────────────────────────────
@@ -1496,8 +1496,8 @@ async def activate_selected_account(request: Request, account_id: int = Form(...
     import json as _json
     data = _json.loads(result.body)
     if data.get("status") == "ok":
-        return HTMLResponse('<span class="text-green-400 text-xs">Switched</span>')
-    return HTMLResponse(f'<span class="text-red-400 text-xs">{data.get("error","Error")}</span>')
+        return HTMLResponse('<span class="text-green" style="font-size:.65rem;">Switched</span>')
+    return HTMLResponse(f'<span class="text-red" style="font-size:.65rem;">{data.get("error","Error")}</span>')
 
 
 @router.post("/accounts/{account_id}/activate-frag", response_class=HTMLResponse)
@@ -1527,12 +1527,12 @@ async def add_account_modal(
     try:
         new_id = await account_registry.add_account(name, exchange, market_type, api_key, api_secret)
         response = _HR(
-            f'<span class="text-green-400 text-xs">Account "{name}" added (id={new_id}). Reloading...</span>'
+            f'<span class="text-green" style="font-size:.65rem;">Account "{name}" added (id={new_id}). Reloading...</span>'
             '<script>setTimeout(function(){window.location.reload();},800);</script>'
         )
         return response
     except Exception as exc:
-        return _HR(f'<span class="text-red-400 text-xs">Error: {exc}</span>')
+        return _HR(f'<span class="text-red" style="font-size:.65rem;">Error: {exc}</span>')
 
 
 @router.post("/accounts/test-preview", response_class=HTMLResponse)
@@ -1556,9 +1556,9 @@ async def test_account_preview(
             t0 = _t.monotonic()
             await loop.run_in_executor(pool, ex.fetch_time)
             latency = round((_t.monotonic() - t0) * 1000, 1)
-        return HTMLResponse(f'<span class="text-green-400 text-xs">Connection OK — {latency}ms</span>')
+        return HTMLResponse(f'<span class="text-green" style="font-size:.65rem;">Connection OK — {latency}ms</span>')
     except Exception as exc:
-        return HTMLResponse(f'<span class="text-red-400 text-xs">Failed: {exc}</span>')
+        return HTMLResponse(f'<span class="text-red" style="font-size:.65rem;">Failed: {exc}</span>')
 
 
 # ── Platform settings ─────────────────────────────────────────────────────────
@@ -1675,7 +1675,7 @@ async def frag_backtest_results(request: Request, session_id: int):
     from core.database import db
     session = await db.get_backtest_session(session_id)
     if not session:
-        return HTMLResponse("<p class='text-red-400'>Session not found.</p>", status_code=404)
+        return HTMLResponse("<p class='text-red'>Session not found.</p>", status_code=404)
     trades  = await db.get_backtest_trades(session_id)
     equity  = await db.get_backtest_equity(session_id)
     return templates.TemplateResponse(

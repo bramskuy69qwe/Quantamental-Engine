@@ -159,8 +159,8 @@ async def activate_selected_account(request: Request, account_id: int = Form(...
     result = await activate_account(account_id, request)
     data = _json.loads(result.body)
     if data.get("status") == "ok":
-        return HTMLResponse('<span class="text-green-400 text-xs">Switched</span>')
-    return HTMLResponse(f'<span class="text-red-400 text-xs">{data.get("error","Error")}</span>')
+        return HTMLResponse('<span class="text-green" style="font-size:.65rem;">Switched</span>')
+    return HTMLResponse(f'<span class="text-red" style="font-size:.65rem;">{data.get("error","Error")}</span>')
 
 
 @router.post("/accounts/{account_id}/activate-frag", response_class=HTMLResponse)
@@ -185,11 +185,11 @@ async def add_account_modal(
     try:
         new_id = await account_registry.add_account(name, exchange, market_type, api_key, api_secret)
         return HTMLResponse(
-            f'<span class="text-green-400 text-xs">Account "{name}" added (id={new_id}). Reloading...</span>'
+            f'<span class="text-green" style="font-size:.65rem;">Account "{name}" added (id={new_id}). Reloading...</span>'
             '<script>setTimeout(function(){window.location.reload();},800);</script>'
         )
     except Exception as exc:
-        return HTMLResponse(f'<span class="text-red-400 text-xs">Error: {exc}</span>')
+        return HTMLResponse(f'<span class="text-red" style="font-size:.65rem;">Error: {exc}</span>')
 
 
 @router.post("/accounts/test-preview", response_class=HTMLResponse)
@@ -207,9 +207,9 @@ async def test_account_preview(
             t0 = time.monotonic()
             await loop.run_in_executor(pool, ex.fetch_time)
             latency = round((time.monotonic() - t0) * 1000, 1)
-        return HTMLResponse(f'<span class="text-green-400 text-xs">Connection OK — {latency}ms</span>')
+        return HTMLResponse(f'<span class="text-green" style="font-size:.65rem;">Connection OK — {latency}ms</span>')
     except Exception as exc:
-        return HTMLResponse(f'<span class="text-red-400 text-xs">Failed: {exc}</span>')
+        return HTMLResponse(f'<span class="text-red" style="font-size:.65rem;">Failed: {exc}</span>')
 
 
 @router.get("/api/settings/platform", response_class=JSONResponse)

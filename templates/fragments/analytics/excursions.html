@@ -1,13 +1,14 @@
-<div class="panel p-4">
-  <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
-    <div class="label">MFE / MAE Excursions — {{ period_label }}</div>
+<div class="card">
+  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
+    <div class="lbl" style="margin-bottom:0;">MFE / MAE Excursions — {{ period_label }}</div>
 
     <!-- Filter buttons -->
-    <div class="flex gap-1">
+    <div style="display:flex;gap:4px;">
       {% for val, label in [('all','All'), ('LONG','Long'), ('SHORT','Short')] %}
       <button onclick="filterExcursions('{{ val }}')"
               id="exc-f-{{ val }}"
-              class="preset-btn text-xs {{ 'active' if filter_dir == val else '' }}">{{ label }}</button>
+              class="preset-btn {{ 'active' if filter_dir == val else '' }}"
+              style="font-size:.66rem;">{{ label }}</button>
       {% endfor %}
     </div>
   </div>
@@ -16,27 +17,27 @@
   <div id="excursions-chart"></div>
 
   <!-- Summary stats -->
-  <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
-    <div class="flex flex-col gap-0.5">
-      <span class="label">Avg MFE</span>
-      <span class="value pos-long">${{ fmt(avg_mfe) }}</span>
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:14px;">
+    <div style="display:flex;flex-direction:column;gap:2px;">
+      <span class="lbl">Avg MFE</span>
+      <span class="mono pos-long" style="font-size:.82rem;">${{ fmt(avg_mfe) }}</span>
     </div>
-    <div class="flex flex-col gap-0.5">
-      <span class="label">Avg |MAE|</span>
-      <span class="value pos-short">${{ fmt(avg_mae_abs) }}</span>
+    <div style="display:flex;flex-direction:column;gap:2px;">
+      <span class="lbl">Avg |MAE|</span>
+      <span class="mono pos-short" style="font-size:.82rem;">${{ fmt(avg_mae_abs) }}</span>
     </div>
-    <div class="flex flex-col gap-0.5">
-      <span class="label">Avg ME-Ratio</span>
-      <span class="value text-white">{{ fmt(avg_mer, 2) }}</span>
+    <div style="display:flex;flex-direction:column;gap:2px;">
+      <span class="lbl">Avg ME-Ratio</span>
+      <span class="mono" style="font-size:.82rem;color:var(--text);">{{ fmt(avg_mer, 2) }}</span>
     </div>
-    <div class="flex flex-col gap-0.5">
-      <span class="label" title="Trades where MFE > 2× |MAE|">MFE &gt; 2× MAE</span>
-      <span class="value pos-long">{{ pct_favorable }}%</span>
+    <div style="display:flex;flex-direction:column;gap:2px;">
+      <span class="lbl" title="Trades where MFE > 2× |MAE|">MFE &gt; 2× MAE</span>
+      <span class="mono pos-long" style="font-size:.82rem;">{{ pct_favorable }}%</span>
     </div>
   </div>
 
   <!-- Per-trade table -->
-  <div class="overflow-x-auto mt-4">
+  <div style="overflow-x:auto;margin-top:14px;">
     <table>
       <thead><tr>
         <th>Symbol</th><th>Dir</th><th>Entry</th><th>MFE</th><th>MAE</th>
@@ -46,14 +47,14 @@
         {% for t in trades %}
         {% set mer = (t.mfe / (t.mae | abs)) if t.mae != 0 else 0 %}
         <tr>
-          <td class="font-bold">{{ t.symbol }}</td>
+          <td style="font-weight:700;">{{ t.symbol }}</td>
           <td class="{{ 'pos-long' if t.direction == 'LONG' else 'pos-short' }}">{{ t.direction }}</td>
           <td>{{ fmt(t.entry_price, 4) if t.entry_price else '—' }}</td>
           <td class="pos-long">{{ fmt(t.mfe, 2) }}</td>
           <td class="pos-short">{{ fmt(t.mae, 2) }}</td>
-          <td class="text-white">{{ fmt(mer, 2) if mer else '—' }}</td>
+          <td style="color:var(--text);">{{ fmt(mer, 2) if mer else '—' }}</td>
           <td class="{{ 'pos-long' if t.income >= 0 else 'pos-short' }}">{{ fmt(t.income) }}</td>
-          <td class="text-slate-500 text-xs">
+          <td style="color:var(--muted);font-size:.72rem;">
             {% if t.hold_ms %}{{ fmt_duration(t.hold_ms) }}{% else %}—{% endif %}
           </td>
         </tr>
@@ -63,7 +64,7 @@
   </div>
 
   {% else %}
-  <div class="text-slate-500 text-sm py-6">No reconciled MFE/MAE data for this period.</div>
+  <div style="color:var(--muted);font-size:.78rem;padding:20px 0;">No reconciled MFE/MAE data for this period.</div>
   {% endif %}
 </div>
 
@@ -71,28 +72,26 @@
 <script>
 (function() {
   const data = {{ scatter_data | tojson }};
-  // Pre-split into the same order used by each series so dataPointIndex
-  // (which is series-local) maps to the correct trade in the tooltip.
   const seriesData = [
     data.filter(d => d.z >= 0),
     data.filter(d => d.z <  0),
   ];
   const opts = {
-    chart: { type: 'scatter', height: 280, background: 'transparent', foreColor: '#94a3b8',
+    chart: { type: 'scatter', height: 280, background: 'transparent', foreColor: '#96b4d0',
              toolbar: { show: false }, zoom: { enabled: true } },
     theme: { mode: 'dark' },
     series: [
-      { name: 'Profitable',  data: seriesData[0].map(d => ({ x: d.x, y: d.y })) },
-      { name: 'Loss',        data: seriesData[1].map(d => ({ x: d.x, y: d.y })) },
+      { name: 'Profitable', data: seriesData[0].map(d => ({ x: d.x, y: d.y })) },
+      { name: 'Loss',       data: seriesData[1].map(d => ({ x: d.x, y: d.y })) },
     ],
-    colors: ['#4ade80', '#f87171'],
+    colors: ['#00c855', '#e83535'],
     markers: { size: 5, strokeWidth: 0 },
-    xaxis: { title: { text: 'MFE ($)', style: { color: '#64748b' } }, labels: { formatter: v => '$' + parseFloat(v).toFixed(0) } },
-    yaxis: { title: { text: 'MAE ($)', style: { color: '#64748b' } }, labels: { formatter: v => '$' + parseFloat(v).toFixed(0) } },
-    grid: { borderColor: '#2a2d3a' },
+    xaxis: { title: { text: 'MFE ($)', style: { color: '#526a88' } }, labels: { formatter: v => '$' + parseFloat(v).toFixed(0) } },
+    yaxis: { title: { text: 'MAE ($)', style: { color: '#526a88' } }, labels: { formatter: v => '$' + parseFloat(v).toFixed(0) } },
+    grid: { borderColor: '#18253a' },
     tooltip: { theme: 'dark', custom: function({series, seriesIndex, dataPointIndex, w}) {
       const d = seriesData[seriesIndex][dataPointIndex];
-      return '<div style="padding:6px 10px;font-size:11px">' +
+      return '<div style="padding:6px 10px;font-size:11px;font-family:JetBrains Mono,monospace;">' +
         '<b>' + (d?.sym||'') + '</b><br>' +
         'MFE: $' + (d?.x||0).toFixed(2) + '<br>' +
         'MAE: $' + (d?.y||0).toFixed(2) + '<br>' +

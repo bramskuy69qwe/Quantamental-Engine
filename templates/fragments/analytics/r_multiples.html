@@ -1,44 +1,44 @@
-<div class="panel p-4">
-  <div class="label mb-3">R-Multiple Distribution — {{ period_label }}</div>
+<div class="card">
+  <div class="lbl" style="margin-bottom:10px;">R-Multiple Distribution — {{ period_label }}</div>
 
   {% if r_values %}
-  <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+  <div style="display:grid;grid-template-columns:2fr 1fr;gap:14px;">
 
     <!-- Chart -->
-    <div class="md:col-span-2">
+    <div>
       <div id="r-hist-chart"></div>
     </div>
 
     <!-- Stats panel -->
-    <div class="flex flex-col gap-3">
-      {% macro rstat(label, val, cls='text-slate-200') %}
-      <div class="flex flex-col gap-0.5">
-        <span class="label">{{ label }}</span>
-        <span class="value {{ cls }}">{{ val }}</span>
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      {% macro rstat(label, val, color='var(--text)') %}
+      <div style="display:flex;flex-direction:column;gap:2px;">
+        <span class="lbl">{{ label }}</span>
+        <span class="mono" style="font-size:.82rem;color:{{ color }};">{{ val }}</span>
       </div>
       {% endmacro %}
 
       {% set wr_pct = (r_stats.win_rate * 100) | round(1) %}
-      {{ rstat("Total Trades",    r_stats.count) }}
-      {{ rstat("Win Rate",        wr_pct ~ "%",
-               'pos-long' if r_stats.win_rate >= 0.5 else 'pos-short') }}
-      {{ rstat("Expectancy",      fmt(r_stats.expectancy, 3) ~ "R",
-               'pos-long' if r_stats.expectancy > 0 else 'pos-short') }}
-      {{ rstat("Profit Factor",   fmt(r_stats.profit_factor, 2),
-               'pos-long' if r_stats.profit_factor >= 1.5 else ('text-yellow-400' if r_stats.profit_factor >= 1 else 'pos-short')) }}
-      {{ rstat("Avg Win R",       fmt(r_stats.avg_win_r, 2) ~ "R",  'pos-long') }}
-      {{ rstat("Avg Loss R",      fmt(r_stats.avg_loss_r, 2) ~ "R", 'pos-short') }}
-      {{ rstat("Best R",          fmt(r_stats.best, 2)  ~ "R", 'pos-long') }}
-      {{ rstat("Worst R",         fmt(r_stats.worst, 2) ~ "R", 'pos-short') }}
-      {{ rstat("Median R",        fmt(r_stats.median, 2) ~ "R") }}
-      {{ rstat("Mean R",          fmt(r_stats.mean, 3)   ~ "R") }}
+      {{ rstat("Total Trades",  r_stats.count) }}
+      {{ rstat("Win Rate",      wr_pct ~ "%",
+               'var(--green)' if r_stats.win_rate >= 0.5 else 'var(--red)') }}
+      {{ rstat("Expectancy",    fmt(r_stats.expectancy, 3) ~ "R",
+               'var(--green)' if r_stats.expectancy > 0 else 'var(--red)') }}
+      {{ rstat("Profit Factor", fmt(r_stats.profit_factor, 2),
+               'var(--green)' if r_stats.profit_factor >= 1.5 else ('var(--amber)' if r_stats.profit_factor >= 1 else 'var(--red)')) }}
+      {{ rstat("Avg Win R",  fmt(r_stats.avg_win_r, 2)  ~ "R", 'var(--green)') }}
+      {{ rstat("Avg Loss R", fmt(r_stats.avg_loss_r, 2) ~ "R", 'var(--red)') }}
+      {{ rstat("Best R",     fmt(r_stats.best, 2)  ~ "R", 'var(--green)') }}
+      {{ rstat("Worst R",    fmt(r_stats.worst, 2) ~ "R", 'var(--red)') }}
+      {{ rstat("Median R",   fmt(r_stats.median, 2) ~ "R") }}
+      {{ rstat("Mean R",     fmt(r_stats.mean, 3)   ~ "R") }}
     </div>
   </div>
 
   {% else %}
-  <div class="text-slate-500 text-sm py-6">
+  <div style="color:var(--muted);font-size:.78rem;padding:20px 0;">
     No R-multiple data for this period.
-    R-multiples come from the manual Trade History log (<span class="text-slate-400">individual_realized_r</span> field).
+    R-multiples come from the manual Trade History log (<span style="color:var(--sub);">individual_realized_r</span> field).
   </div>
   {% endif %}
 </div>
@@ -47,9 +47,9 @@
 <script>
 (function() {
   const bins  = {{ histogram | tojson }};
-  const colors = bins.map(b => b.pos ? '#4ade80' : '#f87171');
+  const colors = bins.map(b => b.pos ? '#00c855' : '#e83535');
   const opts = {
-    chart: { type: 'bar', height: 260, background: 'transparent', foreColor: '#94a3b8',
+    chart: { type: 'bar', height: 260, background: 'transparent', foreColor: '#96b4d0',
              toolbar: { show: false } },
     theme: { mode: 'dark' },
     series: [{ name: 'Trades', data: bins.map(b => b.count) }],
@@ -58,14 +58,14 @@
     legend: { show: false },
     xaxis: {
       categories: bins.map(b => b.label),
-      title: { text: 'R-Multiple', style: { color: '#64748b', fontSize: '11px' } },
+      title: { text: 'R-Multiple', style: { color: '#526a88', fontSize: '11px' } },
     },
-    yaxis: { title: { text: 'Count', style: { color: '#64748b', fontSize: '11px' } } },
-    grid: { borderColor: '#2a2d3a' },
+    yaxis: { title: { text: 'Count', style: { color: '#526a88', fontSize: '11px' } } },
+    grid: { borderColor: '#18253a' },
     dataLabels: {
       enabled: true,
       formatter: v => v > 0 ? v : '',
-      style: { fontSize: '11px', colors: ['#e2e8f0'] },
+      style: { fontSize: '11px', colors: ['#e8f2ff'] },
     },
     tooltip: { theme: 'dark' },
   };

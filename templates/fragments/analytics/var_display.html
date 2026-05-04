@@ -1,42 +1,34 @@
-<div class="space-y-4">
+<div class="card">
+  <div class="lbl" style="margin-bottom:10px;">Value at Risk &amp; Risk Metrics — {{ period_label }}</div>
 
-  <!-- Cards row -->
-  <div class="panel p-4">
-    <div class="label mb-3">Value at Risk &amp; Risk Metrics — {{ period_label }}</div>
+  {% if not has_data %}
+  <div style="color:var(--muted);font-size:.78rem;padding:6px 0;">
+    Insufficient data (need ≥ 20 trading days). Currently have {{ returns | length }} days.
+  </div>
+  {% else %}
 
-    {% if not has_data %}
-    <div class="text-slate-500 text-sm py-2">
-      Insufficient data (need ≥ 20 trading days). Currently have {{ returns | length }} days.
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px;">
+
+    {% macro var_card(label, val, desc) %}
+    <div style="display:flex;flex-direction:column;gap:4px;padding:10px;border-radius:4px;background:var(--panel);border:1px solid var(--border);" title="{{ desc }}">
+      <span class="lbl">{{ label }}</span>
+      {% set pct = val * 100 %}
+      {% set usdt = val * cur_equity %}
+      <span class="mono pos-short" style="font-size:1rem;">{{ fmt(pct | abs, 2) }}%</span>
+      <span style="font-size:.72rem;color:var(--sub);">${{ fmt(usdt | abs, 0) }}</span>
     </div>
-    {% else %}
+    {% endmacro %}
 
-    <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
-
-      {% macro var_card(label, val, desc) %}
-      <div class="flex flex-col gap-1 p-3 rounded bg-[#0f1117] border border-[#2a2d3a]" title="{{ desc }}">
-        <span class="label text-xs">{{ label }}</span>
-        {% set pct = val * 100 %}
-        {% set usdt = val * cur_equity %}
-        <span class="text-base font-bold pos-short">{{ fmt(pct | abs, 2) }}%</span>
-        <span class="text-xs text-slate-400">${{ fmt(usdt | abs, 0) }}</span>
-      </div>
-      {% endmacro %}
-
-      {{ var_card("Historical VaR (95%)", var95,  "At 95% confidence: worst daily loss exceeded 5% of the time") }}
-      {{ var_card("Historical VaR (99%)", var99,  "At 99% confidence: worst daily loss exceeded 1% of the time") }}
-      {{ var_card("CVaR / ES (95%)",     cvar95, "Expected Shortfall: average loss on the worst 5% of days") }}
-      {{ var_card("Parametric VaR (95%)", pvar95, "Gaussian VaR: assumes normally distributed returns (μ - 1.645σ)") }}
-    </div>
-
-    <!-- Return distribution chart -->
-    <div>
-      <div class="label mb-2">Daily Return Distribution</div>
-      <div id="var-dist-chart"></div>
-    </div>
-
-    {% endif %}
+    {{ var_card("Historical VaR (95%)", var95,  "At 95% confidence: worst daily loss exceeded 5% of the time") }}
+    {{ var_card("Historical VaR (99%)", var99,  "At 99% confidence: worst daily loss exceeded 1% of the time") }}
+    {{ var_card("CVaR / ES (95%)",     cvar95, "Expected Shortfall: average loss on the worst 5% of days") }}
+    {{ var_card("Parametric VaR (95%)", pvar95, "Gaussian VaR: assumes normally distributed returns (μ - 1.645σ)") }}
   </div>
 
+  <div class="lbl" style="margin-bottom:8px;">Daily Return Distribution</div>
+  <div id="var-dist-chart"></div>
+
+  {% endif %}
 </div>
 
 {% if has_data %}
@@ -46,22 +38,22 @@
   const var95x = {{ (var95 * 100) | round(3) }};
 
   const opts = {
-    chart: { type: 'bar', height: 220, background: 'transparent', foreColor: '#94a3b8',
+    chart: { type: 'bar', height: 220, background: 'transparent', foreColor: '#96b4d0',
              toolbar: { show: false } },
     theme: { mode: 'dark' },
     series: [{ name: 'Days', data: data.map(d => ({ x: d.x.toFixed(2) + '%', y: d.y })) }],
-    colors: data.map(d => d.x <= var95x ? '#f87171' : (d.x >= 0 ? '#4ade80' : '#94a3b8')),
+    colors: data.map(d => d.x <= var95x ? '#e83535' : (d.x >= 0 ? '#00c855' : '#526a88')),
     plotOptions: { bar: { distributed: true, borderRadius: 2, columnWidth: '90%' } },
     legend: { show: false },
-    xaxis: { title: { text: 'Daily Return (%)', style: { color: '#64748b', fontSize: '11px' } } },
-    yaxis: { title: { text: 'Count', style: { color: '#64748b', fontSize: '11px' } } },
-    grid: { borderColor: '#2a2d3a' },
+    xaxis: { title: { text: 'Daily Return (%)', style: { color: '#526a88', fontSize: '11px' } } },
+    yaxis: { title: { text: 'Count', style: { color: '#526a88', fontSize: '11px' } } },
+    grid: { borderColor: '#18253a' },
     dataLabels: { enabled: false },
     annotations: {
       xaxis: [{
         x: var95x.toFixed(2) + '%',
-        borderColor: '#f87171',
-        label: { text: 'VaR 95%', style: { color: '#f87171', background: '#1a1d27' } },
+        borderColor: '#e83535',
+        label: { text: 'VaR 95%', style: { color: '#e83535', background: '#07080f' } },
       }],
     },
     tooltip: { theme: 'dark' },

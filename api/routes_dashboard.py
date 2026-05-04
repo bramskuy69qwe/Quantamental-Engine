@@ -26,32 +26,67 @@ async def index(request: Request):
 @router.get("/fragments/dashboard", response_class=HTMLResponse)
 async def frag_dashboard(request: Request):
     funding = await _get_funding_cached()
+    acc = app_state.account_state
+    pf  = app_state.portfolio
+    prm = app_state.params
+
+    # Funding exposure lines
+    funding_lines = []
+    for sym, rate in (funding or {}).items():
+        if any(p.ticker == sym for p in app_state.positions):
+            sign = "+" if rate >= 0 else ""
+            funding_lines.append(f"{sym} {sign}{rate*100:.4f}%")
+
+    # Sector exposure lines (placeholder — no sector map yet)
+    sector_lines = []
+
     return templates.TemplateResponse(
         request, "fragments/dashboard_body.html",
         _ctx(request,
-             acc=app_state.account_state,
-             pf=app_state.portfolio,
-             ex=app_state.exchange_info,
-             positions=app_state.positions,
-             funding=funding),
+             exposure_pct=pf.total_exposure * 100,
+             max_exposure_pct=prm["max_exposure"] * 100,
+             dd_state=pf.dd_state,
+             drawdown_pct=pf.drawdown * 100,
+             drawdown_state=pf.dd_state,
+             max_dd_pct=prm["max_dd_percent"] * 100,
+             weekly_pnl_state=pf.weekly_pnl_state,
+             open_positions=app_state.positions,
+             max_open_positions=prm["max_position_count"],
+             funding_lines=funding_lines,
+             sector_lines=sector_lines),
     )
 
 
 @router.get("/fragments/dashboard/top", response_class=HTMLResponse)
 async def frag_dashboard_top(request: Request):
+    acc = app_state.account_state
+    pf  = app_state.portfolio
     return templates.TemplateResponse(
         request, "fragments/dashboard_top.html",
         _ctx(request,
-             acc=app_state.account_state,
-             pf=app_state.portfolio),
+             total_equity=acc.total_equity,
+             daily_pnl=acc.daily_pnl,
+             daily_pnl_pct=acc.daily_pnl_percent * 100,
+             weekly_pnl=pf.total_weekly_pnl,
+             weekly_pnl_pct=pf.total_weekly_pnl_percent * 100,
+             available_margin=acc.available_margin,
+             margin_used=acc.total_margin_used,
+             unrealized_pnl=acc.total_unrealized,
+             bod_equity=acc.bod_equity),
     )
 
 
 @router.get("/fragments/dashboard/exchange_info", response_class=HTMLResponse)
 async def frag_dashboard_exchange_info(request: Request):
+    ex = app_state.exchange_info
     return templates.TemplateResponse(
         request, "fragments/dashboard_exchange_info.html",
-        _ctx(request, ex=app_state.exchange_info),
+        _ctx(request,
+             exchange_name=ex.name,
+             server_time=ex.server_time or "—",
+             latency_str=f"{ex.latency_ms:.0f}ms" if ex.latency_ms else "—",
+             maker_fee_str=f"{ex.maker_fee*100:.4f}%" if ex.maker_fee else "—",
+             taker_fee_str=f"{ex.taker_fee*100:.4f}%" if ex.taker_fee else "—"),
     )
 
 
@@ -93,11 +128,61 @@ async def frag_dashboard_journal_stats(request: Request):
     if isinstance(top_pairs, Exception):  top_pairs = []
 
     period_label = start.strftime("%B %Y")
+
+    # Compute flat vars the template expects
+    initial_eq = boundaries.get("initial_equity", 0.0)
+    final_eq   = boundaries.get("final_equity", 0.0)
+    monthly_pnl = final_eq - initial_eq
+    monthly_pnl_pct = (monthly_pnl / initial_eq * 100) if initial_eq > 0 else 0.0
+
+    total_trades = int(stats.get("total_trades", 0))
+    win_count    = int(stats.get("winning_trades", 0))
+    loss_count   = int(stats.get("losing_trades", 0))
+    win_rate     = (win_count / total_trades * 100) if total_trades > 0 else 0.0
+    avg_profit   = stats.get("avg_profit", 0.0)
+    avg_loss     = stats.get("avg_loss", 0.0)
+    avg_rr       = round(abs(avg_profit / avg_loss), 2) if avg_loss and avg_loss != 0 else 0.0
+
+    # Build params wrapper with the key names the template expects
+    prm = app_state.params
+    params_view = {
+        "individual_risk_per_trade": prm.get("individual_risk_per_trade", 0.01),
+        "max_weekly_loss_pct":       prm.get("max_w_loss_percent", 0.05),
+        "max_drawdown_pct":          prm.get("max_dd_percent", 0.10),
+        "max_exposure_multiple":     prm.get("max_exposure", 3.0),
+        "max_open_positions":        prm.get("max_position_count", 10),
+        "max_correlated_exposure":   prm.get("max_correlated_exposure", 0.5),
+    }
+
     return templates.TemplateResponse(
         request,
         "fragments/dashboard_journal_stats.html",
-        _ctx(request, stats=stats, boundaries=boundaries,
-             top_pairs=top_pairs, period_label=period_label),
+        _ctx(request,
+             month_label=period_label,
+             monthly_pnl=monthly_pnl,
+             monthly_pnl_pct=monthly_pnl_pct,
+             win_rate=win_rate,
+             trade_count=total_trades,
+             win_count=win_count,
+             loss_count=loss_count,
+             avg_rr=avg_rr,
+             avg_profit=avg_profit,
+             avg_loss=avg_loss,
+             max_dd_month=boundaries.get("max_drawdown", 0.0) * 100,
+             monthly_volume=stats.get("trading_volume", 0.0),
+             broker_fee=stats.get("total_fees", 0.0),
+             long_count=int(stats.get("num_longs", 0)),
+             short_count=int(stats.get("num_shorts", 0)),
+             top_pairs=top_pairs,
+             params=params_view),
+    )
+
+
+@router.get("/fragments/dashboard/secondary", response_class=HTMLResponse)
+async def frag_dashboard_secondary(request: Request):
+    return templates.TemplateResponse(
+        request, "fragments/dashboard_secondary.html",
+        _ctx(request, acc=app_state.account_state),
     )
 
 
