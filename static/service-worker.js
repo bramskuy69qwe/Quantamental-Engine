@@ -1,5 +1,5 @@
 /**
- * Quantamental Risk Engine — Service Worker
+ * Quantamental Engine v2.1 — Service Worker
  *
  * Strategy:
  *   /api/*, /fragments/*, /ws/* → Network-first (live data must be fresh)
@@ -104,7 +104,7 @@ async function networkFirst(request) {
         'display:flex;align-items:center;justify-content:center;height:100vh;' +
         'flex-direction:column}h1{font-size:1.5rem;margin-bottom:.5rem}' +
         'p{color:#96b4d0;font-size:.9rem}</style></head><body>' +
-        '<h1>Offline</h1><p>Quantamental Risk Engine is not reachable. ' +
+        '<h1>Offline</h1><p>Quantamental Engine is not reachable. ' +
         'Check that uvicorn is running.</p></body></html>',
         { headers: { 'Content-Type': 'text/html' } }
       );

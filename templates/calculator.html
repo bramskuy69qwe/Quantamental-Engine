@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% set active_page = "calculator" %}
-{% block title %}Risk Calculator — Risk Engine{% endblock %}
+{% block title %}Risk Calculator — {{ project_name }}{% endblock %}
 
 {% block content %}
 <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:6px;align-items:start;">
@@ -251,20 +251,32 @@
        ══════════════════════════════════════════════════════════════ -->
   <div style="display:flex;flex-direction:column;gap:6px;">
 
-    <!-- Auto-refresh controls -->
-    <div id="auto-refresh-bar" class="card card-p8 hidden">
-      <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
-        <span class="lbl" style="margin-bottom:0;">AUTO-REFRESH:</span>
-        <button onclick="setRefreshRate(1)"  id="rr-1"  class="btn btn-primary   btn-sm">1s</button>
-        <button onclick="setRefreshRate(5)"  id="rr-5"  class="btn btn-secondary btn-sm">5s</button>
-        <button onclick="setRefreshRate(10)" id="rr-10" class="btn btn-secondary btn-sm">10s</button>
-        <button onclick="setRefreshRate(30)" id="rr-30" class="btn btn-secondary btn-sm">30s</button>
-        <button onclick="toggleAutoRefresh()" id="rr-pause" class="btn btn-secondary btn-sm">⏸</button>
-      </div>
+    <!-- Result panel (auto-refresh controls are inside calc_result.html fragment) -->
+    <div id="calc-result">
     </div>
 
-    <!-- Result panel -->
-    <div id="calc-result">
+    <!-- Ghost interface (default state, copied into calc-result on clear) -->
+    <template id="calc-ghost">
+      <!-- Auto-refresh controls -->
+      <div class="card card-p8" style="margin-bottom:6px;">
+        <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+          <span class="lbl" style="margin-bottom:0;">&#10227; Auto-refresh:</span>
+          <button type="button" class="btn btn-secondary btn-sm" disabled>1s</button>
+          <button type="button" class="btn btn-secondary btn-sm" disabled>5s</button>
+          <button type="button" class="btn btn-secondary btn-sm" disabled>10s</button>
+          <button type="button" class="btn btn-secondary btn-sm" disabled>30s</button>
+          <button type="button" class="btn btn-secondary btn-sm" disabled>&#9208;</button>
+        </div>
+      </div>
+
+      <!-- Regime -->
+      <div class="card card-p8" style="margin-bottom:6px;">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span class="lbl" style="margin-bottom:0;">Regime</span>
+          <span class="badge regime-neutral" style="opacity:.5;">—</span>
+          <span style="font-family:var(--font-mono);font-size:.72rem;color:var(--muted);">awaiting calculation</span>
+        </div>
+      </div>
 
       <!-- ATR badge row -->
       <div class="card card-p8" style="margin-bottom:6px;">
@@ -277,12 +289,14 @@
       <!-- Main metrics -->
       <div class="card card-p8" style="margin-bottom:6px;">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;">
-          {% for label in ['Ticker','Side','Order Type','Avg Entry','Risk USDT','Base Size (USDT)','Est. Fill Price','1% Depth (USDT)'] %}
-          <div class="stat">
-            <span class="lbl">{{ label }}</span>
-            <div class="val" style="color:var(--sub);">—</div>
-          </div>
-          {% endfor %}
+          <div class="stat"><span class="lbl">Ticker</span><div class="val" style="color:var(--sub);">—</div></div>
+          <div class="stat"><span class="lbl">Side</span><div class="val" style="color:var(--sub);">—</div></div>
+          <div class="stat"><span class="lbl">Order Type</span><div class="val" style="color:var(--sub);">—</div></div>
+          <div class="stat"><span class="lbl">Avg Entry</span><div class="val" style="color:var(--sub);">—</div></div>
+          <div class="stat"><span class="lbl">Risk USDT</span><div class="val" style="color:var(--sub);">—</div></div>
+          <div class="stat"><span class="lbl">Base Size (USDT)</span><div class="val" style="color:var(--sub);">—</div></div>
+          <div class="stat"><span class="lbl">Est. Fill Price</span><div class="val" style="color:var(--sub);">—</div></div>
+          <div class="stat"><span class="lbl">1% Depth (USDT)</span><div class="val" style="color:var(--sub);">—</div></div>
           <div class="stat" style="grid-column:1/-1;">
             <span class="lbl">Best Bid / Ask</span>
             <div class="val" style="color:var(--sub);">—</div>
@@ -294,22 +308,10 @@
       <div class="card card-p8" style="margin-bottom:6px;">
         <span class="sec-lbl">Calculated Position</span>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;">
-          <div class="stat">
-            <span class="lbl">_size (contracts)</span>
-            <div class="val" style="font-size:1.4rem;color:var(--sub);">—</div>
-          </div>
-          <div class="stat">
-            <span class="lbl">Notional / est_size (USDT)</span>
-            <div class="val" style="color:var(--sub);">—</div>
-          </div>
-          <div class="stat">
-            <span class="lbl">TP → USDT profit</span>
-            <div class="val" style="color:var(--sub);">—</div>
-          </div>
-          <div class="stat">
-            <span class="lbl">SL → USDT loss</span>
-            <div class="val" style="color:var(--sub);">—</div>
-          </div>
+          <div class="stat"><span class="lbl">_size (contracts)</span><div class="val" style="font-size:1.4rem;color:var(--sub);">—</div></div>
+          <div class="stat"><span class="lbl">Notional / est_size (USDT)</span><div class="val" style="color:var(--sub);">—</div></div>
+          <div class="stat"><span class="lbl">TP → USDT profit</span><div class="val" style="color:var(--sub);">—</div></div>
+          <div class="stat"><span class="lbl">SL → USDT loss</span><div class="val" style="color:var(--sub);">—</div></div>
         </div>
       </div>
 
@@ -317,12 +319,13 @@
       <div class="card card-p8" style="margin-bottom:6px;">
         <span class="sec-lbl">Estimations</span>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px 12px;">
-          {% for label in ['Est. Slippage','Est. Slippage USDT','Est. Net Profit','Est. Net Loss','Est. R:R','Est. Portfolio Exposure','Fee (2×)'] %}
-          <div class="stat">
-            <span class="lbl">{{ label }}</span>
-            <div class="val" style="color:var(--sub);">—</div>
-          </div>
-          {% endfor %}
+          <div class="stat"><span class="lbl">Est. Slippage</span><div class="val" style="color:var(--sub);">—</div></div>
+          <div class="stat"><span class="lbl">Est. Slippage USDT</span><div class="val" style="color:var(--sub);">—</div></div>
+          <div class="stat"><span class="lbl">Est. Net Profit</span><div class="val" style="color:var(--sub);">—</div></div>
+          <div class="stat"><span class="lbl">Est. Net Loss</span><div class="val" style="color:var(--sub);">—</div></div>
+          <div class="stat"><span class="lbl">Est. R:R</span><div class="val" style="color:var(--sub);">—</div></div>
+          <div class="stat"><span class="lbl">Est. Portfolio Exp.</span><div class="val" style="color:var(--sub);">—</div></div>
+          <div class="stat"><span class="lbl">Fee (2x)</span><div class="val" style="color:var(--sub);">—</div></div>
         </div>
       </div>
 
@@ -331,10 +334,14 @@
         <span class="sec-lbl">Correlated Sector Exposure</span>
         <div style="color:var(--sub);font-size:.72rem;">—</div>
       </div>
-    </div>
+    </template>
 
     <!-- Orderbook (persistent) -->
     <div id="orderbook-container">
+    </div>
+
+    <!-- Ghost orderbook (default state) -->
+    <template id="orderbook-ghost">
       <div class="card card-p8">
         <span class="sec-lbl">Live Orderbook</span>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
@@ -356,7 +363,7 @@
           </div>
         </div>
       </div>
-    </div>
+    </template>
   </div>
 
 </div>
@@ -488,7 +495,6 @@ document.body.addEventListener('htmx:afterSettle',function(evt){
   var ticker=document.getElementById('ticker-input').value.trim().toUpperCase();_calcTicker=ticker;
   startAutoRefresh();updateOrderbook(ticker);populateSetupSummary();
   if(_pendingManualCalc){saveToCalcHistory();_pendingManualCalc=false;}
-  document.getElementById('auto-refresh-bar').classList.remove('hidden');
   saveCalcState();
 });
 document.body.addEventListener('htmx:responseError',function(evt){
@@ -547,6 +553,8 @@ function renderCalcHistory(){
 function recallHistory(idx){
   var h=_calcHistory[idx];if(!h)return;
   stopAutoRefresh();if(_priceInterval){clearInterval(_priceInterval);_priceInterval=null;}_obTicker='';
+  // Seed _livePrice from stored entry so getEffectiveEntry() works before price poll returns
+  if(h.entry&&h.entry>0)_livePrice=h.entry;
   setOrderType(h.orderType||'market');document.getElementById('ticker-input').value=h.ticker;schedulePricePoll();
   if(h.limitPrice)document.getElementById('limit-price').value=h.limitPrice;
   setTpSlMode(h.tpslMode||'price');if(h.pctSide)setSide(h.pctSide);
@@ -560,7 +568,10 @@ function recallHistory(idx){
   document.querySelector('[name="model_desc"]').value=h.modelDesc||'';
   if(h.sizeUnit)_sizeUnit=h.sizeUnit;
   _hasCalculated=true;_calcTicker=h.ticker;updateOrderbook(h.ticker);
-  // Submit form immediately to get fresh data instead of showing stale cached HTML
+  // Update entry price display immediately
+  var epEl=document.getElementById('market-price');
+  if(epEl&&h.entry>0)epEl.value=h.entry;
+  // Submit form — entry price is now available via _livePrice fallback
   setTimeout(function(){document.getElementById('calc-form').requestSubmit();},100);
   updatePricePreview();updatePctPreview();saveCalcState();
 }
@@ -606,6 +617,11 @@ function clearCalculator(){
   document.getElementById('price-preview').innerHTML='TP: — &nbsp;|&nbsp; SL: —';document.getElementById('pct-preview').innerHTML='TP: — &nbsp;|&nbsp; SL: —';
   ['ss-ticker','ss-entry','ss-tp','ss-sl','ss-size'].forEach(function(id){document.getElementById(id).value='—';});
   _sizeUnit='notional';setSizeUnit('notional');setOrderType('market');setTpSlMode('price');
+  // Reset right-side panels to ghost interface
+  var ghost=document.getElementById('calc-ghost');
+  if(ghost)document.getElementById('calc-result').innerHTML=ghost.innerHTML;
+  var obGhost=document.getElementById('orderbook-ghost');
+  if(obGhost)document.getElementById('orderbook-container').innerHTML=obGhost.innerHTML;
   try{localStorage.removeItem('calc_state');sessionStorage.removeItem('calc_result');}catch(e){}
 }
 
@@ -631,13 +647,21 @@ function restoreCalcState(){
   if(s.ticker && sessionStorage.getItem('calc_result')){
     _hasCalculated=true;_calcTicker=s.ticker;_obTicker='';
     if(s.ticker)updateOrderbook(s.ticker);
-    document.getElementById('auto-refresh-bar').classList.remove('hidden');
-    // Submit form to get fresh data instead of showing stale cached HTML
+      // Submit form to get fresh data instead of showing stale cached HTML
     setTimeout(function(){document.getElementById('calc-form').requestSubmit();},200);
   }
   updatePricePreview();updatePctPreview();}catch(e){}
 }
 document.getElementById('calc-form').addEventListener('input',function(){clearTimeout(_saveDebounce);_saveDebounce=setTimeout(saveCalcState,300);});
-document.addEventListener('DOMContentLoaded',function(){loadCalcHistory();restoreCalcState();});
+document.addEventListener('DOMContentLoaded',function(){
+  // Show ghost interfaces on initial load (before any calc or restore)
+  var ghost=document.getElementById('calc-ghost');
+  var result=document.getElementById('calc-result');
+  if(ghost&&result&&!result.innerHTML.trim())result.innerHTML=ghost.innerHTML;
+  var obGhost=document.getElementById('orderbook-ghost');
+  var obContainer=document.getElementById('orderbook-container');
+  if(obGhost&&obContainer&&!obContainer.innerHTML.trim())obContainer.innerHTML=obGhost.innerHTML;
+  loadCalcHistory();restoreCalcState();
+});
 </script>
 {% endblock %}

@@ -1,4 +1,4 @@
-# Quantamental Risk Engine v2.1 — Architecture
+# Quantamental Engine v2.1 — Architecture
 
 Pre-trade risk gatekeeper + post-trade logger for discretionary crypto futures trading on Binance USD-M perpetuals.
 

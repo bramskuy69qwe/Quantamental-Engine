@@ -9,7 +9,7 @@
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png" />
   <link rel="apple-touch-icon" href="/static/icon-192.png" />
-  <title>{% block title %}Quantamental Risk Engine v2.1{% endblock %}</title>
+  <title>{% block title %}{{ project_name }}{% endblock %}</title>
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -266,7 +266,7 @@
 
   <div style="display:flex;align-items:center;gap:8px;min-width:0;overflow:hidden;">
     <span style="font-family:var(--font-ui);font-size:.72rem;font-weight:800;color:var(--blue);letter-spacing:.06em;white-space:nowrap;flex-shrink:0;">
-      QE <span style="color:var(--sub);font-weight:400;font-size:.65rem;">v2.1</span>
+      {{ project_name_ }} <span style="color:var(--sub);font-weight:400;font-size:.65rem;">{{ project_version_ }}</span>
     </span>
     <nav style="display:flex;overflow-x:auto;scrollbar-width:none;flex-shrink:1;">
       {% set nav_items = [
@@ -443,7 +443,7 @@ document.body.addEventListener("account-added",function(){
 </main>
 
 <footer style="text-align:center;color:var(--muted);font-size:.6rem;padding:6px;font-family:var(--font-mono);flex-shrink:0;">
-  Quantamental Risk Engine v2.1 &mdash; Binance USD-M Futures &mdash; UTC+7 &mdash; {{ now }}
+  {{ project_name }} &mdash; Binance USD-M Futures &mdash; UTC+7 &mdash; {{ now }}
 </footer>
 
 <script>

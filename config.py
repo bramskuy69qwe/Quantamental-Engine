@@ -3,6 +3,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# ── Project identity ─────────────────────────────────────────────────────────
+PROJECT_NAME_    = "Quantamental Engine"
+PROJECT_VERSION_ = "v2.1"
+PROJECT_NAME     = f"{PROJECT_NAME_} {PROJECT_VERSION_}"  # "Quantamental Engine v2.1"
+
 # ── Exchange ──────────────────────────────────────────────────────────────────
 # NOTE: BINANCE_API_KEY / BINANCE_API_SECRET are kept for the one-time seed
 # migration that imports them as Account 1 in the accounts table.

@@ -1,5 +1,5 @@
 """
-Shared constants for the Risk Engine.
+Shared constants for the Quantamental Engine.
 
 Centralizes magic numbers that appear across multiple modules.
 """

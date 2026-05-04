@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import Request
 from fastapi.templating import Jinja2Templates
 
+import config
 from core.state import app_state, TZ_LOCAL
 from core.account_registry import account_registry
 
@@ -80,6 +81,9 @@ def _hold_time(entry_iso: str) -> str:
 templates.env.globals["fmt"] = _fmt
 templates.env.globals["fmt_duration"] = _fmt_duration
 templates.env.globals["hold_time"] = _hold_time
+templates.env.globals["project_name"] = config.PROJECT_NAME
+templates.env.globals["project_name_"] = config.PROJECT_NAME_
+templates.env.globals["project_version_"] = config.PROJECT_VERSION_
 
 
 def _ctx(request: Request, **extra) -> dict:

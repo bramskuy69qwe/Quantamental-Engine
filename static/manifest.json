@@ -1,7 +1,7 @@
 {
-  "name": "Quantamental Risk Engine",
+  "name": "Quantamental Engine v2.1",
   "short_name": "QRE",
-  "description": "Pre-trade risk gatekeeper for discretionary crypto futures trading",
+  "description": "Pre-trade gatekeeper for discretionary crypto futures trading",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#07080f",

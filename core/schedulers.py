@@ -1,5 +1,5 @@
 """
-Background task registry and schedulers for the Risk Engine.
+Background task registry and schedulers for the Quantamental Engine.
 
 All long-running loops (BOD, regime, news, account refresh, etc.) live here.
 main.py calls start_background_tasks() during lifespan startup.
@@ -233,8 +233,8 @@ async def _startup_fetch():
         log.warning("Initial regime computation failed: %s", e)
 
     app_state.is_initializing = False
-    app_state.ws_status.add_log("Risk Engine fully initialized.")
-    log.info("Background startup complete — Risk Engine fully ready.")
+    app_state.ws_status.add_log(f"{config.PROJECT_NAME} fully initialized.")
+    log.info(f"Background startup complete — {config.PROJECT_NAME} fully ready.")
 
 
 # ── Regime refresh loop ──────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 """
-Quantamental Risk Engine v2.1 — FastAPI entry point.
+Quantamental Engine v2.1 — FastAPI entry point.
 
 Run with:
     uvicorn main:app --host 0.0.0.0 --port 8000 --reload
@@ -22,7 +22,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import RedirectResponse, FileResponse
+from fastapi.responses import RedirectResponse, FileResponse, JSONResponse
 
 import config
 
@@ -60,7 +60,7 @@ log = logging.getLogger("main")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    log.info("Starting Quantamental Risk Engine v2.1 ...")
+    log.info(f"Starting {config.PROJECT_NAME} ...")
     os.makedirs(config.DATA_DIR, exist_ok=True)
     os.makedirs(config.SNAPSHOTS_DIR, exist_ok=True)
     os.makedirs(config.LOGS_DIR, exist_ok=True)
@@ -92,10 +92,10 @@ async def lifespan(app: FastAPI):
     # ── Background tasks (Binance REST/WS, schedulers, monitoring) ───────────
     start_background_tasks()
 
-    log.info("Risk Engine accepting connections at http://localhost:8000")
+    log.info(f"{config.PROJECT_NAME} accepting connections at http://localhost:8000")
     yield
 
-    log.info("Shutting down Quantamental Risk Engine...")
+    log.info(f"Shutting down {config.PROJECT_NAME}...")
     await event_bus.close()
     await db.close()
 
@@ -103,7 +103,7 @@ async def lifespan(app: FastAPI):
 # ── App ──────────────────────────────────────────────────────────────────────
 
 app = FastAPI(
-    title="Quantamental Risk Engine v2.1",
+    title=config.PROJECT_NAME,
     version="2.1.0",
     lifespan=lifespan,
 )
@@ -117,7 +117,23 @@ app.include_router(router)
 
 @app.get("/manifest.json", include_in_schema=False)
 async def pwa_manifest():
-    return FileResponse("static/manifest.json", media_type="application/manifest+json")
+    return JSONResponse(
+        {
+            "name": config.PROJECT_NAME,
+            "short_name": "QRE",
+            "description": "Pre-trade gatekeeper for discretionary crypto futures trading",
+            "start_url": "/",
+            "display": "standalone",
+            "background_color": "#07080f",
+            "theme_color": "#07080f",
+            "orientation": "any",
+            "icons": [
+                {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+                {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"},
+            ],
+        },
+        media_type="application/manifest+json",
+    )
 
 
 @app.get("/service-worker.js", include_in_schema=False)

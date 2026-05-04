@@ -1,8 +1,8 @@
 @echo off
-title Quantamental Risk Engine v2.1
+title Quantamental Engine v2.1
 echo.
 echo  ===================================================
-echo   Quantamental Risk Engine v2.1  --  Binance USD-M
+echo   Quantamental Engine v2.1  --  Binance USD-M
 echo  ===================================================
 echo.
 
