@@ -1,0 +1,19 @@
+{#
+  Sortable column header macro.
+  Usage: {{ sort_th("Label", "column_name", endpoint, target_id, sort_by, sort_dir, extra_qs) }}
+#}
+{% macro sort_th(label, column, endpoint, target_id, sort_by, sort_dir, extra_qs="") %}
+{% set next_dir = "DESC" if (sort_by == column and sort_dir == "ASC") else "ASC" %}
+<th class="cursor-pointer"
+    style="white-space:nowrap;"
+    hx-get="{{ endpoint }}?page=1&{{ extra_qs }}&sort_by={{ column }}&sort_dir={{ next_dir }}"
+    hx-target="#{{ target_id }}"
+    hx-swap="innerHTML">
+  {{ label }}
+  {% if sort_by == column %}
+    <span class="sort-arrow" style="color:var(--blue);">{% if sort_dir == "ASC" %}▲{% else %}▼{% endif %}</span>
+  {% else %}
+    <span class="sort-arrow" style="color:var(--muted);">▲</span>
+  {% endif %}
+</th>
+{% endmacro %}

@@ -1,0 +1,564 @@
+{% extends "base.html" %}
+{% set active_page = "backtest" %}
+{% block title %}Backtest — Quantamental Risk Engine v2.1{% endblock %}
+
+{% block content %}
+<div style="display:grid;grid-template-columns:minmax(280px,1fr) 2fr;gap:6px;align-items:start;">
+
+  <!-- ── Left: config panels ─────────────────────────────────────────────── -->
+  <div style="display:flex;flex-direction:column;gap:6px;">
+
+    <!-- Tab switcher -->
+    <div class="tabs-line" style="margin-bottom:0;">
+      <button onclick="showPanel('run')"    id="bt-tab-run"    class="tab-btn active">Run</button>
+      <button onclick="showPanel('fetch')"  id="bt-tab-fetch"  class="tab-btn">Fetch Data</button>
+      <button onclick="showPanel('qt')"     id="bt-tab-qt"     class="tab-btn">QT Import</button>
+      <button onclick="showPanel('models')" id="bt-tab-models" class="tab-btn">Models</button>
+    </div>
+
+    <!-- ── Run Backtest ────────────────────────────────────────────────── -->
+    <div id="panel-run" class="card card-p8">
+      <span class="sec-lbl">Strategy Config</span>
+      <form id="run-form" onsubmit="submitRun(event)" style="display:flex;flex-direction:column;gap:7px;">
+
+        <div>
+          <label class="lbl" style="display:block;margin-bottom:3px;">Name</label>
+          <input type="text" name="name" value="Backtest {{ now[:10] }}" />
+        </div>
+
+        <!-- Date range -->
+        <div>
+          <label class="lbl" style="display:block;margin-bottom:3px;">Date Range</label>
+          <div class="date-range-display" onclick="btToggleCalendar()">
+            <span id="bt-date-from-display" style="color:var(--text);"></span>
+            <span style="color:var(--muted);padding:0 3px;">→</span>
+            <span id="bt-date-to-display" style="color:var(--text);"></span>
+            <span style="color:var(--muted);margin-left:4px;font-size:.7rem;">▾</span>
+          </div>
+          <input type="hidden" name="date_from" id="bt-date-from-val" />
+          <input type="hidden" name="date_to"   id="bt-date-to-val" />
+        </div>
+
+        <!-- Presets -->
+        <div style="display:flex;gap:3px;flex-wrap:wrap;">
+          <button type="button" class="preset-btn" data-btpreset="1y" onclick="btSetPreset('1y')">1Y</button>
+          <button type="button" class="preset-btn" data-btpreset="6m" onclick="btSetPreset('6m')">6M</button>
+          <button type="button" class="preset-btn active" data-btpreset="3m" onclick="btSetPreset('3m')">3M</button>
+          <button type="button" class="preset-btn" data-btpreset="1m" onclick="btSetPreset('1m')">1M</button>
+        </div>
+
+        <!-- Calendar dropdown -->
+        <div id="bt-calendar-dropdown" class="hidden card card-p8">
+          <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
+            <div class="cal-month" id="bt-cal-left"></div>
+            <div class="cal-month" id="bt-cal-right"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
+            <button type="button" class="btn btn-ghost btn-sm" onclick="btShiftMonths(-1)">‹ Prev</button>
+            <button type="button" class="btn btn-primary btn-sm" onclick="btApplyRange()">Apply</button>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="btShiftMonths(1)">Next ›</button>
+          </div>
+        </div>
+
+        <div>
+          <label class="lbl" style="display:block;margin-bottom:3px;">Symbols (comma-separated)</label>
+          <input type="text" name="symbols" value="BTCUSDT,ETHUSDT" />
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+          <div>
+            <label class="lbl" style="display:block;margin-bottom:3px;">Timeframe</label>
+            <select name="timeframe">
+              <option value="1h">1h</option>
+              <option value="4h" selected>4h</option>
+              <option value="1d">1d</option>
+            </select>
+          </div>
+          <div>
+            <label class="lbl" style="display:block;margin-bottom:3px;">Initial Equity ($)</label>
+            <input type="number" name="initial_equity" value="10000" min="100" />
+          </div>
+        </div>
+
+        <!-- Model selector -->
+        <div>
+          <label class="lbl" style="display:block;margin-bottom:3px;">Load Model</label>
+          <select id="model-selector" onchange="loadModelConfig(this.value)">
+            <option value="">— Custom —</option>
+          </select>
+        </div>
+
+        <hr class="div" />
+        <span style="font-size:.6rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--sub);">Entry Signals</span>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">EMA Fast</label><input type="number" name="ema_fast" value="20" min="2" /></div>
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">EMA Slow</label><input type="number" name="ema_slow" value="50" min="2" /></div>
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">ATR SL Mult</label><input type="number" name="atr_sl_mult" value="1.5" step="0.1" min="0.1" /></div>
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">ATR TP Mult</label><input type="number" name="atr_tp_mult" value="3.0" step="0.1" min="0.1" /></div>
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">Min ATR-C</label><input type="number" name="min_atr_c" value="0.2" step="0.05" min="0" max="1" /></div>
+          <div>
+            <label class="lbl" style="display:block;margin-bottom:3px;">Direction</label>
+            <select name="direction">
+              <option value="both">Both</option>
+              <option value="long">Long only</option>
+              <option value="short">Short only</option>
+            </select>
+          </div>
+        </div>
+
+        <hr class="div" />
+        <span style="font-size:.6rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--sub);">Risk Parameters</span>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">Risk / Trade (%)</label><input type="number" name="risk_pct" value="1.0" step="0.1" min="0.1" max="10" /></div>
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">Max Positions</label><input type="number" name="max_positions" value="5" min="1" max="20" /></div>
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-md" style="margin-top:4px;">
+          <span id="run-btn-label">▶ Run Backtest</span>
+        </button>
+        <p id="run-status" style="font-size:.65rem;color:var(--sub);text-align:center;"></p>
+      </form>
+    </div>
+
+    <!-- ── Fetch OHLCV ──────────────────────────────────────────────────── -->
+    <div id="panel-fetch" class="card card-p8 hidden">
+      <span class="sec-lbl">Fetch Historical Data</span>
+      <form onsubmit="submitFetch(event)" style="display:flex;flex-direction:column;gap:7px;">
+        <div>
+          <label class="lbl" style="display:block;margin-bottom:3px;">Symbols (comma-separated)</label>
+          <input type="text" id="fetch-symbols" value="BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT" />
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">Timeframe</label>
+            <select id="fetch-tf"><option value="1h">1h</option><option value="4h" selected>4h</option><option value="1d">1d</option></select></div>
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">Days Back</label>
+            <input type="number" id="fetch-days" value="730" min="30" max="1825" /></div>
+        </div>
+        <button type="submit" id="fetch-btn" class="btn btn-primary btn-md">Start Fetch</button>
+        <p id="fetch-status" style="font-size:.65rem;color:var(--sub);text-align:center;"></p>
+        <div id="fetch-progress-wrap" class="hidden">
+          <div class="gauge-track"><div id="fetch-progress-bar" class="gauge-fill" style="width:0%;background:var(--green);"></div></div>
+          <p id="fetch-progress-text" style="font-size:.62rem;color:var(--sub);margin-top:3px;text-align:center;"></p>
+        </div>
+      </form>
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
+        <span class="lbl" style="display:block;margin-bottom:5px;">Recent Fetch Jobs</span>
+        <div id="fetch-jobs-list" style="font-size:.68rem;color:var(--muted);">No jobs yet.</div>
+      </div>
+    </div>
+
+    <!-- ── Quantower Import ─────────────────────────────────────────────── -->
+    <div id="panel-qt" class="card card-p8 hidden">
+      <span class="sec-lbl">Import Quantower Results</span>
+      <p style="font-size:.7rem;color:var(--sub);margin-bottom:10px;line-height:1.5;">
+        Paste the JSON export from Quantower Strategy Manager, or use the
+        <span style="color:var(--blue);font-family:var(--font-mono);">BacktestUploader</span> plugin button.
+      </p>
+      <div style="display:flex;flex-direction:column;gap:7px;">
+        <div><label class="lbl" style="display:block;margin-bottom:3px;">Session Name</label><input type="text" id="qt-name" value="Quantower Import" /></div>
+        <div>
+          <label class="lbl" style="display:block;margin-bottom:3px;">JSON Payload</label>
+          <textarea id="qt-json" rows="7" style='background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:6px 8px;font-size:.72rem;font-family:var(--font-mono);resize:vertical;width:100%;height:auto;' placeholder='{"trades":[...],"summary":{}}'></textarea>
+        </div>
+        <button onclick="submitQtImport()" class="btn btn-primary btn-md">Import</button>
+        <p id="qt-status" style="font-size:.65rem;color:var(--sub);text-align:center;"></p>
+      </div>
+    </div>
+
+    <!-- ── Models ──────────────────────────────────────────────────────── -->
+    <div id="panel-models" class="card card-p8 hidden">
+      <span class="sec-lbl">Add / Edit Model</span>
+      <form id="model-form" onsubmit="submitModel(event)" style="display:flex;flex-direction:column;gap:7px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">Model Name</label><input type="text" id="mdl-name" placeholder="e.g. EMA Trend v2" required /></div>
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">Type</label>
+            <select id="mdl-type"><option value="both">Both</option><option value="macro">Macro</option><option value="micro">Micro</option></select></div>
+        </div>
+        <div><label class="lbl" style="display:block;margin-bottom:3px;">Description</label>
+          <textarea id="mdl-desc" rows="2" style="background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:5px 8px;font-size:.78rem;resize:vertical;width:100%;height:auto;" placeholder="Brief description…"></textarea></div>
+
+        <span style="font-size:.6rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--sub);">Signals</span>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">EMA Fast</label><input type="number" id="mdl-ema-fast" value="20" min="2" /></div>
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">EMA Slow</label><input type="number" id="mdl-ema-slow" value="50" min="2" /></div>
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">ATR SL Mult</label><input type="number" id="mdl-atr-sl" value="1.5" step="0.1" min="0.1" /></div>
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">ATR TP Mult</label><input type="number" id="mdl-atr-tp" value="3.0" step="0.1" min="0.1" /></div>
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">Min ATR-C</label><input type="number" id="mdl-min-atr" value="0.2" step="0.05" min="0" max="1" /></div>
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">Direction</label>
+            <select id="mdl-direction"><option value="both">Both</option><option value="long">Long only</option><option value="short">Short only</option></select></div>
+        </div>
+
+        <span style="font-size:.6rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--sub);">Risk</span>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;">
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">Risk / Trade (%)</label><input type="number" id="mdl-risk-pct" value="1.0" step="0.1" min="0.1" max="10" /></div>
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">Max Positions</label><input type="number" id="mdl-max-pos" value="5" min="1" max="20" /></div>
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">Max Exposure</label><input type="number" id="mdl-max-exp" value="3.0" step="0.5" min="0.5" max="20" /></div>
+        </div>
+
+        <span style="font-size:.6rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--sub);">Regime</span>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">Max VIX</label><input type="number" id="mdl-max-vix" value="30" step="1" min="0" /></div>
+          <div><label class="lbl" style="display:block;margin-bottom:3px;">Regime Multiplier</label><input type="number" id="mdl-regime-mult" value="1.0" step="0.1" min="0.1" max="2.0" /></div>
+        </div>
+
+        <input type="hidden" id="mdl-edit-id" value="" />
+        <div style="display:flex;gap:6px;margin-top:4px;">
+          <button type="submit" class="btn btn-primary btn-md" style="flex:1;">Save Model</button>
+          <button type="button" onclick="clearModelForm()" class="btn btn-secondary btn-md" style="flex:1;">Clear</button>
+        </div>
+        <p id="model-status" style="font-size:.65rem;color:var(--sub);text-align:center;"></p>
+      </form>
+    </div>
+
+  </div>
+
+  <!-- ── Right: sessions + results / models list ─────────────────────────── -->
+  <div style="display:flex;flex-direction:column;gap:6px;">
+
+    <!-- Sessions -->
+    <div id="sessions-container">
+      <div class="card card-p8">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <span class="sec-lbl" style="margin-bottom:0;">Sessions</span>
+          <button onclick="loadSessions()" class="btn btn-ghost btn-sm">↺ Refresh</button>
+        </div>
+        <div id="sessions-list" style="color:var(--muted);font-size:.78rem;">Loading...</div>
+      </div>
+
+      <div id="results-panel" class="card card-p8 hidden" style="margin-top:6px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <span class="sec-lbl" id="results-title" style="margin-bottom:0;">Results</span>
+          <button onclick="document.getElementById('results-panel').classList.add('hidden')"
+                  class="btn btn-ghost btn-sm">✕</button>
+        </div>
+        <div id="results-content"></div>
+      </div>
+    </div>
+
+    <!-- Models list -->
+    <div id="models-container" class="hidden card card-p8">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <span class="sec-lbl" style="margin-bottom:0;">Saved Models</span>
+        <button onclick="loadModels()" class="btn btn-ghost btn-sm">↺ Refresh</button>
+      </div>
+      <div id="models-list" style="color:var(--muted);font-size:.78rem;">Loading...</div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ── Panel switching ────────────────────────────────────────────────────────
+function showPanel(name){
+  ['run','fetch','qt','models'].forEach(function(p){
+    var panel=document.getElementById('panel-'+p);
+    var tab=document.getElementById('bt-tab-'+p);
+    if(panel) panel.classList.add('hidden');
+    if(tab){ tab.classList.remove('active'); }
+  });
+  var active=document.getElementById('panel-'+name);
+  var activeTab=document.getElementById('bt-tab-'+name);
+  if(active) active.classList.remove('hidden');
+  if(activeTab) activeTab.classList.add('active');
+  var sess=document.getElementById('sessions-container');
+  var mods=document.getElementById('models-container');
+  if(name==='models'){ sess.classList.add('hidden'); mods.classList.remove('hidden'); loadModels(); }
+  else { sess.classList.remove('hidden'); mods.classList.add('hidden'); }
+}
+
+// ── Run Backtest ──────────────────────────────────────────────────────────
+async function submitRun(e){
+  e.preventDefault();
+  var fd=new FormData(e.target),direction=fd.get('direction');
+  var cfg={
+    name:fd.get('name'),date_from:fd.get('date_from'),date_to:fd.get('date_to'),
+    symbols:fd.get('symbols').split(',').map(function(s){return s.trim().toUpperCase();}).filter(Boolean),
+    timeframe:fd.get('timeframe'),initial_equity:parseFloat(fd.get('initial_equity'))||10000,
+    signals:{trend_ema_fast:parseInt(fd.get('ema_fast'))||20,trend_ema_slow:parseInt(fd.get('ema_slow'))||50,
+             atr_sl_mult:parseFloat(fd.get('atr_sl_mult'))||1.5,atr_tp_mult:parseFloat(fd.get('atr_tp_mult'))||3.0,
+             min_atr_c:parseFloat(fd.get('min_atr_c'))||0,allow_long:direction!=='short',allow_short:direction!=='long'},
+    risk:{individual_risk_per_trade:parseFloat(fd.get('risk_pct'))/100||0.01,
+          max_position_count:parseInt(fd.get('max_positions'))||5,
+          max_exposure:3.0,maker_fee:0.0002,taker_fee:0.0005},
+    macro_filters:[],regime_multipliers:{},
+  };
+  document.getElementById('run-btn-label').textContent='Starting...';
+  try{
+    var r=await fetch('/api/backtest/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});
+    var d=await r.json();
+    if(d.session_id){
+      document.getElementById('run-status').textContent='Session #'+d.session_id+' running...';
+      pollSession(d.session_id); loadSessions();
+    } else { document.getElementById('run-status').textContent=d.error||'Error'; }
+  }catch(err){ document.getElementById('run-status').textContent=err.message; }
+  finally{ document.getElementById('run-btn-label').textContent='▶ Run Backtest'; }
+}
+
+// ── Fetch OHLCV ───────────────────────────────────────────────────────────
+async function submitFetch(e){
+  e.preventDefault();
+  var symbols=document.getElementById('fetch-symbols').value.split(',').map(function(s){return s.trim().toUpperCase();}).filter(Boolean);
+  var tf=document.getElementById('fetch-tf').value,days=parseInt(document.getElementById('fetch-days').value)||730;
+  var btn=document.getElementById('fetch-btn');
+  btn.disabled=true; btn.textContent='Fetching...';
+  document.getElementById('fetch-status').textContent='Starting...';
+  try{
+    var r=await fetch('/api/backtest/fetch-ohlcv',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbols:symbols,timeframe:tf,days:days})});
+    var d=await r.json();
+    if(d.job_id){ document.getElementById('fetch-progress-wrap').classList.remove('hidden'); pollFetchJob(d.job_id); }
+    else{ document.getElementById('fetch-status').textContent=d.error||'Error'; btn.disabled=false; btn.textContent='Start Fetch'; }
+  }catch(err){ document.getElementById('fetch-status').textContent=err.message; btn.disabled=false; btn.textContent='Start Fetch'; }
+}
+
+var _fetchJobs=[];
+function pollFetchJob(jobId){
+  var iv=setInterval(async function(){
+    try{
+      var r=await fetch('/api/backtest/fetch-status/'+jobId);var d=await r.json();
+      document.getElementById('fetch-progress-text').textContent=d.detail||'';
+      document.getElementById('fetch-status').textContent=d.detail||'';
+      if(d.status==='completed'||d.status==='failed'){
+        clearInterval(iv);
+        document.getElementById('fetch-btn').disabled=false; document.getElementById('fetch-btn').textContent='Start Fetch';
+        document.getElementById('fetch-progress-bar').style.width='100%';
+        if(d.status==='completed'){ showToast('Data fetch complete: '+d.detail,'success'); _fetchJobs.unshift({id:jobId,status:'completed',detail:d.detail}); renderFetchJobs(); }
+        else showToast('Data fetch failed: '+d.detail,'error');
+        setTimeout(function(){ document.getElementById('fetch-progress-wrap').classList.add('hidden'); document.getElementById('fetch-progress-bar').style.width='0%'; },3000);
+      }
+    }catch(e){}
+  },2000);
+}
+function renderFetchJobs(){
+  var el=document.getElementById('fetch-jobs-list');
+  if(!_fetchJobs.length){ el.textContent='No jobs yet.'; return; }
+  el.innerHTML=_fetchJobs.slice(0,5).map(function(j){
+    return '<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--border);font-size:.65rem;">'
+      +'<span style="color:var(--sub);">#'+j.id+'</span>'
+      +'<span style="color:var(--text);flex:1;margin:0 8px;overflow:hidden;text-overflow:ellipsis;">'+j.detail+'</span>'
+      +'<span style="color:'+(j.status==='completed'?'var(--green)':'var(--red)')+';">'+j.status+'</span>'
+      +'</div>';
+  }).join('');
+}
+
+// ── QT Import ────────────────────────────────────────────────────────────
+async function submitQtImport(){
+  var name=document.getElementById('qt-name').value,raw=document.getElementById('qt-json').value,status=document.getElementById('qt-status');
+  var payload; try{ payload=JSON.parse(raw); }catch(e){ status.textContent='Invalid JSON'; return; }
+  payload.session_name=name; status.textContent='Importing...';
+  try{
+    var r=await fetch('/api/backtest/qt-import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    var d=await r.json();
+    status.textContent=d.session_id?'Imported '+d.trade_count+' trades → session #'+d.session_id:(d.error||'Error');
+    if(d.session_id){ showToast('Imported '+d.trade_count+' trades','success'); loadSessions(); }
+  }catch(err){ status.textContent=err.message; }
+}
+
+// ── Sessions ──────────────────────────────────────────────────────────────
+async function loadSessions(){
+  var el=document.getElementById('sessions-list');
+  try{
+    var r=await fetch('/api/backtest/sessions');var sessions=await r.json();
+    if(!sessions.length){ el.innerHTML='<div style="color:var(--muted);font-size:.72rem;padding:12px 0;text-align:center;">No sessions yet.</div>'; return; }
+    var statusColor={completed:'var(--green)',running:'var(--amber)',failed:'var(--red)',pending:'var(--sub)'};
+    el.innerHTML='<div style="overflow-x:auto;"><table><thead><tr>'
+      +'<th>#</th><th>Name</th><th>Type</th><th>Range</th><th>Status</th><th>Trades</th><th>Return</th><th></th>'
+      +'</tr></thead><tbody>'
+      +sessions.map(function(s){
+        var sum=s.summary||{};
+        var ret=sum.total_return_pct!=null?((sum.total_return_pct*100).toFixed(2)+'%'):'—';
+        var cnt=sum.total_trades!=null?sum.total_trades:'—';
+        var sc=statusColor[s.status]||'var(--sub)';
+        var retColor=parseFloat(ret)>=0?'var(--green)':'var(--red)';
+        return '<tr style="cursor:pointer;" onclick="loadResults('+s.id+',\''+s.name.replace(/'/g,"\\'")+'\')">'+
+          '<td style="color:var(--muted);">'+s.id+'</td>'+
+          '<td style="color:var(--text);font-weight:600;">'+s.name+'</td>'+
+          '<td style="color:var(--sub);">'+s.type+'</td>'+
+          '<td style="color:var(--sub);">'+(s.date_from||'—')+' → '+(s.date_to||'—')+'</td>'+
+          '<td style="color:'+sc+';font-weight:700;">'+s.status+'</td>'+
+          '<td>'+cnt+'</td>'+
+          '<td style="color:'+retColor+';font-weight:700;">'+ret+'</td>'+
+          '<td><button onclick="event.stopPropagation();deleteSession('+s.id+')" class="btn btn-danger btn-sm">✕</button></td>'+
+          '</tr>';
+      }).join('')
+      +'</tbody></table></div>';
+  }catch(err){ el.innerHTML='<div class="alert alert-error">'+err.message+'</div>'; }
+}
+async function deleteSession(id){ if(!confirm('Delete session #'+id+'?'))return; await fetch('/api/backtest/sessions/'+id,{method:'DELETE'}); loadSessions(); }
+function pollSession(id){
+  var iv=setInterval(async function(){
+    var r=await fetch('/api/backtest/sessions/'+id);var d=await r.json();
+    if(d.session&&d.session.status!=='running'){
+      clearInterval(iv); loadSessions();
+      document.getElementById('run-status').textContent='Session #'+id+' '+d.session.status;
+      showToast('Backtest #'+id+' '+d.session.status,d.session.status==='completed'?'success':'error');
+    }
+  },3000);
+}
+async function loadResults(id,name){
+  document.getElementById('results-title').textContent='Results — '+name;
+  document.getElementById('results-panel').classList.remove('hidden');
+  document.getElementById('results-content').innerHTML='<div style="text-align:center;color:var(--muted);padding:20px;">Loading...</div>';
+  var r=await fetch('/fragments/backtest/results/'+id);
+  document.getElementById('results-content').innerHTML=await r.text();
+}
+
+// ── Models ────────────────────────────────────────────────────────────────
+var _allModels=[];
+async function loadModels(){
+  var el=document.getElementById('models-list');
+  try{
+    var r=await fetch('/api/models');_allModels=await r.json();renderModelsList();populateModelSelector();
+  }catch(err){ el.innerHTML='<div class="alert alert-error">'+err.message+'</div>'; }
+}
+function renderModelsList(){
+  var el=document.getElementById('models-list');
+  if(!_allModels.length){ el.innerHTML='<div style="color:var(--muted);font-size:.72rem;padding:12px 0;text-align:center;">No models defined. Create one using the form.</div>'; return; }
+  var typeColor={macro:'var(--blue)',micro:'var(--purple)',both:'var(--amber)'};
+  el.innerHTML=_allModels.map(function(m){
+    var cfg=m.config||{},sig=cfg.signals||{},risk=cfg.risk||{};
+    return '<div style="border:1px solid var(--border);border-radius:4px;padding:8px 10px;margin-bottom:5px;transition:border-color .1s;" onmouseover="this.style.borderColor=\'var(--bfoc)\'" onmouseout="this.style.borderColor=\'var(--border)\'">'
+      +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">'
+        +'<div style="display:flex;align-items:center;gap:6px;">'
+          +'<span style="font-weight:700;color:var(--text);">'+m.name+'</span>'
+          +'<span class="badge" style="background:var(--panel);color:'+typeColor[m.type]+';border:1px solid var(--border);">'+m.type+'</span>'
+        +'</div>'
+        +'<div style="display:flex;gap:4px;">'
+          +'<button onclick="editModel('+m.id+')" class="btn btn-ghost btn-sm">Edit</button>'
+          +'<button onclick="deleteModel('+m.id+')" class="btn btn-danger btn-sm">✕</button>'
+        +'</div>'
+      +'</div>'
+      +(m.description?'<div style="font-size:.65rem;color:var(--sub);margin-bottom:4px;">'+m.description+'</div>':'')
+      +'<div style="display:flex;gap:10px;font-size:.65rem;color:var(--muted);font-family:var(--font-mono);">'
+        +(sig.trend_ema_fast?'<span>EMA '+sig.trend_ema_fast+'/'+sig.trend_ema_slow+'</span>':'')
+        +(sig.atr_sl_mult?'<span>SL '+sig.atr_sl_mult+'×ATR</span>':'')
+        +(sig.atr_tp_mult?'<span>TP '+sig.atr_tp_mult+'×ATR</span>':'')
+        +(risk.individual_risk_per_trade?'<span>Risk '+(risk.individual_risk_per_trade*100).toFixed(1)+'%</span>':'')
+      +'</div>'
+      +'</div>';
+  }).join('');
+}
+function populateModelSelector(){
+  var sel=document.getElementById('model-selector');
+  while(sel.options.length>1) sel.remove(1);
+  _allModels.forEach(function(m){ var opt=document.createElement('option');opt.value=m.id;opt.textContent=m.name+' ('+m.type+')';sel.appendChild(opt); });
+}
+function loadModelConfig(modelId){
+  if(!modelId)return;
+  var m=_allModels.find(function(x){return x.id==modelId;});if(!m)return;
+  var cfg=m.config||{},sig=cfg.signals||{},risk=cfg.risk||{};
+  var f=document.getElementById('run-form');
+  if(sig.trend_ema_fast) f.ema_fast.value=sig.trend_ema_fast;
+  if(sig.trend_ema_slow) f.ema_slow.value=sig.trend_ema_slow;
+  if(sig.atr_sl_mult)    f.atr_sl_mult.value=sig.atr_sl_mult;
+  if(sig.atr_tp_mult)    f.atr_tp_mult.value=sig.atr_tp_mult;
+  if(sig.min_atr_c!=null) f.min_atr_c.value=sig.min_atr_c;
+  if(sig.direction)      f.direction.value=sig.direction;
+  if(risk.individual_risk_per_trade) f.risk_pct.value=(risk.individual_risk_per_trade*100).toFixed(1);
+  if(risk.max_position_count) f.max_positions.value=risk.max_position_count;
+  showToast('Loaded: '+m.name,'info');
+}
+async function submitModel(e){
+  e.preventDefault();
+  var editId=document.getElementById('mdl-edit-id').value;
+  var direction=document.getElementById('mdl-direction').value;
+  var body={name:document.getElementById('mdl-name').value.trim(),type:document.getElementById('mdl-type').value,description:document.getElementById('mdl-desc').value.trim(),
+    config:{
+      signals:{trend_ema_fast:parseInt(document.getElementById('mdl-ema-fast').value)||20,trend_ema_slow:parseInt(document.getElementById('mdl-ema-slow').value)||50,atr_sl_mult:parseFloat(document.getElementById('mdl-atr-sl').value)||1.5,atr_tp_mult:parseFloat(document.getElementById('mdl-atr-tp').value)||3.0,min_atr_c:parseFloat(document.getElementById('mdl-min-atr').value)||0,direction:direction,allow_long:direction!=='short',allow_short:direction!=='long'},
+      risk:{individual_risk_per_trade:parseFloat(document.getElementById('mdl-risk-pct').value)/100||0.01,max_position_count:parseInt(document.getElementById('mdl-max-pos').value)||5,max_exposure:parseFloat(document.getElementById('mdl-max-exp').value)||3.0},
+      regime:{max_vix:parseFloat(document.getElementById('mdl-max-vix').value)||30,regime_multiplier:parseFloat(document.getElementById('mdl-regime-mult').value)||1.0},
+    }};
+  if(!body.name){document.getElementById('model-status').textContent='Name is required';return;}
+  var status=document.getElementById('model-status');
+  try{
+    var url=editId?'/api/models/'+editId:'/api/models',method=editId?'PUT':'POST';
+    var r=await fetch(url,{method:method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var d=await r.json();
+    if(d.error){status.textContent=d.error;}
+    else{status.textContent=editId?'Model updated':'Model saved (#'+d.model_id+')';showToast((editId?'Updated: ':'Saved: ')+body.name,'success');clearModelForm();loadModels();}
+  }catch(err){status.textContent=err.message;}
+}
+async function editModel(id){
+  var m=_allModels.find(function(x){return x.id==id;});if(!m)return;
+  var cfg=m.config||{},sig=cfg.signals||{},risk=cfg.risk||{},regime=cfg.regime||{};
+  document.getElementById('mdl-edit-id').value=m.id;document.getElementById('mdl-name').value=m.name;document.getElementById('mdl-type').value=m.type;document.getElementById('mdl-desc').value=m.description||'';
+  document.getElementById('mdl-ema-fast').value=sig.trend_ema_fast||20;document.getElementById('mdl-ema-slow').value=sig.trend_ema_slow||50;
+  document.getElementById('mdl-atr-sl').value=sig.atr_sl_mult||1.5;document.getElementById('mdl-atr-tp').value=sig.atr_tp_mult||3.0;document.getElementById('mdl-min-atr').value=sig.min_atr_c||0.2;document.getElementById('mdl-direction').value=sig.direction||'both';
+  document.getElementById('mdl-risk-pct').value=risk.individual_risk_per_trade?(risk.individual_risk_per_trade*100).toFixed(1):'1.0';document.getElementById('mdl-max-pos').value=risk.max_position_count||5;document.getElementById('mdl-max-exp').value=risk.max_exposure||3.0;
+  document.getElementById('mdl-max-vix').value=regime.max_vix||30;document.getElementById('mdl-regime-mult').value=regime.regime_multiplier||1.0;
+  document.getElementById('model-status').textContent='Editing model #'+m.id;
+  showPanel('models');
+}
+async function deleteModel(id){ if(!confirm('Delete model #'+id+'?'))return; await fetch('/api/models/'+id,{method:'DELETE'}); showToast('Model deleted','info'); loadModels(); }
+function clearModelForm(){
+  ['mdl-edit-id','mdl-name','mdl-desc','mdl-micro-strategy'].forEach(function(id){var e=document.getElementById(id);if(e)e.value='';});
+  document.getElementById('mdl-type').value='both';document.getElementById('mdl-direction').value='both';
+  document.getElementById('mdl-ema-fast').value='20';document.getElementById('mdl-ema-slow').value='50';
+  document.getElementById('mdl-atr-sl').value='1.5';document.getElementById('mdl-atr-tp').value='3.0';
+  document.getElementById('mdl-min-atr').value='0.2';document.getElementById('mdl-risk-pct').value='1.0';
+  document.getElementById('mdl-max-pos').value='5';document.getElementById('mdl-max-exp').value='3.0';
+  document.getElementById('mdl-max-vix').value='30';document.getElementById('mdl-regime-mult').value='1.0';
+  document.getElementById('model-status').textContent='';
+}
+
+// ── Date range calendar ────────────────────────────────────────────────────
+var _btDateFrom='',_btDateTo='',_btCalViewYear,_btCalViewMonth,_btCalSelStart=null,_btCalSelEnd=null,_btCalPicking=0;
+function _btPad(n){return String(n).padStart(2,'0');}
+function _btIsoDate(d){return d.getFullYear()+'-'+_btPad(d.getMonth()+1)+'-'+_btPad(d.getDate());}
+function _btAddDays(d,n){var r=new Date(d);r.setDate(r.getDate()+n);return r;}
+function btSetDates(from,to){
+  _btDateFrom=_btIsoDate(from);_btDateTo=_btIsoDate(to);
+  document.getElementById('bt-date-from-display').textContent=_btDateFrom;
+  document.getElementById('bt-date-to-display').textContent=_btDateTo;
+  document.getElementById('bt-date-from-val').value=_btDateFrom;
+  document.getElementById('bt-date-to-val').value=_btDateTo;
+  _btCalSelStart=from;_btCalSelEnd=to;
+}
+function btSetPreset(preset){
+  var now=new Date(),from,to=now;
+  switch(preset){case'1y':from=_btAddDays(now,-365);break;case'6m':from=_btAddDays(now,-182);break;case'3m':from=_btAddDays(now,-90);break;default:from=_btAddDays(now,-30);}
+  btSetDates(from,to);
+  document.querySelectorAll('[data-btpreset]').forEach(function(b){b.classList.toggle('active',b.dataset.btpreset===preset);});
+  document.getElementById('bt-calendar-dropdown').classList.add('hidden');
+}
+function btToggleCalendar(){document.getElementById('bt-calendar-dropdown').classList.toggle('hidden');btRenderCalendar();}
+function btShiftMonths(delta){
+  _btCalViewMonth+=delta;
+  if(_btCalViewMonth>11){_btCalViewMonth=0;_btCalViewYear++;}
+  if(_btCalViewMonth<0){_btCalViewMonth=11;_btCalViewYear--;}
+  btRenderCalendar();
+}
+function btRenderCalendar(){
+  btRenderMonth('bt-cal-left',_btCalViewYear,_btCalViewMonth);
+  var ry=_btCalViewYear,rm=_btCalViewMonth+1;if(rm>11){rm=0;ry++;}
+  btRenderMonth('bt-cal-right',ry,rm);
+}
+function btRenderMonth(containerId,year,month){
+  var el=document.getElementById(containerId);if(!el)return;
+  var mNames=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  var dNames=['Su','Mo','Tu','We','Th','Fr','Sa'];
+  var firstDay=new Date(year,month,1).getDay(),daysInMonth=new Date(year,month+1,0).getDate();
+  var today=_btIsoDate(new Date()),selS=_btCalSelStart?_btIsoDate(_btCalSelStart):'',selE=_btCalSelEnd?_btIsoDate(_btCalSelEnd):'';
+  var html='<div class="cal-header">'+mNames[month]+' '+year+'</div><div class="cal-grid">';
+  dNames.forEach(function(d){html+='<div class="cal-day-name">'+d+'</div>';});
+  for(var i=0;i<firstDay;i++) html+='<div class="cal-cell" style="cursor:default;"></div>';
+  for(var d=1;d<=daysInMonth;d++){
+    var iso=year+'-'+_btPad(month+1)+'-'+_btPad(d),cls='cal-cell';
+    if(iso===selS||iso===selE) cls+=' cal-selected';
+    else if(selS&&selE&&iso>selS&&iso<selE) cls+=' cal-in-range';
+    if(iso===today) cls+=' cal-today';
+    html+='<div class="'+cls+'" onclick="btPickDate('+year+','+month+','+d+')">'+d+'</div>';
+  }
+  html+='</div>';el.innerHTML=html;
+}
+function btPickDate(year,month,day){
+  var date=new Date(year,month,day);
+  if(_btCalPicking===0){_btCalSelStart=date;_btCalSelEnd=null;_btCalPicking=1;}
+  else{if(date<_btCalSelStart){_btCalSelEnd=_btCalSelStart;_btCalSelStart=date;}else{_btCalSelEnd=date;}_btCalPicking=0;}
+  btRenderCalendar();
+}
+function btApplyRange(){if(_btCalSelStart&&_btCalSelEnd){btSetDates(_btCalSelStart,_btCalSelEnd);document.querySelectorAll('[data-btpreset]').forEach(function(b){b.classList.remove('active');});document.getElementById('bt-calendar-dropdown').classList.add('hidden');}}
+function btInitCalendar(){var now=new Date();_btCalViewYear=now.getFullYear();_btCalViewMonth=now.getMonth();btSetPreset('3m');}
+
+document.addEventListener('DOMContentLoaded',function(){ showPanel('run'); btInitCalendar(); loadSessions(); loadModels(); });
+</script>
+{% endblock %}

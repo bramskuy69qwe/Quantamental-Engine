@@ -1,0 +1,200 @@
+{% set c = calc %}
+
+<!-- ── Auto-refresh controls ─────────────────────────────────────────────── -->
+<div class="card card-p8" style="margin-bottom:6px;">
+  <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+    <span class="lbl" style="margin-bottom:0;">⟳ Auto-refresh:</span>
+    <button type="button" onclick="setRefreshRate(1)"  id="rr-1"  class="btn btn-primary btn-sm">1s</button>
+    <button type="button" onclick="setRefreshRate(5)"  id="rr-5"  class="btn btn-secondary btn-sm">5s</button>
+    <button type="button" onclick="setRefreshRate(10)" id="rr-10" class="btn btn-secondary btn-sm">10s</button>
+    <button type="button" onclick="setRefreshRate(30)" id="rr-30" class="btn btn-secondary btn-sm">30s</button>
+    <button type="button" onclick="toggleAutoRefresh()" id="rr-pause" class="btn btn-secondary btn-sm">⏸</button>
+  </div>
+</div>
+
+<!-- ── Hard stops ─────────────────────────────────────────────────────────── -->
+{% if c.weekly_pnl_state == 'limit' %}
+<div class="alert alert-error" style="margin-bottom:6px;">⛔ Weekly loss LIMIT — trading halted.</div>
+{% elif c.weekly_pnl_state == 'warning' %}
+<div class="alert alert-warning" style="margin-bottom:6px;">⚠ Weekly loss WARNING.</div>
+{% endif %}
+{% if c.dd_state == 'limit' %}
+<div class="alert alert-error" style="margin-bottom:6px;">⛔ Drawdown LIMIT — trading halted.</div>
+{% elif c.dd_state == 'warning' %}
+<div class="alert alert-warning" style="margin-bottom:6px;">⚠ Drawdown WARNING.</div>
+{% endif %}
+
+<!-- ── Ineligibility notice ───────────────────────────────────────────────── -->
+{% if not c.eligible %}
+  {% if c.at_max_positions %}
+  <div class="alert alert-error" style="margin-bottom:6px;">⛔ Max position count reached ({{ params.max_position_count }}). Close a position first.</div>
+  {% elif c.at_max_exposure %}
+  <div class="alert alert-error" style="margin-bottom:6px;">⛔ Estimated exposure {{ fmt(c.est_exposure, 2) }}× exceeds max {{ fmt(params.max_exposure, 1) }}×.</div>
+  {% elif c.exceeds_corr_limit %}
+  <div class="alert alert-error" style="margin-bottom:6px;">⛔ Sector correlated exposure limit exceeded.</div>
+  {% elif c.ineligible_reason %}
+  <div class="alert alert-error" style="margin-bottom:6px;">⛔ {{ c.ineligible_reason }}</div>
+  {% endif %}
+{% endif %}
+
+<!-- ── Regime ─────────────────────────────────────────────────────────────── -->
+<div class="card card-p8" style="margin-bottom:6px;">
+  {% if c.regime_stale %}
+  <div style="display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:4px;background:#251500;border:1px solid #6b3a00;margin-bottom:6px;font-size:.7rem;color:var(--amber);">
+    <svg xmlns="http://www.w3.org/2000/svg" style="width:13px;height:13px;flex-shrink:0;" viewBox="0 0 20 20" fill="currentColor">
+      <path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 6a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 6zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/>
+    </svg>
+    Regime data is stale — multiplier not applied (using 1.0×)
+  </div>
+  {% endif %}
+  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+    <span class="lbl" style="margin-bottom:0;">Regime</span>
+    {% set rl = c.regime_label %}
+    {% if rl == 'risk_on_trending' %}
+      <span class="badge regime-trending">RISK ON TRENDING</span>
+    {% elif rl == 'risk_on_choppy' %}
+      <span class="badge regime-choppy">RISK ON CHOPPY</span>
+    {% elif rl == 'risk_off_defensive' %}
+      <span class="badge regime-defensive">RISK OFF DEFENSIVE</span>
+    {% elif rl == 'risk_off_panic' %}
+      <span class="badge regime-panic">RISK OFF PANIC</span>
+    {% else %}
+      <span class="badge regime-neutral">NEUTRAL</span>
+    {% endif %}
+    {% if not c.regime_stale %}
+    <span style="font-family:var(--font-mono);font-size:.72rem;color:var(--sub);">×{{ fmt(c.regime_multiplier, 1) }} size</span>
+    {% endif %}
+    {% if not c.apply_regime_multiplier and not c.regime_stale %}
+    <span style="font-size:.62rem;color:var(--muted);">(multiplier overridden)</span>
+    {% endif %}
+  </div>
+</div>
+
+<!-- ── ATR volatility ─────────────────────────────────────────────────────── -->
+<div class="card card-p8" style="margin-bottom:6px;">
+  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+    <span class="sec-lbl" style="margin-bottom:0;">Volatility (atr_c)</span>
+    {% if c.atr_c is not none %}
+      <span class="mono" style="font-size:.88rem;">{{ fmt(c.atr_c, 3) }}</span>
+      {% if c.atr_category == 'too_volatile' %}
+        <span class="badge badge-limit">TOO VOLATILE</span>
+      {% elif c.atr_category == 'volatile' %}
+        <span class="badge badge-warning">VOLATILE</span>
+      {% elif c.atr_category == 'not_volatile' %}
+        <span class="badge badge-ok">NOT VOLATILE</span>
+      {% else %}
+        <span class="badge badge-ok">NORMAL</span>
+      {% endif %}
+      <span style="font-size:.62rem;color:var(--muted);font-family:var(--font-mono);">
+        ATR(100,4h) = {{ fmt(c.atr100, 4) if c.atr100 else '—' }}
+        &nbsp;/&nbsp;
+        ATR(14,4h) = {{ fmt(c.atr14, 4) if c.atr14 else '—' }}
+      </span>
+    {% else %}
+      <span style="font-size:.72rem;color:var(--muted);">OHLCV not yet loaded</span>
+    {% endif %}
+  </div>
+</div>
+
+<!-- ── Main metrics ───────────────────────────────────────────────────────── -->
+<div class="card card-p8" style="margin-bottom:6px;">
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;">
+    <div class="stat"><span class="lbl">Ticker</span><div class="val" style="color:var(--blue);">{{ c.ticker }}</div></div>
+    <div class="stat"><span class="lbl">Side</span><div class="val {{ 'text-green' if c.side=='long' else 'text-red' }}">{{ c.side|upper }}</div></div>
+    <div class="stat"><span class="lbl">Order Type</span><div class="val">{{ c.order_type|upper }}</div></div>
+    <div class="stat"><span class="lbl">Avg Entry</span><div class="val">{{ fmt(c.average, 4) }}</div></div>
+    <div class="stat"><span class="lbl">Risk USDT</span><div class="val">{{ fmt(c.risk_usdt) }} USDT</div></div>
+    <div class="stat"><span class="lbl">Base Size (USDT)</span><div class="val">{{ fmt(c.base_size) }}</div></div>
+    <div class="stat"><span class="lbl">Est. Fill Price</span><div class="val">{{ fmt(c.est_fill_price, 4) }}</div></div>
+    <div class="stat"><span class="lbl">1% Depth (USDT)</span><div class="val">{{ fmt(c.one_percent_depth) }}</div></div>
+    <div class="stat" style="grid-column:1/-1;">
+      <span class="lbl">Best Bid / Ask</span>
+      <div class="val">
+        <span class="text-green">{{ fmt(c.best_bid, 4) }}</span>
+        <span style="color:var(--muted);"> / </span>
+        <span class="text-red">{{ fmt(c.best_ask, 4) }}</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Calculated position ────────────────────────────────────────────────── -->
+<div class="card card-p8" style="margin-bottom:6px;{% if not c.eligible %}opacity:.85;{% endif %}">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+    <span class="sec-lbl" style="margin-bottom:0;">Calculated Position</span>
+    {% if not c.eligible %}
+    <span class="badge badge-limit">INELIGIBLE</span>
+    {% else %}
+    <span class="badge badge-ok">ELIGIBLE</span>
+    {% endif %}
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;">
+    <div>
+      <span class="lbl">
+        _size (contracts)
+        {% if c.regime_multiplier != 1.0 and c.apply_regime_multiplier and not c.regime_stale %}
+        <span style="font-size:.58rem;color:var(--muted);font-weight:400;">×{{ fmt(c.regime_multiplier,1) }} regime</span>
+        {% endif %}
+      </span>
+      <div class="mono" style="font-size:1.4rem;color:{% if c.eligible %}var(--blue){% else %}var(--sub){% endif %};">{{ fmt(c.size, 4) }}</div>
+      {% if c.regime_multiplier != 1.0 and not c.regime_stale %}
+        {% if c.apply_regime_multiplier %}
+        <div style="font-size:.6rem;color:var(--muted);">without regime: {{ fmt(c.size_raw, 4) }}</div>
+        {% else %}
+        <div style="font-size:.6rem;color:var(--muted);">with regime (×{{ fmt(c.regime_multiplier,1) }}): {{ fmt(c.size_raw * c.regime_multiplier, 4) }}</div>
+        {% endif %}
+      {% endif %}
+    </div>
+    <div class="stat"><span class="lbl">Notional / est_size (USDT)</span><div class="val">{{ fmt(c.notional) }}</div></div>
+    <div class="stat"><span class="lbl">TP → USDT profit</span><div class="val text-green">{{ fmt(c.tp_usdt) }}</div></div>
+    <div class="stat"><span class="lbl">SL → USDT loss</span><div class="val text-red">{{ fmt(c.sl_usdt) }}</div></div>
+  </div>
+</div>
+
+<!-- ── Estimations ────────────────────────────────────────────────────────── -->
+<div class="card card-p8" style="margin-bottom:6px;">
+  <span class="sec-lbl">Estimations <span style="font-size:.58rem;color:var(--muted);text-transform:none;letter-spacing:0;">— slippage estimates are indicative only.</span></span>
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px 12px;">
+    <div class="stat"><span class="lbl">Est. Slippage</span><div class="val">{{ fmt(c.est_slippage * 100, 4) }}%</div></div>
+    <div class="stat"><span class="lbl">Est. Slippage USDT</span><div class="val">{{ fmt(c.est_slippage_usdt) }}</div></div>
+    <div class="stat"><span class="lbl">Est. Net Profit</span>
+      <div class="val {{ 'text-green' if c.est_profit >= 0 else 'text-red' }}">{{ fmt(c.est_profit) }}</div></div>
+    <div class="stat"><span class="lbl">Est. Net Loss</span><div class="val text-red">{{ fmt(c.est_loss) }}</div></div>
+    <div class="stat"><span class="lbl">Est. R:R</span>
+      <div class="val {{ 'text-green' if c.est_r >= 1 else 'text-amber' }}">{{ fmt(c.est_r, 2) }}</div></div>
+    <div class="stat"><span class="lbl">Est. Portfolio Exp.</span>
+      <div class="val {{ 'text-red' if c.est_exposure > params.max_exposure else '' }}">{{ fmt(c.est_exposure, 2) }}×</div></div>
+    <div class="stat"><span class="lbl">{{ 'Taker' if c.order_type in ('market','stop') else 'Maker' }} Fee (2×)</span>
+      <div class="val">{{ fmt(c.fee_rate * 2 * 100, 3) }}%</div></div>
+  </div>
+</div>
+
+<!-- ── Correlated exposure ────────────────────────────────────────────────── -->
+<div class="card card-p8">
+  <span class="sec-lbl">Correlated Sector Exposure</span>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:.72rem;font-family:var(--font-mono);">
+    {% for sector, net in c.correlated_exposure.items() %}
+    <div>
+      <span style="color:var(--sub);">{{ sector }}:</span>
+      <span class="{{ 'text-red' if net|abs > params.max_correlated_exposure * 100000 else 'text-text' }}">
+        {{ fmt(net) }} USDT
+      </span>
+    </div>
+    {% endfor %}
+    <div>
+      <span style="color:var(--sub);">New ({{ c.ticker }}):</span>
+      <span style="color:var(--text);">+{{ fmt(c.new_sector_exposure) }} USDT</span>
+    </div>
+  </div>
+</div>
+
+<!-- Hidden data for Setup Summary -->
+<div id="calc-data" class="hidden"
+     data-ticker="{{ c.ticker }}"
+     data-entry="{{ c.average }}"
+     data-tp="{{ c.tp_price if c.tp_price else 0 }}"
+     data-sl="{{ c.sl_price if c.sl_price else 0 }}"
+     data-notional="{{ c.notional|round(2) }}"
+     data-contracts="{{ c.size|round(4) }}"
+     data-regime-label="{{ c.regime_label }}"
+     data-regime-mult="{{ c.regime_multiplier }}"></div>
