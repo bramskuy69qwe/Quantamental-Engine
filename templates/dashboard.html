@@ -5,22 +5,13 @@
 {% block content %}
 <div style="display:flex;flex-direction:column;gap:6px;">
 
-  <!-- ── Exchange strip: 500ms refresh ────────────────────────────────── -->
+  <!-- ── Exchange strip: 1s refresh (fragment carries its own hx-get for continuity) -->
   <div hx-get="/fragments/dashboard/exchange_info"
-       hx-trigger="load, every 500ms"
+       hx-trigger="load"
        hx-swap="outerHTML">
-    <div class="card" style="display:flex;align-items:center;flex-wrap:wrap;padding:6px 12px;gap:0;">
-      <div style="display:flex;align-items:center;gap:6px;padding:0 12px;border-right:1px solid var(--border);">
-        <span class="lbl" style="margin-bottom:0;">Exchange</span>
-        <span class="mono" style="font-size:.8rem;">—</span>
-      </div>
-      <div style="display:flex;align-items:center;gap:6px;padding:0 12px;border-right:1px solid var(--border);">
-        <span class="lbl" style="margin-bottom:0;">Server Time</span>
-        <span class="mono" style="font-size:.78rem;color:var(--sub);">connecting...</span>
-      </div>
+    <div class="card" style="display:flex;align-items:center;flex-wrap:wrap;padding:6px 0;gap:0;">
       <div style="display:flex;align-items:center;gap:6px;padding:0 12px;">
-        <span class="lbl" style="margin-bottom:0;">Latency</span>
-        <span class="mono" style="font-size:.8rem;color:var(--sub);">—</span>
+        <span class="lbl" style="margin-bottom:0;">connecting...</span>
       </div>
     </div>
   </div>

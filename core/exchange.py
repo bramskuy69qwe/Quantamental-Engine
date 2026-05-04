@@ -79,7 +79,7 @@ def get_exchange() -> ccxt.Exchange:
 # ── Exchange info ────────────────────────────────────────────────────────────
 
 async def fetch_exchange_info() -> None:
-    """Update exchange_info on app_state."""
+    """Update exchange_info on app_state (latency, server time, name, fees)."""
     loop = asyncio.get_event_loop()
     ex   = get_exchange()
 
@@ -99,14 +99,17 @@ async def fetch_exchange_info() -> None:
     info.server_time = datetime.fromtimestamp(
         server_time / 1000, tz=timezone.utc
     ).strftime("%Y-%m-%d %H:%M:%S UTC")
-    info.maker_fee  = config.MAKER_FEE
-    info.taker_fee  = config.TAKER_FEE
+    # Fees: use live values from fetch_account if available, else config defaults
+    if info.maker_fee == 0.0:
+        info.maker_fee = config.MAKER_FEE
+    if info.taker_fee == 0.0:
+        info.taker_fee = config.TAKER_FEE
 
 
 # ── Account & balance ────────────────────────────────────────────────────────
 
 async def fetch_account() -> None:
-    """Fetch futures account balance and update account_state."""
+    """Fetch futures account balance, fees, and update account_state."""
     loop = asyncio.get_event_loop()
     ex   = get_exchange()
 
@@ -131,7 +134,16 @@ async def fetch_account() -> None:
         if acc.sow_equity == 0.0:
             acc.sow_equity = acc.total_equity
 
-        app_state.exchange_info.account_id = info_raw.get("feeTier", "")
+        # Exchange info: fee tier + live commission rates from Binance
+        exi = app_state.exchange_info
+        exi.account_id = info_raw.get("feeTier", "")
+        maker = float(info_raw.get("makerCommissionRate", 0) or 0)
+        taker = float(info_raw.get("takerCommissionRate", 0) or 0)
+        if maker > 0:
+            exi.maker_fee = maker
+        if taker > 0:
+            exi.taker_fee = taker
+
         app_state.ws_status.last_update    = datetime.now(timezone.utc)
 
 

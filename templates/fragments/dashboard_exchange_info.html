@@ -1,5 +1,9 @@
 <!-- fragment: dashboard/exchange_info -->
-<div class="card" style="display:flex;align-items:center;flex-wrap:wrap;padding:6px 0;gap:0;">
+<div class="card"
+     hx-get="/fragments/dashboard/exchange_info"
+     hx-trigger="every 1s"
+     hx-swap="outerHTML"
+     style="display:flex;align-items:center;flex-wrap:wrap;padding:6px 0;gap:0;">
   {% set items = [
     ('EXCHANGE',    exchange_name | default('Binance')),
     ('SERVER TIME', server_time   | default('—')),

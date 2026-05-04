@@ -132,10 +132,10 @@ async def _account_refresh_loop():
 # ── Latency ping loop ───────────────────────────────────────────────────────
 
 async def _ping_loop():
-    """Measure REST round-trip latency every 5 seconds.
+    """Measure REST round-trip latency every 1 second.
     Skipped when the Quantower plugin is connected — avoids hammering Binance REST."""
     while True:
-        await asyncio.sleep(5)
+        await asyncio.sleep(1)
         if platform_bridge.is_connected:
             continue
         try:

@@ -1,9 +1,10 @@
-"""Import all core modules and assert no exceptions at module load time."""
+"""Import all core + api modules and assert no exceptions at module load time."""
 import importlib
 import pytest
 
 MODULES = [
     "config",
+    "core.constants",
     "core.state",
     "core.database",
     "core.risk_engine",
@@ -12,11 +13,24 @@ MODULES = [
     "core.news_fetcher",
     "core.event_bus",
     "core.db_router",
+    "core.db_snapshots",
+    "core.db_trades",
+    "core.db_exchange",
+    "core.db_analytics",
+    "core.db_backtest",
+    "core.db_regime",
+    "core.db_ohlcv",
+    "core.db_settings",
+    "core.db_equity",
+    "core.db_models",
     "core.migrations.000_split_databases",
     "core.account_registry",
     "core.crypto",
     "core.data_logger",
     "core.exchange",
+    "core.exchange_market",
+    "core.exchange_income",
+    "core.exchange_factory",
     "core.ws_manager",
     "core.platform_bridge",
     "core.reconciler",
@@ -24,6 +38,23 @@ MODULES = [
     "core.analytics",
     "core.backtest_runner",
     "core.monitoring",
+    "core.schedulers",
+    "core.log_formatter",
+    "core.ohlcv_fetcher",
+    "api.helpers",
+    "api.cache",
+    "api.router",
+    "api.routes_dashboard",
+    "api.routes_calculator",
+    "api.routes_history",
+    "api.routes_params",
+    "api.routes_analytics",
+    "api.routes_accounts",
+    "api.routes_backtest",
+    "api.routes_regime",
+    "api.routes_platform",
+    "api.routes_models",
+    "api.routes_news",
 ]
 
 

@@ -225,10 +225,8 @@ async def _user_data_loop(listen_key: str, attempt: int = 0) -> None:
 
             async for raw in sock:
                 try:
-                    t0  = time.monotonic()
                     msg = json.loads(raw)
                     await _handle_user_event(msg)
-                    ws.latency_ms   = round((time.monotonic() - t0) * 1000, 2)
                 except Exception as exc:
                     log.warning("User-data WS message error: %s", exc)
                 ws.last_update  = datetime.now(timezone.utc)
