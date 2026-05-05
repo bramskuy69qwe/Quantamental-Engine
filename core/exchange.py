@@ -160,6 +160,14 @@ async def fetch_account() -> None:
             exi.maker_fee = na.maker_fee
         if na.taker_fee > 0:
             exi.taker_fee = na.taker_fee
+        # Persist live fees to DB so load_params() doesn't revert to stale values
+        if na.maker_fee > 0 or na.taker_fee > 0:
+            from core.account_registry import account_registry
+            await account_registry.update_account_fees(
+                app_state.active_account_id,
+                na.maker_fee if na.maker_fee > 0 else exi.maker_fee,
+                na.taker_fee if na.taker_fee > 0 else exi.taker_fee,
+            )
 
         app_state.ws_status.last_update    = datetime.now(timezone.utc)
 

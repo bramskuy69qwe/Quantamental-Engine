@@ -43,8 +43,18 @@ class BinanceUSDMAdapter(BaseExchangeAdapter):
     # ── Account ──────────────────────────────────────────────────────────────
 
     async def fetch_account(self) -> NormalizedAccount:
-        raw = await self._run(self._ex.fetch_balance)
-        info = raw.get("info", {})
+        # /fapi/v2/account has balances + feeTier but NOT commission rates.
+        # /fapi/v1/commissionRate (per-symbol) has the actual maker/taker rates.
+        def _fetch():
+            account = self._ex.fapiPrivateV2GetAccount()
+            # Fetch commission rates for BTCUSDT as representative rate
+            try:
+                comm = self._ex.fapiPrivateGetCommissionRate({"symbol": "BTCUSDT"})
+            except Exception:
+                comm = {}
+            return account, comm
+
+        info, comm = await self._run(_fetch)
         return NormalizedAccount(
             total_equity=float(info.get("totalWalletBalance", 0) or 0),
             available_margin=float(info.get("availableBalance", 0) or 0),
@@ -52,8 +62,8 @@ class BinanceUSDMAdapter(BaseExchangeAdapter):
             initial_margin=float(info.get("totalInitialMargin", 0) or 0),
             maint_margin=float(info.get("totalMaintMargin", 0) or 0),
             fee_tier=str(info.get("feeTier", "")),
-            maker_fee=float(info.get("makerCommissionRate", 0) or 0),
-            taker_fee=float(info.get("takerCommissionRate", 0) or 0),
+            maker_fee=float(comm.get("makerCommissionRate", 0) or 0),
+            taker_fee=float(comm.get("takerCommissionRate", 0) or 0),
         )
 
     # ── Positions ────────────────────────────────────────────────────────────
