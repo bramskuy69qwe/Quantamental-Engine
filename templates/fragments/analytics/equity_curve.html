@@ -32,7 +32,7 @@
   <div id="eq-ohlc-stats"
        style="display:flex;flex-wrap:wrap;gap:12px 16px;font-size:.72rem;font-family:var(--font-mono);margin-bottom:8px;padding:0 2px;user-select:none;min-height:1.25rem;">
   </div>
-  <div id="equity-chart"></div>
+  <div id="equity-chart" style="height:360px;"></div>
   {% else %}
   <div style="color:var(--muted);font-size:.78rem;padding:40px 0;text-align:center;">No equity data found for this period.</div>
   {% endif %}
@@ -52,14 +52,12 @@ function toggleDrawdown()  { reloadEquity('{{ active_tf }}'); }
 {% if candles %}
 <script>
 (function() {
-  const raw      = {{ candles | tojson }};
-  const showDD   = {{ 'true' if show_dd   else 'false' }};
-  const logScale = {{ 'true' if log_scale else 'false' }};
-
-  const halfMs = raw.length >= 2 ? Math.round((raw[1].x - raw[0].x) / 2) : 0;
+  var raw      = {{ candles | tojson }};
+  var showDD   = {{ 'true' if show_dd   else 'false' }};
+  var logScale = {{ 'true' if log_scale else 'false' }};
 
   function fmtTs(ms) {
-    const d = new Date(ms);
+    var d = new Date(ms);
     return d.toLocaleDateString('en', { year: 'numeric', month: 'short', day: 'numeric' });
   }
 
@@ -67,160 +65,197 @@ function toggleDrawdown()  { reloadEquity('{{ active_tf }}'); }
   function fmtAbs(v) { return '$' + Math.abs(v).toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
   function renderStats(c) {
-    const chg       = c.c - c.o;
-    const chgPct    = c.o !== 0 ? (chg / c.o) * 100 : 0;
-    const rng       = c.h - c.l;
-    const rngPct    = c.l !== 0 ? (rng / c.l) * 100 : 0;
-    const cf        = c.cf || 0;
-    const adjChg    = chg - cf;
-    const adjChgPct = c.o !== 0 ? (adjChg / c.o) * 100 : 0;
-    const sign      = chg >= 0 ? '+' : '-';
-    const adjSign   = adjChg >= 0 ? '+' : '-';
-    const cfSign    = cf >= 0 ? '+' : '-';
-    const chgCls    = chg >= 0 ? 'color:#00c855' : 'color:#e83535';
-    const adjCls    = adjChg >= 0 ? 'color:#00c855' : 'color:#e83535';
-    const cfCls     = cf >= 0 ? 'color:#3c8ff5' : 'color:#e89020';
+    var chg       = c.c - c.o;
+    var chgPct    = c.o !== 0 ? (chg / c.o) * 100 : 0;
+    var rng       = c.h - c.l;
+    var rngPct    = c.l !== 0 ? (rng / c.l) * 100 : 0;
+    var cf        = c.cf || 0;
+    var adjChg    = chg - cf;
+    var adjChgPct = c.o !== 0 ? (adjChg / c.o) * 100 : 0;
+    var sign      = chg >= 0 ? '+' : '-';
+    var adjSign   = adjChg >= 0 ? '+' : '-';
+    var cfSign    = cf >= 0 ? '+' : '-';
+    var chgCls    = chg >= 0 ? 'color:#00c855' : 'color:#e83535';
+    var adjCls    = adjChg >= 0 ? 'color:#00c855' : 'color:#e83535';
+    var cfCls     = cf >= 0 ? 'color:#3c8ff5' : 'color:#e89020';
     document.getElementById('eq-ohlc-stats').innerHTML =
-      `<span><span style="color:var(--muted)">O</span> <span style="color:var(--text)">${fmt(c.o)}</span></span>` +
-      `<span><span style="color:var(--muted)">H</span> <span style="color:#00c855">${fmt(c.h)}</span></span>` +
-      `<span><span style="color:var(--muted)">L</span> <span style="color:#e83535">${fmt(c.l)}</span></span>` +
-      `<span><span style="color:var(--muted)">C</span> <span style="color:var(--text)">${fmt(c.c)}</span></span>` +
-      `<span><span style="color:var(--muted)">Chg</span> <span style="${chgCls}">${sign}${fmtAbs(chg)} (${sign}${Math.abs(chgPct).toFixed(2)}%)</span></span>` +
-      `<span><span style="color:var(--muted)">Range</span> <span style="color:var(--text)">${fmt(rng)} (${rngPct.toFixed(2)}%)</span></span>` +
-      `<span><span style="color:var(--muted)">CF</span> <span style="${cfCls}">${cfSign}${fmtAbs(cf)}</span></span>` +
-      `<span><span style="color:var(--muted)">Adj Chg</span> <span style="${adjCls}">${adjSign}${fmtAbs(adjChg)} (${adjSign}${Math.abs(adjChgPct).toFixed(2)}%)</span></span>`;
+      '<span><span style="color:var(--muted)">O</span> <span style="color:var(--text)">' + fmt(c.o) + '</span></span>' +
+      '<span><span style="color:var(--muted)">H</span> <span style="color:#00c855">' + fmt(c.h) + '</span></span>' +
+      '<span><span style="color:var(--muted)">L</span> <span style="color:#e83535">' + fmt(c.l) + '</span></span>' +
+      '<span><span style="color:var(--muted)">C</span> <span style="color:var(--text)">' + fmt(c.c) + '</span></span>' +
+      '<span><span style="color:var(--muted)">Chg</span> <span style="' + chgCls + '">' + sign + fmtAbs(chg) + ' (' + sign + Math.abs(chgPct).toFixed(2) + '%)</span></span>' +
+      '<span><span style="color:var(--muted)">Range</span> <span style="color:var(--text)">' + fmt(rng) + ' (' + rngPct.toFixed(2) + '%)</span></span>' +
+      '<span><span style="color:var(--muted)">CF</span> <span style="' + cfCls + '">' + cfSign + fmtAbs(cf) + '</span></span>' +
+      '<span><span style="color:var(--muted)">Adj Chg</span> <span style="' + adjCls + '">' + adjSign + fmtAbs(adjChg) + ' (' + adjSign + Math.abs(adjChgPct).toFixed(2) + '%)</span></span>';
   }
   if (raw.length) renderStats(raw[raw.length - 1]);
 
-  let runningPeak = -Infinity;
-  const ddData = raw.map(c => {
+  // Compute drawdown series
+  var runningPeak = -Infinity;
+  var ddValues = raw.map(function(c) {
     if (c.c > runningPeak) runningPeak = c.c;
-    const dd = runningPeak > 0 ? -((runningPeak - c.c) / runningPeak) * 100 : 0;
-    return { x: c.x + halfMs, y: parseFloat(dd.toFixed(3)) };
+    var dd = runningPeak > 0 ? -((runningPeak - c.c) / runningPeak) * 100 : 0;
+    return parseFloat(dd.toFixed(3));
   });
 
-  const eqFmt  = v => '$' + v.toLocaleString('en', { maximumFractionDigits: 0 });
-  const eqLabels = { formatter: eqFmt, style: { fontSize: '11px' } };
-  const ddLabels = { formatter: v => Math.abs(v).toFixed(1) + '%', style: { fontSize: '11px', colors: ['#e83535'] } };
+  // Category labels (timestamps)
+  var categoryData = raw.map(function(c) { return fmtTs(c.x); });
+  // Candlestick data: [open, close, low, high]
+  var candleData = raw.map(function(c) { return [c.o, c.c, c.l, c.h]; });
 
-  function buildEqAxis(lo, hi) {
-    if (logScale) {
-      return { logarithmic: true, forceNiceScale: true, labels: eqLabels };
-    }
-    const pad = Math.max((hi - lo) * 0.04, 1);
-    return { min: lo - pad, max: hi + pad, forceNiceScale: false, labels: eqLabels };
+  // Build Y-axes
+  var yAxes = [{
+    type: logScale ? 'log' : 'value',
+    scale: true,
+    position: 'right',
+    axisLabel: { formatter: function(v) { return '$' + v.toLocaleString('en', { maximumFractionDigits: 0 }); } },
+  }];
+
+  var seriesList = [{
+    type: 'candlestick',
+    name: 'Equity',
+    data: candleData,
+    itemStyle: {
+      color: '#00c855',
+      color0: '#e83535',
+      borderColor: '#00c855',
+      borderColor0: '#e83535',
+    },
+  }];
+
+  if (showDD) {
+    yAxes.push({
+      type: 'value',
+      position: 'left',
+      max: 0,
+      axisLabel: { formatter: function(v) { return Math.abs(v).toFixed(1) + '%'; }, color: '#e83535' },
+      splitLine: { show: false },
+    });
+    seriesList.push({
+      type: 'line',
+      name: 'Drawdown %',
+      data: ddValues,
+      yAxisIndex: 1,
+      smooth: true,
+      symbol: 'none',
+      lineStyle: { width: 1.5, color: '#e83535' },
+      areaStyle: { color: QE.areaGradient('#e83535', 0.15, 0.02) },
+    });
   }
 
-  function buildDdAxis(visibleDd) {
-    const ddMin = visibleDd.length ? Math.min(...visibleDd.map(d => d.y)) : -10;
-    const pad   = Math.abs(ddMin) * 0.1 || 1;
-    return { opposite: true, max: 0, min: ddMin - pad, forceNiceScale: false, labels: ddLabels };
-  }
-
-  function fitY(visibleRaw) {
-    if (!visibleRaw.length) return;
-    const lo  = Math.min(...visibleRaw.map(c => c.l));
-    const hi  = Math.max(...visibleRaw.map(c => c.h));
-    const eqY = buildEqAxis(lo, hi);
-    if (!showDD) { chart.updateOptions({ yaxis: eqY }, false, false); return; }
-    const xSet = new Set(visibleRaw.map(c => c.x));
-    const visDd = ddData.filter(d => xSet.has(d.x - halfMs));
-    chart.updateOptions({ yaxis: [eqY, buildDdAxis(visDd)] }, false, false);
-  }
-
-  const yMin = Math.min(...raw.map(c => c.l));
-  const yMax = Math.max(...raw.map(c => c.h));
-
-  const candleSeries = { name: 'Equity', type: 'candlestick',
-    data: raw.map(c => ({ x: c.x + halfMs, y: [c.o, c.h, c.l, c.c] })) };
-  const ddSeries = { name: 'Drawdown %', type: 'line', data: ddData };
-  const series = showDD ? [candleSeries, ddSeries] : [candleSeries];
-
-  const opts = {
-    chart: {
-      type: 'candlestick', height: 360, background: 'transparent', foreColor: '#96b4d0',
-      toolbar: { show: true, tools: { download: true, zoom: true, pan: true, reset: true } },
-      zoom: { enabled: true }, animations: { enabled: false },
-      events: {
-        dataPointMouseEnter: (_evt, _ctx, cfg) => {
-          if (cfg.seriesIndex === 0 && raw[cfg.dataPointIndex]) renderStats(raw[cfg.dataPointIndex]);
-        },
-        mouseLeave: () => { if (raw.length) renderStats(raw[raw.length - 1]); },
-        zoomed: (_ctx, { xaxis }) => {
-          if (!xaxis || xaxis.min == null) return;
-          const vis = raw.filter(c => (c.x + halfMs) >= xaxis.min && (c.x + halfMs) <= xaxis.max);
-          if (vis.length) fitY(vis);
-        },
-        scrolled: (_ctx, { xaxis }) => {
-          if (!xaxis || xaxis.min == null) return;
-          const vis = raw.filter(c => (c.x + halfMs) >= xaxis.min && (c.x + halfMs) <= xaxis.max);
-          if (vis.length) fitY(vis);
-        },
+  var option = {
+    grid: { top: 20, bottom: 50, left: showDD ? 55 : 20, right: 65 },
+    xAxis: {
+      type: 'category',
+      data: categoryData,
+      axisLabel: { rotate: -45, fontSize: 10 },
+    },
+    yAxis: yAxes,
+    series: seriesList,
+    dataZoom: [
+      { type: 'inside', xAxisIndex: 0 },
+      { type: 'slider', xAxisIndex: 0, height: 20, bottom: 5 },
+    ],
+    toolbox: {
+      feature: {
+        saveAsImage: { title: 'Save' },
+        dataZoom: { title: { zoom: 'Zoom', back: 'Reset' } },
+        restore: { title: 'Restore' },
       },
     },
-    theme: { mode: 'dark' },
-    series,
-    xaxis: {
-      type: 'datetime', datetimeUTC: false,
-      labels: {
-        rotate: -45, hideOverlappingLabels: true,
-        style: { fontSize: '10px' },
-        datetimeFormatter: { year: 'yyyy', month: "MMM 'yy", day: 'MMM dd', hour: 'MMM dd HH:mm' },
-      },
-    },
-    yaxis: showDD ? [buildEqAxis(yMin, yMax), buildDdAxis(ddData)] : buildEqAxis(yMin, yMax),
-    plotOptions: {
-      candlestick: { colors: { upward: '#00c855', downward: '#e83535' }, wick: { useFillColor: true } },
-    },
-    stroke: { width: [1, 1.5], curve: 'smooth' },
-    colors: ['transparent', '#e83535'],
-    grid: { borderColor: '#18253a' },
-    legend: { show: false },
     tooltip: {
-      theme: 'dark',
-      custom: ({ seriesIndex, dataPointIndex }) => {
-        if (seriesIndex !== 0) return '';
-        const c = raw[dataPointIndex];
+      trigger: 'axis',
+      axisPointer: { type: 'cross' },
+      formatter: function(params) {
+        // Find candlestick param
+        var cp = null;
+        for (var i = 0; i < params.length; i++) {
+          if (params[i].seriesType === 'candlestick') { cp = params[i]; break; }
+        }
+        if (!cp) return '';
+        var idx = cp.dataIndex;
+        var c = raw[idx];
         if (!c) return '';
-        const chg       = c.c - c.o;
-        const chgPct    = c.o !== 0 ? (chg / c.o) * 100 : 0;
-        const rng       = c.h - c.l;
-        const rngPct    = c.l !== 0 ? (rng / c.l) * 100 : 0;
-        const cf        = c.cf || 0;
-        const adjChg    = chg - cf;
-        const adjChgPct = c.o !== 0 ? (adjChg / c.o) * 100 : 0;
-        const sign      = chg >= 0 ? '+' : '-';
-        const adjSign   = adjChg >= 0 ? '+' : '-';
-        const cfSign    = cf >= 0 ? '+' : '-';
-        const chgCol    = chg >= 0 ? '#00c855' : '#e83535';
-        const adjCol    = adjChg >= 0 ? '#00c855' : '#e83535';
-        const cfCol     = cf >= 0 ? '#3c8ff5' : '#e89020';
-        const ddVal     = showDD ? ddData[dataPointIndex]?.y ?? 0 : null;
-        const row = (lbl, val, col) =>
-          `<div style="display:flex;justify-content:space-between;gap:16px">` +
-          `<span style="color:#526a88">${lbl}</span>` +
-          `<span style="color:${col || '#e8f2ff'}">${val}</span></div>`;
-        return `<div style="padding:10px 12px;background:#0c1118;border:1px solid #18253a;font-size:11px;font-family:JetBrains Mono,monospace;line-height:1.9;min-width:200px">` +
-          `<div style="color:#526a88;margin-bottom:2px">${fmtTs(c.x)}</div>` +
+        var chg       = c.c - c.o;
+        var chgPct    = c.o !== 0 ? (chg / c.o) * 100 : 0;
+        var rng       = c.h - c.l;
+        var rngPct    = c.l !== 0 ? (rng / c.l) * 100 : 0;
+        var cf        = c.cf || 0;
+        var adjChg    = chg - cf;
+        var adjChgPct = c.o !== 0 ? (adjChg / c.o) * 100 : 0;
+        var sign      = chg >= 0 ? '+' : '-';
+        var adjSign   = adjChg >= 0 ? '+' : '-';
+        var cfSign    = cf >= 0 ? '+' : '-';
+        var chgCol    = chg >= 0 ? '#00c855' : '#e83535';
+        var adjCol    = adjChg >= 0 ? '#00c855' : '#e83535';
+        var cfCol     = cf >= 0 ? '#3c8ff5' : '#e89020';
+        function row(lbl, val, col) {
+          return '<div style="display:flex;justify-content:space-between;gap:16px">' +
+            '<span style="color:#526a88">' + lbl + '</span>' +
+            '<span style="color:' + (col || '#e8f2ff') + '">' + val + '</span></div>';
+        }
+        var html = '<div style="padding:10px 12px;font-size:11px;font-family:JetBrains Mono,monospace;line-height:1.9;min-width:200px">' +
+          '<div style="color:#526a88;margin-bottom:2px">' + fmtTs(c.x) + '</div>' +
           row('Open',  fmt(c.o)) +
           row('High',  fmt(c.h), '#00c855') +
           row('Low',   fmt(c.l), '#e83535') +
           row('Close', fmt(c.c)) +
-          `<div style="border-top:1px solid #18253a;margin:4px 0"></div>` +
-          row('Change', `${sign}${fmtAbs(chg)} (${sign}${Math.abs(chgPct).toFixed(2)}%)`, chgCol) +
-          row('Range',  `${fmt(rng)} (${rngPct.toFixed(2)}%)`) +
-          `<div style="border-top:1px solid #18253a;margin:4px 0"></div>` +
-          row('Cashflow', `${cfSign}${fmtAbs(cf)}`, cfCol) +
-          row('Adj Chg',  `${adjSign}${fmtAbs(adjChg)} (${adjSign}${Math.abs(adjChgPct).toFixed(2)}%)`, adjCol) +
-          (ddVal !== null ? row('Drawdown', Math.abs(ddVal).toFixed(2) + '%', '#e83535') : '') +
-          `</div>`;
+          '<div style="border-top:1px solid #18253a;margin:4px 0"></div>' +
+          row('Change', sign + fmtAbs(chg) + ' (' + sign + Math.abs(chgPct).toFixed(2) + '%)', chgCol) +
+          row('Range',  fmt(rng) + ' (' + rngPct.toFixed(2) + '%)') +
+          '<div style="border-top:1px solid #18253a;margin:4px 0"></div>' +
+          row('Cashflow', cfSign + fmtAbs(cf), cfCol) +
+          row('Adj Chg',  adjSign + fmtAbs(adjChg) + ' (' + adjSign + Math.abs(adjChgPct).toFixed(2) + '%)', adjCol);
+        if (showDD) {
+          html += row('Drawdown', Math.abs(ddValues[idx] || 0).toFixed(2) + '%', '#e83535');
+        }
+        html += '</div>';
+        return html;
       },
     },
-    dataLabels: { enabled: false },
+    legend: { show: false },
+    animation: false,
   };
 
-  const chart = new ApexCharts(document.querySelector('#equity-chart'), opts);
-  chart.render();
+  var chart = QE.initChart(document.getElementById('equity-chart'), option);
+
+  // Auto-fit Y-axis on zoom
+  chart.on('datazoom', function() {
+    var opt = chart.getOption();
+    var dz = opt.dataZoom[0];
+    var startPct = dz.start !== undefined ? dz.start : 0;
+    var endPct = dz.end !== undefined ? dz.end : 100;
+    var startIdx = Math.floor(startPct / 100 * raw.length);
+    var endIdx = Math.ceil(endPct / 100 * raw.length) - 1;
+    startIdx = Math.max(0, startIdx);
+    endIdx = Math.min(raw.length - 1, endIdx);
+    if (endIdx < startIdx) return;
+    var visible = raw.slice(startIdx, endIdx + 1);
+    if (!visible.length) return;
+    var lo = Math.min.apply(null, visible.map(function(c) { return c.l; }));
+    var hi = Math.max.apply(null, visible.map(function(c) { return c.h; }));
+    var pad = (hi - lo) * 0.04 || 1;
+    var yOpt = { yAxis: [{ min: lo - pad, max: hi + pad }] };
+    if (showDD) {
+      var visDd = ddValues.slice(startIdx, endIdx + 1);
+      var ddMin = Math.min.apply(null, visDd);
+      var ddPad = Math.abs(ddMin) * 0.1 || 1;
+      yOpt.yAxis.push({ min: ddMin - ddPad, max: 0 });
+    }
+    chart.setOption(yOpt);
+  });
+
+  // Hover stats — use axisPointer event so it triggers across full chart area
+  chart.on('updateAxisPointer', function(params) {
+    var axesInfo = params.axesInfo;
+    if (axesInfo && axesInfo.length > 0) {
+      var idx = axesInfo[0].value;
+      if (idx >= 0 && idx < raw.length) renderStats(raw[idx]);
+    }
+  });
+  chart.getZr().on('globalout', function() {
+    if (raw.length) renderStats(raw[raw.length - 1]);
+  });
 })();
 </script>
 {% endif %}

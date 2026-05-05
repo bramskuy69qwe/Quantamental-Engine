@@ -59,19 +59,31 @@
   <script>
   (function(){
     var eq = {{ equity|tojson }};
-    var series = eq.map(function(p){ return {x:p.dt, y:parseFloat(p.equity.toFixed(2))}; });
-    new ApexCharts(document.getElementById('bt-equity-chart-{{ session.id }}'),{
-      chart:{type:'area',height:160,background:'transparent',toolbar:{show:false},animations:{enabled:false}},
-      series:[{name:'Equity',data:series}],
-      dataLabels:{enabled:false},
-      stroke:{curve:'smooth',width:1.5},
-      fill:{type:'gradient',gradient:{opacityFrom:.25,opacityTo:.02}},
-      colors:['{{ "#3c8ff5" }}'],
-      xaxis:{type:'category',labels:{show:false},axisBorder:{show:false}},
-      yaxis:{labels:{style:{colors:'#526a88',fontSize:'10px'},formatter:function(v){return '$'+v.toLocaleString();}}},
-      grid:{borderColor:'#18253a',strokeDashArray:3},
-      tooltip:{theme:'dark',x:{show:true}},
-    }).render();
+
+    var option = {
+      grid: { top: 10, bottom: 10, left: 55, right: 10 },
+      xAxis: {
+        type: 'category',
+        data: eq.map(function(p) { return p.dt; }),
+        show: false,
+      },
+      yAxis: {
+        type: 'value',
+        axisLabel: { formatter: function(v) { return '$' + v.toLocaleString(); } },
+      },
+      series: [{
+        type: 'line',
+        data: eq.map(function(p) { return parseFloat(p.equity.toFixed(2)); }),
+        smooth: true,
+        symbol: 'none',
+        lineStyle: { width: 1.5, color: '#3c8ff5' },
+        areaStyle: { color: QE.areaGradient('#3c8ff5', 0.25, 0.02) },
+      }],
+      tooltip: { trigger: 'axis' },
+      animation: false,
+    };
+
+    QE.initChart(document.getElementById('bt-equity-chart-{{ session.id }}'), option);
   })();
   </script>
 </div>

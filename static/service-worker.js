@@ -68,7 +68,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // External CDN resources (htmx, apexcharts, fonts): cache-first
+  // External CDN resources (htmx, echarts, fonts): cache-first
   if (
     url.hostname === 'unpkg.com' ||
     url.hostname === 'cdn.jsdelivr.net' ||

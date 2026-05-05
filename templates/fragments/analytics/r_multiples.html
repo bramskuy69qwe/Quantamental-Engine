@@ -6,7 +6,7 @@
 
     <!-- Chart -->
     <div>
-      <div id="r-hist-chart"></div>
+      <div id="r-hist-chart" style="height:260px;"></div>
     </div>
 
     <!-- Stats panel -->
@@ -46,30 +46,42 @@
 {% if r_values %}
 <script>
 (function() {
-  const bins  = {{ histogram | tojson }};
-  const colors = bins.map(b => b.pos ? '#00c855' : '#e83535');
-  const opts = {
-    chart: { type: 'bar', height: 260, background: 'transparent', foreColor: '#96b4d0',
-             toolbar: { show: false } },
-    theme: { mode: 'dark' },
-    series: [{ name: 'Trades', data: bins.map(b => b.count) }],
-    colors: colors,
-    plotOptions: { bar: { distributed: true, borderRadius: 3, columnWidth: '70%' } },
-    legend: { show: false },
-    xaxis: {
-      categories: bins.map(b => b.label),
-      title: { text: 'R-Multiple', style: { color: '#526a88', fontSize: '11px' } },
+  var bins = {{ histogram | tojson }};
+
+  var option = {
+    grid: { top: 30, bottom: 50, left: 50, right: 20 },
+    xAxis: {
+      type: 'category',
+      data: bins.map(function(b) { return b.label; }),
+      name: 'R-Multiple', nameLocation: 'center', nameGap: 36,
+      nameTextStyle: { color: '#526a88', fontSize: 11 },
     },
-    yaxis: { title: { text: 'Count', style: { color: '#526a88', fontSize: '11px' } } },
-    grid: { borderColor: '#18253a' },
-    dataLabels: {
-      enabled: true,
-      formatter: v => v > 0 ? v : '',
-      style: { fontSize: '11px', colors: ['#e8f2ff'] },
+    yAxis: {
+      type: 'value',
+      name: 'Count', nameTextStyle: { color: '#526a88', fontSize: 11 },
     },
-    tooltip: { theme: 'dark' },
+    series: [{
+      type: 'bar',
+      data: bins.map(function(b) {
+        return {
+          value: b.count,
+          itemStyle: { color: b.pos ? '#00c855' : '#e83535' },
+        };
+      }),
+      barWidth: '70%',
+      label: {
+        show: true,
+        position: 'top',
+        formatter: function(p) { return p.value > 0 ? p.value : ''; },
+        color: '#e8f2ff',
+        fontSize: 11,
+      },
+    }],
+    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+    animation: true,
   };
-  new ApexCharts(document.querySelector('#r-hist-chart'), opts).render();
+
+  QE.initChart(document.getElementById('r-hist-chart'), option);
 })();
 </script>
 {% endif %}

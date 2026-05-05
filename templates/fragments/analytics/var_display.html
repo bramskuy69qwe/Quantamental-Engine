@@ -26,7 +26,7 @@
   </div>
 
   <div class="lbl" style="margin-bottom:8px;">Daily Return Distribution</div>
-  <div id="var-dist-chart"></div>
+  <div id="var-dist-chart" style="height:220px;"></div>
 
   {% endif %}
 </div>
@@ -34,31 +34,52 @@
 {% if has_data %}
 <script>
 (function() {
-  const data   = {{ hist_data | tojson }};
-  const var95x = {{ (var95 * 100) | round(3) }};
+  var data   = {{ hist_data | tojson }};
+  var var95x = {{ (var95 * 100) | round(3) }};
 
-  const opts = {
-    chart: { type: 'bar', height: 220, background: 'transparent', foreColor: '#96b4d0',
-             toolbar: { show: false } },
-    theme: { mode: 'dark' },
-    series: [{ name: 'Days', data: data.map(d => ({ x: d.x.toFixed(2) + '%', y: d.y })) }],
-    colors: data.map(d => d.x <= var95x ? '#e83535' : (d.x >= 0 ? '#00c855' : '#526a88')),
-    plotOptions: { bar: { distributed: true, borderRadius: 2, columnWidth: '90%' } },
-    legend: { show: false },
-    xaxis: { title: { text: 'Daily Return (%)', style: { color: '#526a88', fontSize: '11px' } } },
-    yaxis: { title: { text: 'Count', style: { color: '#526a88', fontSize: '11px' } } },
-    grid: { borderColor: '#18253a' },
-    dataLabels: { enabled: false },
-    annotations: {
-      xaxis: [{
-        x: var95x.toFixed(2) + '%',
-        borderColor: '#e83535',
-        label: { text: 'VaR 95%', style: { color: '#e83535', background: '#07080f' } },
-      }],
+  // Find the index of the bin closest to VaR threshold for markLine
+  var varIdx = 0;
+  var minDist = Infinity;
+  data.forEach(function(d, i) {
+    var dist = Math.abs(d.x - var95x);
+    if (dist < minDist) { minDist = dist; varIdx = i; }
+  });
+
+  var option = {
+    grid: { top: 30, bottom: 50, left: 50, right: 20 },
+    xAxis: {
+      type: 'category',
+      data: data.map(function(d) { return d.x.toFixed(2) + '%'; }),
+      axisLabel: { rotate: 45, fontSize: 9 },
+      name: 'Daily Return (%)', nameLocation: 'center', nameGap: 36,
+      nameTextStyle: { color: '#526a88', fontSize: 11 },
     },
-    tooltip: { theme: 'dark' },
+    yAxis: {
+      type: 'value',
+      name: 'Count', nameTextStyle: { color: '#526a88', fontSize: 11 },
+    },
+    series: [{
+      type: 'bar',
+      data: data.map(function(d) {
+        return {
+          value: d.y,
+          itemStyle: { color: d.x <= var95x ? '#e83535' : (d.x >= 0 ? '#00c855' : '#526a88') },
+        };
+      }),
+      barWidth: '90%',
+      markLine: {
+        silent: true,
+        symbol: 'none',
+        data: [{ xAxis: varIdx }],
+        lineStyle: { color: '#e83535', type: 'dashed', width: 1.5 },
+        label: { formatter: 'VaR 95%', color: '#e83535', fontSize: 10, backgroundColor: '#07080f', padding: [2, 4] },
+      },
+    }],
+    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+    animation: true,
   };
-  new ApexCharts(document.querySelector('#var-dist-chart'), opts).render();
+
+  QE.initChart(document.getElementById('var-dist-chart'), option);
 })();
 </script>
 {% endif %}

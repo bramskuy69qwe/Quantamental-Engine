@@ -502,28 +502,30 @@ async function loadSignalCard(sig){
     var resp=await fetch('/api/regime/signals?'+params.toString());var data=await resp.json();
     var valEl=document.getElementById('val-'+sig.key),chartEl=document.getElementById('chart-'+sig.key);
     if(!data.length){
-      if(signalCharts[sig.key]){signalCharts[sig.key].destroy();delete signalCharts[sig.key];}
+      if(signalCharts[sig.key]){QE.disposeChart(document.getElementById('chart-'+sig.key));delete signalCharts[sig.key];}
       var cov=signalCoverage[sig.key];
       valEl.textContent=cov&&cov.count>0?'no data in range':'not backfilled';
       chartEl.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:.65rem;color:var(--muted);">'+(cov&&cov.count>0?'No data for range':'Not yet backfilled — use Backfill tab')+'</div>';
       return;
     }
     var latest=data[data.length-1];valEl.textContent=latest.value.toFixed(sig.decimals)+(sig.unit?' '+sig.unit:'');
-    var series=data.map(d=>({x:d.date,y:d.value}));
-    var yAnnotations=sig.thresholds.map(t=>({y:t.v,borderColor:t.c,strokeDashArray:3,label:{text:t.l,style:{color:t.c,background:'transparent',fontSize:'8px',padding:{left:2,right:2,top:0,bottom:0}},position:'left'}}));
-    var opts={
-      chart:{type:'area',height:100,background:'transparent',toolbar:{show:false},animations:{enabled:false},zoom:{enabled:false}},
-      series:[{name:sig.label,data:series}],stroke:{curve:'smooth',width:1.5},
-      fill:{type:'gradient',gradient:{opacityFrom:0.2,opacityTo:0.02}},
-      colors:[sig.color],dataLabels:{enabled:false},
-      xaxis:{type:'category',labels:{show:true,rotate:0,style:{colors:'#526a88',fontSize:'8px'},formatter:v=>v?v.slice(5,10):''},axisBorder:{show:false},axisTicks:{show:false},tickAmount:6},
-      yaxis:{labels:{style:{colors:'#526a88',fontSize:'9px'},formatter:v=>v!=null?v.toLocaleString(undefined,{maximumFractionDigits:sig.decimals}):''},tickAmount:3},
-      grid:{borderColor:'#18253a',strokeDashArray:2,padding:{left:2,right:2,top:0,bottom:0}},
-      tooltip:{theme:'dark',x:{show:true},y:{formatter:v=>v!=null?v.toFixed(sig.decimals)+(sig.unit?' '+sig.unit:''):''}},
-      annotations:{yaxis:yAnnotations},
+    var markLines=sig.thresholds.map(function(t){return{yAxis:t.v,lineStyle:{color:t.c,type:'dashed',width:1},label:{formatter:t.l,fontSize:8,color:t.c,position:'insideStartTop'}};});
+    var option={
+      grid:{top:5,bottom:20,left:35,right:5},
+      xAxis:{type:'category',data:data.map(function(d){return d.date;}),axisLabel:{fontSize:8,formatter:function(v){return v?v.slice(5,10):'';},interval:'auto'},axisTick:{show:false},axisLine:{show:false}},
+      yAxis:{type:'value',axisLabel:{fontSize:9,formatter:function(v){return v!=null?v.toLocaleString(undefined,{maximumFractionDigits:sig.decimals}):'';}},splitNumber:3},
+      series:[{
+        type:'line',name:sig.label,
+        data:data.map(function(d){return d.value;}),
+        smooth:true,symbol:'none',
+        lineStyle:{width:1.5,color:sig.color},
+        areaStyle:{color:QE.areaGradient(sig.color,0.2,0.02)},
+        markLine:{silent:true,symbol:'none',data:markLines},
+      }],
+      tooltip:{trigger:'axis',formatter:function(p){var v=p[0]?p[0].value:null;return p[0].axisValue+'<br/>'+sig.label+': '+(v!=null?v.toFixed(sig.decimals):'—')+(sig.unit?' '+sig.unit:'');}},
+      animation:false,
     };
-    if(signalCharts[sig.key])signalCharts[sig.key].destroy();
-    chartEl.innerHTML='';signalCharts[sig.key]=new ApexCharts(chartEl,opts);signalCharts[sig.key].render();
+    chartEl.innerHTML='';signalCharts[sig.key]=QE.initChart(chartEl,option);
   }catch(e){console.error('Signal load error',sig.key,e);}
 }
 

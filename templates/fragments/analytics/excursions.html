@@ -14,7 +14,7 @@
   </div>
 
   {% if trades %}
-  <div id="excursions-chart"></div>
+  <div id="excursions-chart" style="height:280px;"></div>
 
   <!-- Summary stats -->
   <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:14px;">
@@ -71,41 +71,61 @@
 {% if trades %}
 <script>
 (function() {
-  const data = {{ scatter_data | tojson }};
-  const seriesData = [
-    data.filter(d => d.z >= 0),
-    data.filter(d => d.z <  0),
-  ];
-  const opts = {
-    chart: { type: 'scatter', height: 280, background: 'transparent', foreColor: '#96b4d0',
-             toolbar: { show: false }, zoom: { enabled: true } },
-    theme: { mode: 'dark' },
+  var data = {{ scatter_data | tojson }};
+  var profitable = data.filter(function(d) { return d.z >= 0; });
+  var losses = data.filter(function(d) { return d.z < 0; });
+
+  var option = {
+    grid: { top: 30, bottom: 50, left: 60, right: 20 },
+    xAxis: {
+      type: 'value',
+      name: 'MFE ($)', nameLocation: 'center', nameGap: 36,
+      nameTextStyle: { color: '#526a88', fontSize: 11 },
+      axisLabel: { formatter: function(v) { return '$' + v.toFixed(0); } },
+    },
+    yAxis: {
+      type: 'value',
+      name: 'MAE ($)', nameTextStyle: { color: '#526a88', fontSize: 11 },
+      axisLabel: { formatter: function(v) { return '$' + v.toFixed(0); } },
+    },
     series: [
-      { name: 'Profitable', data: seriesData[0].map(d => ({ x: d.x, y: d.y })) },
-      { name: 'Loss',       data: seriesData[1].map(d => ({ x: d.x, y: d.y })) },
+      {
+        name: 'Profitable', type: 'scatter',
+        data: profitable.map(function(d) { return [d.x, d.y]; }),
+        itemStyle: { color: '#00c855' },
+        symbolSize: 8,
+      },
+      {
+        name: 'Loss', type: 'scatter',
+        data: losses.map(function(d) { return [d.x, d.y]; }),
+        itemStyle: { color: '#e83535' },
+        symbolSize: 8,
+      },
     ],
-    colors: ['#00c855', '#e83535'],
-    markers: { size: 5, strokeWidth: 0 },
-    xaxis: { title: { text: 'MFE ($)', style: { color: '#526a88' } }, labels: { formatter: v => '$' + parseFloat(v).toFixed(0) } },
-    yaxis: { title: { text: 'MAE ($)', style: { color: '#526a88' } }, labels: { formatter: v => '$' + parseFloat(v).toFixed(0) } },
-    grid: { borderColor: '#18253a' },
-    tooltip: { theme: 'dark', custom: function({series, seriesIndex, dataPointIndex, w}) {
-      const d = seriesData[seriesIndex][dataPointIndex];
-      return '<div style="padding:6px 10px;font-size:11px;font-family:JetBrains Mono,monospace;">' +
-        '<b>' + (d?.sym||'') + '</b><br>' +
-        'MFE: $' + (d?.x||0).toFixed(2) + '<br>' +
-        'MAE: $' + (d?.y||0).toFixed(2) + '<br>' +
-        'PnL: $' + (d?.z||0).toFixed(2) + '</div>';
-    }},
-    dataLabels: { enabled: false },
+    legend: { data: ['Profitable', 'Loss'] },
+    tooltip: {
+      trigger: 'item',
+      formatter: function(params) {
+        var arr = params.seriesIndex === 0 ? profitable : losses;
+        var d = arr[params.dataIndex];
+        if (!d) return '';
+        return '<b>' + (d.sym || '') + '</b><br/>' +
+          'MFE: $' + d.x.toFixed(2) + '<br/>' +
+          'MAE: $' + d.y.toFixed(2) + '<br/>' +
+          'PnL: $' + d.z.toFixed(2);
+      },
+    },
+    dataZoom: [{ type: 'inside' }],
+    animation: true,
   };
-  new ApexCharts(document.querySelector('#excursions-chart'), opts).render();
+
+  QE.initChart(document.getElementById('excursions-chart'), option);
 })();
 
 function filterExcursions(dir) {
-  const month = document.getElementById('month-display')?.textContent.trim() || '';
-  const allTime = month === 'All Time';
-  const qs = (allTime ? 'all=1' : 'month=' + encodeURIComponent(month)) + '&dir=' + dir;
+  var month = document.getElementById('month-display') ? document.getElementById('month-display').textContent.trim() : '';
+  var allTime = month === 'All Time';
+  var qs = (allTime ? 'all=1' : 'month=' + encodeURIComponent(month)) + '&dir=' + dir;
   htmx.ajax('GET', '/fragments/analytics/excursions?' + qs,
             { target: '#analytics-content', swap: 'innerHTML' });
 }
