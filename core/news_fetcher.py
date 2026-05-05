@@ -151,6 +151,13 @@ class BweWsConsumer:
     _PING_INTERVAL = 20  # seconds between plaintext ping sends
 
     def __init__(self, url: Optional[str] = None) -> None:
+        # Read URL from connections if configured, else fall back to config/env
+        if url is None:
+            try:
+                from core.connections import connections_manager
+                url = connections_manager.get_sync("bwe_news")
+            except Exception:
+                pass
         self.url = url or config.BWE_NEWS_WS_URL
         self._stop = False
 

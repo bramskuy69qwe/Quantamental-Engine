@@ -266,6 +266,7 @@ class RegimeFetcher:
         if self._ccxt_exchange is None:
             import ccxt.async_support as ccxt_async
             import aiohttp as _aiohttp
+            from core.connections import connections_manager
 
             params: Dict[str, Any] = {
                 "enableRateLimit": True,
@@ -273,6 +274,15 @@ class RegimeFetcher:
             }
             if config.HTTP_PROXY:
                 params["aiohttp_proxy"] = config.HTTP_PROXY
+
+            # Read credentials from Connections (optional — public endpoints work without)
+            api_key = connections_manager.get_sync("binance_market_data")
+            if api_key:
+                params["apiKey"] = api_key
+                entry = connections_manager._cache.get("binance_market_data", {})
+                api_secret = entry.get("extra", "")
+                if api_secret:
+                    params["secret"] = api_secret
 
             resolver = _aiohttp.ThreadedResolver()
             connector = _aiohttp.TCPConnector(resolver=resolver)

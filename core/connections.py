@@ -15,6 +15,7 @@ import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
+import config
 from core.database import db
 from core.crypto import decrypt, encrypt, mask_key
 from core.audit import log_event as _audit
@@ -138,6 +139,35 @@ class ConnectionsManager:
                     return {"status": "ok", "msg": "CoinGecko API connected"}
                 return {"status": "error", "msg": f"CoinGecko returned HTTP {resp.status_code}"}
 
+        elif provider == "binance_market_data":
+            # Test connectivity by fetching a single public funding rate
+            url = "https://fapi.binance.com/fapi/v1/fundingRate"
+            params = {"symbol": "BTCUSDT", "limit": 1}
+            headers = {"X-MBX-APIKEY": api_key} if api_key else {}
+            proxy = config.HTTP_PROXY if config.HTTP_PROXY else None
+            async with httpx.AsyncClient(timeout=10, proxy=proxy) as client:
+                resp = await client.get(url, params=params, headers=headers)
+                if resp.status_code == 200:
+                    return {"status": "ok", "msg": "Binance Futures API connected"}
+                return {"status": "error", "msg": f"Binance returned HTTP {resp.status_code}"}
+
+        elif provider == "bwe_news":
+            # Test WS connectivity with a quick connect + disconnect
+            import websockets
+            ws_url = api_key or config.BWE_NEWS_WS_URL
+            try:
+                async with websockets.connect(
+                    ws_url, ping_interval=None, ping_timeout=None,
+                    additional_headers={"Origin": "https://bwenews-api.bwe-ws.com"},
+                ) as ws:
+                    await ws.send("ping")
+                    resp_msg = await asyncio.wait_for(ws.recv(), timeout=5)
+                    if "pong" in resp_msg.lower():
+                        return {"status": "ok", "msg": "BWE News WS connected"}
+                    return {"status": "ok", "msg": f"BWE WS connected (got: {resp_msg[:30]})"}
+            except Exception as e:
+                return {"status": "error", "msg": f"BWE WS failed: {e}"}
+
         return {"status": "error", "msg": f"Unknown provider: {provider}"}
 
     def list_connections(self) -> List[Dict[str, Any]]:
@@ -160,9 +190,11 @@ class ConnectionsManager:
 
 # Known providers shown by default in UI (even if not yet configured)
 KNOWN_PROVIDERS = [
-    {"provider": "fred",      "label": "Federal Reserve (FRED)"},
-    {"provider": "finnhub",   "label": "Finnhub"},
-    {"provider": "coingecko", "label": "CoinGecko"},
+    {"provider": "binance_market_data", "label": "Binance Market Data (OI/Funding)"},
+    {"provider": "bwe_news",            "label": "BWE News (Crypto)"},
+    {"provider": "fred",                "label": "Federal Reserve (FRED)"},
+    {"provider": "finnhub",             "label": "Finnhub"},
+    {"provider": "coingecko",           "label": "CoinGecko"},
 ]
 
 # Module-level singleton
