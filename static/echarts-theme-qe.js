@@ -98,6 +98,7 @@
   // ── Utility: dispose chart and clean up resize listener ────────────────────
   function disposeChart(el) {
     if (!el) return;
+    stopRefresh(el);
     var inst = echarts.getInstanceByDom(el);
     fullDispose(inst);
   }
@@ -118,6 +119,47 @@
     ]);
   }
 
+  // ── Data refresh lifecycle ──────────────────────────────────────────────────
+  function _doRefresh(el, url, onData) {
+    var chart = echarts.getInstanceByDom(el);
+    if (!chart || chart.isDisposed()) return;
+    fetch(url, { cache: 'no-store' })
+      .then(function(r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function(data) {
+        var c = echarts.getInstanceByDom(el);
+        if (c && !c.isDisposed()) onData(c, data, el);
+      })
+      .catch(function(err) {
+        console.warn('QE refresh error (' + url + '):', err);
+      });
+  }
+
+  function startRefresh(el, url, onData, intervalMs) {
+    if (!el) { console.warn('QE.startRefresh: element is null'); return; }
+    stopRefresh(el);
+    el.___qeRefreshTimer = setInterval(function() {
+      if (!document.body.contains(el)) { stopRefresh(el); return; }
+      var chart = echarts.getInstanceByDom(el);
+      if (!chart || chart.isDisposed()) { stopRefresh(el); return; }
+      _doRefresh(el, url, onData);
+    }, intervalMs);
+  }
+
+  function stopRefresh(el) {
+    if (!el) return;
+    if (el.___qeRefreshTimer) {
+      clearInterval(el.___qeRefreshTimer);
+      el.___qeRefreshTimer = null;
+    }
+    if (el.___qeTickTimer) {
+      clearInterval(el.___qeTickTimer);
+      el.___qeTickTimer = null;
+    }
+  }
+
   // ── Expose globally ────────────────────────────────────────────────────────
   window.QE = {
     colors: C,
@@ -125,6 +167,8 @@
     disposeChart: disposeChart,
     ohlcToEcharts: ohlcToEcharts,
     areaGradient: areaGradient,
+    startRefresh: startRefresh,
+    stopRefresh: stopRefresh,
   };
 
 })();

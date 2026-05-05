@@ -1,64 +1,98 @@
-<div class="card">
-  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
-    <div class="lbl" style="margin-bottom:0;">Equity Curve — {{ period_label }}</div>
+{# ── Unified Equity OHLC Candlestick Chart ────────────────────────────────────
+   Used by both dashboard and analytics. Config via template context variables.
 
-    <!-- Timeframe buttons -->
+   Required:  candles, active_tf
+   Optional:  eq_id, eq_title, eq_subtitle, eq_height, eq_timeframes,
+              eq_show_controls, eq_show_dd, eq_log_scale,
+              eq_fragment_url, eq_api_url,
+              eq_reload_target, eq_reload_swap, eq_refresh_ms
+#}
+{% set EID        = eq_id             | default('eq') %}
+{% set HEIGHT     = eq_height         | default('280px') %}
+{% set TITLE      = eq_title          | default('Equity Curve (OHLC)') %}
+{% set SUBTITLE   = eq_subtitle      | default('') %}
+{% set TFS        = eq_timeframes    | default([('1h','1H'),('4h','4H'),('1d','1D'),('1w','1W')]) %}
+{% set SHOW_CTRL  = eq_show_controls | default(false) %}
+{% set SHOW_DD    = eq_show_dd       | default(false) %}
+{% set LOG_SCALE  = eq_log_scale     | default(false) %}
+{% set FRAG_URL   = eq_fragment_url  | default('/fragments/dashboard/equity_ohlc') %}
+{% set API_URL    = eq_api_url       | default('/api/dashboard/equity_ohlc') %}
+{% set RELOAD_TGT = eq_reload_target | default('#' ~ EID ~ '-widget') %}
+{% set RELOAD_SWAP= eq_reload_swap   | default('outerHTML') %}
+{% set REFRESH_MS = eq_refresh_ms    | default(1000) %}
+
+<div id="{{ EID }}-widget" class="card">
+  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
+    <div class="lbl" style="margin-bottom:0;">{{ TITLE }}</div>
     <div style="display:flex;gap:4px;flex-wrap:wrap;">
-      {% for tf, label in [('1W','1W'),('2W','2W'),('1M','1M'),('3M','3M'),('6M','6M'),('1Y','1Y'),('all','All')] %}
-      <button onclick="reloadEquity('{{ tf }}')"
-              id="eq-tf-{{ tf }}"
-              class="preset-btn {{ 'active' if tf == active_tf else '' }}"
-              style="font-size:.66rem;">{{ label }}</button>
+      {% for tf_val, tf_label in TFS %}
+      <button onclick="_eqReload_{{ EID }}('{{ tf_val }}')"
+              id="{{ EID }}-tf-{{ tf_val }}"
+              class="preset-btn {{ 'active' if tf_val == active_tf else '' }}"
+              style="font-size:.66rem;">{{ tf_label }}</button>
       {% endfor %}
     </div>
-
-    <!-- Display toggles -->
+    {% if SHOW_CTRL %}
     <div style="display:flex;gap:12px;align-items:center;">
       <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--sub);cursor:pointer;">
-        <input type="checkbox" id="eq-log-scale" onchange="toggleLogScale()"
-               {% if log_scale %}checked{% endif %}>
+        <input type="checkbox" id="{{ EID }}-log" onchange="_eqReload_{{ EID }}('{{ active_tf }}')"
+               {% if LOG_SCALE %}checked{% endif %}>
         Log scale
       </label>
       <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--sub);cursor:pointer;">
-        <input type="checkbox" id="eq-show-dd" onchange="toggleDrawdown()"
-               {% if show_dd %}checked{% endif %}>
+        <input type="checkbox" id="{{ EID }}-dd" onchange="_eqReload_{{ EID }}('{{ active_tf }}')"
+               {% if SHOW_DD %}checked{% endif %}>
         Drawdown %
       </label>
     </div>
+    {% endif %}
+    {% if SUBTITLE %}
+    <span style="color:var(--muted);font-size:.66rem;">{{ SUBTITLE }}</span>
+    {% endif %}
   </div>
 
   {% if candles %}
-  <!-- Live OHLC + Change + Range stats bar -->
-  <div id="eq-ohlc-stats"
+  <div id="{{ EID }}-stats"
        style="display:flex;flex-wrap:wrap;gap:12px 16px;font-size:.72rem;font-family:var(--font-mono);margin-bottom:8px;padding:0 2px;user-select:none;min-height:1.25rem;">
   </div>
-  <div id="equity-chart" style="height:360px;"></div>
+  <div id="{{ EID }}-chart" style="height:{{ HEIGHT }};"></div>
   {% else %}
-  <div style="color:var(--muted);font-size:.78rem;padding:40px 0;text-align:center;">No equity data found for this period.</div>
+  <div style="color:var(--muted);font-size:.78rem;padding:32px 0;text-align:center;">No snapshot data available yet.</div>
   {% endif %}
 </div>
 
 <script>
-function reloadEquity(tf) {
-  const log = document.getElementById('eq-log-scale')?.checked ? '&log=1' : '';
-  const dd  = document.getElementById('eq-show-dd')?.checked   ? '&dd=1'  : '';
-  htmx.ajax('GET', '/fragments/analytics/equity_curve?tf=' + tf + log + dd,
-            { target: '#analytics-content', swap: 'innerHTML' });
+function _eqReload_{{ EID }}(tf) {
+  {% if SHOW_CTRL %}
+  var log = document.getElementById('{{ EID }}-log')?.checked ? '&log=1' : '';
+  var dd  = document.getElementById('{{ EID }}-dd')?.checked  ? '&dd=1'  : '';
+  htmx.ajax('GET', '{{ FRAG_URL }}?tf=' + tf + log + dd,
+            { target: '{{ RELOAD_TGT }}', swap: '{{ RELOAD_SWAP }}' });
+  {% else %}
+  htmx.ajax('GET', '{{ FRAG_URL }}?tf=' + tf,
+            { target: '{{ RELOAD_TGT }}', swap: '{{ RELOAD_SWAP }}' });
+  {% endif %}
 }
-function toggleLogScale() { reloadEquity('{{ active_tf }}'); }
-function toggleDrawdown()  { reloadEquity('{{ active_tf }}'); }
-</script>
 
 {% if candles %}
-<script>
 (function() {
   var raw      = {{ candles | tojson }};
-  var showDD   = {{ 'true' if show_dd   else 'false' }};
-  var logScale = {{ 'true' if log_scale else 'false' }};
+  var TF       = '{{ active_tf }}';
+  var showDD   = {{ 'true' if SHOW_DD else 'false' }};
+  var logScale = {{ 'true' if LOG_SCALE else 'false' }};
+  var STATS_ID = '{{ EID }}-stats';
+  var CHART_ID = '{{ EID }}-chart';
 
-  function fmtTs(ms) {
-    var d = new Date(ms);
-    return d.toLocaleDateString('en', { year: 'numeric', month: 'short', day: 'numeric' });
+  var _subDaily = { '1h':1, '4h':1 };
+
+  function fmtLabel(ms) {
+    var d  = new Date(ms);
+    var mo = d.toLocaleString('en', { month: 'short' });
+    var dd = String(d.getDate()).padStart(2, '0');
+    if (!_subDaily[TF]) return mo + ' ' + dd;
+    var hh = String(d.getHours()).padStart(2, '0');
+    var mm = String(d.getMinutes()).padStart(2, '0');
+    return mo + ' ' + dd + ' ' + hh + ':' + mm;
   }
 
   function fmt(v)    { return '$' + v.toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
@@ -75,42 +109,43 @@ function toggleDrawdown()  { reloadEquity('{{ active_tf }}'); }
     var sign      = chg >= 0 ? '+' : '-';
     var adjSign   = adjChg >= 0 ? '+' : '-';
     var cfSign    = cf >= 0 ? '+' : '-';
-    var chgCls    = chg >= 0 ? 'color:#00c855' : 'color:#e83535';
-    var adjCls    = adjChg >= 0 ? 'color:#00c855' : 'color:#e83535';
-    var cfCls     = cf >= 0 ? 'color:#3c8ff5' : 'color:#e89020';
-    document.getElementById('eq-ohlc-stats').innerHTML =
+    var chgCol    = chg >= 0 ? 'var(--green)' : 'var(--red)';
+    var adjCol    = adjChg >= 0 ? 'var(--green)' : 'var(--red)';
+    var cfCol     = cf >= 0 ? 'var(--blue)' : 'var(--amber)';
+    document.getElementById(STATS_ID).innerHTML =
       '<span><span style="color:var(--muted)">O</span> <span style="color:var(--text)">' + fmt(c.o) + '</span></span>' +
-      '<span><span style="color:var(--muted)">H</span> <span style="color:#00c855">' + fmt(c.h) + '</span></span>' +
-      '<span><span style="color:var(--muted)">L</span> <span style="color:#e83535">' + fmt(c.l) + '</span></span>' +
+      '<span><span style="color:var(--muted)">H</span> <span style="color:var(--green)">' + fmt(c.h) + '</span></span>' +
+      '<span><span style="color:var(--muted)">L</span> <span style="color:var(--red)">' + fmt(c.l) + '</span></span>' +
       '<span><span style="color:var(--muted)">C</span> <span style="color:var(--text)">' + fmt(c.c) + '</span></span>' +
-      '<span><span style="color:var(--muted)">Chg</span> <span style="' + chgCls + '">' + sign + fmtAbs(chg) + ' (' + sign + Math.abs(chgPct).toFixed(2) + '%)</span></span>' +
+      '<span><span style="color:var(--muted)">Chg</span> <span style="color:' + chgCol + '">' + sign + fmtAbs(chg) + ' (' + sign + Math.abs(chgPct).toFixed(2) + '%)</span></span>' +
       '<span><span style="color:var(--muted)">Range</span> <span style="color:var(--text)">' + fmt(rng) + ' (' + rngPct.toFixed(2) + '%)</span></span>' +
-      '<span><span style="color:var(--muted)">CF</span> <span style="' + cfCls + '">' + cfSign + fmtAbs(cf) + '</span></span>' +
-      '<span><span style="color:var(--muted)">Adj Chg</span> <span style="' + adjCls + '">' + adjSign + fmtAbs(adjChg) + ' (' + adjSign + Math.abs(adjChgPct).toFixed(2) + '%)</span></span>';
+      '<span><span style="color:var(--muted)">CF</span> <span style="color:' + cfCol + '">' + cfSign + fmtAbs(cf) + '</span></span>' +
+      '<span><span style="color:var(--muted)">Adj Chg</span> <span style="color:' + adjCol + '">' + adjSign + fmtAbs(adjChg) + ' (' + adjSign + Math.abs(adjChgPct).toFixed(2) + '%)</span></span>';
   }
+
   if (raw.length) renderStats(raw[raw.length - 1]);
 
-  // Compute drawdown series
-  var runningPeak = -Infinity;
-  var ddValues = raw.map(function(c) {
-    if (c.c > runningPeak) runningPeak = c.c;
-    var dd = runningPeak > 0 ? -((runningPeak - c.c) / runningPeak) * 100 : 0;
-    return parseFloat(dd.toFixed(3));
-  });
+  // Drawdown series (only when enabled)
+  var ddValues = [];
+  if (showDD) {
+    var runningPeak = -Infinity;
+    ddValues = raw.map(function(c) {
+      if (c.c > runningPeak) runningPeak = c.c;
+      var dd = runningPeak > 0 ? -((runningPeak - c.c) / runningPeak) * 100 : 0;
+      return parseFloat(dd.toFixed(3));
+    });
+  }
 
-  // Category labels (timestamps)
-  var categoryData = raw.map(function(c) { return fmtTs(c.x); });
-  // Candlestick data: [open, close, low, high]
-  var candleData = raw.map(function(c) { return [c.o, c.c, c.l, c.h]; });
+  var categoryData = raw.map(function(c) { return fmtLabel(c.x); });
+  var candleData   = raw.map(function(c) { return [c.o, c.c, c.l, c.h]; });
 
-  // Build Y-axes
+  // Y-axes
   var yAxes = [{
     type: logScale ? 'log' : 'value',
     scale: true,
     position: 'right',
     axisLabel: { formatter: function(v) { return '$' + v.toLocaleString('en', { maximumFractionDigits: 0 }); } },
   }];
-
   var seriesList = [{
     type: 'candlestick',
     name: 'Equity',
@@ -167,7 +202,6 @@ function toggleDrawdown()  { reloadEquity('{{ active_tf }}'); }
       trigger: 'axis',
       axisPointer: { type: 'cross' },
       formatter: function(params) {
-        // Find candlestick param
         var cp = null;
         for (var i = 0; i < params.length; i++) {
           if (params[i].seriesType === 'candlestick') { cp = params[i]; break; }
@@ -195,7 +229,6 @@ function toggleDrawdown()  { reloadEquity('{{ active_tf }}'); }
             '<span style="color:' + (col || '#e8f2ff') + '">' + val + '</span></div>';
         }
         var html = '<div style="padding:10px 12px;font-size:11px;font-family:JetBrains Mono,monospace;line-height:1.9;min-width:200px">' +
-          '<div style="color:#526a88;margin-bottom:2px">' + fmtTs(c.x) + '</div>' +
           row('Open',  fmt(c.o)) +
           row('High',  fmt(c.h), '#00c855') +
           row('Low',   fmt(c.l), '#e83535') +
@@ -217,7 +250,8 @@ function toggleDrawdown()  { reloadEquity('{{ active_tf }}'); }
     animation: false,
   };
 
-  var chart = QE.initChart(document.getElementById('equity-chart'), option);
+  var el = document.getElementById(CHART_ID);
+  var chart = QE.initChart(el, option);
 
   // Auto-fit Y-axis on zoom
   chart.on('datazoom', function() {
@@ -245,7 +279,7 @@ function toggleDrawdown()  { reloadEquity('{{ active_tf }}'); }
     chart.setOption(yOpt);
   });
 
-  // Hover stats — use axisPointer event so it triggers across full chart area
+  // Hover stats
   chart.on('updateAxisPointer', function(params) {
     var axesInfo = params.axesInfo;
     if (axesInfo && axesInfo.length > 0) {
@@ -256,6 +290,29 @@ function toggleDrawdown()  { reloadEquity('{{ active_tf }}'); }
   chart.getZr().on('globalout', function() {
     if (raw.length) renderStats(raw[raw.length - 1]);
   });
+
+  // ── 1 Hz data refresh (DB + live equity on last candle) ──────────────
+  QE.startRefresh(el, '{{ API_URL }}?tf=' + TF, function(chart, data) {
+    var candles = data.candles;
+    if (!candles || !candles.length) return;
+    raw.length = 0;
+    Array.prototype.push.apply(raw, candles);
+    if (showDD) {
+      var peak = -Infinity;
+      ddValues = raw.map(function(c) {
+        if (c.c > peak) peak = c.c;
+        var dd = peak > 0 ? -((peak - c.c) / peak) * 100 : 0;
+        return parseFloat(dd.toFixed(3));
+      });
+    }
+    var opt = {
+      xAxis: { data: raw.map(function(c) { return fmtLabel(c.x); }) },
+      series: [{ data: raw.map(function(c) { return [c.o, c.c, c.l, c.h]; }) }]
+    };
+    if (showDD) opt.series.push({ data: ddValues });
+    chart.setOption(opt);
+    renderStats(raw[raw.length - 1]);
+  }, {{ REFRESH_MS }});
 })();
-</script>
 {% endif %}
+</script>

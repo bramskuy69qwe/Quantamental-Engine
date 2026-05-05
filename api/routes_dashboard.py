@@ -13,7 +13,7 @@ from core.state import app_state, TZ_LOCAL
 from core import ws_manager
 from core.database import db
 from api.helpers import templates, _ctx
-from api.cache import _ensure_funding_rates, get_funding_lines, _maybe_backfill_equity
+from api.cache import _ensure_funding_rates, get_funding_lines, _maybe_backfill_equity, _inject_live_equity
 
 log = logging.getLogger("routes.dashboard")
 router = APIRouter()
@@ -100,11 +100,31 @@ async def frag_dashboard_equity_ohlc(request: Request, tf: str = "1h"):
     aid = app_state.active_account_id
     await _maybe_backfill_equity(needed_start_ms, account_id=aid)
     candles = await db.get_equity_ohlc(tf_minutes=tf_minutes, limit=100, account_id=aid)
+    _inject_live_equity(candles)
     return templates.TemplateResponse(
         request,
-        "fragments/dashboard_ohlc.html",
-        _ctx(request, candles=candles, active_tf=tf),
+        "fragments/equity_ohlc.html",
+        _ctx(request, candles=candles, active_tf=tf,
+             eq_id="ohlc",
+             eq_title="Equity Curve (OHLC)",
+             eq_subtitle="Last 100 candles \u00b7 from account snapshots",
+             eq_timeframes=[("1h","1H"),("4h","4H"),("1d","1D"),("1w","1W")],
+             eq_fragment_url="/fragments/dashboard/equity_ohlc",
+             eq_api_url="/api/dashboard/equity_ohlc"),
     )
+
+
+@router.get("/api/dashboard/equity_ohlc")
+async def api_dashboard_equity_ohlc(tf: str = "1h"):
+    tf_map = {"1h": 60, "4h": 240, "1d": 1440, "1w": 10080}
+    tf_minutes = tf_map.get(tf, 60)
+    now_ms = int(_time.time() * 1000)
+    needed_start_ms = now_ms - (100 * tf_minutes * 60 * 1000)
+    aid = app_state.active_account_id
+    await _maybe_backfill_equity(needed_start_ms, account_id=aid)
+    candles = await db.get_equity_ohlc(tf_minutes=tf_minutes, limit=100, account_id=aid)
+    _inject_live_equity(candles)
+    return JSONResponse({"candles": candles, "tf": tf})
 
 
 @router.get("/fragments/dashboard/journal_stats", response_class=HTMLResponse)

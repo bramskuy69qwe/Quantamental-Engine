@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone as _tz
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from core.state import app_state, TZ_LOCAL
 from core.database import db
@@ -18,7 +18,7 @@ from core.analytics import (
 )
 from core.exchange import fetch_funding_rates
 from api.helpers import templates, _ctx
-from api.cache import _maybe_backfill_equity
+from api.cache import _maybe_backfill_equity, _inject_live_equity
 
 log = logging.getLogger("routes.analytics")
 router = APIRouter()
@@ -132,13 +132,45 @@ async def frag_analytics_equity(request: Request, tf: str = "1M", log: str = "",
     from_ms = int((now - timedelta(days=backfill_days)).timestamp() * 1000)
     await _maybe_backfill_equity(from_ms, account_id=aid)
     candles = await db.get_equity_ohlc(tf_minutes=tf_minutes, limit=limit, account_id=aid)
+    _inject_live_equity(candles)
 
     return templates.TemplateResponse(
         request,
-        "fragments/analytics/equity_curve.html",
+        "fragments/equity_ohlc.html",
         _ctx(request, candles=candles, active_tf=tf,
-             log_scale=bool(log), show_dd=bool(dd), period_label=period_label),
+             eq_id="equity",
+             eq_title=f"Equity Curve \u2014 {period_label}",
+             eq_height="360px",
+             eq_timeframes=[("1W","1W"),("2W","2W"),("1M","1M"),("3M","3M"),("6M","6M"),("1Y","1Y"),("all","All")],
+             eq_show_controls=True,
+             eq_show_dd=bool(dd),
+             eq_log_scale=bool(log),
+             eq_fragment_url="/fragments/analytics/equity_curve",
+             eq_api_url="/api/analytics/equity_ohlc",
+             eq_reload_target="#analytics-content",
+             eq_reload_swap="innerHTML"),
     )
+
+
+@router.get("/api/analytics/equity_ohlc")
+async def api_analytics_equity_ohlc(tf: str = "1M"):
+    now = datetime.now(TZ_LOCAL)
+    tf_ohlc_map = {
+        "1W":  (1440,   7,   7),
+        "2W":  (1440,  14,  14),
+        "1M":  (1440,  30,  30),
+        "3M":  (1440,  91,  91),
+        "6M":  (1440, 182, 182),
+        "1Y":  (10080, 52, 365),
+        "all": (10080, 260, 730),
+    }
+    tf_minutes, limit, backfill_days = tf_ohlc_map.get(tf, (1440, 30, 30))
+    aid = app_state.active_account_id
+    from_ms = int((now - timedelta(days=backfill_days)).timestamp() * 1000)
+    await _maybe_backfill_equity(from_ms, account_id=aid)
+    candles = await db.get_equity_ohlc(tf_minutes=tf_minutes, limit=limit, account_id=aid)
+    _inject_live_equity(candles)
+    return JSONResponse({"candles": candles, "tf": tf})
 
 
 @router.get("/fragments/analytics/calendar", response_class=HTMLResponse)

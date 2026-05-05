@@ -68,6 +68,22 @@ async def _maybe_backfill_equity(needed_start_ms: int, account_id: Optional[int]
             log.info("Equity backfill: inserted %d cashflow events", cf_count)
 
 
+def _inject_live_equity(candles: list) -> None:
+    """Update the last candle's close with current live equity from app_state.
+    This makes the chart reflect real-time mark-price equity between DB snapshots."""
+    if not candles:
+        return
+    equity = round(app_state.account_state.total_equity, 2)
+    if equity <= 0:
+        return
+    last = candles[-1]
+    last["c"] = equity
+    if equity > last["h"]:
+        last["h"] = equity
+    if equity < last["l"]:
+        last["l"] = equity
+
+
 # ── Funding rate cache ───────────────────────────────────────────────────────
 # Raw rates from REST (refresh every 60s). Exposure computed at render time
 # from cached rates + live notional so the dashboard gets 0.5 Hz updates.
