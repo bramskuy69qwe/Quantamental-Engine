@@ -197,7 +197,37 @@ class BinanceUSDMAdapter(BaseExchangeAdapter):
 
         await self._run(_keepalive)
 
-    # ── Funding rates (optional capability) ──────────────────────────────────
+    # ── Current funding rates (live) ─────────────────────────────────────────
+
+    async def fetch_current_funding_rates(self, symbols: List[str]) -> Dict[str, Dict]:
+        """Fetch live funding rate + next funding time + mark price via premiumIndex."""
+        if not symbols:
+            return {}
+
+        def _fetch():
+            return self._ex.fapiPublicGetPremiumIndex() or []
+
+        try:
+            raw_list = await self._run(_fetch)
+        except Exception:
+            return {s: {"funding_rate": 0.0, "next_funding_time": 0, "mark_price": 0.0} for s in symbols}
+
+        wanted = set(symbols)
+        results: Dict[str, Dict] = {}
+        for raw in raw_list:
+            sym = raw.get("symbol", "")
+            if sym in wanted:
+                results[sym] = {
+                    "funding_rate": float(raw.get("lastFundingRate", 0) or 0),
+                    "next_funding_time": int(raw.get("nextFundingTime", 0) or 0),
+                    "mark_price": float(raw.get("markPrice", 0) or 0),
+                }
+        for s in symbols:
+            if s not in results:
+                results[s] = {"funding_rate": 0.0, "next_funding_time": 0, "mark_price": 0.0}
+        return results
+
+    # ── Historical funding rates (optional capability) ────────────────────────
 
     async def fetch_funding_rates(
         self, symbol: str, start_ms: int, end_ms: int, limit: int = 1000

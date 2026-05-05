@@ -12,9 +12,15 @@ from typing import Dict, List, Optional
 from datetime import datetime, timezone, timedelta
 
 from core.state import app_state, TZ_LOCAL
-from core.exchange import get_exchange, _REST_POOL, _get_adapter
+from core.exchange import get_exchange, _REST_POOL
 from core.database import db
 from core.constants import MS_PER_DAY
+
+
+def _get_adapter():
+    """Late-import wrapper to avoid circular import with core.exchange."""
+    from core.exchange import _get_adapter as _ga
+    return _ga()
 
 log = logging.getLogger("exchange")
 
@@ -377,8 +383,8 @@ async def fetch_exchange_trade_history(limit: int = 200) -> None:
 
 async def fetch_funding_rates(symbols: List[str]) -> Dict[str, Dict]:
     """
-    Fetch current funding rate + next funding time for each symbol.
-    Single batch call to /fapi/v1/premiumIndex (no symbol param = all symbols).
+    Fetch current funding rate + next funding time + mark price for each symbol
+    via the exchange adapter.
 
     Returns:
         {symbol: {"funding_rate": float, "next_funding_time": int, "mark_price": float}}
@@ -386,30 +392,9 @@ async def fetch_funding_rates(symbols: List[str]) -> Dict[str, Dict]:
     if not symbols:
         return {}
 
-    exchange = get_exchange()
-    loop     = asyncio.get_event_loop()
-    wanted   = set(symbols)
-
     try:
-        raw_list = await loop.run_in_executor(
-            _REST_POOL,
-            lambda: exchange.fapiPublicGetPremiumIndex() or [],
-        )
+        adapter = _get_adapter()
+        return await adapter.fetch_current_funding_rates(symbols)
     except Exception as e:
-        log.warning("fetch_funding_rates batch failed: %r", e)
+        log.warning("fetch_funding_rates failed: %r", e)
         return {s: {"funding_rate": 0.0, "next_funding_time": 0, "mark_price": 0.0} for s in symbols}
-
-    results: Dict[str, Dict] = {}
-    for raw in raw_list:
-        sym = raw.get("symbol", "")
-        if sym in wanted:
-            results[sym] = {
-                "funding_rate":      float(raw.get("lastFundingRate", 0) or 0),
-                "next_funding_time": int(raw.get("nextFundingTime",   0) or 0),
-                "mark_price":        float(raw.get("markPrice",        0) or 0),
-            }
-    # Fill missing
-    for s in symbols:
-        if s not in results:
-            results[s] = {"funding_rate": 0.0, "next_funding_time": 0, "mark_price": 0.0}
-    return results

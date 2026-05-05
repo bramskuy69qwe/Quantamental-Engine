@@ -154,6 +154,14 @@ class ExchangeAdapter(Protocol):
         """Convert unified symbol to exchange-native format."""
         ...
 
+    async def fetch_current_funding_rates(self, symbols: List[str]) -> Dict[str, Dict]:
+        """Fetch live funding rate + next funding time + mark price for symbols.
+
+        Returns:
+            {symbol: {"funding_rate": float, "next_funding_time": int, "mark_price": float}}
+        """
+        ...
+
     def get_ccxt_instance(self):
         """Return underlying CCXT instance (escape hatch for edge cases)."""
         ...

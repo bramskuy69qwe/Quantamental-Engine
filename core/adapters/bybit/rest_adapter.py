@@ -237,7 +237,37 @@ class BybitLinearAdapter(BaseExchangeAdapter):
         """No-op for Bybit — WS auth doesn't expire like Binance listen keys."""
         pass
 
-    # ── Funding rates ────────────────────────────────────────────────────────
+    # ── Current funding rates (live) ─────────────────────────────────────────
+
+    async def fetch_current_funding_rates(self, symbols: List[str]) -> Dict[str, Dict]:
+        """Fetch live funding rate + next funding time + mark price via Bybit V5 tickers."""
+        if not symbols:
+            return {}
+
+        def _fetch():
+            return self._ex.fetch_tickers(symbols, params={"category": "linear"})
+
+        try:
+            raw = await self._run(_fetch)
+        except Exception:
+            return {s: {"funding_rate": 0.0, "next_funding_time": 0, "mark_price": 0.0} for s in symbols}
+
+        results: Dict[str, Dict] = {}
+        for sym_key, ticker in (raw or {}).items():
+            sym = self.normalize_symbol(sym_key)
+            if sym in set(symbols):
+                info = ticker.get("info", {})
+                results[sym] = {
+                    "funding_rate": float(info.get("fundingRate", 0) or 0),
+                    "next_funding_time": int(info.get("nextFundingTime", 0) or 0),
+                    "mark_price": float(info.get("markPrice", 0) or ticker.get("last", 0) or 0),
+                }
+        for s in symbols:
+            if s not in results:
+                results[s] = {"funding_rate": 0.0, "next_funding_time": 0, "mark_price": 0.0}
+        return results
+
+    # ── Historical funding rates ─────────────────────────────────────────────
 
     async def fetch_funding_rates(
         self, symbol: str, start_ms: int, end_ms: int, limit: int = 200

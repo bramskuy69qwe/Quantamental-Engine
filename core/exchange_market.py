@@ -12,8 +12,14 @@ from typing import Dict, List, Optional
 
 import config
 from core.state import app_state
-from core.exchange import get_exchange, _REST_POOL, _get_adapter
+from core.exchange import get_exchange, _REST_POOL
 from core.constants import MS_PER_MINUTE, MS_PER_HOUR
+
+
+def _get_adapter():
+    """Late-import wrapper to avoid circular import with core.exchange."""
+    from core.exchange import _get_adapter as _ga
+    return _ga()
 
 log = logging.getLogger("exchange")
 
