@@ -1,9 +1,9 @@
 """
-WebSocket manager for Binance USD-M Futures.
+WebSocket manager — exchange-agnostic via adapter layer.
 
 Handles:
   - User data stream  (account / position updates)
-  - Kline 4h streams  (for ATR on all active positions)
+  - Kline streams     (for ATR on all active positions)
   - Book ticker/depth streams (for active calculator ticker)
   - Heartbeat / reconnection with exponential back-off
   - Fallback to REST polling after WS_FALLBACK_TIMEOUT seconds stale
@@ -26,9 +26,24 @@ from core.exchange import (
     get_exchange, _REST_POOL,
     fetch_account, fetch_positions, fetch_orderbook, fetch_ohlcv,
     create_listen_key, keepalive_listen_key,
+    _get_adapter,
 )
 
 log = logging.getLogger("ws_manager")
+
+
+def _get_ws_adapter():
+    """Return the WS adapter for the currently active account."""
+    from core.account_registry import account_registry
+    from core.exchange_factory import exchange_factory
+    creds = account_registry.get_active_sync()
+    if not creds:
+        return None
+    return exchange_factory.get_ws_adapter(
+        creds["id"],
+        creds.get("exchange", "binance"),
+        creds.get("market_type", "future"),
+    )
 
 
 # ── State ─────────────────────────────────────────────────────────────────────
@@ -48,20 +63,25 @@ async def _apply_account_update(msg: dict) -> None:
     """Apply ACCOUNT_UPDATE event: update balances and positions under lock,
     then fire side effects (stream restart, portfolio recalc) outside lock."""
     global _last_ws_position_update
-    balances = msg.get("a", {}).get("B", [])
-    raw_positions = msg.get("a", {}).get("P", [])
+    ws_adapter = _get_ws_adapter()
+
+    # Parse via adapter (exchange-agnostic)
+    if ws_adapter:
+        balances, norm_positions = ws_adapter.parse_account_update(msg)
+    else:
+        balances, norm_positions = {}, []
+
     closed_syms: set = set()
     new_syms: set = set()
 
     async with app_state._lock:
-        for b in balances:
-            if b.get("a") == "USDT":
-                app_state.account_state.balance_usdt = float(b.get("wb") or 0)
-                app_state.account_state.total_equity = float(b.get("cw") or 0)
+        if balances:
+            app_state.account_state.balance_usdt = balances.get("wallet_balance", 0)
+            app_state.account_state.total_equity = balances.get("cross_wallet", 0)
 
-        if raw_positions:
+        if norm_positions:
             existing = {p.ticker: p for p in app_state.positions}
-            closed_syms, new_syms = _apply_position_updates(existing, raw_positions)
+            closed_syms, new_syms = _apply_position_updates_normalized(existing, norm_positions)
             if closed_syms:
                 app_state.positions = [p for p in app_state.positions if p.ticker not in closed_syms]
             _last_ws_position_update = time.monotonic()
@@ -71,7 +91,7 @@ async def _apply_account_update(msg: dict) -> None:
         )
 
     # Outside lock: side effects
-    if not raw_positions:
+    if not norm_positions:
         return
     if closed_syms or new_syms:
         asyncio.create_task(restart_market_streams())
@@ -80,44 +100,41 @@ async def _apply_account_update(msg: dict) -> None:
     app_state.recalculate_portfolio()
 
 
-def _apply_position_updates(existing: dict, raw_positions: list) -> tuple[set, set]:
-    """Process raw position updates. Returns (closed_syms, new_syms)."""
+def _apply_position_updates_normalized(existing: dict, norm_positions: list) -> tuple[set, set]:
+    """Process normalized position updates from WS adapter. Returns (closed_syms, new_syms)."""
     closed_syms: set = set()
     new_syms: set = set()
 
-    for p_raw in raw_positions:
-        sym  = p_raw.get("s", "")
-        amt  = float(p_raw.get("pa") or 0)
-        upnl = float(p_raw.get("up") or 0)
-        ep   = float(p_raw.get("ep") or 0)
+    for np in norm_positions:
+        sym = np.symbol
 
-        if amt == 0:
+        if np.size == 0:
             if sym in existing:
                 closed_syms.add(sym)
             continue
 
         if sym in existing:
             pos = existing[sym]
-            pos.individual_unrealized = upnl
-            pos.contract_amount = abs(amt)
-            pos.direction = "LONG" if amt > 0 else "SHORT"
-            if ep > 0:
-                pos.average = ep
+            pos.individual_unrealized = np.unrealized_pnl
+            pos.contract_amount = np.size
+            pos.direction = np.side
+            if np.entry_price > 0:
+                pos.average = np.entry_price
             mark = app_state.mark_price_cache.get(sym, 0)
             if mark:
-                pos.position_value_usdt = abs(amt) * mark
+                pos.position_value_usdt = np.size * mark
             continue
 
         # New position
-        mark = app_state.mark_price_cache.get(sym, ep) or ep
+        mark = app_state.mark_price_cache.get(sym, np.entry_price) or np.entry_price
         app_state.positions.append(PositionInfo(
             ticker=sym,
-            direction="LONG" if amt > 0 else "SHORT",
-            contract_amount=abs(amt),
-            average=ep,
+            direction=np.side,
+            contract_amount=np.size,
+            average=np.entry_price,
             fair_price=mark,
-            individual_unrealized=upnl,
-            position_value_usdt=abs(amt) * mark,
+            individual_unrealized=np.unrealized_pnl,
+            position_value_usdt=np.size * mark,
             entry_timestamp=datetime.now(timezone.utc).isoformat(),
             sector=config.get_sector(sym),
         ))
@@ -127,12 +144,13 @@ def _apply_position_updates(existing: dict, raw_positions: list) -> tuple[set, s
 
 
 async def _handle_user_event(msg: dict) -> None:
-    """Parse and apply a user-data stream event."""
-    ev = msg.get("e", "")
+    """Parse and apply a user-data stream event via WS adapter."""
+    ws_adapter = _get_ws_adapter()
+    ev = ws_adapter.get_event_type(msg) if ws_adapter else msg.get("e", "")
     ws = app_state.ws_status
 
-    # Real-time latency: lag between Binance event time and now
-    event_time_ms = msg.get("E", 0)
+    # Real-time latency: lag between exchange event time and now
+    event_time_ms = ws_adapter.get_event_time_ms(msg) if ws_adapter else msg.get("E", 0)
     if event_time_ms:
         ws.latency_ms = round(time.time() * 1000 - event_time_ms, 1)
 
@@ -152,29 +170,24 @@ async def _on_new_position(sym: str) -> None:
         await restart_market_streams()
     except Exception:
         pass
-    # Fetch real fill timestamp from Binance trades
+    # Fetch real fill timestamp from exchange trades
     try:
-        loop = asyncio.get_event_loop()
-        ex = get_exchange()
-        trades = await loop.run_in_executor(
-            _REST_POOL,
-            lambda: ex.fapiPrivateGetUserTrades({"symbol": sym, "limit": 50}) or [],
-        )
+        adapter = _get_adapter()
+        trades = await adapter.fetch_user_trades(sym, limit=50)
         if trades:
             for pos in app_state.positions:
                 if pos.ticker != sym:
                     continue
                 buy = "BUY" if pos.direction == "LONG" else "SELL"
-                trades.sort(key=lambda t: int(t.get("time", 0)), reverse=True)
+                trades.sort(key=lambda t: t.timestamp_ms, reverse=True)
                 cum = 0.0
                 for t in trades:
-                    if t.get("side") != buy:
+                    if t.side != buy:
                         break
-                    cum += abs(float(t.get("qty", 0) or 0))
-                    open_ms = int(t.get("time", 0))
+                    cum += abs(t.quantity)
                     if cum >= pos.contract_amount - 1e-8:
                         pos.entry_timestamp = datetime.fromtimestamp(
-                            open_ms / 1000, tz=timezone.utc
+                            t.timestamp_ms / 1000, tz=timezone.utc
                         ).isoformat()
                         break
                 break
@@ -208,7 +221,8 @@ async def _user_data_loop(listen_key: str, attempt: int = 0) -> None:
     except Exception:
         pass
 
-    url = f"{config.FSTREAM_WS}/{listen_key}"
+    ws_adapter = _get_ws_adapter()
+    url = ws_adapter.build_user_stream_url(listen_key) if ws_adapter else f"{config.FSTREAM_WS}/{listen_key}"
     ws  = app_state.ws_status
     ws.add_log(f"User-data WS connecting (attempt {attempt+1})")
 
@@ -278,21 +292,24 @@ async def _reconnect_user(attempt: int) -> None:
 
 def _build_market_streams() -> list[str]:
     """Build the combined stream list for all active position symbols + calculator."""
-    symbols = {p.ticker for p in app_state.positions}
-    if _calculator_symbol:
-        symbols.add(_calculator_symbol)
+    ws_adapter = _get_ws_adapter()
+    position_symbols = [p.ticker for p in app_state.positions]
+    all_symbols = list({*position_symbols, _calculator_symbol} - {None})
 
+    if ws_adapter:
+        return ws_adapter.build_market_streams(
+            all_symbols, config.ATR_TIMEFRAME, _calculator_symbol
+        )
+
+    # Fallback (should not hit if adapter is configured)
     streams = []
-    for sym in symbols:
+    for sym in all_symbols:
         s = sym.lower()
         streams.append(f"{s}@kline_{config.ATR_TIMEFRAME}")
-        # Mark price stream at 1s cadence for real-time unrealized PnL
         if sym in {p.ticker for p in app_state.positions}:
             streams.append(f"{s}@markPrice@1s")
     if _calculator_symbol:
-        s = _calculator_symbol.lower()
-        streams.append(f"{s}@depth20")
-
+        streams.append(f"{_calculator_symbol.lower()}@depth20")
     return streams
 
 
@@ -384,7 +401,8 @@ async def _market_stream_loop(attempt: int = 0) -> None:
         asyncio.create_task(_market_stream_loop(0))
         return
 
-    url = f"{config.FSTREAM_COMB}?streams=" + "/".join(streams)
+    ws_adapter = _get_ws_adapter()
+    url = ws_adapter.build_market_stream_url(streams) if ws_adapter else f"{config.FSTREAM_COMB}?streams=" + "/".join(streams)
     ws.add_log(f"Market WS connecting ({len(streams)} streams, attempt {attempt+1})")
 
     try:
@@ -397,8 +415,8 @@ async def _market_stream_loop(attempt: int = 0) -> None:
             async for raw in sock:
                 try:
                     msg_outer = json.loads(raw)
-                    msg  = msg_outer.get("data", msg_outer)
-                    ev   = msg.get("e", "")
+                    msg = ws_adapter.unwrap_stream_message(msg_outer) if ws_adapter else msg_outer.get("data", msg_outer)
+                    ev = ws_adapter.get_event_type(msg) if ws_adapter else msg.get("e", "")
                     if ev == "kline":
                         _apply_kline(msg)
                     elif ev == "depthUpdate":

@@ -1,5 +1,5 @@
 """
-ExchangeFactory — per-account CCXT instance cache.
+ExchangeFactory — per-account CCXT instance cache + adapter resolution.
 
 Replaces the module-level singleton in exchange.py with a per-account
 cache keyed by account_id.  The existing get_exchange() function in
@@ -9,6 +9,11 @@ Module-level singleton:
     from core.exchange_factory import exchange_factory
     ex = exchange_factory.get(account_id, api_key, api_secret, "binance", "future")
     exchange_factory.invalidate(account_id)    # call before account switch
+
+Adapter API (new):
+    from core.exchange_factory import exchange_factory
+    adapter = exchange_factory.get_adapter(account_id, api_key, api_secret, "binance", "future")
+    ws_adapter = exchange_factory.get_ws_adapter(account_id, "binance", "future")
 """
 from __future__ import annotations
 
@@ -18,6 +23,8 @@ from typing import Dict, Optional
 import ccxt
 
 import config
+from core.adapters import get_adapter, get_ws_adapter as _get_ws, map_market_type
+from core.adapters.protocols import ExchangeAdapter, WSAdapter
 
 log = logging.getLogger("exchange_factory")
 
@@ -55,16 +62,23 @@ def _make_ccxt_instance(
     elif exchange == "binance":
         ex = ccxt.binance(params)
     else:
-        cls = getattr(ccxt, exchange, ccxt.binance)
+        cls = getattr(ccxt, exchange, None)
+        if cls is None:
+            raise ValueError(
+                f"Unknown exchange '{exchange}'. No CCXT class found. "
+                f"Check the exchange name in your account settings."
+            )
         ex = cls(params)
     return ex
 
 
 class ExchangeFactory:
-    """Cache of CCXT Exchange objects keyed by account_id."""
+    """Cache of CCXT Exchange objects and adapters keyed by account_id."""
 
     def __init__(self) -> None:
         self._instances: Dict[int, ccxt.Exchange] = {}
+        self._adapters: Dict[int, ExchangeAdapter] = {}
+        self._ws_adapters: Dict[int, WSAdapter] = {}
 
     def get(
         self,
@@ -88,10 +102,55 @@ class ExchangeFactory:
     def invalidate(self, account_id: int) -> None:
         """Remove cached instance (call before account switch or deletion)."""
         self._instances.pop(account_id, None)
+        self._adapters.pop(account_id, None)
+        self._ws_adapters.pop(account_id, None)
         log.info("ExchangeFactory: invalidated account_id=%d", account_id)
 
     def invalidate_all(self) -> None:
         self._instances.clear()
+        self._adapters.clear()
+        self._ws_adapters.clear()
+
+    # ── Adapter API ──────────────────────────────────────────────────────────
+
+    def get_adapter(
+        self,
+        account_id: int,
+        api_key: str,
+        api_secret: str,
+        exchange: str = "binance",
+        market_type: str = "future",
+    ) -> ExchangeAdapter:
+        """Return cached adapter instance, creating on first call."""
+        if account_id not in self._adapters:
+            adapter_market = map_market_type(exchange, market_type)
+            self._adapters[account_id] = get_adapter(
+                exchange, adapter_market,
+                api_key=api_key,
+                api_secret=api_secret,
+                proxy=config.HTTP_PROXY,
+            )
+            log.info(
+                "ExchangeFactory: created adapter account_id=%d exchange=%s market=%s",
+                account_id, exchange, adapter_market,
+            )
+        return self._adapters[account_id]
+
+    def get_ws_adapter(
+        self,
+        account_id: int,
+        exchange: str = "binance",
+        market_type: str = "future",
+    ) -> WSAdapter:
+        """Return cached WS adapter instance."""
+        if account_id not in self._ws_adapters:
+            adapter_market = map_market_type(exchange, market_type)
+            self._ws_adapters[account_id] = _get_ws(exchange, adapter_market)
+            log.info(
+                "ExchangeFactory: created WS adapter account_id=%d exchange=%s",
+                account_id, exchange,
+            )
+        return self._ws_adapters[account_id]
 
 
 # Module-level singleton

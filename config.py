@@ -66,7 +66,8 @@ WS_RECONNECT_MAX      = 60.0
 WS_RECONNECT_ATTEMPTS = 15
 WS_FALLBACK_TIMEOUT   = 30            # fall back to REST after N seconds stale
 
-# Binance Futures WebSocket base
+# Legacy WS URLs — kept for fallback paths only.
+# Canonical source: core/adapters/binance/constants.py
 FSTREAM_WS   = "wss://fstream.binance.com/private/ws"
 FSTREAM_COMB = "wss://fstream.binance.com/market/stream"
 

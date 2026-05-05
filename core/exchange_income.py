@@ -1,8 +1,8 @@
 """
 Income history, equity backfill, trade history, and funding rate wrappers.
 
-Split from exchange.py for maintainability. All functions use the shared
-get_exchange() and _REST_POOL from core.exchange.
+Split from exchange.py for maintainability. Uses the adapter layer for
+all exchange-specific REST calls.
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from typing import Dict, List, Optional
 from datetime import datetime, timezone, timedelta
 
 from core.state import app_state, TZ_LOCAL
-from core.exchange import get_exchange, _REST_POOL
+from core.exchange import get_exchange, _REST_POOL, _get_adapter
 from core.database import db
 from core.constants import MS_PER_DAY
 
@@ -27,21 +27,27 @@ async def fetch_income_history(
     limit: int = 1000,
 ) -> List[Dict]:
     """
-    Fetch income history from Binance Futures via fapiPrivateGetIncome.
+    Fetch income history via adapter.
     income_type: "REALIZED_PNL", "FUNDING_FEE", "COMMISSION", "" (all)
+
+    Returns raw dicts for backward compatibility with existing consumers
+    that expect {"income": ..., "incomeType": ..., "time": ..., "symbol": ...}.
     """
-    loop = asyncio.get_event_loop()
-    ex   = get_exchange()
-
-    def _fetch():
-        params: Dict = {"limit": limit}
-        if income_type:
-            params["incomeType"] = income_type
-        if start_ms is not None:
-            params["startTime"] = start_ms
-        return ex.fapiPrivateGetIncome(params=params) or []
-
-    return await loop.run_in_executor(_REST_POOL, _fetch)
+    adapter = _get_adapter()
+    normalized = await adapter.fetch_income(
+        income_type=income_type, start_ms=start_ms, limit=limit,
+    )
+    # Convert back to dict format for existing consumers
+    return [
+        {
+            "symbol": ni.symbol,
+            "incomeType": ni.income_type.upper(),
+            "income": ni.amount,
+            "time": ni.timestamp_ms,
+            "tradeId": ni.trade_id,
+        }
+        for ni in normalized
+    ]
 
 
 async def fetch_bod_sow_equity() -> None:
@@ -92,24 +98,28 @@ async def fetch_income_for_backfill(start_ms: int, end_ms: int) -> List[Dict]:
     """
     Paginated fetch of ALL income types from start_ms to end_ms (ms UTC).
     Advances cursor by last event timestamp + 1 until end_ms is covered
-    or Binance returns fewer than 1000 records.
+    or the exchange returns fewer than 1000 records.
     """
-    loop = asyncio.get_event_loop()
-    ex   = get_exchange()
+    adapter = _get_adapter()
     all_events: List[Dict] = []
     cursor = start_ms
 
-    def _fetch(since: int) -> list:
-        return ex.fapiPrivateGetIncome(params={
-            "startTime": since,
-            "endTime":   end_ms,
-            "limit":     1000,
-        }) or []
-
     while cursor < end_ms:
-        batch = await loop.run_in_executor(_REST_POOL, _fetch, cursor)
-        if not batch:
+        normalized = await adapter.fetch_income(
+            start_ms=cursor, end_ms=end_ms, limit=1000,
+        )
+        if not normalized:
             break
+        batch = [
+            {
+                "symbol": ni.symbol,
+                "incomeType": ni.income_type.upper(),
+                "income": ni.amount,
+                "time": ni.timestamp_ms,
+                "tradeId": ni.trade_id,
+            }
+            for ni in normalized
+        ]
         all_events.extend(batch)
         if len(batch) < 1000:
             break
@@ -200,15 +210,26 @@ async def build_equity_backfill(
 
 
 async def fetch_user_trades(symbol: str, limit: int = 500) -> List[Dict]:
-    """Fetch recent trade fills for a symbol from Binance Futures userTrades."""
-    loop = asyncio.get_event_loop()
-    ex   = get_exchange()
+    """Fetch recent trade fills for a symbol via adapter.
 
-    def _fetch():
-        return ex.fapiPrivateGetUserTrades(params={"symbol": symbol, "limit": limit}) or []
-
+    Returns raw dicts for backward compatibility with existing consumers
+    that expect {"id": ..., "side": ..., "price": ..., "qty": ..., "time": ...}.
+    """
+    adapter = _get_adapter()
     try:
-        return await loop.run_in_executor(_REST_POOL, _fetch)
+        normalized = await adapter.fetch_user_trades(symbol, limit=limit)
+        return [
+            {
+                "id": nt.trade_id,
+                "symbol": nt.symbol,
+                "side": nt.side,
+                "price": nt.price,
+                "qty": nt.quantity,
+                "commission": nt.fee,
+                "time": nt.timestamp_ms,
+            }
+            for nt in normalized
+        ]
     except Exception as e:
         app_state.ws_status.add_log(f"User trades fetch error ({symbol}): {e}")
         return []

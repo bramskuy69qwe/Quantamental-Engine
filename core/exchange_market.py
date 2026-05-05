@@ -1,8 +1,8 @@
 """
 Market data REST wrappers: OHLCV, orderbook, mark price, MFE/MAE calculations.
 
-Split from exchange.py for maintainability. All functions use the shared
-get_exchange() and _REST_POOL from core.exchange.
+Split from exchange.py for maintainability. Uses the adapter layer for
+exchange-specific REST calls, with get_exchange() fallback for CCXT-generic calls.
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from typing import Dict, List, Optional
 
 import config
 from core.state import app_state
-from core.exchange import get_exchange, _REST_POOL
+from core.exchange import get_exchange, _REST_POOL, _get_adapter
 from core.constants import MS_PER_MINUTE, MS_PER_HOUR
 
 log = logging.getLogger("exchange")
@@ -86,25 +86,16 @@ async def _agg_extremes(symbol: str, start_ms: int, end_ms: int) -> tuple:
 
     Returns (max_price, min_price) or (None, None) on error / no data.
     """
-    loop = asyncio.get_event_loop()
-    ex   = get_exchange()
+    adapter = _get_adapter()
     effective_end = end_ms + _AGG_BUF
 
     max_price: Optional[float] = None
     min_price: Optional[float] = None
     cursor = max(0, start_ms - _AGG_BUF)   # slight lookback for entry fill
 
-    def _fetch(since: int) -> list:
-        return ex.fapiPublicGetAggTrades({
-            "symbol":    symbol,
-            "startTime": since,
-            "endTime":   effective_end,
-            "limit":     1000,
-        }) or []
-
     try:
         while cursor <= effective_end:
-            batch = await loop.run_in_executor(_REST_POOL, _fetch, cursor)
+            batch = await adapter.fetch_agg_trades(symbol, cursor, effective_end)
             if not batch:
                 break
             for t in batch:

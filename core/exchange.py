@@ -1,5 +1,5 @@
 """
-CCXT-based REST wrapper for Binance USD-M Futures.
+CCXT-based REST wrapper — exchange-agnostic via adapter layer.
 
 Core functions: exchange init, account, positions, TP/SL, listen key.
 Market data (OHLCV, orderbook, mark price) -> exchange_market.py
@@ -18,6 +18,8 @@ import config
 from core.state import app_state, PositionInfo, TZ_LOCAL
 from core.event_bus import event_bus, CH_TRADE_CLOSED
 from core.database import db
+from core.adapters import get_adapter, to_position_info, map_market_type
+from core.adapters.protocols import ExchangeAdapter
 
 log = logging.getLogger("exchange")
 
@@ -76,6 +78,22 @@ def get_exchange() -> ccxt.Exchange:
     return _exchange
 
 
+def _get_adapter() -> ExchangeAdapter:
+    """Return the adapter for the currently active account."""
+    from core.account_registry import account_registry
+    from core.exchange_factory import exchange_factory
+    creds = account_registry.get_active_sync()
+    if not creds or not creds.get("api_key"):
+        raise RuntimeError("No active account credentials available")
+    return exchange_factory.get_adapter(
+        creds["id"],
+        creds["api_key"],
+        creds["api_secret"],
+        creds.get("exchange", "binance"),
+        creds.get("market_type", "future"),
+    )
+
+
 # ── Exchange info ────────────────────────────────────────────────────────────
 
 async def fetch_exchange_info() -> None:
@@ -113,21 +131,18 @@ async def fetch_exchange_info() -> None:
 # ── Account & balance ────────────────────────────────────────────────────────
 
 async def fetch_account() -> None:
-    """Fetch futures account balance, fees, and update account_state."""
-    loop = asyncio.get_event_loop()
-    ex   = get_exchange()
-
-    raw  = await loop.run_in_executor(_REST_POOL, ex.fetch_balance)  # REST call outside lock
-    info_raw = raw.get("info", {})
+    """Fetch account balance, fees, and update account_state via adapter."""
+    adapter = _get_adapter()
+    na = await adapter.fetch_account()
 
     async with app_state._lock:
         acc = app_state.account_state
-        acc.total_equity       = float(info_raw.get("totalWalletBalance",    0) or 0)
-        acc.available_margin   = float(info_raw.get("availableBalance",      0) or 0)
-        acc.total_unrealized   = float(info_raw.get("totalUnrealizedProfit", 0) or 0)
-        acc.total_margin_used  = float(info_raw.get("totalInitialMargin",    0) or 0)
-        acc.total_margin_ratio = float(info_raw.get("totalMaintMargin",      0) or 0)
-        acc.balance_usdt       = float(info_raw.get("totalWalletBalance",    0) or 0)
+        acc.total_equity       = na.total_equity
+        acc.available_margin   = na.available_margin
+        acc.total_unrealized   = na.unrealized_pnl
+        acc.total_margin_used  = na.initial_margin
+        acc.total_margin_ratio = na.maint_margin
+        acc.balance_usdt       = na.total_equity
 
         # Set BOD / SOW equity on first fetch if not set
         if acc.bod_equity == 0.0:
@@ -138,15 +153,13 @@ async def fetch_account() -> None:
         if acc.sow_equity == 0.0:
             acc.sow_equity = acc.total_equity
 
-        # Exchange info: fee tier + live commission rates from Binance
+        # Exchange info: fee tier + live commission rates
         exi = app_state.exchange_info
-        exi.account_id = info_raw.get("feeTier", "")
-        maker = float(info_raw.get("makerCommissionRate", 0) or 0)
-        taker = float(info_raw.get("takerCommissionRate", 0) or 0)
-        if maker > 0:
-            exi.maker_fee = maker
-        if taker > 0:
-            exi.taker_fee = taker
+        exi.account_id = na.fee_tier
+        if na.maker_fee > 0:
+            exi.maker_fee = na.maker_fee
+        if na.taker_fee > 0:
+            exi.taker_fee = na.taker_fee
 
         app_state.ws_status.last_update    = datetime.now(timezone.utc)
 
@@ -154,57 +167,15 @@ async def fetch_account() -> None:
 # ── Positions ────────────────────────────────────────────────────────────────
 
 
-def _parse_position_v2(raw: dict) -> Optional[PositionInfo]:
-    """Parse a position entry from fapiPrivateV2GetAccount response."""
-    amt = float(raw.get("positionAmt", 0) or 0)
-    if amt == 0:
-        return None
-
-    symbol      = raw.get("symbol", "")
-    direction   = "LONG" if amt > 0 else "SHORT"
-    avg_price   = float(raw.get("entryPrice", 0) or 0)
-    notional    = abs(float(raw.get("notional", 0) or 0))
-    unrealized  = float(raw.get("unrealizedProfit", 0) or 0)
-    liq_price   = float(raw.get("liquidationPrice", 0) or 0)
-    margin_used = float(raw.get("initialMargin", 0) or 0)
-    mark_price  = float(raw.get("markPrice", avg_price) or avg_price)
-
-    return PositionInfo(
-        ticker               = symbol,
-        contract_amount      = abs(amt),
-        contract_size        = 1.0,
-        direction            = direction,
-        position_value_usdt  = notional,
-        position_value_asset = abs(amt),
-        average              = avg_price,
-        fair_price           = mark_price,
-        liquidation_price    = liq_price,
-        individual_margin_used  = margin_used,
-        individual_unrealized   = unrealized,
-        sector               = config.get_sector(symbol),
-    )
-
-
 async def fetch_positions() -> None:
-    """
-    Fetch open positions via fapiPrivateV2GetAccount — avoids the
-    leverageBrackets KeyError that ccxt.fetch_positions() can throw
-    on newer Binance Futures API responses.
-    """
-    loop = asyncio.get_event_loop()
-    ex   = get_exchange()
+    """Fetch open positions via adapter and update app_state."""
+    adapter = _get_adapter()
+    normalized = await adapter.fetch_positions()
 
-    def _fetch():
-        account = ex.fapiPrivateV2GetAccount()
-        return account.get("positions", [])
-
-    raw_list = await loop.run_in_executor(_REST_POOL, _fetch)
-
-    positions = []
-    for r in (raw_list or []):
-        p = _parse_position_v2(r)
-        if p:
-            positions.append(p)
+    positions = [
+        to_position_info(np, sector=config.get_sector(np.symbol))
+        for np in normalized
+    ]
 
     # Snapshot existing state under lock so we read a consistent list
     async with app_state._lock:
@@ -278,31 +249,27 @@ async def populate_open_position_metadata() -> None:
     """
     from core.exchange_market import _ohlcv_hl
 
-    loop = asyncio.get_event_loop()
-    ex   = get_exchange()
+    adapter = _get_adapter()
 
     for i, pos in enumerate(app_state.positions):
         if i > 0:
             await asyncio.sleep(0.5)  # pace REST calls to avoid 429
         try:
             # ── 1. Find position open time from recent trades ────────────
-            def _fetch_trades(sym=pos.ticker):
-                return ex.fapiPrivateGetUserTrades({"symbol": sym, "limit": 200}) or []
-
-            trades = await loop.run_in_executor(_REST_POOL, _fetch_trades)
+            trades = await adapter.fetch_user_trades(pos.ticker, limit=200)
             if not trades:
                 continue
 
             buy_side = "BUY" if pos.direction == "LONG" else "SELL"
-            trades.sort(key=lambda t: int(t.get("time", 0)), reverse=True)
+            trades.sort(key=lambda t: t.timestamp_ms, reverse=True)
 
             cumulative = 0.0
             open_time_ms = 0
             for t in trades:
-                if t.get("side") != buy_side:
+                if t.side != buy_side:
                     break
-                cumulative += abs(float(t.get("qty", 0) or 0))
-                open_time_ms = int(t.get("time", 0))
+                cumulative += abs(t.quantity)
+                open_time_ms = t.timestamp_ms
                 if cumulative >= pos.contract_amount - 1e-8:
                     break
 
@@ -345,17 +312,13 @@ async def populate_open_position_metadata() -> None:
 
 async def fetch_open_orders_tpsl() -> None:
     """
-    Fetch all open orders on Binance Futures and map TAKE_PROFIT / STOP_MARKET
-    orders to their respective positions so TP/SL show on the dashboard.
+    Fetch all open orders and map take_profit / stop_loss orders to their
+    respective positions so TP/SL show on the dashboard.
     """
-    loop = asyncio.get_event_loop()
-    ex   = get_exchange()
-
-    def _fetch():
-        return ex.fapiPrivateGetOpenOrders() or []
+    adapter = _get_adapter()
 
     try:
-        orders = await loop.run_in_executor(_REST_POOL, _fetch)
+        orders = await adapter.fetch_open_orders()
     except Exception as e:
         app_state.ws_status.add_log(f"Open orders fetch error: {e}")
         return
@@ -364,17 +327,13 @@ async def fetch_open_orders_tpsl() -> None:
     sl_map: Dict[str, dict] = {}
 
     for o in orders:
-        sym   = o.get("symbol", "")
-        otype = o.get("type", "")
-        stop  = float(o.get("stopPrice", 0) or 0)
-        qty   = float(o.get("origQty", 0) or 0)
-
-        if otype in ("TAKE_PROFIT", "TAKE_PROFIT_MARKET"):
-            if sym not in tp_map or stop > tp_map[sym]["price"]:
-                tp_map[sym] = {"price": stop, "qty": qty}
-        elif otype in ("STOP", "STOP_MARKET"):
-            if sym not in sl_map or stop < sl_map[sym].get("price", 1e18):
-                sl_map[sym] = {"price": stop, "qty": qty}
+        sym = o.symbol
+        if o.order_type == "take_profit":
+            if sym not in tp_map or o.stop_price > tp_map[sym]["price"]:
+                tp_map[sym] = {"price": o.stop_price, "qty": o.quantity}
+        elif o.order_type == "stop_loss":
+            if sym not in sl_map or o.stop_price < sl_map[sym].get("price", 1e18):
+                sl_map[sym] = {"price": o.stop_price, "qty": o.quantity}
 
     for pos in app_state.positions:
         sym = pos.ticker
@@ -397,24 +356,13 @@ async def fetch_open_orders_tpsl() -> None:
 # ── Listen key for user-data WebSocket ──────────────────────────────────────
 
 async def create_listen_key() -> str:
-    loop = asyncio.get_event_loop()
-    ex   = get_exchange()
-
-    def _create():
-        resp = ex.fapiPrivatePostListenKey()
-        return resp.get("listenKey", "")
-
-    return await loop.run_in_executor(_REST_POOL, _create)
+    adapter = _get_adapter()
+    return await adapter.create_listen_key()
 
 
 async def keepalive_listen_key(listen_key: str) -> None:
-    loop = asyncio.get_event_loop()
-    ex   = get_exchange()
-
-    def _keepalive():
-        ex.fapiPrivatePutListenKey({"listenKey": listen_key})
-
-    await loop.run_in_executor(_REST_POOL, _keepalive)
+    adapter = _get_adapter()
+    await adapter.keepalive_listen_key(listen_key)
 
 
 # ── Re-exports from split modules (backward compatibility) ───────────────────

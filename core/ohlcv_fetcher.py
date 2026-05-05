@@ -1,5 +1,5 @@
 """
-Historical OHLCV ingestion — fetches from Binance via CCXT and stores in ohlcv_cache.
+Historical OHLCV ingestion — fetches via CCXT async and stores in ohlcv_cache.
 
 Usage (standalone):
     python -m core.ohlcv_fetcher --symbols BTCUSDT ETHUSDT --timeframe 4h --days 365
@@ -21,24 +21,51 @@ import ccxt.async_support as ccxt
 
 import config
 from core.database import db
+from core.adapters import map_market_type
+from core.adapters.registry import _REST_REGISTRY
 
 log = logging.getLogger("ohlcv_fetcher")
 
-# Binance OHLCV candle limit per request
-_BINANCE_LIMIT = 1500
 # Max network retries per batch before giving up on a symbol
 _MAX_RETRIES = 5
 
 
+def _get_ohlcv_limit() -> int:
+    """Get the OHLCV candle limit from the registered adapter, or default."""
+    try:
+        from core.exchange import _get_adapter
+        adapter = _get_adapter()
+        return adapter.ohlcv_limit
+    except Exception:
+        return 1500  # safe default
+
+
 class OHLCVFetcher:
-    """Fetches and stores historical OHLCV data from Binance Futures."""
+    """Fetches and stores historical OHLCV data from the active exchange."""
 
     def __init__(self) -> None:
-        self._exchange: Optional[ccxt.binanceusdm] = None
+        self._exchange: Optional[ccxt.Exchange] = None
 
-    async def _get_exchange(self) -> ccxt.binanceusdm:
+    async def _get_exchange(self) -> ccxt.Exchange:
         if self._exchange is None:
             import aiohttp as _aiohttp
+
+            # Determine which async exchange class to use from account registry
+            exchange_name = "binanceusdm"
+            try:
+                from core.account_registry import account_registry
+                creds = account_registry.get_active_sync()
+                if creds:
+                    ex_name = creds.get("exchange", "binance")
+                    market_type = creds.get("market_type", "future")
+                    if ex_name == "binance" and market_type == "future":
+                        exchange_name = "binanceusdm"
+                    elif ex_name == "binance":
+                        exchange_name = "binance"
+                    else:
+                        exchange_name = ex_name
+            except Exception:
+                pass
 
             params: Dict[str, Any] = {
                 "enableRateLimit": True,
@@ -55,7 +82,8 @@ class OHLCVFetcher:
             connector = _aiohttp.TCPConnector(resolver=resolver)
             session = _aiohttp.ClientSession(connector=connector)
 
-            self._exchange = ccxt.binanceusdm(params)
+            cls = getattr(ccxt, exchange_name, ccxt.binanceusdm)
+            self._exchange = cls(params)
             self._exchange.session = session
             self._exchange.own_session = True
         return self._exchange
@@ -86,6 +114,8 @@ class OHLCVFetcher:
         now_ms = until_ms or int(time.time() * 1000)
         target_since_ms = now_ms - int(since_days * 86_400_000)
 
+        candle_limit = _get_ohlcv_limit()
+
         # Check what we already have stored
         stored = await db.get_ohlcv_range(symbol, timeframe)
         stored_min = stored["min_ts_ms"]
@@ -113,14 +143,14 @@ class OHLCVFetcher:
                 await exchange.load_markets()
             except ccxt.NetworkError as e:
                 log.error(
-                    "Cannot reach Binance Futures API (%s). "
+                    "Cannot reach exchange API (%s). "
                     "Check your internet connection or set HTTP_PROXY in .env. "
                     "Aborting fetch for %s.",
                     e, symbol,
                 )
                 return 0
             except Exception as e:
-                log.error("Failed to load Binance markets: %s", e)
+                log.error("Failed to load exchange markets: %s", e)
                 return 0
 
         total_written = 0
@@ -133,11 +163,11 @@ class OHLCVFetcher:
                 candles = await exchange.fetch_ohlcv(
                     symbol, timeframe,
                     since=since_ms,
-                    limit=_BINANCE_LIMIT,
+                    limit=candle_limit,
                 )
                 retries = 0  # reset on success
             except ccxt.BadSymbol:
-                log.warning("Symbol not found on Binance Futures: %s", symbol)
+                log.warning("Symbol not found on exchange: %s", symbol)
                 break
             except ccxt.NetworkError as e:
                 retries += 1
@@ -176,7 +206,7 @@ class OHLCVFetcher:
                 await progress_cb(pct, f"Fetched {total_written} candles up to {_ms_to_str(last_ts)}")
 
             # Rate limit courtesy pause between batches
-            if len(candles) < _BINANCE_LIMIT:
+            if len(candles) < candle_limit:
                 break  # reached the end of available data
             await asyncio.sleep(0.25)
 
@@ -224,7 +254,7 @@ def _ms_to_str(ts_ms: int) -> str:
 
 async def _main() -> None:
     import argparse
-    parser = argparse.ArgumentParser(description="Fetch historical OHLCV from Binance")
+    parser = argparse.ArgumentParser(description="Fetch historical OHLCV from exchange")
     parser.add_argument("--symbols", nargs="+", default=["BTCUSDT", "ETHUSDT"],
                         help="Symbols to fetch (e.g. BTCUSDT ETHUSDT)")
     parser.add_argument("--timeframe", default="4h", help="Candle timeframe (default: 4h)")
