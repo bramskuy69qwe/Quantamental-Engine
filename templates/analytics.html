@@ -101,9 +101,10 @@ function loadTab(tid){
   htmx.ajax('GET',ep+'?'+qs,{target:'#analytics-content',swap:'innerHTML'});
 }
 
-document.addEventListener('DOMContentLoaded',function(){
+// IIFE: DOMContentLoaded won't re-fire on hx-boost navigations
+(function(){
   document.getElementById('pb-cur').classList.add('active');
   loadTab('overview');
-});
+})();
 </script>
 {% endblock %}

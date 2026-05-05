@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 
 from core.database import db
 from core.crypto import decrypt, encrypt, mask_key
+from core.audit import log_event as _audit
 
 log = logging.getLogger("connections")
 
@@ -77,6 +78,7 @@ class ConnectionsManager:
                 "is_active": 1,
             }
         log.info("Connection upserted: %s", provider)
+        _audit("upsert", "connection", provider)
 
     async def delete(self, provider: str) -> None:
         """Remove a connection."""
@@ -84,6 +86,7 @@ class ConnectionsManager:
         async with self._lock:
             self._cache.pop(provider, None)
         log.info("Connection deleted: %s", provider)
+        _audit("delete", "connection", provider)
 
     async def test(self, provider: str) -> Dict[str, Any]:
         """Test a connection with 10s timeout. Returns {status, msg}."""
@@ -106,33 +109,34 @@ class ConnectionsManager:
 
     async def _test_provider(self, provider: str, api_key: str) -> Dict[str, Any]:
         """Provider-specific health check."""
-        import aiohttp
+        import httpx
 
         if provider == "fred":
-            url = f"https://api.stlouisfed.org/fred/series?series_id=DGS10&api_key={api_key}&file_type=json"
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                    if resp.status == 200:
-                        return {"status": "ok", "msg": "FRED API connected"}
-                    return {"status": "error", "msg": f"FRED returned HTTP {resp.status}"}
+            url = "https://api.stlouisfed.org/fred/series"
+            params = {"series_id": "DGS10", "api_key": api_key, "file_type": "json"}
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(url, params=params)
+                if resp.status_code == 200:
+                    return {"status": "ok", "msg": "FRED API connected"}
+                return {"status": "error", "msg": f"FRED returned HTTP {resp.status_code}"}
 
         elif provider == "finnhub":
             url = "https://finnhub.io/api/v1/stock/market-status?exchange=US"
             headers = {"X-Finnhub-Token": api_key}
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                    if resp.status == 200:
-                        return {"status": "ok", "msg": "Finnhub API connected"}
-                    return {"status": "error", "msg": f"Finnhub returned HTTP {resp.status}"}
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(url, headers=headers)
+                if resp.status_code == 200:
+                    return {"status": "ok", "msg": "Finnhub API connected"}
+                return {"status": "error", "msg": f"Finnhub returned HTTP {resp.status_code}"}
 
         elif provider == "coingecko":
             url = "https://api.coingecko.com/api/v3/ping"
             headers = {"x-cg-demo-api-key": api_key} if api_key else {}
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                    if resp.status == 200:
-                        return {"status": "ok", "msg": "CoinGecko API connected"}
-                    return {"status": "error", "msg": f"CoinGecko returned HTTP {resp.status}"}
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(url, headers=headers)
+                if resp.status_code == 200:
+                    return {"status": "ok", "msg": "CoinGecko API connected"}
+                return {"status": "error", "msg": f"CoinGecko returned HTTP {resp.status_code}"}
 
         return {"status": "error", "msg": f"Unknown provider: {provider}"}
 

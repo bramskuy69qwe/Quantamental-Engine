@@ -653,8 +653,8 @@ function restoreCalcState(){
   updatePricePreview();updatePctPreview();}catch(e){}
 }
 document.getElementById('calc-form').addEventListener('input',function(){clearTimeout(_saveDebounce);_saveDebounce=setTimeout(saveCalcState,300);});
-document.addEventListener('DOMContentLoaded',function(){
-  // Show ghost interfaces on initial load (before any calc or restore)
+// IIFE: DOMContentLoaded won't re-fire on hx-boost navigations
+(function(){
   var ghost=document.getElementById('calc-ghost');
   var result=document.getElementById('calc-result');
   if(ghost&&result&&!result.innerHTML.trim())result.innerHTML=ghost.innerHTML;
@@ -662,6 +662,6 @@ document.addEventListener('DOMContentLoaded',function(){
   var obContainer=document.getElementById('orderbook-container');
   if(obGhost&&obContainer&&!obContainer.innerHTML.trim())obContainer.innerHTML=obGhost.innerHTML;
   loadCalcHistory();restoreCalcState();
-});
+})();
 </script>
 {% endblock %}

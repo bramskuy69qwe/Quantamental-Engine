@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 from core.database import db
 from core.crypto import decrypt, encrypt, safe_exchange_error
 from core.exchange_factory import exchange_factory
+from core.audit import log_event as _audit
 
 log = logging.getLogger("account_registry")
 
@@ -172,6 +173,7 @@ class AccountRegistry:
                 "params":            params,
             }
         log.info("AccountRegistry: added account id=%d name=%r env=%s", new_id, name, environment)
+        _audit("add", "account", name, f"id={new_id} env={environment}")
         return new_id
 
     async def update_account(
@@ -196,6 +198,7 @@ class AccountRegistry:
 
         async with self._lock:
             if account_id in self._cache:
+                acct_name = self._cache[account_id].get("name", str(account_id))
                 if name is not None:
                     self._cache[account_id]["name"] = name
                 if api_key is not None:
@@ -204,11 +207,17 @@ class AccountRegistry:
                     self._cache[account_id]["api_secret"] = api_secret
                 if broker_account_id is not None:
                     self._cache[account_id]["broker_account_id"] = broker_account_id
+        detail = "credentials_changed" if (api_key or api_secret) else "metadata_updated"
+        acct_name = name or self._cache.get(account_id, {}).get("name", str(account_id))
+        _audit("update", "account", acct_name, detail)
 
     async def delete_account(self, account_id: int) -> None:
+        async with self._lock:
+            acct_name = self._cache.get(account_id, {}).get("name", str(account_id))
         await db.delete_account(account_id)
         async with self._lock:
             self._cache.pop(account_id, None)
+        _audit("delete", "account", acct_name)
 
     def _account_meta(self, v: Dict[str, Any]) -> Dict[str, Any]:
         """Extract non-secret metadata from a cache entry."""

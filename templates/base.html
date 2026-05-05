@@ -268,7 +268,7 @@
     <span style="font-family:var(--font-ui);font-size:.72rem;font-weight:800;color:var(--blue);letter-spacing:.06em;white-space:nowrap;flex-shrink:0;">
       {{ project_name_ }} <span style="color:var(--sub);font-weight:400;font-size:.65rem;">{{ project_version_ }}</span>
     </span>
-    <nav style="display:flex;overflow-x:auto;scrollbar-width:none;flex-shrink:1;">
+    <nav hx-boost="true" style="display:flex;overflow-x:auto;scrollbar-width:none;flex-shrink:1;">
       {% set nav_items = [
         ('dashboard',  '/'),
         ('calculator', '/calculator'),
@@ -405,6 +405,25 @@
           <select name="market_type">
             <option value="future">USD-M Futures</option>
             <option value="spot">Spot</option>
+          </select>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+        <div>
+          <label class="lbl" style="display:block;margin-bottom:3px;">Environment</label>
+          <select name="environment">
+            <option value="live">Live</option>
+            <option value="paper">Paper</option>
+            <option value="testnet">Testnet</option>
+          </select>
+        </div>
+        <div>
+          <label class="lbl" style="display:block;margin-bottom:3px;">Initial Parameters</label>
+          <select name="params_source">
+            <option value="defaults">Use defaults</option>
+            {% for acct in accounts %}
+            <option value="copy_{{ acct.id }}">Copy from: {{ acct.name }}</option>
+            {% endfor %}
           </select>
         </div>
       </div>

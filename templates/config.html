@@ -72,7 +72,7 @@ function switchConfigTab(tab) {
   document.getElementById('tab-btn-connections').style.fontWeight = tab === 'connections' ? '700' : '500';
 }
 // Handle ?tab= query param
-const urlTab = new URLSearchParams(window.location.search).get('tab');
+var urlTab = new URLSearchParams(window.location.search).get('tab');
 if (urlTab) switchConfigTab(urlTab);
 </script>
 {% endblock %}

@@ -197,9 +197,24 @@ async def add_account_modal(
     market_type: str = Form("future"),
     api_key: str = Form(...),
     api_secret: str = Form(...),
+    environment: str = Form("live"),
+    params_source: str = Form("defaults"),
 ):
     try:
-        new_id = await account_registry.add_account(name, exchange, market_type, api_key, api_secret)
+        # Resolve params template
+        params_template = None
+        if params_source.startswith("copy_"):
+            try:
+                source_id = int(params_source.split("_", 1)[1])
+                params_template = account_registry.get_account_params(source_id)
+            except (ValueError, IndexError):
+                pass
+
+        new_id = await account_registry.add_account(
+            name, exchange, market_type, api_key, api_secret,
+            environment=environment,
+            params_template=params_template,
+        )
         return HTMLResponse(
             f'<span class="text-green" style="font-size:.65rem;">Account "{name}" added (id={new_id}). Reloading...</span>'
             '<script>setTimeout(function(){window.location.reload();},800);</script>'
