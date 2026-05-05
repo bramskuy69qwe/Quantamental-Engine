@@ -14,10 +14,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Dict, List, Optional, Any
+import time
+from typing import Any, Dict, List, Optional
 
 from core.database import db
-from core.crypto import decrypt, encrypt
+from core.crypto import decrypt, encrypt, safe_exchange_error
 from core.exchange_factory import exchange_factory
 
 log = logging.getLogger("account_registry")
@@ -34,7 +35,9 @@ class AccountRegistry:
     # ── Startup ───────────────────────────────────────────────────────────────
 
     async def load_all(self) -> None:
-        """Read all accounts from DB, decrypt credentials, populate cache."""
+        """Read all accounts from DB, decrypt credentials, load params, populate cache."""
+        from core.state import DEFAULT_PARAMS
+
         rows = await db.get_all_accounts()   # metadata only (no secrets)
 
         # Determine active_id from settings
@@ -43,6 +46,9 @@ class AccountRegistry:
             active_id = int(active_str or "1")
         except ValueError:
             active_id = 1
+
+        # Load all account params in one query
+        all_params = await db.get_all_account_params()
 
         async with self._lock:
             self._cache.clear()
@@ -53,6 +59,13 @@ class AccountRegistry:
                     continue
                 api_key    = decrypt(full.get("api_key_enc", ""))
                 api_secret = decrypt(full.get("api_secret_enc", ""))
+
+                # Per-account params: from DB, or seed defaults
+                params = all_params.get(acct_id)
+                if not params:
+                    params = DEFAULT_PARAMS.copy()
+                    await db.set_account_params(acct_id, params)
+
                 self._cache[acct_id] = {
                     "id":                acct_id,
                     "name":              full["name"],
@@ -62,6 +75,10 @@ class AccountRegistry:
                     "api_secret":        api_secret,
                     "is_active":         full.get("is_active", 0),
                     "broker_account_id": full.get("broker_account_id") or "",
+                    "maker_fee":         full.get("maker_fee", 0.0002),
+                    "taker_fee":         full.get("taker_fee", 0.0005),
+                    "environment":       full.get("environment", "live"),
+                    "params":            params,
                 }
             if active_id in self._cache:
                 self._active_id = active_id
@@ -119,13 +136,26 @@ class AccountRegistry:
         api_key: str,
         api_secret: str,
         broker_account_id: str = "",
+        environment: str = "live",
+        params_template: Optional[Dict[str, float]] = None,
     ) -> int:
+        from core.state import DEFAULT_PARAMS
+        import config as _cfg
+
         key_enc = encrypt(api_key)
         sec_enc = encrypt(api_secret)
         new_id = await db.insert_account(
             name, exchange, market_type, key_enc, sec_enc,
             broker_account_id=broker_account_id,
         )
+        # Set environment
+        if environment != "live":
+            await db.update_account(new_id, environment=environment)
+
+        # Per-account params: from template or defaults
+        params = dict(params_template) if params_template else DEFAULT_PARAMS.copy()
+        await db.set_account_params(new_id, params)
+
         async with self._lock:
             self._cache[new_id] = {
                 "id":                new_id,
@@ -136,8 +166,12 @@ class AccountRegistry:
                 "api_secret":        api_secret,
                 "is_active":         0,
                 "broker_account_id": broker_account_id,
+                "maker_fee":         _cfg.MAKER_FEE,
+                "taker_fee":         _cfg.TAKER_FEE,
+                "environment":       environment,
+                "params":            params,
             }
-        log.info("AccountRegistry: added account id=%d name=%r", new_id, name)
+        log.info("AccountRegistry: added account id=%d name=%r env=%s", new_id, name, environment)
         return new_id
 
     async def update_account(
@@ -176,34 +210,28 @@ class AccountRegistry:
         async with self._lock:
             self._cache.pop(account_id, None)
 
+    def _account_meta(self, v: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract non-secret metadata from a cache entry."""
+        return {
+            "id":                v["id"],
+            "name":              v["name"],
+            "exchange":          v["exchange"],
+            "market_type":       v["market_type"],
+            "is_active":         v["is_active"],
+            "broker_account_id": v.get("broker_account_id", ""),
+            "maker_fee":         v.get("maker_fee", 0.0002),
+            "taker_fee":         v.get("taker_fee", 0.0005),
+            "environment":       v.get("environment", "live"),
+        }
+
     async def list_accounts(self) -> List[Dict[str, Any]]:
         """Return metadata list (no secrets) for UI dropdowns."""
         async with self._lock:
-            return [
-                {
-                    "id":                v["id"],
-                    "name":              v["name"],
-                    "exchange":          v["exchange"],
-                    "market_type":       v["market_type"],
-                    "is_active":         v["is_active"],
-                    "broker_account_id": v.get("broker_account_id", ""),
-                }
-                for v in self._cache.values()
-            ]
+            return [self._account_meta(v) for v in self._cache.values()]
 
     def list_accounts_sync(self) -> List[Dict[str, Any]]:
         """Synchronous version for _ctx() template helper."""
-        return [
-            {
-                "id":                v["id"],
-                "name":              v["name"],
-                "exchange":          v["exchange"],
-                "market_type":       v["market_type"],
-                "is_active":         v["is_active"],
-                "broker_account_id": v.get("broker_account_id", ""),
-            }
-            for v in self._cache.values()
-        ]
+        return [self._account_meta(v) for v in self._cache.values()]
 
     def find_by_broker_id(self, broker_id: str) -> Optional[Dict[str, Any]]:
         """Find account by broker_account_id (used for Quantower fill routing)."""
@@ -218,10 +246,45 @@ class AccountRegistry:
                 }
         return None
 
-    async def test_connection(self, account_id: int) -> Dict[str, Any]:
-        """Test API key by making a lightweight REST call. Returns latency or error."""
-        import time
+    # ── Per-account params ──────────────────────────────────────────────────
 
+    def get_account_params(self, account_id: int) -> Dict[str, Any]:
+        """Return risk params for an account (from cache)."""
+        entry = self._cache.get(account_id)
+        if not entry:
+            from core.state import DEFAULT_PARAMS
+            return DEFAULT_PARAMS.copy()
+        return dict(entry.get("params", {}))
+
+    async def update_account_params(self, account_id: int, params: Dict[str, float]) -> None:
+        """Update risk params in DB and cache."""
+        await db.set_account_params(account_id, params)
+        async with self._lock:
+            if account_id in self._cache:
+                self._cache[account_id]["params"] = dict(params)
+
+    # ── Per-account fees ─────────────────────────────────────────────────
+
+    def get_account_fees(self, account_id: int) -> tuple:
+        """Return (maker_fee, taker_fee) for an account."""
+        entry = self._cache.get(account_id)
+        if not entry:
+            import config as _cfg
+            return (_cfg.MAKER_FEE, _cfg.TAKER_FEE)
+        return (entry.get("maker_fee", 0.0002), entry.get("taker_fee", 0.0005))
+
+    async def update_account_fees(self, account_id: int, maker: float, taker: float) -> None:
+        """Update fees in DB and cache."""
+        await db.update_account(account_id, maker_fee=maker, taker_fee=taker)
+        async with self._lock:
+            if account_id in self._cache:
+                self._cache[account_id]["maker_fee"] = maker
+                self._cache[account_id]["taker_fee"] = taker
+
+    # ── Connection test ──────────────────────────────────────────────────
+
+    async def test_connection(self, account_id: int, fetch_fees: bool = True) -> Dict[str, Any]:
+        """Test API key with 30s timeout. Optionally auto-fetch fee tier."""
         async with self._lock:
             creds = self._cache.get(account_id)
         if not creds:
@@ -236,11 +299,58 @@ class AccountRegistry:
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                 t0 = time.monotonic()
-                await loop.run_in_executor(pool, ex.fetch_time)
+                await asyncio.wait_for(
+                    loop.run_in_executor(pool, ex.fetch_time),
+                    timeout=30.0,
+                )
                 latency_ms = round((time.monotonic() - t0) * 1000, 1)
-            return {"ok": True, "latency_ms": latency_ms}
+
+            result: Dict[str, Any] = {"ok": True, "latency_ms": latency_ms}
+
+            # Auto-fetch fees if requested
+            if fetch_fees:
+                fees = await self._fetch_fees(ex, account_id)
+                if fees:
+                    result["fees_updated"] = True
+                    result["maker_fee"] = fees[0]
+                    result["taker_fee"] = fees[1]
+
+            return result
+        except asyncio.TimeoutError:
+            return {"ok": False, "error": "Connection timed out (30s)"}
         except Exception as exc:
-            return {"ok": False, "error": str(exc)}
+            return {"ok": False, "error": safe_exchange_error(exc)}
+
+    async def _fetch_fees(self, ex: Any, account_id: int) -> Optional[tuple]:
+        """Try to fetch trading fees from exchange. Returns (maker, taker) or None."""
+        try:
+            loop = asyncio.get_event_loop()
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                fees = await asyncio.wait_for(
+                    loop.run_in_executor(pool, ex.fetch_trading_fees),
+                    timeout=30.0,
+                )
+            # CCXT returns {symbol: {maker, taker}}; pick first or default pair
+            if isinstance(fees, dict):
+                # Try to find a common pair, or take first entry
+                for sym in ("BTC/USDT:USDT", "BTC/USDT", "BTCUSDT"):
+                    if sym in fees:
+                        maker = fees[sym].get("maker", 0)
+                        taker = fees[sym].get("taker", 0)
+                        if maker > 0 or taker > 0:
+                            await self.update_account_fees(account_id, maker, taker)
+                            return (maker, taker)
+                # Fallback: first entry with nonzero fees
+                for sym, data in fees.items():
+                    maker = data.get("maker", 0)
+                    taker = data.get("taker", 0)
+                    if maker > 0 or taker > 0:
+                        await self.update_account_fees(account_id, maker, taker)
+                        return (maker, taker)
+        except (asyncio.TimeoutError, Exception) as e:
+            log.warning("Fee fetch failed for account %d: %s", account_id, safe_exchange_error(e))
+        return None
 
 
 # Module-level singleton

@@ -72,11 +72,15 @@ async def lifespan(app: FastAPI):
     await account_registry.load_all()
     app_state.active_account_id = account_registry.active_id
 
+    # ── Load connections manager (3rd-party API keys) ────────────────────────
+    from core.connections import connections_manager
+    await connections_manager.load_all()
+
     # ── Load active platform from settings ────────────────────────────────────
     platform = await db.get_setting("active_platform")
     app_state.active_platform = platform or "standalone"
 
-    # ── Load persisted parameters (fast — local file) ────────────────────────
+    # ── Load persisted parameters (per-account from DB) ──────────────────────
     app_state.load_params()
 
     # ── Crash recovery: restore last known account state from DB (fast) ──────

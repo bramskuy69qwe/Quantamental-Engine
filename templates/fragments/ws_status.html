@@ -1,19 +1,16 @@
-<!-- fragment: ws_status -->
-<div style="display:flex;align-items:center;gap:4px;font-size:.65rem;color:var(--sub);white-space:nowrap;">
-  {% if ws.connected %}
-    <span style="width:5px;height:5px;border-radius:50%;background:var(--green);display:inline-block;flex-shrink:0;"></span>
-    <span style="color:var(--green);font-weight:700;">WS</span>
-    <span style="font-family:var(--font-mono);">{{ ws.latency_ms|round|int if ws.latency_ms else '—' }}ms</span>
-    <span>{{ ws.seconds_since_update|round|int }}s</span>
-  {% elif ws.using_fallback %}
-    <span style="width:5px;height:5px;border-radius:50%;background:var(--amber);display:inline-block;flex-shrink:0;"></span>
-    <span style="color:var(--amber);font-weight:700;">REST</span>
-    <span style="font-family:var(--font-mono);">{{ ex.latency_ms|round|int if ex.latency_ms else '—' }}ms</span>
-  {% else %}
-    <span style="width:5px;height:5px;border-radius:50%;background:var(--red);display:inline-block;flex-shrink:0;"></span>
-    <span style="color:var(--red);font-weight:700;">OFF</span>
-    {% if ws.reconnect_attempts > 0 %}
-      <span>retry #{{ ws.reconnect_attempts }}</span>
-    {% endif %}
+{% if ws.connected %}
+  <span style="width:5px;height:5px;border-radius:50%;background:var(--green);display:inline-block;flex-shrink:0;"></span>
+  <span style="color:var(--green);font-weight:700;display:inline-block;width:22px;text-align:center;">WS</span>
+  <span style="font-family:var(--font-mono);width:42px;text-align:right;display:inline-block;">{{ ws.latency_ms|round|int if ws.latency_ms else '—' }}ms</span>
+  <span style="font-family:var(--font-mono);width:30px;text-align:right;display:inline-block;">{{ ws.seconds_since_update|round|int }}s</span>
+{% elif ws.using_fallback %}
+  <span style="width:5px;height:5px;border-radius:50%;background:var(--amber);display:inline-block;flex-shrink:0;"></span>
+  <span style="color:var(--amber);font-weight:700;display:inline-block;width:28px;text-align:center;">REST</span>
+  <span style="font-family:var(--font-mono);width:42px;text-align:right;display:inline-block;">{{ ex.latency_ms|round|int if ex.latency_ms else '—' }}ms</span>
+{% else %}
+  <span style="width:5px;height:5px;border-radius:50%;background:var(--red);display:inline-block;flex-shrink:0;"></span>
+  <span style="color:var(--red);font-weight:700;display:inline-block;width:22px;text-align:center;">OFF</span>
+  {% if ws.reconnect_attempts > 0 %}
+    <span style="font-family:var(--font-mono);width:42px;text-align:right;display:inline-block;">retry #{{ ws.reconnect_attempts }}</span>
   {% endif %}
-</div>
+{% endif %}

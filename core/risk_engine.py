@@ -341,7 +341,8 @@ def run_risk_calculator(
 
     # PRD step 6: est_slippage_usdt = est_slippage × est_size
     est_slip_usdt = sizing["est_slippage"] * est_size
-    fee_rate      = config.TAKER_FEE if order_type in ("market", "stop") else config.MAKER_FEE
+    _maker, _taker = app_state.exchange_info.maker_fee, app_state.exchange_info.taker_fee
+    fee_rate       = _taker if order_type in ("market", "stop") else _maker
     fee_cost      = 2 * fee_rate * est_size
 
     # PRD steps 9–11
@@ -428,6 +429,6 @@ def run_risk_calculator(
         "model_desc":          model_desc,
         "order_type":          order_type,
         "fee_rate":            fee_rate,
-        "maker_fee":           config.MAKER_FEE,
-        "taker_fee":           config.TAKER_FEE,
+        "maker_fee":           _maker,
+        "taker_fee":           _taker,
     }

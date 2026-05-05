@@ -199,6 +199,25 @@ CREATE TABLE IF NOT EXISTS settings (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS account_params (
+    account_id  INTEGER NOT NULL,
+    key         TEXT    NOT NULL,
+    value       REAL    NOT NULL,
+    PRIMARY KEY (account_id, key),
+    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS connections (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider    TEXT    NOT NULL UNIQUE,
+    label       TEXT    NOT NULL,
+    api_key_enc TEXT    NOT NULL DEFAULT '',
+    extra_enc   TEXT    NOT NULL DEFAULT '',
+    is_active   INTEGER NOT NULL DEFAULT 1,
+    key_version INTEGER NOT NULL DEFAULT 1,
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
 -- ── Backtesting ───────────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS ohlcv_cache (
@@ -346,6 +365,7 @@ class DatabaseManager(
         self._conn = await aiosqlite.connect(self.path)
         self._conn.row_factory = aiosqlite.Row
         await self._conn.execute("PRAGMA journal_mode=WAL")
+        await self._conn.execute("PRAGMA foreign_keys=ON")
         for stmt in _CREATE_STATEMENTS.strip().split(";"):
             stmt = stmt.strip()
             if stmt and not stmt.upper().startswith("PRAGMA"):
@@ -370,6 +390,11 @@ class DatabaseManager(
             "ALTER TABLE accounts ADD COLUMN broker_account_id TEXT",
             # v2.1: fill source for debugging (manual UI, quantower, binance)
             "ALTER TABLE execution_log ADD COLUMN source_terminal TEXT NOT NULL DEFAULT 'manual'",
+            # v2.2: per-account fees, environment, key versioning
+            "ALTER TABLE accounts ADD COLUMN maker_fee REAL NOT NULL DEFAULT 0.0002",
+            "ALTER TABLE accounts ADD COLUMN taker_fee REAL NOT NULL DEFAULT 0.0005",
+            "ALTER TABLE accounts ADD COLUMN environment TEXT NOT NULL DEFAULT 'live'",
+            "ALTER TABLE accounts ADD COLUMN key_version INTEGER NOT NULL DEFAULT 1",
         ]:
             try:
                 await self._conn.execute(migration)
@@ -478,7 +503,89 @@ class DatabaseManager(
             await self._conn.commit()
             log.info("Seeded Account 1 from .env credentials")
 
+        # ── v2.2 data migrations ─────────────────────────────────────────────
+        await self._migrate_params_json_to_db()
+        await self._migrate_env_connections()
+
         log.info(f"SQLite initialized at {config.DB_PATH}")
+
+    async def _migrate_params_json_to_db(self) -> None:
+        """Migrate data/params.json → account_params table (one-time)."""
+        import json
+        import os
+
+        params_count = await self.count_account_params()
+        if params_count > 0:
+            return  # already migrated
+
+        params_path = os.path.join(config.DATA_DIR, "params.json")
+        if not os.path.isfile(params_path):
+            return  # no params.json to migrate
+
+        try:
+            with open(params_path, "r") as f:
+                params = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            log.error("Failed to read params.json for migration: %s", e)
+            return
+
+        # Get all account IDs — every account gets a copy of the params
+        async with self._conn.execute("SELECT id FROM accounts") as cur:
+            account_ids = [r["id"] for r in await cur.fetchall()]
+
+        if not account_ids:
+            return
+
+        for acct_id in account_ids:
+            for key, value in params.items():
+                await self._conn.execute(
+                    "INSERT OR IGNORE INTO account_params (account_id, key, value)"
+                    " VALUES (?, ?, ?)",
+                    (acct_id, key, float(value)),
+                )
+        await self._conn.commit()
+
+        # Rename original as backup
+        migrated_path = params_path + ".migrated"
+        try:
+            os.rename(params_path, migrated_path)
+        except OSError:
+            pass  # not critical if rename fails
+
+        log.info("Migrated params.json → account_params for %d account(s)", len(account_ids))
+
+    async def _migrate_env_connections(self) -> None:
+        """Seed connections table from .env keys (one-time)."""
+        conn_count = await self.count_connections()
+        if conn_count > 0:
+            return  # already seeded
+
+        from core.crypto import encrypt
+
+        providers = [
+            ("fred",      "Federal Reserve (FRED)",    config.FRED_API_KEY),
+            ("finnhub",   "Finnhub",                   config.FINNHUB_API_KEY),
+            ("coingecko", "CoinGecko",                 getattr(config, "COINGECKO_API_KEY", "")),
+        ]
+
+        seeded = 0
+        for provider, label, raw_key in providers:
+            if not raw_key:
+                continue
+            try:
+                enc = encrypt(raw_key)
+            except Exception:
+                enc = ""
+            await self._conn.execute(
+                "INSERT OR IGNORE INTO connections (provider, label, api_key_enc)"
+                " VALUES (?, ?, ?)",
+                (provider, label, enc),
+            )
+            seeded += 1
+
+        if seeded:
+            await self._conn.commit()
+            log.info("Seeded %d connection(s) from .env", seeded)
 
     async def close(self) -> None:
         if self._conn:

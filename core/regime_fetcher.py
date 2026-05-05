@@ -108,7 +108,7 @@ class RegimeFetcher:
             await _progress(progress_cb, 100, f"VIX: {msg}")
             return 0
         except Exception as e:
-            log.error("VIX download error: %s", e, exc_info=True)
+            log.error("VIX download error: %s", e)
             await _progress(progress_cb, 100, f"VIX: error — {e}")
             return 0
 
@@ -452,7 +452,7 @@ class RegimeFetcher:
             results["vix_close"] = 0
             await step_progress(0, 100, "VIX: yfinance not installed")
         except Exception as e:
-            log.error("VIX fetch failed: %s", e, exc_info=True)
+            log.error("VIX fetch failed: %s", e)
             results["vix_close"] = 0
 
         # Step 2: US 10Y Yield (FRED)

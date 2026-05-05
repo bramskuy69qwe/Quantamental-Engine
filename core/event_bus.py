@@ -91,7 +91,7 @@ class EventBus:
             try:
                 await handler(payload)
             except Exception as exc:
-                log.error("Handler error on channel %r: %s", channel, exc, exc_info=True)
+                log.error("Handler error on channel %r: %s", channel, exc)
 
     async def run(self) -> None:
         """Long-running coroutine: drain the queue and dispatch events."""
@@ -103,7 +103,7 @@ class EventBus:
             except asyncio.CancelledError:
                 break
             except Exception as exc:
-                log.error("EventBus run loop error: %s", exc, exc_info=True)
+                log.error("EventBus run loop error: %s", exc)
 
     async def close(self) -> None:
         """No-op — kept for interface compatibility with old redis_bus."""

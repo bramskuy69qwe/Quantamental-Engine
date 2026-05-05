@@ -119,7 +119,7 @@ async def api_regime_backfill(request: Request):
             job["detail"] = f"Done — {count} dates classified"
             job["pct"] = 100
         except Exception as e:
-            log.error("Regime backfill failed: %s", e, exc_info=True)
+            log.error("Regime backfill failed: %s", e)
             job["status"] = "failed"
             job["detail"] = str(e)
 

@@ -229,7 +229,7 @@ async def _user_data_loop(listen_key: str, attempt: int = 0) -> None:
                     await _handle_user_event(msg)
                 except Exception as exc:
                     log.warning("User-data WS message error: %s", exc)
-                ws.last_update  = datetime.now(timezone.utc)
+                ws.last_update = datetime.now(timezone.utc)
 
     except Exception as exc:
         ws.connected = False
@@ -261,7 +261,8 @@ async def _reconnect_user(attempt: int) -> None:
         _listen_key = await create_listen_key()
     except Exception as e:
         ws.add_log(f"Failed to refresh listen key: {e}")
-        log.exception("create_listen_key failed during reconnect (attempt %d)", attempt)
+        from core.crypto import safe_exchange_error
+        log.error("create_listen_key failed during reconnect (attempt %d): %s", attempt, safe_exchange_error(e))
         await _reconnect_user(attempt + 1)
         return
 

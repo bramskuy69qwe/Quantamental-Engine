@@ -7,7 +7,9 @@ from datetime import datetime
 from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, FileResponse
 
-from core.state import app_state, TZ_LOCAL
+from starlette.responses import RedirectResponse
+
+from core.state import app_state, TZ_LOCAL, validate_params
 from core.event_bus import event_bus
 from core.data_logger import export_all_to_excel
 from api.helpers import templates, _ctx
@@ -16,9 +18,9 @@ log = logging.getLogger("routes.params")
 router = APIRouter()
 
 
-@router.get("/params", response_class=HTMLResponse)
+@router.get("/params")
 async def params_page(request: Request):
-    return templates.TemplateResponse(request, "params.html", _ctx(request))
+    return RedirectResponse(url="/config", status_code=302)
 
 
 @router.get("/fragments/ws_log", response_class=HTMLResponse)
@@ -44,7 +46,7 @@ async def update_params(
     max_dd_warning_pct:        float = Form(0.80),
     max_dd_limit_pct:          float = Form(0.95),
 ):
-    app_state.params.update({
+    new_params = {
         "individual_risk_per_trade": individual_risk_per_trade,
         "max_w_loss_percent":        max_w_loss_percent,
         "max_dd_percent":            max_dd_percent,
@@ -56,7 +58,13 @@ async def update_params(
         "weekly_loss_limit_pct":     weekly_loss_limit_pct,
         "max_dd_warning_pct":        max_dd_warning_pct,
         "max_dd_limit_pct":          max_dd_limit_pct,
-    })
+    }
+    errors = validate_params(new_params)
+    if errors:
+        return HTMLResponse(
+            f'<div class="alert alert-error">Validation error: {"; ".join(errors)}</div>'
+        )
+    app_state.params.update(new_params)
     await app_state.save_params_async()
     await event_bus.publish(
         "risk:params_updated",

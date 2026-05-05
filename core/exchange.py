@@ -96,14 +96,18 @@ async def fetch_exchange_info() -> None:
     except Exception:
         info.name = config.EXCHANGE_NAME
     info.latency_ms = round(latency_ms, 2)
+    # Also sync to ws_status so the WS indicator shows a value immediately
+    app_state.ws_status.latency_ms = info.latency_ms
     info.server_time = datetime.fromtimestamp(
         server_time / 1000, tz=timezone.utc
     ).strftime("%Y-%m-%d %H:%M:%S UTC")
-    # Fees: use live values from fetch_account if available, else config defaults
+    # Fees: use per-account values from registry, then fallback to config defaults
+    from core.account_registry import account_registry
+    maker, taker = account_registry.get_account_fees(app_state.active_account_id)
     if info.maker_fee == 0.0:
-        info.maker_fee = config.MAKER_FEE
+        info.maker_fee = maker
     if info.taker_fee == 0.0:
-        info.taker_fee = config.TAKER_FEE
+        info.taker_fee = taker
 
 
 # ── Account & balance ────────────────────────────────────────────────────────

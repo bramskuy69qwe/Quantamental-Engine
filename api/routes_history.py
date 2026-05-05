@@ -89,7 +89,8 @@ async def post_execution(
         "ticker": ticker.upper(), "side": side,
         "entry_price_actual": entry_price_actual, "size_filled": size_filled,
         "slippage": slippage, "order_type": order_type,
-        "maker_fee": config.MAKER_FEE, "taker_fee": config.TAKER_FEE,
+        "maker_fee": app_state.exchange_info.maker_fee,
+        "taker_fee": app_state.exchange_info.taker_fee,
         "latency_snapshot": latency_snapshot, "orderbook_depth_snapshot": "",
         "source_terminal": "manual",
     }

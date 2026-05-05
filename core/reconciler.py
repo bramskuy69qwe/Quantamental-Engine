@@ -75,7 +75,7 @@ class ReconcilerWorker:
             await self._reconcile_symbol(ticker, direction)
         except Exception as e:
             app_state.ws_status.add_log(f"Reconciler error ({ticker}): {e}")
-            log.exception(f"Reconciler failed for {ticker}")
+            log.error("Reconciler failed for %s: %s", ticker, e)
 
     async def backfill_all(self) -> None:
         """
@@ -113,6 +113,6 @@ class ReconcilerWorker:
                 try:
                     await self._reconcile_symbol(sym)
                 except Exception as e:
-                    log.exception(f"Backfill failed for {sym}: {e}")
+                    log.error("Backfill failed for %s: %s", sym, e)
 
         await asyncio.gather(*[_process(sym) for sym in symbols])

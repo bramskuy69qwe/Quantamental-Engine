@@ -69,7 +69,7 @@ async def handle_account_updated(payload: Dict[str, Any]) -> None:
     try:
         await db.insert_account_snapshot(snap)
     except Exception as exc:
-        log.error(f"handle_account_updated DB write failed: {exc}", exc_info=True)
+        log.error("handle_account_updated DB write failed: %s", exc)
 
     # Push to Quantower plugin (no-op when standalone or no clients connected)
     if app_state.active_platform == "quantower":
@@ -140,7 +140,7 @@ async def handle_positions_refreshed(payload: Dict[str, Any]) -> None:
         )
         await db.insert_account_snapshot(_build_account_snapshot("risk:positions_refreshed"))
     except Exception as exc:
-        log.error(f"handle_positions_refreshed DB write failed: {exc}", exc_info=True)
+        log.error("handle_positions_refreshed DB write failed: %s", exc)
 
     log.debug(
         "positions_refreshed",
@@ -160,7 +160,7 @@ async def handle_risk_calculated(payload: Dict[str, Any]) -> None:
     try:
         await db.insert_pre_trade_log({**payload, "account_id": app_state.active_account_id})
     except Exception as exc:
-        log.error(f"handle_risk_calculated DB write failed: {exc}", exc_info=True)
+        log.error("handle_risk_calculated DB write failed: %s", exc)
 
     # Maintain in-memory cache (same shape as the old CSV-backed list)
     row = {

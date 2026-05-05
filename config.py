@@ -96,11 +96,24 @@ HISTORY_POLL_INTERVAL     = 30
 WS_STATUS_POLL_INTERVAL   = 5
 WS_LOG_MAX_DISPLAY        = 10
 
-# ── Regime Classifier ───────────────────────────────────────────────────────
-FRED_API_KEY = os.getenv("FRED_API_KEY", "")
+# ── API Keys (DB-first fallback chain) ──────────────────────────────────────
 
-# ── News & Economic Calendar ────────────────────────────────────────────────
-FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "")  # Free key from finnhub.io
+def get_api_key(provider: str) -> str:
+    """DB first (via connections_manager), then .env fallback."""
+    try:
+        from core.connections import connections_manager
+        key = connections_manager.get_sync(provider)
+        if key:
+            return key
+    except Exception:
+        pass  # connections_manager not loaded yet during startup
+    return os.getenv(f"{provider.upper()}_API_KEY", "")
+
+# Keep module-level attributes for backward compatibility — consumers that
+# read config.FRED_API_KEY will get the .env value at import time.  Modules
+# that need the DB-first chain should call config.get_api_key("fred").
+FRED_API_KEY = os.getenv("FRED_API_KEY", "")
+FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "")
 BWE_NEWS_WS_URL = os.getenv("BWE_NEWS_WS_URL", "wss://bwenews-api.bwe-ws.com/ws")
 
 REGIME_STALE_MINUTES = 90   # current_regime older than this is treated as stale

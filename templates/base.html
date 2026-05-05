@@ -273,7 +273,6 @@
         ('dashboard',  '/'),
         ('calculator', '/calculator'),
         ('history',    '/history'),
-        ('params',     '/params'),
         ('analytics',  '/analytics'),
         ('backtest',   '/backtest'),
         ('regime',     '/regime'),
@@ -299,7 +298,7 @@
     <!-- Account selector -->
     <div style="display:flex;align-items:center;gap:4px;">
       <select id="account-selector"
-              style="width:130px;height:24px;font-size:.68rem;padding:2px 6px;"
+              style="width:160px;height:24px;font-size:.68rem;padding:2px 6px;"
               hx-post="/accounts/activate-selected"
               hx-trigger="change"
               hx-target="#account-switch-msg"
@@ -311,9 +310,6 @@
         </option>
         {% endfor %}
       </select>
-      <button title="Add account"
-              onclick="document.getElementById('add-account-modal').style.display='flex'"
-              class="btn btn-ghost btn-sm">+</button>
       <!-- Account connection status badge -->
       <span id="account-conn-badge" style="display:none;font-size:.65rem;padding:2px 7px;border-radius:99px;white-space:nowrap;font-weight:700;"></span>
       <span id="account-switch-msg" class="htmx-indicator" style="font-size:.62rem;color:var(--sub);"></span>
@@ -321,7 +317,7 @@
 
     <!-- Platform selector -->
     <select id="platform-selector"
-            style="width:120px;height:24px;font-size:.68rem;padding:2px 6px;"
+            style="width:140px;height:24px;font-size:.68rem;padding:2px 6px;"
             hx-post="/api/settings/platform"
             hx-trigger="change"
             hx-swap="none"
@@ -332,17 +328,28 @@
 
     <!-- Plugin badge (Quantower only) -->
     <span id="plugin-status" {% if active_platform != 'quantower' %}style="display:none;"{% endif %}>
-      <span id="plugin-dot" style="font-size:.65rem;color:var(--muted);font-family:var(--font-mono);">◌ Plugin</span>
+      <span id="plugin-dot" style="font-size:.65rem;color:var(--muted);font-family:var(--font-mono);display:inline-block;width:60px;text-align:center;">&#9676; Plugin</span>
     </span>
 
-    <!-- WS status -->
+    <!-- WS status (fixed width to prevent layout shift) -->
     <div id="ws-status-bar"
          hx-get="/fragments/ws_status"
          hx-trigger="load, every 1s"
          hx-swap="innerHTML"
-         style="display:flex;align-items:center;gap:4px;font-size:.65rem;color:var(--sub);white-space:nowrap;">
+         style="display:flex;align-items:center;gap:4px;font-size:.65rem;color:var(--sub);white-space:nowrap;width:120px;justify-content:flex-end;">
       <span style="color:var(--sub);">connecting...</span>
     </div>
+
+    <!-- Config gear button -->
+    <a href="/config" title="Configuration"
+       style="display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;
+              border-radius:6px;color:{% if active_page=='config' %}var(--blue){% else %}var(--sub){% endif %};
+              text-decoration:none;font-size:1.1rem;transition:color .15s,background .15s;
+              background:{% if active_page=='config' %}rgba(59,130,246,0.1){% else %}transparent{% endif %};"
+       onmouseover="this.style.color='var(--blue)';this.style.background='rgba(59,130,246,0.1)'"
+       onmouseout="this.style.color='{% if active_page=='config' %}var(--blue){% else %}var(--sub){% endif %}';this.style.background='{% if active_page=='config' %}rgba(59,130,246,0.1){% else %}transparent{% endif %}'">
+      &#9881;
+    </a>
   </div>
 </header>
 
@@ -351,7 +358,7 @@
   'dashboard':  ('Dashboard',   'Live overview · equity · risk · positions'),
   'calculator': ('Calculator',  'Position sizing · TP/SL · order preview'),
   'history':    ('History',     'Trade log · executions · pre-trade journal'),
-  'params':     ('Parameters',  'Risk limits · account management'),
+  'config':     ('Configuration','Accounts · connections · risk parameters'),
   'analytics':  ('Analytics',   'Portfolio performance · equity curve · pairs'),
   'backtest':   ('Backtest',    'Strategy simulation · model management · QT import'),
   'regime':     ('Regime',      'Macro classifier · signals · timeline'),

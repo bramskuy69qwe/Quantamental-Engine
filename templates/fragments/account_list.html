@@ -1,0 +1,31 @@
+{% for acct in accounts %}
+<div class="card"
+     style="padding:8px 12px;cursor:pointer;
+            border-left:3px solid {% if acct.id == active_account_id %}var(--blue){% else %}transparent{% endif %};"
+     hx-get="/fragments/account-detail/{{ acct.id }}"
+     hx-target="#account-detail"
+     hx-swap="innerHTML">
+  <div style="display:flex;align-items:center;gap:6px;">
+    <span style="font-size:.6rem;color:{% if acct.is_active %}var(--green){% else %}var(--muted){% endif %};">
+      {% if acct.is_active %}&#9679;{% else %}&#9675;{% endif %}
+    </span>
+    <div style="min-width:0;flex:1;">
+      <div style="font-size:.72rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+        {{ acct.name }}
+      </div>
+      <div style="font-size:.6rem;color:var(--sub);">
+        {{ acct.exchange }} &middot; {{ acct.market_type }}
+      </div>
+    </div>
+    {% set env = acct.get('environment', 'live') %}
+    <span style="font-size:.55rem;font-weight:700;padding:1px 5px;border-radius:3px;
+                 {% if env == 'live' %}background:rgba(239,68,68,0.15);color:var(--red);
+                 {% elif env == 'testnet' %}background:rgba(59,130,246,0.15);color:var(--blue);
+                 {% else %}background:rgba(234,179,8,0.15);color:#eab308;{% endif %}">
+      {{ env|upper }}
+    </span>
+  </div>
+</div>
+{% else %}
+<div style="color:var(--muted);font-size:.72rem;padding:12px;">No accounts configured.</div>
+{% endfor %}

@@ -32,6 +32,37 @@ DEFAULT_PARAMS: Dict[str, Any] = {
     "max_dd_limit_pct":          0.95,
 }
 
+PARAM_BOUNDS: Dict[str, tuple] = {
+    "individual_risk_per_trade": (0.0001, 0.10),
+    "max_w_loss_percent":        (0.001,  0.30),
+    "max_dd_percent":            (0.01,   0.50),
+    "max_exposure":              (0.1,    20.0),
+    "max_position_count":        (1,      100),
+    "max_correlated_exposure":   (0.05,   1.0),
+    "auto_export_hours":         (1,      168),
+    "weekly_loss_warning_pct":   (0.50,   0.99),
+    "weekly_loss_limit_pct":     (0.50,   1.00),
+    "max_dd_warning_pct":        (0.50,   0.99),
+    "max_dd_limit_pct":          (0.50,   1.00),
+}
+
+
+def validate_params(params: Dict[str, Any]) -> List[str]:
+    """Validate param values against PARAM_BOUNDS. Returns list of error messages."""
+    errors = []
+    for key, (lo, hi) in PARAM_BOUNDS.items():
+        if key not in params:
+            continue
+        val = params[key]
+        try:
+            val = float(val)
+        except (TypeError, ValueError):
+            errors.append(f"{key}: must be a number")
+            continue
+        if val < lo or val > hi:
+            errors.append(f"{key}: must be between {lo} and {hi} (got {val})")
+    return errors
+
 
 @dataclass
 class RegimeState:
@@ -209,9 +240,8 @@ class AppState:
         self.active_account_id: int = 1
         self.active_platform:   str = "standalone"
 
-    def reset_for_account_switch(self) -> None:
-        """Clear all runtime state before switching to a different account.
-        Params are intentionally NOT reset — they persist per-session."""
+    def reset_for_account_switch(self, new_account_id: Optional[int] = None) -> None:
+        """Clear all runtime state and load new account's params."""
         self.account_state        = AccountState()
         self.positions            = []
         self.portfolio            = PortfolioStats()
@@ -225,10 +255,29 @@ class AppState:
         self.ws_status            = WSStatus()
         self.ws_status.add_log("State reset for account switch.")
 
+        # Load per-account params and fees for the new account
+        if new_account_id is not None:
+            from core.account_registry import account_registry
+            self.params = DEFAULT_PARAMS.copy()
+            acct_params = account_registry.get_account_params(new_account_id)
+            if acct_params:
+                self.params.update(acct_params)
+            maker, taker = account_registry.get_account_fees(new_account_id)
+            self.exchange_info.maker_fee = maker
+            self.exchange_info.taker_fee = taker
+
     # ── Parameter persistence ─────────────────────────────────────────────────
 
     def load_params(self):
-        if os.path.exists(config.PARAMS_FILE):
+        """Load params for the active account from the registry cache.
+        Falls back to params.json (legacy) then defaults."""
+        from core.account_registry import account_registry
+        acct_params = account_registry.get_account_params(self.active_account_id)
+        if acct_params:
+            self.params = DEFAULT_PARAMS.copy()
+            self.params.update(acct_params)
+        elif os.path.exists(config.PARAMS_FILE):
+            # Legacy fallback for first run before migration
             try:
                 with open(config.PARAMS_FILE) as f:
                     saved = json.load(f)
@@ -236,25 +285,26 @@ class AppState:
             except (ValueError, OSError, KeyError):
                 pass
 
-    def save_params(self):
-        os.makedirs(config.DATA_DIR, exist_ok=True)
-        with open(config.PARAMS_FILE, "w") as f:
-            json.dump(self.params, f, indent=2)
+        # Also load per-account fees into exchange_info
+        maker, taker = account_registry.get_account_fees(self.active_account_id)
+        self.exchange_info.maker_fee = maker
+        self.exchange_info.taker_fee = taker
 
     async def save_params_async(self) -> None:
-        """Non-blocking version — offloads the file write to a thread so the
-        event loop is not blocked by slow disk I/O (network mounts, HDD GC, etc.)."""
-        import asyncio as _asyncio
-        data = json.dumps(self.params, indent=2)
-        path = config.PARAMS_FILE
-        dir_ = config.DATA_DIR
+        """Save params to DB for the active account."""
+        from core.account_registry import account_registry
+        await account_registry.update_account_params(self.active_account_id, self.params)
 
-        def _write():
-            os.makedirs(dir_, exist_ok=True)
-            with open(path, "w") as f:
-                f.write(data)
-
-        await _asyncio.get_event_loop().run_in_executor(None, _write)
+    def save_params(self):
+        """Synchronous save — schedule the async version."""
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.ensure_future(self.save_params_async())
+            else:
+                loop.run_until_complete(self.save_params_async())
+        except RuntimeError:
+            pass  # no event loop — skip (startup edge case)
 
     # ── Portfolio recalculation (called after any state update) ───────────────
 

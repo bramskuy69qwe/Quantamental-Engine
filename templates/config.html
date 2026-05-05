@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% set active_page = "config" %}
+{% block title %}Configuration — {{ project_name }}{% endblock %}
+
+{% block content %}
+<div style="display:flex;flex-direction:column;gap:6px;max-width:1100px;">
+
+  <!-- Sub-tabs -->
+  <div style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:4px;">
+    <button id="tab-btn-accounts" class="btn btn-ghost"
+            onclick="switchConfigTab('accounts')"
+            style="border-bottom:2px solid var(--blue);font-weight:700;font-size:.72rem;padding:6px 16px;">
+      Accounts
+    </button>
+    <button id="tab-btn-connections" class="btn btn-ghost"
+            onclick="switchConfigTab('connections')"
+            style="border-bottom:2px solid transparent;font-weight:500;font-size:.72rem;padding:6px 16px;">
+      Connections
+    </button>
+  </div>
+
+  <!-- ── Accounts Tab ──────────────────────────────────────────────────── -->
+  <div id="tab-accounts">
+    <div style="display:flex;gap:8px;min-height:500px;">
+
+      <!-- Left: Account list -->
+      <div style="width:220px;flex-shrink:0;display:flex;flex-direction:column;gap:4px;">
+        <div id="account-list"
+             hx-get="/fragments/account-list"
+             hx-trigger="load"
+             hx-swap="innerHTML">
+          <div style="color:var(--muted);font-size:.72rem;">Loading...</div>
+        </div>
+        <button class="btn btn-primary btn-sm" style="margin-top:8px;"
+                onclick="document.getElementById('add-account-modal').style.display='flex'">
+          + Add Account
+        </button>
+      </div>
+
+      <!-- Right: Account detail -->
+      <div style="flex:1;min-width:0;">
+        <div id="account-detail"
+             hx-get="/fragments/account-detail/{{ active_account_id }}"
+             hx-trigger="load"
+             hx-swap="innerHTML">
+          <div style="color:var(--muted);font-size:.72rem;">Select an account...</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── Connections Tab ───────────────────────────────────────────────── -->
+  <div id="tab-connections" style="display:none;">
+    <div id="connections-list"
+         hx-get="/fragments/connections"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+      <div style="color:var(--muted);font-size:.72rem;">Loading connections...</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function switchConfigTab(tab) {
+  document.getElementById('tab-accounts').style.display = tab === 'accounts' ? 'block' : 'none';
+  document.getElementById('tab-connections').style.display = tab === 'connections' ? 'block' : 'none';
+  document.getElementById('tab-btn-accounts').style.borderBottomColor = tab === 'accounts' ? 'var(--blue)' : 'transparent';
+  document.getElementById('tab-btn-accounts').style.fontWeight = tab === 'accounts' ? '700' : '500';
+  document.getElementById('tab-btn-connections').style.borderBottomColor = tab === 'connections' ? 'var(--blue)' : 'transparent';
+  document.getElementById('tab-btn-connections').style.fontWeight = tab === 'connections' ? '700' : '500';
+}
+// Handle ?tab= query param
+const urlTab = new URLSearchParams(window.location.search).get('tab');
+if (urlTab) switchConfigTab(urlTab);
+</script>
+{% endblock %}

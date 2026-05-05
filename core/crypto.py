@@ -17,9 +17,13 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 import os
+import re
 
 from cryptography.fernet import Fernet, InvalidToken
+
+log = logging.getLogger("crypto")
 
 
 def _fernet() -> Fernet:
@@ -47,5 +51,19 @@ def decrypt(ciphertext: str) -> str:
         return ""
     try:
         return _fernet().decrypt(ciphertext.encode()).decode()
-    except (InvalidToken, Exception):
+    except (InvalidToken, Exception) as e:
+        log.error("Decryption failed (key mismatch or corruption): %s", type(e).__name__)
         return ""
+
+
+def safe_exchange_error(e: Exception) -> str:
+    """Strip potential credential fragments from CCXT error messages."""
+    msg = str(e)
+    return re.sub(r"(apiKey|secret|signature|key|token)=[^&\s]+", r"\1=***", msg)
+
+
+def mask_key(key: str, visible: int = 4) -> str:
+    """Return a masked version of an API key showing only the last `visible` chars."""
+    if not key or len(key) <= visible:
+        return "****"
+    return "•" * 8 + key[-visible:]
