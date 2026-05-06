@@ -20,7 +20,7 @@ from typing import Optional
 import websockets
 
 import config
-from core.state import app_state, PositionInfo
+from core.state import app_state
 from core.event_bus import event_bus
 from core.exchange import (
     get_exchange, _REST_POOL,
@@ -60,9 +60,15 @@ _stopping: bool = False   # set by stop() to prevent reconnect tasks after teard
 # ── User data stream ──────────────────────────────────────────────────────────
 
 async def _apply_account_update(msg: dict) -> None:
-    """Apply ACCOUNT_UPDATE event: update balances and positions under lock,
-    then fire side effects (stream restart, portfolio recalc) outside lock."""
+    """Apply ACCOUNT_UPDATE event through DataCache (single writer).
+    Side effects (stream restart, portfolio recalc) fire outside the lock."""
     global _last_ws_position_update
+    from core.data_cache import UpdateSource
+
+    if app_state._data_cache is None:
+        log.warning("_apply_account_update: DataCache not yet initialized — skipping")
+        return
+
     ws_adapter = _get_ws_adapter()
 
     # Parse via adapter (exchange-agnostic)
@@ -71,80 +77,23 @@ async def _apply_account_update(msg: dict) -> None:
     else:
         balances, norm_positions = {}, []
 
-    closed_syms: set = set()
-    new_syms: set = set()
+    event_time_ms = ws_adapter.get_event_time_ms(msg) if ws_adapter else int(time.time() * 1000)
 
-    async with app_state._lock:
-        if balances:
-            app_state.account_state.balance_usdt = balances.get("wallet_balance", 0)
-            app_state.account_state.total_equity = balances.get("cross_wallet", 0)
+    result = await app_state._data_cache.apply_position_update_incremental(
+        UpdateSource.WS_USER, norm_positions, balances, event_time_ms,
+    )
 
-        if norm_positions:
-            existing = {(p.ticker, p.direction): p for p in app_state.positions}
-            closed_keys, new_syms = _apply_position_updates_normalized(existing, norm_positions)
-            if closed_keys:
-                app_state.positions = [p for p in app_state.positions
-                                       if (p.ticker, p.direction) not in closed_keys]
-                closed_syms = {k[0] for k in closed_keys}
-            _last_ws_position_update = time.monotonic()
+    if result.changed and norm_positions:
+        _last_ws_position_update = time.monotonic()
 
-        app_state.account_state.total_unrealized = sum(
-            p.individual_unrealized for p in app_state.positions
-        )
-
-    # Outside lock: side effects
+    # Side effects outside DataCache lock
     if not norm_positions:
         return
-    if closed_syms or new_syms:
+    if result.closed_syms or result.new_syms:
         asyncio.create_task(restart_market_streams())
-    for sym in new_syms:
+    for sym in result.new_syms:
         asyncio.create_task(_on_new_position(sym))
-    app_state.recalculate_portfolio()
-
-
-def _apply_position_updates_normalized(existing: dict, norm_positions: list) -> tuple[set, set]:
-    """Process normalized position updates from WS adapter.
-    existing is keyed by (ticker, direction). Returns (closed_keys, new_syms)."""
-    closed_keys: set = set()
-    new_syms: set = set()
-
-    for np in norm_positions:
-        sym = np.symbol
-        key = (sym, np.side)
-
-        if np.size == 0:
-            if key in existing:
-                closed_keys.add(key)
-            continue
-
-        if key in existing:
-            pos = existing[key]
-            pos.individual_unrealized = np.unrealized_pnl
-            pos.contract_amount = np.size
-            pos.direction = np.side
-            if np.entry_price > 0:
-                pos.average = np.entry_price
-            mark = app_state.mark_price_cache.get(sym, 0)
-            if mark:
-                pos.position_value_usdt = np.size * mark
-            continue
-
-        # New position
-        mark = app_state.mark_price_cache.get(sym, np.entry_price) or np.entry_price
-        app_state.positions.append(PositionInfo(
-            ticker=sym,
-            direction=np.side,
-            contract_amount=np.size,
-            average=np.entry_price,
-            fair_price=mark,
-            individual_unrealized=np.unrealized_pnl,
-            position_value_usdt=np.size * mark,
-            entry_timestamp=datetime.now(timezone.utc).isoformat(),
-            sector=config.get_sector(sym),
-        ))
-        new_syms.add(sym)
-
-    return closed_keys, new_syms
+    # recalculate_portfolio() now called inside DataCache.apply_position_update_incremental()
 
 
 async def _handle_user_event(msg: dict) -> None:
@@ -161,11 +110,120 @@ async def _handle_user_event(msg: dict) -> None:
     if ev == "ACCOUNT_UPDATE":
         await _apply_account_update(msg)
 
+    elif ev == "ORDER_TRADE_UPDATE":
+        await _apply_order_update(msg, ws_adapter)
+
     ws.last_update = datetime.now(timezone.utc)
     await event_bus.publish(
         "risk:account_updated",
         {"event": ev, "ts": datetime.now(timezone.utc).isoformat()},
     )
+
+
+# ── TP/SL types that map to position stop prices ────────────────────────────
+_TPSL_TYPES = {"take_profit", "stop_loss"}
+
+
+async def _apply_order_update(msg: dict, ws_adapter) -> None:
+    """Handle ORDER_TRADE_UPDATE: real-time TP/SL enrichment + fill detection.
+
+    Fires for every order event: placement, modification, fill, cancel.
+    TP/SL orders update position fields immediately (sub-second).
+    Fills trigger a position refresh via REST for consistency.
+    """
+    if not ws_adapter or not hasattr(ws_adapter, "parse_order_update"):
+        return
+
+    order = ws_adapter.parse_order_update(msg)
+    execution_type = msg.get("o", {}).get("x", "")  # NEW, CANCELED, TRADE, AMENDMENT, EXPIRED
+
+    # ── TP/SL order → update matching position in real-time ──────────────
+    if order.order_type in _TPSL_TYPES:
+        # Use position_side directly from WS payload (reliable in hedge mode).
+        # Fallback to side-based inference only if position_side is empty.
+        pos_dir = order.position_side
+        if not pos_dir:
+            pos_dir = "LONG" if order.side == "SELL" else "SHORT"
+
+        for pos in app_state.positions:
+            if pos.ticker != order.symbol or pos.direction != pos_dir:
+                continue
+
+            if execution_type in ("NEW", "AMENDMENT"):
+                # TP/SL placed or modified
+                if order.order_type == "take_profit":
+                    pos.individual_tpsl = True
+                    pos.individual_tp_price = order.stop_price
+                    pos.individual_tp_amount = order.quantity
+                    if pos.direction == "LONG":
+                        pos.individual_tp_usdt = (order.stop_price - pos.average) * order.quantity
+                    else:
+                        pos.individual_tp_usdt = (pos.average - order.stop_price) * order.quantity
+                elif order.order_type == "stop_loss":
+                    pos.individual_tpsl = True
+                    pos.individual_sl_price = order.stop_price
+                    pos.individual_sl_amount = order.quantity
+                    if pos.direction == "LONG":
+                        pos.individual_sl_usdt = (pos.average - order.stop_price) * order.quantity
+                    else:
+                        pos.individual_sl_usdt = (order.stop_price - pos.average) * order.quantity
+
+            elif execution_type in ("CANCELED", "EXPIRED"):
+                # TP/SL canceled — clear the corresponding price
+                if order.order_type == "take_profit":
+                    pos.individual_tp_price = 0.0
+                    pos.individual_tp_amount = 0.0
+                    pos.individual_tp_usdt = 0.0
+                elif order.order_type == "stop_loss":
+                    pos.individual_sl_price = 0.0
+                    pos.individual_sl_amount = 0.0
+                    pos.individual_sl_usdt = 0.0
+                # If both TP and SL are now 0, clear the flag
+                if pos.individual_tp_price == 0.0 and pos.individual_sl_price == 0.0:
+                    pos.individual_tpsl = False
+            break  # found the matching position
+
+    # ── Fill → refresh positions so new fills appear immediately ─────────
+    if execution_type == "TRADE":
+        asyncio.create_task(_refresh_positions_after_fill())
+
+    # ── Persist order to DB + refresh OrderManager cache ────────────────────
+    # Use upsert_order_batch (not process_order_snapshot which cancels missing
+    # orders). Then rebuild the OrderManager's in-memory cache so the UI
+    # reflects the change immediately (not on next 30s REST poll).
+    try:
+        from core.database import db
+        from core.platform_bridge import platform_bridge
+        order_dict = {
+            "account_id":         app_state.active_account_id,
+            "exchange_order_id":  order.exchange_order_id,
+            "terminal_order_id":  "",
+            "client_order_id":    order.client_order_id,
+            "symbol":             order.symbol,
+            "side":               order.side,
+            "order_type":         order.order_type,
+            "status":             order.status,
+            "price":              order.price,
+            "stop_price":         order.stop_price,
+            "quantity":           order.quantity,
+            "filled_qty":         order.filled_qty,
+            "avg_fill_price":     order.avg_fill_price,
+            "reduce_only":        order.reduce_only,
+            "time_in_force":      order.time_in_force,
+            "position_side":      order.position_side,
+            "exchange_position_id": "",
+            "terminal_position_id": "",
+            "source":             "binance_ws",
+            "created_at_ms":      order.created_at_ms,
+            "updated_at_ms":      order.updated_at_ms,
+        }
+        await db.upsert_order_batch([order_dict])
+        # Refresh OrderManager cache from DB so open orders UI updates instantly
+        om = platform_bridge.order_manager
+        om._open_orders = await db.query_open_orders_all(app_state.active_account_id)
+        om.enrich_positions_tpsl(app_state.positions)
+    except Exception as e:
+        log.debug("WS order DB persist skipped: %s", e)
 
 
 async def _on_new_position(sym: str) -> None:
@@ -182,12 +240,12 @@ async def _on_new_position(sym: str) -> None:
             for pos in app_state.positions:
                 if pos.ticker != sym:
                     continue
-                buy = "BUY" if pos.direction == "LONG" else "SELL"
+                entry_side = "BUY" if pos.direction == "LONG" else "SELL"
                 sorted_trades = sorted(trades, key=lambda t: t.timestamp_ms, reverse=True)
                 cum = 0.0
                 for t in sorted_trades:
-                    if t.side != buy:
-                        break
+                    if t.side != entry_side:
+                        continue  # skip interleaved trades from other direction
                     cum += abs(t.quantity)
                     if cum >= pos.contract_amount - 1e-8:
                         pos.entry_timestamp = datetime.fromtimestamp(
@@ -201,11 +259,9 @@ async def _on_new_position(sym: str) -> None:
 async def _refresh_positions_after_fill() -> None:
     try:
         await fetch_account()
-        await fetch_positions()
-        await event_bus.publish(
-            "risk:positions_refreshed",
-            {"trigger": "fill", "ts": datetime.now(timezone.utc).isoformat()},
-        )
+        await fetch_positions(force=True)
+        # force=True: fill-triggered refresh must always be accepted,
+        # even if WS updated recently (avoids 30s delay on position close).
     except Exception as e:
         app_state.ws_status.add_log(f"Post-fill refresh error: {e}")
 

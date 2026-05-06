@@ -229,63 +229,10 @@
   </div>
 
   <!-- ══════════════════════════════════════════════════════════════════
-       NEWS PANEL — economic calendar (top) + news feed + detail (bottom)
+       NEWS PANEL — magazine / list+detail layouts, rendered by JS
        ══════════════════════════════════════════════════════════════ -->
   <div id="panel-news" class="hidden">
-
-    <!-- Economic Calendar -->
-    <div class="card" style="margin-bottom:6px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
-        <span class="sec-lbl" style="margin-bottom:0;">Economic Calendar — Next 7 Days</span>
-        <div style="display:flex;align-items:center;gap:6px;">
-          <span style="font-size:.65rem;color:var(--sub);">Impact:</span>
-          <select id="cal-impact" onchange="loadCalendar()"
-                  style="background:var(--bg);border:1px solid var(--border);font-size:.65rem;color:var(--text);border-radius:3px;padding:3px 8px;">
-            <option value="">All</option>
-            <option value="high">High only</option>
-            <option value="high,medium">High + Medium</option>
-          </select>
-          <button onclick="refreshNews()" class="btn btn-secondary btn-sm">&#8635; Refresh</button>
-        </div>
-      </div>
-      <div style="overflow-x:auto;max-height:360px;">
-        <table style="width:100%;font-size:.72rem;">
-          <thead style="position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--border);">
-            <tr>
-              <th>Time (UTC)</th><th>Country</th><th>Event</th><th>Impact</th>
-              <th style="text-align:right;">Previous</th>
-              <th style="text-align:right;">Estimate</th>
-              <th style="text-align:right;">Actual</th>
-            </tr>
-          </thead>
-          <tbody id="calendar-body">
-            <tr><td colspan="7" style="text-align:center;color:var(--muted);padding:16px;">Loading...</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <!-- News feed + detail -->
-    <div style="display:grid;grid-template-columns:1fr 2fr;gap:6px;">
-
-      <!-- Feed list -->
-      <div class="card">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-          <span class="sec-lbl" style="margin-bottom:0;">News Feed</span>
-          <span id="news-count" style="font-size:.65rem;color:var(--sub);"></span>
-        </div>
-        <div id="news-list" style="display:flex;flex-direction:column;gap:4px;overflow-y:auto;max-height:60vh;">
-          <div style="text-align:center;color:var(--muted);font-size:.65rem;padding:16px;">Loading...</div>
-        </div>
-      </div>
-
-      <!-- Detail pane -->
-      <div id="news-detail" class="card" style="min-height:60vh;">
-        <div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);font-size:.72rem;">
-          Select a news item to view details.
-        </div>
-      </div>
-    </div>
+    <div id="news-root"></div>
   </div>
 
 </div>
@@ -296,6 +243,17 @@
 .regime-neutral   { background:var(--panel); color:var(--sub); }
 .regime-defensive { background:#251500; color:var(--amber);  }
 .regime-panic     { background:#250808; color:var(--red);    }
+
+/* ── News panel badges ── */
+.impact-high   { padding:1px 5px; border-radius:3px; font-size:.62rem; font-weight:700; background:#7f1d1d; color:#f87171; }
+.impact-medium { padding:1px 5px; border-radius:3px; font-size:.62rem; font-weight:700; background:#78350f; color:#fbbf24; }
+.impact-low    { padding:1px 5px; border-radius:3px; font-size:.62rem; background:var(--panel); color:var(--sub); }
+.src-finnhub   { padding:1px 5px; border-radius:3px; font-size:.62rem; font-weight:700; background:#1e3a8a; color:#93c5fd; }
+.src-bwe       { padding:1px 5px; border-radius:3px; font-size:.62rem; font-weight:700; background:#7c2d12; color:#fdba74; }
+.src-default   { padding:1px 5px; border-radius:3px; font-size:.62rem; background:var(--panel); color:var(--sub); }
+.news-item     { text-align:left; padding:7px 9px; border-radius:4px; border:1px solid var(--border); background:var(--panel); cursor:pointer; width:100%; transition:border-color .1s; display:block; }
+.news-item:hover { background:var(--hover); }
+.news-item.active { border-color:var(--bfoc); background:var(--hover); }
 </style>
 
 <script>
@@ -320,7 +278,7 @@ var SIGNALS=[
 ];
 
 var currentTimelineRange=365,currentTimelineStyle='swim',signalRanges={},signalCharts={},timelineChart=null,signalCoverage={};
-var _newsRefreshTimer=null,_activeNewsId=null;
+var _newsRefreshTimer=null,_newsData=[],_calDataAll=[],_newsLayout='magazine',_newsExpandedId=null,_newsSelId=null,_calFilter='',_clockIv=null,_calScrolledOnce=false;
 
 // ── Panel switching ────────────────────────────────────────────────────────
 function showPanel(name){
@@ -332,7 +290,7 @@ function showPanel(name){
   if(name==='backfill')loadCoverage();
   if(name==='config')loadThresholds();
   if(name==='overview'){loadCurrentRegime();loadAllSignalCharts();loadTimeline();}
-  if(name==='news'){loadCalendar();loadNewsFeed();startNewsAutoRefresh();}
+  if(name==='news'){_calScrolledOnce=false;loadCalendar();loadNewsFeed();startNewsAutoRefresh();}
   else{stopNewsAutoRefresh();}
 }
 
@@ -602,9 +560,10 @@ async function reclassify(){
 function escapeHtml(s){
   return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
+function _pad(n){ return String(n).padStart(2,'0'); }
 function fmtUtcTime(iso){
   if(!iso)return '\u2014';
-  try{var d=new Date(iso);if(isNaN(d.getTime()))return iso;var pad=function(n){return String(n).padStart(2,'0');};return d.getUTCFullYear()+'-'+pad(d.getUTCMonth()+1)+'-'+pad(d.getUTCDate())+' '+pad(d.getUTCHours())+':'+pad(d.getUTCMinutes());}catch(e){return iso;}
+  try{var d=new Date(iso);if(isNaN(d.getTime()))return iso;return d.getUTCFullYear()+'-'+_pad(d.getUTCMonth()+1)+'-'+_pad(d.getUTCDate())+' '+_pad(d.getUTCHours())+':'+_pad(d.getUTCMinutes());}catch(e){return iso;}
 }
 function fmtRelTime(iso){
   if(!iso)return '';var d=new Date(iso);if(isNaN(d.getTime()))return '';
@@ -618,105 +577,285 @@ function fmtNum(v){
 }
 function impactBadge(level){
   var l=(level||'').toLowerCase();
-  if(l==='high')return '<span style="padding:1px 5px;border-radius:3px;font-size:.62rem;background:#7f1d1d;color:#f87171;">HIGH</span>';
-  if(l==='medium')return '<span style="padding:1px 5px;border-radius:3px;font-size:.62rem;background:#78350f;color:#fbbf24;">MED</span>';
-  if(l==='low')return '<span style="padding:1px 5px;border-radius:3px;font-size:.62rem;background:var(--panel);color:var(--sub);">low</span>';
+  if(l==='high')return '<span class="impact-high">HIGH</span>';
+  if(l==='medium')return '<span class="impact-medium">MED</span>';
+  if(l==='low')return '<span class="impact-low">low</span>';
   return '<span style="color:var(--muted);font-size:.62rem;">\u2014</span>';
 }
 function sourceBadge(s){
-  if(s==='finnhub')return '<span style="padding:1px 5px;border-radius:3px;font-size:.62rem;font-weight:700;background:#1e3a8a;color:#93c5fd;">FH</span>';
-  if(s==='bwe')return '<span style="padding:1px 5px;border-radius:3px;font-size:.62rem;font-weight:700;background:#7c2d12;color:#fdba74;">BWE</span>';
-  return '<span style="padding:1px 5px;border-radius:3px;font-size:.62rem;background:var(--panel);color:var(--sub);">'+(s||'?')+'</span>';
+  if(s==='finnhub')return '<span class="src-finnhub">FH</span>';
+  if(s==='bwe')return '<span class="src-bwe">BWE</span>';
+  return '<span class="src-default">'+(s||'?')+'</span>';
+}
+function tickerTags(tickers){
+  if(!tickers)return '';
+  return (tickers+'').split(',').map(function(t){t=t.trim();return t?'<span style="padding:1px 6px;border-radius:3px;font-family:var(--font-mono);font-size:.62rem;background:var(--panel);border:1px solid var(--border);color:var(--sub);">'+escapeHtml(t)+'</span>':'';}).join('');
 }
 
-// ── News: Calendar ────────────────────────────────────────────────────────
-async function loadCalendar(){
-  var tbody=document.getElementById('calendar-body');if(!tbody)return;
-  var today=new Date().toISOString().slice(0,10);
-  var plus7=new Date(Date.now()+7*86400000).toISOString().slice(0,10);
-  var impact=document.getElementById('cal-impact').value;
-  try{
-    var url='/api/calendar?from_date='+today+'&to_date='+plus7+(impact?'&impact='+encodeURIComponent(impact):'');
-    var resp=await fetch(url);var events=await resp.json();
-    if(!events||events.length===0){tbody.innerHTML='<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:16px;">No events. Set FINNHUB_API_KEY and refresh.</td></tr>';return;}
-    var nowMs=Date.now();
-    tbody.innerHTML=events.map(function(e){
-      var evMs=new Date(e.event_time).getTime();
-      var upcoming=!isNaN(evMs)&&(evMs-nowMs)>0&&(evMs-nowMs)<4*3600*1000;
-      var rowStyle=upcoming?'border-left:2px solid #e89020;':'';
-      var surprise=(e.actual!==null&&e.estimate!==null&&Math.abs(e.estimate)>0)?Math.abs(e.actual-e.estimate)/Math.abs(e.estimate):0;
-      var actualStyle=e.actual===null?'':(surprise>0.10?(e.actual>e.estimate?'color:#00c855;font-weight:700;':'color:#e83535;font-weight:700;'):'color:var(--text);');
-      return '<tr style="border-bottom:1px solid var(--border);'+rowStyle+'">'
-        +'<td style="padding:3px 6px;font-family:var(--font-mono);color:var(--sub);">'+fmtUtcTime(e.event_time)+'</td>'
-        +'<td style="padding:3px 6px;color:var(--sub);">'+escapeHtml(e.country)+'</td>'
-        +'<td style="padding:3px 6px;">'+escapeHtml(e.event_name)+(e.unit?' <span style="color:var(--muted);font-size:.62rem;">('+escapeHtml(e.unit)+')</span>':'')+'</td>'
-        +'<td style="padding:3px 6px;">'+impactBadge(e.impact)+'</td>'
-        +'<td style="padding:3px 6px;text-align:right;font-family:var(--font-mono);color:var(--sub);">'+fmtNum(e.previous)+'</td>'
-        +'<td style="padding:3px 6px;text-align:right;font-family:var(--font-mono);color:var(--sub);">'+fmtNum(e.estimate)+'</td>'
-        +'<td style="padding:3px 6px;text-align:right;font-family:var(--font-mono);'+actualStyle+'">'+fmtNum(e.actual)+'</td>'
-        +'</tr>';
-    }).join('');
-  }catch(e){tbody.innerHTML='<tr><td colspan="7" style="text-align:center;color:var(--red);padding:16px;">Calendar load failed: '+escapeHtml(e.message)+'</td></tr>';}
+// ── News render dispatcher ───────────────────────────────────────────────
+function renderNewsPanel(){
+  var root=document.getElementById('news-root');
+  if(!root)return;
+  if(_newsLayout==='magazine') renderNewsMagazine(root);
+  else renderNewsDetailLayout(root);
+  if(!_calScrolledOnce&&_calDataAll.length){_calScrolledOnce=true;setTimeout(scrollCalToNow,80);}
 }
 
-// ── News: Feed ────────────────────────────────────────────────────────────
-async function loadNewsFeed(){
-  var list=document.getElementById('news-list');if(!list)return;
-  try{
-    var resp=await fetch('/api/news/feed?limit=80');var items=await resp.json();
-    var countEl=document.getElementById('news-count');if(countEl)countEl.textContent=items.length+' items';
-    if(!items.length){list.innerHTML='<div style="text-align:center;color:var(--muted);font-size:.65rem;padding:16px;">No news yet. Set FINNHUB_API_KEY and refresh.</div>';return;}
-    list.innerHTML=items.map(function(n){
-      var isActive=_activeNewsId===n.id;
-      var bg=isActive?'var(--hover)':'var(--panel)';
-      var border=isActive?'1px solid var(--bfoc)':'1px solid var(--border)';
-      return '<button type="button" onclick="showNewsDetail('+n.id+')"'
-        +' style="text-align:left;padding:6px 8px;border-radius:4px;border:'+border+';background:'+bg+';cursor:pointer;width:100%;transition:background .1s;"'
-        +' onmouseover="this.style.background=\'var(--hover)\'" onmouseout="this.style.background=\''+(isActive?'var(--hover)':'var(--panel)')+'\'">'+
-        '<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">'+sourceBadge(n.source)+'<span style="color:var(--muted);font-size:.62rem;margin-left:auto;" title="'+escapeHtml(n.published_at)+'">'+fmtRelTime(n.published_at)+'</span></div>'+
-        '<div style="color:var(--text);font-size:.68rem;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">'+escapeHtml(n.headline)+'</div>'+
-        '</button>';
-    }).join('');
-  }catch(e){list.innerHTML='<div style="text-align:center;color:var(--red);font-size:.65rem;padding:16px;">Feed load failed</div>';}
-}
+// ══════════════════════════════════════════════════════════════════════════
+// MAGAZINE LAYOUT — 2:1 grid, hero + feed left, clock + calendar right
+// ══════════════════════════════════════════════════════════════════════════
+function renderNewsMagazine(root){
+  var filteredCal=getFilteredCalendar();
+  var hero=_newsData[0];
+  var rest=_newsData.slice(1);
+  var nowMs=Date.now();
 
-// ── News: Detail ──────────────────────────────────────────────────────────
-async function showNewsDetail(id){
-  _activeNewsId=id;
-  var detail=document.getElementById('news-detail');if(!detail)return;
-  detail.innerHTML='<div style="text-align:center;color:var(--muted);font-size:.72rem;padding:32px;">Loading...</div>';
-  try{
-    var resp=await fetch('/api/news/'+id);
-    if(!resp.ok)throw new Error('not found');
-    var n=await resp.json();
-    var tickers=(n.tickers||'').split(',').map(function(s){return s.trim();}).filter(Boolean);
-    detail.innerHTML=
-      '<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;flex-wrap:wrap;">'+sourceBadge(n.source)+
-      '<span style="color:var(--muted);font-family:var(--font-mono);font-size:.65rem;">'+escapeHtml(fmtUtcTime(n.published_at))+' UTC</span>'+
-      '<span style="color:var(--muted);">\u00b7</span>'+
-      '<span style="color:var(--sub);font-size:.65rem;">'+fmtRelTime(n.published_at)+'</span>'+
-      (n.url?'<a href="'+escapeHtml(n.url)+'" target="_blank" rel="noopener" style="margin-left:auto;color:var(--blue);font-size:.65rem;text-decoration:none;" onmouseover="this.style.textDecoration=\'underline\'" onmouseout="this.style.textDecoration=\'none\'">Open original \u2192</a>':'')+
+  var heroHtml=hero?(
+    '<div onclick="toggleNewsExpand('+hero.id+')" style="background:var(--card);border:1px solid '+(_newsExpandedId===hero.id?'var(--bfoc)':'var(--border)')+';border-radius:5px;padding:16px;cursor:pointer;margin-bottom:4px;"'
+    +' onmouseover="this.style.borderColor=\'var(--bfoc)\'" onmouseout="this.style.borderColor=\''+(_newsExpandedId===hero.id?'var(--bfoc)':'var(--border)')+'\'">'+
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">'+
+        sourceBadge(hero.source)+
+        '<span style="font-size:.6rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--blue);background:#071828;padding:1px 6px;border-radius:3px;">TOP STORY</span>'+
+        '<span style="font-size:.65rem;color:var(--muted);margin-left:auto;">'+fmtRelTime(hero.published_at)+'</span>'+
       '</div>'+
-      '<h2 style="font-size:.88rem;font-weight:700;color:var(--text);margin-bottom:8px;line-height:1.4;">'+escapeHtml(n.headline)+'</h2>'+
-      (n.image_url?'<img src="'+escapeHtml(n.image_url)+'" alt="" style="border-radius:4px;margin-bottom:10px;max-height:200px;object-fit:cover;width:100%;" onerror="this.style.display=\'none\'"/>':'')+
-      (n.summary?'<p style="font-size:.75rem;color:var(--sub);line-height:1.6;white-space:pre-wrap;">'+escapeHtml(n.summary)+'</p>':'')+
-      (tickers.length?'<div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:4px;">'+tickers.map(function(t){return '<span style="padding:2px 6px;border-radius:3px;font-family:var(--font-mono);font-size:.65rem;background:var(--panel);color:var(--sub);">'+escapeHtml(t)+'</span>';}).join('')+'</div>':'');
-    loadNewsFeed();
-  }catch(e){detail.innerHTML='<div style="text-align:center;color:var(--red);font-size:.72rem;padding:32px;">Failed to load item</div>';}
+      '<h2 style="font-size:1.05rem;font-weight:800;color:var(--text);line-height:1.35;margin-bottom:8px;font-family:var(--font-ui);letter-spacing:-.01em;">'+escapeHtml(hero.headline)+'</h2>'+
+      '<p style="font-size:.75rem;color:var(--sub);line-height:1.65;margin-bottom:6px;">'+escapeHtml(hero.summary)+'</p>'+
+      (_newsExpandedId===hero.id?'<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:8px;">'+tickerTags(hero.tickers)+'</div>':'')+
+      '<div style="font-size:.62rem;color:var(--muted);margin-top:6px;">'+(_newsExpandedId===hero.id?'\u25B2 Collapse':'\u25BC Expand')+'</div>'+
+    '</div>'
+  ):'';
+
+  var restHtml=rest.map(function(n){
+    var isOpen=_newsExpandedId===n.id;
+    return '<div onclick="toggleNewsExpand('+n.id+')"'
+      +' style="background:var(--card);border:1px solid '+(isOpen?'var(--bfoc)':'var(--border)')+';border-radius:4px;padding:'+(isOpen?'12px':'8px 10px')+';cursor:pointer;margin-bottom:3px;"'
+      +' onmouseover="if(!this.classList.contains(\'exp\'))this.style.background=\'var(--hover)\'" onmouseout="if(!this.classList.contains(\'exp\'))this.style.background=\'var(--card)\'"'
+      +(isOpen?' class="exp"':'')+'>'+
+        '<div style="display:flex;align-items:flex-start;gap:8px;">'+
+          '<div style="flex-shrink:0;padding-top:1px;">'+sourceBadge(n.source)+'</div>'+
+          '<div style="flex:1;min-width:0;">'+
+            '<div style="font-size:'+(isOpen?'.82rem':'.75rem')+';font-weight:'+(isOpen?700:600)+';color:var(--text);line-height:1.35;font-family:var(--font-ui);">'+escapeHtml(n.headline)+'</div>'+
+            (isOpen?'<p style="font-size:.73rem;color:var(--sub);line-height:1.65;margin-top:8px;">'+escapeHtml(n.summary)+'</p>':'')+
+            (isOpen&&n.tickers?'<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:8px;">'+tickerTags(n.tickers)+'</div>':'')+
+          '</div>'+
+          '<div style="flex-shrink:0;display:flex;flex-direction:column;align-items:flex-end;gap:4px;">'+
+            '<span style="font-size:.6rem;color:var(--muted);white-space:nowrap;">'+fmtRelTime(n.published_at)+'</span>'+
+            '<span style="font-size:.58rem;color:var(--muted);">'+(isOpen?'\u25B2':'\u25BC')+'</span>'+
+          '</div>'+
+        '</div>'+
+      '</div>';
+  }).join('');
+
+  var calCardsArr=[],_nowMark=false;
+  var nowMarkerHtml='<div id="cal-now-marker" style="display:flex;align-items:center;gap:6px;margin:4px 0;"><hr style="flex:1;border:none;border-top:1px solid var(--blue);opacity:.4;"><span style="font-size:.58rem;font-weight:700;color:var(--blue);letter-spacing:.08em;white-space:nowrap;">NOW</span><hr style="flex:1;border:none;border-top:1px solid var(--blue);opacity:.4;"></div>';
+  filteredCal.forEach(function(e){
+    var evMs=new Date(e.event_time).getTime();
+    if(!_nowMark&&evMs>=nowMs){_nowMark=true;calCardsArr.push(nowMarkerHtml);}
+    var minsAway=Math.round((evMs-nowMs)/60000);
+    var isPast=evMs<nowMs;
+    var isNear=!isPast&&minsAway<=240;
+    var surprise=(e.actual!==null&&e.estimate!==null&&Math.abs(e.estimate)>0)?Math.abs(e.actual-e.estimate)/Math.abs(e.estimate):0;
+    var actualColor=e.actual===null?'var(--sub)':surprise>0.10?(e.actual>e.estimate?'var(--green)':'var(--red)'):'var(--text)';
+    var timeLabel=isPast?(function(){var ago=Math.round((nowMs-evMs)/60000);return ago<60?ago+'m ago':Math.round(ago/60)+'h ago';})()
+      :(minsAway<60?'in '+minsAway+'m':'in '+Math.round(minsAway/60)+'h');
+    calCardsArr.push('<div style="padding:7px 8px;border-radius:4px;background:'+(isNear?'rgba(232,144,32,0.06)':'var(--panel)')+';border:1px solid '+(isNear?'rgba(232,144,32,0.35)':'var(--border)')+';opacity:'+(isPast?0.55:1)+';margin-bottom:4px;">'+
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px;">'+
+        '<span style="font-family:var(--font-mono);font-size:.62rem;color:'+(isNear?'var(--amber)':'var(--muted)')+';">'+escapeHtml(timeLabel)+'</span>'+
+        '<div style="display:flex;align-items:center;gap:4px;"><span style="font-size:.6rem;color:var(--muted);">'+escapeHtml(e.country)+'</span>'+impactBadge(e.impact)+'</div>'+
+      '</div>'+
+      '<div style="font-size:.7rem;font-weight:600;color:'+(isPast?'var(--sub)':'var(--text)')+';line-height:1.3;margin-bottom:4px;">'+escapeHtml(e.event_name)+(e.unit?' <span style="color:var(--muted);font-size:.6rem;">('+escapeHtml(e.unit)+')</span>':'')+'</div>'+
+      '<div style="display:flex;gap:8px;font-family:var(--font-mono);font-size:.62rem;">'+
+        '<span style="color:var(--muted);">P: <span style="color:var(--sub);">'+fmtNum(e.previous)+'</span></span>'+
+        '<span style="color:var(--muted);">E: <span style="color:var(--sub);">'+fmtNum(e.estimate)+'</span></span>'+
+        (e.actual!==null?'<span style="color:var(--muted);">A: <span style="color:'+actualColor+';font-weight:'+(surprise>0.10?700:400)+';">'+fmtNum(e.actual)+'</span></span>':'')+
+      '</div>'+
+    '</div>');
+  });
+  if(filteredCal.length&&!_nowMark)calCardsArr.push(nowMarkerHtml);
+  var calCardsHtml=calCardsArr.length?calCardsArr.join(''):'<div style="text-align:center;color:var(--muted);font-size:.68rem;padding:16px;">No events. Set FINNHUB_API_KEY and refresh.</div>';
+
+  var now=new Date(nowMs);
+  var clockTime=_pad(now.getUTCHours())+':'+_pad(now.getUTCMinutes())+':'+_pad(now.getUTCSeconds());
+  var clockDate=now.getUTCFullYear()+'-'+_pad(now.getUTCMonth()+1)+'-'+_pad(now.getUTCDate());
+  var emptyFeed=!_newsData.length;
+
+  root.innerHTML=
+    '<div style="display:grid;grid-template-columns:2fr 1fr;gap:6px;align-items:start;">'+
+      '<div style="display:flex;flex-direction:column;gap:6px;">'+
+        '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px;">'+
+          '<span class="sec-lbl" style="margin-bottom:0;">News Feed</span>'+
+          '<div style="display:flex;gap:4px;">'+
+            '<button class="btn btn-primary btn-sm" style="cursor:default;">Magazine</button>'+
+            '<button class="btn btn-secondary btn-sm" onclick="setNewsLayout(\'detail\')">\u21C4 List + Detail</button>'+
+            '<button class="btn btn-ghost btn-sm" onclick="refreshNews()">\u21BA Refresh</button>'+
+          '</div>'+
+        '</div>'+
+        (emptyFeed?'<div class="card" style="text-align:center;color:var(--muted);padding:24px;font-size:.72rem;">No news yet. Set FINNHUB_API_KEY and refresh.</div>':(heroHtml+'<div id="news-rest">'+restHtml+'</div>'))+
+      '</div>'+
+      '<div style="display:flex;flex-direction:column;gap:6px;position:sticky;top:12px;">'+
+        '<div class="card" style="display:flex;flex-direction:column;align-items:center;gap:3px;padding:10px 12px;">'+
+          '<span class="lbl">UTC Time</span>'+
+          '<span id="utc-clock" style="font-family:var(--font-mono);font-size:1rem;font-weight:700;color:var(--text);letter-spacing:.04em;">'+clockTime+'</span>'+
+          '<span style="font-family:var(--font-mono);font-size:.65rem;color:var(--sub);">'+clockDate+'</span>'+
+        '</div>'+
+        '<div class="card" style="padding:8px 10px;">'+
+          '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:4px;">'+
+            '<span class="sec-lbl" style="margin-bottom:0;">Economic Calendar</span>'+
+            '<div style="display:flex;gap:3px;align-items:center;">'+
+              '<button class="btn btn-ghost btn-sm" onclick="scrollCalToNow()" style="font-size:.58rem;color:var(--blue);">\u25B6 Now</button>'+
+              '<select id="news-cal-filter" onchange="setCalFilter(this.value)">'+
+                '<option value="">All</option>'+
+                '<option value="high"'+(_calFilter==='high'?' selected':'')+'>High</option>'+
+                '<option value="high,medium"'+(_calFilter==='high,medium'?' selected':'')+'>H+M</option>'+
+              '</select>'+
+            '</div>'+
+          '</div>'+
+          '<div style="display:flex;flex-direction:column;max-height:65vh;overflow-y:auto;">'+calCardsHtml+'</div>'+
+        '</div>'+
+      '</div>'+
+    '</div>';
 }
 
-// ── News: Refresh & auto-refresh ──────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════
+// LIST + DETAIL LAYOUT — calendar table top, feed list + detail bottom
+// ══════════════════════════════════════════════════════════════════════════
+function renderNewsDetailLayout(root){
+  var filteredCal=getFilteredCalendar();
+  var nowMs=Date.now();
+  var selItem=_newsSelId?_newsData.find(function(n){return n.id===_newsSelId;}):null;
+
+  var calRowsArr=[],_nowRowMark=false;
+  var nowRowHtml='<tr id="cal-now-row"><td colspan="7" style="padding:3px 8px;border-bottom:1px solid var(--border);"><div style="display:flex;align-items:center;gap:6px;"><hr style="flex:1;border:none;border-top:1px solid var(--blue);opacity:.4;"><span style="font-size:.58rem;font-weight:700;color:var(--blue);letter-spacing:.08em;">NOW</span><hr style="flex:1;border:none;border-top:1px solid var(--blue);opacity:.4;"></div></td></tr>';
+  filteredCal.forEach(function(e){
+    var evMs=new Date(e.event_time).getTime();
+    if(!_nowRowMark&&evMs>=nowMs){_nowRowMark=true;calRowsArr.push(nowRowHtml);}
+    var upcoming=!isNaN(evMs)&&(evMs-nowMs)>0&&(evMs-nowMs)<4*3600*1000;
+    var surprise=(e.actual!==null&&e.estimate!==null&&Math.abs(e.estimate)>0)?Math.abs(e.actual-e.estimate)/Math.abs(e.estimate):0;
+    var actualColor=e.actual===null?'var(--sub)':surprise>0.10?(e.actual>e.estimate?'var(--green)':'var(--red)'):'var(--text)';
+    calRowsArr.push('<tr style="border-left:'+(upcoming?'2px solid var(--amber)':'2px solid transparent')+'">'+
+      '<td style="color:var(--sub);white-space:nowrap;">'+fmtUtcTime(e.event_time)+'</td>'+
+      '<td style="color:var(--sub);">'+escapeHtml(e.country)+'</td>'+
+      '<td>'+escapeHtml(e.event_name)+(e.unit?' <span style="color:var(--muted);font-size:.62rem;">('+escapeHtml(e.unit)+')</span>':'')+'</td>'+
+      '<td>'+impactBadge(e.impact)+'</td>'+
+      '<td style="text-align:right;color:var(--sub);">'+fmtNum(e.previous)+'</td>'+
+      '<td style="text-align:right;color:var(--sub);">'+fmtNum(e.estimate)+'</td>'+
+      '<td style="text-align:right;color:'+actualColor+';font-weight:'+(e.actual!==null&&surprise>0.10?700:400)+';">'+fmtNum(e.actual)+'</td>'+
+    '</tr>');
+  });
+  if(filteredCal.length&&!_nowRowMark)calRowsArr.push(nowRowHtml);
+  var calRowsHtml=calRowsArr.length?calRowsArr.join(''):'<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:16px;">No events. Set FINNHUB_API_KEY and refresh.</td></tr>';
+
+  var feedHtml=_newsData.length?_newsData.map(function(n){
+    var isActive=_newsSelId===n.id;
+    return '<button onclick="selectNewsItem('+n.id+')" class="news-item'+(isActive?' active':'')+'" style="margin-bottom:4px;">'+
+      '<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">'+
+        sourceBadge(n.source)+
+        '<span style="color:var(--muted);font-size:.62rem;margin-left:auto;">'+fmtRelTime(n.published_at)+'</span>'+
+      '</div>'+
+      '<div style="color:var(--text);font-size:.68rem;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">'+escapeHtml(n.headline)+'</div>'+
+    '</button>';
+  }).join(''):'<div style="text-align:center;color:var(--muted);font-size:.65rem;padding:16px;">No news yet. Set FINNHUB_API_KEY and refresh.</div>';
+
+  var detailHtml=selItem?
+    '<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;flex-wrap:wrap;">'+
+      sourceBadge(selItem.source)+
+      '<span style="color:var(--muted);font-family:var(--font-mono);font-size:.65rem;">'+fmtUtcTime(selItem.published_at)+' UTC</span>'+
+      '<span style="color:var(--muted);">\u00b7</span>'+
+      '<span style="color:var(--sub);font-size:.65rem;">'+fmtRelTime(selItem.published_at)+'</span>'+
+      (selItem.url?'<a href="'+escapeHtml(selItem.url)+'" target="_blank" rel="noopener" style="margin-left:auto;color:var(--blue);font-size:.65rem;text-decoration:none;" onmouseover="this.style.textDecoration=\'underline\'" onmouseout="this.style.textDecoration=\'none\'">Open original \u2192</a>':'')+
+    '</div>'+
+    '<h2 style="font-size:.88rem;font-weight:700;color:var(--text);margin-bottom:10px;line-height:1.4;">'+escapeHtml(selItem.headline)+'</h2>'+
+    (selItem.image_url?'<img src="'+escapeHtml(selItem.image_url)+'" alt="" style="border-radius:4px;margin-bottom:10px;max-height:200px;object-fit:cover;width:100%;" onerror="this.style.display=\'none\'"/>':'')+
+    '<p style="font-size:.75rem;color:var(--sub);line-height:1.7;margin-bottom:10px;">'+escapeHtml(selItem.summary)+'</p>'+
+    (selItem.tickers?'<div style="display:flex;flex-wrap:wrap;gap:4px;">'+tickerTags(selItem.tickers)+'</div>':'')
+    :
+    '<div style="display:flex;align-items:center;justify-content:center;height:180px;color:var(--muted);font-size:.72rem;">Select a news item to view details.</div>';
+
+  root.innerHTML=
+    '<div style="display:flex;flex-direction:column;gap:6px;">'+
+      '<div class="card">'+
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px;">'+
+          '<span class="sec-lbl" style="margin-bottom:0;">Economic Calendar</span>'+
+          '<div style="display:flex;align-items:center;gap:6px;">'+
+            '<span class="lbl">Impact:</span>'+
+            '<select id="news-cal-filter" onchange="setCalFilter(this.value)">'+
+              '<option value="">All</option>'+
+              '<option value="high"'+(_calFilter==='high'?' selected':'')+'>High only</option>'+
+              '<option value="high,medium"'+(_calFilter==='high,medium'?' selected':'')+'>High + Medium</option>'+
+            '</select>'+
+            '<button class="btn btn-ghost btn-sm" onclick="scrollCalToNow()" style="font-size:.58rem;color:var(--blue);">\u25B6 Now</button>'+
+            '<button class="btn btn-secondary btn-sm" onclick="refreshNews()">\u21BA Refresh</button>'+
+            '<button class="btn btn-secondary btn-sm" onclick="setNewsLayout(\'magazine\')">\u21C4 Magazine</button>'+
+          '</div>'+
+        '</div>'+
+        '<div style="overflow-x:auto;max-height:280px;">'+
+          '<table><thead><tr>'+
+            '<th>Time (UTC)</th><th>Country</th><th>Event</th><th>Impact</th>'+
+            '<th style="text-align:right;">Previous</th><th style="text-align:right;">Estimate</th><th style="text-align:right;">Actual</th>'+
+          '</tr></thead><tbody>'+calRowsHtml+'</tbody></table>'+
+        '</div>'+
+      '</div>'+
+      '<div style="display:grid;grid-template-columns:320px 1fr;gap:6px;align-items:start;">'+
+        '<div class="card" style="padding:8px 10px;">'+
+          '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">'+
+            '<span class="sec-lbl" style="margin-bottom:0;">News Feed</span>'+
+            '<span style="font-size:.65rem;color:var(--sub);">'+_newsData.length+' items</span>'+
+          '</div>'+
+          '<div style="display:flex;flex-direction:column;overflow-y:auto;max-height:55vh;min-height:200px;">'+feedHtml+'</div>'+
+        '</div>'+
+        '<div class="card" style="padding:10px 14px;min-height:300px;">'+detailHtml+'</div>'+
+      '</div>'+
+    '</div>';
+}
+
+// ── News event handlers ──────────────────────────────────────────────────
+function toggleNewsExpand(id){ _newsExpandedId=_newsExpandedId===id?null:id; renderNewsPanel(); }
+function selectNewsItem(id){ _newsSelId=id; renderNewsPanel(); }
+function setNewsLayout(l){ _newsLayout=l; _newsExpandedId=null; _newsSelId=null; renderNewsPanel(); }
+function setCalFilter(v){ _calFilter=v; renderNewsPanel(); setTimeout(scrollCalToNow,50); }
+function scrollCalToNow(){
+  var el=document.getElementById('cal-now-marker')||document.getElementById('cal-now-row');
+  if(el)el.scrollIntoView({behavior:'smooth',block:'center'});
+}
+
+// ── News: Load data (real API) ───────────────────────────────────────────
+async function loadCalendar(){
+  var minus30=new Date(Date.now()-30*86400000).toISOString().slice(0,10);
+  var plus30=new Date(Date.now()+30*86400000).toISOString().slice(0,10);
+  try{var resp=await fetch('/api/calendar?from_date='+minus30+'&to_date='+plus30);_calDataAll=await resp.json();}
+  catch(e){_calDataAll=[];}
+  renderNewsPanel();
+}
+function getFilteredCalendar(){
+  if(!_calFilter)return _calDataAll||[];
+  if(_calFilter==='high')return (_calDataAll||[]).filter(function(e){return e.impact==='high';});
+  return (_calDataAll||[]).filter(function(e){return e.impact==='high'||e.impact==='medium';});
+}
+
+async function loadNewsFeed(){
+  try{var resp=await fetch('/api/news/feed?limit=80');_newsData=await resp.json();}
+  catch(e){_newsData=[];}
+  renderNewsPanel();
+}
+
 async function refreshNews(){
-  showToast('Refreshing news + calendar...','info');
-  try{var resp=await fetch('/api/news/refresh',{method:'POST'});var r=await resp.json();showToast('+'+(r.news_added||0)+' news, +'+(r.calendar_added||0)+' events','success');loadCalendar();loadNewsFeed();}
+  showToast('Refreshing news + calendar...');
+  try{var resp=await fetch('/api/news/refresh',{method:'POST'});var r=await resp.json();showToast('+'+(r.news_added||0)+' news, +'+(r.calendar_added||0)+' events');loadCalendar();loadNewsFeed();}
   catch(e){showToast('Refresh failed','error');}
 }
 function startNewsAutoRefresh(){
   stopNewsAutoRefresh();
-  _newsRefreshTimer=setInterval(loadNewsFeed,30000);
+  _newsRefreshTimer=setInterval(function(){loadNewsFeed();loadCalendar();},30000);
+  _clockIv=setInterval(tickNewsClock,1000);
 }
 function stopNewsAutoRefresh(){
   if(_newsRefreshTimer){clearInterval(_newsRefreshTimer);_newsRefreshTimer=null;}
+  if(_clockIv){clearInterval(_clockIv);_clockIv=null;}
+}
+function tickNewsClock(){
+  if(_newsLayout!=='magazine')return;
+  var now=new Date(),el=document.getElementById('utc-clock');
+  if(el)el.textContent=_pad(now.getUTCHours())+':'+_pad(now.getUTCMinutes())+':'+_pad(now.getUTCSeconds());
 }
 
 // ── Init ────────────────────────────────────────────────────────────────────

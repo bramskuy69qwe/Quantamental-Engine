@@ -86,16 +86,11 @@
                    onkeydown="if(event.key==='Enter'){event.preventDefault();focusNextFromTicker();}" />
           </div>
           <div>
-            <label class="lbl" style="display:block;margin-bottom:3px;">
-              Entry Price
-              <span id="live-badge" style="color:var(--green);font-size:.6rem;font-weight:400;margin-left:4px;">● LIVE</span>
-            </label>
-            <div id="market-price-wrap" style="position:relative;">
+            <label class="lbl" style="display:block;margin-bottom:3px;">Entry Price</label>
+            <div id="market-price-wrap">
               <input type="number" id="market-price" step="any" readonly
                      placeholder="waiting for ticker..."
                      style="border-color:#0d3020;color:var(--green);" />
-              <span style="position:absolute;right:6px;top:50%;transform:translateY(-50%);
-                           font-size:.6rem;color:var(--green);pointer-events:none;">LIVE</span>
             </div>
             <input type="number" id="limit-price" step="any" tabindex="2"
                    placeholder="enter price" class="hidden"
@@ -382,8 +377,9 @@ function setOrderType(t){
   document.getElementById('order_type_val').value=t;
   var isMarket=t==='market';
   document.getElementById('market-price-wrap').classList.toggle('hidden',!isMarket);
-  document.getElementById('limit-price').classList.toggle('hidden',isMarket);
-  document.getElementById('live-badge').style.visibility=isMarket?'visible':'hidden';
+  var limitEl=document.getElementById('limit-price');
+  var limitWrap=limitEl.closest('.num-wrap')||limitEl;
+  limitWrap.classList.toggle('hidden',isMarket);
   var fb=document.getElementById('fee-badge');
   if(t==='limit'){fb.textContent='MAKER FEE';fb.className='badge badge-ok';}
   else{fb.textContent='TAKER FEE';fb.className='badge badge-warning';}
@@ -663,5 +659,19 @@ document.getElementById('calc-form').addEventListener('input',function(){clearTi
   if(obGhost&&obContainer&&!obContainer.innerHTML.trim())obContainer.innerHTML=obGhost.innerHTML;
   loadCalcHistory();restoreCalcState();
 })();
+
+// Append LIVE tag beside market-price stepper (runs after stepper IIFE in base.html)
+setTimeout(function(){
+  var mp=document.getElementById('market-price');
+  var nw=mp?mp.closest('.num-wrap'):null;
+  if(!nw)return;
+  var st=nw.querySelector('.num-stepper');
+  if(st){st.style.borderColor='#0d3020';st.style.borderRadius='0';}
+  var tag=document.createElement('span');
+  tag.id='live-tag';
+  tag.style.cssText='display:flex;align-items:center;padding:0 7px;font-size:.55rem;font-weight:700;letter-spacing:.05em;color:var(--green);background:var(--panel);border:1px solid #0d3020;border-left:none;border-radius:0 4px 4px 0;white-space:nowrap;';
+  tag.textContent='LIVE';
+  nw.appendChild(tag);
+},0);
 </script>
 {% endblock %}

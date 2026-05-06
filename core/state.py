@@ -10,7 +10,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any
 
+import logging
+
 import config
+
+log = logging.getLogger("state")
 
 TZ_LOCAL = timezone(timedelta(hours=config.TIMEZONE_OFFSET_HOURS))
 
@@ -210,7 +214,8 @@ class AppState:
 
         self.exchange_info   = ExchangeInfo()
         self.account_state   = AccountState()
-        self.positions:  List[PositionInfo]  = []
+        self._positions_legacy: List[PositionInfo] = []
+        self._data_cache = None          # set by main.py after DataCache init
         self.portfolio   = PortfolioStats()
         self.ws_status   = WSStatus()
 
@@ -242,10 +247,29 @@ class AppState:
         self.active_account_id: int = 1
         self.active_platform:   str = "standalone"
 
+    # ── DataCache-backed property for positions ────────────────────────────────
+
+    @property
+    def positions(self) -> List[PositionInfo]:
+        if self._data_cache is not None:
+            return self._data_cache.positions
+        return self._positions_legacy
+
+    @positions.setter
+    def positions(self, value: List[PositionInfo]) -> None:
+        if self._data_cache is not None:
+            log.warning(
+                "Direct write to app_state.positions bypasses DataCache — "
+                "migrate caller to use data_cache.apply_*() methods"
+            )
+        self._positions_legacy = value
+
     def reset_for_account_switch(self, new_account_id: Optional[int] = None) -> None:
         """Clear all runtime state and load new account's params."""
         self.account_state        = AccountState()
-        self.positions            = []
+        self._positions_legacy    = []
+        if self._data_cache is not None:
+            self._data_cache.clear()
         self.portfolio            = PortfolioStats()
         self.ohlcv_cache          = {}
         self.orderbook_cache      = {}

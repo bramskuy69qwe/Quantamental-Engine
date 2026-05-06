@@ -9,14 +9,17 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Tuple
 
 from core.adapters.registry import register_ws_adapter
-from core.adapters.protocols import NormalizedPosition
+from core.adapters.protocols import NormalizedPosition, NormalizedOrder
 from core.adapters.binance.constants import (
     USER_STREAM_BASE,
     MARKET_STREAM_BASE,
     EVENT_ACCOUNT_UPDATE,
+    EVENT_ORDER_UPDATE,
     EVENT_KLINE,
     EVENT_MARK_PRICE,
     EVENT_DEPTH,
+    ORDER_TYPE_FROM_BINANCE,
+    BINANCE_STATUS_MAP,
 )
 
 
@@ -90,6 +93,41 @@ class BinanceWSAdapter:
             ))
 
         return balances, positions
+
+    def parse_order_update(self, msg: dict) -> NormalizedOrder:
+        """Parse ORDER_TRADE_UPDATE event into a NormalizedOrder.
+
+        WS payload fields (inside "o" dict):
+            s=symbol, S=side, o=orderType, ot=origOrderType, X=status,
+            x=executionType, i=orderId, c=clientOrderId, sp=stopPrice,
+            p=price, q=origQty, z=cumFilledQty, ap=avgPrice, f=timeInForce,
+            R=reduceOnly, ps=positionSide, T=tradeTime, t=tradeId,
+            rp=realizedProfit, l=lastFilledQty, L=lastFilledPrice
+        """
+        o = msg.get("o", {})
+        otype = o.get("ot", o.get("o", ""))
+        unified_type = ORDER_TYPE_FROM_BINANCE.get(otype, otype.lower())
+        raw_status = o.get("X", "")
+        status = BINANCE_STATUS_MAP.get(raw_status, "new")
+
+        return NormalizedOrder(
+            exchange_order_id=str(o.get("i", "")),
+            client_order_id=o.get("c", ""),
+            symbol=o.get("s", ""),
+            side=o.get("S", ""),
+            order_type=unified_type,
+            status=status,
+            price=float(o.get("p", 0) or 0),
+            stop_price=float(o.get("sp", 0) or 0),
+            quantity=float(o.get("q", 0) or 0),
+            filled_qty=float(o.get("z", 0) or 0),
+            avg_fill_price=float(o.get("ap", 0) or 0),
+            reduce_only=bool(o.get("R", False)),
+            time_in_force=o.get("f", ""),
+            position_side=o.get("ps", ""),
+            created_at_ms=int(o.get("T", 0)),
+            updated_at_ms=int(msg.get("T", 0)),
+        )
 
     # ── Market data stream parsing ───────────────────────────────────────────
 

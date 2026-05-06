@@ -391,18 +391,14 @@ class PlatformBridge:
             except (TypeError, ValueError):
                 return 0.0
 
-        acc = app_state.account_state
-        acc.balance_usdt        = _f("balance")
-        acc.total_equity        = _f("total_equity")
-        acc.total_unrealized    = _f("unrealized_pnl")
-        acc.available_margin    = _f("available_margin")
-        acc.total_margin_used   = max(0.0, acc.total_equity - acc.available_margin)
-        acc.total_margin_ratio  = _f("margin_ratio")
-
-        try:
-            app_state.recalculate_portfolio()
-        except Exception as exc:
-            log.error("PlatformBridge: recalculate_portfolio after account_state failed: %r", exc)
+        # Apply through DataCache — locked, conflict-resolved, auto-recalculates
+        await app_state._data_cache.apply_account_update_platform(
+            balance=_f("balance"),
+            total_equity=_f("total_equity"),
+            unrealized_pnl=_f("unrealized_pnl"),
+            available_margin=_f("available_margin"),
+            margin_ratio=_f("margin_ratio"),
+        )
 
         await self.push_risk_state()
 
@@ -637,29 +633,36 @@ class PlatformBridge:
             )
             new_positions.append(pi)
 
-        # Detect positions that disappeared — schedule deferred close rows
-        new_ids  = {p.position_id for p in new_positions if p.position_id}
-        new_keys = {(p.ticker, p.direction) for p in new_positions}
-        for prev_pos in app_state.positions:
-            gone = False
-            if prev_pos.position_id:
-                gone = prev_pos.position_id not in new_ids
-            else:
-                gone = (prev_pos.ticker, prev_pos.direction) not in new_keys
-            if gone:
-                log.info(
-                    "PlatformBridge: position disappeared %s %s — scheduling close row",
-                    prev_pos.ticker, prev_pos.direction,
-                )
-                loop = asyncio.get_running_loop()
-                loop.call_later(
-                    2.0,
-                    lambda p=prev_pos: asyncio.ensure_future(
-                        self._order_manager.build_final_close_row(p)
-                    ),
-                )
+        # Snapshot previous positions for build_final_close_row (needs full PositionInfo)
+        prev_by_key = {(p.ticker, p.direction): p for p in app_state.positions}
 
-        app_state.positions = new_positions
+        # Apply through DataCache (single writer — atomic, conflict-resolved)
+        # DataCache handles closure detection and publishes CH_TRADE_CLOSED.
+        from core.data_cache import UpdateSource
+        ts_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        result = await app_state._data_cache.apply_position_snapshot(
+            UpdateSource.PLATFORM, new_positions, ts_ms,
+        )
+
+        # Schedule deferred close rows for disappeared positions.
+        # Use DataCache's result.closed_syms instead of manual detection
+        # to avoid divergence between closure detection logic.
+        if result is not None:
+            for sym in result.closed_syms:
+                # Find the prev position for this symbol to pass to build_final_close_row
+                for key, prev_pos in prev_by_key.items():
+                    if key[0] == sym:
+                        log.info(
+                            "PlatformBridge: position disappeared %s %s — scheduling close row",
+                            prev_pos.ticker, prev_pos.direction,
+                        )
+                        loop = asyncio.get_running_loop()
+                        loop.call_later(
+                            2.0,
+                            lambda p=prev_pos: asyncio.ensure_future(
+                                self._order_manager.build_final_close_row(p)
+                            ),
+                        )
 
         # Enrich positions with TP/SL from orders DB (replaces prev-preservation)
         self._order_manager.enrich_positions_tpsl(new_positions)

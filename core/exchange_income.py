@@ -81,23 +81,33 @@ async def fetch_bod_sow_equity() -> None:
     )
     monday_ms = int(monday_midnight.astimezone(timezone.utc).timestamp() * 1000)
 
+    bod_eq = None
+    bod_ts = None
+    sow_eq = None
+    sow_ts = None
+
     try:
         today_income = await fetch_income_history(start_ms=today_ms, limit=1000)
         today_pnl = sum(float(i.get("income", 0)) for i in today_income)
-        app_state.account_state.bod_equity = round(current_equity - today_pnl, 4)
-        if app_state.account_state.bod_timestamp == "":
-            app_state.account_state.bod_timestamp = today_midnight.isoformat()
+        bod_eq = round(current_equity - today_pnl, 4)
+        bod_ts = today_midnight.isoformat()
     except Exception as e:
         app_state.ws_status.add_log(f"BOD equity fetch error: {e}")
 
     try:
         week_income = await fetch_income_history(start_ms=monday_ms, limit=1000)
         week_pnl = sum(float(i.get("income", 0)) for i in week_income)
-        app_state.account_state.sow_equity = round(current_equity - week_pnl, 4)
-        if app_state.account_state.sow_timestamp == "":
-            app_state.account_state.sow_timestamp = monday_midnight.isoformat()
+        sow_eq = round(current_equity - week_pnl, 4)
+        sow_ts = monday_midnight.isoformat()
     except Exception as e:
         app_state.ws_status.add_log(f"SOW equity fetch error: {e}")
+
+    # Apply through DataCache — locked, auto-recalculates portfolio
+    if bod_eq is not None or sow_eq is not None:
+        await app_state._data_cache.apply_bod_sow_equity(
+            bod_equity=bod_eq, bod_timestamp=bod_ts,
+            sow_equity=sow_eq, sow_timestamp=sow_ts,
+        )
 
 
 async def fetch_income_for_backfill(start_ms: int, end_ms: int) -> List[Dict]:

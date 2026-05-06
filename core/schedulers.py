@@ -34,7 +34,7 @@ from core.regime_classifier import compute_current_regime
 from core.regime_fetcher import RegimeFetcher
 from core.news_fetcher import FinnhubFetcher, BweWsConsumer
 from core.monitoring import MonitoringService
-from core.ws_manager import _last_ws_position_update
+# _last_ws_position_update guard removed — DataCache handles conflict resolution
 
 log = logging.getLogger("main")
 
@@ -112,17 +112,14 @@ async def _account_refresh_loop():
         await asyncio.sleep(interval)
         if platform_bridge.is_connected or _account_refresh_in_flight:
             continue
-        # Skip REST refresh if WS updated positions recently (avoid race)
-        if time.monotonic() - _last_ws_position_update < 5:
-            continue
+        # WS freshness guard removed — DataCache now handles conflict resolution
+        # (rejects stale REST position/account updates when WS is fresher)
         _account_refresh_in_flight = True
         try:
             await fetch_account()
             await fetch_positions()
-            await event_bus.publish(
-                "risk:positions_refreshed",
-                {"trigger": "periodic", "ts": datetime.now(timezone.utc).isoformat()},
-            )
+            # Note: risk:positions_refreshed now fires inside
+            # DataCache.apply_position_snapshot() — no duplicate needed.
             # Also sync orders from REST when plugin is disconnected
             try:
                 from core.exchange import _get_adapter
@@ -255,15 +252,27 @@ async def _startup_fetch():
         log.error(f"EventBus startup failed: {e}")
         app_state.ws_status.add_log(f"EVENT BUS ERROR: {e}")
 
+    # Each fetch is independent — one failure must not block the others.
+    # Previously all were in a single try block, so fetch_account failure
+    # would prevent fetch_positions from ever running (0 positions on startup).
+    for fetch_fn, label in [
+        (fetch_exchange_info, "exchange_info"),
+        (fetch_account,       "account"),
+        (fetch_positions,     "positions"),
+    ]:
+        try:
+            await fetch_fn()
+        except Exception as e:
+            log.error(f"Initial {label} fetch failed: {e}")
+            app_state.ws_status.add_log(f"INIT ERROR ({label}): {e}")
+
     try:
-        await fetch_exchange_info()
-        await fetch_account()
-        await fetch_positions()
         await populate_open_position_metadata()
-        log.info(f"Connected — equity: {app_state.account_state.total_equity:.2f} USDT")
     except Exception as e:
-        log.error(f"Initial data fetch failed (is .env set?): {e}")
-        app_state.ws_status.add_log(f"INIT ERROR: {e}")
+        log.warning(f"Position metadata population failed: {e}")
+
+    if app_state.account_state.total_equity > 0:
+        log.info(f"Connected — equity: {app_state.account_state.total_equity:.2f} USDT")
 
     try:
         await fetch_bod_sow_equity()

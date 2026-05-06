@@ -16,7 +16,6 @@ from datetime import datetime, timezone, timedelta
 import ccxt
 import config
 from core.state import app_state, PositionInfo, TZ_LOCAL
-from core.event_bus import event_bus, CH_TRADE_CLOSED
 from core.database import db
 from core.adapters import get_adapter, to_position_info, map_market_type
 from core.adapters.protocols import ExchangeAdapter
@@ -131,52 +130,48 @@ async def fetch_exchange_info() -> None:
 # ── Account & balance ────────────────────────────────────────────────────────
 
 async def fetch_account() -> None:
-    """Fetch account balance, fees, and update account_state via adapter."""
+    """Fetch account balance, fees, and update account_state through DataCache."""
     adapter = _get_adapter()
     na = await adapter.fetch_account()
 
-    async with app_state._lock:
-        acc = app_state.account_state
-        acc.total_equity       = na.total_equity
-        acc.available_margin   = na.available_margin
-        acc.total_unrealized   = na.unrealized_pnl
-        acc.total_margin_used  = na.initial_margin
-        acc.total_margin_ratio = na.maint_margin
-        acc.balance_usdt       = na.total_equity
+    ts_ms = int(time.time() * 1000)
+    await app_state._data_cache.apply_account_update_rest(na, ts_ms)
 
-        # Set BOD / SOW equity on first fetch if not set
-        if acc.bod_equity == 0.0:
-            acc.bod_equity       = acc.total_equity
-            acc.max_total_equity = acc.total_equity
-            acc.min_total_equity = acc.total_equity
-            app_state.portfolio.dd_baseline_equity = acc.total_equity
-        if acc.sow_equity == 0.0:
-            acc.sow_equity = acc.total_equity
+    # Exchange info: fee tier + live commission rates (outside lock — safe)
+    exi = app_state.exchange_info
+    exi.account_id = na.fee_tier
+    if na.maker_fee > 0:
+        exi.maker_fee = na.maker_fee
+    if na.taker_fee > 0:
+        exi.taker_fee = na.taker_fee
+    if na.maker_fee > 0 or na.taker_fee > 0:
+        from core.account_registry import account_registry
+        await account_registry.update_account_fees(
+            app_state.active_account_id,
+            na.maker_fee if na.maker_fee > 0 else exi.maker_fee,
+            na.taker_fee if na.taker_fee > 0 else exi.taker_fee,
+        )
 
-        # Exchange info: fee tier + live commission rates
-        exi = app_state.exchange_info
-        exi.account_id = na.fee_tier
-        if na.maker_fee > 0:
-            exi.maker_fee = na.maker_fee
-        if na.taker_fee > 0:
-            exi.taker_fee = na.taker_fee
-        # Persist live fees to DB so load_params() doesn't revert to stale values
-        if na.maker_fee > 0 or na.taker_fee > 0:
-            from core.account_registry import account_registry
-            await account_registry.update_account_fees(
-                app_state.active_account_id,
-                na.maker_fee if na.maker_fee > 0 else exi.maker_fee,
-                na.taker_fee if na.taker_fee > 0 else exi.taker_fee,
-            )
-
-        app_state.ws_status.last_update    = datetime.now(timezone.utc)
+    app_state.ws_status.last_update = datetime.now(timezone.utc)
 
 
 # ── Positions ────────────────────────────────────────────────────────────────
 
 
-async def fetch_positions() -> None:
-    """Fetch open positions via adapter and update app_state."""
+async def fetch_positions(force: bool = False) -> None:
+    """Fetch open positions via adapter and update app_state through DataCache.
+
+    All conflict resolution, metadata preservation, closure detection, and
+    event publishing are handled atomically inside DataCache — no TOCTOU race.
+
+    Set force=True for fill-triggered refreshes that must always be accepted.
+    """
+    from core.data_cache import UpdateSource
+
+    if app_state._data_cache is None:
+        log.warning("fetch_positions: DataCache not yet initialized — skipping")
+        return
+
     adapter = _get_adapter()
     normalized = await adapter.fetch_positions()
 
@@ -185,69 +180,31 @@ async def fetch_positions() -> None:
         for np in normalized
     ]
 
-    # Snapshot existing state under lock so we read a consistent list
-    async with app_state._lock:
-        existing = {(p.ticker, p.direction): p for p in app_state.positions}
+    ts_ms = int(time.time() * 1000)
+    result = await app_state._data_cache.apply_position_snapshot(
+        UpdateSource.REST, positions, ts_ms, force=force,
+    )
 
-    new_keys = {(p.ticker, p.direction) for p in positions}
+    # Always mark that REST ran (even if DataCache rejected the snapshot)
+    app_state.ws_status.last_update = datetime.now(timezone.utc)
 
-    # Preserve metadata that only lives in our state (never comes from REST)
-    for p in positions:
-        key = (p.ticker, p.direction)
-        if key in existing:
-            old = existing[key]
-            p.model_name           = old.model_name
-            p.individual_tpsl      = old.individual_tpsl
-            p.individual_tp_price  = old.individual_tp_price
-            p.individual_sl_price  = old.individual_sl_price
-            p.individual_tp_amount = old.individual_tp_amount
-            p.individual_sl_amount = old.individual_sl_amount
-            p.order_timestamp      = old.order_timestamp
-            p.entry_timestamp      = old.entry_timestamp
-            p.session_mfe          = old.session_mfe
-            p.session_mae          = old.session_mae
-            p.individual_fees      = old.individual_fees
-            # Preserve plugin-sourced position_id (REST may not provide it)
-            if old.position_id and not p.position_id:
-                p.position_id      = old.position_id
-            # Preserve WS-sourced unrealized PnL if it is more recent than REST snapshot
-            if old.individual_unrealized != 0.0:
-                p.individual_unrealized = old.individual_unrealized
-        elif not p.entry_timestamp:
-            p.entry_timestamp = datetime.now(timezone.utc).isoformat()
+    if result is None:
+        log.debug("fetch_positions: DataCache rejected REST update (WS is fresher)")
+    else:
+        # Evict cache entries for symbols no longer in any active position
+        active_tickers = {p.ticker for p in app_state.positions}
+        for sym in list(app_state.ohlcv_cache.keys()):
+            if sym not in active_tickers:
+                del app_state.ohlcv_cache[sym]
+        for sym in list(app_state.orderbook_cache.keys()):
+            if sym not in active_tickers:
+                del app_state.orderbook_cache[sym]
+        for sym in list(app_state.mark_price_cache.keys()):
+            if sym not in active_tickers:
+                del app_state.mark_price_cache[sym]
 
-    # Detect closed positions and fire trade_closed events (outside lock — I/O)
-    for (ticker, direction), old_pos in existing.items():
-        if (ticker, direction) not in new_keys:
-            try:
-                asyncio.get_event_loop().create_task(
-                    event_bus.publish(CH_TRADE_CLOSED, {
-                        "ticker":            ticker,
-                        "direction":         old_pos.direction,
-                        "approx_close_ms":   int(datetime.now(timezone.utc).timestamp() * 1000),
-                    })
-                )
-            except Exception as _e:
-                log.warning(f"Failed to publish trade_closed for {ticker}: {_e}")
-
-    # Atomic list replacement under lock so WS handlers see a consistent list
-    async with app_state._lock:
-        app_state.positions = sorted(positions, key=lambda p: p.entry_timestamp or "")
-        app_state.ws_status.last_update = datetime.now(timezone.utc)
-
-    # Evict cache entries for symbols no longer in any active position.
-    active_tickers = {p.ticker for p in app_state.positions}
-    for sym in list(app_state.ohlcv_cache.keys()):
-        if sym not in active_tickers:
-            del app_state.ohlcv_cache[sym]
-    for sym in list(app_state.orderbook_cache.keys()):
-        if sym not in active_tickers:
-            del app_state.orderbook_cache[sym]
-    for sym in list(app_state.mark_price_cache.keys()):
-        if sym not in active_tickers:
-            del app_state.mark_price_cache[sym]
-
-    # Attach TP/SL from open orders (outside lock — REST call)
+    # Always attach TP/SL from open orders — even if position snapshot was
+    # rejected, orders can change independently (user edits TP/SL on exchange)
     await fetch_open_orders_tpsl()
 
 
@@ -273,14 +230,14 @@ async def populate_open_position_metadata() -> None:
             if not trades:
                 continue
 
-            buy_side = "BUY" if pos.direction == "LONG" else "SELL"
+            entry_side = "BUY" if pos.direction == "LONG" else "SELL"
             trades.sort(key=lambda t: t.timestamp_ms, reverse=True)
 
             cumulative = 0.0
             open_time_ms = 0
             for t in trades:
-                if t.side != buy_side:
-                    break
+                if t.side != entry_side:
+                    continue  # skip interleaved trades from other direction
                 cumulative += abs(t.quantity)
                 open_time_ms = t.timestamp_ms
                 if cumulative >= pos.contract_amount - 1e-8:
@@ -362,8 +319,11 @@ async def fetch_open_orders_tpsl() -> None:
 
     for o in orders:
         sym = o.symbol
-        # Infer which position this order closes: SELL orders close LONG, BUY orders close SHORT
-        pos_dir = "LONG" if o.side == "SELL" else "SHORT"
+        # Use position_side directly (reliable in hedge mode).
+        # Fallback to side-based inference only if position_side is empty.
+        pos_dir = o.position_side
+        if not pos_dir:
+            pos_dir = "LONG" if o.side == "SELL" else "SHORT"
         key = (sym, pos_dir)
         if o.order_type == "take_profit":
             if key not in tp_map or o.stop_price > tp_map[key]["price"]:

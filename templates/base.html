@@ -92,7 +92,8 @@
     input[readonly] { cursor:default; }
     select option { background:var(--card); color:var(--text); }
     input[type=number]::-webkit-inner-spin-button,
-    input[type=number]::-webkit-outer-spin-button { opacity:.4; }
+    input[type=number]::-webkit-outer-spin-button { display: none; }
+    input[type=number] { -moz-appearance: textfield; }
 
     /* ── Buttons ── */
     .btn { display:inline-flex; align-items:center; justify-content:center; gap:4px;
@@ -582,6 +583,72 @@ if ('serviceWorker' in navigator) {
     .then(function(reg) { console.log('SW registered, scope:', reg.scope); })
     .catch(function(err) { console.warn('SW registration failed:', err); });
 }
+</script>
+
+<!-- ── Number input steppers ─────────────────────────────────────────────── -->
+<style>
+  .num-wrap { position: relative; display: flex; align-items: stretch; }
+  .num-wrap input[type=number] {
+    border-radius: 4px 0 0 4px !important;
+    border-right: none !important;
+    flex: 1;
+  }
+  .num-stepper {
+    display: flex; flex-direction: column;
+    border: 1px solid var(--border); border-left: none;
+    border-radius: 0 4px 4px 0; overflow: hidden; flex-shrink: 0;
+  }
+  .num-stepper button {
+    background: var(--panel); border: none; cursor: pointer;
+    color: var(--muted); line-height: 1; padding: 0 5px;
+    font-size: 0.55rem; flex: 1; display: flex;
+    align-items: center; justify-content: center;
+    transition: background 0.1s, color 0.1s; min-width: 16px;
+  }
+  .num-stepper button:hover { background: var(--hover); color: var(--sub); }
+  .num-stepper button:first-child { border-bottom: 1px solid var(--border); }
+</style>
+
+<script>
+(function() {
+  function attachSteppers() {
+    document.querySelectorAll('input[type=number]:not([data-stepped])').forEach(function(inp) {
+      inp.setAttribute('data-stepped', '1');
+      var wrap = document.createElement('div');
+      wrap.className = 'num-wrap';
+      if (inp.classList.contains('hidden')) {
+        inp.classList.remove('hidden');
+        wrap.classList.add('hidden');
+      }
+      inp.parentNode.insertBefore(wrap, inp);
+      wrap.appendChild(inp);
+      var stepper = document.createElement('div');
+      stepper.className = 'num-stepper';
+      ['▲', '▼'].forEach(function(arrow, i) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = arrow;
+        btn.title = i === 0 ? 'Increment' : 'Decrement';
+        btn.addEventListener('mousedown', function(e) {
+          e.preventDefault();
+          var step = parseFloat(inp.step) || 1;
+          var cur  = parseFloat(inp.value) || 0;
+          inp.value = parseFloat((cur + (i === 0 ? step : -step)).toFixed(10));
+          inp.dispatchEvent(new Event('input',  { bubbles: true }));
+          inp.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        stepper.appendChild(btn);
+      });
+      wrap.appendChild(stepper);
+    });
+  }
+
+  // Run on initial page load
+  attachSteppers();
+
+  // Re-run after any HTMX swap (catches dynamically loaded fragments)
+  document.body.addEventListener('htmx:afterSettle', attachSteppers);
+})();
 </script>
 
 </body>

@@ -64,7 +64,8 @@ async def handle_account_updated(payload: Dict[str, Any]) -> None:
     2. Persist account snapshot to DB
     3. Push risk state to any connected Quantower plugin clients
     """
-    app_state.recalculate_portfolio()
+    # recalculate_portfolio() now called inside DataCache after position mutations.
+    # For account_updated events (WS), DataCache already recalculated.
     snap = _build_account_snapshot("risk:account_updated")
     try:
         await db.insert_account_snapshot(snap)
@@ -100,7 +101,8 @@ async def handle_positions_refreshed(payload: Dict[str, Any]) -> None:
     2. Persist all open positions snapshot to DB
     3. Persist account snapshot (position refresh changes portfolio state)
     """
-    app_state.recalculate_portfolio()
+    # recalculate_portfolio() now called inside DataCache.apply_position_snapshot()
+    # before this event is published — portfolio is already up-to-date.
 
     # Rebuild market WS streams if position symbols changed (new open/close)
     current_syms = {p.ticker for p in app_state.positions}
