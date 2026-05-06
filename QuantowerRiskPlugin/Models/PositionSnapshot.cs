@@ -21,6 +21,10 @@ public class PositionSnapshot
 
 public class PositionItem
 {
+    /// <summary>Broker-side position ID (stable within session).</summary>
+    [JsonPropertyName("positionId")]
+    public string PositionId { get; set; } = "";
+
     [JsonPropertyName("symbol")]
     public string Symbol { get; set; } = "";
 
@@ -36,4 +40,20 @@ public class PositionItem
 
     [JsonPropertyName("unrealizedPnL")]
     public double UnrealizedPnL { get; set; }
+
+    /// <summary>Position open time as Unix milliseconds (0 = unknown).</summary>
+    [JsonPropertyName("openTimeMs")]
+    public long OpenTimeMs { get; set; }
+
+    /// <summary>Take-profit price (0 = none set).</summary>
+    [JsonPropertyName("tpPrice")]
+    public double TpPrice { get; set; }
+
+    /// <summary>Stop-loss price (0 = none set).</summary>
+    [JsonPropertyName("slPrice")]
+    public double SlPrice { get; set; }
+
+    /// <summary>Liquidation price (0 = unknown).</summary>
+    [JsonPropertyName("liquidationPrice")]
+    public double LiquidationPrice { get; set; }
 }

@@ -187,14 +187,15 @@ async def fetch_positions() -> None:
 
     # Snapshot existing state under lock so we read a consistent list
     async with app_state._lock:
-        existing = {p.ticker: p for p in app_state.positions}
+        existing = {(p.ticker, p.direction): p for p in app_state.positions}
 
-    new_tickers = {p.ticker for p in positions}
+    new_keys = {(p.ticker, p.direction) for p in positions}
 
     # Preserve metadata that only lives in our state (never comes from REST)
     for p in positions:
-        if p.ticker in existing:
-            old = existing[p.ticker]
+        key = (p.ticker, p.direction)
+        if key in existing:
+            old = existing[key]
             p.model_name           = old.model_name
             p.individual_tpsl      = old.individual_tpsl
             p.individual_tp_price  = old.individual_tp_price
@@ -205,6 +206,10 @@ async def fetch_positions() -> None:
             p.entry_timestamp      = old.entry_timestamp
             p.session_mfe          = old.session_mfe
             p.session_mae          = old.session_mae
+            p.individual_fees      = old.individual_fees
+            # Preserve plugin-sourced position_id (REST may not provide it)
+            if old.position_id and not p.position_id:
+                p.position_id      = old.position_id
             # Preserve WS-sourced unrealized PnL if it is more recent than REST snapshot
             if old.individual_unrealized != 0.0:
                 p.individual_unrealized = old.individual_unrealized
@@ -212,8 +217,8 @@ async def fetch_positions() -> None:
             p.entry_timestamp = datetime.now(timezone.utc).isoformat()
 
     # Detect closed positions and fire trade_closed events (outside lock — I/O)
-    for ticker, old_pos in existing.items():
-        if ticker not in new_tickers:
+    for (ticker, direction), old_pos in existing.items():
+        if (ticker, direction) not in new_keys:
             try:
                 asyncio.get_event_loop().create_task(
                     event_bus.publish(CH_TRADE_CLOSED, {
@@ -312,6 +317,16 @@ async def populate_open_position_metadata() -> None:
                 "Position metadata: %s open=%s mfe=%.2f mae=%.2f",
                 pos.ticker, pos.entry_timestamp, pos.session_mfe, pos.session_mae,
             )
+
+            # ── 3. Populate fees from fills DB ─────────────────────────────
+            if pos.position_id:
+                try:
+                    fees = await db.get_position_fees(
+                        app_state.active_account_id, pos.position_id,
+                    )
+                    pos.individual_fees = fees
+                except Exception:
+                    pass  # best-effort — fees table may be empty on first run
         except Exception as e:
             log.warning("populate_open_position_metadata failed for %s: %s", pos.ticker, e)
 
@@ -322,7 +337,16 @@ async def fetch_open_orders_tpsl() -> None:
     """
     Fetch all open orders and map take_profit / stop_loss orders to their
     respective positions so TP/SL show on the dashboard.
+
+    When the Quantower plugin is connected, TP/SL comes from the orders DB
+    via OrderManager (fed by order_snapshot events). REST is only used when
+    the plugin is disconnected.
     """
+    from core.platform_bridge import platform_bridge
+    if platform_bridge.is_connected:
+        platform_bridge.order_manager.enrich_positions_tpsl(app_state.positions)
+        return
+
     adapter = _get_adapter()
 
     try:
@@ -331,34 +355,39 @@ async def fetch_open_orders_tpsl() -> None:
         app_state.ws_status.add_log(f"Open orders fetch error: {e}")
         return
 
-    tp_map: Dict[str, dict] = {}
-    sl_map: Dict[str, dict] = {}
+    # Key by (symbol, position_direction) so long+short on same symbol get distinct TP/SL.
+    # TP order for LONG is a SELL, TP for SHORT is a BUY; SL mirrors the same logic.
+    tp_map: Dict[tuple, dict] = {}
+    sl_map: Dict[tuple, dict] = {}
 
     for o in orders:
         sym = o.symbol
+        # Infer which position this order closes: SELL orders close LONG, BUY orders close SHORT
+        pos_dir = "LONG" if o.side == "SELL" else "SHORT"
+        key = (sym, pos_dir)
         if o.order_type == "take_profit":
-            if sym not in tp_map or o.stop_price > tp_map[sym]["price"]:
-                tp_map[sym] = {"price": o.stop_price, "qty": o.quantity}
+            if key not in tp_map or o.stop_price > tp_map[key]["price"]:
+                tp_map[key] = {"price": o.stop_price, "qty": o.quantity}
         elif o.order_type == "stop_loss":
-            if sym not in sl_map or o.stop_price < sl_map[sym].get("price", 1e18):
-                sl_map[sym] = {"price": o.stop_price, "qty": o.quantity}
+            if key not in sl_map or o.stop_price < sl_map[key].get("price", 1e18):
+                sl_map[key] = {"price": o.stop_price, "qty": o.quantity}
 
     for pos in app_state.positions:
-        sym = pos.ticker
-        if sym in tp_map:
+        key = (pos.ticker, pos.direction)
+        if key in tp_map:
             pos.individual_tpsl     = True
-            pos.individual_tp_price = tp_map[sym]["price"]
+            pos.individual_tp_price = tp_map[key]["price"]
             if pos.direction == "LONG":
-                pos.individual_tp_usdt = (tp_map[sym]["price"] - pos.average) * tp_map[sym]["qty"]
+                pos.individual_tp_usdt = (tp_map[key]["price"] - pos.average) * tp_map[key]["qty"]
             else:
-                pos.individual_tp_usdt = (pos.average - tp_map[sym]["price"]) * tp_map[sym]["qty"]
-        if sym in sl_map:
+                pos.individual_tp_usdt = (pos.average - tp_map[key]["price"]) * tp_map[key]["qty"]
+        if key in sl_map:
             pos.individual_tpsl     = True
-            pos.individual_sl_price = sl_map[sym]["price"]
+            pos.individual_sl_price = sl_map[key]["price"]
             if pos.direction == "LONG":
-                pos.individual_sl_usdt = (pos.average - sl_map[sym]["price"]) * sl_map[sym]["qty"]
+                pos.individual_sl_usdt = (pos.average - sl_map[key]["price"]) * sl_map[key]["qty"]
             else:
-                pos.individual_sl_usdt = (sl_map[sym]["price"] - pos.average) * sl_map[sym]["qty"]
+                pos.individual_sl_usdt = (sl_map[key]["price"] - pos.average) * sl_map[key]["qty"]
 
 
 # ── Listen key for user-data WebSocket ──────────────────────────────────────

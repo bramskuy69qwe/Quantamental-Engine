@@ -84,6 +84,7 @@ class RegimeState:
 
 @dataclass
 class PositionInfo:
+    position_id:             str   = ""     # broker-side position ID
     ticker:                  str   = ""
     order_timestamp:         Optional[str] = None
     entry_timestamp:         Optional[str] = None
@@ -100,6 +101,7 @@ class PositionInfo:
     individual_unrealized:   float = 0.0
     session_mfe:             float = 0.0  # max favorable excursion this session (visual only)
     session_mae:             float = 0.0  # max adverse excursion this session (visual only)
+    individual_fees:         float = 0.0  # cumulative fees, computed from fills DB (never accumulated in cache)
     individual_funding_fees: float = 0.0
     individual_realized:     float = 0.0
     individual_tpsl:         bool  = False

@@ -78,9 +78,21 @@ def _hold_time(entry_iso: str) -> str:
         return "—"
 
 
+def _ms_to_local(ms: int) -> str:
+    """Convert epoch-ms to local datetime string for display."""
+    if not ms:
+        return "—"
+    try:
+        dt = datetime.fromtimestamp(ms / 1000, tz=TZ_LOCAL)
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return "—"
+
+
 templates.env.globals["fmt"] = _fmt
 templates.env.globals["fmt_duration"] = _fmt_duration
 templates.env.globals["hold_time"] = _hold_time
+templates.env.globals["ms_to_local"] = _ms_to_local
 templates.env.globals["project_name"] = config.PROJECT_NAME
 templates.env.globals["project_name_"] = config.PROJECT_NAME_
 templates.env.globals["project_version_"] = config.PROJECT_VERSION_

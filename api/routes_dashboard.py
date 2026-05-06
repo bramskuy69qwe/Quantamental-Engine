@@ -12,6 +12,7 @@ import config
 from core.state import app_state, TZ_LOCAL
 from core import ws_manager
 from core.database import db
+from core.platform_bridge import platform_bridge
 from api.helpers import templates, _ctx
 from api.cache import _ensure_funding_rates, get_funding_lines, _maybe_backfill_equity, _inject_live_equity
 
@@ -41,6 +42,17 @@ async def frag_dashboard(request: Request):
             sector_totals[p.sector] = sector_totals.get(p.sector, 0.0) + abs(p.position_value_usdt)
     sector_lines = [f"{s}: ${v:,.0f}" for s, v in sorted(sector_totals.items(), key=lambda x: -x[1])]
 
+    # Working orders + recent order history for dashboard tabs
+    working_orders = platform_bridge.order_manager.open_orders
+    aid = app_state.active_account_id
+    try:
+        recent_orders, _ = await db.query_order_history(
+            account_id=aid, page=1, per_page=20,
+            sort_by="updated_at_ms", sort_dir="DESC",
+        )
+    except Exception:
+        recent_orders = []
+
     return templates.TemplateResponse(
         request, "fragments/dashboard_body.html",
         _ctx(request,
@@ -54,7 +66,9 @@ async def frag_dashboard(request: Request):
              open_positions=app_state.positions,
              max_open_positions=prm["max_position_count"],
              funding_lines=funding_lines,
-             sector_lines=sector_lines),
+             sector_lines=sector_lines,
+             working_orders=working_orders,
+             recent_orders=recent_orders),
     )
 
 

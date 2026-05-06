@@ -116,3 +116,54 @@ class ReconcilerWorker:
                     log.error("Backfill failed for %s: %s", sym, e)
 
         await asyncio.gather(*[_process(sym) for sym in symbols])
+
+        # Also backfill MFE/MAE on closed_positions table
+        await self._reconcile_closed_positions()
+
+    async def on_position_closed(self, payload: Dict) -> None:
+        """Triggered by risk:position_closed — compute MFE/MAE for the new row."""
+        ticker = payload.get("symbol", "")
+        if not ticker:
+            return
+        await asyncio.sleep(_SETTLE_DELAY)
+        try:
+            await self._reconcile_closed_positions(symbol=ticker)
+        except Exception as e:
+            log.error("Reconciler closed_positions failed for %s: %s", ticker, e)
+
+    async def _reconcile_closed_positions(self, symbol: str = "") -> None:
+        """Compute MFE/MAE for closed_positions rows missing them."""
+        rows = await db.get_uncalculated_closed_positions(
+            account_id=app_state.active_account_id,
+        )
+        if symbol:
+            rows = [r for r in rows if r.get("symbol") == symbol]
+        if not rows:
+            return
+
+        for row in rows:
+            open_ms  = row["entry_time_ms"]
+            close_ms = row["exit_time_ms"]
+            entry_p  = row["entry_price"]
+            qty      = row["quantity"]
+            direction = row["direction"]
+            if not all((open_ms, close_ms, entry_p, qty)):
+                continue
+            try:
+                trade_high, trade_low = await fetch_hl_for_trade(
+                    row["symbol"], open_ms, close_ms,
+                )
+                if trade_high is None:
+                    continue
+                mfe, mae = calc_mfe_mae(
+                    trade_high, trade_low, entry_p, direction, qty,
+                )
+                await db.update_closed_position_mfe_mae(row["id"], mfe, mae)
+                log.info(
+                    "Reconciler closed_pos: %s %s mfe=%.2f mae=%.2f",
+                    row["symbol"], direction, mfe, mae,
+                )
+            except Exception as e:
+                log.warning(
+                    "Reconciler closed_pos failed for id=%d: %s", row["id"], e,
+                )

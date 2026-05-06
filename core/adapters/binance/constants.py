@@ -28,6 +28,18 @@ ORDER_TYPE_FROM_BINANCE = {
     "TRAILING_STOP_MARKET": "trailing_stop",
 }
 
+# ── Order status mapping: Binance -> unified ─────────────────────────────────
+BINANCE_STATUS_MAP = {
+    "NEW":              "new",
+    "PARTIALLY_FILLED": "partially_filled",
+    "FILLED":           "filled",
+    "CANCELED":         "canceled",
+    "EXPIRED":          "expired",
+    "REJECTED":         "rejected",
+    "NEW_INSURANCE":    "new",
+    "NEW_ADL":          "new",
+}
+
 # ── WS event types ───────────────────────────────────────────────────────────
 EVENT_ACCOUNT_UPDATE = "ACCOUNT_UPDATE"
 EVENT_ORDER_UPDATE = "ORDER_TRADE_UPDATE"

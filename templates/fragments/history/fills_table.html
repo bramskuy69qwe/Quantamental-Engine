@@ -1,0 +1,66 @@
+{% from "fragments/history/_sort_header.html" import sort_th %}
+{% from "fragments/history/_pagination.html" import pagination %}
+{% set ep = "/fragments/history/fills" %}
+{% set tid = "fills-table" %}
+{% set df = date_from | replace(":", "%3A") | replace("+", "%2B") %}
+{% set dt = date_to   | replace(":", "%3A") | replace("+", "%2B") %}
+{% set qs = "per_page=" ~ per_page ~ "&search=" ~ search ~ "&sort_by=" ~ sort_by ~ "&sort_dir=" ~ sort_dir ~ "&date_from=" ~ df ~ "&date_to=" ~ dt %}
+
+<div class="card card-p8">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
+    <span class="sec-lbl" style="margin-bottom:0;">Trade History ({{ total }})</span>
+    <input type="text" placeholder="Search symbol..." class="hist-input" style="width:140px;"
+           value="{{ search }}"
+           hx-get="{{ ep }}?page=1&per_page={{ per_page }}&sort_by={{ sort_by }}&sort_dir={{ sort_dir }}&date_from={{ df }}&date_to={{ dt }}"
+           hx-target="#{{ tid }}" hx-swap="innerHTML"
+           hx-trigger="keyup[key=='Enter']"
+           name="search">
+  </div>
+
+  {% if rows %}
+  <div class="overflow-x-auto">
+    <table>
+      <thead><tr>
+        {{ sort_th("Time",      "timestamp_ms",   ep, tid, sort_by, sort_dir, qs) }}
+        <th>Order No.</th>
+        {{ sort_th("Symbol",    "symbol",          ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Side",      "side",            ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Price",     "price",           ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Qty",       "quantity",         ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Fee",       "fee",             ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Role",      "role",            ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("PnL",       "realized_pnl",   ep, tid, sort_by, sort_dir, qs) }}
+      </tr></thead>
+      <tbody>
+        {% for r in rows %}
+        {% set is_close = r.is_close %}
+        {% set dir = r.direction %}
+        {% if is_close %}
+          {% set side_label = "Close " ~ dir %}
+          {% set side_class = "pos-short" if dir == "LONG" else "pos-long" %}
+        {% else %}
+          {% set side_label = "Open " ~ dir %}
+          {% set side_class = "pos-long" if dir == "LONG" else "pos-short" %}
+        {% endif %}
+        <tr>
+          <td style="color:var(--sub);">{{ ms_to_local(r.timestamp_ms) }}</td>
+          <td style="color:var(--muted);font-size:.72rem;">{{ r.exchange_order_id[:12] if r.exchange_order_id else "—" }}</td>
+          <td style="color:var(--blue);font-weight:700;">{{ r.symbol }}</td>
+          <td class="{{ side_class }}">{{ side_label }}</td>
+          <td>{{ fmt(r.price, 6) }}</td>
+          <td>{{ fmt(r.quantity, 4) }}</td>
+          <td style="color:var(--sub);">{{ fmt(r.fee, 4) }} {{ r.fee_asset }}</td>
+          <td style="color:var(--sub);">{{ r.role }}</td>
+          <td class="{{ 'text-green' if r.realized_pnl > 0 else 'text-red' if r.realized_pnl < 0 else '' }}">
+            {{ fmt(r.realized_pnl, 2) if r.realized_pnl else "—" }}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ pagination(ep, tid, page, per_page, total, total_pages, qs) }}
+  {% else %}
+  <div style="color:var(--muted);padding:20px 0;text-align:center;font-size:.78rem;">No trade history found for this period.</div>
+  {% endif %}
+</div>

@@ -30,6 +30,16 @@ internal static class RiskEngineEventMapper
         }
 
         bool isBuy = trade.Side == Side.Buy;
+        string impact = "";
+        try { impact = trade.PositionImpactType.ToString().ToLower(); } catch { }
+        bool isClose = impact.Contains("close") || impact.Contains("reverse") || impact.Contains("decrease");
+
+        // Position direction: for closing fills, opposite of trade side
+        string direction;
+        if (isClose)
+            direction = isBuy ? "SHORT" : "LONG";  // BUY closes SHORT, SELL closes LONG
+        else
+            direction = isBuy ? "LONG" : "SHORT";
 
         long timestampMs;
         try { timestampMs = ((DateTimeOffset)trade.DateTime).ToUnixTimeMilliseconds(); }
@@ -37,14 +47,20 @@ internal static class RiskEngineEventMapper
 
         return new FillEvent
         {
-            Symbol    = symbol,
-            Side      = isBuy ? "BUY" : "SELL",
-            Price     = trade.Price,
-            Quantity  = Math.Abs(trade.Quantity),
-            GrossPnL  = (double)trade.GrossPnl.Value,
-            Fee       = Math.Abs((double)trade.Fee.Value),
-            Timestamp = timestampMs,
-            AccountId = trade.Account.Id,
+            ExchangeFillId  = trade.Id ?? "",
+            TerminalFillId  = trade.UniqueId ?? "",
+            ExchangeOrderId = trade.OrderId ?? "",
+            Symbol     = symbol,
+            Side       = isBuy ? "BUY" : "SELL",
+            Direction  = direction,
+            PositionId = trade.PositionId ?? "",
+            IsClose    = isClose,
+            Price      = trade.Price,
+            Quantity   = Math.Abs(trade.Quantity),
+            GrossPnL   = (double)trade.GrossPnl.Value,
+            Fee        = Math.Abs((double)trade.Fee.Value),
+            Timestamp  = timestampMs,
+            AccountId  = trade.Account.Id,
         };
     }
 
@@ -64,12 +80,23 @@ internal static class RiskEngineEventMapper
             double unreal = 0.0;
             try { if (p.GrossPnL != null) unreal = (double)p.GrossPnL.Value; } catch { }
 
+            long openTimeMs = 0;
+            try { openTimeMs = ((DateTimeOffset)p.OpenTime).ToUnixTimeMilliseconds(); } catch { }
+
+            double liqPrice = 0.0;
+            try { liqPrice = p.LiquidationPrice; } catch { }
+
             snap.Positions.Add(new PositionItem
             {
-                Symbol        = NormalizeSymbol(p.Symbol?.Name ?? ""),
-                Quantity      = signedQty,
-                AvgPrice      = p.OpenPrice,
-                UnrealizedPnL = unreal,
+                PositionId       = p.Id ?? "",
+                Symbol           = NormalizeSymbol(p.Symbol?.Name ?? ""),
+                Quantity         = signedQty,
+                AvgPrice         = p.OpenPrice,
+                UnrealizedPnL    = unreal,
+                OpenTimeMs       = openTimeMs,
+                LiquidationPrice = liqPrice,
+                // TP/SL not sent here — engine fetches directly from exchange
+                // via fetch_open_orders_tpsl() for reliable, real-time values.
             });
         }
         return snap;
@@ -167,6 +194,94 @@ internal static class RiskEngineEventMapper
             return complexId;
 
         return id;
+    }
+
+    /// <summary>
+    /// Build an order snapshot from the given orders belonging to the account.
+    /// positionSideLookup maps PositionId → "LONG"/"SHORT" from live positions.
+    /// </summary>
+    public static OrderSnapshot MapOrders(
+        Account account,
+        IEnumerable<Order> orders,
+        Dictionary<string, string>? positionSideLookup = null)
+    {
+        var snap = new OrderSnapshot { AccountId = account.Id ?? "" };
+        foreach (var o in orders)
+        {
+            string symbol = NormalizeSymbol(o.Symbol?.Name ?? "");
+            if (string.IsNullOrEmpty(symbol)) continue;
+
+            string side = o.Side == Side.Buy ? "BUY" : "SELL";
+
+            // Map Quantower OrderType to engine name for status mapping
+            string status;
+            try { status = o.Status.ToString(); }
+            catch { status = "Opened"; }
+
+            string orderType;
+            try { orderType = o.OrderType.ToString(); }
+            catch { orderType = "Market"; }
+
+            string timeInForce;
+            try { timeInForce = o.TimeInForce.ToString(); }
+            catch { timeInForce = ""; }
+
+            // Quantower Order SDK only exposes LastUpdateTime, not creation time.
+            // True creation time comes from exchange REST adapter (created_at_ms).
+            long createdAt = 0;
+            try { createdAt = ((DateTimeOffset)o.LastUpdateTime).ToUnixTimeMilliseconds(); }
+            catch { }
+
+            double triggerPrice = 0.0;
+            try { triggerPrice = o.TriggerPrice; } catch { }
+
+            double avgFill = 0.0;
+            try { avgFill = o.AverageFillPrice; } catch { }
+
+            double filledQty = 0.0;
+            try { filledQty = Math.Abs(o.FilledQuantity); } catch { }
+
+            // Quantower SDK doesn't expose ReduceOnly on Order;
+            // infer from order type — TP/SL orders are inherently reduce-only
+            bool reduceOnly = orderType.Contains("TakeProfit") || orderType.Contains("Stop");
+
+            // Determine position side:
+            // 1. Best: look up from live position via PositionId
+            // 2. Fallback: infer from side + reduceOnly
+            string positionSide = "";
+            string posId = o.PositionId ?? "";
+            if (positionSideLookup != null && !string.IsNullOrEmpty(posId)
+                && positionSideLookup.TryGetValue(posId, out var resolvedSide))
+            {
+                positionSide = resolvedSide;
+            }
+            else if (reduceOnly)
+                positionSide = side == "BUY" ? "SHORT" : "LONG";
+            else
+                positionSide = side == "BUY" ? "LONG" : "SHORT";
+
+            snap.Orders.Add(new OrderItem
+            {
+                ExchangeOrderId = o.Id ?? "",
+                TerminalOrderId = o.UniqueId ?? "",
+                ClientOrderId   = o.Comment ?? "",
+                Symbol          = symbol,
+                Side            = side,
+                OrderType       = orderType,
+                Status          = status,
+                Price           = o.Price,
+                StopPrice       = triggerPrice,
+                Quantity        = Math.Abs(o.TotalQuantity),
+                FilledQuantity  = filledQty,
+                AvgFillPrice    = avgFill,
+                ReduceOnly      = reduceOnly,
+                TimeInForce     = timeInForce,
+                PositionSide    = positionSide,
+                PositionId      = o.PositionId ?? "",
+                CreatedAt       = createdAt,
+            });
+        }
+        return snap;
     }
 
     /// <summary>

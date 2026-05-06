@@ -1,0 +1,68 @@
+{% from "fragments/history/_sort_header.html" import sort_th %}
+{% from "fragments/history/_pagination.html" import pagination %}
+{% set ep = "/fragments/history/order_history" %}
+{% set tid = "order-history-table" %}
+{% set df = date_from | replace(":", "%3A") | replace("+", "%2B") %}
+{% set dt = date_to   | replace(":", "%3A") | replace("+", "%2B") %}
+{% set qs = "per_page=" ~ per_page ~ "&search=" ~ search ~ "&sort_by=" ~ sort_by ~ "&sort_dir=" ~ sort_dir ~ "&date_from=" ~ df ~ "&date_to=" ~ dt %}
+
+<div class="card card-p8">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
+    <span class="sec-lbl" style="margin-bottom:0;">Order History ({{ total }})</span>
+    <input type="text" placeholder="Search symbol..." class="hist-input" style="width:140px;"
+           value="{{ search }}"
+           hx-get="{{ ep }}?page=1&per_page={{ per_page }}&sort_by={{ sort_by }}&sort_dir={{ sort_dir }}&date_from={{ df }}&date_to={{ dt }}"
+           hx-target="#{{ tid }}" hx-swap="innerHTML"
+           hx-trigger="keyup[key=='Enter']"
+           name="search">
+  </div>
+
+  {% if rows %}
+  <div class="overflow-x-auto">
+    <table>
+      <thead><tr>
+        {{ sort_th("Time",      "updated_at_ms", ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Symbol",    "symbol",        ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Side",      "side",          ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Type",      "order_type",    ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Qty",       "quantity",       ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Price",     "price",         ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Trigger",   "stop_price",    ep, tid, sort_by, sort_dir, qs) }}
+        <th>TIF</th>
+        {{ sort_th("Status",    "status",        ep, tid, sort_by, sort_dir, qs) }}
+        <th>Order ID</th>
+        <th>Avg Fill</th>
+      </tr></thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td style="color:var(--sub);">{{ ms_to_local(r.updated_at_ms) }}</td>
+          <td style="color:var(--blue);font-weight:700;">{{ r.symbol }}</td>
+          <td class="{{ 'pos-long' if r.side == 'BUY' else 'pos-short' }}">{{ r.side }}</td>
+          <td style="color:var(--sub);">{{ r.order_type }}</td>
+          <td>{{ fmt(r.quantity, 4) }}</td>
+          <td>{{ fmt(r.price, 6) if r.price else "—" }}</td>
+          <td>{{ fmt(r.stop_price, 6) if r.stop_price else "—" }}</td>
+          <td style="color:var(--sub);">{{ r.time_in_force }}</td>
+          <td>
+            {% if r.status == 'filled' %}<span class="badge badge-green">filled</span>
+            {% elif r.status == 'canceled' %}<span class="badge badge-red">canceled</span>
+            {% elif r.status == 'expired' %}<span class="badge badge-gray">expired</span>
+            {% elif r.status == 'rejected' %}<span class="badge badge-red">rejected</span>
+            {% elif r.status == 'new' %}<span class="badge badge-blue">new</span>
+            {% elif r.status == 'partially_filled' %}<span class="badge badge-yellow">partial</span>
+            {% else %}<span class="badge">{{ r.status }}</span>
+            {% endif %}
+          </td>
+          <td style="color:var(--muted);font-size:.72rem;">{{ r.exchange_order_id[:12] if r.exchange_order_id else "—" }}</td>
+          <td>{{ fmt(r.avg_fill_price, 6) if r.avg_fill_price else "—" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ pagination(ep, tid, page, per_page, total, total_pages, qs) }}
+  {% else %}
+  <div style="color:var(--muted);padding:20px 0;text-align:center;font-size:.78rem;">No order history found for this period.</div>
+  {% endif %}
+</div>

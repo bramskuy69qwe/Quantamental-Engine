@@ -33,6 +33,7 @@ from core.db_backtest  import BacktestMixin
 from core.db_models    import ModelsMixin
 from core.db_regime    import RegimeMixin
 from core.db_news      import NewsMixin
+from core.db_orders    import OrdersMixin
 
 log = logging.getLogger("database")
 
@@ -331,6 +332,96 @@ CREATE TABLE IF NOT EXISTS economic_calendar (
     UNIQUE(event_time, country, event_name)
 );
 CREATE INDEX IF NOT EXISTS idx_calendar_time ON economic_calendar (event_time ASC);
+
+-- ── v2.2.2: Order Center tables ─────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS orders (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id          INTEGER NOT NULL,
+    exchange_order_id   TEXT,
+    terminal_order_id   TEXT    NOT NULL DEFAULT '',
+    client_order_id     TEXT    NOT NULL DEFAULT '',
+    symbol              TEXT    NOT NULL,
+    side                TEXT    NOT NULL,
+    order_type          TEXT    NOT NULL DEFAULT '',
+    status              TEXT    NOT NULL DEFAULT 'new',
+    price               REAL    NOT NULL DEFAULT 0,
+    stop_price          REAL    NOT NULL DEFAULT 0,
+    quantity            REAL    NOT NULL DEFAULT 0,
+    filled_qty          REAL    NOT NULL DEFAULT 0,
+    avg_fill_price      REAL    NOT NULL DEFAULT 0,
+    reduce_only         INTEGER NOT NULL DEFAULT 0,
+    time_in_force       TEXT    NOT NULL DEFAULT '',
+    position_side       TEXT    NOT NULL DEFAULT '',
+    exchange_position_id TEXT   NOT NULL DEFAULT '',
+    terminal_position_id TEXT   NOT NULL DEFAULT '',
+    source              TEXT    NOT NULL DEFAULT '',
+    created_at_ms       INTEGER NOT NULL DEFAULT 0,
+    updated_at_ms       INTEGER NOT NULL DEFAULT 0,
+    last_seen_ms        INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(account_id, exchange_order_id)
+);
+CREATE INDEX IF NOT EXISTS idx_orders_terminal ON orders (terminal_order_id);
+CREATE INDEX IF NOT EXISTS idx_orders_status   ON orders (account_id, status, updated_at_ms DESC);
+CREATE INDEX IF NOT EXISTS idx_orders_symbol   ON orders (symbol, updated_at_ms DESC);
+CREATE INDEX IF NOT EXISTS idx_orders_tpsl     ON orders (account_id, symbol, position_side, order_type, status);
+
+CREATE TABLE IF NOT EXISTS fills (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id           INTEGER NOT NULL,
+    exchange_fill_id     TEXT,
+    terminal_fill_id     TEXT    NOT NULL DEFAULT '',
+    exchange_order_id    TEXT    NOT NULL DEFAULT '',
+    symbol               TEXT    NOT NULL,
+    side                 TEXT    NOT NULL,
+    direction            TEXT    NOT NULL DEFAULT '',
+    price                REAL    NOT NULL DEFAULT 0,
+    quantity             REAL    NOT NULL DEFAULT 0,
+    fee                  REAL    NOT NULL DEFAULT 0,
+    fee_asset            TEXT    NOT NULL DEFAULT 'USDT',
+    exchange_position_id TEXT    NOT NULL DEFAULT '',
+    terminal_position_id TEXT    NOT NULL DEFAULT '',
+    is_close             INTEGER NOT NULL DEFAULT 0,
+    realized_pnl         REAL    NOT NULL DEFAULT 0,
+    role                 TEXT    NOT NULL DEFAULT '',
+    source               TEXT    NOT NULL DEFAULT '',
+    timestamp_ms         INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(account_id, exchange_fill_id)
+);
+CREATE INDEX IF NOT EXISTS idx_fills_terminal  ON fills (terminal_fill_id);
+CREATE INDEX IF NOT EXISTS idx_fills_order     ON fills (exchange_order_id);
+CREATE INDEX IF NOT EXISTS idx_fills_position  ON fills (terminal_position_id, is_close);
+CREATE INDEX IF NOT EXISTS idx_fills_ts        ON fills (account_id, timestamp_ms DESC);
+
+CREATE TABLE IF NOT EXISTS closed_positions (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id           INTEGER NOT NULL,
+    exchange_position_id TEXT    NOT NULL DEFAULT '',
+    terminal_position_id TEXT    NOT NULL DEFAULT '',
+    symbol               TEXT    NOT NULL,
+    direction            TEXT    NOT NULL DEFAULT '',
+    quantity             REAL    NOT NULL DEFAULT 0,
+    entry_price          REAL    NOT NULL DEFAULT 0,
+    exit_price           REAL    NOT NULL DEFAULT 0,
+    entry_time_ms        INTEGER NOT NULL DEFAULT 0,
+    exit_time_ms         INTEGER NOT NULL DEFAULT 0,
+    realized_pnl         REAL    NOT NULL DEFAULT 0,
+    total_fees           REAL    NOT NULL DEFAULT 0,
+    net_pnl              REAL    NOT NULL DEFAULT 0,
+    funding_fees         REAL    NOT NULL DEFAULT 0,
+    mfe                  REAL    NOT NULL DEFAULT 0,
+    mae                  REAL    NOT NULL DEFAULT 0,
+    hold_time_ms         INTEGER NOT NULL DEFAULT 0,
+    exit_reason          TEXT    NOT NULL DEFAULT '',
+    model_name           TEXT    NOT NULL DEFAULT '',
+    notes                TEXT    NOT NULL DEFAULT '',
+    shortfall_entry      REAL    NOT NULL DEFAULT 0,
+    shortfall_exit       REAL    NOT NULL DEFAULT 0,
+    source               TEXT    NOT NULL DEFAULT '',
+    UNIQUE(account_id, terminal_position_id, exit_time_ms)
+);
+CREATE INDEX IF NOT EXISTS idx_closed_pos_ts     ON closed_positions (account_id, exit_time_ms DESC);
+CREATE INDEX IF NOT EXISTS idx_closed_pos_symbol ON closed_positions (symbol, exit_time_ms DESC);
 """
 
 
@@ -346,6 +437,7 @@ class DatabaseManager(
     ModelsMixin,
     RegimeMixin,
     NewsMixin,
+    OrdersMixin,
 ):
     """Async SQLite manager. Keep open for app lifetime; use WAL for concurrency.
 

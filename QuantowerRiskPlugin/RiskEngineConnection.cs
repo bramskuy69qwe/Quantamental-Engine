@@ -251,6 +251,23 @@ public sealed class RiskEngineConnection : IDisposable
             await PostRestAsync("/api/platform/positions", json);
     }
 
+    public async Task SendOrderSnapshotAsync(OrderSnapshot snap)
+    {
+        var json = JsonSerializer.Serialize(snap);
+        if (_wsConnected)
+            await SendTextAsync(json);
+        else
+            await PostRestAsync("/api/platform/event", json);
+    }
+
+    [Obsolete("Use SendOrderSnapshotAsync — kept for backward compat during transition")]
+    public async Task SendOrdersChangedAsync()
+    {
+        var json = """{"type":"orders_changed"}""";
+        if (_wsConnected)
+            await SendTextAsync(json);
+    }
+
     private async Task SendTextAsync(string text)
     {
         if (_ws is null || _ws.State != WebSocketState.Open) return;

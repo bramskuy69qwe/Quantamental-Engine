@@ -38,28 +38,56 @@ class NormalizedPosition:
     unrealized_pnl: float = 0.0
     initial_margin: float = 0.0
     notional: float = 0.0
+    position_id: str = ""          # broker/exchange position ID
 
 
 @dataclass
 class NormalizedOrder:
-    """Exchange-agnostic open order (TP/SL/limit/market)."""
+    """Exchange-agnostic order. Maps to `orders` DB table."""
+    # Identity
+    exchange_order_id: str = ""     # exchange-assigned (Binance orderId, Bybit orderId)
+    terminal_order_id: str = ""     # terminal-assigned (Quantower UniqueId) — empty from REST
+    client_order_id: str = ""       # user/client-assigned (Binance clientOrderId)
+    # Core fields (original 5 kept in place for backward compat)
     symbol: str = ""
-    order_type: str = ""           # "take_profit" | "stop_loss" | "limit" | "market"
-    stop_price: float = 0.0
-    quantity: float = 0.0
-    side: str = ""                 # "BUY" | "SELL"
+    side: str = ""                  # BUY / SELL
+    order_type: str = ""            # limit / market / stop_loss / take_profit / trailing_stop
+    status: str = ""                # new / partially_filled / filled / canceled / expired / rejected
+    price: float = 0.0              # limit price
+    stop_price: float = 0.0         # trigger price (TP/SL)
+    quantity: float = 0.0           # original qty
+    filled_qty: float = 0.0         # cumulative filled
+    avg_fill_price: float = 0.0     # VWAP of fills
+    reduce_only: bool = False
+    time_in_force: str = ""         # GTC / IOC / FOK / GTX
+    # Position linkage (hedge mode)
+    position_side: str = ""         # LONG / SHORT
+    # Timestamps
+    created_at_ms: int = 0
+    updated_at_ms: int = 0
 
 
 @dataclass
 class NormalizedTrade:
-    """Exchange-agnostic trade fill."""
+    """Exchange-agnostic trade fill. Maps to `fills` DB table."""
+    # Identity
+    exchange_fill_id: str = ""      # exchange trade ID (Binance id, Bybit execId)
+    exchange_order_id: str = ""     # parent order (Binance orderId)
+    terminal_fill_id: str = ""      # terminal trade ID — empty from REST
+    terminal_position_id: str = ""  # terminal position ID — empty from REST
+    # Core fields (original 7 kept for backward compat)
     symbol: str = ""
-    side: str = ""                 # "BUY" | "SELL"
+    side: str = ""                  # BUY / SELL
+    direction: str = ""             # LONG / SHORT (from positionSide, not inferred from side)
     price: float = 0.0
     quantity: float = 0.0
     fee: float = 0.0
+    fee_asset: str = "USDT"
+    role: str = ""                  # maker / taker
+    is_close: bool = False          # closing vs opening fill
+    realized_pnl: float = 0.0      # gross PnL for closing fills
     timestamp_ms: int = 0
-    trade_id: str = ""
+    trade_id: str = ""              # DEPRECATED — alias of exchange_fill_id, remove in v2.3
 
 
 @dataclass
@@ -100,6 +128,10 @@ class ExchangeAdapter(Protocol):
 
     async def fetch_user_trades(self, symbol: str, limit: int = 200) -> List[NormalizedTrade]:
         """Fetch recent fills for a symbol."""
+        ...
+
+    async def fetch_order_history(self, symbol: str = "", limit: int = 100) -> List[NormalizedOrder]:
+        """Fetch historical orders (all statuses). Optional — returns [] if not supported."""
         ...
 
     async def fetch_income(

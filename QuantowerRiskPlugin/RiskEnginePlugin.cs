@@ -65,6 +65,8 @@ public class RiskEnginePlugin : Strategy
         Core.Instance.TradeAdded      += OnTradeAdded;
         Core.Instance.PositionAdded   += OnPositionChanged;
         Core.Instance.PositionRemoved += OnPositionChanged;
+        Core.Instance.OrderAdded      += OnOrderChanged;
+        Core.Instance.OrderRemoved    += OnOrderChanged;
 
         _ = ConnectAndIntroduceAsync();
         Log("Risk Engine Plugin started.", StrategyLoggingLevel.Info);
@@ -75,6 +77,8 @@ public class RiskEnginePlugin : Strategy
         if (_conn is null) return;
         await _conn.ConnectAsync();
         await SendHelloAsync();
+        SendOrderSnapshot();         // orders BEFORE positions — so TP/SL is available for enrichment
+        SendPositionSnapshot();
         SendAccountStateNow(force: true);
         _ = BackfillHistoricalTradesAsync();
     }
@@ -143,6 +147,8 @@ public class RiskEnginePlugin : Strategy
         Core.Instance.TradeAdded      -= OnTradeAdded;
         Core.Instance.PositionAdded   -= OnPositionChanged;
         Core.Instance.PositionRemoved -= OnPositionChanged;
+        Core.Instance.OrderAdded      -= OnOrderChanged;
+        Core.Instance.OrderRemoved    -= OnOrderChanged;
 
         if (_activeAccount != null)
             _activeAccount.Updated -= OnAccountUpdated;
@@ -221,6 +227,54 @@ public class RiskEnginePlugin : Strategy
     {
         try { SendPositionSnapshot(); }
         catch (Exception ex) { Log($"OnPositionChanged error: {ex.Message}", StrategyLoggingLevel.Error); }
+    }
+
+    private long _lastOrderSignalMs;
+    private const int OrderSignalMinIntervalMs = 500;
+
+    private void OnOrderChanged(Order order)
+    {
+        if (_conn is null) return;
+        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if ((now - _lastOrderSignalMs) < OrderSignalMinIntervalMs) return;
+        _lastOrderSignalMs = now;
+        try { SendOrderSnapshot(); }
+        catch (Exception ex) { Log($"OnOrderChanged error: {ex.Message}", StrategyLoggingLevel.Error); }
+    }
+
+    private void SendOrderSnapshot()
+    {
+        if (_conn is null) return;
+        try
+        {
+            var account = _activeAccount ?? Core.Instance.Accounts.FirstOrDefault();
+            if (account is null) return;
+            var orders = (Core.Instance.Orders ?? Enumerable.Empty<Order>())
+                .Where(o => o.Account?.Id == account.Id)
+                .ToArray();
+
+            // Build positionId → side lookup from live positions
+            var posLookup = new Dictionary<string, string>();
+            try
+            {
+                var positions = (Core.Instance.Positions ?? Enumerable.Empty<Position>())
+                    .Where(p => p.Account?.Id == account.Id);
+                foreach (var p in positions)
+                {
+                    var pid = p.Id ?? "";
+                    if (!string.IsNullOrEmpty(pid))
+                        posLookup[pid] = p.Side == Side.Buy ? "LONG" : "SHORT";
+                }
+            }
+            catch { }
+
+            var snap = RiskEngineEventMapper.MapOrders(account, orders, posLookup);
+            _ = _conn.SendOrderSnapshotAsync(snap);
+        }
+        catch (Exception ex)
+        {
+            Log($"SendOrderSnapshot error: {ex.Message}", StrategyLoggingLevel.Error);
+        }
     }
 
     private void SendPositionSnapshot()

@@ -1,0 +1,79 @@
+{% from "fragments/history/_sort_header.html" import sort_th %}
+{% from "fragments/history/_pagination.html" import pagination %}
+{% set ep = "/fragments/history/closed_positions" %}
+{% set tid = "closed-positions-table" %}
+{% set df = date_from | replace(":", "%3A") | replace("+", "%2B") %}
+{% set dt = date_to   | replace(":", "%3A") | replace("+", "%2B") %}
+{% set qs = "per_page=" ~ per_page ~ "&search=" ~ search ~ "&sort_by=" ~ sort_by ~ "&sort_dir=" ~ sort_dir ~ "&date_from=" ~ df ~ "&date_to=" ~ dt %}
+
+<div class="card card-p8">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
+    <span class="sec-lbl" style="margin-bottom:0;">Position History ({{ total }})</span>
+    <input type="text" placeholder="Search symbol..." class="hist-input" style="width:140px;"
+           value="{{ search }}"
+           hx-get="{{ ep }}?page=1&per_page={{ per_page }}&sort_by={{ sort_by }}&sort_dir={{ sort_dir }}&date_from={{ df }}&date_to={{ dt }}"
+           hx-target="#{{ tid }}" hx-swap="innerHTML"
+           hx-trigger="keyup[key=='Enter']"
+           name="search">
+  </div>
+
+  {% if rows %}
+  <div class="overflow-x-auto">
+    <table>
+      <thead><tr>
+        {{ sort_th("Open",       "entry_time_ms",  ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Close",      "exit_time_ms",   ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Symbol",     "symbol",         ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Dir",        "direction",       ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Qty",        "quantity",        ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Entry",      "entry_price",    ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Exit",       "exit_price",     ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("PnL",        "realized_pnl",   ep, tid, sort_by, sort_dir, qs) }}
+        <th>PnL %</th>
+        {{ sort_th("Fees",       "total_fees",     ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Hold",       "hold_time_ms",   ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Exit Reason","exit_reason",    ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("MFE",        "mfe",            ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("MAE",        "mae",            ep, tid, sort_by, sort_dir, qs) }}
+      </tr></thead>
+      <tbody>
+        {% for r in rows %}
+        {% set pnl_pct = (r.net_pnl / (r.entry_price * r.quantity) * 100) if r.entry_price and r.quantity else 0 %}
+        {% set hold_h = (r.hold_time_ms / 3600000) | round(1) if r.hold_time_ms else 0 %}
+        <tr>
+          <td style="color:var(--sub);">{{ ms_to_local(r.entry_time_ms) }}</td>
+          <td style="color:var(--sub);">{{ ms_to_local(r.exit_time_ms) }}</td>
+          <td style="color:var(--blue);font-weight:700;">{{ r.symbol }}</td>
+          <td class="{{ 'pos-long' if r.direction == 'LONG' else 'pos-short' }}">{{ r.direction }}</td>
+          <td>{{ fmt(r.quantity, 4) }}</td>
+          <td>{{ fmt(r.entry_price, 6) }}</td>
+          <td>{{ fmt(r.exit_price, 6) }}</td>
+          <td class="{{ 'text-green' if r.net_pnl > 0 else 'text-red' if r.net_pnl < 0 else '' }}" style="font-weight:700;">
+            {{ fmt(r.net_pnl, 2) }}
+          </td>
+          <td class="{{ 'text-green' if pnl_pct > 0 else 'text-red' if pnl_pct < 0 else '' }}">
+            {{ fmt(pnl_pct, 2) }}%
+          </td>
+          <td style="color:var(--sub);">{{ fmt(r.total_fees, 4) }}</td>
+          <td style="color:var(--sub);">{{ hold_h }}h</td>
+          <td>
+            {% if r.exit_reason == 'tp_hit' %}<span class="badge badge-green">TP</span>
+            {% elif r.exit_reason == 'sl_hit' %}<span class="badge badge-red">SL</span>
+            {% elif r.exit_reason == 'trailing_stop' %}<span class="badge badge-yellow">Trail</span>
+            {% elif r.exit_reason == 'manual' %}<span class="badge badge-gray">Manual</span>
+            {% elif r.exit_reason == 'liquidation' %}<span class="badge badge-red">Liq</span>
+            {% else %}<span class="badge">{{ r.exit_reason or "—" }}</span>
+            {% endif %}
+          </td>
+          <td class="text-green">{{ fmt(r.mfe, 2) if r.mfe else "—" }}</td>
+          <td class="text-red">{{ fmt(r.mae, 2) if r.mae else "—" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ pagination(ep, tid, page, per_page, total, total_pages, qs) }}
+  {% else %}
+  <div style="color:var(--muted);padding:20px 0;text-align:center;font-size:.78rem;">No closed positions found for this period.</div>
+  {% endif %}
+</div>

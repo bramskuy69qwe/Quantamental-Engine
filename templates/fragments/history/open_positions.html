@@ -1,48 +1,113 @@
-<!-- fragment: history/open_positions -->
+<!-- fragment: history/open_positions (Binance-style subtabs) -->
 <div class="card">
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-    <span class="sec-lbl" style="margin-bottom:0;">Open Positions</span>
-    <span class="mono" style="font-size:.72rem;color:var(--sub);">{{ positions | length }} / {{ max_positions }}</span>
+  <!-- ── Subtab row ── -->
+  <div style="display:flex;align-items:center;gap:0;border-bottom:1px solid var(--border);margin-bottom:8px;">
+    <button id="hp-tab-pos" onclick="hpTab('pos')"
+            style="font-family:var(--font-ui);font-size:.6rem;padding:6px 14px;border:none;background:none;cursor:pointer;
+                   letter-spacing:.1em;text-transform:uppercase;font-weight:700;
+                   color:var(--blue);border-bottom:2px solid var(--blue);">
+      Positions({{ positions | length }})
+    </button>
+    <button id="hp-tab-oo" onclick="hpTab('oo')"
+            style="font-family:var(--font-ui);font-size:.6rem;padding:6px 14px;border:none;background:none;cursor:pointer;
+                   letter-spacing:.1em;text-transform:uppercase;font-weight:700;
+                   color:var(--muted);border-bottom:2px solid transparent;">
+      Open Orders({{ working_orders | length }})
+    </button>
+    <span class="mono" style="margin-left:auto;font-size:.68rem;color:var(--sub);">{{ positions | length }}/{{ max_positions }}</span>
   </div>
 
-  <!-- Capacity bar -->
-  <div class="gauge-track" style="margin-bottom:10px;">
-    <div class="gauge-fill"
-         style="width:{{ [positions|length / max_positions * 100, 100]|min }}%;background:var(--blue);"></div>
+  <!-- ── Panel: Positions ── -->
+  <div id="hp-panel-pos">
+    {% if positions %}
+    <div style="overflow-x:auto;">
+      <table>
+        <thead><tr>
+          <th>Symbol</th><th>Dir</th><th>Hold</th><th>Entry</th><th>Mark</th>
+          <th>Size</th><th>Notional</th><th>uPnL</th><th>Fees</th><th>Net</th><th>MFE</th><th>MAE</th><th>TP</th><th>SL</th>
+        </tr></thead>
+        <tbody>
+          {% for p in positions %}
+          {% set net = p.individual_unrealized - p.individual_fees %}
+          <tr>
+            <td style="color:var(--blue);font-weight:700;">{{ p.ticker }}</td>
+            <td class="{{ 'pos-long' if p.direction=='LONG' else 'pos-short' }}">{{ p.direction }}</td>
+            <td style="color:var(--sub);font-size:.68rem;">{{ hold_time(p.entry_timestamp) }}</td>
+            <td>{{ fmt(p.average, 4) }}</td>
+            <td>{{ fmt(p.fair_price, 4) }}</td>
+            <td>{{ fmt(p.contract_amount, 4) }}</td>
+            <td>{{ fmt(p.position_value_usdt, 2) }}</td>
+            <td style="color:{{ 'var(--green)' if p.individual_unrealized >= 0 else 'var(--red)' }};">
+              {{ fmt(p.individual_unrealized, 2) }}
+            </td>
+            <td style="color:var(--sub);">{{ fmt(p.individual_fees, 4) }}</td>
+            <td style="color:{{ 'var(--green)' if net >= 0 else 'var(--red)' }};font-weight:700;">
+              {{ fmt(net, 2) }}
+            </td>
+            <td style="color:var(--green);">{{ fmt(p.session_mfe, 2) }}</td>
+            <td style="color:var(--red);">{{ fmt(p.session_mae, 2) }}</td>
+            <td style="color:var(--green);">{{ fmt(p.individual_tp_price, 4) if p.individual_tp_price else '—' }}</td>
+            <td style="color:var(--red);">{{ fmt(p.individual_sl_price, 4) if p.individual_sl_price else '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div style="text-align:center;padding:24px 0;color:var(--muted);font-size:.78rem;">No open positions.</div>
+    {% endif %}
   </div>
 
-  {% if positions %}
-  <div style="overflow-x:auto;">
-    <table>
-      <thead><tr>
-        <th>Symbol</th><th>Dir</th><th>Hold</th><th>Entry</th><th>Mark</th>
-        <th>Size</th><th>Notional</th><th>uPnL</th><th>MFE</th><th>MAE</th><th>TP</th><th>SL</th>
-      </tr></thead>
-      <tbody>
-        {% for p in positions %}
-        <tr>
-          <td style="color:var(--blue);font-weight:700;">{{ p.ticker }}</td>
-          <td class="{{ 'pos-long' if p.direction=='LONG' else 'pos-short' }}">{{ p.direction }}</td>
-          <td style="color:var(--sub);font-size:.68rem;">{{ hold_time(p.entry_timestamp) }}</td>
-          <td>{{ fmt(p.average, 4) }}</td>
-          <td>{{ fmt(p.fair_price, 4) }}</td>
-          <td>{{ fmt(p.contract_amount, 4) }}</td>
-          <td>{{ fmt(p.position_value_usdt, 2) }}</td>
-          <td style="color:{{ 'var(--green)' if p.individual_unrealized >= 0 else 'var(--red)' }};">
-            {{ fmt(p.individual_unrealized, 2) }}
-          </td>
-          <td style="color:var(--green);">{{ fmt(p.session_mfe, 2) }}</td>
-          <td style="color:var(--red);">{{ fmt(p.session_mae, 2) }}</td>
-          <td style="color:var(--green);">{{ fmt(p.individual_tp_price, 4) if p.individual_tp_price else '—' }}</td>
-          <td style="color:var(--red);">{{ fmt(p.individual_sl_price, 4) if p.individual_sl_price else '—' }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+  <!-- ── Panel: Open Orders ── -->
+  <div id="hp-panel-oo" style="display:none;">
+    {% if working_orders %}
+    <div style="overflow-x:auto;">
+      <table>
+        <thead><tr>
+          <th>Symbol</th><th>Side</th><th>Type</th><th>Qty</th><th>Filled</th><th>Remaining</th>
+          <th>Price</th><th>Trigger</th><th>TIF</th><th>Pos Side</th>
+        </tr></thead>
+        <tbody>
+          {% for o in working_orders %}
+          <tr>
+            <td style="color:var(--blue);font-weight:700;">{{ o.symbol }}</td>
+            <td class="{{ 'pos-long' if o.side == 'BUY' else 'pos-short' }}">{{ o.side }}</td>
+            <td style="color:var(--sub);">{{ o.order_type }}</td>
+            <td>{{ fmt(o.quantity, 4) }}</td>
+            <td>{{ fmt(o.filled_qty, 4) }}</td>
+            <td style="color:var(--sub);">{{ fmt(o.quantity - o.filled_qty, 4) }}</td>
+            <td>{{ fmt(o.price, 6) if o.price else '—' }}</td>
+            <td>{{ fmt(o.stop_price, 6) if o.stop_price else '—' }}</td>
+            <td style="color:var(--sub);">{{ o.time_in_force }}</td>
+            <td class="{{ 'pos-long' if o.position_side == 'LONG' else 'pos-short' if o.position_side == 'SHORT' else '' }}">
+              {{ o.position_side or '—' }}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div style="text-align:center;padding:24px 0;color:var(--muted);font-size:.78rem;">No open orders.</div>
+    {% endif %}
   </div>
-  {% else %}
-  <div style="text-align:center;padding:24px 0;color:var(--muted);font-size:.78rem;">
-    No open positions.
-  </div>
-  {% endif %}
 </div>
+
+<script>
+(function(){
+  var _t = window._hpTab || 'pos';
+  function hpTab(t) { window._hpTab = t; _apply(t); }
+  function _apply(t) {
+    ['pos','oo'].forEach(function(k) {
+      var p = document.getElementById('hp-panel-'+k);
+      var b = document.getElementById('hp-tab-'+k);
+      if (!p || !b) return;
+      p.style.display = k===t ? '' : 'none';
+      b.style.color = k===t ? 'var(--blue)' : 'var(--muted)';
+      b.style.borderBottomColor = k===t ? 'var(--blue)' : 'transparent';
+    });
+  }
+  _apply(_t);
+  window.hpTab = hpTab;
+})();
+</script>

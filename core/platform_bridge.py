@@ -24,12 +24,15 @@ import asyncio
 import json
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Set
 
 import config as _cfg
 from core.state import app_state, PositionInfo
 from core.database import db
 from core.account_registry import account_registry
+from core.order_manager import OrderManager
+from core.order_state import QT_STATUS_MAP, QT_ORDER_TYPE_MAP
 
 log = logging.getLogger("platform_bridge")
 
@@ -46,16 +49,45 @@ def _normalize_symbol(qt_symbol: str) -> str:
 def _map_fill(msg: dict) -> Optional[Dict[str, Any]]:
     """Translate a Quantower fill message to internal fill representation."""
     try:
+        side_str = str(msg.get("side", "")).upper()
+        # Prefer explicit direction from plugin (position direction, not trade side)
+        direction = str(msg.get("direction", "")).upper()
+        if direction not in ("LONG", "SHORT"):
+            if side_str in ("BUY", "LONG"):
+                direction = "LONG"
+            elif side_str in ("SELL", "SHORT"):
+                direction = "SHORT"
+            else:
+                direction = ""   # unknown — don't guess
+
+        symbol = _normalize_symbol(msg.get("symbol", msg.get("ticker", "")))
+        ts = int(msg.get("timestamp", time.time() * 1000))
+        pos_id = str(msg.get("positionId", msg.get("position_id", "")))
         return {
-            "type":        "fill",
-            "ticker":      _normalize_symbol(msg.get("symbol", msg.get("ticker", ""))),
-            "direction":   "LONG" if str(msg.get("side", "")).upper() in ("BUY", "LONG") else "SHORT",
-            "price":       float(msg.get("price", 0)),
-            "quantity":    abs(float(msg.get("quantity", msg.get("qty", 0)))),
-            "gross_pnl":   float(msg.get("grossPnL", msg.get("gross_pnl", 0))),
-            "fee":         float(msg.get("fee", 0)),
-            "timestamp":   int(msg.get("timestamp", time.time() * 1000)),
-            "account_id":  msg.get("accountId", msg.get("account_id")),
+            "type":         "fill",
+            "symbol":       symbol,
+            "ticker":       symbol,       # backward compat alias
+            "side":         side_str,
+            "direction":    direction,
+            # Dual IDs from plugin (FillEvent.cs)
+            "exchange_fill_id":    str(msg.get("exchangeFillId", msg.get("exchange_fill_id", ""))),
+            "terminal_fill_id":    str(msg.get("terminalFillId", msg.get("terminal_fill_id", ""))),
+            "exchange_order_id":   str(msg.get("exchangeOrderId", msg.get("exchange_order_id", ""))),
+            "exchange_position_id": "",     # not available from terminal fills
+            "terminal_position_id": pos_id,
+            "position_id":  pos_id,       # backward compat alias
+            "is_close":     bool(msg.get("isClose", msg.get("is_close", False))),
+            "price":        float(msg.get("price", 0)),
+            "quantity":     abs(float(msg.get("quantity", msg.get("qty", 0)))),
+            "gross_pnl":    float(msg.get("grossPnL", msg.get("gross_pnl", 0))),
+            "realized_pnl": float(msg.get("grossPnL", msg.get("gross_pnl", 0))),
+            "fee":          float(msg.get("fee", 0)),
+            "fee_asset":    str(msg.get("feeAsset", msg.get("fee_asset", "USDT"))),
+            "role":         str(msg.get("role", "")),
+            "source":       "quantower",
+            "timestamp":    ts,
+            "timestamp_ms": ts,           # alias for fills DB
+            "account_id":   msg.get("accountId", msg.get("account_id")),
         }
     except Exception as exc:
         log.warning("_map_fill: could not parse fill message: %r — %r", msg, exc)
@@ -70,16 +102,59 @@ def _map_position_snapshot(msg: dict) -> Optional[Dict[str, Any]]:
         for p in positions:
             qty = float(p.get("quantity", p.get("qty", 0)))
             mapped.append({
+                "position_id":  str(p.get("positionId", p.get("position_id", ""))),
                 "ticker":       _normalize_symbol(p.get("symbol", p.get("ticker", ""))),
                 "direction":    "LONG" if qty >= 0 else "SHORT",
                 "quantity":     abs(qty),
                 "avg_price":    float(p.get("avgPrice", p.get("avg_price", p.get("openPrice", 0)))),
                 "unrealized":   float(p.get("unrealizedPnL", p.get("unrealized_pnl", 0))),
+                "open_time_ms": int(p.get("openTimeMs", p.get("open_time_ms", 0)) or 0),
+                "tp_price":     float(p["tpPrice"]) if "tpPrice" in p else (float(p["tp_price"]) if "tp_price" in p else None),
+                "sl_price":     float(p["slPrice"]) if "slPrice" in p else (float(p["sl_price"]) if "sl_price" in p else None),
+                "liq_price":    float(p["liquidationPrice"]) if "liquidationPrice" in p else (float(p["liq_price"]) if "liq_price" in p else None),
             })
         return {"positions": mapped, "account_id": msg.get("accountId")}
     except Exception as exc:
         log.warning("_map_position_snapshot error: %r — %r", msg, exc)
         return None
+
+
+def _map_order_snapshot(msg: dict) -> list[dict]:
+    """Parse an order_snapshot message from the plugin into order dicts.
+
+    Maps Quantower camelCase JSON → engine snake_case dicts suitable for
+    OrderManager.process_order_snapshot().
+    """
+    orders = msg.get("orders", [])
+    mapped = []
+    for o in orders:
+        symbol = _normalize_symbol(o.get("symbol", ""))
+        if not symbol:
+            continue
+        raw_status = o.get("status", "Opened")
+        raw_type   = o.get("orderType", "Market")
+        mapped.append({
+            "exchange_order_id":   o.get("exchangeOrderId", ""),
+            "terminal_order_id":   o.get("terminalOrderId", ""),
+            "client_order_id":     o.get("clientOrderId", ""),
+            "symbol":              symbol,
+            "side":                o.get("side", ""),
+            "order_type":          QT_ORDER_TYPE_MAP.get(raw_type, raw_type.lower()),
+            "status":              QT_STATUS_MAP.get(raw_status, "new"),
+            "price":               float(o.get("price", 0) or 0),
+            "stop_price":          float(o.get("stopPrice", 0) or 0),
+            "quantity":            float(o.get("quantity", 0) or 0),
+            "filled_qty":          float(o.get("filledQuantity", 0) or 0),
+            "avg_fill_price":      float(o.get("avgFillPrice", 0) or 0),
+            "reduce_only":         bool(o.get("reduceOnly", False)),
+            "time_in_force":       o.get("timeInForce", ""),
+            "position_side":       o.get("positionSide", ""),
+            "terminal_position_id": o.get("positionId", ""),
+            "source":              "quantower",
+            "created_at_ms":       int(o.get("createdAt", 0) or 0),
+            "updated_at_ms":       int(o.get("updatedAt", o.get("createdAt", 0)) or 0),
+        })
+    return mapped
 
 
 class PlatformBridge:
@@ -89,6 +164,12 @@ class PlatformBridge:
         self._ws_clients: Set[Any] = set()   # FastAPI WebSocket objects
         self._last_push: float = 0.0
         self._historical_fill_count: int = 0   # session counter for backfill
+        self._metadata_populated: bool = False  # one-shot flag for metadata backfill
+        self._order_manager: OrderManager = OrderManager(db)
+
+    @property
+    def order_manager(self) -> OrderManager:
+        return self._order_manager
 
     @property
     def is_connected(self) -> bool:
@@ -155,6 +236,10 @@ class PlatformBridge:
             self._handle_mark_price(msg)
         elif event_type == "depth_snapshot":
             self._handle_depth_snapshot(msg)
+        elif event_type == "order_snapshot":
+            await self._handle_order_snapshot(msg)
+        elif event_type == "orders_changed":
+            await self._handle_orders_changed()
         elif event_type == "heartbeat":
             pass  # just keep-alive — no action needed
         else:
@@ -444,7 +529,15 @@ class PlatformBridge:
             fill["ticker"], fill["direction"], fill["quantity"], fill["price"],
         )
 
-        # Record fill in execution_log tagged as quantower for post-hoc analysis
+        # NEW: write to fills table + update parent order + refresh fees
+        try:
+            await self._order_manager.process_fill(
+                app_state.active_account_id, fill,
+            )
+        except Exception as exc:
+            log.warning("PlatformBridge: order_manager.process_fill failed: %r", exc)
+
+        # LEGACY dual-write: execution_log (remove in v2.2.3+)
         try:
             await db.insert_execution_log({
                 "account_id":               app_state.active_account_id,
@@ -470,18 +563,48 @@ class PlatformBridge:
         except Exception as exc:
             log.error("PlatformBridge: position refresh after fill failed: %r", exc)
 
+    async def _handle_order_snapshot(self, msg: dict) -> None:
+        """Plugin sent a full order snapshot — delegate to OrderManager."""
+        try:
+            order_dicts = _map_order_snapshot(msg)
+            await self._order_manager.process_order_snapshot(
+                app_state.active_account_id, order_dicts,
+            )
+            log.debug(
+                "PlatformBridge: order_snapshot processed (%d orders)",
+                len(order_dicts),
+            )
+        except Exception as exc:
+            log.warning("PlatformBridge: _handle_order_snapshot failed: %r", exc)
+
+    async def _handle_orders_changed(self) -> None:
+        """Plugin signals that orders were added/removed — refresh TP/SL from exchange."""
+        try:
+            from core.exchange import fetch_open_orders_tpsl
+            await fetch_open_orders_tpsl()
+            log.debug("PlatformBridge: TP/SL refreshed after orders_changed signal")
+        except Exception as exc:
+            log.warning("PlatformBridge: fetch_open_orders_tpsl failed: %r", exc)
+
     async def _handle_position_snapshot(self, msg: dict) -> None:
         """Quantower pushes its full position list — reconcile against engine state.
 
         Broker truth always wins. This overwrites app_state.positions with the
         authoritative snapshot so P&L / exposure calculations reflect reality.
+        Session-local fields (MFE, MAE, entry_timestamp) are preserved from the
+        existing position when matched by (ticker, direction).
         """
         snap = _map_position_snapshot(msg)
         if snap is None:
             return
 
+        # Index existing positions by position_id (primary) and (ticker, direction) (fallback)
+        by_id  = {p.position_id: p for p in app_state.positions if p.position_id}
+        by_key = {(p.ticker, p.direction): p for p in app_state.positions}
+
         new_positions = []
         for p in snap["positions"]:
+            pos_id    = p.get("position_id", "")
             ticker    = p["ticker"]
             direction = p["direction"]
             qty       = p["quantity"]
@@ -489,7 +612,26 @@ class PlatformBridge:
             unreal    = p["unrealized"]
             notional  = avg * qty
 
+            prev = by_id.get(pos_id) if pos_id else by_key.get((ticker, direction))
+
+            # Derive entry_timestamp: broker open_time > prev (exchange-derived) > now
+            open_time_ms = p.get("open_time_ms", 0)
+            if open_time_ms > 0:
+                entry_ts = datetime.fromtimestamp(
+                    open_time_ms / 1000, tz=timezone.utc
+                ).isoformat()
+            elif prev and prev.entry_timestamp:
+                entry_ts = prev.entry_timestamp
+            else:
+                entry_ts = None  # let populate_open_position_metadata fill it later
+
+            # Liquidation from broker snapshot
+            liq_price = p.get("liq_price", None)
+            if liq_price is None:
+                liq_price = prev.liquidation_price if prev else 0.0
+
             pi = PositionInfo(
+                position_id          = pos_id,
                 ticker               = ticker,
                 direction            = direction,
                 contract_amount      = qty,
@@ -497,14 +639,63 @@ class PlatformBridge:
                 individual_unrealized = unreal,
                 position_value_usdt  = notional,
                 sector               = _cfg.get_sector(ticker),
+                entry_timestamp      = entry_ts,
+                # Preserve session-local fields from previous state
+                session_mfe          = prev.session_mfe if prev else 0.0,
+                session_mae          = prev.session_mae if prev else 0.0,
+                fair_price           = prev.fair_price if prev else 0.0,
+                liquidation_price    = liq_price,
+                individual_fees          = prev.individual_fees if prev else 0.0,
+                individual_funding_fees = prev.individual_funding_fees if prev else 0.0,
+                individual_realized     = prev.individual_realized if prev else 0.0,
+                individual_margin_used  = prev.individual_margin_used if prev else 0.0,
+                model_name              = prev.model_name if prev else "",
+                # TP/SL NOT preserved from prev — OrderManager.enrich_positions_tpsl()
+                # rebuilds from orders DB below, ensuring cancel clears immediately
             )
             new_positions.append(pi)
 
+        # Detect positions that disappeared — schedule deferred close rows
+        new_ids  = {p.position_id for p in new_positions if p.position_id}
+        new_keys = {(p.ticker, p.direction) for p in new_positions}
+        for prev_pos in app_state.positions:
+            gone = False
+            if prev_pos.position_id:
+                gone = prev_pos.position_id not in new_ids
+            else:
+                gone = (prev_pos.ticker, prev_pos.direction) not in new_keys
+            if gone:
+                log.info(
+                    "PlatformBridge: position disappeared %s %s — scheduling close row",
+                    prev_pos.ticker, prev_pos.direction,
+                )
+                loop = asyncio.get_running_loop()
+                loop.call_later(
+                    2.0,
+                    lambda p=prev_pos: asyncio.ensure_future(
+                        self._order_manager.build_final_close_row(p)
+                    ),
+                )
+
         app_state.positions = new_positions
+
+        # Enrich positions with TP/SL from orders DB (replaces prev-preservation)
+        self._order_manager.enrich_positions_tpsl(new_positions)
+
         log.info(
             "PlatformBridge: reconciled %d position(s) from broker snapshot",
             len(new_positions),
         )
+
+        # One-shot: derive entry_timestamp + MFE/MAE from exchange history
+        # for positions that don't have them yet (first snapshot after restart)
+        if not self._metadata_populated and new_positions:
+            self._metadata_populated = True
+            try:
+                from core.exchange import populate_open_position_metadata
+                asyncio.ensure_future(populate_open_position_metadata())
+            except Exception:
+                pass
 
     # ── R4: market data handlers (inbound from plugin) ────────────────────────
 
@@ -559,7 +750,6 @@ class PlatformBridge:
                     pos.session_mfe = round(unreal, 2)
                 if pos.session_mae == 0.0 or unreal < pos.session_mae:
                     pos.session_mae = round(unreal, 2)
-            break
 
         app_state.account_state.total_unrealized = sum(
             p.individual_unrealized for p in app_state.positions

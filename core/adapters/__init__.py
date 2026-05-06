@@ -62,6 +62,7 @@ def to_position_info(np: NormalizedPosition, sector: str = "") -> "PositionInfo"
     from core.state import PositionInfo  # late import: avoid circular
 
     return PositionInfo(
+        position_id=np.position_id,
         ticker=np.symbol,
         direction=np.side,
         contract_amount=np.size,

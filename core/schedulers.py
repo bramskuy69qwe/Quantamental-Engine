@@ -123,6 +123,42 @@ async def _account_refresh_loop():
                 "risk:positions_refreshed",
                 {"trigger": "periodic", "ts": datetime.now(timezone.utc).isoformat()},
             )
+            # Also sync orders from REST when plugin is disconnected
+            try:
+                from core.exchange import _get_adapter
+                adapter = _get_adapter()
+                normalized_orders = await adapter.fetch_open_orders()
+                order_dicts = [
+                    {
+                        "account_id":         app_state.active_account_id,
+                        "exchange_order_id":  o.exchange_order_id,
+                        "terminal_order_id":  "",
+                        "client_order_id":    o.client_order_id,
+                        "symbol":             o.symbol,
+                        "side":               o.side,
+                        "order_type":         o.order_type,
+                        "status":             o.status,
+                        "price":              o.price,
+                        "stop_price":         o.stop_price,
+                        "quantity":           o.quantity,
+                        "filled_qty":         o.filled_qty,
+                        "avg_fill_price":     o.avg_fill_price,
+                        "reduce_only":        o.reduce_only,
+                        "time_in_force":      o.time_in_force,
+                        "position_side":        o.position_side,
+                        "exchange_position_id": "",
+                        "terminal_position_id": "",
+                        "source":               f"{config.EXCHANGE_NAME.lower()}_rest",
+                        "created_at_ms":        o.created_at_ms,
+                        "updated_at_ms":        o.updated_at_ms,
+                    }
+                    for o in normalized_orders
+                ]
+                await platform_bridge.order_manager.process_order_snapshot(
+                    app_state.active_account_id, order_dicts,
+                )
+            except Exception as e:
+                log.debug("REST order sync skipped: %s", e)
         except Exception as e:
             log.warning(f"Periodic account refresh failed: {e}")
         finally:
@@ -180,6 +216,7 @@ async def _startup_fetch():
 
         _reconciler = ReconcilerWorker()
         event_bus.subscribe(CH_TRADE_CLOSED, _reconciler.on_trade_closed)
+        event_bus.subscribe("risk:position_closed", _reconciler.on_position_closed)
         _spawn(_reconciler.backfill_all(), name="reconciler_backfill")
 
         _spawn(event_bus.run(), name="event_bus")
@@ -339,6 +376,34 @@ async def _bwe_ws_consumer():
     await consumer.run()
 
 
+# ── Order staleness detection ────────────────────────────────────────────────
+
+async def _order_staleness_loop():
+    """Every 60s: mark active orders not seen in 5+ minutes as canceled.
+    Only meaningful when the plugin is connected (providing order snapshots)."""
+    from core.database import db
+
+    while True:
+        await asyncio.sleep(60)
+        if not platform_bridge.is_connected:
+            continue
+        try:
+            count = await db.mark_stale_orders(
+                account_id=app_state.active_account_id,
+                stale_threshold_ms=5 * 60 * 1000,
+            )
+            if count:
+                log.warning("Marked %d stale orders as canceled", count)
+                # Rebuild cache from DB (mark_stale only updates DB, not cache)
+                om = platform_bridge.order_manager
+                om._open_orders = await db.query_open_orders_all(
+                    app_state.active_account_id,
+                )
+                om.enrich_positions_tpsl(app_state.positions)
+        except Exception as e:
+            log.warning("Order staleness loop error: %s", e)
+
+
 # ── Public API ───────────────────────────────────────────────────────────────
 
 def start_background_tasks() -> None:
@@ -353,3 +418,4 @@ def start_background_tasks() -> None:
     _spawn(_news_refresh_loop(),     name="news_refresh")
     _spawn(_bwe_ws_consumer(),       name="bwe_ws")
     _spawn(MonitoringService().run(), name="monitoring")
+    _spawn(_order_staleness_loop(),  name="order_staleness")

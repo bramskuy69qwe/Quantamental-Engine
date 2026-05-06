@@ -26,6 +26,27 @@ ORDER_TYPE_FROM_BYBIT = {
     "Stop": "stop_loss",
 }
 
+# ── Order status mapping: Bybit -> unified ───────────────────────────────────
+BYBIT_STATUS_MAP = {
+    "New":              "new",
+    "PartiallyFilled":  "partially_filled",
+    "Filled":           "filled",
+    "Cancelled":        "canceled",
+    "Rejected":         "rejected",
+    "Deactivated":      "expired",
+    "Untriggered":      "new",
+    "Triggered":        "new",
+}
+
+# CCXT-normalized status → unified (CCXT lowercases Bybit statuses)
+BYBIT_CCXT_STATUS_MAP = {
+    "open":     "new",
+    "closed":   "filled",
+    "canceled":  "canceled",
+    "expired":   "expired",
+    "rejected":  "rejected",
+}
+
 # ── WS topic prefixes ────────────────────────────────────────────────────────
 TOPIC_POSITION = "position"
 TOPIC_WALLET = "wallet"

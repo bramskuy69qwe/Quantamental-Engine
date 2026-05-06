@@ -1,0 +1,55 @@
+{% from "fragments/history/_sort_header.html" import sort_th %}
+{% from "fragments/history/_pagination.html" import pagination %}
+{% set ep = "/fragments/history/open_orders" %}
+{% set tid = "open-orders-table" %}
+{% set qs = "per_page=" ~ per_page ~ "&search=" ~ search ~ "&sort_by=" ~ sort_by ~ "&sort_dir=" ~ sort_dir %}
+
+<div class="card card-p8">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
+    <span class="sec-lbl" style="margin-bottom:0;">Open Orders ({{ total }})</span>
+    <input type="text" placeholder="Search symbol..." class="hist-input" style="width:140px;"
+           value="{{ search }}"
+           hx-get="{{ ep }}?page=1&per_page={{ per_page }}&sort_by={{ sort_by }}&sort_dir={{ sort_dir }}"
+           hx-target="#{{ tid }}" hx-swap="innerHTML"
+           hx-trigger="keyup[key=='Enter']"
+           name="search">
+  </div>
+
+  {% if rows %}
+  <div class="overflow-x-auto">
+    <table>
+      <thead><tr>
+        {{ sort_th("Symbol",    "symbol",        ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Side",      "side",          ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Type",      "order_type",    ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Qty",       "quantity",       ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Filled",    "filled_qty",    ep, tid, sort_by, sort_dir, qs) }}
+        <th>Remaining</th>
+        {{ sort_th("Price",     "price",         ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Trigger",   "stop_price",    ep, tid, sort_by, sort_dir, qs) }}
+        <th>TIF</th>
+        <th>Comment</th>
+      </tr></thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td style="color:var(--blue);font-weight:700;">{{ r.symbol }}</td>
+          <td class="{{ 'pos-long' if r.side == 'BUY' else 'pos-short' }}">{{ r.side }}</td>
+          <td style="color:var(--sub);">{{ r.order_type }}</td>
+          <td>{{ fmt(r.quantity, 4) }}</td>
+          <td>{{ fmt(r.filled_qty, 4) }}</td>
+          <td style="color:var(--sub);">{{ fmt(r.quantity - r.filled_qty, 4) }}</td>
+          <td>{{ fmt(r.price, 6) if r.price else "—" }}</td>
+          <td>{{ fmt(r.stop_price, 6) if r.stop_price else "—" }}</td>
+          <td style="color:var(--sub);">{{ r.time_in_force }}</td>
+          <td style="color:var(--muted);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ r.client_order_id }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ pagination(ep, tid, page, per_page, total, total_pages, qs) }}
+  {% else %}
+  <div style="color:var(--muted);padding:20px 0;text-align:center;font-size:.78rem;">No open orders.</div>
+  {% endif %}
+</div>

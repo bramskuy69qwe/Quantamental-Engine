@@ -17,7 +17,11 @@ from core.adapters.protocols import (
     NormalizedPosition,
     NormalizedTrade,
 )
-from core.adapters.binance.constants import OHLCV_LIMIT, ORDER_TYPE_FROM_BINANCE
+from core.adapters.binance.constants import (
+    OHLCV_LIMIT,
+    ORDER_TYPE_FROM_BINANCE,
+    BINANCE_STATUS_MAP,
+)
 
 log = logging.getLogger("adapters.binance.rest")
 
@@ -104,12 +108,27 @@ class BinanceUSDMAdapter(BaseExchangeAdapter):
         for o in raw_orders:
             otype = o.get("type", "")
             unified_type = ORDER_TYPE_FROM_BINANCE.get(otype, otype.lower())
+            raw_status = o.get("status", "")
+            status = BINANCE_STATUS_MAP.get(raw_status, "new")
+            if raw_status and raw_status not in BINANCE_STATUS_MAP:
+                log.warning("Unmapped Binance order status: %s → defaulting to 'new'", raw_status)
             orders.append(NormalizedOrder(
+                exchange_order_id=str(o.get("orderId", "")),
+                client_order_id=o.get("clientOrderId", ""),
                 symbol=o.get("symbol", ""),
+                side=o.get("side", ""),
                 order_type=unified_type,
+                status=status,
+                price=float(o.get("price", 0) or 0),
                 stop_price=float(o.get("stopPrice", 0) or 0),
                 quantity=float(o.get("origQty", 0) or 0),
-                side=o.get("side", ""),
+                filled_qty=float(o.get("executedQty", 0) or 0),
+                avg_fill_price=float(o.get("avgPrice", 0) or 0),
+                reduce_only=bool(o.get("reduceOnly", False)),
+                time_in_force=o.get("timeInForce", ""),
+                position_side=o.get("positionSide", ""),
+                created_at_ms=int(o.get("time", 0)),
+                updated_at_ms=int(o.get("updateTime", 0)),
             ))
         return orders
 
@@ -124,16 +143,62 @@ class BinanceUSDMAdapter(BaseExchangeAdapter):
         raw = await self._run(_fetch)
         trades = []
         for t in raw:
+            tid = str(t.get("id", ""))
             trades.append(NormalizedTrade(
+                exchange_fill_id=tid,
+                exchange_order_id=str(t.get("orderId", "")),
                 symbol=t.get("symbol", ""),
                 side=t.get("side", ""),
+                direction=t.get("positionSide", ""),
                 price=float(t.get("price", 0) or 0),
                 quantity=float(t.get("qty", 0) or 0),
                 fee=float(t.get("commission", 0) or 0),
+                fee_asset=t.get("commissionAsset", "USDT"),
+                role="maker" if t.get("maker") else "taker",
+                is_close=bool(float(t.get("realizedPnl", 0) or 0) != 0),
+                realized_pnl=float(t.get("realizedPnl", 0) or 0),
                 timestamp_ms=int(t.get("time", 0)),
-                trade_id=str(t.get("id", "")),
+                trade_id=tid,
             ))
         return trades
+
+    # ── Order history ───────────────────────────────────────────────────────
+
+    async def fetch_order_history(self, symbol: str = "", limit: int = 100) -> List[NormalizedOrder]:
+        def _fetch():
+            params: Dict = {"limit": limit}
+            if symbol:
+                params["symbol"] = symbol
+            return self._ex.fapiPrivateGetAllOrders(params=params) or []
+
+        raw_orders = await self._run(_fetch)
+        orders = []
+        for o in raw_orders:
+            otype = o.get("type", "")
+            unified_type = ORDER_TYPE_FROM_BINANCE.get(otype, otype.lower())
+            raw_status = o.get("status", "")
+            status = BINANCE_STATUS_MAP.get(raw_status, "new")
+            if raw_status and raw_status not in BINANCE_STATUS_MAP:
+                log.warning("Unmapped Binance order status: %s → defaulting to 'new'", raw_status)
+            orders.append(NormalizedOrder(
+                exchange_order_id=str(o.get("orderId", "")),
+                client_order_id=o.get("clientOrderId", ""),
+                symbol=o.get("symbol", ""),
+                side=o.get("side", ""),
+                order_type=unified_type,
+                status=status,
+                price=float(o.get("price", 0) or 0),
+                stop_price=float(o.get("stopPrice", 0) or 0),
+                quantity=float(o.get("origQty", 0) or 0),
+                filled_qty=float(o.get("executedQty", 0) or 0),
+                avg_fill_price=float(o.get("avgPrice", 0) or 0),
+                reduce_only=bool(o.get("reduceOnly", False)),
+                time_in_force=o.get("timeInForce", ""),
+                position_side=o.get("positionSide", ""),
+                created_at_ms=int(o.get("time", 0)),
+                updated_at_ms=int(o.get("updateTime", 0)),
+            ))
+        return orders
 
     # ── Income history ───────────────────────────────────────────────────────
 

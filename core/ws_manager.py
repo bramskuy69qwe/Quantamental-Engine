@@ -80,10 +80,12 @@ async def _apply_account_update(msg: dict) -> None:
             app_state.account_state.total_equity = balances.get("cross_wallet", 0)
 
         if norm_positions:
-            existing = {p.ticker: p for p in app_state.positions}
-            closed_syms, new_syms = _apply_position_updates_normalized(existing, norm_positions)
-            if closed_syms:
-                app_state.positions = [p for p in app_state.positions if p.ticker not in closed_syms]
+            existing = {(p.ticker, p.direction): p for p in app_state.positions}
+            closed_keys, new_syms = _apply_position_updates_normalized(existing, norm_positions)
+            if closed_keys:
+                app_state.positions = [p for p in app_state.positions
+                                       if (p.ticker, p.direction) not in closed_keys]
+                closed_syms = {k[0] for k in closed_keys}
             _last_ws_position_update = time.monotonic()
 
         app_state.account_state.total_unrealized = sum(
@@ -101,20 +103,22 @@ async def _apply_account_update(msg: dict) -> None:
 
 
 def _apply_position_updates_normalized(existing: dict, norm_positions: list) -> tuple[set, set]:
-    """Process normalized position updates from WS adapter. Returns (closed_syms, new_syms)."""
-    closed_syms: set = set()
+    """Process normalized position updates from WS adapter.
+    existing is keyed by (ticker, direction). Returns (closed_keys, new_syms)."""
+    closed_keys: set = set()
     new_syms: set = set()
 
     for np in norm_positions:
         sym = np.symbol
+        key = (sym, np.side)
 
         if np.size == 0:
-            if sym in existing:
-                closed_syms.add(sym)
+            if key in existing:
+                closed_keys.add(key)
             continue
 
-        if sym in existing:
-            pos = existing[sym]
+        if key in existing:
+            pos = existing[key]
             pos.individual_unrealized = np.unrealized_pnl
             pos.contract_amount = np.size
             pos.direction = np.side
@@ -140,7 +144,7 @@ def _apply_position_updates_normalized(existing: dict, norm_positions: list) -> 
         ))
         new_syms.add(sym)
 
-    return closed_syms, new_syms
+    return closed_keys, new_syms
 
 
 async def _handle_user_event(msg: dict) -> None:
@@ -179,9 +183,9 @@ async def _on_new_position(sym: str) -> None:
                 if pos.ticker != sym:
                     continue
                 buy = "BUY" if pos.direction == "LONG" else "SELL"
-                trades.sort(key=lambda t: t.timestamp_ms, reverse=True)
+                sorted_trades = sorted(trades, key=lambda t: t.timestamp_ms, reverse=True)
                 cum = 0.0
-                for t in trades:
+                for t in sorted_trades:
                     if t.side != buy:
                         break
                     cum += abs(t.quantity)
@@ -190,7 +194,6 @@ async def _on_new_position(sym: str) -> None:
                             t.timestamp_ms / 1000, tz=timezone.utc
                         ).isoformat()
                         break
-                break
     except Exception as e:
         log.warning("_on_new_position trade lookup failed for %s: %s", sym, e)
 
@@ -338,7 +341,6 @@ def _apply_mark_price(msg: dict) -> None:
                     pos.session_mfe = round(unreal, 2)
                 if pos.session_mae == 0.0 or unreal < pos.session_mae:
                     pos.session_mae = round(unreal, 2)
-            break
 
     acc = app_state.account_state
     acc.total_unrealized = sum(
