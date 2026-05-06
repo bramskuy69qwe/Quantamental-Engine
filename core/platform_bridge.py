@@ -537,25 +537,6 @@ class PlatformBridge:
         except Exception as exc:
             log.warning("PlatformBridge: order_manager.process_fill failed: %r", exc)
 
-        # LEGACY dual-write: execution_log (remove in v2.2.3+)
-        try:
-            await db.insert_execution_log({
-                "account_id":               app_state.active_account_id,
-                "ticker":                   fill["ticker"],
-                "side":                     fill["direction"],
-                "entry_price_actual":       fill["price"],
-                "size_filled":              fill["quantity"],
-                "slippage":                 0,
-                "order_type":               "market",
-                "maker_fee":                _cfg.MAKER_FEE,
-                "taker_fee":                _cfg.TAKER_FEE,
-                "latency_snapshot":         0,
-                "orderbook_depth_snapshot": "",
-                "source_terminal":          "quantower",
-            })
-        except Exception as exc:
-            log.warning("PlatformBridge: execution_log write failed: %r", exc)
-
         # Trigger position refresh via the same path as Binance WS
         try:
             from core.ws_manager import _refresh_positions_after_fill  # late import: circular dep
@@ -566,13 +547,14 @@ class PlatformBridge:
     async def _handle_order_snapshot(self, msg: dict) -> None:
         """Plugin sent a full order snapshot — delegate to OrderManager."""
         try:
+            raw_count = len(msg.get("orders", []))
             order_dicts = _map_order_snapshot(msg)
             await self._order_manager.process_order_snapshot(
                 app_state.active_account_id, order_dicts,
             )
-            log.debug(
-                "PlatformBridge: order_snapshot processed (%d orders)",
-                len(order_dicts),
+            log.info(
+                "PlatformBridge: order_snapshot processed (%d raw → %d mapped, %d cached open)",
+                raw_count, len(order_dicts), len(self._order_manager.open_orders),
             )
         except Exception as exc:
             log.warning("PlatformBridge: _handle_order_snapshot failed: %r", exc)

@@ -237,6 +237,82 @@ class OrdersMixin:
         except Exception:
             log.warning("update_order_from_fill: order %s not found", exchange_order_id)
 
+    async def upsert_fill_and_update_order(
+        self, row: Dict[str, Any], exchange_order_id: str = "",
+    ) -> None:
+        """Upsert fill + update parent order in a SINGLE commit.
+
+        Replaces the old pattern of upsert_fill() + update_order_from_fill()
+        which did 2 separate commits per fill event.
+        """
+        fill_sql = """
+            INSERT INTO fills (
+                account_id, exchange_fill_id, terminal_fill_id, exchange_order_id,
+                symbol, side, direction, price, quantity, fee, fee_asset,
+                exchange_position_id, terminal_position_id, is_close,
+                realized_pnl, role, source, timestamp_ms
+            ) VALUES (
+                :account_id, :exchange_fill_id, :terminal_fill_id, :exchange_order_id,
+                :symbol, :side, :direction, :price, :quantity, :fee, :fee_asset,
+                :exchange_position_id, :terminal_position_id, :is_close,
+                :realized_pnl, :role, :source, :timestamp_ms
+            )
+            ON CONFLICT(account_id, exchange_fill_id) DO UPDATE SET
+                terminal_fill_id     = excluded.terminal_fill_id,
+                terminal_position_id = excluded.terminal_position_id,
+                price                = excluded.price,
+                quantity             = excluded.quantity,
+                fee                  = excluded.fee,
+                fee_asset            = excluded.fee_asset,
+                role                 = excluded.role,
+                realized_pnl         = excluded.realized_pnl,
+                timestamp_ms         = excluded.timestamp_ms
+        """
+        try:
+            await self._conn.execute(fill_sql, {
+                "account_id":           row.get("account_id", 1),
+                "exchange_fill_id":     row.get("exchange_fill_id"),
+                "terminal_fill_id":     row.get("terminal_fill_id", ""),
+                "exchange_order_id":    row.get("exchange_order_id", ""),
+                "symbol":               row.get("symbol", ""),
+                "side":                 row.get("side", ""),
+                "direction":            row.get("direction", ""),
+                "price":                row.get("price", 0),
+                "quantity":             row.get("quantity", 0),
+                "fee":                  row.get("fee", 0),
+                "fee_asset":            row.get("fee_asset", "USDT"),
+                "exchange_position_id": row.get("exchange_position_id", ""),
+                "terminal_position_id": row.get("terminal_position_id", ""),
+                "is_close":             int(row.get("is_close", False)),
+                "realized_pnl":         row.get("realized_pnl", 0),
+                "role":                 row.get("role", ""),
+                "source":               row.get("source", ""),
+                "timestamp_ms":         row.get("timestamp_ms", 0),
+            })
+            if exchange_order_id:
+                now_ms = int(time.time() * 1000)
+                await self._conn.execute(
+                    """UPDATE orders SET
+                        avg_fill_price = CASE
+                            WHEN filled_qty = 0 THEN :price
+                            ELSE (avg_fill_price * filled_qty + :price * :qty)
+                                 / (filled_qty + :qty)
+                        END,
+                        filled_qty     = filled_qty + :qty,
+                        updated_at_ms  = :now_ms
+                    WHERE exchange_order_id = :oid AND account_id = :aid""",
+                    {
+                        "qty":    row.get("quantity", 0),
+                        "price":  row.get("price", 0),
+                        "now_ms": now_ms,
+                        "oid":    exchange_order_id,
+                        "aid":    row.get("account_id", 1),
+                    },
+                )
+            await self._conn.commit()
+        except Exception:
+            log.exception("upsert_fill_and_update_order failed")
+
     async def mark_stale_orders_canceled(
         self, account_id: int, active_ids: List[str],
         *, allow_cancel_all: bool = False,

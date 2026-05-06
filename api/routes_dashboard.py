@@ -19,6 +19,26 @@ from api.cache import _ensure_funding_rates, get_funding_lines, _maybe_backfill_
 log = logging.getLogger("routes.dashboard")
 router = APIRouter()
 
+# ── Cached recent orders (avoid DB query every 1s dashboard poll) ─────────
+_recent_orders_cache: list = []
+_recent_orders_ts: float = 0.0
+_RECENT_ORDERS_TTL = 5.0  # seconds
+
+
+async def _get_cached_recent_orders(aid: int) -> list:
+    global _recent_orders_cache, _recent_orders_ts
+    now = _time.monotonic()
+    if now - _recent_orders_ts >= _RECENT_ORDERS_TTL:
+        try:
+            _recent_orders_cache, _ = await db.query_order_history(
+                account_id=aid, page=1, per_page=20,
+                sort_by="updated_at_ms", sort_dir="DESC",
+            )
+        except Exception:
+            pass
+        _recent_orders_ts = now
+    return _recent_orders_cache
+
 
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request):
@@ -42,16 +62,10 @@ async def frag_dashboard(request: Request):
             sector_totals[p.sector] = sector_totals.get(p.sector, 0.0) + abs(p.position_value_usdt)
     sector_lines = [f"{s}: ${v:,.0f}" for s, v in sorted(sector_totals.items(), key=lambda x: -x[1])]
 
-    # Working orders + recent order history for dashboard tabs
+    # Working orders (in-memory cache) + recent order history (5s TTL cache)
     working_orders = platform_bridge.order_manager.open_orders
     aid = app_state.active_account_id
-    try:
-        recent_orders, _ = await db.query_order_history(
-            account_id=aid, page=1, per_page=20,
-            sort_by="updated_at_ms", sort_dir="DESC",
-        )
-    except Exception:
-        recent_orders = []
+    recent_orders = await _get_cached_recent_orders(aid)
 
     return templates.TemplateResponse(
         request, "fragments/dashboard_body.html",

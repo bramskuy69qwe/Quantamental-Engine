@@ -26,8 +26,6 @@ public class RiskEnginePlugin : Strategy
     private Account? _activeAccount;
 
     // Throttle Account.Updated -> account_state events (5 Hz)
-    private long _lastAccountStateMs;
-    private const int AccountStateMinIntervalMs = 200;
 
     // R4: active market-data subscriptions (engine-normalised symbol → Quantower Symbol)
     private readonly Dictionary<string, Symbol> _ohlcvSubs = new();
@@ -192,9 +190,6 @@ public class RiskEnginePlugin : Strategy
     private void SendAccountStateNow(bool force)
     {
         if (_conn is null || _activeAccount is null) return;
-        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (!force && (now - _lastAccountStateMs) < AccountStateMinIntervalMs) return;
-        _lastAccountStateMs = now;
         try
         {
             var state = RiskEngineEventMapper.MapAccountState(_activeAccount);
@@ -229,15 +224,9 @@ public class RiskEnginePlugin : Strategy
         catch (Exception ex) { Log($"OnPositionChanged error: {ex.Message}", StrategyLoggingLevel.Error); }
     }
 
-    private long _lastOrderSignalMs;
-    private const int OrderSignalMinIntervalMs = 500;
-
     private void OnOrderChanged(Order order)
     {
         if (_conn is null) return;
-        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if ((now - _lastOrderSignalMs) < OrderSignalMinIntervalMs) return;
-        _lastOrderSignalMs = now;
         try { SendOrderSnapshot(); }
         catch (Exception ex) { Log($"OnOrderChanged error: {ex.Message}", StrategyLoggingLevel.Error); }
     }

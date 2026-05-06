@@ -159,6 +159,37 @@ async def _account_refresh_loop():
                 )
             except Exception as e:
                 log.debug("REST order sync skipped: %s", e)
+            # Also sync fills for open position symbols
+            try:
+                from core.database import db as _db
+                for pos in app_state.positions:
+                    try:
+                        recent = await adapter.fetch_user_trades(pos.ticker, limit=50)
+                        for t in recent:
+                            await _db.upsert_fill({
+                                "account_id":           app_state.active_account_id,
+                                "exchange_fill_id":     t.exchange_fill_id,
+                                "terminal_fill_id":     t.terminal_fill_id,
+                                "exchange_order_id":    t.exchange_order_id,
+                                "symbol":               t.symbol,
+                                "side":                 t.side,
+                                "direction":            t.direction,
+                                "price":                t.price,
+                                "quantity":             t.quantity,
+                                "fee":                  t.fee,
+                                "fee_asset":            t.fee_asset,
+                                "exchange_position_id": "",
+                                "terminal_position_id": t.terminal_position_id,
+                                "is_close":             int(t.is_close),
+                                "realized_pnl":         t.realized_pnl,
+                                "role":                 t.role,
+                                "source":               f"{config.EXCHANGE_NAME.lower()}_rest",
+                                "timestamp_ms":         t.timestamp_ms,
+                            })
+                    except Exception:
+                        pass
+            except Exception as e:
+                log.debug("REST fill sync skipped: %s", e)
         except Exception as e:
             log.warning(f"Periodic account refresh failed: {e}")
         finally:
@@ -243,6 +274,23 @@ async def _startup_fetch():
         await fetch_exchange_trade_history()
     except Exception as e:
         log.warning(f"Exchange trade history initial fetch failed: {e}")
+
+    # Auto-backfill fills + closed_positions from exchange_history (idempotent)
+    try:
+        from core.database import db as _db
+        aid = app_state.active_account_id
+        result = await _db.backfill_fills_from_exchange_history(account_id=aid, days=90)
+        if result["fills_inserted"] or result["closed_inserted"]:
+            log.info(
+                "Startup backfill: %d fills, %d closed_positions from exchange_history",
+                result["fills_inserted"], result["closed_inserted"],
+            )
+            app_state.ws_status.add_log(
+                f"Backfill: {result['fills_inserted']} fills, "
+                f"{result['closed_inserted']} closed positions"
+            )
+    except Exception as e:
+        log.warning(f"Startup backfill failed: {e}")
 
     for pos in app_state.positions:
         try:

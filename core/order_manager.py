@@ -141,17 +141,10 @@ class OrderManager:
     ) -> None:
         """Record fill, update parent order, refresh position fees from DB."""
         fill.setdefault("account_id", account_id)
-
-        # 1. Upsert fill to DB (dedup by exchange_fill_id)
-        await self._db.upsert_fill(fill)
-
-        # 2. Update parent order (best-effort — order may not exist yet)
         exchange_order_id = fill.get("exchange_order_id", "")
-        if exchange_order_id:
-            try:
-                await self._db.update_order_from_fill(exchange_order_id, fill)
-            except Exception:
-                log.warning("Parent order %s not found for fill", exchange_order_id)
+
+        # 1+2. Upsert fill + update parent order in ONE commit
+        await self._db.upsert_fill_and_update_order(fill, exchange_order_id)
 
         # 3. Refresh position fees from DB (SUM query, not accumulate)
         pos_id = fill.get("terminal_position_id", "")

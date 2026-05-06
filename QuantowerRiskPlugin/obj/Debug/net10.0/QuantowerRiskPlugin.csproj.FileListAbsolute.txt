@@ -1,0 +1,13 @@
+E:\Quantamental Models\Quantamental Engine v2.0\Quantamental Engine v2.0 Code Base 1\QuantowerRiskPlugin\bin\Debug\net10.0\QuantowerRiskPlugin.deps.json
+E:\Quantamental Models\Quantamental Engine v2.0\Quantamental Engine v2.0 Code Base 1\QuantowerRiskPlugin\bin\Debug\net10.0\QuantowerRiskPlugin.dll
+E:\Quantamental Models\Quantamental Engine v2.0\Quantamental Engine v2.0 Code Base 1\QuantowerRiskPlugin\bin\Debug\net10.0\QuantowerRiskPlugin.pdb
+E:\Quantamental Models\Quantamental Engine v2.0\Quantamental Engine v2.0 Code Base 1\QuantowerRiskPlugin\obj\Debug\net10.0\QuantowerRiskPlugin.csproj.AssemblyReference.cache
+E:\Quantamental Models\Quantamental Engine v2.0\Quantamental Engine v2.0 Code Base 1\QuantowerRiskPlugin\obj\Debug\net10.0\QuantowerRiskPlugin.GeneratedMSBuildEditorConfig.editorconfig
+E:\Quantamental Models\Quantamental Engine v2.0\Quantamental Engine v2.0 Code Base 1\QuantowerRiskPlugin\obj\Debug\net10.0\QuantowerRiskPlugin.AssemblyInfoInputs.cache
+E:\Quantamental Models\Quantamental Engine v2.0\Quantamental Engine v2.0 Code Base 1\QuantowerRiskPlugin\obj\Debug\net10.0\QuantowerRiskPlugin.AssemblyInfo.cs
+E:\Quantamental Models\Quantamental Engine v2.0\Quantamental Engine v2.0 Code Base 1\QuantowerRiskPlugin\obj\Debug\net10.0\QuantowerRiskPlugin.csproj.CoreCompileInputs.cache
+E:\Quantamental Models\Quantamental Engine v2.0\Quantamental Engine v2.0 Code Base 1\QuantowerRiskPlugin\obj\Debug\net10.0\QuantowerRiskPlugin.sourcelink.json
+E:\Quantamental Models\Quantamental Engine v2.0\Quantamental Engine v2.0 Code Base 1\QuantowerRiskPlugin\obj\Debug\net10.0\QuantowerRiskPlugin.dll
+E:\Quantamental Models\Quantamental Engine v2.0\Quantamental Engine v2.0 Code Base 1\QuantowerRiskPlugin\obj\Debug\net10.0\refint\QuantowerRiskPlugin.dll
+E:\Quantamental Models\Quantamental Engine v2.0\Quantamental Engine v2.0 Code Base 1\QuantowerRiskPlugin\obj\Debug\net10.0\QuantowerRiskPlugin.pdb
+E:\Quantamental Models\Quantamental Engine v2.0\Quantamental Engine v2.0 Code Base 1\QuantowerRiskPlugin\obj\Debug\net10.0\ref\QuantowerRiskPlugin.dll
