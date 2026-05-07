@@ -66,7 +66,7 @@ async def _bod_scheduler():
         # Sleep until next midnight local
         midnight = now.replace(hour=0, minute=0, second=5, microsecond=0)
         if now >= midnight:
-            midnight = midnight.replace(day=midnight.day + 1)
+            midnight += timedelta(days=1)
         sleep_secs = (midnight - now).total_seconds()
         log.info(f"BOD scheduler: sleeping {sleep_secs/3600:.2f}h until {midnight}")
         await asyncio.sleep(sleep_secs)

@@ -16,6 +16,7 @@ PRD step-by-step chain:
   12. est_exposure = (total_notional + est_size) / total_equity
 """
 from __future__ import annotations
+import time
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -307,6 +308,16 @@ def run_risk_calculator(
     pf           = app_state.portfolio
     total_equity = acc.total_equity if acc.total_equity > 0 else 1.0
 
+    # RE-1: detect stale equity — sizing on outdated balance is dangerous
+    equity_stale = True  # assume stale until proven fresh
+    dc = getattr(app_state, "_data_cache", None)
+    if dc is not None:
+        applied = dc._account_version.applied_at
+        if applied > 0 and (time.monotonic() - applied) < config.WS_FALLBACK_TIMEOUT:
+            equity_stale = False
+    elif not app_state.ws_status.is_stale:
+        equity_stale = False  # no data_cache yet but WS is alive
+
     side   = "short" if sl_price > average else "long"
     sizing = calculate_position_size(ticker, average, sl_price, total_equity, side)
 
@@ -424,6 +435,9 @@ def run_risk_calculator(
         # Portfolio state
         "weekly_pnl_state":    pf.weekly_pnl_state,
         "dd_state":            pf.dd_state,
+        # Equity freshness (RE-1)
+        "equity_stale":        equity_stale,
+        "total_equity":        total_equity,
         # Misc
         "model_name":          model_name,
         "model_desc":          model_desc,

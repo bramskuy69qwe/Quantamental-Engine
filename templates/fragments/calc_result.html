@@ -24,6 +24,10 @@
 <div class="alert alert-warning" style="margin-bottom:6px;">⚠ Drawdown WARNING.</div>
 {% endif %}
 
+{% if c.equity_stale %}
+<div class="alert alert-error" style="margin-bottom:6px;">&#9888; Equity data is stale — sizing may use outdated balance (${{ fmt(c.total_equity, 2) }}). Wait for WS reconnect or refresh account.</div>
+{% endif %}
+
 <!-- ── Ineligibility notice ───────────────────────────────────────────────── -->
 {% if not c.eligible %}
   {% if c.at_max_positions %}

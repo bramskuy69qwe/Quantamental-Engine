@@ -117,6 +117,11 @@ FRED_API_KEY = os.getenv("FRED_API_KEY", "")
 FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "")
 BWE_NEWS_WS_URL = os.getenv("BWE_NEWS_WS_URL", "wss://bwenews-api.bwe-ws.com/ws")
 
+# ── Platform bridge auth ─────────────────────────────────────────────────────
+# Shared secret for Quantower plugin REST/WS endpoints.
+# Generate: python -c "import secrets; print(secrets.token_hex(32))"
+PLATFORM_TOKEN = os.getenv("PLATFORM_TOKEN", "")
+
 REGIME_STALE_MINUTES = 90   # current_regime older than this is treated as stale
 
 REGIME_MULTIPLIERS = {
