@@ -70,7 +70,8 @@ async def lifespan(app: FastAPI):
 
     # ── Load account registry (fast — local DB) ──────────────────────────────
     await account_registry.load_all()
-    app_state.active_account_id = account_registry.active_id
+    # SR-2: app_state.active_account_id is now a read-through property
+    # backed by account_registry.active_id — no manual sync needed.
 
     # ── Load connections manager (3rd-party API keys) ────────────────────────
     from core.connections import connections_manager

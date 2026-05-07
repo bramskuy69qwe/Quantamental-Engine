@@ -114,7 +114,8 @@ async def activate_account(account_id: int, request: Request):
         _backfill_earliest_ms.pop(old_account_id, None)
 
         await account_registry.set_active(account_id)
-        app_state.active_account_id = account_id
+        # SR-2: app_state.active_account_id is a read-through property —
+        # no manual sync needed after set_active().
 
         last_snap = await db.get_last_account_state(account_id=account_id)
         if last_snap:
@@ -146,7 +147,7 @@ async def activate_account(account_id: int, request: Request):
                       account_id, old_account_id, safe_exchange_error(exc))
             app_state.ws_status.add_log(f"SWITCH FAILED: {safe_exchange_error(exc)}")
             await account_registry.set_active(old_account_id)
-            app_state.active_account_id = old_account_id
+            # SR-2: read-through property, no manual sync needed.
             app_state.reset_for_account_switch(new_account_id=old_account_id)
             exchange_factory.invalidate(account_id)
             try:

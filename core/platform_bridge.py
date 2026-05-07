@@ -432,7 +432,7 @@ class PlatformBridge:
         # Already configured?
         existing = account_registry.find_by_broker_id(broker_account_id)
         if existing is not None:
-            app_state.active_account_id = existing["id"]
+            await account_registry.set_active(existing["id"])
             log.info(
                 "PlatformBridge: hello received - %s/%s/%s -> existing account_id=%d (%s)",
                 terminal, broker, broker_account_id, existing["id"], existing["name"],
@@ -462,7 +462,7 @@ class PlatformBridge:
                 await account_registry.update_account(
                     target["id"], broker_account_id=broker_account_id,
                 )
-                app_state.active_account_id = target["id"]
+                await account_registry.set_active(target["id"])
                 log.info(
                     "PlatformBridge: hello populated broker_account_id=%s on "
                     "account_id=%d (%s) - %s/%s",

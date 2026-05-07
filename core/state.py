@@ -244,8 +244,19 @@ class AppState:
         self.current_regime: Optional[RegimeState] = None
 
         # ── Multi-account / multi-platform ────────────────────────────────────
-        self.active_account_id: int = 1
+        # SR-2: active_account_id is now a read-only @property backed by
+        # account_registry.active_id.  All writes go through
+        # account_registry.set_active().  See property definition below.
         self.active_platform:   str = "standalone"
+
+    # ── SR-2: single-owner account identity ───────────────────────────────────
+
+    @property
+    def active_account_id(self) -> int:
+        """Read-through to AccountRegistry — the sole owner of active account
+        identity.  Returns 1 (safe default) before the registry is loaded."""
+        from core.account_registry import account_registry
+        return account_registry.active_id
 
     # ── DataCache-backed property for positions ────────────────────────────────
 
