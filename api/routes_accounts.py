@@ -117,13 +117,10 @@ async def activate_account(account_id: int, request: Request):
         # SR-2: app_state.active_account_id is a read-through property —
         # no manual sync needed after set_active().
 
+        # SR-3: shared 8-field restore (fixes MP-2 — was only 4 fields)
         last_snap = await db.get_last_account_state(account_id=account_id)
         if last_snap:
-            acc = app_state.account_state
-            acc.total_equity     = last_snap.get("total_equity", 0.0)
-            acc.bod_equity       = last_snap.get("bod_equity", 0.0)
-            acc.sow_equity       = last_snap.get("sow_equity", 0.0)
-            acc.max_total_equity = last_snap.get("max_total_equity", 0.0)
+            app_state.restore_from_snapshot(last_snap)
 
         async def _reinit():
             await fetch_exchange_info()
@@ -136,7 +133,9 @@ async def activate_account(account_id: int, request: Request):
                     await fetch_ohlcv(pos.ticker)
                 except Exception:
                     pass
-            app_state.recalculate_portfolio()
+            # SR-3/F4: route through DataCache (sole recalculation path)
+            if app_state._data_cache is not None:
+                app_state._data_cache._recalculate_portfolio()
             listen_key = await create_listen_key()
             await ws_manager.start(listen_key)
 

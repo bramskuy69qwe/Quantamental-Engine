@@ -91,17 +91,8 @@ async def lifespan(app: FastAPI):
     # ── Crash recovery: restore last known account state from DB (fast) ──────
     last_snap = await db.get_last_account_state(account_id=app_state.active_account_id)
     if last_snap:
-        acc = app_state.account_state
-        acc.total_equity     = last_snap.get("total_equity", 0.0)
-        acc.bod_equity       = last_snap.get("bod_equity", 0.0)
-        acc.sow_equity       = last_snap.get("sow_equity", 0.0)
-        acc.max_total_equity = last_snap.get("max_total_equity", 0.0)
-        acc.min_total_equity = last_snap.get("min_total_equity", 0.0)
-        acc.balance_usdt     = last_snap.get("balance_usdt", 0.0)
-        pf = app_state.portfolio
-        pf.dd_baseline_equity = acc.bod_equity if acc.bod_equity > 0 else acc.total_equity
-        pf.drawdown           = last_snap.get("drawdown", 0.0)
-        log.info(f"Crash recovery: restored equity={acc.total_equity:.2f} USDT from last DB snapshot")
+        app_state.restore_from_snapshot(last_snap)
+        log.info(f"Crash recovery: restored equity={app_state.account_state.total_equity:.2f} USDT from last DB snapshot")
 
     # ── Background tasks (Binance REST/WS, schedulers, monitoring) ───────────
     start_background_tasks()

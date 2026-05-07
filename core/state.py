@@ -343,73 +343,31 @@ class AppState:
         except RuntimeError:
             pass  # no event loop — skip (startup edge case)
 
-    # ── Portfolio recalculation (called after any state update) ───────────────
+    # ── SR-3: recalculate_portfolio deleted (F4) ────────────────────────────────
+    # All callers now use DataCache._recalculate_portfolio().
+    # Direct access raises AttributeError (no method, no property).
 
-    def recalculate_portfolio(self):
-        acc  = self.account_state
-        pos  = self.positions
-        prm  = self.params
-        pf   = self.portfolio
+    # ── SR-3: crash recovery — shared restore function ────────────────────────
 
-        total_equity = acc.total_equity
+    def restore_from_snapshot(self, snapshot: dict) -> None:
+        """Restore the 8-field crash-recovery set from a DB snapshot dict.
 
-        # Total exposure = sum of all notional / equity.
-        # If equity hasn't loaded yet (0), leave exposure at 0 — using 1.0 as a
-        # fallback would produce a wildly incorrect value (notional treated as ×equity).
-        if total_equity > 0:
-            pf.total_exposure = sum(abs(p.position_value_usdt) for p in pos) / total_equity
-        else:
-            pf.total_exposure = 0.0
-
-        # Correlated exposure per sector
-        sector_net: Dict[str, float] = {}
-        for p in pos:
-            net = p.position_value_usdt if p.direction == "LONG" else -p.position_value_usdt
-            sector_net[p.sector] = sector_net.get(p.sector, 0.0) + net
-        pf.total_correlated_exposure = sector_net
-
-        # Total TP / SL usdt
-        acc.total_tp_usdt = sum(p.individual_tp_usdt for p in pos)
-        acc.total_sl_usdt = sum(p.individual_sl_usdt for p in pos)
-
-        # Daily PnL (current equity vs BOD equity)
-        bod_eq = acc.bod_equity if acc.bod_equity > 0 else total_equity
-        acc.daily_pnl         = acc.total_equity - bod_eq
-        acc.daily_pnl_percent = acc.daily_pnl / bod_eq if bod_eq > 0 else 0.0
-
-        # Weekly PnL
-        sow_eq = acc.sow_equity if acc.sow_equity > 0 else total_equity
-        pf.total_weekly_pnl = acc.total_equity - sow_eq
-        pf.total_weekly_pnl_percent = pf.total_weekly_pnl / sow_eq if sow_eq > 0 else 0.0
-
-        # Drawdown from BOD baseline
-        baseline = pf.dd_baseline_equity if pf.dd_baseline_equity > 0 else total_equity
-        max_eq   = max(acc.max_total_equity, total_equity)
-        acc.max_total_equity = max_eq
-        # Track min equity (only update once initialized > 0)
-        if acc.min_total_equity > 0:
-            acc.min_total_equity = min(acc.min_total_equity, total_equity)
-        else:
-            acc.min_total_equity = total_equity
-        pf.drawdown = (max_eq - total_equity) / max_eq if max_eq > 0 else 0.0
-
-        # Warnings / limits — only applies when weekly PnL is negative (a loss)
-        weekly_loss_pct = -pf.total_weekly_pnl_percent  # positive when losing
-        w_ratio = weekly_loss_pct / prm["max_w_loss_percent"] if prm["max_w_loss_percent"] > 0 else 0
-        if weekly_loss_pct > 0 and w_ratio >= prm["weekly_loss_limit_pct"]:
-            pf.weekly_pnl_state = "limit"
-        elif weekly_loss_pct > 0 and w_ratio >= prm["weekly_loss_warning_pct"]:
-            pf.weekly_pnl_state = "warning"
-        else:
-            pf.weekly_pnl_state = "ok"
-
-        dd_ratio = pf.drawdown / prm["max_dd_percent"] if prm["max_dd_percent"] > 0 else 0
-        if dd_ratio >= prm["max_dd_limit_pct"]:
-            pf.dd_state = "limit"
-        elif dd_ratio >= prm["max_dd_warning_pct"]:
-            pf.dd_state = "warning"
-        else:
-            pf.dd_state = "ok"
+        Called by main.py (startup) and routes_accounts.py (account switch).
+        Fields restored:
+          AccountState:   total_equity, balance_usdt, bod_equity, sow_equity,
+                          max_total_equity, min_total_equity
+          PortfolioStats: dd_baseline_equity (derived), drawdown
+        """
+        acc = self.account_state
+        acc.total_equity     = snapshot.get("total_equity", 0.0)
+        acc.balance_usdt     = snapshot.get("balance_usdt", 0.0)
+        acc.bod_equity       = snapshot.get("bod_equity", 0.0)
+        acc.sow_equity       = snapshot.get("sow_equity", 0.0)
+        acc.max_total_equity = snapshot.get("max_total_equity", 0.0)
+        acc.min_total_equity = snapshot.get("min_total_equity", 0.0)
+        pf = self.portfolio
+        pf.dd_baseline_equity = acc.bod_equity if acc.bod_equity > 0 else acc.total_equity
+        pf.drawdown           = snapshot.get("drawdown", 0.0)
 
     # ── BOD reset ─────────────────────────────────────────────────────────────
 

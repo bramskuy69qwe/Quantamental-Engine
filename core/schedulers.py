@@ -307,7 +307,9 @@ async def _startup_fetch():
         except Exception as e:
             log.warning(f"OHLCV fetch failed for {pos.ticker}: {e}")
 
-    app_state.recalculate_portfolio()
+    # SR-3/F4: route through DataCache (sole recalculation path)
+    if app_state._data_cache is not None:
+        app_state._data_cache._recalculate_portfolio()
 
     try:
         listen_key = await create_listen_key()

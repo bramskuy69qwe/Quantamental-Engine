@@ -52,11 +52,21 @@
 
 ### Bucket 3+: see AUDIT_REPORT.md execution order
 
+### Bucket 5: Follow-up cleanup (no dependency constraints)
+- Public API on DataCache: expose `recalculate_portfolio()` (no
+  underscore) as the public method, keep `_recalculate_portfolio`
+  internal. Migrate the 3 SR-3 callers to the public form. ~5 lines.
+
 ## Status: Where are we?
 
 Last updated: 2026-05-08
 - Bucket 0: **done** — RE-9 landed (60 tests, 111-row baseline CSV)
 - Bucket 1: **done** — SC-1, RP-1, RE-1 all landed (branch: audit/v2.3.1)
-- Bucket 2: **SR-2 done** (branch: fix/SR-2-account-registry-single-owner)
-  - 18 regression tests, 151/151 full suite green, baseline diff empty
-  - SR-1 next (can land independently); SR-3 depends on SR-2 (now unblocked)
+- Bucket 2: **SR-2 done**, **SR-3 done**
+  - SR-2: 18 regression tests (branch: fix/SR-2-account-registry-single-owner)
+  - SR-3: 13 regression tests (branch: fix/SR-3-crash-recovery-consolidation)
+  - 164/164 full suite green, baseline diff empty after both
+  - SR-1 next (independent of SR-2/SR-3)
+  - Note: v2.3.1 recomputes dd_state/weekly_pnl_state on restart
+    rather than restoring from snapshot. v2.4 gate semantics may
+    revisit this decision.

@@ -209,5 +209,7 @@ async def handle_params_updated(payload: Dict[str, Any]) -> None:
 
     Recalculate portfolio so all metrics reflect new parameters immediately.
     """
-    app_state.recalculate_portfolio()
+    # SR-3/F4: route through DataCache (sole recalculation path)
+    if app_state._data_cache is not None:
+        app_state._data_cache._recalculate_portfolio()
     log.debug("params_updated", extra={"ts": payload.get("ts")})
