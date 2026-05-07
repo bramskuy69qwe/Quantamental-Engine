@@ -377,42 +377,7 @@ def _apply_mark_price(msg: dict) -> None:
     mark = float(msg.get("p", 0) or 0)
     if not sym or not mark:
         return
-
-    app_state.mark_price_cache[sym] = mark
-
-    for pos in app_state.positions:
-        if pos.ticker == sym:
-            pos.fair_price = mark
-            # Update notional and margin from mark price
-            pos.position_value_usdt = abs(mark * pos.contract_amount * pos.contract_size)
-            pos.position_value_asset = abs(pos.contract_amount * pos.contract_size)
-            if pos.average > 0:
-                if pos.direction == "LONG":
-                    pos.individual_unrealized = (mark - pos.average) * pos.contract_amount
-                else:
-                    pos.individual_unrealized = (pos.average - mark) * pos.contract_amount
-                # Session MFE/MAE in USDT — track running max/min of unrealized PnL
-                unreal = pos.individual_unrealized
-                if unreal > pos.session_mfe:
-                    pos.session_mfe = round(unreal, 2)
-                if pos.session_mae == 0.0 or unreal < pos.session_mae:
-                    pos.session_mae = round(unreal, 2)
-
-    acc = app_state.account_state
-    acc.total_unrealized = sum(
-        p.individual_unrealized for p in app_state.positions
-    )
-    acc.total_position_value = sum(
-        p.position_value_usdt for p in app_state.positions
-    )
-    acc.total_margin_used = sum(
-        p.individual_margin_used for p in app_state.positions
-    )
-    # Equity = balance + unrealized (real-time from mark price)
-    if acc.balance_usdt > 0:
-        acc.total_equity = acc.balance_usdt + acc.total_unrealized
-        acc.available_margin = acc.total_equity - acc.total_margin_used
-    app_state.recalculate_portfolio()
+    app_state._data_cache.apply_mark_price(sym, mark)
 
 
 def _apply_kline(msg: dict) -> None:
@@ -420,7 +385,6 @@ def _apply_kline(msg: dict) -> None:
     sym = msg.get("s", "")
     if not k.get("x"):          # only closed candles
         return
-
     candle = [
         k["t"],                  # open time
         float(k["o"]),
@@ -429,25 +393,16 @@ def _apply_kline(msg: dict) -> None:
         float(k["c"]),
         float(k["v"]),
     ]
-
-    cache = app_state.ohlcv_cache.get(sym, [])
-    if cache and cache[-1][0] == candle[0]:
-        cache[-1] = candle
-    else:
-        cache.append(candle)
-        if len(cache) > config.ATR_FETCH_LIMIT + 10:
-            cache = cache[-(config.ATR_FETCH_LIMIT + 10):]
-    app_state.ohlcv_cache[sym] = cache
+    app_state._data_cache.apply_kline(sym, candle)
 
 
 def _apply_depth(msg: dict) -> None:
     sym = msg.get("s", "")
     if not sym:
         return
-    app_state.orderbook_cache[sym] = {
-        "bids": [[float(p), float(q)] for p, q in msg.get("b", [])],
-        "asks": [[float(p), float(q)] for p, q in msg.get("a", [])],
-    }
+    bids = [[float(p), float(q)] for p, q in msg.get("b", [])]
+    asks = [[float(p), float(q)] for p, q in msg.get("a", [])]
+    app_state._data_cache.apply_depth(sym, bids, asks)
 
 
 async def _market_stream_loop(attempt: int = 0) -> None:

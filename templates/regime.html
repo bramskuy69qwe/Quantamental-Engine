@@ -278,7 +278,7 @@ var SIGNALS=[
 ];
 
 var currentTimelineRange=365,currentTimelineStyle='swim',signalRanges={},signalCharts={},timelineChart=null,signalCoverage={};
-var _newsRefreshTimer=null,_newsData=[],_calDataAll=[],_newsLayout='magazine',_newsExpandedId=null,_newsSelId=null,_calFilter='',_clockIv=null,_calScrolledOnce=false;
+var _newsRefreshTimer=null,_calRefreshTimer=null,_newsTimeTick=null,_newsData=[],_calDataAll=[],_newsLayout='magazine',_newsExpandedId=null,_newsSelId=null,_calFilter='',_clockIv=null,_calScrolledOnce=false,_newsDataKey='',_calDataKey='';
 
 // ── Panel switching ────────────────────────────────────────────────────────
 function showPanel(name){
@@ -290,7 +290,7 @@ function showPanel(name){
   if(name==='backfill')loadCoverage();
   if(name==='config')loadThresholds();
   if(name==='overview'){loadCurrentRegime();loadAllSignalCharts();loadTimeline();}
-  if(name==='news'){_calScrolledOnce=false;loadCalendar();loadNewsFeed();startNewsAutoRefresh();}
+  if(name==='news'){_calScrolledOnce=false;_newsDataKey='';_calDataKey='';loadCalendar();loadNewsFeed();startNewsAutoRefresh();}
   else{stopNewsAutoRefresh();}
 }
 
@@ -567,9 +567,12 @@ function fmtUtcTime(iso){
 }
 function fmtRelTime(iso){
   if(!iso)return '';var d=new Date(iso);if(isNaN(d.getTime()))return '';
-  var diff=(Date.now()-d.getTime())/1000;
-  if(diff<60)return Math.floor(diff)+'s ago';if(diff<3600)return Math.floor(diff/60)+'m ago';
-  if(diff<86400)return Math.floor(diff/3600)+'h ago';return Math.floor(diff/86400)+'d ago';
+  var diff=Math.floor((Date.now()-d.getTime())/1000);if(diff<0)diff=0;
+  var days=Math.floor(diff/86400),hrs=Math.floor((diff%86400)/3600),mins=Math.floor((diff%3600)/60),secs=diff%60;
+  if(days>0)return days+'d '+hrs+'h ago';
+  if(hrs>0)return hrs+'h '+mins+'m ago';
+  if(mins>0)return mins+'m '+secs+'s ago';
+  return secs+'s ago';
 }
 function fmtNum(v){
   if(v===null||v===undefined)return '\u2014';var n=Number(v);if(!isFinite(n))return '\u2014';
@@ -596,8 +599,14 @@ function tickerTags(tickers){
 function renderNewsPanel(){
   var root=document.getElementById('news-root');
   if(!root)return;
+  // Preserve scroll positions across re-renders
+  var cs=document.getElementById('cal-scroll'),fs=document.getElementById('news-feed-scroll');
+  var savedCal=cs?cs.scrollTop:0,savedFeed=fs?fs.scrollTop:0;
   if(_newsLayout==='magazine') renderNewsMagazine(root);
   else renderNewsDetailLayout(root);
+  var cs2=document.getElementById('cal-scroll'),fs2=document.getElementById('news-feed-scroll');
+  if(cs2&&savedCal)cs2.scrollTop=savedCal;
+  if(fs2&&savedFeed)fs2.scrollTop=savedFeed;
   if(!_calScrolledOnce&&_calDataAll.length){_calScrolledOnce=true;setTimeout(scrollCalToNow,80);}
 }
 
@@ -710,7 +719,7 @@ function renderNewsMagazine(root){
               '</select>'+
             '</div>'+
           '</div>'+
-          '<div style="display:flex;flex-direction:column;max-height:65vh;overflow-y:auto;">'+calCardsHtml+'</div>'+
+          '<div id="cal-scroll" style="display:flex;flex-direction:column;max-height:65vh;overflow-y:auto;">'+calCardsHtml+'</div>'+
         '</div>'+
       '</div>'+
     '</div>';
@@ -788,7 +797,7 @@ function renderNewsDetailLayout(root){
             '<button class="btn btn-secondary btn-sm" onclick="setNewsLayout(\'magazine\')">\u21C4 Magazine</button>'+
           '</div>'+
         '</div>'+
-        '<div style="overflow-x:auto;max-height:280px;">'+
+        '<div id="cal-scroll" style="overflow-x:auto;max-height:280px;overflow-y:auto;">'+
           '<table><thead><tr>'+
             '<th>Time (UTC)</th><th>Country</th><th>Event</th><th>Impact</th>'+
             '<th style="text-align:right;">Previous</th><th style="text-align:right;">Estimate</th><th style="text-align:right;">Actual</th>'+
@@ -801,7 +810,7 @@ function renderNewsDetailLayout(root){
             '<span class="sec-lbl" style="margin-bottom:0;">News Feed</span>'+
             '<span style="font-size:.65rem;color:var(--sub);">'+_newsData.length+' items</span>'+
           '</div>'+
-          '<div style="display:flex;flex-direction:column;overflow-y:auto;max-height:55vh;min-height:200px;">'+feedHtml+'</div>'+
+          '<div id="news-feed-scroll" style="display:flex;flex-direction:column;overflow-y:auto;max-height:55vh;min-height:200px;">'+feedHtml+'</div>'+
         '</div>'+
         '<div class="card" style="padding:10px 14px;min-height:300px;">'+detailHtml+'</div>'+
       '</div>'+
@@ -822,8 +831,13 @@ function scrollCalToNow(){
 async function loadCalendar(){
   var minus30=new Date(Date.now()-30*86400000).toISOString().slice(0,10);
   var plus30=new Date(Date.now()+30*86400000).toISOString().slice(0,10);
-  try{var resp=await fetch('/api/calendar?from_date='+minus30+'&to_date='+plus30);_calDataAll=await resp.json();}
-  catch(e){_calDataAll=[];}
+  try{
+    var resp=await fetch('/api/calendar?from_date='+minus30+'&to_date='+plus30);
+    var d=await resp.json();
+    var key=JSON.stringify(d);
+    if(key===_calDataKey)return;
+    _calDataKey=key;_calDataAll=d;
+  }catch(e){_calDataAll=[];_calDataKey='';}
   renderNewsPanel();
 }
 function getFilteredCalendar(){
@@ -833,23 +847,32 @@ function getFilteredCalendar(){
 }
 
 async function loadNewsFeed(){
-  try{var resp=await fetch('/api/news/feed?limit=80');_newsData=await resp.json();}
-  catch(e){_newsData=[];}
+  try{
+    var resp=await fetch('/api/news/feed?limit=80');
+    var d=await resp.json();
+    var key=JSON.stringify(d);
+    if(key===_newsDataKey)return;
+    _newsDataKey=key;_newsData=d;
+  }catch(e){_newsData=[];_newsDataKey='';}
   renderNewsPanel();
 }
 
 async function refreshNews(){
   showToast('Refreshing news + calendar...');
-  try{var resp=await fetch('/api/news/refresh',{method:'POST'});var r=await resp.json();showToast('+'+(r.news_added||0)+' news, +'+(r.calendar_added||0)+' events');loadCalendar();loadNewsFeed();}
+  try{var resp=await fetch('/api/news/refresh',{method:'POST'});var r=await resp.json();showToast('+'+(r.news_added||0)+' news, +'+(r.calendar_added||0)+' events');_newsDataKey='';_calDataKey='';loadCalendar();loadNewsFeed();}
   catch(e){showToast('Refresh failed','error');}
 }
 function startNewsAutoRefresh(){
   stopNewsAutoRefresh();
-  _newsRefreshTimer=setInterval(function(){loadNewsFeed();loadCalendar();},30000);
+  _newsRefreshTimer=setInterval(loadNewsFeed,15000);
+  _calRefreshTimer=setInterval(loadCalendar,60000);
+  _newsTimeTick=setInterval(renderNewsPanel,60000);
   _clockIv=setInterval(tickNewsClock,1000);
 }
 function stopNewsAutoRefresh(){
   if(_newsRefreshTimer){clearInterval(_newsRefreshTimer);_newsRefreshTimer=null;}
+  if(_calRefreshTimer){clearInterval(_calRefreshTimer);_calRefreshTimer=null;}
+  if(_newsTimeTick){clearInterval(_newsTimeTick);_newsTimeTick=null;}
   if(_clockIv){clearInterval(_clockIv);_clockIv=null;}
 }
 function tickNewsClock(){

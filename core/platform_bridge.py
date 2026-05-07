@@ -685,7 +685,7 @@ class PlatformBridge:
     # ── R4: market data handlers (inbound from plugin) ────────────────────────
 
     def _handle_ohlcv_bar(self, msg: dict) -> None:
-        """Plugin streamed one OHLCV bar. Updates ohlcv_cache in-place."""
+        """Plugin streamed one OHLCV bar → DataCache."""
         symbol = _normalize_symbol(str(msg.get("symbol", "")))
         if not symbol:
             return
@@ -700,18 +700,10 @@ class PlatformBridge:
             ]
         except (TypeError, ValueError):
             return
-
-        cache = app_state.ohlcv_cache.get(symbol, [])
-        if cache and cache[-1][0] == candle[0]:
-            cache[-1] = candle          # replace in-progress bar
-        else:
-            cache.append(candle)
-            if len(cache) > _cfg.ATR_FETCH_LIMIT + 10:
-                cache = cache[-(_cfg.ATR_FETCH_LIMIT + 10):]
-        app_state.ohlcv_cache[symbol] = cache
+        app_state._data_cache.apply_kline(symbol, candle)
 
     def _handle_mark_price(self, msg: dict) -> None:
-        """Plugin pushed a mark-price update for a symbol."""
+        """Plugin pushed a mark-price update → DataCache."""
         symbol = _normalize_symbol(str(msg.get("symbol", "")))
         try:
             price = float(msg.get("price", 0) or 0)
@@ -719,43 +711,19 @@ class PlatformBridge:
             price = 0.0
         if not symbol or not price:
             return
-
-        app_state.mark_price_cache[symbol] = price
-        for pos in app_state.positions:
-            if pos.ticker != symbol:
-                continue
-            pos.fair_price = price
-            if pos.average > 0:
-                if pos.direction == "LONG":
-                    pos.individual_unrealized = (price - pos.average) * pos.contract_amount
-                else:
-                    pos.individual_unrealized = (pos.average - price) * pos.contract_amount
-                unreal = pos.individual_unrealized
-                if unreal > pos.session_mfe:
-                    pos.session_mfe = round(unreal, 2)
-                if pos.session_mae == 0.0 or unreal < pos.session_mae:
-                    pos.session_mae = round(unreal, 2)
-
-        app_state.account_state.total_unrealized = sum(
-            p.individual_unrealized for p in app_state.positions
-        )
-        try:
-            app_state.recalculate_portfolio()
-        except Exception:
-            pass
+        app_state._data_cache.apply_mark_price(symbol, price)
 
     def _handle_depth_snapshot(self, msg: dict) -> None:
-        """Plugin pushed an order-book snapshot."""
+        """Plugin pushed an order-book snapshot → DataCache."""
         symbol = _normalize_symbol(str(msg.get("symbol", "")))
         if not symbol:
             return
         try:
-            app_state.orderbook_cache[symbol] = {
-                "bids": [[float(p), float(q)] for p, q in (msg.get("bids") or [])],
-                "asks": [[float(p), float(q)] for p, q in (msg.get("asks") or [])],
-            }
+            bids = [[float(p), float(q)] for p, q in (msg.get("bids") or [])]
+            asks = [[float(p), float(q)] for p, q in (msg.get("asks") or [])]
         except (TypeError, ValueError):
-            pass
+            return
+        app_state._data_cache.apply_depth(symbol, bids, asks)
 
     # ── R4: outbound requests to plugin ──────────────────────────────────────
 

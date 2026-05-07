@@ -546,6 +546,77 @@ class DataCache:
 
             self._recalculate_portfolio()
 
+    # ── Market data: synchronous methods (Phase 5) ─────────────────────────
+    #
+    # No async lock needed — asyncio is single-threaded, sync functions run
+    # to completion without yielding. These are called from WS message
+    # handlers at high frequency (~1/sec per symbol for mark price).
+
+    def apply_mark_price(self, symbol: str, mark: float) -> None:
+        """Update mark price, recalculate PnL for matching positions,
+        update account aggregates, and recalculate portfolio."""
+        from core.state import app_state
+
+        app_state.mark_price_cache[symbol] = mark
+
+        for pos in self._positions:
+            if pos.ticker != symbol:
+                continue
+            pos.fair_price = mark
+            pos.position_value_usdt = abs(mark * pos.contract_amount * pos.contract_size)
+            pos.position_value_asset = abs(pos.contract_amount * pos.contract_size)
+            if pos.average > 0:
+                if pos.direction == "LONG":
+                    pos.individual_unrealized = (mark - pos.average) * pos.contract_amount
+                else:
+                    pos.individual_unrealized = (pos.average - mark) * pos.contract_amount
+                unreal = pos.individual_unrealized
+                if unreal > pos.session_mfe:
+                    pos.session_mfe = round(unreal, 2)
+                if pos.session_mae == 0.0 or unreal < pos.session_mae:
+                    pos.session_mae = round(unreal, 2)
+
+        acc = app_state.account_state
+        acc.total_unrealized = sum(p.individual_unrealized for p in self._positions)
+        acc.total_position_value = sum(p.position_value_usdt for p in self._positions)
+        acc.total_margin_used = sum(p.individual_margin_used for p in self._positions)
+        if acc.balance_usdt > 0:
+            acc.total_equity = acc.balance_usdt + acc.total_unrealized
+            acc.available_margin = acc.total_equity - acc.total_margin_used
+
+        self._recalculate_portfolio()
+
+    def apply_kline(self, symbol: str, candle: list) -> None:
+        """Update OHLCV cache with a closed kline candle."""
+        from core.state import app_state
+
+        cache = app_state.ohlcv_cache.get(symbol, [])
+        if cache and cache[-1][0] == candle[0]:
+            cache[-1] = candle          # replace in-progress bar
+        else:
+            cache.append(candle)
+            if len(cache) > config.ATR_FETCH_LIMIT + 10:
+                cache = cache[-(config.ATR_FETCH_LIMIT + 10):]
+        app_state.ohlcv_cache[symbol] = cache
+
+    def apply_depth(self, symbol: str, bids: list, asks: list) -> None:
+        """Update orderbook cache with a depth snapshot."""
+        from core.state import app_state
+        app_state.orderbook_cache[symbol] = {"bids": bids, "asks": asks}
+
+    def evict_symbol_caches(self, active_tickers: set) -> None:
+        """Remove cache entries for symbols no longer in any active position."""
+        from core.state import app_state
+        for sym in list(app_state.ohlcv_cache.keys()):
+            if sym not in active_tickers:
+                del app_state.ohlcv_cache[sym]
+        for sym in list(app_state.orderbook_cache.keys()):
+            if sym not in active_tickers:
+                del app_state.orderbook_cache[sym]
+        for sym in list(app_state.mark_price_cache.keys()):
+            if sym not in active_tickers:
+                del app_state.mark_price_cache[sym]
+
     # ── Utilities ────────────────────────────────────────────────────────────
 
     def clear(self) -> None:

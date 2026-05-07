@@ -402,7 +402,7 @@ async def _regime_refresh_loop():
 
 async def _news_refresh_loop():
     """
-    Pull Finnhub news every 60s and economic calendar every 30 min.
+    Pull Finnhub news every 15s and economic calendar every 10 min.
     Non-fatal on errors — just log and continue, like _history_refresh_loop.
     """
     fetcher = FinnhubFetcher()
@@ -415,16 +415,16 @@ async def _news_refresh_loop():
             log.warning("Finnhub news refresh failed: %s", e)
 
         now_ts = datetime.now(timezone.utc).timestamp()
-        if now_ts - last_calendar_ts >= 30 * 60:
+        if now_ts - last_calendar_ts >= 10 * 60:
             try:
-                today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-                plus7 = (datetime.now(timezone.utc) + timedelta(days=7)).strftime("%Y-%m-%d")
-                await fetcher.fetch_calendar(today, plus7)
+                minus30 = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%d")
+                plus30 = (datetime.now(timezone.utc) + timedelta(days=30)).strftime("%Y-%m-%d")
+                await fetcher.fetch_calendar(minus30, plus30)
                 last_calendar_ts = now_ts
             except Exception as e:
                 log.warning("Finnhub calendar refresh failed: %s", e)
 
-        await asyncio.sleep(60)
+        await asyncio.sleep(15)
 
 
 async def _bwe_ws_consumer():

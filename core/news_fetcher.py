@@ -34,9 +34,13 @@ class FinnhubFetcher:
     BASE_URL = "https://finnhub.io/api/v1"
 
     def __init__(self, api_key: Optional[str] = None) -> None:
-        self.api_key = api_key if api_key is not None else config.FINNHUB_API_KEY
+        self._explicit_key = api_key
 
     def _key_ok(self) -> bool:
+        # Re-resolve each call: explicit > connections DB > env fallback
+        self.api_key = (self._explicit_key
+                        if self._explicit_key is not None
+                        else config.get_api_key("finnhub"))
         if not self.api_key:
             log.warning("FINNHUB_API_KEY not set — Finnhub fetches skipped")
             return False
@@ -151,15 +155,21 @@ class BweWsConsumer:
     _PING_INTERVAL = 20  # seconds between plaintext ping sends
 
     def __init__(self, url: Optional[str] = None) -> None:
-        # Read URL from connections if configured, else fall back to config/env
-        if url is None:
-            try:
-                from core.connections import connections_manager
-                url = connections_manager.get_sync("bwe_news")
-            except Exception:
-                pass
-        self.url = url or config.BWE_NEWS_WS_URL
+        self._explicit_url = url
         self._stop = False
+
+    def _resolve_url(self) -> str:
+        """Re-resolve URL each reconnect: explicit > connections DB > env fallback."""
+        if self._explicit_url:
+            return self._explicit_url
+        try:
+            from core.connections import connections_manager
+            url = connections_manager.get_sync("bwe_news")
+            if url:
+                return url
+        except Exception:
+            pass
+        return config.BWE_NEWS_WS_URL
 
     def stop(self) -> None:
         self._stop = True
@@ -170,6 +180,7 @@ class BweWsConsumer:
 
         backoff = 5
         while not self._stop:
+            self.url = self._resolve_url()
             try:
                 async with websockets.connect(
                     self.url,

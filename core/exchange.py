@@ -193,15 +193,7 @@ async def fetch_positions(force: bool = False) -> None:
     else:
         # Evict cache entries for symbols no longer in any active position
         active_tickers = {p.ticker for p in app_state.positions}
-        for sym in list(app_state.ohlcv_cache.keys()):
-            if sym not in active_tickers:
-                del app_state.ohlcv_cache[sym]
-        for sym in list(app_state.orderbook_cache.keys()):
-            if sym not in active_tickers:
-                del app_state.orderbook_cache[sym]
-        for sym in list(app_state.mark_price_cache.keys()):
-            if sym not in active_tickers:
-                del app_state.mark_price_cache[sym]
+        app_state._data_cache.evict_symbol_caches(active_tickers)
 
     # Always attach TP/SL from open orders — even if position snapshot was
     # rejected, orders can change independently (user edits TP/SL on exchange)

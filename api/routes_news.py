@@ -38,8 +38,8 @@ async def api_news_refresh():
     """Manual trigger: pull Finnhub news + calendar immediately."""
     from datetime import datetime as _dt, timedelta as _td, timezone as _tz
     fetcher = FinnhubFetcher()
-    today = _dt.now(_tz.utc).strftime("%Y-%m-%d")
-    plus7 = (_dt.now(_tz.utc) + _td(days=7)).strftime("%Y-%m-%d")
+    minus30 = (_dt.now(_tz.utc) - _td(days=30)).strftime("%Y-%m-%d")
+    plus30 = (_dt.now(_tz.utc) + _td(days=30)).strftime("%Y-%m-%d")
     news_count = await fetcher.fetch_news(category="general")
-    cal_count  = await fetcher.fetch_calendar(today, plus7)
+    cal_count  = await fetcher.fetch_calendar(minus30, plus30)
     return JSONResponse({"news_added": news_count, "calendar_added": cal_count})
