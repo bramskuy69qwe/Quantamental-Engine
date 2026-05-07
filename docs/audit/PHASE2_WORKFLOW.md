@@ -62,11 +62,11 @@
 Last updated: 2026-05-08
 - Bucket 0: **done** — RE-9 landed (60 tests, 111-row baseline CSV)
 - Bucket 1: **done** — SC-1, RP-1, RE-1 all landed (branch: audit/v2.3.1)
-- Bucket 2: **SR-2 done**, **SR-3 done**
+- Bucket 2: **done** — all three foundation redesigns landed
+  - SR-1: 73 regression tests (branch: fix/SR-1-order-manager-single-owner)
   - SR-2: 18 regression tests (branch: fix/SR-2-account-registry-single-owner)
   - SR-3: 13 regression tests (branch: fix/SR-3-crash-recovery-consolidation)
-  - 164/164 full suite green, baseline diff empty after both
-  - SR-1 next (independent of SR-2/SR-3)
+  - 237/237 full suite green, baseline diff empty after all three
   - Note: v2.3.1 recomputes dd_state/weekly_pnl_state on restart
     rather than restoring from snapshot. v2.4 gate semantics may
     revisit this decision.

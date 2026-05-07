@@ -70,6 +70,8 @@ class OrdersMixin:
                 exchange_position_id = excluded.exchange_position_id,
                 updated_at_ms       = excluded.updated_at_ms,
                 last_seen_ms        = excluded.last_seen_ms
+            WHERE excluded.updated_at_ms >= orders.updated_at_ms
+               OR orders.updated_at_ms IS NULL
         """
         try:
             async with self._conn.cursor() as cur:

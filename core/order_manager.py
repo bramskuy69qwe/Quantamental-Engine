@@ -82,10 +82,50 @@ class OrderManager:
         if canceled:
             log.info("Marked %d missing orders as canceled", canceled)
 
-        # 5. Rebuild cache from DB (1 query)
-        self._open_orders = await self._db.query_open_orders_all(account_id)
+        # 5. Rebuild cache from DB + enrich positions (via refresh_cache)
+        await self.refresh_cache(account_id)
 
-        # 6. Enrich positions with TP/SL
+    # ── Single-Order Update (WS path) ────────────────────────────────────────
+
+    async def process_order_update(
+        self, account_id: int, order: Dict[str, Any]
+    ) -> bool:
+        """Validate and persist a single order update from WS.
+
+        SR-1: This replaces the old ws_manager bypass that called
+        db.upsert_order_batch directly without transition validation.
+
+        Returns True if the order was accepted and persisted, False if
+        the transition was invalid (e.g., filled→new stale replay).
+        """
+        order.setdefault("account_id", account_id)
+        eid = order.get("exchange_order_id")
+
+        if eid:
+            existing = await self._db.get_active_orders_map(account_id)
+            if eid in existing:
+                current_status = existing[eid].get("status", "")
+                new_status = order.get("status", "new")
+                if not validate_transition(current_status, new_status):
+                    log.warning(
+                        "SR-1: rejected invalid transition %s→%s for order %s (WS update)",
+                        current_status, new_status, eid,
+                    )
+                    return False
+
+        await self._db.upsert_order_batch([order])
+        await self.refresh_cache(account_id)
+        return True
+
+    # ── Cache Refresh ──────────────────────────────────────────────────────
+
+    async def refresh_cache(self, account_id: int) -> None:
+        """Rebuild _open_orders from DB and enrich positions.
+
+        SR-1: This is the sole controlled entry point for cache rebuilds.
+        External callers must use this instead of writing _open_orders directly.
+        """
+        self._open_orders = await self._db.query_open_orders_all(account_id)
         self.enrich_positions_tpsl(app_state.positions)
 
     # ── TP/SL Enrichment ────────────────────────────────────────────────────

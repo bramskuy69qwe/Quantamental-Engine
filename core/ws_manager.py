@@ -187,12 +187,8 @@ async def _apply_order_update(msg: dict, ws_adapter) -> None:
     if execution_type == "TRADE":
         asyncio.create_task(_refresh_positions_after_fill())
 
-    # ── Persist order to DB + refresh OrderManager cache ────────────────────
-    # Use upsert_order_batch (not process_order_snapshot which cancels missing
-    # orders). Then rebuild the OrderManager's in-memory cache so the UI
-    # reflects the change immediately (not on next 30s REST poll).
+    # ── SR-1: Persist order via OrderManager (validates transition + timestamp)
     try:
-        from core.database import db
         from core.platform_bridge import platform_bridge
         order_dict = {
             "account_id":         app_state.active_account_id,
@@ -217,13 +213,11 @@ async def _apply_order_update(msg: dict, ws_adapter) -> None:
             "created_at_ms":      order.created_at_ms,
             "updated_at_ms":      order.updated_at_ms,
         }
-        await db.upsert_order_batch([order_dict])
-        # Refresh OrderManager cache from DB so open orders UI updates instantly
-        om = platform_bridge.order_manager
-        om._open_orders = await db.query_open_orders_all(app_state.active_account_id)
-        om.enrich_positions_tpsl(app_state.positions)
+        await platform_bridge.order_manager.process_order_update(
+            app_state.active_account_id, order_dict,
+        )
     except Exception as e:
-        log.debug("WS order DB persist skipped: %s", e)
+        log.debug("WS order persist skipped: %s", e)
 
 
 async def _on_new_position(sym: str) -> None:

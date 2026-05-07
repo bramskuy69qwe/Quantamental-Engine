@@ -453,12 +453,10 @@ async def _order_staleness_loop():
             )
             if count:
                 log.warning("Marked %d stale orders as canceled", count)
-                # Rebuild cache from DB (mark_stale only updates DB, not cache)
-                om = platform_bridge.order_manager
-                om._open_orders = await db.query_open_orders_all(
+                # SR-1: rebuild cache via controlled entry point
+                await platform_bridge.order_manager.refresh_cache(
                     app_state.active_account_id,
                 )
-                om.enrich_positions_tpsl(app_state.positions)
         except Exception as e:
             log.warning("Order staleness loop error: %s", e)
 
