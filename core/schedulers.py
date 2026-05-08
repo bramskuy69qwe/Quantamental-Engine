@@ -13,6 +13,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Set
 
+import ccxt
 import config
 from core.state import app_state, TZ_LOCAL
 from core.exchange import (
@@ -108,9 +109,13 @@ async def _account_refresh_loop():
     while True:
         # WS handles real-time position/mark price updates.
         # REST is just a safety net: 30s when WS healthy, 5s when WS down.
-        interval = 30 if app_state.ws_status.connected else 5
+        # RL-1: degraded interval raised from 5s to 15s to avoid 429 cascade
+        interval = 30 if app_state.ws_status.connected else 15
         await asyncio.sleep(interval)
         if platform_bridge.is_connected or _account_refresh_in_flight:
+            continue
+        # RL-1: skip if rate-limited
+        if app_state.ws_status.is_rate_limited:
             continue
         # WS freshness guard removed — DataCache now handles conflict resolution
         # (rejects stale REST position/account updates when WS is fresher)
@@ -187,6 +192,9 @@ async def _account_refresh_loop():
                         pass
             except Exception as e:
                 log.debug("REST fill sync skipped: %s", e)
+        except (ccxt.DDoSProtection, ccxt.RateLimitExceeded) as e:
+            from core.exchange import handle_rate_limit_error
+            handle_rate_limit_error(e)
         except Exception as e:
             log.warning(f"Periodic account refresh failed: {e}")
         finally:
@@ -196,11 +204,15 @@ async def _account_refresh_loop():
 # ── Latency ping loop ───────────────────────────────────────────────────────
 
 async def _ping_loop():
-    """Measure REST round-trip latency every 1 second.
+    """Measure REST round-trip latency every 10 seconds.
     Skipped when the Quantower plugin is connected — avoids hammering Binance REST."""
     while True:
-        await asyncio.sleep(1)
+        # RL-1: raised from 1s to 10s (was 60 req/min, now 6 req/min)
+        await asyncio.sleep(10)
         if platform_bridge.is_connected:
+            continue
+        # RL-1: skip if rate-limited
+        if app_state.ws_status.is_rate_limited:
             continue
         try:
             await fetch_exchange_info()

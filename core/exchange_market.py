@@ -10,6 +10,7 @@ import asyncio
 import logging
 from typing import Dict, List, Optional
 
+import ccxt
 import config
 from core.state import app_state
 from core.exchange import get_exchange, _REST_POOL
@@ -101,6 +102,10 @@ async def _agg_extremes(symbol: str, start_ms: int, end_ms: int) -> tuple:
 
     try:
         while cursor <= effective_end:
+            # RL-1: abort if rate-limited (don't fire more REST calls into a 429)
+            if app_state.ws_status.is_rate_limited:
+                log.debug("aggTrades aborted for %s — rate limited", symbol)
+                return None, None
             batch = await adapter.fetch_agg_trades(symbol, cursor, effective_end)
             if not batch:
                 break
@@ -114,6 +119,16 @@ async def _agg_extremes(symbol: str, start_ms: int, end_ms: int) -> tuple:
             if last_ts >= effective_end or len(batch) < 1000:
                 break
             cursor = last_ts + 1
+            # RL-1: pace pagination (was zero delay → burst)
+            await asyncio.sleep(0.25)
+    except ccxt.DDoSProtection as e:
+        from core.exchange import handle_rate_limit_error
+        handle_rate_limit_error(e)
+        return None, None
+    except ccxt.RateLimitExceeded as e:
+        from core.exchange import handle_rate_limit_error
+        handle_rate_limit_error(e)
+        return None, None
     except Exception as e:
         log.warning(f"aggTrades failed for {symbol} [{start_ms},{end_ms}]: {e}")
         return None, None

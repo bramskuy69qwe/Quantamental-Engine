@@ -23,6 +23,38 @@ from core.adapters.protocols import ExchangeAdapter
 log = logging.getLogger("exchange")
 
 
+# ── RL-1: Rate-limit detection + global pause ────────────────────────────────
+
+def handle_rate_limit_error(exc: Exception) -> None:
+    """Parse 429/418 from CCXT exceptions, set rate_limited_until on WSStatus.
+
+    Called by any REST caller that catches DDoSProtection or RateLimitExceeded.
+    Parses Binance 418 "banned until <epoch_ms>" for precise backoff; falls back
+    to 120s default pause for 429 without a specific timestamp.
+    """
+    import re
+    msg = str(exc)
+    ws = app_state.ws_status
+
+    # Try to parse "banned until <epoch_ms>" from 418 responses
+    match = re.search(r"banned until (\d+)", msg)
+    if match:
+        epoch_ms = int(match.group(1))
+        ws.rate_limited_until = datetime.fromtimestamp(epoch_ms / 1000, tz=timezone.utc)
+        log.error("RL-1: IP banned until %s — all REST calls paused", ws.rate_limited_until)
+    else:
+        # 429 without specific ban time — back off 120 seconds
+        ws.rate_limited_until = datetime.now(timezone.utc) + timedelta(seconds=120)
+        log.warning("RL-1: 429 detected — REST calls paused for 120s")
+
+    ws.add_log(f"Rate limited until {ws.rate_limited_until.strftime('%H:%M:%S UTC')}")
+
+
+def is_rate_limited() -> bool:
+    """Check if we're currently in a rate-limit backoff period."""
+    return app_state.ws_status.is_rate_limited
+
+
 # Dedicated thread pool for all blocking CCXT REST calls.
 # Keeps REST I/O isolated from the default executor used by the event loop,
 # preventing REST saturation from blocking asyncio internals.

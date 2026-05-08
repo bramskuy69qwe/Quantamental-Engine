@@ -32,6 +32,11 @@ class ReconcilerWorker:
             return
 
         for row in rows:
+            # RL-1: abort if rate-limited (don't cascade 429s across rows)
+            if app_state.ws_status.is_rate_limited:
+                log.info("Reconciler: aborting — rate limited")
+                return
+
             trade_key   = row["trade_key"]
             open_ms     = row["open_time"]
             close_ms    = row["time"]
@@ -142,6 +147,11 @@ class ReconcilerWorker:
             return
 
         for row in rows:
+            # RL-1: abort if rate-limited
+            if app_state.ws_status.is_rate_limited:
+                log.info("Reconciler closed_positions: aborting — rate limited")
+                return
+
             open_ms  = row["entry_time_ms"]
             close_ms = row["exit_time_ms"]
             entry_p  = row["entry_price"]

@@ -177,6 +177,7 @@ class WSStatus:
     latency_ms:         float = 0.0
     reconnect_attempts: int   = 0
     using_fallback:     bool  = False
+    rate_limited_until: Optional[datetime] = None  # RL-1: 429/418 backoff
     logs:               List[str] = field(default_factory=list)
 
     def add_log(self, msg: str):
@@ -194,6 +195,14 @@ class WSStatus:
     @property
     def is_stale(self) -> bool:
         return self.seconds_since_update > config.WS_FALLBACK_TIMEOUT
+
+    @property
+    def is_rate_limited(self) -> bool:
+        """True when a 429/418 backoff is active."""
+        return (
+            self.rate_limited_until is not None
+            and self.rate_limited_until > datetime.now(timezone.utc)
+        )
 
 
 # ── Singleton ─────────────────────────────────────────────────────────────────

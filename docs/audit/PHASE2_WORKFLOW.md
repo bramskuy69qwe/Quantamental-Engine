@@ -56,6 +56,13 @@
 - Public API on DataCache: expose `recalculate_portfolio()` (no
   underscore) as the public method, keep `_recalculate_portfolio`
   internal. Migrate the 3 SR-3 callers to the public form. ~5 lines.
+- AN-1: Reconciler MFE/MAE backfill has no failure-attempt tracking.
+  Failed rows (mfe=0 from rate-limit, data unavailable, symbol
+  delisted) get retried every startup indefinitely. Needs
+  backfill_attempts counter or similar to mark rows "permanently
+  failed" after N attempts. Severity: MEDIUM (quality issue, not
+  ban-prevention). Discovered during RL-1 investigation.
+  Operational note: SIRENUSDT/ONUSDT rows stuck since 2026-05-05.
 
 ## Status: Where are we?
 
@@ -67,6 +74,9 @@ Last updated: 2026-05-08
   - SR-2: 18 regression tests (branch: fix/SR-2-account-registry-single-owner)
   - SR-3: 13 regression tests (branch: fix/SR-3-crash-recovery-consolidation)
   - 237/237 full suite green, baseline diff empty after all three
+- RL-1: **done** — rate-limit handling band-aid (branch: fix/RL-1-rate-limit-handling)
+  - 23 regression tests, 260/260 full suite green, baseline diff empty
+  - Operational verification pending: run engine and confirm no 429/418 recurrence
   - Note: v2.3.1 recomputes dd_state/weekly_pnl_state on restart
     rather than restoring from snapshot. v2.4 gate semantics may
     revisit this decision.

@@ -460,7 +460,8 @@ async def _keepalive_loop() -> None:
 async def _fallback_loop() -> None:
     """Poll REST API when WS is stale for > WS_FALLBACK_TIMEOUT seconds."""
     while True:
-        await asyncio.sleep(5)
+        # RL-1: raised from 5s to 15s to reduce REST pressure during WS outage
+        await asyncio.sleep(15)
         ws = app_state.ws_status
 
         if ws.is_stale and not ws.using_fallback:
@@ -468,6 +469,9 @@ async def _fallback_loop() -> None:
             ws.add_log("WS stale — switched to REST polling fallback.")
 
         if ws.using_fallback:
+            # RL-1: skip if rate-limited
+            if ws.is_rate_limited:
+                continue
             try:
                 # Skip account/position REST fetch if plugin is providing live data.
                 try:
