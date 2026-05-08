@@ -79,6 +79,25 @@
   data is no longer relevant to standalone operation. Discovered
   during RL-1 investigation. Can land with AN-1 for practical
   convenience.
+- **FE-1** (LOW): Pagination inconsistency in position/order/trade
+  history. Some pages render >20 rows despite 20/page setting.
+  Options are 20/50 per page. Spacing inconsistent across views.
+  Fix: use position history as canonical; migrate order and trade
+  history to match its pagination logic and spacing.
+- **FE-2** (LOW): Calculator recent-calculated click renders partial
+  state on first click (orderbook only, rest is ghost UI); second
+  click works. Async-render race — data fetch not awaited before
+  template renders, or HTMX swaps orderbook independently. Fix:
+  investigate load order; fix await chain or add loading skeleton.
+- **FE-3** (MEDIUM): Open position card flickers on refresh —
+  entire card re-renders instead of just data nodes. Pattern issue
+  across the frontend. Fix: audit hx-target granularity; move
+  targets from wrapping containers to specific data spans (price,
+  PnL, status). Container renders once; only data nodes refresh.
+  One consolidated PR. May warrant its own session given scope.
+- **FE-4** (LOW): No edit-account-name in configuration tab.
+  Frontend + backend work — add edit field, route handler, DB
+  UPDATE. Small feature, not a defect.
 
 ## Status: Where are we?
 
