@@ -52,17 +52,33 @@
 
 ### Bucket 3+: see AUDIT_REPORT.md execution order
 
-### Bucket 5: Follow-up cleanup (no dependency constraints)
+### Bucket 4 (HIGH cleanup):
+- **AN-1** (HIGH): MFE/MAE backfill uses 0 as sentinel for "not yet
+  computed," but 0 is a valid computed result for tight trades. The
+  query `WHERE mfe=0 OR mae=0` reprocesses every trade where MFE
+  or MAE happens to be exactly 0 (or rounds to 0). Operational
+  impact: persistent REST calls every startup, contributor to
+  per-second pressure that triggered the May 5 ban. Fix: add
+  `backfill_completed` boolean column; query `WHERE NOT
+  backfill_completed`. Requires migration. Small fix, high
+  operational leverage. Discovered during RL-1 investigation.
+  Operational gate: start only after 24-48h RL-1 verification
+  clears. Optionally scheduled early between Buckets 2 and 3 for
+  less reconciler noise during v2.4 prereq work, but no hard
+  dependency. Operational note: SIRENUSDT/ONUSDT rows stuck since
+  2026-05-05.
+
+### Bucket 5 (MEDIUM/LOW cleanup):
 - Public API on DataCache: expose `recalculate_portfolio()` (no
   underscore) as the public method, keep `_recalculate_portfolio`
   internal. Migrate the 3 SR-3 callers to the public form. ~5 lines.
-- AN-1: Reconciler MFE/MAE backfill has no failure-attempt tracking.
-  Failed rows (mfe=0 from rate-limit, data unavailable, symbol
-  delisted) get retried every startup indefinitely. Needs
-  backfill_attempts counter or similar to mark rows "permanently
-  failed" after N attempts. Severity: MEDIUM (quality issue, not
-  ban-prevention). Discovered during RL-1 investigation.
-  Operational note: SIRENUSDT/ONUSDT rows stuck since 2026-05-05.
+- **AN-2** (MEDIUM): qt:-prefixed legacy trades from previous
+  Quantower mode show hold=0s and high≈low (single-tick range).
+  Timestamp bug or stale orphaned data. User is standalone now.
+  Fix: delete or exclude qt: rows from analytics — Quantower-mode
+  data is no longer relevant to standalone operation. Discovered
+  during RL-1 investigation. Can land with AN-1 for practical
+  convenience.
 
 ## Status: Where are we?
 
