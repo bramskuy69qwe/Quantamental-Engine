@@ -122,6 +122,7 @@ async def _account_refresh_loop():
         _account_refresh_in_flight = True
         try:
             await fetch_account()
+            await asyncio.sleep(0.5)  # RL-1: per-second burst pacing
             await fetch_positions()
             # Note: risk:positions_refreshed now fires inside
             # DataCache.apply_position_snapshot() — no duplicate needed.
@@ -161,11 +162,15 @@ async def _account_refresh_loop():
                 )
             except Exception as e:
                 log.debug("REST order sync skipped: %s", e)
+            await asyncio.sleep(0.5)  # RL-1: per-second burst pacing
             # Also sync fills for open position symbols
             try:
                 from core.database import db as _db
                 for pos in app_state.positions:
+                    if app_state.ws_status.is_rate_limited:
+                        break  # RL-1: abort fill sync if rate-limited mid-loop
                     try:
+                        await asyncio.sleep(0.5)  # RL-1: per-second burst pacing
                         recent = await adapter.fetch_user_trades(pos.ticker, limit=50)
                         for t in recent:
                             await _db.upsert_fill({
@@ -385,17 +390,24 @@ async def _regime_refresh_loop():
 
         # ── Binance crypto signal refresh (every 4 hours) ─────────────────────
         if now - _state["last_crypto"] >= 4 * 3600:
-            try:
-                today     = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-                lookback  = (datetime.now(timezone.utc) - timedelta(days=10)).strftime("%Y-%m-%d")
-                fetcher   = RegimeFetcher()
-                await fetcher.fetch_binance_oi(lookback, today)
-                await fetcher.fetch_binance_funding(lookback, today)
-                await fetcher.close()
-                _state["last_crypto"] = now
-                log.info("Regime: Binance crypto signals refreshed")
-            except Exception as e:
-                log.warning("Regime Binance signal refresh failed: %s", e)
+            # RL-1: skip if rate-limited
+            if app_state.ws_status.is_rate_limited:
+                log.info("Regime: skipping Binance signal refresh — rate limited")
+            else:
+                try:
+                    today     = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                    lookback  = (datetime.now(timezone.utc) - timedelta(days=10)).strftime("%Y-%m-%d")
+                    fetcher   = RegimeFetcher()
+                    await fetcher.fetch_binance_oi(lookback, today)
+                    await fetcher.fetch_binance_funding(lookback, today)
+                    await fetcher.close()
+                    _state["last_crypto"] = now
+                    log.info("Regime: Binance crypto signals refreshed")
+                except (ccxt.DDoSProtection, ccxt.RateLimitExceeded) as e:
+                    from core.exchange import handle_rate_limit_error
+                    handle_rate_limit_error(e)
+                except Exception as e:
+                    log.warning("Regime Binance signal refresh failed: %s", e)
 
         # ── Re-classify current regime ────────────────────────────────────────
         try:

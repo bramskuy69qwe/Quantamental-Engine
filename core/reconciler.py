@@ -20,6 +20,10 @@ log = logging.getLogger("reconciler")
 
 _SETTLE_DELAY    = 8   # seconds after close for Binance to finalise income entry
 _BACKFILL_SEM    = 3   # max concurrent symbols during backfill
+# RL-1: global semaphore limiting concurrent fetch_hl_for_trade across ALL
+# reconciler paths (backfill + event-driven). Prevents burst when multiple
+# positions close simultaneously.
+_HL_SEM = asyncio.Semaphore(2)
 
 
 class ReconcilerWorker:
@@ -49,7 +53,8 @@ class ReconcilerWorker:
                 continue
 
             duration_s = (close_ms - open_ms) / 1000
-            trade_high, trade_low = await fetch_hl_for_trade(ticker, open_ms, close_ms)
+            async with _HL_SEM:  # RL-1: limit concurrent REST bursts
+                trade_high, trade_low = await fetch_hl_for_trade(ticker, open_ms, close_ms)
             if trade_high is None:
                 log.warning(f"Reconciler: no price data for {trade_key}")
                 continue
@@ -160,9 +165,10 @@ class ReconcilerWorker:
             if not all((open_ms, close_ms, entry_p, qty)):
                 continue
             try:
-                trade_high, trade_low = await fetch_hl_for_trade(
-                    row["symbol"], open_ms, close_ms,
-                )
+                async with _HL_SEM:  # RL-1: limit concurrent REST bursts
+                    trade_high, trade_low = await fetch_hl_for_trade(
+                        row["symbol"], open_ms, close_ms,
+                    )
                 if trade_high is None:
                     continue
                 mfe, mae = calc_mfe_mae(

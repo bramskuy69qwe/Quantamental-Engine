@@ -313,8 +313,14 @@ class RegimeFetcher:
         all_daily: Dict[str, float] = {}
 
         for sym_idx, sym in enumerate(symbols):
+            # RL-1: abort if rate-limited
+            if app_state.ws_status.is_rate_limited:
+                log.info("fetch_binance_oi: aborting — rate limited")
+                break
             current_start = since_dt
             while current_start < until_dt:
+                if app_state.ws_status.is_rate_limited:
+                    break  # RL-1: abort pagination if rate-limited mid-loop
                 period_end = min(current_start + timedelta(days=29), until_dt)
                 try:
                     data = await exchange.fapiPublicGetOpenInterestHist({
@@ -325,7 +331,13 @@ class RegimeFetcher:
                         "limit": 30,
                     })
                 except Exception as e:
-                    log.warning("OI fetch failed for %s: %s", sym, e)
+                    # RL-1: detect 429/418 and set global pause
+                    import ccxt as _ccxt
+                    if isinstance(e, (_ccxt.DDoSProtection, _ccxt.RateLimitExceeded)):
+                        from core.exchange import handle_rate_limit_error
+                        handle_rate_limit_error(e)
+                    else:
+                        log.warning("OI fetch failed for %s: %s", sym, e)
                     break
 
                 for entry in data:
@@ -379,10 +391,16 @@ class RegimeFetcher:
         daily_rates: Dict[str, List[float]] = {}
 
         for sym_idx, sym in enumerate(symbols):
+            # RL-1: abort if rate-limited (don't cascade 429s across symbols)
+            if app_state.ws_status.is_rate_limited:
+                log.info("fetch_binance_funding: aborting — rate limited")
+                break
             since_ms = int(since_dt.timestamp() * 1000)
             until_ms = int(until_dt.timestamp() * 1000)
 
             while since_ms < until_ms:
+                if app_state.ws_status.is_rate_limited:
+                    break  # RL-1: abort pagination if rate-limited mid-loop
                 try:
                     data = await exchange.fapiPublicGetFundingRate({
                         "symbol": sym,
@@ -391,7 +409,13 @@ class RegimeFetcher:
                         "limit": 1000,
                     })
                 except Exception as e:
-                    log.warning("Funding fetch failed for %s: %s", sym, e)
+                    # RL-1: detect 429/418 and set global pause
+                    import ccxt as _ccxt
+                    if isinstance(e, (_ccxt.DDoSProtection, _ccxt.RateLimitExceeded)):
+                        from core.exchange import handle_rate_limit_error
+                        handle_rate_limit_error(e)
+                    else:
+                        log.warning("Funding fetch failed for %s: %s", sym, e)
                     break
 
                 if not data:
