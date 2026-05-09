@@ -232,3 +232,72 @@ async def test_consistency_check_uses_backfill_completed():
     assert "backfill_completed" in source, (
         "consistency check must use backfill_completed column"
     )
+
+
+@pytest.mark.asyncio
+async def test_migration_marks_existing_computed_rows():
+    """Post-migration UPDATE must mark rows where mfe or mae is nonzero
+    as backfill_completed=1, leaving genuinely uncomputed rows pending."""
+    conn = await _in_memory_db()
+
+    # Row 1: computed, mfe=0.05, mae=-0.02 → should be marked complete
+    await conn.execute(
+        "INSERT INTO exchange_history "
+        "(trade_key, time, symbol, open_time, mfe, mae, backfill_completed) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("computed_1", 1000, "BTCUSDT", 900, 0.05, -0.02, 0),
+    )
+    # Row 2: computed with negative mae only → should be marked complete
+    await conn.execute(
+        "INSERT INTO exchange_history "
+        "(trade_key, time, symbol, open_time, mfe, mae, backfill_completed) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("computed_2", 2000, "ETHUSDT", 1900, 0.0, -0.03, 0),
+    )
+    # Row 3: genuinely uncomputed (both zero) → should stay pending
+    await conn.execute(
+        "INSERT INTO exchange_history "
+        "(trade_key, time, symbol, open_time, mfe, mae, backfill_completed) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("uncomputed_1", 3000, "BTCUSDT", 2900, 0.0, 0.0, 0),
+    )
+    # Row 4: already marked complete → should stay complete
+    await conn.execute(
+        "INSERT INTO exchange_history "
+        "(trade_key, time, symbol, open_time, mfe, mae, backfill_completed) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("already_done", 4000, "BTCUSDT", 3900, 0.1, -0.05, 1),
+    )
+    await conn.commit()
+
+    # Run the migration UPDATE (same SQL as database.py initialize)
+    await conn.execute(
+        "UPDATE exchange_history SET backfill_completed=1"
+        " WHERE backfill_completed=0 AND (mfe != 0 OR mae != 0)"
+    )
+    await conn.commit()
+
+    async with conn.execute(
+        "SELECT trade_key, backfill_completed FROM exchange_history ORDER BY time"
+    ) as cur:
+        rows = {r["trade_key"]: r["backfill_completed"] for r in await cur.fetchall()}
+
+    assert rows["computed_1"] == 1, "Nonzero mfe+mae should be marked complete"
+    assert rows["computed_2"] == 1, "Nonzero mae alone should be marked complete"
+    assert rows["uncomputed_1"] == 0, "Both-zero row should stay pending"
+    assert rows["already_done"] == 1, "Already-complete row should stay complete"
+
+    # Verify: only the genuinely uncomputed row is returned by the query
+    from core.db_exchange import ExchangeMixin
+
+    class FakeDB(ExchangeMixin):
+        def __init__(self, c):
+            self._conn = c
+
+    db = FakeDB(conn)
+    pending = await db.get_uncalculated_exchange_rows("BTCUSDT")
+    pending_keys = [r["trade_key"] for r in pending]
+    assert pending_keys == ["uncomputed_1"], (
+        f"Only genuinely uncomputed row should be pending, got: {pending_keys}"
+    )
+    await conn.close()

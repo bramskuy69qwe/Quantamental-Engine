@@ -509,6 +509,21 @@ class DatabaseManager(
         )
         await self._conn.commit()
 
+        # AN-1: mark already-computed rows so they aren't reprocessed on first
+        # startup after migration.  Idempotent — rows already marked 1 stay 1.
+        # Marks rows where either mfe or mae is nonzero (computation definitely
+        # ran).  Rows where both are exactly 0.0 stay pending — the reconciler
+        # will reprocess them once and set backfill_completed=1.
+        await self._conn.execute(
+            "UPDATE exchange_history SET backfill_completed=1"
+            " WHERE backfill_completed=0 AND (mfe != 0 OR mae != 0)"
+        )
+        await self._conn.execute(
+            "UPDATE closed_positions SET backfill_completed=1"
+            " WHERE backfill_completed=0 AND (mfe != 0 OR mae != 0)"
+        )
+        await self._conn.commit()
+
         # ── account_id indexes (idempotent) ───────────────────────────────────
         for idx_sql in [
             "CREATE INDEX IF NOT EXISTS idx_snapshots_account ON account_snapshots (account_id, snapshot_ts DESC)",
