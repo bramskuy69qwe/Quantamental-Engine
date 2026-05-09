@@ -721,10 +721,10 @@ class OrdersMixin:
     async def get_uncalculated_closed_positions(
         self, account_id: int,
     ) -> List[Dict]:
-        """Return closed_positions rows with mfe=0 that have valid time bounds."""
+        """Return closed_positions rows where backfill has not completed."""
         async with self._conn.execute(
             "SELECT * FROM closed_positions "
-            "WHERE account_id=? AND (mfe=0 AND mae=0) "
+            "WHERE account_id=? AND NOT backfill_completed "
             "AND entry_time_ms > 0 AND exit_time_ms > 0 "
             "ORDER BY exit_time_ms DESC LIMIT 200",
             (account_id,),
@@ -736,7 +736,7 @@ class OrdersMixin:
     ) -> None:
         """Update MFE/MAE on a specific closed_positions row."""
         await self._conn.execute(
-            "UPDATE closed_positions SET mfe=?, mae=? WHERE id=?",
+            "UPDATE closed_positions SET mfe=?, mae=?, backfill_completed=1 WHERE id=?",
             (mfe, mae, row_id),
         )
         await self._conn.commit()
@@ -773,7 +773,7 @@ class OrdersMixin:
         # Closed positions missing MFE/MAE
         async with self._conn.execute(
             "SELECT COUNT(*) FROM closed_positions "
-            "WHERE account_id=? AND mfe=0 AND mae=0 "
+            "WHERE account_id=? AND NOT backfill_completed "
             "AND entry_time_ms > 0 AND exit_time_ms > 0",
             (account_id,),
         ) as cur:

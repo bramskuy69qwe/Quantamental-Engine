@@ -97,7 +97,7 @@ class ReconcilerWorker:
 
     async def backfill_all(self) -> None:
         """
-        Startup backfill — processes all exchange_history rows with mfe=0.
+        Startup backfill — processes all exchange_history rows pending backfill.
 
         Performance optimisations vs the naive sequential loop:
         1. fetch_exchange_trade_history() is called ONCE up-front, updating
@@ -119,7 +119,7 @@ class ReconcilerWorker:
         # are individual fills, not round-trip trades, so MFE/MAE pairing doesn't apply.
         async with db._conn.execute(
             "SELECT DISTINCT symbol FROM exchange_history"
-            " WHERE (mfe=0 OR mae=0) AND open_time>0"
+            " WHERE NOT backfill_completed AND open_time>0"
             " AND trade_key NOT LIKE 'qt:%'"
         ) as cur:
             symbols = [r[0] for r in await cur.fetchall()]

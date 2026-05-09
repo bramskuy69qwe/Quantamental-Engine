@@ -171,7 +171,8 @@ CREATE TABLE IF NOT EXISTS exchange_history (
     fee         REAL    NOT NULL DEFAULT 0.0,
     asset       TEXT    NOT NULL DEFAULT '',
     mfe         REAL    NOT NULL DEFAULT 0.0,
-    mae         REAL    NOT NULL DEFAULT 0.0
+    mae         REAL    NOT NULL DEFAULT 0.0,
+    backfill_completed INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_exchist_time   ON exchange_history(time DESC);
 CREATE INDEX IF NOT EXISTS idx_exchist_symbol ON exchange_history(symbol);
@@ -411,6 +412,7 @@ CREATE TABLE IF NOT EXISTS closed_positions (
     funding_fees         REAL    NOT NULL DEFAULT 0,
     mfe                  REAL    NOT NULL DEFAULT 0,
     mae                  REAL    NOT NULL DEFAULT 0,
+    backfill_completed   INTEGER NOT NULL DEFAULT 0,
     hold_time_ms         INTEGER NOT NULL DEFAULT 0,
     exit_reason          TEXT    NOT NULL DEFAULT '',
     model_name           TEXT    NOT NULL DEFAULT '',
@@ -487,6 +489,9 @@ class DatabaseManager(
             "ALTER TABLE accounts ADD COLUMN taker_fee REAL NOT NULL DEFAULT 0.0005",
             "ALTER TABLE accounts ADD COLUMN environment TEXT NOT NULL DEFAULT 'live'",
             "ALTER TABLE accounts ADD COLUMN key_version INTEGER NOT NULL DEFAULT 1",
+            # AN-1: backfill_completed replaces mfe=0/mae=0 sentinel
+            "ALTER TABLE exchange_history ADD COLUMN backfill_completed INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE closed_positions ADD COLUMN backfill_completed INTEGER NOT NULL DEFAULT 0",
         ]:
             try:
                 await self._conn.execute(migration)

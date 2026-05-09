@@ -74,15 +74,15 @@ class ExchangeMixin:
     async def update_exchange_mfe_mae(self, trade_key: str, mfe: float, mae: float) -> None:
         """Write accurate MFE/MAE for a closed trade (reconciler only)."""
         await self._conn.execute(
-            "UPDATE exchange_history SET mfe=?, mae=? WHERE trade_key=?",
+            "UPDATE exchange_history SET mfe=?, mae=?, backfill_completed=1 WHERE trade_key=?",
             (mfe, mae, trade_key),
         )
         await self._conn.commit()
 
     async def get_uncalculated_exchange_rows(self, symbol: str) -> List[Dict]:
-        """Return exchange_history rows for symbol where mfe or mae is still 0 and open_time is known."""
+        """Return exchange_history rows for symbol where backfill has not completed."""
         async with self._conn.execute(
-            "SELECT * FROM exchange_history WHERE symbol=? AND (mfe=0 OR mae=0) AND open_time>0",
+            "SELECT * FROM exchange_history WHERE symbol=? AND NOT backfill_completed AND open_time>0",
             (symbol,),
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
