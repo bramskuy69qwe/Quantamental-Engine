@@ -146,11 +146,12 @@ Last updated: 2026-05-09
   - 11 regression tests, 271/271 full suite green, baseline diff empty
   - Fixed 11 catch sites across exchange.py, reconciler.py, ws_manager.py
   - Added ccxt.RateLimitExceeded + ccxt.DDoSProtection before broad except Exception
-  - Operational verification: pending 24-48h clean run after AN-1
+  - Operational verification: **in progress** (started 2026-05-09)
 - AN-1: **done** — backfill_completed sentinel fix (branch: fix/AN-1-backfill-sentinel)
-  - 6 regression tests, 277/277 full suite green, baseline diff empty
+  - 7 regression tests, 278/278 full suite green, baseline diff empty
   - Added `backfill_completed INTEGER` column to exchange_history + closed_positions
   - Queries use `NOT backfill_completed` instead of `mfe=0 OR mae=0` sentinel
   - Update functions set `backfill_completed=1` alongside mfe/mae values
-  - Migration: ALTER TABLE ADD COLUMN (idempotent, existing pattern)
-  - Operational verification: pending 24-48h clean run
+  - Migration: ALTER TABLE ADD COLUMN + UPDATE existing computed rows
+  - Operational verification: **in progress** (started 2026-05-09)
+- **Next**: SR-7 (protocol vendor-neutrality) — blocked on verification window
