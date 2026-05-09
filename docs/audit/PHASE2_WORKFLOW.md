@@ -120,6 +120,24 @@ Sequence: RL-3 → AN-1 → 24-48h re-verification → SR-7
   targets from wrapping containers to specific data spans (price,
   PnL, status). Container renders once; only data nodes refresh.
   One consolidated PR. May warrant its own session given scope.
+- **AN-3** (severity TBD pending diagnostic): MAE values exceed
+  equity bounds. User observed mae >$260 on <$100 equity account.
+  Three candidate causes:
+  (a) Legitimate: high-leverage position + last-price wick on
+      illiquid altcoin. aggTrades reads last price, not mark price
+      used for liquidation. Mathematically plausible at 20x leverage
+      with ~13% wick. If confirmed: documentation gap, not a bug.
+  (b) Window bug: open_time/close_time wrong (potentially linked to
+      AN-2 qt:-prefixed legacy rows with bad timestamps), causing
+      fetch_hl_for_trade to pull extremes from a wider period.
+  (c) Qty unit bug: qty stored in scaled/contract-multiplied form
+      different from what calc_mfe_mae assumes.
+  Diagnostic: query exchange_history WHERE ABS(mae) > 100; check
+  qt: prefix, hold duration plausibility, qty cross-reference.
+  May escalate to Bucket 4 if proven to be window/qty bug rather
+  than legitimate wick artifact. Discovered: 2026-05-09.
+  Operational gate: investigation deferred until after RL-3 + AN-1
+  verification window closes.
 - **FE-4** (LOW): No edit-account-name in configuration tab.
   Frontend + backend work — add edit field, route handler, DB
   UPDATE. Small feature, not a defect.
