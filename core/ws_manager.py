@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import websockets
+import ccxt
 
 import config
 from core.state import app_state
@@ -26,7 +27,7 @@ from core.exchange import (
     get_exchange, _REST_POOL,
     fetch_account, fetch_positions, fetch_orderbook, fetch_ohlcv,
     create_listen_key, keepalive_listen_key,
-    _get_adapter,
+    _get_adapter, handle_rate_limit_error,
 )
 
 log = logging.getLogger("ws_manager")
@@ -246,6 +247,9 @@ async def _on_new_position(sym: str) -> None:
                             t.timestamp_ms / 1000, tz=timezone.utc
                         ).isoformat()
                         break
+    except (ccxt.RateLimitExceeded, ccxt.DDoSProtection) as e:
+        handle_rate_limit_error(e)
+        log.warning("Rate limit hit in _on_new_position for %s: %s", sym, e)
     except Exception as e:
         log.warning("_on_new_position trade lookup failed for %s: %s", sym, e)
 
@@ -256,6 +260,9 @@ async def _refresh_positions_after_fill() -> None:
         await fetch_positions(force=True)
         # force=True: fill-triggered refresh must always be accepted,
         # even if WS updated recently (avoids 30s delay on position close).
+    except (ccxt.RateLimitExceeded, ccxt.DDoSProtection) as e:
+        handle_rate_limit_error(e)
+        log.warning("Rate limit hit in _refresh_positions_after_fill: %s", e)
     except Exception as e:
         app_state.ws_status.add_log(f"Post-fill refresh error: {e}")
 
@@ -451,6 +458,9 @@ async def _keepalive_loop() -> None:
             try:
                 await keepalive_listen_key(_listen_key)
                 app_state.ws_status.add_log("Listen key refreshed.")
+            except (ccxt.RateLimitExceeded, ccxt.DDoSProtection) as e:
+                handle_rate_limit_error(e)
+                log.warning("Rate limit hit in keepalive_loop: %s", e)
             except Exception as e:
                 app_state.ws_status.add_log(f"Listen key refresh failed: {e}")
 
@@ -485,6 +495,9 @@ async def _fallback_loop() -> None:
                 if _calculator_symbol:
                     await fetch_orderbook(_calculator_symbol)
                 ws.last_update = datetime.now(timezone.utc)
+            except (ccxt.RateLimitExceeded, ccxt.DDoSProtection) as e:
+                handle_rate_limit_error(e)
+                log.warning("Rate limit hit in fallback_loop: %s", e)
             except Exception as e:
                 ws.add_log(f"REST fallback error: {e}")
 

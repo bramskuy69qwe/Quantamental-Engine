@@ -12,9 +12,14 @@ import asyncio
 import logging
 from typing import Dict
 
+import ccxt
+
 from core.state import app_state
 from core.database import db
-from core.exchange import fetch_hl_for_trade, calc_mfe_mae, fetch_exchange_trade_history
+from core.exchange import (
+    fetch_hl_for_trade, calc_mfe_mae, fetch_exchange_trade_history,
+    handle_rate_limit_error,
+)
 
 log = logging.getLogger("reconciler")
 
@@ -83,6 +88,9 @@ class ReconcilerWorker:
         try:
             await fetch_exchange_trade_history()
             await self._reconcile_symbol(ticker, direction)
+        except (ccxt.RateLimitExceeded, ccxt.DDoSProtection) as e:
+            handle_rate_limit_error(e)
+            log.warning("Rate limit hit in on_trade_closed for %s: %s", ticker, e)
         except Exception as e:
             app_state.ws_status.add_log(f"Reconciler error ({ticker}): {e}")
             log.error("Reconciler failed for %s: %s", ticker, e)
@@ -100,6 +108,10 @@ class ReconcilerWorker:
         # Single up-front history refresh — corrects open_time for all symbols
         try:
             await fetch_exchange_trade_history()
+        except (ccxt.RateLimitExceeded, ccxt.DDoSProtection) as e:
+            handle_rate_limit_error(e)
+            log.warning("Rate limit hit in backfill history pre-fetch: %s", e)
+            return
         except Exception as e:
             log.warning(f"Backfill: history pre-fetch failed: {e}")
 
@@ -122,6 +134,9 @@ class ReconcilerWorker:
             async with sem:
                 try:
                     await self._reconcile_symbol(sym)
+                except (ccxt.RateLimitExceeded, ccxt.DDoSProtection) as e:
+                    handle_rate_limit_error(e)
+                    log.warning("Rate limit hit in backfill for %s: %s", sym, e)
                 except Exception as e:
                     log.error("Backfill failed for %s: %s", sym, e)
 
@@ -138,6 +153,9 @@ class ReconcilerWorker:
         await asyncio.sleep(_SETTLE_DELAY)
         try:
             await self._reconcile_closed_positions(symbol=ticker)
+        except (ccxt.RateLimitExceeded, ccxt.DDoSProtection) as e:
+            handle_rate_limit_error(e)
+            log.warning("Rate limit hit in on_position_closed for %s: %s", ticker, e)
         except Exception as e:
             log.error("Reconciler closed_positions failed for %s: %s", ticker, e)
 
@@ -179,6 +197,10 @@ class ReconcilerWorker:
                     "Reconciler closed_pos: %s %s mfe=%.2f mae=%.2f",
                     row["symbol"], direction, mfe, mae,
                 )
+            except (ccxt.RateLimitExceeded, ccxt.DDoSProtection) as e:
+                handle_rate_limit_error(e)
+                log.warning("Rate limit hit in reconcile_closed_pos id=%d: %s", row["id"], e)
+                return
             except Exception as e:
                 log.warning(
                     "Reconciler closed_pos failed for id=%d: %s", row["id"], e,

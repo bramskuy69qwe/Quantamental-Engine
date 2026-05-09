@@ -50,23 +50,42 @@
 - (SR-1 and SR-2 can land in parallel; SR-3 depends on SR-2)
 - SR-3: Crash recovery consolidation
 
+### Bucket 2.5: Rate-limit hardening + reconciler noise reduction
+Sequence: RL-3 → AN-1 → 24-48h re-verification → SR-7
+
+- **RL-3** (NEW, HIGH): RL-1 exception coverage gaps. RL-1 catch
+  sites likely match `ccxt.DDoSProtection` only (raised on 418),
+  missing `ccxt.RateLimitExceeded` (raised on 429). Safety net
+  engages after ban, not before. Evidence: 9s of SIRENUSDT 429s
+  on 2026-05-07 20:01 UTC without `rate_limited_until` being set,
+  escalating to 418 IP ban. Three sub-issues:
+  (a) Every RL-1 catch site — confirm which exception types caught.
+  (b) LABUSDT `_on_new_position` trade lookup path — locate it,
+      check whether it's in RL-1 coverage.
+  (c) reconciler.py outer `except Exception` handlers swallow 429s
+      without calling `handle_rate_limit_error`. Same in
+      `on_position_closed` and `_reconcile_closed_positions`. Need
+      narrower except clauses or explicit propagation.
+  Branch: `fix/RL-3-rate-limit-exception-coverage`.
+  Discovered: 2026-05-09, RL-1 operational verification.
+
+- **AN-1** (HIGH, promoted to Bucket 2.5): MFE/MAE backfill uses 0
+  as sentinel for "not yet computed," but 0 is a valid computed
+  result for tight trades. The query `WHERE mfe=0 OR mae=0`
+  reprocesses every trade where MFE or MAE happens to be exactly 0
+  (or rounds to 0). Operational impact: persistent REST calls every
+  startup, contributor to per-second pressure that triggered the
+  May 5 and May 7 bans. Fix: add `backfill_completed` boolean
+  column; query `WHERE NOT backfill_completed`. Requires migration.
+  Small fix, high operational leverage. Discovered during RL-1
+  investigation. Promoted from Bucket 4 — reduces baseline
+  reconciler REST pressure, making rate-limit events less likely.
+  Operational note: SIRENUSDT/ONUSDT rows stuck since 2026-05-05.
+  Branch: `fix/AN-1-backfill-sentinel`.
+
 ### Bucket 3+: see AUDIT_REPORT.md execution order
 
 ### Bucket 4 (HIGH cleanup):
-- **AN-1** (HIGH): MFE/MAE backfill uses 0 as sentinel for "not yet
-  computed," but 0 is a valid computed result for tight trades. The
-  query `WHERE mfe=0 OR mae=0` reprocesses every trade where MFE
-  or MAE happens to be exactly 0 (or rounds to 0). Operational
-  impact: persistent REST calls every startup, contributor to
-  per-second pressure that triggered the May 5 ban. Fix: add
-  `backfill_completed` boolean column; query `WHERE NOT
-  backfill_completed`. Requires migration. Small fix, high
-  operational leverage. Discovered during RL-1 investigation.
-  Operational gate: start only after 24-48h RL-1 verification
-  clears. Optionally scheduled early between Buckets 2 and 3 for
-  less reconciler noise during v2.4 prereq work, but no hard
-  dependency. Operational note: SIRENUSDT/ONUSDT rows stuck since
-  2026-05-05.
 
 ### Bucket 5 (MEDIUM/LOW cleanup):
 - Public API on DataCache: expose `recalculate_portfolio()` (no
@@ -101,7 +120,7 @@
 
 ## Status: Where are we?
 
-Last updated: 2026-05-08
+Last updated: 2026-05-09
 - Bucket 0: **done** — RE-9 landed (60 tests, 111-row baseline CSV)
 - Bucket 1: **done** — SC-1, RP-1, RE-1 all landed (branch: audit/v2.3.1)
 - Bucket 2: **done** — all three foundation redesigns landed
@@ -111,7 +130,15 @@ Last updated: 2026-05-08
   - 237/237 full suite green, baseline diff empty after all three
 - RL-1: **done** — rate-limit handling band-aid (branch: fix/RL-1-rate-limit-handling)
   - 23 regression tests, 260/260 full suite green, baseline diff empty
-  - Operational verification pending: run engine and confirm no 429/418 recurrence
+  - Operational verification **FAILED** (2026-05-09): 418 IP ban on
+    2026-05-07 20:01-20:04 UTC. RL-1 catch sites did not engage on
+    429s — only caught 418 (DDoSProtection). See RL-3 in Bucket 2.5.
   - Note: v2.3.1 recomputes dd_state/weekly_pnl_state on restart
     rather than restoring from snapshot. v2.4 gate semantics may
     revisit this decision.
+- RL-3: **done** — exception coverage fix (branch: fix/RL-3-rate-limit-exception-coverage)
+  - 11 regression tests, 271/271 full suite green, baseline diff empty
+  - Fixed 11 catch sites across exchange.py, reconciler.py, ws_manager.py
+  - Added ccxt.RateLimitExceeded + ccxt.DDoSProtection before broad except Exception
+  - Operational verification: pending 24-48h clean run after AN-1
+- AN-1: **queued** — next after RL-3

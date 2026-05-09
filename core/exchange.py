@@ -308,6 +308,10 @@ async def populate_open_position_metadata() -> None:
                     pos.individual_fees = fees
                 except Exception:
                     pass  # best-effort — fees table may be empty on first run
+        except (ccxt.RateLimitExceeded, ccxt.DDoSProtection) as e:
+            handle_rate_limit_error(e)
+            log.warning("Rate limit hit in populate_open_position_metadata for %s: %s", pos.ticker, e)
+            return
         except Exception as e:
             log.warning("populate_open_position_metadata failed for %s: %s", pos.ticker, e)
 
@@ -332,6 +336,10 @@ async def fetch_open_orders_tpsl() -> None:
 
     try:
         orders = await adapter.fetch_open_orders()
+    except (ccxt.RateLimitExceeded, ccxt.DDoSProtection) as e:
+        handle_rate_limit_error(e)
+        log.warning("Rate limit hit in fetch_open_orders_tpsl: %s", e)
+        return
     except Exception as e:
         app_state.ws_status.add_log(f"Open orders fetch error: {e}")
         return
