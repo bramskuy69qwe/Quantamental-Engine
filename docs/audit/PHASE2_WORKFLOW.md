@@ -53,21 +53,27 @@
 ### Bucket 2.5: Rate-limit hardening + reconciler noise reduction
 Sequence: RL-3 → AN-1 → 24-48h re-verification → SR-7
 
-- **RL-3** (NEW, HIGH): RL-1 exception coverage gaps. RL-1 catch
-  sites likely match `ccxt.DDoSProtection` only (raised on 418),
-  missing `ccxt.RateLimitExceeded` (raised on 429). Safety net
-  engages after ban, not before. Evidence: 9s of SIRENUSDT 429s
-  on 2026-05-07 20:01 UTC without `rate_limited_until` being set,
-  escalating to 418 IP ban. Three sub-issues:
-  (a) Every RL-1 catch site — confirm which exception types caught.
-  (b) LABUSDT `_on_new_position` trade lookup path — locate it,
-      check whether it's in RL-1 coverage.
-  (c) reconciler.py outer `except Exception` handlers swallow 429s
-      without calling `handle_rate_limit_error`. Same in
-      `on_position_closed` and `_reconcile_closed_positions`. Need
-      narrower except clauses or explicit propagation.
+- **RL-3** (NEW, HIGH): RL-1 exception coverage gaps. Broad
+  `except Exception` handlers swallowed `ccxt.RateLimitExceeded`
+  (429) without calling `handle_rate_limit_error()`. Evidence: 9s
+  of SIRENUSDT 429s on 2026-05-07 20:01 UTC without
+  `rate_limited_until` being set, escalating to 418 IP ban.
   Branch: `fix/RL-3-rate-limit-exception-coverage`.
   Discovered: 2026-05-09, RL-1 operational verification.
+  **11 catch sites fixed** (actual, post-audit refinement):
+  - exchange.py (2): `populate_open_position_metadata` outer loop,
+    `fetch_open_orders_tpsl`
+  - reconciler.py (5): `on_trade_closed`, `backfill_all` history
+    pre-fetch, `backfill_all/_process` per-symbol,
+    `on_position_closed`, `_reconcile_closed_positions` per-row
+  - ws_manager.py (4): `_on_new_position`, `_refresh_positions_
+    after_fill`, `_keepalive_loop`, `_fallback_loop`
+  Audit note: original audit listed exchange.py `get_exchange:104`
+  and `fetch_exchange_info:145` as uncovered, but these wrap local
+  factory/registry lookups (no REST calls) — correctly excluded.
+  Three ws_manager.py sites (`_refresh_positions_after_fill`,
+  `_keepalive_loop`, `_fallback_loop`) were originally marked
+  "GENERIC (unaudited)" and added during implementation audit.
 
 - **AN-1** (HIGH, promoted to Bucket 2.5): MFE/MAE backfill uses 0
   as sentinel for "not yet computed," but 0 is a valid computed
