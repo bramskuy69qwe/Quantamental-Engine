@@ -237,9 +237,11 @@ Last updated: 2026-05-10
   - Update functions set `backfill_completed=1` alongside mfe/mae values
   - Migration: ALTER TABLE ADD COLUMN + UPDATE existing computed rows
   - Operational verification: **PASSED** (2026-05-10) — 21h clean run, zero 429/418
-- SR-7: **in progress** — Phase 2 (neutralization proposals) complete, awaiting review
+- SR-7: **done** — protocol vendor-neutrality redesign
   Branch: fix/SR-7-protocol-vendor-neutrality
-  Phase 1: enumeration done (docs/design/SR-7_phase1_enumeration.md)
-  Phase 2: neutralization done (docs/design/SR-7_phase2_neutralization.md)
-  Phase 3: migration plan done (docs/design/SR-7_phase3_migration.md)
-  Phase 4: implementation — blocked on Phase 3 review
+  - Step 1: neutral error types (RateLimitError hierarchy) — 291→291 green
+  - Step 2: protocol dataclass changes (Optional fields, NormalizedFundingRate, WSEventType) — 303→303 green
+  - Step 3: SupportsListenKey + auth model abstraction — 314→314 green
+  - Step 4: fetch_price_extremes (replaces fetch_agg_trades, tier logic in adapter) — 325→325 green
+  - All 4 steps: baseline diff empty, behavioral equivalence verified
+  - Design docs: docs/design/SR-7_phase{1,2,3}_*.md
