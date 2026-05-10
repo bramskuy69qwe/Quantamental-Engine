@@ -116,6 +116,18 @@ Sequence: RL-3 → AN-1 → 24-48h re-verification → SR-7
   gate in v2.4 — this finding must be resolved before v2.4
   promotion, otherwise a broken metric gets promoted to
   enforcement role. Discovered: 2026-05-10, verification window.
+- **AD-2** (MEDIUM): Bybit adapter `fetch_income()` ignores
+  `income_type` parameter — only returns "realized_pnl". Funding
+  fee, commission, and transfer income types silently return empty.
+  Protocol violation. Fix: implement V5 transaction log endpoint
+  for non-PnL income types. Discovered: 2026-05-11, SR-7 Phase 1
+  audit. Not in SR-7 scope (adapter quality, not protocol design).
+- **AD-3** (LOW): Bybit adapter hardcodes maker_fee=0.0002,
+  taker_fee=0.00055 (VIP0 tier assumption). Binance fetches live
+  from fapiPrivateGetCommissionRate. Fix: query Bybit V5 account
+  info for actual fee tier, or accept config override. Discovered:
+  2026-05-11, SR-7 Phase 1 audit. Partially addressed by SR-7's
+  `fee_source` indicator (surfaces the gap without fixing it).
 
 ### Bucket 5 (MEDIUM/LOW cleanup):
 - Public API on DataCache: expose `recalculate_portfolio()` (no
@@ -209,5 +221,8 @@ Last updated: 2026-05-10
   - Update functions set `backfill_completed=1` alongside mfe/mae values
   - Migration: ALTER TABLE ADD COLUMN + UPDATE existing computed rows
   - Operational verification: **PASSED** (2026-05-10) — 21h clean run, zero 429/418
-- SR-7: **in progress** — Phase 1 (enumeration)
+- SR-7: **in progress** — Phase 2 (neutralization proposals) complete, awaiting review
   Branch: fix/SR-7-protocol-vendor-neutrality
+  Phase 1: enumeration done (docs/design/SR-7_phase1_enumeration.md)
+  Phase 2: neutralization done (docs/design/SR-7_phase2_neutralization.md)
+  Phase 3: adapter migration plan — blocked on Phase 2 review
