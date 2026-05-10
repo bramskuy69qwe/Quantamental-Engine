@@ -23,6 +23,9 @@ from core.adapters.protocols import (  # noqa: F401
     NormalizedOrder,
     NormalizedTrade,
     NormalizedIncome,
+    NormalizedFundingRate,
+    WSEventType,
+    SupportsListenKey,
     SupportsFundingRates,
     SupportsOpenInterest,
 )

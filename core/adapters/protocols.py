@@ -177,14 +177,6 @@ class ExchangeAdapter(Protocol):
         """Fetch OHLCV candles."""
         ...
 
-    async def create_listen_key(self) -> str:
-        """Create a user-data stream listen key."""
-        ...
-
-    async def keepalive_listen_key(self, key: str) -> None:
-        """Refresh/keepalive the listen key."""
-        ...
-
     async def load_markets(self) -> None:
         """Load exchange market info (precision, limits, etc.)."""
         ...
@@ -268,8 +260,35 @@ class WSAdapter(Protocol):
         """Unwrap combined-stream envelope to get the inner data payload."""
         ...
 
+    # ── Post-connect authentication ─────────────────────────────────────────
+
+    def requires_post_connect_auth(self) -> bool:
+        """Whether WS connection needs auth messages sent after connect."""
+        ...
+
+    def build_auth_payload(self, api_key: str, api_secret: str) -> Optional[dict]:
+        """Return auth message to send after connect, or None if not needed."""
+        ...
+
+    def build_subscribe_payload(self, topics: List[str]) -> Optional[dict]:
+        """Return subscription message, or None if topics are in URL."""
+        ...
+
 
 # ── Optional capability protocols ────────────────────────────────────────────
+
+@runtime_checkable
+class SupportsListenKey(Protocol):
+    """Exchange uses a token-based user-data stream (Binance pattern)."""
+
+    async def create_listen_key(self) -> str:
+        """Create a user-data stream listen key."""
+        ...
+
+    async def keepalive_listen_key(self, key: str) -> None:
+        """Refresh/keepalive the listen key."""
+        ...
+
 
 @runtime_checkable
 class SupportsFundingRates(Protocol):

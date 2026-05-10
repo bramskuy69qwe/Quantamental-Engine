@@ -60,6 +60,17 @@ class BinanceWSAdapter:
         """Binance combined streams wrap payload in {"stream": ..., "data": ...}."""
         return msg.get("data", msg)
 
+    # ── Post-connect auth (Binance: not needed — listen key in URL) ──────────
+
+    def requires_post_connect_auth(self) -> bool:
+        return False
+
+    def build_auth_payload(self, api_key: str, api_secret: str):
+        return None
+
+    def build_subscribe_payload(self, topics):
+        return None
+
     # ── User data stream parsing ─────────────────────────────────────────────
 
     def parse_account_update(self, msg: dict) -> Tuple[dict, List[NormalizedPosition]]:

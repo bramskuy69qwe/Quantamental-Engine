@@ -323,17 +323,6 @@ class BybitLinearAdapter(BaseExchangeAdapter):
 
         return await self._run(_fetch)
 
-    # ── Listen key (Bybit uses HMAC auth on WS connect, no listen key needed) ─
-
-    async def create_listen_key(self) -> str:
-        """Bybit authenticates WS via HMAC signature, not listen keys.
-        Return a placeholder — the WS adapter handles auth differently."""
-        return "bybit_ws_auth"
-
-    async def keepalive_listen_key(self, key: str) -> None:
-        """No-op for Bybit — WS auth doesn't expire like Binance listen keys."""
-        pass
-
     # ── Current funding rates (live) ─────────────────────────────────────────
 
     async def fetch_current_funding_rates(self, symbols: List[str]) -> Dict[str, Dict]:

@@ -132,6 +132,12 @@ scope — belong to exchange.py collapse or adapter routing work):
   Protocol violation. Fix: implement V5 transaction log endpoint
   for non-PnL income types. Discovered: 2026-05-11, SR-7 Phase 1
   audit. Not in SR-7 scope (adapter quality, not protocol design).
+- **AD-4** (MEDIUM): Adapter is_close heuristic improvements.
+  Binance: use side+positionSide deterministic check instead of
+  realizedPnl != 0. Bybit: use closedSize > 0 field. Improves
+  accuracy for new fills going forward. Historical data unaffected
+  (stored at write time). Discovered: 2026-05-11, SR-7 Phase 4
+  is_close investigation. NOT in SR-7 scope (adapter quality).
 - **AD-3** (LOW): Bybit adapter hardcodes maker_fee=0.0002,
   taker_fee=0.00055 (VIP0 tier assumption). Binance fetches live
   from fapiPrivateGetCommissionRate. Fix: query Bybit V5 account

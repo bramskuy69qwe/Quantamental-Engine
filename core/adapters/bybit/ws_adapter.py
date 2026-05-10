@@ -61,9 +61,12 @@ class BybitWSAdapter:
         """Bybit public linear WS URL — subscriptions sent after connect."""
         return MARKET_STREAM_BASE
 
-    # ── Authentication helper ────────────────────────────────────────────────
+    # ── Post-connect auth (Bybit: HMAC auth + subscription after connect) ───
 
-    def build_auth_message(self, api_key: str, api_secret: str) -> dict:
+    def requires_post_connect_auth(self) -> bool:
+        return True
+
+    def build_auth_payload(self, api_key: str, api_secret: str) -> dict:
         """Build the HMAC auth message to send after WS connect."""
         expires = int((time.time() + 10) * 1000)
         signature = hmac.HMAC(
@@ -73,7 +76,7 @@ class BybitWSAdapter:
         ).hexdigest()
         return {"op": "auth", "args": [api_key, expires, signature]}
 
-    def build_subscribe_message(self, topics: List[str]) -> dict:
+    def build_subscribe_payload(self, topics: List[str]) -> dict:
         """Build subscription message to send after connect."""
         return {"op": "subscribe", "args": topics}
 

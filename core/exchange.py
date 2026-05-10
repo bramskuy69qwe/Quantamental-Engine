@@ -392,12 +392,18 @@ async def fetch_open_orders_tpsl() -> None:
 # ── Listen key for user-data WebSocket ──────────────────────────────────────
 
 async def create_listen_key() -> str:
+    from core.adapters.protocols import SupportsListenKey
     adapter = _get_adapter()
+    if not isinstance(adapter, SupportsListenKey):
+        return ""  # Adapter doesn't use listen keys (e.g., Bybit uses HMAC auth)
     return await adapter.create_listen_key()
 
 
 async def keepalive_listen_key(listen_key: str) -> None:
+    from core.adapters.protocols import SupportsListenKey
     adapter = _get_adapter()
+    if not isinstance(adapter, SupportsListenKey):
+        return  # No-op for adapters without listen key lifecycle
     await adapter.keepalive_listen_key(listen_key)
 
 
