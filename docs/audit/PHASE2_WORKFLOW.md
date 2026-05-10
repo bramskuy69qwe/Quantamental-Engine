@@ -244,4 +244,6 @@ Last updated: 2026-05-10
   - Step 3: SupportsListenKey + auth model abstraction — 314→314 green
   - Step 4: fetch_price_extremes (replaces fetch_agg_trades, tier logic in adapter) — 325→325 green
   - All 4 steps: baseline diff empty, behavioral equivalence verified
+  - Operational verification: **in progress** (started 2026-05-11)
   - Design docs: docs/design/SR-7_phase{1,2,3}_*.md
+- **Next**: SR-4 (exchange.py collapse) — blocked on SR-7 verification window
