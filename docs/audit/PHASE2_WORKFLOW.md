@@ -173,10 +173,15 @@ Sequence: RL-3 → AN-1 → 24-48h re-verification → SR-7
   vendor-neutrality redesign — custom endpoints only become
   meaningful once protocol is vendor-neutral. Land alongside or
   after SR-7, not as standalone frontend finding.
+- **BU-1** (LOW): CCXT "Unclosed client session" resource warning
+  observed during RL-3+AN-1 verification window. Possible CCXT
+  client lifecycle bug — exchange instance not closed on some path
+  (account switch, shutdown, or error recovery). Defer until after
+  SR-7. Discovered: 2026-05-10, verification window.
 
 ## Status: Where are we?
 
-Last updated: 2026-05-09
+Last updated: 2026-05-10
 - Bucket 0: **done** — RE-9 landed (60 tests, 111-row baseline CSV)
 - Bucket 1: **done** — SC-1, RP-1, RE-1 all landed (branch: audit/v2.3.1)
 - Bucket 2: **done** — all three foundation redesigns landed
@@ -196,12 +201,13 @@ Last updated: 2026-05-09
   - 11 regression tests, 271/271 full suite green, baseline diff empty
   - Fixed 11 catch sites across exchange.py, reconciler.py, ws_manager.py
   - Added ccxt.RateLimitExceeded + ccxt.DDoSProtection before broad except Exception
-  - Operational verification: **in progress** (started 2026-05-09)
+  - Operational verification: **PASSED** (2026-05-10) — 21h clean run, zero 429/418
 - AN-1: **done** — backfill_completed sentinel fix (branch: fix/AN-1-backfill-sentinel)
   - 7 regression tests, 278/278 full suite green, baseline diff empty
   - Added `backfill_completed INTEGER` column to exchange_history + closed_positions
   - Queries use `NOT backfill_completed` instead of `mfe=0 OR mae=0` sentinel
   - Update functions set `backfill_completed=1` alongside mfe/mae values
   - Migration: ALTER TABLE ADD COLUMN + UPDATE existing computed rows
-  - Operational verification: **in progress** (started 2026-05-09)
-- **Next**: SR-7 (protocol vendor-neutrality) — blocked on verification window
+  - Operational verification: **PASSED** (2026-05-10) — 21h clean run, zero 429/418
+- SR-7: **in progress** — Phase 1 (enumeration)
+  Branch: fix/SR-7-protocol-vendor-neutrality
