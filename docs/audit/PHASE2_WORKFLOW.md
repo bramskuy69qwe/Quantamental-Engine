@@ -198,6 +198,19 @@ scope — belong to exchange.py collapse or adapter routing work):
   vendor-neutrality redesign — custom endpoints only become
   meaningful once protocol is vendor-neutral. Land alongside or
   after SR-7, not as standalone frontend finding.
+- **FE-8** (severity TBD, leaning HIGH-MEDIUM): Calculator market
+  price flickers between previous-calculated symbol and current
+  symbol when switching. Derived values (size, etc.) also flicker.
+  Possible causes: (a) WS subscription not cleaned up on switch,
+  (b) concurrent price-fetch loops, (c) calculator state holding
+  both symbols, (d) HTMX poll serving cached wrong-symbol data,
+  (e) race between recent-calc-click and live-data-fetch.
+  Possible shared root with FE-2 (first-click partial state) —
+  both involve stale previous-symbol data contaminating new view.
+  Severity escalation: if users can act on visibly-coherent but
+  wrong calculations (flicker not visible at click moment),
+  severity is HIGH (risk-management gap, Bucket 4 candidate).
+  Discovered: 2026-05-11, SR-7 verification window.
 - **BU-1** (LOW): CCXT "Unclosed client session" resource warning
   observed during RL-3+AN-1 verification window. Possible CCXT
   client lifecycle bug — exchange instance not closed on some path
