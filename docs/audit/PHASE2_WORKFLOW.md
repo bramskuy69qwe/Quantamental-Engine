@@ -93,6 +93,30 @@ Sequence: RL-3 → AN-1 → 24-48h re-verification → SR-7
 
 ### Bucket 4 (HIGH cleanup):
 
+### Bucket 4 (HIGH cleanup):
+- **OM-5** (severity TBD, potentially HIGH): TP/SL set at order
+  creation not visible in open-orders tab or TPSL tab. Three
+  possible layers:
+  (a) Display bug — exists in app state, template doesn't render.
+  (b) Fetch bug — Binance USDM TP/SL at order creation creates
+      separate STOP_MARKET/TAKE_PROFIT_MARKET orders with
+      reduceOnly=true. Parser may miss those types or filter.
+  (c) Timing/race — stale snapshot replay clearing TP/SL. SR-1
+      covered main entry order; TP/SL may be out of scope.
+  Diagnostic: query Binance API for open orders on affected symbol;
+  compare against engine local state; isolate fetch vs display.
+  May escalate to Bucket 1 if confirmed protective-order gap.
+  Discovered: 2026-05-10, verification window.
+- **MN-2** (severity TBD, potentially HIGH): Monthly drawdown
+  shows 0 in dashboard despite real drawdown this month. Failing
+  layer unknown: reset logic, calculation logic, frontend display,
+  or definition mismatch. Diagnostic: query dd_state directly,
+  compare to dashboard render, isolate failing layer.
+  Operational gate: dd_state is being promoted from advisory to
+  gate in v2.4 — this finding must be resolved before v2.4
+  promotion, otherwise a broken metric gets promoted to
+  enforcement role. Discovered: 2026-05-10, verification window.
+
 ### Bucket 5 (MEDIUM/LOW cleanup):
 - Public API on DataCache: expose `recalculate_portfolio()` (no
   underscore) as the public method, keep `_recalculate_portfolio`
@@ -141,6 +165,14 @@ Sequence: RL-3 → AN-1 → 24-48h re-verification → SR-7
 - **FE-4** (LOW): No edit-account-name in configuration tab.
   Frontend + backend work — add edit field, route handler, DB
   UPDATE. Small feature, not a defect.
+- **FE-7** (LOW): Cap dashboard order history at 10 visible lines,
+  scrollable to 25, with existing link to full history tab.
+  Frontend-only. Discovered: 2026-05-10.
+- **SR-7 feature note**: WebSocket endpoint URL input field needed
+  in configs > connection tab. Downstream of SR-7's protocol
+  vendor-neutrality redesign — custom endpoints only become
+  meaningful once protocol is vendor-neutral. Land alongside or
+  after SR-7, not as standalone frontend finding.
 
 ## Status: Where are we?
 
