@@ -132,6 +132,16 @@ scope — belong to exchange.py collapse or adapter routing work):
   Protocol violation. Fix: implement V5 transaction log endpoint
   for non-PnL income types. Discovered: 2026-05-11, SR-7 Phase 1
   audit. Not in SR-7 scope (adapter quality, not protocol design).
+- **AN-2** (HIGH, promoted from Bucket 5): qt:-prefixed legacy
+  Quantower rows have multiple corruption modes — hold=0s with
+  high≈low (original report) AND long-hold-with-extreme-MAE
+  (hold 2-6 days, wick_pct >245%, confirmed by AN-3 diagnostic
+  2026-05-11: 3/3 rows qt:-prefixed SIRENUSDT). Likely additional
+  smaller-magnitude corruption below diagnostic threshold.
+  Actively distorts visible dashboard MAE values. Unifying fix:
+  exclude or delete all qt:-prefixed rows from analytics queries
+  (and consider deleting from exchange_history table entirely).
+  Branch: fix/AN-2-quantower-legacy-cleanup.
 - **AD-4** (MEDIUM): Adapter is_close heuristic improvements.
   Binance: use side+positionSide deterministic check instead of
   realizedPnl != 0. Bybit: use closedSize > 0 field. Improves
@@ -149,13 +159,7 @@ scope — belong to exchange.py collapse or adapter routing work):
 - Public API on DataCache: expose `recalculate_portfolio()` (no
   underscore) as the public method, keep `_recalculate_portfolio`
   internal. Migrate the 3 SR-3 callers to the public form. ~5 lines.
-- **AN-2** (MEDIUM): qt:-prefixed legacy trades from previous
-  Quantower mode show hold=0s and high≈low (single-tick range).
-  Timestamp bug or stale orphaned data. User is standalone now.
-  Fix: delete or exclude qt: rows from analytics — Quantower-mode
-  data is no longer relevant to standalone operation. Discovered
-  during RL-1 investigation. Can land with AN-1 for practical
-  convenience.
+- (AN-2 promoted to Bucket 4 — see below)
 - **FE-1** (LOW): Pagination inconsistency in position/order/trade
   history. Some pages render >20 rows despite 20/page setting.
   Options are 20/50 per page. Spacing inconsistent across views.
@@ -172,24 +176,11 @@ scope — belong to exchange.py collapse or adapter routing work):
   targets from wrapping containers to specific data spans (price,
   PnL, status). Container renders once; only data nodes refresh.
   One consolidated PR. May warrant its own session given scope.
-- **AN-3** (severity TBD pending diagnostic): MAE values exceed
-  equity bounds. User observed mae >$260 on <$100 equity account.
-  Three candidate causes:
-  (a) Legitimate: high-leverage position + last-price wick on
-      illiquid altcoin. aggTrades reads last price, not mark price
-      used for liquidation. Mathematically plausible at 20x leverage
-      with ~13% wick. If confirmed: documentation gap, not a bug.
-  (b) Window bug: open_time/close_time wrong (potentially linked to
-      AN-2 qt:-prefixed legacy rows with bad timestamps), causing
-      fetch_hl_for_trade to pull extremes from a wider period.
-  (c) Qty unit bug: qty stored in scaled/contract-multiplied form
-      different from what calc_mfe_mae assumes.
-  Diagnostic: query exchange_history WHERE ABS(mae) > 100; check
-  qt: prefix, hold duration plausibility, qty cross-reference.
-  May escalate to Bucket 4 if proven to be window/qty bug rather
-  than legitimate wick artifact. Discovered: 2026-05-09.
-  Operational gate: investigation deferred until after RL-3 + AN-1
-  verification window closes.
+- ~~**AN-3**~~ CLOSED: duplicate of AN-2 (legacy Quantower data
+  corruption). Diagnostic (2026-05-11): 3/3 anomalous rows are
+  qt:-prefixed, all wick_pct >245%, mathematically inconsistent
+  with real trades. Root cause = AN-2's corrupted timestamps
+  causing fetch_price_extremes to read a wider window.
 - **FE-4** (LOW): No edit-account-name in configuration tab.
   Frontend + backend work — add edit field, route handler, DB
   UPDATE. Small feature, not a defect.
