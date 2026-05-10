@@ -225,4 +225,5 @@ Last updated: 2026-05-10
   Branch: fix/SR-7-protocol-vendor-neutrality
   Phase 1: enumeration done (docs/design/SR-7_phase1_enumeration.md)
   Phase 2: neutralization done (docs/design/SR-7_phase2_neutralization.md)
-  Phase 3: adapter migration plan — blocked on Phase 2 review
+  Phase 3: migration plan done (docs/design/SR-7_phase3_migration.md)
+  Phase 4: implementation — blocked on Phase 3 review
