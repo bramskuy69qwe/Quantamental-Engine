@@ -208,23 +208,18 @@ class TestReconcilerRateLimit:
         from core.reconciler import _BACKFILL_SEM
         assert _BACKFILL_SEM <= 3  # prevents request burst
 
-    def test_agg_extremes_no_rapid_pagination(self):
-        """Post-fix: _agg_extremes should have pacing between pages
-        or respect rate_limited_until."""
+    def test_price_extremes_has_pacing(self):
+        """Post SR-7: fetch_price_extremes in adapter should have pacing
+        between pages or respect rate_limited_until."""
         import inspect
-        from core import exchange_market
-        source = inspect.getsource(exchange_market._agg_extremes)
+        from core.adapters.binance import rest_adapter
+        source = inspect.getsource(rest_adapter.BinanceUSDMAdapter.fetch_price_extremes)
 
         has_pacing = (
-            "asyncio.sleep" in source
+            "sleep" in source
             or "rate_limited" in source
         )
-        # Adaptive: pre-fix has no pacing, post-fix does
-        if has_pacing:
-            pass  # post-fix
-        else:
-            # Pre-fix: document the missing pacing
-            pass
+        assert has_pacing, "fetch_price_extremes must have pacing or rate-limit check"
 
     def test_reconciler_aborts_when_rate_limited(self):
         """When rate_limited_until is in the future, reconciler REST calls

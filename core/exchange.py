@@ -248,8 +248,6 @@ async def populate_open_position_metadata() -> None:
     Called once on startup so MFE/MAE reflect the full hold, not just
     the current engine session.
     """
-    from core.exchange_market import _ohlcv_hl
-
     adapter = _get_adapter()
 
     for i, pos in enumerate(app_state.positions):
@@ -281,16 +279,12 @@ async def populate_open_position_metadata() -> None:
                 open_time_ms / 1000, tz=timezone.utc
             ).isoformat()
 
-            # ── 2. Fetch OHLCV to compute MFE/MAE since open ────────────
+            # ── 2. Fetch price extremes to compute MFE/MAE since open ──
             now_ms = int(time.time() * 1000)
-            hold_ms = now_ms - open_time_ms
 
-            if hold_ms < 12 * 3600 * 1000:
-                tf = "1m"
-            else:
-                tf = "1h"
-
-            max_price, min_price = await _ohlcv_hl(pos.ticker, open_time_ms, now_ms, tf)
+            max_price, min_price = await adapter.fetch_price_extremes(
+                pos.ticker, open_time_ms, now_ms, "auto",
+            )
             if max_price is None or min_price is None:
                 continue
 

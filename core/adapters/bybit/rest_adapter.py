@@ -294,21 +294,120 @@ class BybitLinearAdapter(BaseExchangeAdapter):
             ))
         return results
 
-    # ── Aggregate trades ─────────────────────────────────────────────────────
+    # ── Price extremes ─────────────────────────────────────────────────────────
 
-    async def fetch_agg_trades(self, symbol: str, start_ms: int, end_ms: int) -> List[Dict]:
-        """Bybit V5 public trades — returns raw dicts with 'p' and 'T' keys for compatibility."""
-        def _fetch():
-            return self._ex.fetch_trades(symbol, since=start_ms, limit=1000,
-                                         params={"category": "linear"})
+    async def fetch_price_extremes(
+        self,
+        symbol: str,
+        start_ms: int,
+        end_ms: int,
+        precision: str = "auto",
+    ) -> tuple:
+        """Return (max_price, min_price) for the time window using Bybit data.
 
-        raw = await self._run(_fetch)
-        # Normalize to same format as Binance aggTrades for _agg_extremes compatibility
-        return [
-            {"p": str(t.get("price", 0)), "T": t.get("timestamp", 0)}
-            for t in (raw or [])
-            if t.get("timestamp", 0) <= end_ms
-        ]
+        Uses public trades for high precision, OHLCV for medium/low.
+        """
+        import asyncio as _aio
+        from core.adapters.errors import RateLimitError
+        from core.state import app_state
+
+        _3_MIN = 3 * 60_000
+        _12_HR = 12 * 3_600_000
+        _1_HR = 3_600_000
+        _60_S = 60_000
+
+        duration = end_ms - start_ms
+        if precision == "high" or (precision == "auto" and duration < _3_MIN):
+            use_tier = 1
+        elif precision == "medium" or (precision == "auto" and duration <= _12_HR):
+            use_tier = 2
+        elif precision == "low" or (precision == "auto" and duration > _12_HR):
+            use_tier = 3
+        else:
+            use_tier = 2
+
+        async def _trade_extremes(start: int, end: int) -> tuple:
+            """Fetch public trades and reduce to (max, min)."""
+            max_p = None
+            min_p = None
+            try:
+                if app_state.ws_status.is_rate_limited:
+                    return None, None
+                def _fetch():
+                    return self._ex.fetch_trades(symbol, since=start, limit=1000,
+                                                 params={"category": "linear"})
+                raw = await self._run(_fetch)
+                for t in (raw or []):
+                    ts = t.get("timestamp", 0)
+                    if ts > end:
+                        break
+                    price = float(t.get("price", 0))
+                    if max_p is None or price > max_p:
+                        max_p = price
+                    if min_p is None or price < min_p:
+                        min_p = price
+            except RateLimitError:
+                raise
+            except Exception:
+                return None, None
+            return max_p, min_p
+
+        async def _ohlcv_hl(start: int, end: int, tf: str) -> tuple:
+            if start >= end:
+                return None, None
+            def _fetch():
+                return self._ex.fetch_ohlcv(symbol, tf, since=start,
+                                            limit=min(200, self.ohlcv_limit)) or []
+            candles = await self._run(_fetch)
+            candles = [c for c in candles if c[0] <= end]
+            if not candles:
+                return None, None
+            return max(c[2] for c in candles), min(c[3] for c in candles)
+
+        def _merge(*pairs) -> tuple:
+            highs = [h for h, l in pairs if h is not None]
+            lows = [l for h, l in pairs if l is not None]
+            if not highs:
+                return None, None
+            return max(highs), min(lows)
+
+        if use_tier == 1:
+            high, low = await _trade_extremes(start_ms, end_ms)
+            if high is not None:
+                return high, low
+            return await _ohlcv_hl(start_ms, end_ms, "1m")
+
+        if use_tier == 2:
+            results = await _aio.gather(
+                _trade_extremes(start_ms, start_ms + _60_S),
+                _ohlcv_hl(start_ms + _60_S, end_ms - _60_S, "1m"),
+                _trade_extremes(end_ms - _60_S, end_ms),
+                return_exceptions=True,
+            )
+            if any(isinstance(v, BaseException) for v in results):
+                return await _ohlcv_hl(start_ms, end_ms, "1m")
+            high, low = _merge(*results)
+            if high is not None:
+                return high, low
+            return await _ohlcv_hl(start_ms, end_ms, "1m")
+
+        # Tier 3
+        e1m_end = start_ms + _1_HR
+        x1m_start = max(end_ms - _1_HR, e1m_end)
+        results = await _aio.gather(
+            _trade_extremes(start_ms, start_ms + _60_S),
+            _ohlcv_hl(start_ms + _60_S, e1m_end, "1m"),
+            _ohlcv_hl(e1m_end, x1m_start, "1h"),
+            _ohlcv_hl(x1m_start, end_ms - _60_S, "1m"),
+            _trade_extremes(end_ms - _60_S, end_ms),
+            return_exceptions=True,
+        )
+        if any(isinstance(v, BaseException) for v in results):
+            return await _ohlcv_hl(start_ms, end_ms, "1m")
+        high, low = _merge(*results)
+        if high is not None:
+            return high, low
+        return await _ohlcv_hl(start_ms, end_ms, "1m")
 
     # ── OHLCV ────────────────────────────────────────────────────────────────
 

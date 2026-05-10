@@ -167,8 +167,22 @@ class ExchangeAdapter(Protocol):
         """Fetch income history (PnL, funding, commissions)."""
         ...
 
-    async def fetch_agg_trades(self, symbol: str, start_ms: int, end_ms: int) -> List[Dict]:
-        """Fetch aggregate/public trades for a time window."""
+    async def fetch_price_extremes(
+        self,
+        symbol: str,
+        start_ms: int,
+        end_ms: int,
+        precision: str = "auto",
+    ) -> Tuple[Optional[float], Optional[float]]:
+        """Return (max_price, min_price) for the time window.
+
+        precision hint (adapter maps to native resolution):
+          "high"   — tick-level (aggTrades or equivalent)
+          "medium" — 1m OHLCV
+          "low"    — 1h OHLCV
+          "auto"   — adapter decides based on window duration
+        Returns (None, None) on error or no data.
+        """
         ...
 
     async def fetch_ohlcv(

@@ -231,18 +231,150 @@ class BinanceUSDMAdapter(BaseExchangeAdapter):
             ))
         return results
 
-    # ── Aggregate trades ─────────────────────────────────────────────────────
+    # ── Price extremes (replaces fetch_agg_trades) ─────────────────────────────
 
-    async def fetch_agg_trades(self, symbol: str, start_ms: int, end_ms: int) -> List[Dict]:
-        def _fetch():
-            return self._ex.fapiPublicGetAggTrades(params={
-                "symbol": symbol,
-                "startTime": start_ms,
-                "endTime": end_ms,
-                "limit": 1000,
-            }) or []
+    async def fetch_price_extremes(
+        self,
+        symbol: str,
+        start_ms: int,
+        end_ms: int,
+        precision: str = "auto",
+    ) -> tuple:
+        """Return (max_price, min_price) for the time window.
 
-        return await self._run(_fetch)
+        Multi-resolution strategy based on precision hint:
+          "high"  / "auto" + duration < 3 min → aggTrades (tick-level)
+          "medium" / "auto" + 3 min-12 hr → hybrid (entry/exit aggTrades + 1m body)
+          "low"  / "auto" + >= 12 hr → hybrid (agg + 1m + 1h sections)
+        Falls back to OHLCV if aggTrades returns empty.
+        """
+        import asyncio as _aio
+        from core.adapters.errors import RateLimitError
+        from core.state import app_state
+
+        _3_MIN = 3 * 60_000
+        _12_HR = 12 * 3_600_000
+        _1_HR = 3_600_000
+        _60_S = 60_000
+        _BUF = 1_000  # 1s buffer for Binance exclusive endTime
+
+        duration = end_ms - start_ms
+
+        # Choose resolution
+        if precision == "high" or (precision == "auto" and duration < _3_MIN):
+            use_tier = 1
+        elif precision == "medium" or (precision == "auto" and duration <= _12_HR):
+            use_tier = 2
+        elif precision == "low" or (precision == "auto" and duration > _12_HR):
+            use_tier = 3
+        else:
+            use_tier = 2  # fallback
+
+        # ── Helpers ───────────────────────────────────────────────────────────
+
+        async def _agg_extremes(start: int, end: int) -> tuple:
+            """Paginated aggTrades → (max, min) in O(1) memory."""
+            effective_end = end + _BUF
+            max_p = None
+            min_p = None
+            cursor = max(0, start - _BUF)
+            try:
+                while cursor <= effective_end:
+                    if app_state.ws_status.is_rate_limited:
+                        return None, None
+                    def _fetch(c=cursor):
+                        return self._ex.fapiPublicGetAggTrades(params={
+                            "symbol": symbol,
+                            "startTime": c,
+                            "endTime": effective_end,
+                            "limit": 1000,
+                        }) or []
+                    batch = await self._run(_fetch)
+                    if not batch:
+                        break
+                    for t in batch:
+                        price = float(t["p"])
+                        if max_p is None or price > max_p:
+                            max_p = price
+                        if min_p is None or price < min_p:
+                            min_p = price
+                    last_ts = int(batch[-1]["T"])
+                    if last_ts >= effective_end or len(batch) < 1000:
+                        break
+                    cursor = last_ts + 1
+                    await _aio.sleep(0.25)
+            except RateLimitError:
+                raise  # Let caller handle
+            except Exception:
+                return None, None
+            return max_p, min_p
+
+        async def _ohlcv_hl(start: int, end: int, tf: str) -> tuple:
+            """OHLCV → (max_high, min_low)."""
+            if start >= end:
+                return None, None
+            all_candles = []
+            cursor = start
+            while cursor < end:
+                def _fetch(c=cursor):
+                    return self._ex.fetch_ohlcv(symbol, tf, since=c, limit=1000) or []
+                batch = await self._run(_fetch)
+                if not batch:
+                    break
+                all_candles.extend([c for c in batch if c[0] <= end])
+                if batch[-1][0] >= end or len(batch) < 1000:
+                    break
+                cursor = batch[-1][0] + 1
+            if not all_candles:
+                return None, None
+            return max(c[2] for c in all_candles), min(c[3] for c in all_candles)
+
+        def _merge(*pairs) -> tuple:
+            highs = [h for h, l in pairs if h is not None]
+            lows = [l for h, l in pairs if l is not None]
+            if not highs:
+                return None, None
+            return max(highs), min(lows)
+
+        # ── Tier 1: all aggTrades ─────────────────────────────────────────────
+        if use_tier == 1:
+            high, low = await _agg_extremes(start_ms, end_ms)
+            if high is not None:
+                return high, low
+            return await _ohlcv_hl(start_ms, end_ms, "1m")
+
+        # ── Tier 2: entry agg + body 1m + exit agg ───────────────────────────
+        if use_tier == 2:
+            results = await _aio.gather(
+                _agg_extremes(start_ms, start_ms + _60_S),
+                _ohlcv_hl(start_ms + _60_S, end_ms - _60_S, "1m"),
+                _agg_extremes(end_ms - _60_S, end_ms),
+                return_exceptions=True,
+            )
+            if any(isinstance(v, BaseException) for v in results):
+                return await _ohlcv_hl(start_ms, end_ms, "1m")
+            high, low = _merge(*results)
+            if high is not None:
+                return high, low
+            return await _ohlcv_hl(start_ms, end_ms, "1m")
+
+        # ── Tier 3: 5-section hybrid ─────────────────────────────────────────
+        e1m_end = start_ms + _1_HR
+        x1m_start = max(end_ms - _1_HR, e1m_end)
+        results = await _aio.gather(
+            _agg_extremes(start_ms, start_ms + _60_S),
+            _ohlcv_hl(start_ms + _60_S, e1m_end, "1m"),
+            _ohlcv_hl(e1m_end, x1m_start, "1h"),
+            _ohlcv_hl(x1m_start, end_ms - _60_S, "1m"),
+            _agg_extremes(end_ms - _60_S, end_ms),
+            return_exceptions=True,
+        )
+        if any(isinstance(v, BaseException) for v in results):
+            return await _ohlcv_hl(start_ms, end_ms, "1m")
+        high, low = _merge(*results)
+        if high is not None:
+            return high, low
+        return await _ohlcv_hl(start_ms, end_ms, "1m")
 
     # ── OHLCV ────────────────────────────────────────────────────────────────
 
