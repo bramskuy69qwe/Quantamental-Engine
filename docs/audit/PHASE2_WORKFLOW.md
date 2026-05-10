@@ -113,6 +113,12 @@ scope — belong to exchange.py collapse or adapter routing work):
       reduceOnly=true. Parser may miss those types or filter.
   (c) Timing/race — stale snapshot replay clearing TP/SL. SR-1
       covered main entry order; TP/SL may be out of scope.
+  Manifests in TWO paths, likely same root cause:
+  (a) TP/SL set at order creation not visible (original report)
+  (b) TP/SL edited mid-trade not visible (observed during SR-7
+      verification window)
+  Both paths produce STOP_MARKET/TAKE_PROFIT_MARKET orders with
+  reduceOnly=true on Binance USDM; same fetch and display surface.
   Diagnostic: query Binance API for open orders on affected symbol;
   compare against engine local state; isolate fetch vs display.
   May escalate to Bucket 1 if confirmed protective-order gap.
