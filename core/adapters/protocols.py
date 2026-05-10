@@ -15,6 +15,7 @@ from typing import Dict, List, Optional, Protocol, Tuple, runtime_checkable
 @dataclass
 class NormalizedAccount:
     """Exchange-agnostic account balance snapshot."""
+    currency: str = "USDT"         # Settlement/collateral currency
     total_equity: float = 0.0
     available_margin: float = 0.0
     unrealized_pnl: float = 0.0
@@ -23,6 +24,7 @@ class NormalizedAccount:
     fee_tier: str = ""
     maker_fee: float = 0.0
     taker_fee: float = 0.0
+    fee_source: str = "default"    # "live" (from exchange API) | "default" (hardcoded/config)
 
 
 @dataclass
@@ -58,10 +60,13 @@ class NormalizedOrder:
     quantity: float = 0.0           # original qty
     filled_qty: float = 0.0         # cumulative filled
     avg_fill_price: float = 0.0     # VWAP of fills
-    reduce_only: bool = False
+    reduce_only: Optional[bool] = None   # None = not applicable / not reported
     time_in_force: str = ""         # GTC / IOC / FOK / GTX
     # Position linkage (hedge mode)
-    position_side: str = ""         # LONG / SHORT
+    position_side: Optional[str] = None  # "LONG" / "SHORT" / None (one-way mode)
+    # Order linkage (TP/SL → parent relationship)
+    parent_order_id: Optional[str] = None   # Exchange order ID of parent
+    oca_group_id: Optional[str] = None      # One-cancels-all group ID
     # Timestamps
     created_at_ms: int = 0
     updated_at_ms: int = 0
@@ -82,7 +87,7 @@ class NormalizedTrade:
     price: float = 0.0
     quantity: float = 0.0
     fee: float = 0.0
-    fee_asset: str = "USDT"
+    fee_asset: str = ""
     role: str = ""                  # maker / taker
     is_close: bool = False          # closing vs opening fill
     realized_pnl: float = 0.0      # gross PnL for closing fills
@@ -98,6 +103,24 @@ class NormalizedIncome:
     amount: float = 0.0
     timestamp_ms: int = 0
     trade_id: str = ""
+
+
+@dataclass
+class NormalizedFundingRate:
+    """Exchange-agnostic live funding rate snapshot."""
+    symbol: str = ""
+    funding_rate: float = 0.0
+    next_funding_time_ms: int = 0
+    mark_price: float = 0.0
+
+
+class WSEventType:
+    """Canonical event type strings for WebSocket adapter → consumer contract."""
+    ACCOUNT_UPDATE = "ACCOUNT_UPDATE"
+    ORDER_UPDATE = "ORDER_TRADE_UPDATE"
+    KLINE = "kline"
+    MARK_PRICE = "markPriceUpdate"
+    DEPTH = "depthUpdate"
 
 
 # ── Protocol definitions ─────────────────────────────────────────────────────
@@ -186,11 +209,11 @@ class ExchangeAdapter(Protocol):
         """Convert unified symbol to exchange-native format."""
         ...
 
-    async def fetch_current_funding_rates(self, symbols: List[str]) -> Dict[str, Dict]:
+    async def fetch_current_funding_rates(self, symbols: List[str]) -> Dict[str, "NormalizedFundingRate"]:
         """Fetch live funding rate + next funding time + mark price for symbols.
 
         Returns:
-            {symbol: {"funding_rate": float, "next_funding_time": int, "mark_price": float}}
+            {symbol: NormalizedFundingRate}
         """
         ...
 

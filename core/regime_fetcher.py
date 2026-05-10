@@ -332,6 +332,8 @@ class RegimeFetcher:
                     })
                 except Exception as e:
                     # RL-1: detect 429/418 and set global pause
+                    # TODO(SR-8): remove ccxt isinstance once regime_fetcher routes
+                    # through adapter — only RateLimitError will be needed.
                     from core.adapters.errors import RateLimitError as _RLE
                     import ccxt as _ccxt
                     if isinstance(e, (_RLE, _ccxt.DDoSProtection, _ccxt.RateLimitExceeded)):
@@ -411,6 +413,8 @@ class RegimeFetcher:
                     })
                 except Exception as e:
                     # RL-1: detect 429/418 and set global pause
+                    # TODO(SR-8): remove ccxt isinstance once regime_fetcher routes
+                    # through adapter — only RateLimitError will be needed.
                     from core.adapters.errors import RateLimitError as _RLE
                     import ccxt as _ccxt
                     if isinstance(e, (_RLE, _ccxt.DDoSProtection, _ccxt.RateLimitExceeded)):
