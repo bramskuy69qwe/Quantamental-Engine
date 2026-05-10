@@ -13,8 +13,8 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Set
 
-import ccxt
 import config
+from core.adapters.errors import RateLimitError
 from core.state import app_state, TZ_LOCAL
 from core.exchange import (
     fetch_exchange_info, fetch_account, fetch_positions,
@@ -197,7 +197,7 @@ async def _account_refresh_loop():
                         pass
             except Exception as e:
                 log.debug("REST fill sync skipped: %s", e)
-        except (ccxt.DDoSProtection, ccxt.RateLimitExceeded) as e:
+        except RateLimitError as e:
             from core.exchange import handle_rate_limit_error
             handle_rate_limit_error(e)
         except Exception as e:
@@ -403,7 +403,7 @@ async def _regime_refresh_loop():
                     await fetcher.close()
                     _state["last_crypto"] = now
                     log.info("Regime: Binance crypto signals refreshed")
-                except (ccxt.DDoSProtection, ccxt.RateLimitExceeded) as e:
+                except RateLimitError as e:
                     from core.exchange import handle_rate_limit_error
                     handle_rate_limit_error(e)
                 except Exception as e:

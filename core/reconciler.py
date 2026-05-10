@@ -12,8 +12,7 @@ import asyncio
 import logging
 from typing import Dict
 
-import ccxt
-
+from core.adapters.errors import RateLimitError
 from core.state import app_state
 from core.database import db
 from core.exchange import (
@@ -88,7 +87,7 @@ class ReconcilerWorker:
         try:
             await fetch_exchange_trade_history()
             await self._reconcile_symbol(ticker, direction)
-        except (ccxt.RateLimitExceeded, ccxt.DDoSProtection) as e:
+        except RateLimitError as e:
             handle_rate_limit_error(e)
             log.warning("Rate limit hit in on_trade_closed for %s: %s", ticker, e)
         except Exception as e:
@@ -108,7 +107,7 @@ class ReconcilerWorker:
         # Single up-front history refresh — corrects open_time for all symbols
         try:
             await fetch_exchange_trade_history()
-        except (ccxt.RateLimitExceeded, ccxt.DDoSProtection) as e:
+        except RateLimitError as e:
             handle_rate_limit_error(e)
             log.warning("Rate limit hit in backfill history pre-fetch: %s", e)
             return
@@ -134,7 +133,7 @@ class ReconcilerWorker:
             async with sem:
                 try:
                     await self._reconcile_symbol(sym)
-                except (ccxt.RateLimitExceeded, ccxt.DDoSProtection) as e:
+                except RateLimitError as e:
                     handle_rate_limit_error(e)
                     log.warning("Rate limit hit in backfill for %s: %s", sym, e)
                 except Exception as e:
@@ -153,7 +152,7 @@ class ReconcilerWorker:
         await asyncio.sleep(_SETTLE_DELAY)
         try:
             await self._reconcile_closed_positions(symbol=ticker)
-        except (ccxt.RateLimitExceeded, ccxt.DDoSProtection) as e:
+        except RateLimitError as e:
             handle_rate_limit_error(e)
             log.warning("Rate limit hit in on_position_closed for %s: %s", ticker, e)
         except Exception as e:
@@ -197,7 +196,7 @@ class ReconcilerWorker:
                     "Reconciler closed_pos: %s %s mfe=%.2f mae=%.2f",
                     row["symbol"], direction, mfe, mae,
                 )
-            except (ccxt.RateLimitExceeded, ccxt.DDoSProtection) as e:
+            except RateLimitError as e:
                 handle_rate_limit_error(e)
                 log.warning("Rate limit hit in reconcile_closed_pos id=%d: %s", row["id"], e)
                 return

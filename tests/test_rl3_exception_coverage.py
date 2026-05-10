@@ -2,7 +2,7 @@
 RL-3 regression tests — rate-limit exception coverage.
 
 Validates that all 11 REST-calling exception handlers propagate
-ccxt.RateLimitExceeded to handle_rate_limit_error(), setting
+rate-limit errors to handle_rate_limit_error(), setting
 app_state.ws_status.rate_limited_until.
 
 Pre-fix:  all 11 tests FAIL (rate_limited_until stays None).
@@ -17,12 +17,12 @@ from datetime import datetime, timezone
 from unittest.mock import patch, AsyncMock, MagicMock
 
 import pytest
-import ccxt
 
+from core.adapters.errors import RateLimitError
 from core.state import app_state, PositionInfo
 
 
-RL_EXC = ccxt.RateLimitExceeded(
+RL_EXC = RateLimitError(
     'binanceusdm 429 Too Many Requests '
     '{"code":-1003,"msg":"Too many requests"}'
 )

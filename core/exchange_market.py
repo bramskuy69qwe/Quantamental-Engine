@@ -10,8 +10,8 @@ import asyncio
 import logging
 from typing import Dict, List, Optional
 
-import ccxt
 import config
+from core.adapters.errors import RateLimitError
 from core.state import app_state
 from core.exchange import get_exchange, _REST_POOL
 from core.constants import MS_PER_MINUTE, MS_PER_HOUR
@@ -121,11 +121,7 @@ async def _agg_extremes(symbol: str, start_ms: int, end_ms: int) -> tuple:
             cursor = last_ts + 1
             # RL-1: pace pagination (was zero delay → burst)
             await asyncio.sleep(0.25)
-    except ccxt.DDoSProtection as e:
-        from core.exchange import handle_rate_limit_error
-        handle_rate_limit_error(e)
-        return None, None
-    except ccxt.RateLimitExceeded as e:
+    except RateLimitError as e:
         from core.exchange import handle_rate_limit_error
         handle_rate_limit_error(e)
         return None, None

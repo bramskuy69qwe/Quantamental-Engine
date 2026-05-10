@@ -332,8 +332,9 @@ class RegimeFetcher:
                     })
                 except Exception as e:
                     # RL-1: detect 429/418 and set global pause
+                    from core.adapters.errors import RateLimitError as _RLE
                     import ccxt as _ccxt
-                    if isinstance(e, (_ccxt.DDoSProtection, _ccxt.RateLimitExceeded)):
+                    if isinstance(e, (_RLE, _ccxt.DDoSProtection, _ccxt.RateLimitExceeded)):
                         from core.exchange import handle_rate_limit_error
                         handle_rate_limit_error(e)
                     else:
@@ -410,8 +411,9 @@ class RegimeFetcher:
                     })
                 except Exception as e:
                     # RL-1: detect 429/418 and set global pause
+                    from core.adapters.errors import RateLimitError as _RLE
                     import ccxt as _ccxt
-                    if isinstance(e, (_ccxt.DDoSProtection, _ccxt.RateLimitExceeded)):
+                    if isinstance(e, (_RLE, _ccxt.DDoSProtection, _ccxt.RateLimitExceeded)):
                         from core.exchange import handle_rate_limit_error
                         handle_rate_limit_error(e)
                     else:

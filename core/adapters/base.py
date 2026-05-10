@@ -11,7 +11,14 @@ import math
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, Optional
 
+import re as _re
+
 import ccxt
+
+from core.adapters.errors import (
+    RateLimitError, AuthenticationError, ConnectionError,
+    ValidationError, ExchangeError,
+)
 
 log = logging.getLogger("adapters.base")
 
@@ -47,11 +54,29 @@ class BaseExchangeAdapter:
         return cls(params)
 
     async def _run(self, fn: Callable, *args) -> Any:
-        """Run a blocking CCXT call in the shared thread pool."""
+        """Run a blocking CCXT call in the shared thread pool.
+
+        Translates ccxt exceptions to neutral adapter error types at the
+        boundary — consumers never need to import ccxt for error handling.
+        """
         loop = asyncio.get_event_loop()
-        if args:
-            return await loop.run_in_executor(_REST_POOL, fn, *args)
-        return await loop.run_in_executor(_REST_POOL, fn)
+        try:
+            if args:
+                return await loop.run_in_executor(_REST_POOL, fn, *args)
+            return await loop.run_in_executor(_REST_POOL, fn)
+        except (ccxt.RateLimitExceeded, ccxt.DDoSProtection) as e:
+            # Parse "banned until <epoch_ms>" for precise retry hint
+            match = _re.search(r"banned until (\d+)", str(e))
+            retry_ms = int(match.group(1)) if match else None
+            raise RateLimitError(str(e), retry_after_ms=retry_ms) from e
+        except ccxt.AuthenticationError as e:
+            raise AuthenticationError(str(e)) from e
+        except (ccxt.NetworkError, ccxt.RequestTimeout) as e:
+            raise ConnectionError(str(e)) from e
+        except (ccxt.InvalidOrder, ccxt.InsufficientFunds) as e:
+            raise ValidationError(str(e)) from e
+        except (ccxt.ExchangeError, ccxt.ExchangeNotAvailable) as e:
+            raise ExchangeError(str(e)) from e
 
     def get_ccxt_instance(self) -> ccxt.Exchange:
         """Return underlying CCXT instance (escape hatch)."""

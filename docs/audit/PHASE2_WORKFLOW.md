@@ -91,7 +91,17 @@ Sequence: RL-3 → AN-1 → 24-48h re-verification → SR-7
 
 ### Bucket 3+: see AUDIT_REPORT.md execution order
 
-### Bucket 4 (HIGH cleanup):
+SR-4/SR-6 deferred items (identified during SR-7 Phase 3, NOT in SR-7
+scope — belong to exchange.py collapse or adapter routing work):
+- **SR-4a**: Eliminate `_REST_POOL` ThreadPoolExecutor (internal impl)
+- **SR-4b**: Remove `get_exchange()` legacy singleton (adapter factory
+  handles this)
+- **SR-4c**: Move `fetch_exchange_trade_history` augmentation logic to
+  adapter or service layer
+- **SR-4d**: `fetch_ohlcv_window` pagination helper — internal, not
+  protocol surface
+- **SR-6a**: Wire remaining raw-CCXT calls in exchange_market.py
+  through adapter (4 functions per original audit WS-1/EM-1)
 
 ### Bucket 4 (HIGH cleanup):
 - **OM-5** (severity TBD, potentially HIGH): TP/SL set at order

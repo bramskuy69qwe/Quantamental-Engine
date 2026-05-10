@@ -15,6 +15,7 @@ from datetime import datetime, timezone, timedelta
 
 import ccxt
 import config
+from core.adapters.errors import RateLimitError
 from core.state import app_state, PositionInfo, TZ_LOCAL
 from core.database import db
 from core.adapters import get_adapter, to_position_info, map_market_type
@@ -26,26 +27,32 @@ log = logging.getLogger("exchange")
 # ── RL-1: Rate-limit detection + global pause ────────────────────────────────
 
 def handle_rate_limit_error(exc: Exception) -> None:
-    """Parse 429/418 from CCXT exceptions, set rate_limited_until on WSStatus.
+    """Set rate_limited_until on WSStatus from a rate-limit error.
 
-    Called by any REST caller that catches DDoSProtection or RateLimitExceeded.
-    Parses Binance 418 "banned until <epoch_ms>" for precise backoff; falls back
-    to 120s default pause for 429 without a specific timestamp.
+    Accepts both RateLimitError (neutral, from adapter boundary) and raw
+    ccxt exceptions (from legacy paths not yet migrated to adapter).
+    Uses retry_after_ms if available on RateLimitError; falls back to
+    message parsing for "banned until <epoch_ms>"; defaults to 120s.
     """
     import re
-    msg = str(exc)
     ws = app_state.ws_status
 
-    # Try to parse "banned until <epoch_ms>" from 418 responses
-    match = re.search(r"banned until (\d+)", msg)
-    if match:
-        epoch_ms = int(match.group(1))
-        ws.rate_limited_until = datetime.fromtimestamp(epoch_ms / 1000, tz=timezone.utc)
+    # Prefer structured retry hint from RateLimitError
+    retry_ms = getattr(exc, "retry_after_ms", None)
+    if retry_ms:
+        ws.rate_limited_until = datetime.fromtimestamp(retry_ms / 1000, tz=timezone.utc)
         log.error("RL-1: IP banned until %s — all REST calls paused", ws.rate_limited_until)
     else:
-        # 429 without specific ban time — back off 120 seconds
-        ws.rate_limited_until = datetime.now(timezone.utc) + timedelta(seconds=120)
-        log.warning("RL-1: 429 detected — REST calls paused for 120s")
+        # Fallback: parse "banned until <epoch_ms>" from message string
+        match = re.search(r"banned until (\d+)", str(exc))
+        if match:
+            epoch_ms = int(match.group(1))
+            ws.rate_limited_until = datetime.fromtimestamp(epoch_ms / 1000, tz=timezone.utc)
+            log.error("RL-1: IP banned until %s — all REST calls paused", ws.rate_limited_until)
+        else:
+            # 429 without specific ban time — back off 120 seconds
+            ws.rate_limited_until = datetime.now(timezone.utc) + timedelta(seconds=120)
+            log.warning("RL-1: 429 detected — REST calls paused for 120s")
 
     ws.add_log(f"Rate limited until {ws.rate_limited_until.strftime('%H:%M:%S UTC')}")
 
@@ -308,7 +315,7 @@ async def populate_open_position_metadata() -> None:
                     pos.individual_fees = fees
                 except Exception:
                     pass  # best-effort — fees table may be empty on first run
-        except (ccxt.RateLimitExceeded, ccxt.DDoSProtection) as e:
+        except RateLimitError as e:
             handle_rate_limit_error(e)
             log.warning("Rate limit hit in populate_open_position_metadata for %s: %s", pos.ticker, e)
             return
@@ -336,7 +343,7 @@ async def fetch_open_orders_tpsl() -> None:
 
     try:
         orders = await adapter.fetch_open_orders()
-    except (ccxt.RateLimitExceeded, ccxt.DDoSProtection) as e:
+    except RateLimitError as e:
         handle_rate_limit_error(e)
         log.warning("Rate limit hit in fetch_open_orders_tpsl: %s", e)
         return
