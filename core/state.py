@@ -359,13 +359,14 @@ class AppState:
     # ── SR-3: crash recovery — shared restore function ────────────────────────
 
     def restore_from_snapshot(self, snapshot: dict) -> None:
-        """Restore the 8-field crash-recovery set from a DB snapshot dict.
+        """Restore the 10-field crash-recovery set from a DB snapshot dict.
 
         Called by main.py (startup) and routes_accounts.py (account switch).
         Fields restored:
           AccountState:   total_equity, balance_usdt, bod_equity, sow_equity,
                           max_total_equity, min_total_equity
-          PortfolioStats: dd_baseline_equity (derived), drawdown
+          PortfolioStats: dd_baseline_equity (derived), drawdown,
+                          dd_state, weekly_pnl_state (MP-1)
         """
         acc = self.account_state
         acc.total_equity     = snapshot.get("total_equity", 0.0)
@@ -377,6 +378,9 @@ class AppState:
         pf = self.portfolio
         pf.dd_baseline_equity = acc.bod_equity if acc.bod_equity > 0 else acc.total_equity
         pf.drawdown           = snapshot.get("drawdown", 0.0)
+        # MP-1: restore gate states so they survive restart
+        pf.dd_state           = snapshot.get("dd_state", "ok")
+        pf.weekly_pnl_state   = snapshot.get("weekly_pnl_state", "ok")
 
     # ── BOD reset ─────────────────────────────────────────────────────────────
 

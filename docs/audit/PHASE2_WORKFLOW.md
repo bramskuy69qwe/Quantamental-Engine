@@ -360,5 +360,13 @@ Last updated: 2026-05-10
   - Operational verification: **PASSED** (2026-05-12, partial) — no false
     positives, engine stayed ready. Fault path unverified (no sustained
     60s+ staleness). Deferred to production observation.
-- MP-1: **in progress** — Phase 1 (enumeration)
+- MP-1: **done** — crash recovery risk states
   Branch: fix/MP-1-crash-recovery-risk-states
+  - Added dd_state + weekly_pnl_state to restore_from_snapshot() (+2 lines)
+  - Both fields already in DB schema + write path — only read-back was missing
+  - Eliminates 5-15s window where gate defaults to "ok" after restart
+  - 437/437 green, baseline diff empty
+  - Operational verification: 1-2 hr smoke (adjusted — restart-recovery
+    tested in suite, not time-dependent)
+- **Bucket 3 complete.** Per original schedule: full 24-48h verification
+  of all Bucket 3 work before promoting to Bucket 4.
