@@ -265,9 +265,11 @@ Last updated: 2026-05-10
     May 10 caught across 6 sites by neutral RateLimitError, proper 120s
     pauses, no 418 escalation. Stress-tested under real production load.
   - Design docs: docs/design/SR-7_phase{1,2,3}_*.md
-- SR-4: **in progress** — Phase 3 (migration plan) complete, awaiting review
+- SR-4 + SR-6a: **done** — exchange.py collapse + adapter wiring
   Branch: fix/SR-4-exchange-collapse
-  Phase 1: enumeration done
-  Phase 2: collapse design done (Q1/Q2 verified)
-  Phase 3: migration plan done
-  Phase 4: implementation — blocked on Phase 3 review
+  - Step 1 (SR-4d): deleted dead-code fetch_ohlcv_window — 328 green
+  - Step 2 (SR-6a): 3 adapter methods + 4 caller migrations — 343 green
+  - Step 3 (SR-4a+b): deleted singleton + pool + ccxt import — 356 green
+  - All 3 steps: baseline diff empty
+  - exchange.py post-collapse: thin orchestration facade, zero raw CCXT,
+    zero thread pool, zero singleton. All I/O through _get_adapter().

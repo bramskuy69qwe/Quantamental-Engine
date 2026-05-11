@@ -1,7 +1,7 @@
 """
-CCXT-based REST wrapper — exchange-agnostic via adapter layer.
+Exchange orchestration facade — all I/O through adapter layer.
 
-Core functions: exchange init, account, positions, TP/SL, listen key.
+Core functions: account, positions, TP/SL, listen key, rate-limit handling.
 Market data (OHLCV, orderbook, mark price) -> exchange_market.py
 Income/equity/trade history -> exchange_income.py
 """
@@ -9,11 +9,9 @@ from __future__ import annotations
 import logging
 import time
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional
 from datetime import datetime, timezone, timedelta
 
-import ccxt
 import config
 from core.adapters.errors import RateLimitError
 from core.state import app_state, PositionInfo, TZ_LOCAL
@@ -60,60 +58,6 @@ def handle_rate_limit_error(exc: Exception) -> None:
 def is_rate_limited() -> bool:
     """Check if we're currently in a rate-limit backoff period."""
     return app_state.ws_status.is_rate_limited
-
-
-# Dedicated thread pool for all blocking CCXT REST calls.
-# Keeps REST I/O isolated from the default executor used by the event loop,
-# preventing REST saturation from blocking asyncio internals.
-_REST_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="rest")
-
-
-def _make_exchange() -> ccxt.binanceusdm:
-    """Legacy factory — kept for compatibility; main.py still references it during init."""
-    params = {
-        "apiKey":  config.BINANCE_API_KEY,
-        "secret":  config.BINANCE_API_SECRET,
-        "options": {
-            "defaultType": "future",
-            "fetchCurrencies": False,
-        },
-        "enableRateLimit": True,
-    }
-    if config.HTTP_PROXY:
-        params["proxies"] = {"http": config.HTTP_PROXY, "https": config.HTTP_PROXY}
-    ex = ccxt.binanceusdm(params)
-    return ex
-
-
-_exchange: Optional[ccxt.binance] = None
-
-
-def get_exchange() -> ccxt.Exchange:
-    """Return the CCXT instance for the currently active account.
-
-    Delegates to exchange_factory (keyed by account_id) so account switching
-    automatically routes all REST calls to the new account without restarting.
-    Falls back to the legacy singleton during the one-time startup window before
-    account_registry has finished loading.
-    """
-    try:
-        from core.account_registry import account_registry  # late import: startup ordering
-        from core.exchange_factory import exchange_factory  # late import: startup ordering
-        creds = account_registry.get_active_sync()
-        if creds and creds.get("api_key"):
-            return exchange_factory.get(
-                creds["id"],
-                creds["api_key"],
-                creds["api_secret"],
-                creds.get("exchange", "binance"),
-                creds.get("market_type", "future"),
-            )
-    except Exception:
-        pass  # fall through to legacy singleton during startup
-    global _exchange
-    if _exchange is None:
-        _exchange = _make_exchange()
-    return _exchange
 
 
 def _get_adapter() -> ExchangeAdapter:
