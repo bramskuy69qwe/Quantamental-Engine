@@ -138,6 +138,15 @@ scope — belong to exchange.py collapse or adapter routing work):
   Protocol violation. Fix: implement V5 transaction log endpoint
   for non-PnL income types. Discovered: 2026-05-11, SR-7 Phase 1
   audit. Not in SR-7 scope (adapter quality, not protocol design).
+- **RL-4** (MEDIUM): Periodic 429 bursts at ~8-minute intervals.
+  5 bursts on 2026-05-10 18:57-19:25 UTC. Periodicity suggests a
+  scheduled task hitting Binance hard enough to trigger rate limits
+  every ~8 minutes. Diagnostic: cross-reference burst timestamps
+  with scheduler config in core/schedulers.py; the ~8-minute
+  interval should match one configured loop. May justify promoting
+  RL-2 (proactive weight tracker, currently deferred) earlier —
+  proactive tracking would prevent periodic hits at the source.
+  Discovered: 2026-05-12, SR-7 verification window.
 - **AN-2** (HIGH, promoted from Bucket 5): qt:-prefixed legacy
   Quantower rows have multiple corruption modes — hold=0s with
   high≈low (original report) AND long-hold-with-extreme-MAE
@@ -254,6 +263,9 @@ Last updated: 2026-05-10
   - Step 3: SupportsListenKey + auth model abstraction — 314→314 green
   - Step 4: fetch_price_extremes (replaces fetch_agg_trades, tier logic in adapter) — 325→325 green
   - All 4 steps: baseline diff empty, behavioral equivalence verified
-  - Operational verification: **in progress** (started 2026-05-11)
+  - Operational verification: **PASSED** (2026-05-12) — 429 cluster on
+    May 10 caught across 6 sites by neutral RateLimitError, proper 120s
+    pauses, no 418 escalation. Stress-tested under real production load.
   - Design docs: docs/design/SR-7_phase{1,2,3}_*.md
-- **Next**: SR-4 (exchange.py collapse) — blocked on SR-7 verification window
+- SR-4: **in progress** — Phase 1 (enumeration)
+  Branch: fix/SR-4-exchange-collapse
