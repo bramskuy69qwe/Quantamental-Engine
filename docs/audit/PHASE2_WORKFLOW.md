@@ -108,8 +108,21 @@ Per-item verification windows based on risk profile:
 - Pure refactors (SR-6 remaining, SR-8): 1-2 hr smoke test
 - Additive changes (MN-1): 1-2 hr smoke test
 - Behavior changes (SC-2, MP-1): 6-12 hr verification
-- End of Bucket 3 (after MP-1): full 24-48h before Bucket 4
+- End of Bucket 3 (after MP-1): bundled with end-of-Bucket-4
+  combined 24-48h window. Rationale: structural Bucket 3 work
+  is pure refactor (smoke-diff empty per-item), behavior-change
+  items had partial verification, full window earns more keep
+  when testing cumulative Bucket 3+4 stack.
 Same grep pattern and routing logic (A/B/C) for all windows.
+
+### Bucket 4 execution order
+1. AD-5 (architectural cleanup, possibly resolves aiohttp
+   unclosed-session anomaly)
+2. MN-1a (~2-line quick win, activates check #9)
+3. FE-9 diagnostic (determines if (b)/(c) → stays in Bucket 4,
+   or (a) → falls to Bucket 5)
+4. Remaining HIGH items (AN-2, AD-2/3/4, RL-4, OM-5, MN-2/RE-2)
+   ordered as findings inform
 
 ### Bucket 4 (HIGH cleanup):
 - **OM-5** (severity TBD, potentially HIGH): TP/SL set at order
@@ -270,7 +283,7 @@ Same grep pattern and routing logic (A/B/C) for all windows.
 
 ## Status: Where are we?
 
-Last updated: 2026-05-10
+Last updated: 2026-05-12
 - Bucket 0: **done** — RE-9 landed (60 tests, 111-row baseline CSV)
 - Bucket 1: **done** — SC-1, RP-1, RE-1 all landed (branch: audit/v2.3.1)
 - Bucket 2: **done** — all three foundation redesigns landed
@@ -368,5 +381,14 @@ Last updated: 2026-05-10
   - 437/437 green, baseline diff empty
   - Operational verification: 1-2 hr smoke (adjusted — restart-recovery
     tested in suite, not time-dependent)
-- **Bucket 3 complete.** Per original schedule: full 24-48h verification
-  of all Bucket 3 work before promoting to Bucket 4.
+- **Bucket 3 complete.** Final 24-48h verification bundled with
+  end-of-Bucket-4 (decision: 2026-05-12). Pre-Bucket-4 evidence:
+  5.3h MN-1+SC-2+MP-1 code + 21h Bucket 3 structural code under
+  production load. Structured report 2026-05-12: CLEAN across all
+  7 findings with caveats — MN-1 partial (checks 2,4-9 unfired
+  due to healthy conditions), SC-2 fault path unverified (no organic
+  60s+ staleness), MP-1 per-field restore test-suite verified but
+  not log-observed.
+  Outstanding TODO during Bucket 4: deliberate stop-start with
+  pre/post dd_state and weekly_pnl_state capture at any natural
+  restart — closes MP-1 observational gap.
