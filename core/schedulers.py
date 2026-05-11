@@ -382,7 +382,6 @@ async def _regime_refresh_loop():
                 await fetcher.fetch_us10y_yield(lookback, today)
                 await fetcher.fetch_hy_spread(lookback, today)
                 await fetcher.compute_btc_rvol_ratio(lookback, today)
-                await fetcher.close()
                 _state["last_tradfi"] = now
                 log.info("Regime: TradFi signals refreshed")
             except Exception as e:
@@ -397,10 +396,10 @@ async def _regime_refresh_loop():
                 try:
                     today     = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                     lookback  = (datetime.now(timezone.utc) - timedelta(days=10)).strftime("%Y-%m-%d")
-                    fetcher   = RegimeFetcher()
+                    from core.exchange import _get_adapter
+                    fetcher = RegimeFetcher(adapter=_get_adapter())
                     await fetcher.fetch_binance_oi(lookback, today)
                     await fetcher.fetch_binance_funding(lookback, today)
-                    await fetcher.close()
                     _state["last_crypto"] = now
                     log.info("Regime: Binance crypto signals refreshed")
                 except RateLimitError as e:

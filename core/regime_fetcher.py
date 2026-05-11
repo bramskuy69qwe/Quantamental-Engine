@@ -39,13 +39,8 @@ ProgressCB = Optional[Callable]
 class RegimeFetcher:
     """Fetches and stores macro signal data from multiple free sources."""
 
-    def __init__(self) -> None:
-        self._ccxt_exchange = None
-
-    async def close(self) -> None:
-        if self._ccxt_exchange:
-            await self._ccxt_exchange.close()
-            self._ccxt_exchange = None
+    def __init__(self, adapter=None) -> None:
+        self._adapter = adapter
 
     # ── VIX (Yahoo Finance via yfinance) ─────────────────────────────────────
 
@@ -262,85 +257,59 @@ class RegimeFetcher:
 
     # ── Binance OI & Funding (via CCXT, proxied) ─────────────────────────────
 
-    async def _get_ccxt(self):
-        if self._ccxt_exchange is None:
-            import ccxt.async_support as ccxt_async
-            import aiohttp as _aiohttp
-            from core.connections import connections_manager
-
-            params: Dict[str, Any] = {
-                "enableRateLimit": True,
-                "options": {"defaultType": "future"},
-            }
-            if config.HTTP_PROXY:
-                params["aiohttp_proxy"] = config.HTTP_PROXY
-
-            # Read credentials from Connections (optional — public endpoints work without)
-            api_key = connections_manager.get_sync("binance_market_data")
-            if api_key:
-                params["apiKey"] = api_key
-                entry = connections_manager._cache.get("binance_market_data", {})
-                api_secret = entry.get("extra", "")
-                if api_secret:
-                    params["secret"] = api_secret
-
-            resolver = _aiohttp.ThreadedResolver()
-            connector = _aiohttp.TCPConnector(resolver=resolver)
-            session = _aiohttp.ClientSession(connector=connector)
-
-            self._ccxt_exchange = ccxt_async.binanceusdm(params)
-            self._ccxt_exchange.session = session
-            self._ccxt_exchange.own_session = True
-
-        return self._ccxt_exchange
+    # ── Binance crypto signals (via adapter) ──────────────────────────────────
+    # Pagination/chunking at this level (not in adapter) because:
+    # - Window sizes are domain-driven (regime look-back period), partially
+    #   informed by Binance's 30-day API limit but chosen for regime semantics
+    # - Symbol selection is domain-driven (top-10 aggregate breadth)
+    # - Pacing is domain-driven (0.3s courtesy, not exchange-specific)
+    # - Early abort is domain-driven (rate-limit circuit breaker)
+    # Contrast: adapter.fetch_price_extremes() owns tier logic because
+    # resolution choice (aggTrades vs OHLCV) IS exchange-specific.
 
     async def fetch_binance_oi(
         self, since_date: str, until_date: str, progress_cb: ProgressCB = None,
     ) -> int:
         """Fetch aggregate open interest for top symbols. Returns rows written."""
+        from core.adapters.errors import RateLimitError
+        from core.adapters.protocols import SupportsOpenInterest
+
         await _progress(progress_cb, 0, "Fetching Binance open interest...")
 
-        exchange = await self._get_ccxt()
+        if not isinstance(self._adapter, SupportsOpenInterest):
+            log.info("fetch_binance_oi: adapter doesn't support open interest — skipping")
+            return 0
 
-        # Top symbols to aggregate OI
         symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT",
                     "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "DOTUSDT"]
 
         since_dt = datetime.strptime(since_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
         until_dt = datetime.strptime(until_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
 
-        # Binance /fapi/v1/openInterestHist gives daily OI history (up to 30 days per request)
         all_daily: Dict[str, float] = {}
 
         for sym_idx, sym in enumerate(symbols):
-            # RL-1: abort if rate-limited
             if app_state.ws_status.is_rate_limited:
                 log.info("fetch_binance_oi: aborting — rate limited")
                 break
             current_start = since_dt
             while current_start < until_dt:
                 if app_state.ws_status.is_rate_limited:
-                    break  # RL-1: abort pagination if rate-limited mid-loop
+                    break
                 period_end = min(current_start + timedelta(days=29), until_dt)
                 try:
-                    data = await exchange.fapiPublicGetOpenInterestHist({
-                        "symbol": sym,
-                        "period": "1d",
-                        "startTime": int(current_start.timestamp() * 1000),
-                        "endTime": int(period_end.timestamp() * 1000),
-                        "limit": 30,
-                    })
+                    data = await self._adapter.fetch_open_interest_hist(
+                        sym, "1d",
+                        int(current_start.timestamp() * 1000),
+                        int(period_end.timestamp() * 1000),
+                        limit=30,
+                    )
+                except RateLimitError as e:
+                    from core.exchange import handle_rate_limit_error
+                    handle_rate_limit_error(e)
+                    break
                 except Exception as e:
-                    # RL-1: detect 429/418 and set global pause
-                    # TODO(SR-8): remove ccxt isinstance once regime_fetcher routes
-                    # through adapter — only RateLimitError will be needed.
-                    from core.adapters.errors import RateLimitError as _RLE
-                    import ccxt as _ccxt
-                    if isinstance(e, (_RLE, _ccxt.DDoSProtection, _ccxt.RateLimitExceeded)):
-                        from core.exchange import handle_rate_limit_error
-                        handle_rate_limit_error(e)
-                    else:
-                        log.warning("OI fetch failed for %s: %s", sym, e)
+                    log.warning("OI fetch failed for %s: %s", sym, e)
                     break
 
                 for entry in data:
@@ -380,9 +349,14 @@ class RegimeFetcher:
         self, since_date: str, until_date: str, progress_cb: ProgressCB = None,
     ) -> int:
         """Fetch average funding rate across top symbols. Returns rows written."""
+        from core.adapters.errors import RateLimitError
+        from core.adapters.protocols import SupportsFundingRates
+
         await _progress(progress_cb, 0, "Fetching Binance funding rates...")
 
-        exchange = await self._get_ccxt()
+        if not isinstance(self._adapter, SupportsFundingRates):
+            log.info("fetch_binance_funding: adapter doesn't support funding rates — skipping")
+            return 0
 
         symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT",
                     "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "DOTUSDT"]
@@ -390,11 +364,9 @@ class RegimeFetcher:
         since_dt = datetime.strptime(since_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
         until_dt = datetime.strptime(until_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
 
-        # Collect all funding entries: {date: [rates]}
         daily_rates: Dict[str, List[float]] = {}
 
         for sym_idx, sym in enumerate(symbols):
-            # RL-1: abort if rate-limited (don't cascade 429s across symbols)
             if app_state.ws_status.is_rate_limited:
                 log.info("fetch_binance_funding: aborting — rate limited")
                 break
@@ -403,25 +375,19 @@ class RegimeFetcher:
 
             while since_ms < until_ms:
                 if app_state.ws_status.is_rate_limited:
-                    break  # RL-1: abort pagination if rate-limited mid-loop
+                    break
                 try:
-                    data = await exchange.fapiPublicGetFundingRate({
-                        "symbol": sym,
-                        "startTime": since_ms,
-                        "endTime": min(since_ms + 30 * 86_400_000, until_ms),
-                        "limit": 1000,
-                    })
+                    data = await self._adapter.fetch_funding_rates(
+                        sym, since_ms,
+                        min(since_ms + 30 * 86_400_000, until_ms),
+                        limit=1000,
+                    )
+                except RateLimitError as e:
+                    from core.exchange import handle_rate_limit_error
+                    handle_rate_limit_error(e)
+                    break
                 except Exception as e:
-                    # RL-1: detect 429/418 and set global pause
-                    # TODO(SR-8): remove ccxt isinstance once regime_fetcher routes
-                    # through adapter — only RateLimitError will be needed.
-                    from core.adapters.errors import RateLimitError as _RLE
-                    import ccxt as _ccxt
-                    if isinstance(e, (_RLE, _ccxt.DDoSProtection, _ccxt.RateLimitExceeded)):
-                        from core.exchange import handle_rate_limit_error
-                        handle_rate_limit_error(e)
-                    else:
-                        log.warning("Funding fetch failed for %s: %s", sym, e)
+                    log.warning("Funding fetch failed for %s: %s", sym, e)
                     break
 
                 if not data:

@@ -289,5 +289,13 @@ Last updated: 2026-05-10
   - WS-2: added execution_type to NormalizedOrder, Binance adapter populates
   - 372/372 green, baseline diff empty
   - Operational verification: **PASSED** (2026-05-12) — 1-2 hr smoke clean
-- SR-8: **in progress** — Phase 1 (enumeration)
+- SR-8: **done** — regime_fetcher adapter migration
   Branch: fix/SR-8-regime-adapter-migration
+  - Replaced 2 raw ccxt calls with adapter methods (fetch_open_interest_hist,
+    fetch_funding_rates — both already existed on protocol)
+  - Deleted _get_ccxt() singleton + ccxt.async_support + aiohttp session (~35 LOC)
+  - Collapsed 2 TODO(SR-8) dual-catch sites to single RateLimitError
+  - Added SupportsOpenInterest / SupportsFundingRates isinstance guards
+  - Scheduler injects adapter via _get_adapter()
+  - 387/387 green, baseline diff empty
+  - Remaining direct ccxt: ohlcv_fetcher.py (async_support, separate concern)
