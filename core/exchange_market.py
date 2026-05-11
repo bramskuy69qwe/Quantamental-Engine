@@ -1,8 +1,8 @@
 """
 Market data REST wrappers: OHLCV, orderbook, mark price, MFE/MAE calculations.
 
-Split from exchange.py for maintainability. Uses the adapter layer for
-exchange-specific REST calls, with get_exchange() fallback for CCXT-generic calls.
+Split from exchange.py for maintainability. All exchange-specific REST
+calls go through the adapter layer.
 """
 from __future__ import annotations
 
@@ -13,8 +13,6 @@ from typing import Dict, List, Optional
 import config
 from core.adapters.errors import RateLimitError
 from core.state import app_state
-from core.exchange import get_exchange, _REST_POOL
-from core.constants import MS_PER_MINUTE, MS_PER_HOUR
 
 
 def _get_adapter():
@@ -41,13 +39,8 @@ async def fetch_ohlcv(symbol: str, timeframe: str = config.ATR_TIMEFRAME,
     except Exception:
         pass
 
-    loop = asyncio.get_event_loop()
-    ex   = get_exchange()
-
-    def _fetch():
-        return ex.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
-
-    candles = await loop.run_in_executor(_REST_POOL, _fetch)
+    adapter = _get_adapter()
+    candles = await adapter.fetch_ohlcv(symbol, timeframe, limit)
     app_state.ohlcv_cache[symbol] = candles
     return candles
 
@@ -113,13 +106,8 @@ async def fetch_orderbook(symbol: str, limit: int = 20) -> Dict:
     except Exception:
         pass
 
-    loop = asyncio.get_event_loop()
-    ex   = get_exchange()
-
-    def _fetch():
-        return ex.fetch_order_book(symbol, limit=limit)
-
-    ob = await loop.run_in_executor(_REST_POOL, _fetch)
+    adapter = _get_adapter()
+    ob = await adapter.fetch_orderbook(symbol, limit)
     app_state.orderbook_cache[symbol] = ob
     return ob
 
@@ -127,13 +115,7 @@ async def fetch_orderbook(symbol: str, limit: int = 20) -> Dict:
 # ── Mark price ───────────────────────────────────────────────────────────────
 
 async def fetch_mark_price(symbol: str) -> float:
-    loop = asyncio.get_event_loop()
-    ex   = get_exchange()
-
-    def _fetch():
-        ticker = ex.fetch_ticker(symbol)
-        return float(ticker.get("last") or ticker.get("close") or 0)
-
-    price = await loop.run_in_executor(_REST_POOL, _fetch)
+    adapter = _get_adapter()
+    price = await adapter.fetch_mark_price(symbol)
     app_state.mark_price_cache[symbol] = price
     return price

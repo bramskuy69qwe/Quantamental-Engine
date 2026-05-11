@@ -12,7 +12,6 @@ from typing import Dict, List, Optional
 from datetime import datetime, timezone, timedelta
 
 from core.state import app_state, TZ_LOCAL
-from core.exchange import get_exchange, _REST_POOL
 from core.database import db
 from core.constants import MS_PER_DAY
 

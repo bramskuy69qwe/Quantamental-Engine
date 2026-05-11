@@ -389,6 +389,20 @@ class BinanceUSDMAdapter(BaseExchangeAdapter):
 
         return await self._run(_fetch)
 
+    # ── Orderbook / mark price / server time ──────────────────────────────────
+
+    async def fetch_orderbook(self, symbol: str, limit: int = 20) -> Dict:
+        return await self._run(lambda: self._ex.fetch_order_book(symbol, limit=limit))
+
+    async def fetch_mark_price(self, symbol: str) -> float:
+        def _fetch():
+            ticker = self._ex.fetch_ticker(symbol)
+            return float(ticker.get("last") or ticker.get("close") or 0)
+        return await self._run(_fetch)
+
+    async def fetch_server_time(self) -> int:
+        return await self._run(self._ex.fetch_time)
+
     # ── Listen key ───────────────────────────────────────────────────────────
 
     async def create_listen_key(self) -> str:

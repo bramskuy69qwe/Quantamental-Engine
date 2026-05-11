@@ -191,6 +191,20 @@ class ExchangeAdapter(Protocol):
         """Fetch OHLCV candles."""
         ...
 
+    async def fetch_orderbook(self, symbol: str, limit: int = 20) -> Dict:
+        """Fetch current orderbook snapshot.
+        Returns: {"bids": [[price, qty], ...], "asks": [[price, qty], ...]}
+        """
+        ...
+
+    async def fetch_mark_price(self, symbol: str) -> float:
+        """Fetch current mark/last price for a symbol."""
+        ...
+
+    async def fetch_server_time(self) -> int:
+        """Fetch exchange server time (ms UTC). For latency measurement."""
+        ...
+
     async def load_markets(self) -> None:
         """Load exchange market info (precision, limits, etc.)."""
         ...

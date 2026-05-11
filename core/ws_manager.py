@@ -24,7 +24,6 @@ from core.adapters.errors import RateLimitError
 from core.state import app_state
 from core.event_bus import event_bus
 from core.exchange import (
-    get_exchange, _REST_POOL,
     fetch_account, fetch_positions, fetch_orderbook, fetch_ohlcv,
     create_listen_key, keepalive_listen_key,
     _get_adapter, handle_rate_limit_error,

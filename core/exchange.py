@@ -136,11 +136,10 @@ def _get_adapter() -> ExchangeAdapter:
 
 async def fetch_exchange_info() -> None:
     """Update exchange_info on app_state (latency, server time, name, fees)."""
-    loop = asyncio.get_event_loop()
-    ex   = get_exchange()
+    adapter = _get_adapter()
 
     t0 = time.monotonic()
-    server_time = await loop.run_in_executor(_REST_POOL, ex.fetch_time)
+    server_time = await adapter.fetch_server_time()
     latency_ms  = (time.monotonic() - t0) * 1000
 
     info = app_state.exchange_info
