@@ -273,7 +273,9 @@ class DataCache:
             # won't overwrite fresher WS balance data within priority window
             if balances:
                 app_state.account_state.balance_usdt = balances.get("wallet_balance", 0)
-                app_state.account_state.total_equity = balances.get("cross_wallet", 0)
+                # FE-9: total_equity NOT set here — cross_wallet is balance-only
+                # (missing unrealized PnL). Sole equity authority is apply_mark_price()
+                # which computes balance_usdt + total_unrealized correctly.
                 self._advance_account_version(source, ts_ms)
 
             if norm_positions:

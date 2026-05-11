@@ -254,7 +254,13 @@ Same grep pattern and routing logic (A/B/C) for all windows.
   wrong calculations (flicker not visible at click moment),
   severity is HIGH (risk-management gap, Bucket 4 candidate).
   Discovered: 2026-05-11, SR-7 verification window.
-- **FE-9** (potentially HIGH): Total equity flash crash on equity curve
+- **FE-9**: **done** (confirmed HIGH, race condition). data_cache.py:276
+  set total_equity = cross_wallet (balance only, missing unrealized PnL)
+  on WS ACCOUNT_UPDATE. Fixed: removed assignment, apply_mark_price() is
+  sole equity authority (computes balance + unrealized). 58/104 pnl_anomaly
+  events had equity_after = balance_usdt value; all 104 likely false
+  positives from this race. 457/457 green, baseline diff empty.
+- ~~**FE-9** (potentially HIGH)~~: Total equity flash crash on equity curve
   tab — equity briefly shows wrong (low) value for ~1s. Strong potential
   connection to dozens of pnl_anomaly events in MN-1 logs (equity drops
   -1.0% to -5.3% throughout SC-2 verification window). pnl_anomaly noise
