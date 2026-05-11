@@ -267,7 +267,9 @@ Same grep pattern and routing logic (A/B/C) for all windows.
   wrong calculations (flicker not visible at click moment),
   severity is HIGH (risk-management gap, Bucket 4 candidate).
   Discovered: 2026-05-11, SR-7 verification window.
-- **FE-9**: **done, verification pending**. Race condition fix landed
+- **FE-9**: **done, verified** (91.5% pnl_anomaly rate reduction). Race
+  condition eliminated. Single residual event attributed to 5-min lookback
+  catching pre-fix snapshot; zero events for 38 min afterward.
   (data_cache.py:276 removed). User reports flickering "still presents"
   — three explanations: (a) fix incomplete, (b) chart rendering historical
   race-corrupted snapshots (will age out), (c) separate display-layer
@@ -292,6 +294,10 @@ Same grep pattern and routing logic (A/B/C) for all windows.
   Cross-references: FE-2 (unintentional case c), FE-3 (hx-target
   granularity determines re-render), OM-5 (TP/SL placement pending).
   Address after Bucket 3 completes. Discovered: 2026-05-12.
+- **FE-12** (MEDIUM): Residual equity curve flicker — chart rendering
+  historical race-corrupted snapshots from pre-FE-9 data. Will age out
+  as clean snapshots accumulate. Revisit if persists after ~1 week.
+  Discovered: 2026-05-12.
 - **FE-10** (MEDIUM-LOW): 1W equity chart shows "huge drop on left" with
   value appearing only on right. Chart axis/data padding issue — engine
   may pad missing days with zero/null, Y-axis starts at 0 instead of
