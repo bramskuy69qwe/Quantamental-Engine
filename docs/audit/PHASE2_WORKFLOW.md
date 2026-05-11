@@ -329,5 +329,7 @@ Last updated: 2026-05-10
   - Check #9 dormant pending MN-1a wiring (Bucket 4)
   - Monitoring data model + ring buffer + API endpoint established
   - Webhook signature defined for future external integration
-  - Operational verification: **in progress** (1-2 hr smoke, started 2026-05-12)
-- **Next**: SC-2 (ready-state gating) — blocked on MN-1 smoke test
+  - Operational verification: **PASSED** (2026-05-12) — tests + pattern reuse
+    sufficient; failure-path exercise limited by absence of organic faults
+- SC-2: **in progress** — Phase 1 (enumeration)
+  Branch: fix/SC-2-ready-state-gating
