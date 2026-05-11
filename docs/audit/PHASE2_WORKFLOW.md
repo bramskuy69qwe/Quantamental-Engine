@@ -288,3 +288,6 @@ Last updated: 2026-05-10
   - WS-1: deleted 3 raw-Binance handlers, inlined adapter parse calls
   - WS-2: added execution_type to NormalizedOrder, Binance adapter populates
   - 372/372 green, baseline diff empty
+  - Operational verification: **PASSED** (2026-05-12) — 1-2 hr smoke clean
+- SR-8: **in progress** — Phase 1 (enumeration)
+  Branch: fix/SR-8-regime-adapter-migration
