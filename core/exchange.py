@@ -405,7 +405,7 @@ async def keepalive_listen_key(listen_key: str) -> None:
 # These modules were extracted from this file; all existing import paths
 # (e.g. `from core.exchange import fetch_ohlcv`) continue to work.
 from core.exchange_market import (  # noqa: E402, F401
-    fetch_ohlcv, fetch_ohlcv_window, fetch_hl_for_trade, calc_mfe_mae,
+    fetch_ohlcv, fetch_hl_for_trade, calc_mfe_mae,
     fetch_orderbook, fetch_mark_price,
 )
 from core.exchange_income import (  # noqa: E402, F401

@@ -52,33 +52,6 @@ async def fetch_ohlcv(symbol: str, timeframe: str = config.ATR_TIMEFRAME,
     return candles
 
 
-async def fetch_ohlcv_window(
-    symbol: str, since_ms: int, until_ms: int, timeframe: str = "1m"
-) -> List:
-    """
-    Fetch OHLCV candles for an exact time window (since_ms -> until_ms, ms UTC).
-    Makes multiple 1000-candle requests if the window is large.
-    Returns list of [timestamp, open, high, low, close, volume].
-    """
-    loop = asyncio.get_event_loop()
-    ex   = get_exchange()
-    all_candles: List = []
-    cursor = since_ms
-
-    def _fetch(since):
-        return ex.fetch_ohlcv(symbol, timeframe, since=since, limit=1000) or []
-
-    while cursor < until_ms:
-        batch = await loop.run_in_executor(_REST_POOL, _fetch, cursor)
-        if not batch:
-            break
-        all_candles.extend([c for c in batch if c[0] <= until_ms])
-        if batch[-1][0] >= until_ms or len(batch) < 1000:
-            break
-        cursor = batch[-1][0] + 1  # advance past last candle
-    return all_candles
-
-
 async def fetch_hl_for_trade(symbol: str, open_ms: int, close_ms: int) -> tuple:
     """
     Fetch the true (max_high, min_low) for a closed trade.
