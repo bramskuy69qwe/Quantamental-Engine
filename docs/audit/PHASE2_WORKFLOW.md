@@ -265,5 +265,9 @@ Last updated: 2026-05-10
     May 10 caught across 6 sites by neutral RateLimitError, proper 120s
     pauses, no 418 escalation. Stress-tested under real production load.
   - Design docs: docs/design/SR-7_phase{1,2,3}_*.md
-- SR-4: **in progress** — Phase 1 (enumeration)
+- SR-4: **in progress** — Phase 3 (migration plan) complete, awaiting review
   Branch: fix/SR-4-exchange-collapse
+  Phase 1: enumeration done
+  Phase 2: collapse design done (Q1/Q2 verified)
+  Phase 3: migration plan done
+  Phase 4: implementation — blocked on Phase 3 review
