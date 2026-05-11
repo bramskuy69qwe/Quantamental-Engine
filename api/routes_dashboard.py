@@ -281,6 +281,25 @@ async def api_ready():
     return JSONResponse({"ready": not app_state.is_initializing})
 
 
+@router.get("/api/monitoring/events")
+async def api_monitoring_events():
+    """Return active (unresolved) monitoring events as JSON array."""
+    from core.monitoring import MonitoringEvent
+    svc = getattr(app_state, "_monitoring_service", None)
+    if svc is None:
+        return JSONResponse([])
+    return JSONResponse([
+        {
+            "kind": ev.kind,
+            "severity": ev.severity,
+            "message": ev.message,
+            "timestamp": ev.timestamp.isoformat() if ev.timestamp else None,
+            "context": ev.context,
+        }
+        for ev in svc.get_active_events()
+    ])
+
+
 @router.get("/api/state")
 async def api_state():
     acc = app_state.account_state

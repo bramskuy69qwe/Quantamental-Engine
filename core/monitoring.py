@@ -1,10 +1,16 @@
 """
-MonitoringService — periodic health checks running every 60 seconds.
+MonitoringService — periodic health checks with structured event model.
 
-Checks:
-  1. P&L anomaly     — equity drops > 1 % in a 5-minute window (reads DB)
-  2. WS staleness    — WS last_update > 45 s ago and NOT already in REST fallback
-  3. Position count  — in-memory position count differs from last DB snapshot
+Checks (9 total):
+  1. P&L anomaly          — equity drops > 1 % in a 5-minute window
+  2. WS staleness         — WS last_update > 45 s ago (not in fallback)
+  3. Position count        — in-memory count differs from last DB snapshot
+  4. Regime data freshness — regime classification older than 90 min
+  5. News feed health      — no news rows inserted in last 60 min
+  6. Plugin connection     — plugin was connected but is now disconnected
+  7. Reconciler health     — >20 pending backfill rows
+  8. Database health       — SELECT 1 fails or times out
+  9. Rate-limit frequency  — >5 rate-limit events in 30-minute window
 
 Start as an asyncio background task in lifespan startup:
     from core.monitoring import MonitoringService
@@ -14,7 +20,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Optional
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 
 from core.state import app_state
 from core.database import db
@@ -25,17 +33,72 @@ _PNL_DROP_THRESHOLD   = 0.01   # 1 % equity drop triggers anomaly alert
 _PNL_WINDOW_MINUTES   = 5      # look-back window in minutes
 _WS_STALE_THRESHOLD   = 45.0   # seconds before we warn (separate from 30 s fallback trigger)
 _CHECK_INTERVAL       = 60     # seconds between checks
+_EVENT_BUFFER_MAX     = 100    # max events in ring buffer
+
+
+# ── Monitoring data model ────────────────────────────────────────────────────
+
+@dataclass
+class MonitoringEvent:
+    """Structured monitoring event for alert surfacing and future webhook dispatch."""
+    kind: str                                    # e.g. "regime_stale", "rate_limit_burst"
+    severity: str                                # "info" | "warning" | "critical"
+    message: str                                 # Human-readable description
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    resolved: bool = False
+    resolved_at: Optional[datetime] = None
+    context: Dict[str, Any] = field(default_factory=dict)
 
 
 class MonitoringService:
     """
-    Runs three health checks on a fixed interval.
-    Writes structured WARNING log entries that land in data/logs/risk_engine.jsonl
-    via the root logger's RotatingFileHandler (attached in main.py).
+    Runs health checks on a fixed interval. Emits MonitoringEvent objects
+    into an in-memory ring buffer. Events are also written as structured
+    JSON log entries for grep-based analysis.
     """
 
+    def __init__(self) -> None:
+        self.events: List[MonitoringEvent] = []
+
+    # ── Event emission / resolution ─────────────────────────────────────────
+
+    def emit(self, kind: str, severity: str, message: str,
+             context: Optional[Dict[str, Any]] = None) -> MonitoringEvent:
+        """Create and store a new MonitoringEvent. Also logs it."""
+        event = MonitoringEvent(
+            kind=kind, severity=severity, message=message,
+            context=context or {},
+        )
+        self.events.append(event)
+        # Trim ring buffer
+        if len(self.events) > _EVENT_BUFFER_MAX:
+            self.events = self.events[-_EVENT_BUFFER_MAX:]
+
+        # Structured log entry
+        log_level = logging.CRITICAL if severity == "critical" else (
+            logging.WARNING if severity == "warning" else logging.INFO
+        )
+        log.log(log_level, "ALERT: %s", message, extra={
+            "event": kind, "severity": severity, "context": context or {},
+        })
+        return event
+
+    def resolve(self, kind: str) -> None:
+        """Mark all unresolved events of this kind as resolved."""
+        now = datetime.now(timezone.utc)
+        for ev in self.events:
+            if ev.kind == kind and not ev.resolved:
+                ev.resolved = True
+                ev.resolved_at = now
+
+    def get_active_events(self) -> List[MonitoringEvent]:
+        """Return unresolved events."""
+        return [ev for ev in self.events if not ev.resolved]
+
+    # ── Main loop ───────────────────────────────────────────────────────────
+
     async def run(self) -> None:
-        log.info("MonitoringService started")
+        log.info("MonitoringService started (9 checks)")
         while True:
             await asyncio.sleep(_CHECK_INTERVAL)
             await self._check_pnl_anomaly()
