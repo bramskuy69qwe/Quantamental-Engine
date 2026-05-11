@@ -314,5 +314,10 @@ Last updated: 2026-05-10
   - Adapter migration arc complete except AD-5 — ohlcv_fetcher is the
     last direct ccxt consumer in the codebase
   - Operational verification: **PASSED** (2026-05-12) — 1-2 hr smoke clean
-- MN-1: **in progress** — Phase 1 (enumeration)
+- MN-1: **done** — monitoring expansion (3 → 9 checks)
   Branch: fix/MN-1-monitoring-expansion
+  - Commit 1: MonitoringEvent data model, ring buffer, API endpoint
+  - Commit 2: 6 new checks (regime freshness, news health, plugin
+    connection, reconciler health, DB health, rate-limit frequency)
+  - MonitoringEvent forward-compatible with webhook dispatch
+  - 417/417 green, baseline diff empty

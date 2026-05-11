@@ -29,11 +29,18 @@ from core.database import db
 
 log = logging.getLogger("monitoring")
 
-_PNL_DROP_THRESHOLD   = 0.01   # 1 % equity drop triggers anomaly alert
-_PNL_WINDOW_MINUTES   = 5      # look-back window in minutes
-_WS_STALE_THRESHOLD   = 45.0   # seconds before we warn (separate from 30 s fallback trigger)
-_CHECK_INTERVAL       = 60     # seconds between checks
-_EVENT_BUFFER_MAX     = 100    # max events in ring buffer
+import time as _time
+
+_PNL_DROP_THRESHOLD          = 0.01   # 1 % equity drop triggers anomaly alert
+_PNL_WINDOW_MINUTES          = 5      # look-back window in minutes
+_WS_STALE_THRESHOLD          = 45.0   # seconds before we warn (separate from 30 s fallback trigger)
+_CHECK_INTERVAL              = 60     # seconds between checks
+_EVENT_BUFFER_MAX            = 100    # max events in ring buffer
+_NEWS_STALE_MINUTES          = 60     # no news rows in 60 min → alert (observed 5-15 min cadence)
+_RECONCILER_PENDING_THRESHOLD = 20    # >20 uncalculated rows → alert (AN-1 data)
+_DB_HEALTH_TIMEOUT           = 5.0    # seconds for SELECT 1
+_RATE_LIMIT_BURST_THRESHOLD  = 5      # events in window → alert
+_RATE_LIMIT_BURST_WINDOW     = 30 * 60  # 30 minutes (from RL-4 May 10 pattern)
 
 
 # ── Monitoring data model ────────────────────────────────────────────────────
@@ -59,6 +66,9 @@ class MonitoringService:
 
     def __init__(self) -> None:
         self.events: List[MonitoringEvent] = []
+        self._ever_plugin_connected: bool = False
+        self._rate_limit_timestamps: List[tuple] = []  # [(epoch_s, was_ban), ...]
+        self._cycle_count: int = 0
 
     # ── Event emission / resolution ─────────────────────────────────────────
 
@@ -101,9 +111,23 @@ class MonitoringService:
         log.info("MonitoringService started (9 checks)")
         while True:
             await asyncio.sleep(_CHECK_INTERVAL)
+            self._cycle_count += 1
+            # Original 3 checks (every cycle)
             await self._check_pnl_anomaly()
             await self._check_ws_staleness()
             await self._check_position_count()
+            # New checks 4-7 (every cycle — fast, in-memory reads)
+            self._check_regime_freshness_sync()
+            self._check_plugin_connection_sync()
+            self._check_rate_limit_frequency_sync()
+            # Check 5: news feed (every cycle, lightweight DB query)
+            await self._check_news_feed_health()
+            # Check 7: reconciler health (every 5th cycle = 5 min)
+            if self._cycle_count % 5 == 0:
+                await self._check_reconciler_health()
+            # Check 8: DB health (every 2nd cycle = 2 min)
+            if self._cycle_count % 2 == 0:
+                await self._check_db_health()
 
     # ── Check 1: P&L anomaly ─────────────────────────────────────────────────
 
@@ -192,3 +216,141 @@ class MonitoringService:
                 },
             )
             app_state.ws_status.add_log(msg)
+
+    # ── Check 4: Regime data freshness ───────────────────────────────────────
+
+    def _check_regime_freshness_sync(self) -> None:
+        regime = app_state.current_regime
+        if regime is None or regime.is_stale:
+            if not any(e.kind == "regime_stale" and not e.resolved for e in self.events):
+                age = "unknown"
+                if regime and regime.computed_at:
+                    age_min = (datetime.now(timezone.utc) - regime.computed_at).total_seconds() / 60
+                    age = f"{age_min:.0f} min"
+                self.emit("regime_stale", "warning",
+                          f"Regime data stale ({age} since last classification)",
+                          {"age": age})
+        else:
+            self.resolve("regime_stale")
+
+    # ── Check 5: News feed health ────────────────────────────────────────────
+
+    async def _check_news_feed_health(self) -> None:
+        try:
+            async with db._conn.execute(
+                "SELECT MAX(published_at) FROM news"
+            ) as cur:
+                row = await cur.fetchone()
+                latest_ts = row[0] if row else None
+        except Exception:
+            return  # News table may not exist or DB unavailable
+
+        if latest_ts is None:
+            return  # No news data yet
+
+        try:
+            if isinstance(latest_ts, (int, float)):
+                latest = datetime.fromtimestamp(latest_ts / 1000, tz=timezone.utc)
+            else:
+                latest = datetime.fromisoformat(str(latest_ts).replace("Z", "+00:00"))
+            age_min = (datetime.now(timezone.utc) - latest).total_seconds() / 60
+        except Exception:
+            return
+
+        if age_min > _NEWS_STALE_MINUTES:
+            if not any(e.kind == "news_stale" and not e.resolved for e in self.events):
+                self.emit("news_stale", "info",
+                          f"No news data in {age_min:.0f} min (threshold: {_NEWS_STALE_MINUTES})",
+                          {"age_minutes": round(age_min, 1), "threshold": _NEWS_STALE_MINUTES})
+        else:
+            self.resolve("news_stale")
+
+    # ── Check 6: Plugin connection health ────────────────────────────────────
+
+    def _check_plugin_connection_sync(self, plugin_connected: Optional[bool] = None) -> None:
+        if plugin_connected is None:
+            try:
+                from core.platform_bridge import platform_bridge
+                plugin_connected = platform_bridge.is_connected
+            except Exception:
+                return
+
+        if plugin_connected:
+            self._ever_plugin_connected = True
+            self.resolve("plugin_disconnected")
+            return
+
+        if not self._ever_plugin_connected:
+            return  # Standalone mode — don't alert
+
+        if not any(e.kind == "plugin_disconnected" and not e.resolved for e in self.events):
+            self.emit("plugin_disconnected", "warning",
+                      "Plugin was connected but is now disconnected — using exchange fallback")
+
+    # ── Check 7: Reconciler health ───────────────────────────────────────────
+
+    async def _check_reconciler_health(self) -> None:
+        try:
+            async with db._conn.execute(
+                "SELECT COUNT(*) FROM exchange_history"
+                " WHERE NOT backfill_completed AND open_time>0"
+                " AND trade_key NOT LIKE 'qt:%'"
+            ) as cur:
+                row = await cur.fetchone()
+                pending = row[0] if row else 0
+        except Exception:
+            return
+
+        if pending > _RECONCILER_PENDING_THRESHOLD:
+            if not any(e.kind == "reconciler_backlog" and not e.resolved for e in self.events):
+                self.emit("reconciler_backlog", "warning",
+                          f"Reconciler has {pending} pending rows (threshold: {_RECONCILER_PENDING_THRESHOLD})",
+                          {"pending_rows": pending, "threshold": _RECONCILER_PENDING_THRESHOLD})
+        else:
+            self.resolve("reconciler_backlog")
+
+    # ── Check 8: Database health ─────────────────────────────────────────────
+
+    async def _check_db_health(self) -> None:
+        try:
+            async with db._conn.execute("SELECT 1") as cur:
+                await asyncio.wait_for(cur.fetchone(), timeout=_DB_HEALTH_TIMEOUT)
+            self.resolve("db_unreachable")
+        except Exception:
+            if not any(e.kind == "db_unreachable" and not e.resolved for e in self.events):
+                self.emit("db_unreachable", "critical",
+                          "Database health check failed (SELECT 1 timeout or error)",
+                          {"timeout_s": _DB_HEALTH_TIMEOUT})
+
+    # ── Check 9: Rate-limit frequency ────────────────────────────────────────
+
+    def record_rate_limit_event(self, was_ban: bool = False) -> None:
+        """Called by handle_rate_limit_error() to record a rate-limit event."""
+        self._rate_limit_timestamps.append((_time.time(), was_ban))
+
+    def _check_rate_limit_frequency_sync(self) -> None:
+        now = _time.time()
+        cutoff = now - _RATE_LIMIT_BURST_WINDOW
+        self._rate_limit_timestamps = [
+            (ts, ban) for ts, ban in self._rate_limit_timestamps if ts >= cutoff
+        ]
+
+        bans = [ts for ts, ban in self._rate_limit_timestamps if ban]
+        if bans:
+            if not any(e.kind == "rate_limit_ban" and not e.resolved for e in self.events):
+                self.emit("rate_limit_ban", "critical",
+                          "IP ban (418) detected in rate-limit window",
+                          {"ban_count": len(bans), "window_minutes": _RATE_LIMIT_BURST_WINDOW // 60})
+        else:
+            self.resolve("rate_limit_ban")
+
+        count = len(self._rate_limit_timestamps)
+        if count >= _RATE_LIMIT_BURST_THRESHOLD:
+            if not any(e.kind == "rate_limit_burst" and not e.resolved for e in self.events):
+                self.emit("rate_limit_burst", "warning",
+                          f"{count} rate-limit events in {_RATE_LIMIT_BURST_WINDOW // 60} min "
+                          f"(threshold: {_RATE_LIMIT_BURST_THRESHOLD})",
+                          {"count": count, "window_minutes": _RATE_LIMIT_BURST_WINDOW // 60,
+                           "threshold": _RATE_LIMIT_BURST_THRESHOLD})
+        else:
+            self.resolve("rate_limit_burst")
