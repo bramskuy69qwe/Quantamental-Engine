@@ -278,5 +278,7 @@ Last updated: 2026-05-10
   - All 3 steps: baseline diff empty
   - exchange.py post-collapse: thin orchestration facade, zero raw CCXT,
     zero thread pool, zero singleton. All I/O through _get_adapter().
-  - Operational verification: **in progress** (1-2 hr smoke, started 2026-05-12)
-- **Next**: SR-6 remaining (WS-1/WS-2 adapter routing) — blocked on smoke test
+  - Operational verification: **PASSED** (2026-05-12) — 1-2 hr smoke clean,
+    429s caught by neutral errors, zero deleted-function references
+- SR-6 remaining: **in progress** — Phase 1 (enumeration)
+  Branch: fix/SR-6-ws-adapter-routing
