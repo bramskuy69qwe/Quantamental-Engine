@@ -311,11 +311,18 @@ class TestOnePercentDepth:
 
 class TestPositionSize:
     def _run(self, symbol, average, sl_price, equity, side, ohlcv=None, ob=None, params=None):
+        from datetime import datetime, timezone
         mock_state = MagicMock()
         mock_state.ohlcv_cache = {symbol: ohlcv or []}
         mock_state.orderbook_cache = {symbol: ob} if ob else {}
         mock_state.params = params or {"individual_risk_per_trade": 0.01}
+        # SC-2: ready-state gate needs these fields on app_state
+        mock_state.is_initializing = False
+        mock_state.account_state.total_equity = equity
+        mock_state.ws_status.last_update = datetime.now(timezone.utc)
+        mock_state.ws_status.seconds_since_update = 0
         with patch("core.risk_engine.app_state", mock_state), \
+             patch("core.monitoring.app_state", mock_state), \
              patch("core.risk_engine.config") as mock_cfg:
             mock_cfg.ATR_SHORT_PERIOD = 14
             mock_cfg.ATR_LONG_PERIOD = 100

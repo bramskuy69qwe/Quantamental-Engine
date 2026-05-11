@@ -331,5 +331,12 @@ Last updated: 2026-05-10
   - Webhook signature defined for future external integration
   - Operational verification: **PASSED** (2026-05-12) — tests + pattern reuse
     sufficient; failure-path exercise limited by absence of organic faults
-- SC-2: **in progress** — Phase 1 (enumeration)
+- SC-2: **done** — ready-state gating
   Branch: fix/SC-2-ready-state-gating
+  - Commit 1: ReadyStateEvaluator (3 gates: bootstrap, account, staleness),
+    /api/ready upgraded with reason field, 60s hysteresis
+  - Commit 2: calculator returns ineligible when not ready, uses existing
+    ineligible_reason mechanism
+  - 430/430 green, baseline diff empty
+  - Operational verification: per differential schedule, 6-12 hr window
+    required (behavior change)

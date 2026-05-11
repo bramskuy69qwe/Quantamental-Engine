@@ -214,6 +214,14 @@ def calculate_position_size(
         "ineligible_reason": "",
     }
 
+    # SC-2: engine_ready gate — refuse sizing when critical data missing
+    from core.monitoring import ReadyStateEvaluator
+    engine_ready, ready_reason = ReadyStateEvaluator().evaluate()
+    if not engine_ready:
+        result["eligible"] = False
+        result["ineligible_reason"] = f"Engine not ready: {ready_reason}"
+        return result
+
     if average <= 0 or sl_price <= 0:
         result["eligible"] = False
         result["ineligible_reason"] = "Invalid entry or SL price."
