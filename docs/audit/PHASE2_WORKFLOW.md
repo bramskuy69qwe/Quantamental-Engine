@@ -91,15 +91,20 @@ Sequence: RL-3 → AN-1 → 24-48h re-verification → SR-7
 
 ### Bucket 3: Revised sequence (dependency-ordered)
 - SR-7: **done**
-- **SR-4d**: Delete dead-code `fetch_ohlcv_window` (zero callers)
-- **SR-4c**: Extract augmentation logic to service layer
-- **SR-6a**: Wire exchange_market.py through adapter (prerequisite for SR-4a+b)
-- **SR-4a + SR-4b**: Remove `_REST_POOL` + `get_exchange()` singleton (combined)
-- SR-6 (remaining): adapter routing for non-6a items
+- SR-4 + SR-6a: **done** (SR-4d, SR-4c no-change, SR-6a, SR-4a+b)
+- SR-6 (remaining): adapter routing for non-6a items (WS-1/WS-2)
 - SR-8: regime data source ports
 - MN-1: monitoring expansion
 - SC-2: ready-state gating
 - MP-1: crash recovery risk states
+
+### Differential verification schedule (Bucket 3)
+Per-item verification windows based on risk profile:
+- Pure refactors (SR-6 remaining, SR-8): 1-2 hr smoke test
+- Additive changes (MN-1): 1-2 hr smoke test
+- Behavior changes (SC-2, MP-1): 6-12 hr verification
+- End of Bucket 3 (after MP-1): full 24-48h before Bucket 4
+Same grep pattern and routing logic (A/B/C) for all windows.
 
 ### Bucket 4 (HIGH cleanup):
 - **OM-5** (severity TBD, potentially HIGH): TP/SL set at order
@@ -273,5 +278,5 @@ Last updated: 2026-05-10
   - All 3 steps: baseline diff empty
   - exchange.py post-collapse: thin orchestration facade, zero raw CCXT,
     zero thread pool, zero singleton. All I/O through _get_adapter().
-  - Operational verification: **in progress** (started 2026-05-12)
-- **Next**: SR-6 remaining (WS-1/WS-2 adapter routing) — blocked on verification window
+  - Operational verification: **in progress** (1-2 hr smoke, started 2026-05-12)
+- **Next**: SR-6 remaining (WS-1/WS-2 adapter routing) — blocked on smoke test
