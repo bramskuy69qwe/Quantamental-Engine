@@ -254,12 +254,12 @@ Same grep pattern and routing logic (A/B/C) for all windows.
   wrong calculations (flicker not visible at click moment),
   severity is HIGH (risk-management gap, Bucket 4 candidate).
   Discovered: 2026-05-11, SR-7 verification window.
-- **FE-9**: **done** (confirmed HIGH, race condition). data_cache.py:276
-  set total_equity = cross_wallet (balance only, missing unrealized PnL)
-  on WS ACCOUNT_UPDATE. Fixed: removed assignment, apply_mark_price() is
-  sole equity authority (computes balance + unrealized). 58/104 pnl_anomaly
-  events had equity_after = balance_usdt value; all 104 likely false
-  positives from this race. 457/457 green, baseline diff empty.
+- **FE-9**: **done, verification pending**. Race condition fix landed
+  (data_cache.py:276 removed). User reports flickering "still presents"
+  — three explanations: (a) fix incomplete, (b) chart rendering historical
+  race-corrupted snapshots (will age out), (c) separate display-layer
+  flicker. 1-2 hr smoke MANDATORY: compare pnl_anomaly rate pre (19/hr)
+  vs post (should be 0-2/hr if fix correct). 457/457 green.
 - ~~**FE-9** (potentially HIGH)~~: Total equity flash crash on equity curve
   tab — equity briefly shows wrong (low) value for ~1s. Strong potential
   connection to dozens of pnl_anomaly events in MN-1 logs (equity drops
@@ -279,6 +279,15 @@ Same grep pattern and routing logic (A/B/C) for all windows.
   Cross-references: FE-2 (unintentional case c), FE-3 (hx-target
   granularity determines re-render), OM-5 (TP/SL placement pending).
   Address after Bucket 3 completes. Discovered: 2026-05-12.
+- **FE-10** (MEDIUM-LOW): 1W equity chart shows "huge drop on left" with
+  value appearing only on right. Chart axis/data padding issue — engine
+  may pad missing days with zero/null, Y-axis starts at 0 instead of
+  near data range, or query returns null entries. Different bug from FE-9.
+  Discovered: 2026-05-12.
+- **FE-11** (MEDIUM): Rapid timeframe switching (1D/1W repeatedly) makes
+  engine unresponsive temporarily. Synchronous backend blocking event loop
+  during query/recompute. Known limitation for v2.3.1 — properly addressed
+  by v1.2 Redis event-driven state architecture. Discovered: 2026-05-12.
 - **BU-1** (LOW): CCXT "Unclosed client session" resource warning
   observed during RL-3+AN-1 verification window. Possible CCXT
   client lifecycle bug — exchange instance not closed on some path
