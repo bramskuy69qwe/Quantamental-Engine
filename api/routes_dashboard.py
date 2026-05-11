@@ -278,7 +278,12 @@ async def api_price(ticker: str):
 
 @router.get("/api/ready")
 async def api_ready():
-    return JSONResponse({"ready": not app_state.is_initializing})
+    from core.monitoring import ReadyStateEvaluator
+    ready, reason = ReadyStateEvaluator().evaluate()
+    response = {"ready": ready}
+    if reason:
+        response["reason"] = reason
+    return JSONResponse(response)
 
 
 @router.get("/api/monitoring/events")

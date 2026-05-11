@@ -57,6 +57,46 @@ class MonitoringEvent:
     context: Dict[str, Any] = field(default_factory=dict)
 
 
+# ── SC-2: Ready-state evaluator ──────────────────────────────────────────────
+
+_STALE_GATE_SECONDS = 60   # sustained data staleness before not-ready (hysteresis)
+
+
+class ReadyStateEvaluator:
+    """Bidirectional ready-state with hysteresis.
+
+    Evaluates three gates:
+      1. Bootstrap complete (sticky-once-achieved)
+      2. Account data present (equity > 0)
+      3. Data flowing (WS or REST fallback, with 60s sustained-fault hysteresis)
+
+    Rate-limit alone does NOT gate — only when co-occurring with sustained
+    data staleness (rate-limited AND stale for the full hysteresis window).
+    This is sustained conjunction, not point-in-time: both conditions must
+    persist for the entire _STALE_GATE_SECONDS window.
+    """
+
+    def evaluate(self) -> tuple:
+        """Return (ready: bool, reason: str). Empty reason when ready."""
+        # Gate 1: Bootstrap must be complete (sticky-once-achieved)
+        if app_state.is_initializing:
+            return False, "Engine initializing"
+
+        # Gate 2: Account data must be present (hard fault)
+        if app_state.account_state.total_equity <= 0:
+            return False, "Account data not loaded (equity=0)"
+
+        # Gate 3: Data must be flowing — sustained staleness gate
+        # WS fallback keeps seconds_since_update <15s even when WS is down.
+        # Only gate when BOTH WS and REST have failed for >60s.
+        ws = app_state.ws_status
+        stale_s = ws.seconds_since_update
+        if stale_s > _STALE_GATE_SECONDS:
+            return False, f"Exchange data offline ({stale_s:.0f}s stale)"
+
+        return True, ""
+
+
 class MonitoringService:
     """
     Runs health checks on a fixed interval. Emits MonitoringEvent objects
