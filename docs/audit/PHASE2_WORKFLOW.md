@@ -33,6 +33,11 @@
   regression test and smoke-test diff verification.
 - If you disagree with an audit finding, log it as a question for 
   the human — do not silently skip the fix.
+- **Pre-phase gate (engine-off)**: Before beginning any implementation
+  phase (code modification), explicitly ask: "Is the engine stopped?"
+  Wait for user confirmation. Do not begin if unacknowledged. Applies
+  to all Phase 4 steps and any phase that writes code. Read-only phases
+  (enumeration, design) are exempt.
 
 ## Current priority order
 
@@ -308,5 +313,6 @@ Last updated: 2026-05-10
   - Remaining direct ccxt: ohlcv_fetcher.py (async_support, filed as AD-5)
   - Adapter migration arc complete except AD-5 — ohlcv_fetcher is the
     last direct ccxt consumer in the codebase
-  - Operational verification: **in progress** (1-2 hr smoke, started 2026-05-12)
-- **Next**: MN-1 (monitoring expansion) — blocked on SR-8 smoke test
+  - Operational verification: **PASSED** (2026-05-12) — 1-2 hr smoke clean
+- MN-1: **in progress** — Phase 1 (enumeration)
+  Branch: fix/MN-1-monitoring-expansion
