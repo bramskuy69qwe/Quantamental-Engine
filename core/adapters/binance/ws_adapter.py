@@ -136,6 +136,7 @@ class BinanceWSAdapter:
             reduce_only=bool(o.get("R", False)),
             time_in_force=o.get("f", ""),
             position_side=o.get("ps", ""),
+            execution_type=o.get("x", ""),       # NEW, TRADE, CANCELED, AMENDMENT, EXPIRED
             created_at_ms=int(o.get("T", 0)),
             updated_at_ms=int(msg.get("T", 0)),
         )

@@ -67,6 +67,8 @@ class NormalizedOrder:
     # Order linkage (TP/SL → parent relationship)
     parent_order_id: Optional[str] = None   # Exchange order ID of parent
     oca_group_id: Optional[str] = None      # One-cancels-all group ID
+    # Execution lifecycle (WS events only)
+    execution_type: Optional[str] = None  # "NEW" | "TRADE" | "CANCELED" | "AMENDMENT" | "EXPIRED"
     # Timestamps
     created_at_ms: int = 0
     updated_at_ms: int = 0

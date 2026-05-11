@@ -126,6 +126,9 @@ Same grep pattern and routing logic (A/B/C) for all windows.
   compare against engine local state; isolate fetch vs display.
   May escalate to Bucket 1 if confirmed protective-order gap.
   Discovered: 2026-05-10, verification window.
+  Note: execution_type field (SR-6 WS-2) unblocks manifestation (b)
+  — mid-trade TP/SL edit detection requires distinguishing AMENDMENT
+  events from NEW events, which status alone cannot do.
 - **MN-2** (severity TBD, potentially HIGH): Monthly drawdown
   shows 0 in dashboard despite real drawdown this month. Failing
   layer unknown: reset logic, calculation logic, frontend display,
@@ -280,5 +283,8 @@ Last updated: 2026-05-10
     zero thread pool, zero singleton. All I/O through _get_adapter().
   - Operational verification: **PASSED** (2026-05-12) — 1-2 hr smoke clean,
     429s caught by neutral errors, zero deleted-function references
-- SR-6 remaining: **in progress** — Phase 1 (enumeration)
+- SR-6 remaining (WS-1/WS-2): **done** — ws_manager adapter routing
   Branch: fix/SR-6-ws-adapter-routing
+  - WS-1: deleted 3 raw-Binance handlers, inlined adapter parse calls
+  - WS-2: added execution_type to NormalizedOrder, Binance adapter populates
+  - 372/372 green, baseline diff empty

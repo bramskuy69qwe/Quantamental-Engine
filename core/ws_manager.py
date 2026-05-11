@@ -135,7 +135,7 @@ async def _apply_order_update(msg: dict, ws_adapter) -> None:
         return
 
     order = ws_adapter.parse_order_update(msg)
-    execution_type = msg.get("o", {}).get("x", "")  # NEW, CANCELED, TRADE, AMENDMENT, EXPIRED
+    execution_type = order.execution_type or ""
 
     # ── TP/SL order → update matching position in real-time ──────────────
     if order.order_type in _TPSL_TYPES:
@@ -372,39 +372,6 @@ def _build_market_streams() -> list[str]:
     return streams
 
 
-def _apply_mark_price(msg: dict) -> None:
-    sym  = msg.get("s", "")
-    mark = float(msg.get("p", 0) or 0)
-    if not sym or not mark:
-        return
-    app_state._data_cache.apply_mark_price(sym, mark)
-
-
-def _apply_kline(msg: dict) -> None:
-    k  = msg.get("k", {})
-    sym = msg.get("s", "")
-    if not k.get("x"):          # only closed candles
-        return
-    candle = [
-        k["t"],                  # open time
-        float(k["o"]),
-        float(k["h"]),
-        float(k["l"]),
-        float(k["c"]),
-        float(k["v"]),
-    ]
-    app_state._data_cache.apply_kline(sym, candle)
-
-
-def _apply_depth(msg: dict) -> None:
-    sym = msg.get("s", "")
-    if not sym:
-        return
-    bids = [[float(p), float(q)] for p, q in msg.get("b", [])]
-    asks = [[float(p), float(q)] for p, q in msg.get("a", [])]
-    app_state._data_cache.apply_depth(sym, bids, asks)
-
-
 async def _market_stream_loop(attempt: int = 0) -> None:
     ws = app_state.ws_status
     streams = _build_market_streams()
@@ -431,11 +398,17 @@ async def _market_stream_loop(attempt: int = 0) -> None:
                     msg = ws_adapter.unwrap_stream_message(msg_outer) if ws_adapter else msg_outer.get("data", msg_outer)
                     ev = ws_adapter.get_event_type(msg) if ws_adapter else msg.get("e", "")
                     if ev == "kline":
-                        _apply_kline(msg)
+                        parsed = ws_adapter.parse_kline(msg) if ws_adapter else None
+                        if parsed:
+                            app_state._data_cache.apply_kline(parsed["symbol"], parsed["candle"])
                     elif ev == "depthUpdate":
-                        _apply_depth(msg)
+                        parsed = ws_adapter.parse_depth(msg) if ws_adapter else None
+                        if parsed:
+                            app_state._data_cache.apply_depth(parsed["symbol"], parsed["bids"], parsed["asks"])
                     elif ev == "markPriceUpdate":
-                        _apply_mark_price(msg)
+                        parsed = ws_adapter.parse_mark_price(msg) if ws_adapter else None
+                        if parsed:
+                            app_state._data_cache.apply_mark_price(parsed["symbol"], parsed["mark_price"])
                 except Exception as exc:
                     log.warning("Market WS message error: %s", exc)
                 ws.last_update = datetime.now(timezone.utc)
