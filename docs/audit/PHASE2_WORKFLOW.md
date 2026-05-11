@@ -89,19 +89,17 @@ Sequence: RL-3 → AN-1 → 24-48h re-verification → SR-7
   Operational note: SIRENUSDT/ONUSDT rows stuck since 2026-05-05.
   Branch: `fix/AN-1-backfill-sentinel`.
 
-### Bucket 3+: see AUDIT_REPORT.md execution order
-
-SR-4/SR-6 deferred items (identified during SR-7 Phase 3, NOT in SR-7
-scope — belong to exchange.py collapse or adapter routing work):
-- **SR-4a**: Eliminate `_REST_POOL` ThreadPoolExecutor (internal impl)
-- **SR-4b**: Remove `get_exchange()` legacy singleton (adapter factory
-  handles this)
-- **SR-4c**: Move `fetch_exchange_trade_history` augmentation logic to
-  adapter or service layer
-- **SR-4d**: `fetch_ohlcv_window` pagination helper — internal, not
-  protocol surface
-- **SR-6a**: Wire remaining raw-CCXT calls in exchange_market.py
-  through adapter (4 functions per original audit WS-1/EM-1)
+### Bucket 3: Revised sequence (dependency-ordered)
+- SR-7: **done**
+- **SR-4d**: Delete dead-code `fetch_ohlcv_window` (zero callers)
+- **SR-4c**: Extract augmentation logic to service layer
+- **SR-6a**: Wire exchange_market.py through adapter (prerequisite for SR-4a+b)
+- **SR-4a + SR-4b**: Remove `_REST_POOL` + `get_exchange()` singleton (combined)
+- SR-6 (remaining): adapter routing for non-6a items
+- SR-8: regime data source ports
+- MN-1: monitoring expansion
+- SC-2: ready-state gating
+- MP-1: crash recovery risk states
 
 ### Bucket 4 (HIGH cleanup):
 - **OM-5** (severity TBD, potentially HIGH): TP/SL set at order
