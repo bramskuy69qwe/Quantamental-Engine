@@ -302,6 +302,154 @@ it was split out).
 
 ---
 
+## Verification Q1: SR-4c Reclassification Evidence
+
+### populate_open_position_metadata (exchange.py:244, ~70 LOC)
+
+**Not a thin wrapper.** Orchestrates 3 adapter calls + 1 DB call per
+position, with cross-cutting business logic between each:
+
+1. Calls `adapter.fetch_user_trades(pos.ticker, limit=200)` — adapter I/O
+2. **Business logic**: walks trades in reverse chronological order,
+   accumulates quantity by entry_side (BUY for LONG, SELL for SHORT),
+   stops when cumulative qty >= position size. This reconstructs the
+   true entry timestamp from partial fills — not something an adapter
+   can do (requires cross-referencing position state with trade history).
+3. Calls `adapter.fetch_price_extremes(pos.ticker, open_ms, now_ms)` — adapter I/O
+4. **Business logic**: computes session_mfe/session_mae using
+   `(max_price - entry) * qty` for LONG, `(entry - min_price) * qty`
+   for SHORT. Requires knowledge of position direction + entry price
+   (domain state, not adapter concern).
+5. Calls `db.get_position_fees(account_id, position_id)` — DB I/O
+6. **Cross-cutting**: paces iterations with 0.5s sleep, handles rate
+   limits, applies results to `app_state.positions` (mutable state).
+
+**Verdict**: Genuine orchestration. 3 data sources (adapter trades, adapter
+extremes, DB fees), business logic between each, mutable state updates.
+
+### fetch_open_orders_tpsl (exchange.py:322, ~70 LOC)
+
+**Not a thin wrapper.** Single adapter call, but substantial domain
+logic in the mapping phase:
+
+1. **Cross-cutting gate**: checks `platform_bridge.is_connected` — if
+   plugin provides orders, delegates to OrderManager instead of REST.
+   This routing decision is a domain concern, not adapter concern.
+2. Calls `adapter.fetch_open_orders()` — adapter I/O
+3. **Business logic** (30 lines): iterates orders, classifies by
+   order_type (take_profit vs stop_loss), maps each to a position by
+   (symbol, position_side) tuple key, handles hedge-mode inference
+   (fallback from positionSide to side-based inference), tracks
+   best TP/SL per position (highest TP, lowest SL).
+4. **Business logic** (15 lines): iterates positions, applies TP/SL
+   prices + computes P&L in USDT for each (direction-dependent
+   calculation: LONG TP = (tp_price - avg) * qty).
+
+**Verdict**: Genuine orchestration. Single adapter call but 45+ lines of
+non-trivial domain mapping that requires knowledge of position state,
+direction semantics, and hedge-mode inference rules.
+
+### fetch_exchange_trade_history (exchange_income.py:254, ~130 LOC)
+
+**Not a thin wrapper.** Orchestrates 4 adapter calls + 1 DB call with
+complex cross-referencing augmentation:
+
+1. Calls `fetch_income_history(type="REALIZED_PNL")` — adapter I/O
+2. Calls `fetch_income_history(type="COMMISSION")` — adapter I/O
+3. Calls `fetch_income_history(type="FUNDING_FEE")` — adapter I/O
+4. **Business logic**: builds fee_map (tradeId → fee amount) and
+   funding_by_symbol (symbol → [(ts, amount)]) lookup structures
+5. Calls `fetch_user_trades(symbol)` concurrently for all symbols
+   (Semaphore(5) limiting concurrency) — adapter I/O
+6. **Business logic** (60 lines per trade): for each PnL event:
+   - Derives direction from trade side (SELL closing = LONG position)
+   - Computes entry_price algebraically: `entry = exit - PnL/qty` (LONG)
+   - Reconstructs open_time by walking fills in reverse, bounded by
+     previous leg's closing fill to avoid historical leg contamination
+   - Computes total fee: entry_fee (from fill commissions) + funding_fee
+     (from FUNDING_FEE events within hold window) + exit_fee (from
+     COMMISSION matched by tradeId)
+   - Computes trade_key for DB deduplication
+7. Calls `db.upsert_exchange_history(raw_pnl)` — DB I/O
+
+**Verdict**: Genuine orchestration. 4 adapter calls, 1 concurrent gather
+with semaphore, 60 lines of algebraic trade reconstruction. The most
+complex domain logic in the codebase — definitively NOT adapter territory.
+
+### SR-4c conclusion
+
+All three functions are genuine orchestration. None is a thin wrapper.
+Reclassification to "no change needed" is confirmed.
+
+---
+
+## Verification Q2: Thread Pool 16→8 Operational Justification
+
+### Q2a: Peak concurrent REST threads in production
+
+**Concurrency limiters in the codebase:**
+
+| Limiter | Location | Value | Constrains |
+|---------|----------|-------|------------|
+| `_HL_SEM` | reconciler.py:30 | Semaphore(2) | Concurrent fetch_price_extremes |
+| `_BACKFILL_SEM` | reconciler.py:26 | 3 | Concurrent symbol backfills |
+| `_sym_sem` | exchange_income.py:301 | Semaphore(5) | Concurrent per-symbol trade fetches |
+| RL-1 pacing | Various | 0.25-0.5s sleeps | Sequential REST calls |
+
+**Effective concurrency bounds:**
+- Reconciler backfill: `_BACKFILL_SEM=3` symbols × `_HL_SEM=2` concurrent
+  fetch_price_extremes = max 6 concurrent adapter._run() calls from reconciler
+- Trade history: `_sym_sem=5` concurrent fetch_user_trades
+- Account refresh / positions: sequential (single call)
+- Regime fetcher: sequential per-symbol (no gather)
+
+**Worst case**: reconciler backfill (6 threads) + trade history fetch (5
+threads) + account refresh (1 thread) running simultaneously = 12 threads.
+But this scenario requires all three schedulers to fire at the same moment,
+which the scheduler intervals make unlikely.
+
+**Typical case**: reconciler OR trade history (not both simultaneously,
+because reconciler calls `fetch_exchange_trade_history()` first, then
+backfills sequentially) + background account refresh = 5-7 threads peak.
+
+**May 7 and May 10 events**: The 429s occurred because too many REST
+calls hit Binance's per-minute rate limit (2400 req/min), NOT because
+of thread exhaustion. The thread pool was never the bottleneck —
+request volume was. RL-1/RL-3 pacing addresses request volume directly.
+
+### Q2b: Code paths benefiting from >8 threads
+
+**No code path currently benefits from >8 concurrent threads.**
+
+The highest concurrency path (reconciler backfill at 6 + trade history at
+5 = 11) only occurs on startup when ALL schedulers fire simultaneously.
+But these calls are already paced with semaphores and sleeps that prevent
+actual 11-thread occupancy at any instant.
+
+**Post-SR-7**: `adapter.fetch_price_extremes()` internalizes the
+`asyncio.gather` for tier 2/3 (3 or 5 concurrent sections). These sections
+each call `self._run()` which submits to base.py's pool. The gather
+creates up to 5 concurrent `_run()` submissions. Combined with the
+`_HL_SEM=2` limit on the reconciler side, effective adapter pool usage
+from fetch_price_extremes is at most 2 × 5 = 10 concurrent submissions.
+
+**Verdict**: 8 threads is sufficient for all observed and designed
+concurrency patterns. The 10-thread theoretical peak (2 concurrent
+fetch_price_extremes × 5 internal sections) can queue briefly in an
+8-thread pool without deadlock (asyncio awaits are non-blocking; the
+thread pool just paces execution).
+
+### Q2 conclusion
+
+**Accept 16→8 reduction.** No code path requires >8 concurrent threads.
+The rate-limit constraint (2400 req/min = 40 req/s) is the binding
+throughput limit, not thread count. If future workloads (e.g., 50-symbol
+regime fetch, multi-exchange parallel queries) need more threads,
+`base.py:_REST_POOL` max_workers can be increased as a configuration
+change, not an architectural one.
+
+---
+
 ## Summary: Landing Sequence
 
 | Step | Sub-item | Action | Net LOC | Risk |
