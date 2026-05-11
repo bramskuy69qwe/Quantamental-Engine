@@ -273,3 +273,5 @@ Last updated: 2026-05-10
   - All 3 steps: baseline diff empty
   - exchange.py post-collapse: thin orchestration facade, zero raw CCXT,
     zero thread pool, zero singleton. All I/O through _get_adapter().
+  - Operational verification: **in progress** (started 2026-05-12)
+- **Next**: SR-6 remaining (WS-1/WS-2 adapter routing) — blocked on verification window
