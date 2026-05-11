@@ -158,6 +158,11 @@ Same grep pattern and routing logic (A/B/C) for all windows.
   RL-2 (proactive weight tracker, currently deferred) earlier —
   proactive tracking would prevent periodic hits at the source.
   Discovered: 2026-05-12, SR-7 verification window.
+- **MN-1a** (LOW): Wire `record_rate_limit_event()` into
+  `handle_rate_limit_error()` in exchange.py so monitoring check #9
+  (rate-limit frequency) actually fires. ~1-2 lines. Check #9 sits
+  dormant until this wiring lands. No architectural decisions needed.
+  Discovered: 2026-05-12, MN-1 completion.
 - **AD-5** (MEDIUM): ohlcv_fetcher.py uses ccxt.async_support
   directly — last remaining direct ccxt usage in codebase after
   SR-8. Different lifecycle (long-running async batch backfill vs
@@ -321,3 +326,8 @@ Last updated: 2026-05-10
     connection, reconciler health, DB health, rate-limit frequency)
   - MonitoringEvent forward-compatible with webhook dispatch
   - 417/417 green, baseline diff empty
+  - Check #9 dormant pending MN-1a wiring (Bucket 4)
+  - Monitoring data model + ring buffer + API endpoint established
+  - Webhook signature defined for future external integration
+  - Operational verification: **in progress** (1-2 hr smoke, started 2026-05-12)
+- **Next**: SC-2 (ready-state gating) — blocked on MN-1 smoke test
