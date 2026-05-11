@@ -338,5 +338,6 @@ Last updated: 2026-05-10
   - Commit 2: calculator returns ineligible when not ready, uses existing
     ineligible_reason mechanism
   - 430/430 green, baseline diff empty
-  - Operational verification: per differential schedule, 6-12 hr window
-    required (behavior change)
+  - Operational verification: **in progress** (6-12 hr, started 2026-05-12)
+    Behavior change — first gate in Bucket 3. MN-1 gets extended exercise.
+- **Next**: MP-1 (crash recovery risk states) — blocked on SC-2 verification
