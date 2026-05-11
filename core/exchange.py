@@ -54,6 +54,11 @@ def handle_rate_limit_error(exc: Exception) -> None:
 
     ws.add_log(f"Rate limited until {ws.rate_limited_until.strftime('%H:%M:%S UTC')}")
 
+    # MN-1a: record event for monitoring check #9 (rate-limit frequency)
+    svc = getattr(app_state, "_monitoring_service", None)
+    if svc and hasattr(svc, "record_rate_limit_event"):
+        svc.record_rate_limit_event(was_ban=bool(retry_ms))
+
 
 def is_rate_limited() -> bool:
     """Check if we're currently in a rate-limit backoff period."""

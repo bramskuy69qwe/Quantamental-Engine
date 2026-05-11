@@ -171,11 +171,9 @@ Same grep pattern and routing logic (A/B/C) for all windows.
   RL-2 (proactive weight tracker, currently deferred) earlier —
   proactive tracking would prevent periodic hits at the source.
   Discovered: 2026-05-12, SR-7 verification window.
-- **MN-1a** (LOW): Wire `record_rate_limit_event()` into
-  `handle_rate_limit_error()` in exchange.py so monitoring check #9
-  (rate-limit frequency) actually fires. ~1-2 lines. Check #9 sits
-  dormant until this wiring lands. No architectural decisions needed.
-  Discovered: 2026-05-12, MN-1 completion.
+- **MN-1a**: **done** — wired record_rate_limit_event() into
+  handle_rate_limit_error(). Check #9 (rate-limit frequency) now active.
+  3 lines added. 454/454 green, baseline diff empty.
 - **AD-5**: **done** — ohlcv_fetcher migrated to adapter (Option A:
   pagination wrapper around sync adapter). Deleted ccxt.async_support,
   aiohttp session, ThreadedResolver (~45 LOC). Windows DNS workaround
