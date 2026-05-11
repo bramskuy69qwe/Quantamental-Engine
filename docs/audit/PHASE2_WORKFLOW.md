@@ -153,6 +153,13 @@ Same grep pattern and routing logic (A/B/C) for all windows.
   RL-2 (proactive weight tracker, currently deferred) earlier —
   proactive tracking would prevent periodic hits at the source.
   Discovered: 2026-05-12, SR-7 verification window.
+- **AD-5** (MEDIUM): ohlcv_fetcher.py uses ccxt.async_support
+  directly — last remaining direct ccxt usage in codebase after
+  SR-8. Different lifecycle (long-running async batch backfill vs
+  request-response). May require new adapter protocol pattern
+  (SupportsAsyncBatchFetch or similar) rather than 1:1 method
+  migration. Investigate adapter design approach before implementing.
+  Discovered: 2026-05-12, SR-8 completion.
 - **AN-2** (HIGH, promoted from Bucket 5): qt:-prefixed legacy
   Quantower rows have multiple corruption modes — hold=0s with
   high≈low (original report) AND long-hold-with-extreme-MAE
@@ -298,4 +305,8 @@ Last updated: 2026-05-10
   - Added SupportsOpenInterest / SupportsFundingRates isinstance guards
   - Scheduler injects adapter via _get_adapter()
   - 387/387 green, baseline diff empty
-  - Remaining direct ccxt: ohlcv_fetcher.py (async_support, separate concern)
+  - Remaining direct ccxt: ohlcv_fetcher.py (async_support, filed as AD-5)
+  - Adapter migration arc complete except AD-5 — ohlcv_fetcher is the
+    last direct ccxt consumer in the codebase
+  - Operational verification: **in progress** (1-2 hr smoke, started 2026-05-12)
+- **Next**: MN-1 (monitoring expansion) — blocked on SR-8 smoke test
