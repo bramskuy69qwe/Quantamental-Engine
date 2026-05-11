@@ -171,6 +171,19 @@ Same grep pattern and routing logic (A/B/C) for all windows.
   RL-2 (proactive weight tracker, currently deferred) earlier —
   proactive tracking would prevent periodic hits at the source.
   Discovered: 2026-05-12, SR-7 verification window.
+- **PA-1** (HIGH): Partial-fill aggregation produces incorrect position
+  and trade records. User opened 1 SHORT SKYAIUSDT, closed in 2 partial
+  fills. Engine shows 2 position entries (split per partial close) and
+  only 1 of 2 close trades in trade history. Two manifestations:
+  (a) WS event miss: trade history missing one partial close event.
+      Investigate why WS missed second close fill.
+  (b) Position split: position tracking creates new record per partial
+      close instead of updating same position. Investigate position
+      lifecycle in reconciler/position manager.
+  Impact: distorts trade count (143 — unknown split duplicates), win
+  rate, average PnL, MAE/MFE. Critical for external backtest validation.
+  Cross-refs: SR-1 (OrderManager), SR-6 WS-2 (execution_type),
+  reconciler logic. Discovered: 2026-05-12.
 - **MN-1a**: **done** — wired record_rate_limit_event() into
   handle_rate_limit_error(). Check #9 (rate-limit frequency) now active.
   3 lines added. 454/454 green, baseline diff empty.
