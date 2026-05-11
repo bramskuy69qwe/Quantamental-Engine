@@ -243,6 +243,15 @@ Same grep pattern and routing logic (A/B/C) for all windows.
   wrong calculations (flicker not visible at click moment),
   severity is HIGH (risk-management gap, Bucket 4 candidate).
   Discovered: 2026-05-11, SR-7 verification window.
+- **UX-1** (Bucket 5, candidate for v2.4 UX bundle): Consistent ghost
+  interface pattern across data-dependent components. Three states:
+  (a) Engine unreachable — ghost structure with "data pending" indicators
+  (b) Data stale — SC-2 not-ready → ghost overlay/fade with staleness
+      annotation
+  (c) Data immature / bootstrapping — consistent loading indicators
+  Cross-references: FE-2 (unintentional case c), FE-3 (hx-target
+  granularity determines re-render), OM-5 (TP/SL placement pending).
+  Address after Bucket 3 completes. Discovered: 2026-05-12.
 - **BU-1** (LOW): CCXT "Unclosed client session" resource warning
   observed during RL-3+AN-1 verification window. Possible CCXT
   client lifecycle bug — exchange instance not closed on some path
