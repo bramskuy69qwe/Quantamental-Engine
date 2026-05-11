@@ -79,7 +79,8 @@ async def api_fetch_ohlcv(request: Request):
     _fetch_jobs[job_id] = job
 
     async def _run():
-        fetcher = OHLCVFetcher()
+        from core.exchange import _get_adapter
+        fetcher = OHLCVFetcher(adapter=_get_adapter())
         try:
             for i, sym in enumerate(symbols):
                 job["detail"] = f"Fetching {sym} ({i + 1}/{len(symbols)})…"
@@ -91,8 +92,6 @@ async def api_fetch_ohlcv(request: Request):
         except Exception as exc:
             job["status"] = "failed"
             job["detail"] = str(exc)
-        finally:
-            await fetcher.close()
 
     asyncio.create_task(_run())
     return JSONResponse({"status": "started", "job_id": job_id, "symbols": symbols,

@@ -176,13 +176,13 @@ Same grep pattern and routing logic (A/B/C) for all windows.
   (rate-limit frequency) actually fires. ~1-2 lines. Check #9 sits
   dormant until this wiring lands. No architectural decisions needed.
   Discovered: 2026-05-12, MN-1 completion.
-- **AD-5** (MEDIUM): ohlcv_fetcher.py uses ccxt.async_support
-  directly — last remaining direct ccxt usage in codebase after
-  SR-8. Different lifecycle (long-running async batch backfill vs
-  request-response). May require new adapter protocol pattern
-  (SupportsAsyncBatchFetch or similar) rather than 1:1 method
-  migration. Investigate adapter design approach before implementing.
-  Discovered: 2026-05-12, SR-8 completion.
+- **AD-5**: **done** — ohlcv_fetcher migrated to adapter (Option A:
+  pagination wrapper around sync adapter). Deleted ccxt.async_support,
+  aiohttp session, ThreadedResolver (~45 LOC). Windows DNS workaround
+  eliminated (sync adapter uses OS-native DNS). Last direct ccxt
+  consumer eliminated — adapter abstraction is now exhaustive.
+  Only ccxt import remaining: exchange_factory.py (adapter infrastructure,
+  correct placement). 450/450 green, baseline diff empty.
 - **AN-2** (HIGH, promoted from Bucket 5): qt:-prefixed legacy
   Quantower rows have multiple corruption modes — hold=0s with
   high≈low (original report) AND long-hold-with-extreme-MAE

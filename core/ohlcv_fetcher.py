@@ -1,12 +1,13 @@
 """
-Historical OHLCV ingestion — fetches via CCXT async and stores in ohlcv_cache.
+Historical OHLCV ingestion — fetches via adapter and stores in ohlcv_cache.
 
 Usage (standalone):
     python -m core.ohlcv_fetcher --symbols BTCUSDT ETHUSDT --timeframe 4h --days 365
 
 Usage (from code):
     from core.ohlcv_fetcher import OHLCVFetcher
-    fetcher = OHLCVFetcher()
+    from core.exchange import _get_adapter
+    fetcher = OHLCVFetcher(adapter=_get_adapter())
     count = await fetcher.fetch_and_store("BTCUSDT", "4h", since_days=365)
 """
 from __future__ import annotations
@@ -17,12 +18,13 @@ import time
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Dict, Any
 
-import ccxt.async_support as ccxt
-
 import config
+from core.adapters.errors import (
+    ConnectionError as AdapterConnectionError,
+    ExchangeError as AdapterExchangeError,
+    RateLimitError,
+)
 from core.database import db
-from core.adapters import map_market_type
-from core.adapters.registry import _REST_REGISTRY
 
 log = logging.getLogger("ohlcv_fetcher")
 
@@ -30,68 +32,30 @@ log = logging.getLogger("ohlcv_fetcher")
 _MAX_RETRIES = 5
 
 
-def _get_ohlcv_limit() -> int:
-    """Get the OHLCV candle limit from the registered adapter, or default."""
-    try:
-        from core.exchange import _get_adapter
-        adapter = _get_adapter()
-        return adapter.ohlcv_limit
-    except Exception:
-        return 1500  # safe default
-
-
 class OHLCVFetcher:
-    """Fetches and stores historical OHLCV data from the active exchange."""
+    """Fetches and stores historical OHLCV data via adapter.
 
-    def __init__(self) -> None:
-        self._exchange: Optional[ccxt.Exchange] = None
+    Pagination/retry at this level (not in adapter) because:
+    - Batch operations span minutes; need aggressive retry (5 attempts, 5-60s)
+    - Cursor advancement is domain logic (how much history, when to stop)
+    - Adapter's fetch_ohlcv() is single-call by design
+    """
 
-    async def _get_exchange(self) -> ccxt.Exchange:
-        if self._exchange is None:
-            import aiohttp as _aiohttp
+    def __init__(self, adapter=None) -> None:
+        self._adapter = adapter
 
-            # Determine which async exchange class to use from account registry
-            exchange_name = "binanceusdm"
-            try:
-                from core.account_registry import account_registry
-                creds = account_registry.get_active_sync()
-                if creds:
-                    ex_name = creds.get("exchange", "binance")
-                    market_type = creds.get("market_type", "future")
-                    if ex_name == "binance" and market_type == "future":
-                        exchange_name = "binanceusdm"
-                    elif ex_name == "binance":
-                        exchange_name = "binance"
-                    else:
-                        exchange_name = ex_name
-            except Exception:
-                pass
+    def _get_adapter(self):
+        if self._adapter is not None:
+            return self._adapter
+        from core.exchange import _get_adapter
+        self._adapter = _get_adapter()
+        return self._adapter
 
-            params: Dict[str, Any] = {
-                "enableRateLimit": True,
-                "options": {"defaultType": "future"},
-            }
-            if config.HTTP_PROXY:
-                params["aiohttp_proxy"] = config.HTTP_PROXY
-                log.info("Using proxy for CCXT async: %s", config.HTTP_PROXY)
-
-            # Force the OS threaded DNS resolver instead of aiodns/c-ares.
-            # c-ares bypasses Cloudflare WARP's DNS tunnel on Windows,
-            # causing "Could not contact DNS servers" errors.
-            resolver = _aiohttp.ThreadedResolver()
-            connector = _aiohttp.TCPConnector(resolver=resolver)
-            session = _aiohttp.ClientSession(connector=connector)
-
-            cls = getattr(ccxt, exchange_name, ccxt.binanceusdm)
-            self._exchange = cls(params)
-            self._exchange.session = session
-            self._exchange.own_session = True
-        return self._exchange
-
-    async def close(self) -> None:
-        if self._exchange:
-            await self._exchange.close()
-            self._exchange = None
+    def _get_ohlcv_limit(self) -> int:
+        try:
+            return self._get_adapter().ohlcv_limit
+        except Exception:
+            return 1500
 
     async def fetch_and_store(
         self,
@@ -110,11 +74,11 @@ class OHLCVFetcher:
 
         progress_cb: optional async callable(pct: float, msg: str) for progress updates.
         """
-        exchange = await self._get_exchange()
+        adapter = self._get_adapter()
         now_ms = until_ms or int(time.time() * 1000)
         target_since_ms = now_ms - int(since_days * 86_400_000)
 
-        candle_limit = _get_ohlcv_limit()
+        candle_limit = self._get_ohlcv_limit()
 
         # Check what we already have stored
         stored = await db.get_ohlcv_range(symbol, timeframe)
@@ -135,23 +99,20 @@ class OHLCVFetcher:
             stored_count,
         )
 
-        # Fast-fail connectivity check: load markets once before the fetch loop.
-        # If fapi.binance.com is unreachable this raises immediately instead of
-        # spinning inside the loop.
-        if not exchange.markets:
-            try:
-                await exchange.load_markets()
-            except ccxt.NetworkError as e:
-                log.error(
-                    "Cannot reach exchange API (%s). "
-                    "Check your internet connection or set HTTP_PROXY in .env. "
-                    "Aborting fetch for %s.",
-                    e, symbol,
-                )
-                return 0
-            except Exception as e:
-                log.error("Failed to load exchange markets: %s", e)
-                return 0
+        # Fast-fail connectivity check
+        try:
+            await adapter.load_markets()
+        except AdapterConnectionError as e:
+            log.error(
+                "Cannot reach exchange API (%s). "
+                "Check your internet connection or set HTTP_PROXY in .env. "
+                "Aborting fetch for %s.",
+                e, symbol,
+            )
+            return 0
+        except Exception as e:
+            log.error("Failed to load exchange markets: %s", e)
+            return 0
 
         total_written = 0
         since_ms = fetch_since_ms
@@ -160,16 +121,17 @@ class OHLCVFetcher:
 
         while since_ms < now_ms:
             try:
-                candles = await exchange.fetch_ohlcv(
+                candles = await adapter.fetch_ohlcv(
                     symbol, timeframe,
-                    since=since_ms,
-                    limit=candle_limit,
+                    candle_limit,
+                    since_ms=since_ms,
                 )
                 retries = 0  # reset on success
-            except ccxt.BadSymbol:
-                log.warning("Symbol not found on exchange: %s", symbol)
+            except (AdapterExchangeError, ValueError) as e:
+                # Covers BadSymbol (mapped to ExchangeError by adapter)
+                log.warning("Symbol error fetching %s: %s", symbol, e)
                 break
-            except ccxt.NetworkError as e:
+            except (AdapterConnectionError, RateLimitError) as e:
                 retries += 1
                 if retries > _MAX_RETRIES:
                     log.error(
@@ -262,18 +224,16 @@ async def _main() -> None:
     args = parser.parse_args()
 
     await db.initialize()
-    fetcher = OHLCVFetcher()
+    from core.exchange import _get_adapter
+    fetcher = OHLCVFetcher(adapter=_get_adapter())
 
     async def progress(pct: float, msg: str) -> None:
         print(f"  [{pct:5.1f}%] {msg}")
 
-    try:
-        for sym in args.symbols:
-            print(f"\nFetching {sym} {args.timeframe} ({args.days}d)...")
-            count = await fetcher.fetch_and_store(sym, args.timeframe, args.days, progress_cb=progress)
-            print(f"  → {count} candles written")
-    finally:
-        await fetcher.close()
+    for sym in args.symbols:
+        print(f"\nFetching {sym} {args.timeframe} ({args.days}d)...")
+        count = await fetcher.fetch_and_store(sym, args.timeframe, args.days, progress_cb=progress)
+        print(f"  → {count} candles written")
 
 
 if __name__ == "__main__":
