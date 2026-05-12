@@ -204,15 +204,15 @@ Same grep pattern and routing logic (A/B/C) for all windows.
   consumer eliminated — adapter abstraction is now exhaustive.
   Only ccxt import remaining: exchange_factory.py (adapter infrastructure,
   correct placement). 450/450 green, baseline diff empty.
-- **AN-2** (HIGH, promoted from Bucket 5): qt:-prefixed legacy
-  Quantower rows have multiple corruption modes — hold=0s with
-  high≈low (original report) AND long-hold-with-extreme-MAE
-  (hold 2-6 days, wick_pct >245%, confirmed by AN-3 diagnostic
-  2026-05-11: 3/3 rows qt:-prefixed SIRENUSDT). Likely additional
-  smaller-magnitude corruption below diagnostic threshold.
-  Actively distorts visible dashboard MAE values. Unifying fix:
-  exclude or delete all qt:-prefixed rows from analytics queries
-  (and consider deleting from exchange_history table entirely).
+- **AN-2**: **done** — DELETE with export-first. Removed all 148
+  qt:-prefixed legacy Quantower rows from exchange_history (254→106,
+  58% of table) and 148 matching fills. All rows confirmed corrupted:
+  hold=0s entries, MAE>245%, impossible hold times (up to ~7948 days).
+  14 symbols affected: STOUSDT(56), SIRENUSDT(29), ONUSDT(12),
+  BTCUSDT(10), JCTUSDT(10), TRUMPUSDT(7), +8 others.
+  Archive: docs/archive/quantower_legacy_*_2026-05-12.csv (commit 48755ee).
+  Migration: two _run_once entries in database.py (idempotent).
+  8 regression tests. 487/487 green, baseline diff empty.
   Branch: fix/AN-2-quantower-legacy-cleanup.
 - **AD-4** (MEDIUM): Adapter is_close heuristic improvements.
   Binance: use side+positionSide deterministic check instead of
@@ -332,7 +332,7 @@ Same grep pattern and routing logic (A/B/C) for all windows.
 
 ## Status: Where are we?
 
-Last updated: 2026-05-12
+Last updated: 2026-05-13
 - Bucket 0: **done** — RE-9 landed (60 tests, 111-row baseline CSV)
 - Bucket 1: **done** — SC-1, RP-1, RE-1 all landed (branch: audit/v2.3.1)
 - Bucket 2: **done** — all three foundation redesigns landed
