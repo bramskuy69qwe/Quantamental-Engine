@@ -125,28 +125,19 @@ Same grep pattern and routing logic (A/B/C) for all windows.
    ordered as findings inform
 
 ### Bucket 4 (HIGH cleanup):
-- **OM-5** (severity TBD, potentially HIGH): TP/SL set at order
-  creation not visible in open-orders tab or TPSL tab. Three
-  possible layers:
-  (a) Display bug — exists in app state, template doesn't render.
-  (b) Fetch bug — Binance USDM TP/SL at order creation creates
-      separate STOP_MARKET/TAKE_PROFIT_MARKET orders with
-      reduceOnly=true. Parser may miss those types or filter.
-  (c) Timing/race — stale snapshot replay clearing TP/SL. SR-1
-      covered main entry order; TP/SL may be out of scope.
-  Manifests in TWO paths, likely same root cause:
-  (a) TP/SL set at order creation not visible (original report)
-  (b) TP/SL edited mid-trade not visible (observed during SR-7
-      verification window)
-  Both paths produce STOP_MARKET/TAKE_PROFIT_MARKET orders with
-  reduceOnly=true on Binance USDM; same fetch and display surface.
-  Diagnostic: query Binance API for open orders on affected symbol;
-  compare against engine local state; isolate fetch vs display.
-  May escalate to Bucket 1 if confirmed protective-order gap.
-  Discovered: 2026-05-10, verification window.
-  Note: execution_type field (SR-6 WS-2) unblocks manifestation (b)
-  — mid-trade TP/SL edit detection requires distinguishing AMENDMENT
-  events from NEW events, which status alone cannot do.
+- **OM-5**: **done** — TP/SL position matching fix for Binance one-way
+  mode. Root cause: positionSide="BOTH" (one-way mode) never matched
+  pos.direction="LONG"/"SHORT" at 3 sites. Truthy-string fallback
+  (if not pos_dir:) didn't catch "BOTH". Fix: resolve_tpsl_direction()
+  helper resolves "BOTH" → LONG/SHORT using close-order semantics
+  (SELL→LONG, BUY→SHORT). Hedge mode passes through unchanged.
+  Sites: enrich_positions_tpsl (order_manager.py), _apply_order_update
+  (ws_manager.py), fetch_open_orders_tpsl (exchange.py).
+  Latent secondary finding: mark_stale_orders_canceled() may falsely
+  cancel WS-received TP/SL during REST snapshot lag — watch during
+  verification. 14 regression tests, 501/501 green, baseline empty.
+  Branch: fix/OM-5-tpsl-position-matching.
+  Design doc: docs/design/OM-5_phase1_investigation.md.
 - **MN-2** (severity TBD, potentially HIGH): Monthly drawdown
   shows 0 in dashboard despite real drawdown this month. Failing
   layer unknown: reset logic, calculation logic, frontend display,
@@ -327,7 +318,7 @@ Same grep pattern and routing logic (A/B/C) for all windows.
 
 ## Status: Where are we?
 
-Last updated: 2026-05-13
+Last updated: 2026-05-13 (OM-5 done)
 - Bucket 0: **done** — RE-9 landed (60 tests, 111-row baseline CSV)
 - Bucket 1: **done** — SC-1, RP-1, RE-1 all landed (branch: audit/v2.3.1)
 - Bucket 2: **done** — all three foundation redesigns landed
