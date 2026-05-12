@@ -30,6 +30,7 @@ desktop.ini
 # Since you're doing quant work, ignore massive CSVs or Parquet files
 data/
 *.csv
+!docs/archive/*.csv
 *.parquet
 *.log
 
