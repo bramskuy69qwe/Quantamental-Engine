@@ -175,8 +175,12 @@ Same grep pattern and routing logic (A/B/C) for all windows.
   created from WS TRADE events via _create_fill_from_ws() using native
   tradeId. Backfill dedup checks (symbol+side+qty+|ts|<1s) prevents
   dual records. 468/468 green, baseline diff empty.
-- **PA-1b**: queued — open_time reconstruction algorithm fix for partial
-  closes. Separate root cause from PA-1a.
+- **PA-1b**: **done** — FIFO open_time reconstruction. Replaced 24-line
+  backward-walk with precomputed FIFO queue per (symbol, direction).
+  Closes consume opening fills oldest-first; partial closes share
+  the correct open_time. Eliminates 7-day fallback silent wrong grab.
+  Orphan closes get open_time=0 (explicit unknown). Scale-in handled
+  naturally. 479/479 green, baseline diff empty.
 - **PA-1** (HIGH): Partial-fill aggregation produces incorrect position
   and trade records. User opened 1 SHORT SKYAIUSDT, closed in 2 partial
   fills. Engine shows 2 position entries (split per partial close) and

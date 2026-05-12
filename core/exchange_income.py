@@ -315,6 +315,40 @@ async def fetch_exchange_trade_history(limit: int = 200) -> None:
             for t in fills:
                 trade_lookup[str(t.get("id", ""))] = t
 
+        # PA-1b: Precompute open_time per close fill using FIFO position accounting.
+        # For each (symbol, direction), builds a FIFO queue of opening fills.
+        # Closing fills consume from the queue head (oldest first).
+        # The queue head's timestamp = the position's open_time for that close.
+        close_open_times: Dict[str, int] = {}  # fill_id -> open_time_ms
+
+        for sym, sym_fills_raw in fills_by_symbol.items():
+            sorted_fills = sorted(sym_fills_raw, key=lambda f: int(f.get("time", 0)))
+            for direction in ("LONG", "SHORT"):
+                open_side  = "BUY" if direction == "LONG" else "SELL"
+                close_side = "SELL" if direction == "LONG" else "BUY"
+                fifo_queue: List[List] = []  # [[time_ms, remaining_qty], ...]
+                for fill in sorted_fills:
+                    fill_side = fill.get("side", "")
+                    fill_qty  = float(fill.get("qty", 0))
+                    fill_time = int(fill.get("time", 0))
+                    fill_id   = str(fill.get("id", ""))
+                    if fill_side == open_side:
+                        fifo_queue.append([fill_time, fill_qty])
+                    elif fill_side == close_side:
+                        open_time_fifo = fifo_queue[0][0] if fifo_queue else 0
+                        close_open_times[fill_id] = open_time_fifo
+                        if not fifo_queue and fill_id:
+                            log.debug("PA-1b: orphan close fill %s %s — no matching open", sym, fill_id)
+                        # Consume FIFO
+                        remaining = fill_qty
+                        while remaining > 1e-8 and fifo_queue:
+                            if fifo_queue[0][1] <= remaining + 1e-8:
+                                remaining -= fifo_queue[0][1]
+                                fifo_queue.pop(0)
+                            else:
+                                fifo_queue[0][1] -= remaining
+                                remaining = 0
+
         # Augment each PnL event
         for r in raw_pnl:
             tid      = str(r.get("tradeId", ""))
@@ -336,30 +370,17 @@ async def fetch_exchange_trade_history(limit: int = 200) -> None:
             else:
                 entry_price = 0.0
 
-            # open_time: oldest opening-direction fill of the CURRENT leg only.
-            open_side  = "BUY"  if direction == "LONG"  else ("SELL" if direction == "SHORT" else "")
-            close_side = "SELL" if direction == "LONG"  else ("BUY"  if direction == "SHORT" else "")
-            open_time  = 0
+            # PA-1b: open_time from FIFO precomputation (replaces backward-walk)
+            open_time = close_open_times.get(tid, 0)
+
+            # Collect opening fills for fee calculation
+            open_side = "BUY" if direction == "LONG" else ("SELL" if direction == "SHORT" else "")
             open_fills: List[Dict] = []
-            if open_side:
+            if open_side and open_time > 0:
                 sym_fills = fills_by_symbol.get(sym, [])
-                prev_close_fills = [t for t in sym_fills
-                                    if t.get("side") == close_side
-                                    and int(t.get("time", 0)) < close_ms]
-                prev_leg_end_ms = max(
-                    (int(t.get("time", 0)) for t in prev_close_fills), default=0
-                )
                 open_fills = [t for t in sym_fills
                               if t.get("side") == open_side
-                              and prev_leg_end_ms < int(t.get("time", 0)) < close_ms]
-                if not open_fills:
-                    _SEVEN_DAYS_MS = 7 * 24 * 3600 * 1000
-                    open_fills = [t for t in sym_fills
-                                  if t.get("side") == open_side
-                                  and close_ms - _SEVEN_DAYS_MS < int(t.get("time", 0)) < close_ms]
-                if open_fills:
-                    open_time = int(min(open_fills, key=lambda t: int(t.get("time", 0)))
-                                    .get("time", 0))
+                              and open_time <= int(t.get("time", 0)) <= close_ms]
 
             notional = round(exit_price * qty, 2) if exit_price and qty else 0.0
 
