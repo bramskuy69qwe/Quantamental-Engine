@@ -595,6 +595,17 @@ class DatabaseManager(
             "reset_fee_combined_total_v5",
             "UPDATE exchange_history SET fee=0",
         )
+        # AN-2: delete corrupted qt:-prefixed legacy Quantower rows.
+        # All 148 rows confirmed mathematically impossible (MAE>245%, hold=7948d, etc.).
+        # Archived to docs/archive/quantower_legacy_*_2026-05-12.csv before deletion.
+        await _run_once(
+            "an2_delete_qt_exchange_history_v1",
+            "DELETE FROM exchange_history WHERE trade_key LIKE 'qt:%'",
+        )
+        await _run_once(
+            "an2_delete_qt_fills_v1",
+            "DELETE FROM fills WHERE exchange_fill_id LIKE 'qt:%'",
+        )
 
         # v1.3-seed: import .env credentials as Account 1 if no accounts exist yet
         async with self._conn.execute("SELECT COUNT(*) FROM accounts") as cur:
