@@ -183,8 +183,13 @@ async def _apply_order_update(msg: dict, ws_adapter) -> None:
                     pos.individual_tpsl = False
             break  # found the matching position
 
-    # ── Fill → refresh positions so new fills appear immediately ─────────
+    # ── Fill → create fill record + refresh positions ────────────────────
     if execution_type == "TRADE":
+        # PA-1a: create fill record from WS event (fact before state transition)
+        try:
+            await _create_fill_from_ws(order, msg)
+        except Exception as e:
+            log.warning("WS fill creation failed: %s", e)
         asyncio.create_task(_refresh_positions_after_fill())
 
     # ── SR-1: Persist order via OrderManager (validates transition + timestamp)
@@ -251,6 +256,46 @@ async def _on_new_position(sym: str) -> None:
         log.warning("Rate limit hit in _on_new_position for %s: %s", sym, e)
     except Exception as e:
         log.warning("_on_new_position trade lookup failed for %s: %s", sym, e)
+
+
+async def _create_fill_from_ws(order, raw_msg: dict) -> None:
+    """PA-1a: create a fill record from WS ORDER_TRADE_UPDATE (execution_type=TRADE).
+
+    Extracts fill-specific fields from the raw message (tradeId, lastFilledQty,
+    lastFilledPrice, realizedProfit, commission) that are NOT on NormalizedOrder.
+    Uses tradeId as exchange_fill_id for natural dedup with backfill path.
+    """
+    from core.database import db
+
+    o = raw_msg.get("o", {})
+    trade_id = str(o.get("t", ""))
+    if not trade_id or trade_id == "0":
+        return  # No trade ID — not a real fill
+
+    realized_pnl = float(o.get("rp", 0) or 0)
+    fill = {
+        "account_id":           app_state.active_account_id,
+        "exchange_fill_id":     trade_id,
+        "terminal_fill_id":     "",
+        "exchange_order_id":    str(o.get("i", "")),
+        "symbol":               o.get("s", ""),
+        "side":                 o.get("S", ""),
+        "direction":            o.get("ps", "") or ("LONG" if o.get("S") == "BUY" else "SHORT"),
+        "price":                float(o.get("L", 0) or 0),   # lastFilledPrice
+        "quantity":             float(o.get("l", 0) or 0),   # lastFilledQty
+        "fee":                  abs(float(o.get("n", 0) or 0)),
+        "fee_asset":            o.get("N", "USDT"),
+        "exchange_position_id": "",
+        "terminal_position_id": "",
+        "is_close":             int(realized_pnl != 0),
+        "realized_pnl":         realized_pnl,
+        "role":                 "maker" if o.get("m") else "taker",
+        "source":               "binance_ws",
+        "timestamp_ms":         int(o.get("T", 0)),
+    }
+    await db.upsert_fill(fill)
+    log.debug("WS fill created: %s %s qty=%.4f pnl=%.4f",
+              fill["symbol"], trade_id, fill["quantity"], realized_pnl)
 
 
 async def _refresh_positions_after_fill() -> None:

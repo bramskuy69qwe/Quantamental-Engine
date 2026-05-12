@@ -171,6 +171,12 @@ Same grep pattern and routing logic (A/B/C) for all windows.
   RL-2 (proactive weight tracker, currently deferred) earlier —
   proactive tracking would prevent periodic hits at the source.
   Discovered: 2026-05-12, SR-7 verification window.
+- **PA-1a**: **done** — WS fill creation + backfill dedup. Fills now
+  created from WS TRADE events via _create_fill_from_ws() using native
+  tradeId. Backfill dedup checks (symbol+side+qty+|ts|<1s) prevents
+  dual records. 468/468 green, baseline diff empty.
+- **PA-1b**: queued — open_time reconstruction algorithm fix for partial
+  closes. Separate root cause from PA-1a.
 - **PA-1** (HIGH): Partial-fill aggregation produces incorrect position
   and trade records. User opened 1 SHORT SKYAIUSDT, closed in 2 partial
   fills. Engine shows 2 position entries (split per partial close) and

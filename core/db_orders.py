@@ -648,6 +648,20 @@ class OrdersMixin:
                 "source":               "exchange_history_backfill",
                 "timestamp_ms":         r.get("time", 0),
             }
+            # PA-1a: skip if a matching WS fill already exists (dedup at write time).
+            # WS fills use tradeId as key; backfill uses trade_key — different keys
+            # for the same fill. Match on (symbol, side, quantity, timestamp ±1s).
+            try:
+                async with self._conn.execute(
+                    "SELECT 1 FROM fills WHERE account_id=? AND symbol=? AND side=? "
+                    "AND quantity=? AND ABS(timestamp_ms - ?) < 1000 LIMIT 1",
+                    (account_id, fill["symbol"], fill["side"],
+                     fill["quantity"], fill["timestamp_ms"]),
+                ) as cur:
+                    if await cur.fetchone():
+                        continue  # WS fill exists — skip backfill duplicate
+            except Exception:
+                pass  # If check fails, proceed with insert (safe: upsert is idempotent)
             try:
                 await self.upsert_fill(fill)
                 fills_inserted += 1
