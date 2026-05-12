@@ -137,9 +137,69 @@ To achieve dedup without schema changes:
 aggregation path is 2-3 lines and protects against dual records without
 requiring schema changes or backfill key migration.
 
-Alternatively, skip the backfill fill entirely for rows where a WS fill
-with the same `(symbol, side, timestamp_ms, quantity)` already exists.
-Add a check in backfill_fills_from_exchange_history before insert.
+### Chosen strategy: Option 2 (write-time dedup in backfill)
+
+Backfill checks for existing fills before creating. Prevents duplicates
+at write time rather than compensating at read time.
+
+### Consideration 1: Asymmetry (WS doesn't check backfill)
+
+**Decision: (a) Accept as rare.** WS fill creation uses `upsert_fill()`
+with `ON CONFLICT DO UPDATE` — if a backfill fill with the same
+`exchange_fill_id` existed, it would be updated (not duplicated). Since
+WS uses `tradeId` and backfill uses `trade_key`, they have different
+`exchange_fill_id` values and don't conflict via the UNIQUE constraint.
+
+The true risk is two rows with different keys for the same fill. This is
+addressed by Option 2's backfill-side check. WS-side check is unnecessary
+because WS fills arrive FIRST (real-time); backfill runs at next startup
+(later). The check only needs to be in the later path (backfill).
+
+Edge case: WS reconnects replaying recent events that backfill already
+processed → `upsert_fill` with same `tradeId` → `ON CONFLICT DO UPDATE`
+→ no duplicate. Safe.
+
+### Consideration 2: Timestamp precision
+
+**Verified**: WS fill timestamp has millisecond precision (e.g.,
+`1778518450214`). Exchange_history timestamp is truncated to seconds
+(e.g., `1778518450000`). **214ms difference** for the same trade.
+
+**Match criteria**: `symbol + side + quantity + ABS(timestamp_ms
+difference) < 1000`. The 1-second tolerance handles the truncation.
+
+```python
+# In backfill_fills_from_exchange_history, before upsert_fill:
+async with self._conn.execute(
+    "SELECT 1 FROM fills WHERE account_id=? AND symbol=? AND side=? "
+    "AND quantity=? AND ABS(timestamp_ms - ?) < 1000 LIMIT 1",
+    (account_id, fill["symbol"], fill["side"], fill["quantity"], fill["timestamp_ms"]),
+) as cur:
+    if await cur.fetchone():
+        continue  # WS fill already exists — skip backfill duplicate
+```
+
+### Consideration 3: UNIQUE INDEX (optional)
+
+A composite UNIQUE INDEX on `(account_id, symbol, side, timestamp_ms,
+quantity)` would catch duplicates at DB level. **Deferred**: the
+tolerance-based match (±1s) can't be expressed as a UNIQUE constraint.
+Application-level check is the primary guard. If exact timestamps
+were guaranteed, the constraint would be viable — but the 214ms gap
+makes it unreliable.
+
+Mentioned for future consideration if timestamp alignment is addressed
+(e.g., storing all timestamps at second precision).
+
+### Updated LOC estimate
+
+| Change | Lines |
+|--------|-------|
+| `_create_fill_from_ws()` function | +20 |
+| Call from TRADE handler with try/except | +5 |
+| Backfill dedup check (tolerance query) | +6 |
+| Tests | +35 |
+| **Total** | **~66** |
 
 ---
 
