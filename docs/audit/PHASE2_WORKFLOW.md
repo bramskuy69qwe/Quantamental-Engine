@@ -125,19 +125,38 @@ Same grep pattern and routing logic (A/B/C) for all windows.
    ordered as findings inform
 
 ### Bucket 4 (HIGH cleanup):
-- **OM-5**: **done** — TP/SL position matching fix for Binance one-way
-  mode. Root cause: positionSide="BOTH" (one-way mode) never matched
-  pos.direction="LONG"/"SHORT" at 3 sites. Truthy-string fallback
-  (if not pos_dir:) didn't catch "BOTH". Fix: resolve_tpsl_direction()
-  helper resolves "BOTH" → LONG/SHORT using close-order semantics
-  (SELL→LONG, BUY→SHORT). Hedge mode passes through unchanged.
-  Sites: enrich_positions_tpsl (order_manager.py), _apply_order_update
-  (ws_manager.py), fetch_open_orders_tpsl (exchange.py).
-  Latent secondary finding: mark_stale_orders_canceled() may falsely
-  cancel WS-received TP/SL during REST snapshot lag — watch during
-  verification. 14 regression tests, 501/501 green, baseline empty.
+- **OM-5**: code landed, **verification failed** — positionSide="BOTH"
+  matching fix correct for one-way mode but user's account is hedge
+  mode (position_side=LONG/SHORT). Original matching already worked.
+  Real issue: TP/SL orders placed via Binance while engine running
+  with WS connected never appear in DB. WS delivers ORDER_TRADE_UPDATE
+  for market/limit orders (confirmed in DB) but zero TP/SL orders
+  persisted for test symbol (SAGAUSDT). Three hypotheses under
+  investigation:
+  (A) Strategy/conditional orders: Binance position-panel TP/SL may
+      create "strategy orders" that don't fire ORDER_TRADE_UPDATE
+  (B) Processing exception swallowed: ws_manager.py:347 catches all
+      exceptions at DEBUG/WARNING level
+  (C) Events arrive but immediately overwritten (unlikely — zero DB
+      trace)
+  User verification pending: (1) log check for exceptions, (2)
+  explicit STOP_MARKET order test vs position-panel TP/SL test.
+  14 regression tests, 501/501 green, baseline empty.
   Branch: fix/OM-5-tpsl-position-matching.
   Design doc: docs/design/OM-5_phase1_investigation.md.
+- **OM-5b** (HIGH, deferred pending OM-5 WS resolution): Plugin
+  connection state gates REST order fetch on startup. Three sites
+  skip adapter.fetch_open_orders when platform_bridge.is_connected:
+  (1) fetch_open_orders_tpsl() (exchange.py:281) enriches from
+  cache only → cache empty → nothing to enrich
+  (2) _account_refresh_loop() (schedulers.py:115) skips entire REST
+  sync including order fetch
+  (3) _user_data_loop() (ws_manager.py:317) stands by when plugin
+  connected → no Binance user data WS → no ORDER_TRADE_UPDATE
+  Result: pre-existing TP/SL placed before engine started or while
+  plugin connected is invisible. Fix shape: at least one REST fetch
+  on startup regardless of plugin state. May share scope with OM-5
+  WS-case fix. Discovered: 2026-05-13.
 - **MN-2** (severity TBD, potentially HIGH): Monthly drawdown
   shows 0 in dashboard despite real drawdown this month. Failing
   layer unknown: reset logic, calculation logic, frontend display,
@@ -318,7 +337,7 @@ Same grep pattern and routing logic (A/B/C) for all windows.
 
 ## Status: Where are we?
 
-Last updated: 2026-05-13 (OM-5 done)
+Last updated: 2026-05-13 (OM-5 verification failed, OM-5b filed)
 - Bucket 0: **done** — RE-9 landed (60 tests, 111-row baseline CSV)
 - Bucket 1: **done** — SC-1, RP-1, RE-1 all landed (branch: audit/v2.3.1)
 - Bucket 2: **done** — all three foundation redesigns landed
