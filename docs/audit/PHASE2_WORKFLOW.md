@@ -294,6 +294,13 @@ Same grep pattern and routing logic (A/B/C) for all windows.
   Cross-references: FE-2 (unintentional case c), FE-3 (hx-target
   granularity determines re-render), OM-5 (TP/SL placement pending).
   Address after Bucket 3 completes. Discovered: 2026-05-12.
+- **MP-2** (MEDIUM, Bucket 5): Equity history backfill on startup.
+  Engine equity curve shows flat line during downtime (gaps filled with
+  last value). No backfill fetches missing equity data on restart.
+  Fix: compute snapshots from price+state during downtime, OR derive
+  from exchange equity endpoint, OR mark gaps explicitly in UI.
+  Bucket 5 by default (external backtesting re-derives). Bucket 4 if
+  engine curve intended as backtest input. Discovered: 2026-05-12.
 - **FE-12** (MEDIUM): Residual equity curve flicker — chart rendering
   historical race-corrupted snapshots from pre-FE-9 data. Will age out
   as clean snapshots accumulate. Revisit if persists after ~1 week.

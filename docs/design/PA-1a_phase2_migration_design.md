@@ -74,31 +74,72 @@ same logical fill — see idempotency section.
 
 ---
 
-## 3. Idempotency
+## 3. Idempotency (REVISED after dual-record investigation)
 
 **Dedup key**: `UNIQUE(account_id, exchange_fill_id)` on fills table.
 
-**Collision risk**: WS fill uses `tradeId` (e.g., `"120920342"`).
-Backfill uses `trade_key` (e.g., `"1778518450000_SKYAIUSDT_REALIZED_PNL"`).
-These NEVER collide — different format.
+### Investigation findings
 
-**Result**: The same logical fill can exist TWICE in the fills table
-(once from WS, once from backfill) with different `exchange_fill_id`
-values. This is acceptable:
-- Both have the same symbol, side, price, quantity, timestamp
-- Downstream analytics (closed_positions, MFE/MAE) use fills by
-  position grouping, not by fill count
-- The backfill path groups fills by `(symbol, direction, open_time)`
-  for closed_positions creation — duplicates in fills don't create
-  duplicate closed_positions
+Backfill uses `trade_key` (format `{timestamp}_{symbol}_REALIZED_PNL`)
+as `exchange_fill_id`. WS uses Binance's native `tradeId` (integer).
+These are different keys for the same fill — dual records would inflate:
+- `realized_pnl = sum(...)` in OrderManager (line 265) — PnL doubled
+- Trade count metrics — over-count
+- External backtest exports — duplicates
 
-**Alternative** (stricter dedup): Use a composite key that matches
-across both paths. Rejected — would require changing backfill's key
-format, breaking existing data.
+### Solution: align both paths to use tradeId
 
-**Recommended approach**: Accept dual records. The WS fill is
-authoritative (real-time, complete fields); the backfill fill is
-supplementary. No downstream harm from having both.
+REALIZED_PNL income events from Binance carry `tradeId` (used at
+exchange_income.py:320 for userTrade lookup). The backfill path at
+db_orders.py:630 should use this `tradeId` as `exchange_fill_id`
+instead of `trade_key`.
+
+**WS path**: uses `str(o.get("t", ""))` — the native tradeId.
+**Backfill path change**: use `str(r.get("tradeId", r.get("trade_key", "")))`
+as `exchange_fill_id`. Falls back to trade_key for rows without tradeId
+(legacy data).
+
+**DB-level dedup**: `UNIQUE(account_id, exchange_fill_id)` naturally
+prevents duplicates. WS fill arrives first (real-time); backfill at
+next startup attempts insert → ON CONFLICT updates with same data → no-op.
+
+### Scope note
+
+The backfill key change is a small addition to PA-1a scope (~2 lines in
+db_orders.py). It ensures the two paths produce consistent keys. Existing
+fills with trade_key-based IDs remain unchanged (no migration needed —
+they won't collide with tradeId-based fills from different trades).
+
+### exchange_history tradeId availability
+
+exchange_history rows do NOT store tradeId as a column. The tradeId
+is available during `fetch_exchange_trade_history()` processing (from
+the raw REALIZED_PNL income event) but is used only for userTrade
+lookup, not persisted.
+
+**Solution**: Add tradeId to exchange_history `trade_key` generation,
+OR store tradeId as a separate column. Simpler: just change the
+backfill to use the existing `trade_key` + a prefix to distinguish
+from WS tradeIds. BUT this doesn't achieve dedup.
+
+**Revised simpler approach**: Backfill fills are created from
+exchange_history rows. These rows have `trade_key` but no `tradeId`.
+To achieve dedup without schema changes:
+
+1. WS fills use `exchange_fill_id = str(tradeId)` (e.g., "120920342")
+2. Backfill fills KEEP `exchange_fill_id = trade_key` (e.g.,
+   "1778518450000_SKYAIUSDT_REALIZED_PNL")
+3. Add a dedup guard in OrderManager's PnL aggregation: when summing
+   `realized_pnl` across fills, group by `(symbol, timestamp_ms,
+   round(quantity))` and take MAX instead of SUM to avoid double-counting
+
+**Recommended approach**: Option 3 is pragmatic. The dedup guard in the
+aggregation path is 2-3 lines and protects against dual records without
+requiring schema changes or backfill key migration.
+
+Alternatively, skip the backfill fill entirely for rows where a WS fill
+with the same `(symbol, side, timestamp_ms, quantity)` already exists.
+Add a check in backfill_fills_from_exchange_history before insert.
 
 ---
 
