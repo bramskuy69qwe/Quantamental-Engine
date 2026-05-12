@@ -77,28 +77,60 @@ def _is_position_fully_closed(sym, direction, up_to_ms, fills):
     return close_qty >= open_qty - 1e-8  # tolerance for float comparison
 ```
 
-### Simplified approach (recommended for PA-1b)
+### Implementation: Lightweight FIFO (chosen over time-proximity heuristic)
 
-The full FIFO model is correct but complex. A simpler fix that handles
-the SKYAIUSDT case and most real scenarios:
+Time-proximity grouping (60s threshold) barely covers the observed 55s
+case and fails silently for manual partial closes, TWAP exits, or slower
+automation. Lightweight FIFO eliminates the threshold question entirely.
 
-**Group REALIZED_PNL events that close the same position by time
-proximity.** If two REALIZED_PNL events for the same symbol+direction
-occur within 60 seconds, they're partial closes of the same position →
-share the same open_time.
+**Precomputation** (before the raw_pnl augmentation loop):
+
+For each symbol, sort all user fills chronologically. For each direction
+(LONG/SHORT), maintain a FIFO queue of opening fills. Closing fills
+consume from the queue head (oldest first). Record the queue head's
+timestamp as the `open_time` for each close fill.
 
 ```python
-# Sort REALIZED_PNL by time ascending
-# For each symbol+direction, if this close is within 60s of the previous
-# close, reuse previous open_time instead of re-computing
+# Precompute: close_fill_id → open_time_ms
+close_open_times: Dict[str, int] = {}  # tradeId → open_time
+
+for sym, sym_fills_raw in fills_by_symbol.items():
+    sorted_fills = sorted(sym_fills_raw, key=lambda f: int(f.get("time", 0)))
+    for direction in ("LONG", "SHORT"):
+        open_side  = "BUY" if direction == "LONG" else "SELL"
+        close_side = "SELL" if direction == "LONG" else "BUY"
+        # FIFO queue: [(time_ms, remaining_qty), ...]
+        queue: List[List] = []
+        for fill in sorted_fills:
+            side = fill.get("side", "")
+            qty  = float(fill.get("qty", 0))
+            ts   = int(fill.get("time", 0))
+            fid  = str(fill.get("id", ""))
+            if side == open_side:
+                queue.append([ts, qty])
+            elif side == close_side:
+                # Record open_time = queue head (oldest unconsumed open)
+                open_time = queue[0][0] if queue else 0
+                close_open_times[fid] = open_time
+                # Consume FIFO
+                remaining = qty
+                while remaining > 1e-8 and queue:
+                    if queue[0][1] <= remaining + 1e-8:
+                        remaining -= queue[0][1]
+                        queue.pop(0)
+                    else:
+                        queue[0][1] -= remaining
+                        remaining = 0
 ```
 
-This avoids the full FIFO tracking while fixing the primary bug (partial
-closes within a short window picking up wrong open_times).
+**In the raw_pnl loop**: Replace the backward-walk (lines 339-362) with
+a simple lookup:
 
-**Limitation**: Doesn't handle partial closes spread over hours/days.
-For the engine's use case (automated crypto perps with sub-minute
-execution), 60s covers >99% of partial-fill scenarios.
+```python
+open_time = close_open_times.get(tid, 0)
+```
+
+If `open_time == 0` → no opening fill found (log warning, explicit unknown).
 
 ---
 
@@ -135,10 +167,11 @@ Synthetic partial-fill chains with mocked fill data:
 
 | Edge case | Behavior |
 |-----------|----------|
-| No opening fill within window | Log warning, set open_time=0. Do NOT silently grab wrong opening from 7-day fallback. open_time=0 is explicit "unknown." |
-| Close qty exceeds open qty | Possible on position flip (close + open opposite side in one order). Log warning, treat as full close + new open. |
-| Position flip (close LONG + open SHORT) | Binance sends separate REALIZED_PNL for the close portion. positionSide field distinguishes. Not affected by this fix — different direction key. |
-| Very old position (open >7 days ago) | Current 7-day fallback is removed for same-symbol-within-60s case. For the first close of a position (not a partial), original algorithm runs unchanged. |
+| No opening fill found (empty queue) | `open_time=0`. Explicit unknown. Log warning. No 7-day fallback — no silent wrong grab. |
+| Close qty exceeds open qty | FIFO queue empties mid-close. Remaining close qty has no matching open. `open_time=0` for that portion. Possible on data gaps or position flip. |
+| Scale-in (multiple opens before close) | FIFO naturally handles: queue has [open1, open2]. First close consumes from open1 head. `open_time = open1.time`. Correct. |
+| Position flip | Binance uses separate positionSide. Different direction key in the FIFO computation. Not affected. |
+| Very old position (open >7 days ago) | FIFO queue built from `fetch_user_trades(limit=500)`. If position opened >500 trades ago, opening fill may not be in the fetched set → queue empty → `open_time=0`. Same limitation as current algorithm but explicit instead of wrong. |
 
 ---
 
@@ -156,8 +189,8 @@ Synthetic partial-fill chains with mocked fill data:
 
 | Change | Lines |
 |--------|-------|
-| Group REALIZED_PNL by time proximity for open_time sharing | +15 |
-| Remove 7-day fallback for same-position partials | -5 |
-| Edge case handling (open_time=0 on miss) | +3 |
-| Tests (4 scenarios + edge cases) | +45 |
-| **Total** | **~58** |
+| FIFO precomputation (before raw_pnl loop) | +30 |
+| Replace backward-walk in raw_pnl loop | +3, -24 |
+| Edge case handling (open_time=0, logging) | +3 |
+| Tests (4 scenarios + edge cases) | +50 |
+| **Total** | **~85 LOC** (net +11 code, +50 tests) |
