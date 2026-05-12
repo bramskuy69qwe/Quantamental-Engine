@@ -56,6 +56,23 @@ QT_STATUS_MAP: Dict[str, str] = {
 
 # ── Quantower terminal → engine order type mapping ─────────────────────────
 
+def resolve_tpsl_direction(position_side: str | None, side: str) -> str:
+    """Resolve position direction for TP/SL order matching.
+
+    In hedge mode, position_side is 'LONG'/'SHORT' — use directly.
+    In one-way mode, position_side is 'BOTH' — infer from order side
+    using close-order semantics (TP/SL are reduceOnly):
+      SELL reduces LONG → direction is LONG
+      BUY  reduces SHORT → direction is SHORT
+
+    Scope: TP/SL matching only. Do NOT apply to entry-order matching
+    where the side-to-direction mapping inverts.
+    """
+    if position_side and position_side != "BOTH":
+        return position_side
+    return "LONG" if side == "SELL" else "SHORT"
+
+
 QT_ORDER_TYPE_MAP: Dict[str, str] = {
     "Limit":              "limit",
     "Market":             "market",

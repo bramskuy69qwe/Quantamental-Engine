@@ -14,6 +14,7 @@ from datetime import datetime, timezone, timedelta
 
 import config
 from core.adapters.errors import RateLimitError
+from core.order_state import resolve_tpsl_direction
 from core.state import app_state, PositionInfo, TZ_LOCAL
 from core.database import db
 from core.adapters import get_adapter, to_position_info, map_market_type
@@ -300,11 +301,8 @@ async def fetch_open_orders_tpsl() -> None:
 
     for o in orders:
         sym = o.symbol
-        # Use position_side directly (reliable in hedge mode).
-        # Fallback to side-based inference only if position_side is empty.
-        pos_dir = o.position_side
-        if not pos_dir:
-            pos_dir = "LONG" if o.side == "SELL" else "SHORT"
+        # OM-5: resolve "BOTH" (one-way mode) to LONG/SHORT via close-order semantics.
+        pos_dir = resolve_tpsl_direction(o.position_side, o.side)
         key = (sym, pos_dir)
         if o.order_type == "take_profit":
             if key not in tp_map or o.stop_price > tp_map[key]["price"]:

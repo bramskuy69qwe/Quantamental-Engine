@@ -15,7 +15,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from core.event_bus import event_bus
-from core.order_state import validate_transition, ACTIVE_STATES, OrderStatus
+from core.order_state import validate_transition, ACTIVE_STATES, OrderStatus, resolve_tpsl_direction
 from core.state import app_state, PositionInfo
 
 log = logging.getLogger("order_manager")
@@ -148,14 +148,14 @@ class OrderManager:
             tp_orders = [
                 o for o in self._open_orders
                 if o.get("symbol") == pos.ticker
-                and o.get("position_side") == pos.direction
+                and resolve_tpsl_direction(o.get("position_side", ""), o.get("side", "")) == pos.direction
                 and o.get("order_type") in ("take_profit",)
                 and o.get("status") in ("new", "partially_filled")
             ]
             sl_orders = [
                 o for o in self._open_orders
                 if o.get("symbol") == pos.ticker
-                and o.get("position_side") == pos.direction
+                and resolve_tpsl_direction(o.get("position_side", ""), o.get("side", "")) == pos.direction
                 and o.get("order_type") in ("stop_loss",)
                 and o.get("status") in ("new", "partially_filled")
             ]

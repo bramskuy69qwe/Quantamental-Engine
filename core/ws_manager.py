@@ -23,6 +23,7 @@ import config
 from core.adapters.errors import RateLimitError
 from core.state import app_state
 from core.event_bus import event_bus
+from core.order_state import resolve_tpsl_direction
 from core.exchange import (
     fetch_account, fetch_positions, fetch_orderbook, fetch_ohlcv,
     create_listen_key, keepalive_listen_key,
@@ -139,11 +140,8 @@ async def _apply_order_update(msg: dict, ws_adapter) -> None:
 
     # ── TP/SL order → update matching position in real-time ──────────────
     if order.order_type in _TPSL_TYPES:
-        # Use position_side directly from WS payload (reliable in hedge mode).
-        # Fallback to side-based inference only if position_side is empty.
-        pos_dir = order.position_side
-        if not pos_dir:
-            pos_dir = "LONG" if order.side == "SELL" else "SHORT"
+        # OM-5: resolve "BOTH" (one-way mode) to LONG/SHORT via close-order semantics.
+        pos_dir = resolve_tpsl_direction(order.position_side, order.side)
 
         for pos in app_state.positions:
             if pos.ticker != order.symbol or pos.direction != pos_dir:
