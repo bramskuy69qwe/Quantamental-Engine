@@ -327,11 +327,24 @@ Same grep pattern and routing logic (A/B/C) for all windows.
   engine unresponsive temporarily. Synchronous backend blocking event loop
   during query/recompute. Known limitation for v2.3.1 — properly addressed
   by v1.2 Redis event-driven state architecture. Discovered: 2026-05-12.
-- **BU-1** (LOW): CCXT "Unclosed client session" resource warning
-  observed during RL-3+AN-1 verification window. Possible CCXT
-  client lifecycle bug — exchange instance not closed on some path
-  (account switch, shutdown, or error recovery). Defer until after
-  SR-7. Discovered: 2026-05-10, verification window.
+- ~~**BU-1**~~: **auto-resolved** by AD-5 + SR-8. All ccxt.async_support
+  and aiohttp eliminated from codebase. Zero unclosed sessions possible.
+- ~~**DataCache public API**~~: **auto-resolved** by SR-3. All external
+  callers migrated into DataCache internals. No public wrapper needed.
+- ~~**AN-3**~~: **closed** — duplicate of AN-2 (already noted above).
+- **FE-13** (MEDIUM, NEW): Stop entry vs stop_loss disambiguation.
+  Conditional orders with reduceOnly=false + side indicating position
+  opening are misclassified as stop_loss. Should be stop_entry.
+  Diagnostic-first: downstream impact analysis needed (TP/SL panel,
+  position tracking, MFE/MAE, closed-order tracking).
+  Discovered: 2026-05-13, OM-5 verification.
+- **FE-14** (LOW, NEW): TP/SL column in open orders tab. Display
+  tpPrice/slPrice fields for entry orders with attached TP/SL legs.
+  Template-only if data available in order rows. ~5-8 LOC.
+  Discovered: 2026-05-13, OM-5 verification.
+- **BY-WS-1** (MEDIUM, NEW): Bybit WS parse_order_update() missing.
+  Order events silently dropped. BybitWSAdapter defines TOPIC_ORDER
+  but has no parser. ~30 LOC. Discovered: 2026-05-13, adapter docs.
 
 ## Status: Where are we?
 

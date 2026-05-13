@@ -115,9 +115,35 @@ OM-5, AD-2/3/4/5, SR-7, SR-4, SR-6, SR-8, RL-3, RE-1, SC-1, RP-1
 
 | Category | Items | LOC |
 |----------|-------|-----|
-| Quick fixes | 5 | ~55 |
-| Diagnostics | 2 (may merge to 1) | ~30-50 |
+| Quick fixes | 6 | ~35-45 |
+| Diagnostics | 3 (FE-13, FE-2+FE-8) | ~30-50 |
 | Adapter gap | 1 | ~30 |
-| **Active total** | **8** | **~115-135** |
+| **Active total** | **10** | **~95-125** |
 | Deferred (v2.4) | 3 | — |
 | Auto-resolved/close | 4 | 0 |
+
+---
+
+## Quick Fixes Sub-Enumeration (added 2026-05-13)
+
+All 6 confirmed active. Mostly independent files — single branch with
+atomic commits. Ordered by simplicity:
+
+| Order | ID | File(s) | Change | LOC |
+|-------|-----|---------|--------|-----|
+| 1 | FE-1 | routes_orders.py | Standardize per_page 25→20 (lines 42, 65) | 2 |
+| 2 | FE-7 | dashboard_body.html | Add max-height + overflow-y to order history (line 179) | 3-5 |
+| 3 | FE-14 | open_orders_table.html | Add TP/SL columns (after Trigger, before TIF) | 5-8 |
+| 4 | FE-10 | db_analytics.py | Fix equity OHLC gap handling (init prev_close) | 4-6 |
+| 5 | FE-4 | accounts.html | Inline-editable account name (same pattern as broker_account_id) | 8-10 |
+| 6 | FE-3 | dashboard.html + possibly new endpoint | HTMX target refinement for position card refresh | 8-12 |
+
+**Branch**: `fix/bucket5-quick-fixes`
+**FE-14 note**: Needs verification that order rows from DB include TP/SL
+fields. If not, either join from algo orders or add columns to orders table.
+**FE-3 note**: Most complex — may need new fragment endpoint for positions-only
+refresh. Leave last; may be deferred if scope expands beyond quick fix.
+
+**FE-13 (NEW)**: Stop entry vs stop_loss disambiguation. Diagnostic-first —
+separate branch after quick fixes batch.
+**FE-14 (NEW)**: TP/SL column display. Quick fix tier if data available.
