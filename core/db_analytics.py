@@ -334,7 +334,13 @@ class AnalyticsMixin:
                 p += tf_ms
 
         result: List[Dict[str, Any]] = []
+        # FE-10: initialize prev_close from first candle so dense_periods
+        # before the first data point carry forward a real value instead of
+        # being skipped (which causes a visual "drop to zero" on the left).
         prev_close: Optional[float] = None
+        if sorted_periods:
+            first_candle = candles[sorted_periods[0]]
+            prev_close = first_candle["o"]
         for period in dense_periods:
             c = candles.get(period)
             if c is None:
