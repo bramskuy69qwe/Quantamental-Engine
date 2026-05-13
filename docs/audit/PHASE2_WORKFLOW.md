@@ -139,12 +139,14 @@ Same grep pattern and routing logic (A/B/C) for all windows.
   Branch: fix/OM-5-conditional-orders-support.
   Design docs: docs/design/OM-5_phase1_investigation.md,
   docs/design/OM-5_phase1_conditional_orders.md.
-- **OM-5b**: partially addressed — conditional order REST polling
-  runs regardless of plugin state (addresses OM-5b for algo orders).
-  Basic-order plugin gating (3 sites) remains: fetch_open_orders_tpsl
-  (exchange.py:281), _account_refresh_loop (schedulers.py:115),
-  _user_data_loop standby (ws_manager.py:317). Separate fix still
-  needed for basic order discovery on startup. Discovered: 2026-05-13.
+- **OM-5b**: **done** — basic order REST sync no longer plugin-gated.
+  _account_refresh_loop order sync runs every 30s regardless of plugin.
+  _startup_fetch includes one-shot order sync. fetch_open_orders_tpsl
+  always enriches from cache. Account/position sync remains gated
+  (plugin authoritative). WS user-data standby unchanged (low risk,
+  order sync covers the gap). 3 regression tests, 519/519 green.
+  Branch: fix/OM-5b-basic-order-plugin-gating.
+  OM-5 family closed (OM-5 + OM-5b).
 - **MN-2** (severity TBD, potentially HIGH): Monthly drawdown
   shows 0 in dashboard despite real drawdown this month. Failing
   layer unknown: reset logic, calculation logic, frontend display,
@@ -325,7 +327,7 @@ Same grep pattern and routing logic (A/B/C) for all windows.
 
 ## Status: Where are we?
 
-Last updated: 2026-05-13 (OM-5 done, OM-5b partially addressed)
+Last updated: 2026-05-13 (OM-5 family closed)
 - Bucket 0: **done** — RE-9 landed (60 tests, 111-row baseline CSV)
 - Bucket 1: **done** — SC-1, RP-1, RE-1 all landed (branch: audit/v2.3.1)
 - Bucket 2: **done** — all three foundation redesigns landed
