@@ -79,7 +79,7 @@
       <button id="dt-positions" onclick="dtab('positions')"
               style="font-family:var(--font-ui);font-size:.6rem;padding:6px 14px;border:none;background:none;cursor:pointer;
                      letter-spacing:.1em;text-transform:uppercase;font-weight:700;
-                     color:var(--blue);border-bottom:2px solid var(--blue);">
+                     color:var(--muted);border-bottom:2px solid transparent;">
         Positions({{ open_positions | length }})
       </button>
       <button id="dt-orders" onclick="dtab('orders')"
@@ -99,7 +99,7 @@
     </div>
 
     <!-- ── Panel: Positions ── -->
-    <div id="dp-positions">
+    <div id="dp-positions" style="display:none;">
       {% if open_positions %}
       <div style="overflow-x:auto;">
         <table>
