@@ -47,9 +47,17 @@ class BybitLinearAdapter(BaseExchangeAdapter):
 
     async def fetch_account(self) -> NormalizedAccount:
         def _fetch():
-            return self._ex.fetch_balance(params={"type": "unified"})
+            balance = self._ex.fetch_balance(params={"type": "unified"})
+            # AD-3: fetch live fee rates from /v5/account/fee-rate
+            try:
+                fees = self._ex.privateGetV5AccountFeeRate(
+                    params={"category": "linear", "symbol": "BTCUSDT"}
+                )
+            except Exception:
+                fees = {}
+            return balance, fees
 
-        raw = await self._run(_fetch)
+        raw, fee_resp = await self._run(_fetch)
         info = raw.get("info", {})
 
         # Bybit V5 unified account structure
@@ -72,6 +80,18 @@ class BybitLinearAdapter(BaseExchangeAdapter):
                 unrealized = float(coin.get("unrealisedPnl", unrealized) or unrealized)
                 break
 
+        # AD-3: parse live fee rates, fall back to VIP0 defaults
+        fee_list = fee_resp.get("result", {}).get("list", []) if fee_resp else []
+        if fee_list:
+            entry = fee_list[0]
+            maker_fee = float(entry.get("makerFeeRate", 0) or 0)
+            taker_fee = float(entry.get("takerFeeRate", 0) or 0)
+            fee_source = "live"
+        else:
+            maker_fee = 0.0002   # Bybit VIP0 default
+            taker_fee = 0.00055  # Bybit VIP0 default
+            fee_source = "default"
+
         return NormalizedAccount(
             total_equity=total_equity,
             available_margin=available,
@@ -79,8 +99,9 @@ class BybitLinearAdapter(BaseExchangeAdapter):
             initial_margin=initial_margin,
             maint_margin=maint_margin,
             fee_tier="",
-            maker_fee=0.0002,  # Bybit default VIP0
-            taker_fee=0.00055,  # Bybit default VIP0
+            maker_fee=maker_fee,
+            taker_fee=taker_fee,
+            fee_source=fee_source,
         )
 
     # ── Positions ────────────────────────────────────────────────────────────

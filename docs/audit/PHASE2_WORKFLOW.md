@@ -218,12 +218,13 @@ Same grep pattern and routing logic (A/B/C) for all windows.
   accuracy for new fills going forward. Historical data unaffected
   (stored at write time). Discovered: 2026-05-11, SR-7 Phase 4
   is_close investigation. NOT in SR-7 scope (adapter quality).
-- **AD-3** (LOW): Bybit adapter hardcodes maker_fee=0.0002,
-  taker_fee=0.00055 (VIP0 tier assumption). Binance fetches live
-  from fapiPrivateGetCommissionRate. Fix: query Bybit V5 account
-  info for actual fee tier, or accept config override. Discovered:
-  2026-05-11, SR-7 Phase 1 audit. Partially addressed by SR-7's
-  `fee_source` indicator (surfaces the gap without fixing it).
+- **AD-3**: **done** — Bybit live fee fetch via /v5/account/fee-rate.
+  Replaces hardcoded VIP0 defaults (maker=0.02%, taker=0.055%) with
+  live per-user rates from Bybit API. fee_source="live" on success,
+  "default" on fallback. Discovered Bybit V5 has direct fee-rate
+  endpoint (better than VIP lookup table initially planned).
+  6 regression tests, 537/537 green, baseline empty.
+  v2.4 candidate: AD-4-B (one-way mode break-even close fix, LOW).
 
 ### Bucket 5 (MEDIUM/LOW cleanup):
 - Public API on DataCache: expose `recalculate_portfolio()` (no
