@@ -21,6 +21,7 @@ from core.adapters.binance.constants import (
     OHLCV_LIMIT,
     ORDER_TYPE_FROM_BINANCE,
     BINANCE_STATUS_MAP,
+    ALGO_STATUS_MAP,
 )
 
 log = logging.getLogger("adapters.binance.rest")
@@ -129,6 +130,47 @@ class BinanceUSDMAdapter(BaseExchangeAdapter):
                 position_side=o.get("positionSide", ""),
                 created_at_ms=int(o.get("time", 0)),
                 updated_at_ms=int(o.get("updateTime", 0)),
+            ))
+        return orders
+
+    # ── Algo/conditional orders (TP/SL placed via Binance UI) ──────────────
+
+    async def fetch_algo_open_orders(self) -> List[NormalizedOrder]:
+        """Fetch open algo/conditional orders via /fapi/v1/openAlgoOrders.
+
+        These are STOP_MARKET/TAKE_PROFIT_MARKET orders placed as "conditional"
+        through the Binance UI. They use a separate API from basic open orders.
+        """
+        def _fetch():
+            return self._ex.request("openAlgoOrders", "fapiPrivate", "GET", {})
+
+        raw = await self._run(_fetch)
+        if not isinstance(raw, list):
+            raw = [raw] if raw else []
+        orders = []
+        for o in raw:
+            otype = o.get("orderType", "")
+            unified_type = ORDER_TYPE_FROM_BINANCE.get(otype, otype.lower())
+            raw_status = o.get("algoStatus", "")
+            status = ALGO_STATUS_MAP.get(raw_status, "new")
+            if raw_status and raw_status not in ALGO_STATUS_MAP:
+                log.warning("Unmapped algo order status: %s → defaulting to 'new'", raw_status)
+            orders.append(NormalizedOrder(
+                exchange_order_id=f"algo:{o.get('algoId', '')}",
+                client_order_id=o.get("clientAlgoId", ""),
+                symbol=o.get("symbol", ""),
+                side=o.get("side", ""),
+                order_type=unified_type,
+                status=status,
+                price=float(o.get("price", 0) or 0),
+                stop_price=float(o.get("triggerPrice", 0) or 0),
+                quantity=float(o.get("totalQty", 0) or 0),
+                filled_qty=float(o.get("executedQty", 0) or 0),
+                reduce_only=bool(o.get("reduceOnly", False)),
+                time_in_force=o.get("timeInForce", "GTC"),
+                position_side=o.get("positionSide", ""),
+                created_at_ms=int(o.get("bookTime", 0) or 0),
+                updated_at_ms=int(o.get("updateTime", 0) or 0),
             ))
         return orders
 

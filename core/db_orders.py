@@ -318,30 +318,43 @@ class OrdersMixin:
     async def mark_stale_orders_canceled(
         self, account_id: int, active_ids: List[str],
         *, allow_cancel_all: bool = False,
+        exclude_prefix: str = "",
+        only_prefix: str = "",
     ) -> int:
         """Mark active orders NOT in snapshot as canceled. Returns count affected.
 
         If active_ids is empty and allow_cancel_all is False, skip cancellation
         to avoid mass-cancel on empty/broken snapshots.
+
+        exclude_prefix: skip orders whose exchange_order_id starts with this prefix
+            (e.g., 'algo:' to protect algo orders during basic snapshot processing)
+        only_prefix: only affect orders whose exchange_order_id starts with this prefix
+            (e.g., 'algo:' to scope stale-cancel to algo orders only)
         """
+        now_ms = int(time.time() * 1000)
+        scope_clause = ""
+        if exclude_prefix:
+            scope_clause = f" AND exchange_order_id NOT LIKE '{exclude_prefix}%'"
+        elif only_prefix:
+            scope_clause = f" AND exchange_order_id LIKE '{only_prefix}%'"
+
         if not active_ids:
             if not allow_cancel_all:
                 log.debug("mark_stale_orders_canceled: empty active_ids, skipping")
                 return 0
             cur = await self._conn.execute(
                 "UPDATE orders SET status='canceled', updated_at_ms=? "
-                "WHERE account_id=? AND status IN ('new','partially_filled')",
-                (int(time.time() * 1000), account_id),
+                f"WHERE account_id=? AND status IN ('new','partially_filled'){scope_clause}",
+                (now_ms, account_id),
             )
             await self._conn.commit()
             return cur.rowcount
 
         placeholders = ",".join("?" for _ in active_ids)
-        now_ms = int(time.time() * 1000)
         cur = await self._conn.execute(
             f"UPDATE orders SET status='canceled', updated_at_ms=? "
             f"WHERE account_id=? AND status IN ('new','partially_filled') "
-            f"AND exchange_order_id NOT IN ({placeholders})",
+            f"AND exchange_order_id NOT IN ({placeholders}){scope_clause}",
             [now_ms, account_id] + active_ids,
         )
         await self._conn.commit()

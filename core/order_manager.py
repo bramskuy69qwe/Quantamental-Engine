@@ -67,7 +67,8 @@ class OrderManager:
         if valid_orders:
             await self._db.upsert_order_batch(valid_orders)
 
-        # 4. Mark active orders NOT in snapshot as canceled (1 query)
+        # 4. Mark active BASIC orders NOT in snapshot as canceled (1 query)
+        #    Scoped to non-algo orders only (algo: prefix excluded).
         #    allow_cancel_all=True only when snapshot explicitly contained orders
         #    (prevents mass-cancel on broken/empty snapshots)
         active_ids = [
@@ -78,11 +79,45 @@ class OrderManager:
         canceled = await self._db.mark_stale_orders_canceled(
             account_id, active_ids,
             allow_cancel_all=len(orders) > 0 and not active_ids,
+            exclude_prefix="algo:",
         )
         if canceled:
-            log.info("Marked %d missing orders as canceled", canceled)
+            log.info("Marked %d missing basic orders as canceled", canceled)
 
         # 5. Rebuild cache from DB + enrich positions (via refresh_cache)
+        await self.refresh_cache(account_id)
+
+    # ── Algo Order Snapshot Processing ───────────────────────────────────────
+
+    async def process_algo_snapshot(
+        self, account_id: int, orders: List[Dict[str, Any]]
+    ) -> None:
+        """Upsert algo/conditional orders and mark stale algo orders canceled.
+
+        Isolated from basic order snapshot: only affects orders with
+        exchange_order_id starting with 'algo:'.
+        """
+        # 1. Upsert algo orders
+        for o in orders:
+            o.setdefault("account_id", account_id)
+        if orders:
+            await self._db.upsert_order_batch(orders)
+
+        # 2. Mark stale algo orders canceled (scoped to algo: prefix)
+        active_ids = [
+            o["exchange_order_id"]
+            for o in orders
+            if o.get("exchange_order_id")
+        ]
+        canceled = await self._db.mark_stale_orders_canceled(
+            account_id, active_ids,
+            allow_cancel_all=len(orders) == 0,
+            only_prefix="algo:",
+        )
+        if canceled:
+            log.info("Marked %d stale algo orders as canceled", canceled)
+
+        # 3. Rebuild cache + enrich
         await self.refresh_cache(account_id)
 
     # ── Single-Order Update (WS path) ────────────────────────────────────────

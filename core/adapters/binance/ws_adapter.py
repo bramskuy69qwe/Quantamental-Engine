@@ -20,6 +20,7 @@ from core.adapters.binance.constants import (
     EVENT_DEPTH,
     ORDER_TYPE_FROM_BINANCE,
     BINANCE_STATUS_MAP,
+    ALGO_STATUS_MAP,
 )
 
 
@@ -139,6 +140,40 @@ class BinanceWSAdapter:
             execution_type=o.get("x", ""),       # NEW, TRADE, CANCELED, AMENDMENT, EXPIRED
             created_at_ms=int(o.get("T", 0)),
             updated_at_ms=int(msg.get("T", 0)),
+        )
+
+    def parse_algo_update(self, msg: dict) -> NormalizedOrder:
+        """Parse ALGO_UPDATE event into a NormalizedOrder.
+
+        WS payload fields (inside "o" dict):
+            aid=algoId, caid=clientAlgoId, at=algoType, o=orderType,
+            s=symbol, S=side, ps=positionSide, X=algoStatus,
+            tp=triggerPrice, p=price, q=quantity, R=reduceOnly,
+            T=bookTime, ut=updateTime
+        """
+        o = msg.get("o", {})
+        otype = o.get("o", "")
+        unified_type = ORDER_TYPE_FROM_BINANCE.get(otype, otype.lower())
+        raw_status = o.get("X", "")
+        status = ALGO_STATUS_MAP.get(raw_status, "new")
+
+        return NormalizedOrder(
+            exchange_order_id=f"algo:{o.get('aid', '')}",
+            client_order_id=o.get("caid", ""),
+            symbol=o.get("s", ""),
+            side=o.get("S", ""),
+            order_type=unified_type,
+            status=status,
+            price=float(o.get("p", 0) or 0),
+            stop_price=float(o.get("tp", 0) or 0),
+            quantity=float(o.get("q", 0) or 0),
+            filled_qty=0.0,
+            reduce_only=bool(o.get("R", False)),
+            time_in_force=o.get("f", "GTC"),
+            position_side=o.get("ps", ""),
+            execution_type=raw_status,  # reuse as lifecycle indicator
+            created_at_ms=int(o.get("T", 0) or 0),
+            updated_at_ms=int(o.get("ut", 0) or msg.get("T", 0) or 0),
         )
 
     # ── Market data stream parsing ───────────────────────────────────────────

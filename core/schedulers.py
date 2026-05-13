@@ -484,6 +484,58 @@ async def _order_staleness_loop():
             log.warning("Order staleness loop error: %s", e)
 
 
+# ── Algo/conditional order sync (NOT plugin-gated) ───────────────────────────
+
+async def _algo_order_sync_loop():
+    """Periodically fetch conditional/algo orders via REST.
+
+    Runs every 15s regardless of plugin connection state — addresses OM-5b
+    for conditional orders. Binance conditional orders (TP/SL placed via UI)
+    use a separate API from basic open orders.
+    """
+    await asyncio.sleep(5)  # initial delay for engine bootstrap
+    while True:
+        try:
+            from core.exchange import _get_adapter
+            adapter = _get_adapter()
+            if not hasattr(adapter, "fetch_algo_open_orders"):
+                await asyncio.sleep(30)
+                continue
+            algo_orders = await adapter.fetch_algo_open_orders()
+            order_dicts = [
+                {
+                    "account_id":         app_state.active_account_id,
+                    "exchange_order_id":  o.exchange_order_id,
+                    "terminal_order_id":  "",
+                    "client_order_id":    o.client_order_id,
+                    "symbol":             o.symbol,
+                    "side":               o.side,
+                    "order_type":         o.order_type,
+                    "status":             o.status,
+                    "price":              o.price,
+                    "stop_price":         o.stop_price,
+                    "quantity":           o.quantity,
+                    "filled_qty":         o.filled_qty,
+                    "avg_fill_price":     0.0,
+                    "reduce_only":        o.reduce_only,
+                    "time_in_force":      o.time_in_force,
+                    "position_side":      o.position_side,
+                    "exchange_position_id": "",
+                    "terminal_position_id": "",
+                    "source":             "binance_algo_rest",
+                    "created_at_ms":      o.created_at_ms,
+                    "updated_at_ms":      o.updated_at_ms,
+                }
+                for o in algo_orders
+            ]
+            await platform_bridge.order_manager.process_algo_snapshot(
+                app_state.active_account_id, order_dicts,
+            )
+        except Exception as e:
+            log.debug("Algo order sync skipped: %s", e)
+        await asyncio.sleep(15)
+
+
 # ── Public API ───────────────────────────────────────────────────────────────
 
 def start_background_tasks() -> None:
@@ -499,3 +551,4 @@ def start_background_tasks() -> None:
     _spawn(_bwe_ws_consumer(),       name="bwe_ws")
     _spawn(MonitoringService().run(), name="monitoring")
     _spawn(_order_staleness_loop(),  name="order_staleness")
+    _spawn(_algo_order_sync_loop(),  name="algo_order_sync")

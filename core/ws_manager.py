@@ -114,6 +114,9 @@ async def _handle_user_event(msg: dict) -> None:
     elif ev == "ORDER_TRADE_UPDATE":
         await _apply_order_update(msg, ws_adapter)
 
+    elif ev == "ALGO_UPDATE":
+        await _apply_algo_update(msg, ws_adapter)
+
     ws.last_update = datetime.now(timezone.utc)
     await event_bus.publish(
         "risk:account_updated",
@@ -221,6 +224,80 @@ async def _apply_order_update(msg: dict, ws_adapter) -> None:
         )
     except Exception as e:
         log.debug("WS order persist skipped: %s", e)
+
+
+async def _apply_algo_update(msg: dict, ws_adapter) -> None:
+    """Handle ALGO_UPDATE: real-time conditional order lifecycle.
+
+    Algo orders (TP/SL placed via Binance UI as "conditional") fire this
+    event instead of ORDER_TRADE_UPDATE. Same enrichment pattern applies.
+    """
+    if not ws_adapter or not hasattr(ws_adapter, "parse_algo_update"):
+        return
+
+    order = ws_adapter.parse_algo_update(msg)
+    algo_status = order.execution_type or ""  # reused field carries raw algo status
+
+    # ── TP/SL → update matching position in real-time ──────────────────
+    if order.order_type in _TPSL_TYPES:
+        pos_dir = resolve_tpsl_direction(order.position_side, order.side)
+
+        for pos in app_state.positions:
+            if pos.ticker != order.symbol or pos.direction != pos_dir:
+                continue
+
+            if algo_status in ("NEW", "TRIGGERING"):
+                if order.order_type == "take_profit":
+                    pos.individual_tpsl = True
+                    pos.individual_tp_price = order.stop_price
+                    pos.individual_tp_amount = order.quantity
+                elif order.order_type == "stop_loss":
+                    pos.individual_tpsl = True
+                    pos.individual_sl_price = order.stop_price
+                    pos.individual_sl_amount = order.quantity
+
+            elif algo_status in ("CANCELED", "EXPIRED", "REJECTED", "FINISHED"):
+                if order.order_type == "take_profit":
+                    pos.individual_tp_price = 0.0
+                    pos.individual_tp_amount = 0.0
+                elif order.order_type == "stop_loss":
+                    pos.individual_sl_price = 0.0
+                    pos.individual_sl_amount = 0.0
+                if pos.individual_tp_price == 0.0 and pos.individual_sl_price == 0.0:
+                    pos.individual_tpsl = False
+            break
+
+    # ── Persist via OrderManager ───────────────────────────────────────
+    try:
+        from core.platform_bridge import platform_bridge
+        order_dict = {
+            "account_id":         app_state.active_account_id,
+            "exchange_order_id":  order.exchange_order_id,
+            "terminal_order_id":  "",
+            "client_order_id":    order.client_order_id,
+            "symbol":             order.symbol,
+            "side":               order.side,
+            "order_type":         order.order_type,
+            "status":             order.status,
+            "price":              order.price,
+            "stop_price":         order.stop_price,
+            "quantity":           order.quantity,
+            "filled_qty":         order.filled_qty,
+            "avg_fill_price":     0.0,
+            "reduce_only":        order.reduce_only,
+            "time_in_force":      order.time_in_force,
+            "position_side":      order.position_side,
+            "exchange_position_id": "",
+            "terminal_position_id": "",
+            "source":             "binance_algo_ws",
+            "created_at_ms":      order.created_at_ms,
+            "updated_at_ms":      order.updated_at_ms,
+        }
+        await platform_bridge.order_manager.process_order_update(
+            app_state.active_account_id, order_dict,
+        )
+    except Exception as e:
+        log.debug("WS algo order persist skipped: %s", e)
 
 
 async def _on_new_position(sym: str) -> None:

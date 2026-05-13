@@ -40,9 +40,21 @@ BINANCE_STATUS_MAP = {
     "NEW_ADL":          "new",
 }
 
+# ── Algo/conditional order status mapping: Binance -> unified ────────────────
+ALGO_STATUS_MAP = {
+    "NEW":        "new",
+    "TRIGGERING": "new",               # still active, about to trigger
+    "TRIGGERED":  "partially_filled",   # forwarded to matching engine
+    "FINISHED":   "filled",
+    "CANCELED":   "canceled",
+    "REJECTED":   "rejected",
+    "EXPIRED":    "expired",
+}
+
 # ── WS event types ───────────────────────────────────────────────────────────
 EVENT_ACCOUNT_UPDATE = "ACCOUNT_UPDATE"
 EVENT_ORDER_UPDATE = "ORDER_TRADE_UPDATE"
+EVENT_ALGO_UPDATE = "ALGO_UPDATE"
 EVENT_KLINE = "kline"
 EVENT_MARK_PRICE = "markPriceUpdate"
 EVENT_DEPTH = "depthUpdate"
