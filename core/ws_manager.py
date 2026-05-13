@@ -625,8 +625,19 @@ async def start(listen_key: str) -> None:
 
 
 def set_calculator_symbol(symbol: str) -> None:
+    """Set the active calculator symbol and clean up stale caches.
+
+    FE-8: evict old symbol's orderbook cache to prevent flicker when
+    switching symbols. WS streams for old symbol keep running until
+    restart_market_streams() fires, so cached data for old symbol
+    would otherwise contaminate the new symbol's display.
+    """
     global _calculator_symbol
-    _calculator_symbol = symbol.upper() if symbol else None
+    new_sym = symbol.upper() if symbol else None
+    old_sym = _calculator_symbol
+    _calculator_symbol = new_sym
+    if old_sym and old_sym != new_sym:
+        app_state.orderbook_cache.pop(old_sym, None)
 
 
 async def restart_market_streams() -> None:

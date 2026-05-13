@@ -567,8 +567,8 @@ function recallHistory(idx){
   // Update entry price display immediately
   var epEl=document.getElementById('market-price');
   if(epEl&&h.entry>0)epEl.value=h.entry;
-  // Submit form — entry price is now available via _livePrice fallback
-  setTimeout(function(){document.getElementById('calc-form').requestSubmit();},100);
+  // FE-2: submit form directly (no setTimeout race with orderbook hx-get)
+  document.getElementById('calc-form').requestSubmit();
   updatePricePreview();updatePctPreview();saveCalcState();
 }
 
