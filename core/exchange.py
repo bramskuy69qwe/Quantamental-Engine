@@ -23,6 +23,13 @@ from core.adapters.protocols import ExchangeAdapter
 log = logging.getLogger("exchange")
 
 
+# ── RL-4: Trade-event burst serialization ─────────────────────────────────────
+# Shared semaphore limits concurrent REST calls from trade-event handlers.
+# Without this, 6 subsystems fire REST calls in <1s on every trade close,
+# exceeding the rate limit budget. Semaphore(2) spreads the burst over ~4-5s.
+trade_event_sem = asyncio.Semaphore(2)
+
+
 # ── RL-1: Rate-limit detection + global pause ────────────────────────────────
 
 def handle_rate_limit_error(exc: Exception) -> None:

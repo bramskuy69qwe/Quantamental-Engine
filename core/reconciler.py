@@ -17,7 +17,7 @@ from core.state import app_state
 from core.database import db
 from core.exchange import (
     fetch_hl_for_trade, calc_mfe_mae, fetch_exchange_trade_history,
-    handle_rate_limit_error,
+    handle_rate_limit_error, trade_event_sem,
 )
 
 log = logging.getLogger("reconciler")
@@ -80,19 +80,24 @@ class ReconcilerWorker:
         direction = payload.get("direction", "")
         if not ticker:
             return
+        # RL-4: skip if already rate-limited (work is idempotent, _history_refresh_loop covers)
+        if app_state.ws_status.is_rate_limited:
+            log.debug("Reconciler on_trade_closed: skipping %s — rate-limited", ticker)
+            return
         log.info(f"Reconciler triggered for {ticker}")
 
         await asyncio.sleep(_SETTLE_DELAY)
 
-        try:
-            await fetch_exchange_trade_history()
-            await self._reconcile_symbol(ticker, direction)
-        except RateLimitError as e:
-            handle_rate_limit_error(e)
-            log.warning("Rate limit hit in on_trade_closed for %s: %s", ticker, e)
-        except Exception as e:
-            app_state.ws_status.add_log(f"Reconciler error ({ticker}): {e}")
-            log.error("Reconciler failed for %s: %s", ticker, e)
+        async with trade_event_sem:
+            try:
+                await fetch_exchange_trade_history()
+                await self._reconcile_symbol(ticker, direction)
+            except RateLimitError as e:
+                handle_rate_limit_error(e)
+                log.warning("Rate limit hit in on_trade_closed for %s: %s", ticker, e)
+            except Exception as e:
+                app_state.ws_status.add_log(f"Reconciler error ({ticker}): {e}")
+                log.error("Reconciler failed for %s: %s", ticker, e)
 
     async def backfill_all(self) -> None:
         """
@@ -130,14 +135,19 @@ class ReconcilerWorker:
         sem = asyncio.Semaphore(_BACKFILL_SEM)
 
         async def _process(sym: str) -> None:
-            async with sem:
-                try:
-                    await self._reconcile_symbol(sym)
-                except RateLimitError as e:
-                    handle_rate_limit_error(e)
-                    log.warning("Rate limit hit in backfill for %s: %s", sym, e)
-                except Exception as e:
-                    log.error("Backfill failed for %s: %s", sym, e)
+            # RL-4: skip if rate-limited (uncalculated rows picked up next startup)
+            if app_state.ws_status.is_rate_limited:
+                log.debug("Backfill: skipping %s — rate-limited", sym)
+                return
+            async with trade_event_sem:
+                async with sem:
+                    try:
+                        await self._reconcile_symbol(sym)
+                    except RateLimitError as e:
+                        handle_rate_limit_error(e)
+                        log.warning("Rate limit hit in backfill for %s: %s", sym, e)
+                    except Exception as e:
+                        log.error("Backfill failed for %s: %s", sym, e)
 
         await asyncio.gather(*[_process(sym) for sym in symbols])
 
@@ -182,10 +192,11 @@ class ReconcilerWorker:
             if not all((open_ms, close_ms, entry_p, qty)):
                 continue
             try:
-                async with _HL_SEM:  # RL-1: limit concurrent REST bursts
-                    trade_high, trade_low = await fetch_hl_for_trade(
-                        row["symbol"], open_ms, close_ms,
-                    )
+                async with trade_event_sem:
+                    async with _HL_SEM:  # RL-1: limit concurrent REST bursts
+                        trade_high, trade_low = await fetch_hl_for_trade(
+                            row["symbol"], open_ms, close_ms,
+                        )
                 if trade_high is None:
                     continue
                 mfe, mae = calc_mfe_mae(

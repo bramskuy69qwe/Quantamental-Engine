@@ -27,7 +27,7 @@ from core.order_state import resolve_tpsl_direction
 from core.exchange import (
     fetch_account, fetch_positions, fetch_orderbook, fetch_ohlcv,
     create_listen_key, keepalive_listen_key,
-    _get_adapter, handle_rate_limit_error,
+    _get_adapter, handle_rate_limit_error, trade_event_sem,
 )
 
 log = logging.getLogger("ws_manager")
@@ -306,31 +306,36 @@ async def _on_new_position(sym: str) -> None:
         await restart_market_streams()
     except Exception:
         pass
+    # RL-4: skip REST fetch if rate-limited (WS-derived entry time is acceptable)
+    if app_state.ws_status.is_rate_limited:
+        log.debug("_on_new_position: skipping %s — rate-limited", sym)
+        return
     # Fetch real fill timestamp from exchange trades
-    try:
-        adapter = _get_adapter()
-        trades = await adapter.fetch_user_trades(sym, limit=50)
-        if trades:
-            for pos in app_state.positions:
-                if pos.ticker != sym:
-                    continue
-                entry_side = "BUY" if pos.direction == "LONG" else "SELL"
-                sorted_trades = sorted(trades, key=lambda t: t.timestamp_ms, reverse=True)
-                cum = 0.0
-                for t in sorted_trades:
-                    if t.side != entry_side:
-                        continue  # skip interleaved trades from other direction
-                    cum += abs(t.quantity)
-                    if cum >= pos.contract_amount - 1e-8:
-                        pos.entry_timestamp = datetime.fromtimestamp(
-                            t.timestamp_ms / 1000, tz=timezone.utc
-                        ).isoformat()
-                        break
-    except RateLimitError as e:
-        handle_rate_limit_error(e)
-        log.warning("Rate limit hit in _on_new_position for %s: %s", sym, e)
-    except Exception as e:
-        log.warning("_on_new_position trade lookup failed for %s: %s", sym, e)
+    async with trade_event_sem:
+        try:
+            adapter = _get_adapter()
+            trades = await adapter.fetch_user_trades(sym, limit=50)
+            if trades:
+                for pos in app_state.positions:
+                    if pos.ticker != sym:
+                        continue
+                    entry_side = "BUY" if pos.direction == "LONG" else "SELL"
+                    sorted_trades = sorted(trades, key=lambda t: t.timestamp_ms, reverse=True)
+                    cum = 0.0
+                    for t in sorted_trades:
+                        if t.side != entry_side:
+                            continue  # skip interleaved trades from other direction
+                        cum += abs(t.quantity)
+                        if cum >= pos.contract_amount - 1e-8:
+                            pos.entry_timestamp = datetime.fromtimestamp(
+                                t.timestamp_ms / 1000, tz=timezone.utc
+                            ).isoformat()
+                            break
+        except RateLimitError as e:
+            handle_rate_limit_error(e)
+            log.warning("Rate limit hit in _on_new_position for %s: %s", sym, e)
+        except Exception as e:
+            log.warning("_on_new_position trade lookup failed for %s: %s", sym, e)
 
 
 async def _create_fill_from_ws(order, raw_msg: dict) -> None:
@@ -374,16 +379,21 @@ async def _create_fill_from_ws(order, raw_msg: dict) -> None:
 
 
 async def _refresh_positions_after_fill() -> None:
-    try:
-        await fetch_account()
-        await fetch_positions(force=True)
-        # force=True: fill-triggered refresh must always be accepted,
-        # even if WS updated recently (avoids 30s delay on position close).
-    except RateLimitError as e:
-        handle_rate_limit_error(e)
-        log.warning("Rate limit hit in _refresh_positions_after_fill: %s", e)
-    except Exception as e:
-        app_state.ws_status.add_log(f"Post-fill refresh error: {e}")
+    # RL-4: skip if rate-limited (_account_refresh_loop covers drift)
+    if app_state.ws_status.is_rate_limited:
+        log.debug("_refresh_positions_after_fill: skipping — rate-limited")
+        return
+    async with trade_event_sem:
+        try:
+            await fetch_account()
+            await fetch_positions(force=True)
+            # force=True: fill-triggered refresh must always be accepted,
+            # even if WS updated recently (avoids 30s delay on position close).
+        except RateLimitError as e:
+            handle_rate_limit_error(e)
+            log.warning("Rate limit hit in _refresh_positions_after_fill: %s", e)
+        except Exception as e:
+            app_state.ws_status.add_log(f"Post-fill refresh error: {e}")
 
 
 async def _user_data_loop(listen_key: str, attempt: int = 0) -> None:
@@ -574,24 +584,25 @@ async def _fallback_loop() -> None:
             # RL-1: skip if rate-limited
             if ws.is_rate_limited:
                 continue
-            try:
-                # Skip account/position REST fetch if plugin is providing live data.
+            async with trade_event_sem:  # RL-4: serialize with trade-event burst callers
                 try:
-                    from core.platform_bridge import platform_bridge  # late import: circular dep
-                    _plugin_up = platform_bridge.is_connected
-                except Exception:
-                    _plugin_up = False
-                if not _plugin_up:
-                    await fetch_account()
-                    await fetch_positions()
-                if _calculator_symbol:
-                    await fetch_orderbook(_calculator_symbol)
-                ws.last_update = datetime.now(timezone.utc)
-            except RateLimitError as e:
-                handle_rate_limit_error(e)
-                log.warning("Rate limit hit in fallback_loop: %s", e)
-            except Exception as e:
-                ws.add_log(f"REST fallback error: {e}")
+                    # Skip account/position REST fetch if plugin is providing live data.
+                    try:
+                        from core.platform_bridge import platform_bridge  # late import: circular dep
+                        _plugin_up = platform_bridge.is_connected
+                    except Exception:
+                        _plugin_up = False
+                    if not _plugin_up:
+                        await fetch_account()
+                        await fetch_positions()
+                    if _calculator_symbol:
+                        await fetch_orderbook(_calculator_symbol)
+                    ws.last_update = datetime.now(timezone.utc)
+                except RateLimitError as e:
+                    handle_rate_limit_error(e)
+                    log.warning("Rate limit hit in fallback_loop: %s", e)
+                except Exception as e:
+                    ws.add_log(f"REST fallback error: {e}")
 
         elif ws.using_fallback and not ws.is_stale:
             ws.using_fallback = False

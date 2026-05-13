@@ -168,14 +168,15 @@ Same grep pattern and routing logic (A/B/C) for all windows.
   unified transaction log (enumeration incorrectly claimed no unified
   endpoint). 10 regression tests, 547/547 green, baseline empty.
   AD-2/3/4 sweep complete.
-- **RL-4**: Phase 1 complete — root cause: trade-event concurrent REST
-  burst, not periodic scheduler. 6 subsystems fire REST calls within
-  1 second on every trade close (reconciler ×3, ws_manager ×2, fallback
-  ×1). ~8-min periodicity was user's trading cadence, not scheduler freq.
-  Still active post-audit (77 events May 13). NOT auto-resolved.
-  Fix: Option A+B (serialize burst callers + rate-limit guards, ~30 LOC).
-  RL-2 (proactive weight tracker) deferred to v2.4.
-  Design doc: docs/design/RL-4_phase1_investigation.md.
+- **RL-4**: **done** — trade-event burst serialization. Semaphore(2) +
+  is_rate_limited guards at 6 burst callers. Spreads 6-caller burst
+  over ~4.5s instead of <1s. All 6 callers SAFE TO SKIP when rate-
+  limited (engine's layered defense covers: _history_refresh_loop,
+  _account_refresh_loop, durable DB rows, WS-derived approximations).
+  9 regression tests, 556/556 green, baseline empty.
+  RL-4-B filed (v2.4): fan-out architectural review (shared data fetch).
+  RL-2 (proactive weight tracker) remains v2.4 scope.
+  Design docs: RL-4_phase1_investigation.md, RL-4_phase2_serialization.md.
   Discovered: 2026-05-12, SR-7 verification window.
 - **PA-1a**: **done** — WS fill creation + backfill dedup. Fills now
   created from WS TRADE events via _create_fill_from_ws() using native
@@ -334,7 +335,7 @@ Same grep pattern and routing logic (A/B/C) for all windows.
 
 ## Status: Where are we?
 
-Last updated: 2026-05-13 (adapter docs done, AD-2/3/4 done, MN-2 done, OM-5 closed)
+Last updated: 2026-05-13 (RL-4 done, AD-2/3/4 done, MN-2 done, OM-5 closed)
 - Bucket 0: **done** — RE-9 landed (60 tests, 111-row baseline CSV)
 - Bucket 1: **done** — SC-1, RP-1, RE-1 all landed (branch: audit/v2.3.1)
 - Bucket 2: **done** — all three foundation redesigns landed
