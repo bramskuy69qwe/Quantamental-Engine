@@ -178,25 +178,32 @@ class BybitLinearAdapter(BaseExchangeAdapter):
             fee_obj = t.get("fee", {})
             fee_cost = float(fee_obj.get("cost", 0) or 0) if isinstance(fee_obj, dict) else 0
             fee_currency = fee_obj.get("currency", "USDT") if isinstance(fee_obj, dict) else "USDT"
+            side_upper = t.get("side", "").upper()
+            pos_idx = str(info.get("positionIdx", "0"))
+            # AD-4: deterministic is_close from positionIdx + side (hedge mode).
+            # One-way mode (positionIdx=0): fall back to closedPnl heuristic.
+            if pos_idx in ("1", "2"):
+                direction = {"1": "LONG", "2": "SHORT"}[pos_idx]
+                is_close = (
+                    (side_upper == "SELL" and direction == "LONG") or
+                    (side_upper == "BUY" and direction == "SHORT")
+                )
+            else:
+                direction = "LONG" if side_upper == "BUY" else "SHORT"
+                is_close = bool(float(info.get("closedPnl", 0) or 0) != 0)
             trades.append(NormalizedTrade(
                 exchange_fill_id=tid,
                 exchange_order_id=str(t.get("order", "") or info.get("orderId", "")),
                 symbol=self.normalize_symbol(t.get("symbol", "")),
-                side=t.get("side", "").upper(),
-                direction=(
-                    # Hedge mode: positionIdx 1=LONG, 2=SHORT
-                    {"1": "LONG", "2": "SHORT"}.get(str(info.get("positionIdx", "0")), "")
-                    if info.get("positionIdx")
-                    # One-way mode: infer from side
-                    else ("LONG" if t.get("side", "").upper() == "BUY" else "SHORT")
-                ),
+                side=side_upper,
+                direction=direction,
                 price=float(t.get("price", 0) or 0),
                 quantity=float(t.get("amount", 0) or 0),
                 fee=fee_cost,
                 fee_asset=fee_currency,
                 role="maker" if t.get("takerOrMaker") == "maker" else "taker",
                 realized_pnl=float(info.get("closedPnl", 0) or 0),
-                is_close=bool(float(info.get("closedPnl", 0) or 0) != 0),
+                is_close=is_close,
                 timestamp_ms=int(t.get("timestamp", 0)),
                 trade_id=tid,
             ))

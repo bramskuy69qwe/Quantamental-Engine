@@ -186,18 +186,29 @@ class BinanceUSDMAdapter(BaseExchangeAdapter):
         trades = []
         for t in raw:
             tid = str(t.get("id", ""))
+            side = t.get("side", "")
+            position_side = t.get("positionSide", "")
+            # AD-4: deterministic is_close from side + positionSide (hedge mode).
+            # One-way mode (positionSide=BOTH or empty): fall back to realizedPnl heuristic.
+            if position_side and position_side != "BOTH":
+                is_close = (
+                    (side == "SELL" and position_side == "LONG") or
+                    (side == "BUY" and position_side == "SHORT")
+                )
+            else:
+                is_close = bool(float(t.get("realizedPnl", 0) or 0) != 0)
             trades.append(NormalizedTrade(
                 exchange_fill_id=tid,
                 exchange_order_id=str(t.get("orderId", "")),
                 symbol=t.get("symbol", ""),
-                side=t.get("side", ""),
-                direction=t.get("positionSide", ""),
+                side=side,
+                direction=position_side,
                 price=float(t.get("price", 0) or 0),
                 quantity=float(t.get("qty", 0) or 0),
                 fee=float(t.get("commission", 0) or 0),
                 fee_asset=t.get("commissionAsset", "USDT"),
                 role="maker" if t.get("maker") else "taker",
-                is_close=bool(float(t.get("realizedPnl", 0) or 0) != 0),
+                is_close=is_close,
                 realized_pnl=float(t.get("realizedPnl", 0) or 0),
                 timestamp_ms=int(t.get("time", 0)),
                 trade_id=tid,
