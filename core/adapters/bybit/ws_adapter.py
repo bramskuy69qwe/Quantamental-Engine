@@ -18,15 +18,18 @@ import time
 from typing import Dict, List, Optional, Tuple
 
 from core.adapters.registry import register_ws_adapter
-from core.adapters.protocols import NormalizedPosition
+from core.adapters.protocols import NormalizedPosition, NormalizedOrder
 from core.adapters.bybit.constants import (
     USER_STREAM_BASE,
     MARKET_STREAM_BASE,
     TOPIC_POSITION,
     TOPIC_WALLET,
+    TOPIC_ORDER,
     TOPIC_KLINE,
     TOPIC_TICKERS,
     TOPIC_ORDERBOOK,
+    ORDER_TYPE_FROM_BYBIT,
+    BYBIT_STATUS_MAP,
 )
 
 
@@ -89,6 +92,8 @@ class BybitWSAdapter:
             return "ACCOUNT_UPDATE"
         if topic.startswith("wallet"):
             return "ACCOUNT_UPDATE"
+        if topic.startswith("order"):
+            return "ORDER_TRADE_UPDATE"
         if topic.startswith("kline"):
             return "kline"
         if topic.startswith("tickers"):
@@ -158,6 +163,62 @@ class BybitWSAdapter:
                 ))
 
         return balances, positions
+
+    # ── Order update parsing ──────────────────────────────────────────────────
+
+    def parse_order_update(self, msg: dict) -> NormalizedOrder:
+        """Parse Bybit V5 order topic into NormalizedOrder.
+
+        Bybit WS order payload fields (inside "data" list, first entry):
+            orderId, orderLinkId, symbol, side (Buy/Sell), orderType,
+            orderStatus, price, triggerPrice, qty, cumExecQty, avgPrice,
+            reduceOnly, positionIdx, timeInForce, createdTime, updatedTime
+        """
+        data_list = msg.get("data", [{}])
+        o = data_list[0] if data_list else {}
+
+        raw_type = o.get("orderType", "")
+        # Check stopOrderType first (some Bybit events include it)
+        stop_order_type = o.get("stopOrderType", "")
+        if stop_order_type == "TakeProfit":
+            unified_type = "take_profit"
+        elif stop_order_type in ("StopLoss", "Stop"):
+            unified_type = "stop_loss"
+        else:
+            unified_type = ORDER_TYPE_FROM_BYBIT.get(raw_type, raw_type.lower())
+
+        # FE-13: entry stops get _entry suffix (from day 1)
+        reduce_only = bool(o.get("reduceOnly", False))
+        if unified_type in ("stop_loss", "take_profit") and not reduce_only:
+            unified_type += "_entry"
+
+        raw_status = o.get("orderStatus", "")
+        status = BYBIT_STATUS_MAP.get(raw_status, "new")
+
+        # positionIdx: 0=one-way, 1=LONG, 2=SHORT
+        pos_idx = str(o.get("positionIdx", "0"))
+        position_side = {"1": "LONG", "2": "SHORT"}.get(pos_idx, "")
+
+        side_upper = o.get("side", "").upper()
+
+        return NormalizedOrder(
+            exchange_order_id=str(o.get("orderId", "")),
+            client_order_id=o.get("orderLinkId", ""),
+            symbol=o.get("symbol", ""),
+            side=side_upper,
+            order_type=unified_type,
+            status=status,
+            price=float(o.get("price", 0) or 0),
+            stop_price=float(o.get("triggerPrice", 0) or 0),
+            quantity=float(o.get("qty", 0) or 0),
+            filled_qty=float(o.get("cumExecQty", 0) or 0),
+            avg_fill_price=float(o.get("avgPrice", 0) or 0),
+            reduce_only=reduce_only,
+            time_in_force=o.get("timeInForce", ""),
+            position_side=position_side,
+            created_at_ms=int(o.get("createdTime", 0) or 0),
+            updated_at_ms=int(o.get("updatedTime", 0) or 0),
+        )
 
     # ── Market data stream parsing ───────────────────────────────────────────
 

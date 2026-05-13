@@ -426,6 +426,23 @@ async def _user_data_loop(listen_key: str, attempt: int = 0) -> None:
             ws.using_fallback = False
             ws.add_log("User-data WS connected.")
 
+            # BY-WS-1: post-connect auth + topic subscription for exchanges
+            # that require it (Bybit V5). Binance uses listen-key URL auth
+            # and auto-sends all events, so this block is skipped.
+            if ws_adapter and hasattr(ws_adapter, "requires_post_connect_auth") \
+                    and ws_adapter.requires_post_connect_auth():
+                from core.account_registry import account_registry
+                acct = account_registry.get_active_account()
+                if acct:
+                    from core.crypto import decrypt
+                    api_key = decrypt(acct.get("api_key_enc", ""))
+                    api_secret = decrypt(acct.get("api_secret_enc", ""))
+                    auth_msg = ws_adapter.build_auth_payload(api_key, api_secret)
+                    await sock.send(json.dumps(auth_msg))
+                    sub_msg = ws_adapter.build_subscribe_payload(["position", "wallet", "order"])
+                    await sock.send(json.dumps(sub_msg))
+                    ws.add_log("User-data WS: auth + subscribe sent (position, wallet, order).")
+
             async for raw in sock:
                 try:
                     msg = json.loads(raw)

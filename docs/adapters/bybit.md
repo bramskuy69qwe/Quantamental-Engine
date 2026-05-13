@@ -48,6 +48,7 @@ ASSUMED — see legend below.
 |---|---|---|---|---|
 | `position` | `ACCOUNT_UPDATE` | `_apply_account_update()` | `parse_account_update()` | LISTED (2026-05-13) |
 | `wallet` | `ACCOUNT_UPDATE` | `_apply_account_update()` | `parse_account_update()` | LISTED (2026-05-13) |
+| `order` | `ORDER_TRADE_UPDATE` | `_apply_order_update()` | `parse_order_update()` | VERIFIED (2026-05-13) |
 | `kline.{tf}.{sym}` | `kline` | `_on_market_data()` inline | `parse_kline()` | LISTED (2026-05-13) |
 | `tickers.{sym}` | `markPriceUpdate` | `_on_market_data()` inline | `parse_mark_price()` | LISTED (2026-05-13) |
 | `orderbook.25.{sym}` | `depthUpdate` | `_on_market_data()` inline | `parse_depth()` | LISTED (2026-05-13) |
@@ -56,9 +57,8 @@ ASSUMED — see legend below.
 
 | Topic | Purpose | Why Not Handled |
 |---|---|---|
-| `order` | Order lifecycle updates | Topic prefix defined in constants (`TOPIC_ORDER`) but no `parse_order_update()` method on BybitWSAdapter. Engine receives these but can't parse them. |
 | `execution` | Fill events | Not subscribed. Would require adding topic subscription + parser. |
-| `stopOrder` | Conditional order triggers | Not implemented. Bybit conditional order WS support is a gap. |
+| `stopOrder` | Conditional order triggers | Bybit V5 may merge into `order` topic. Investigate if needed. |
 
 ### WebSocket Architecture
 
@@ -68,7 +68,7 @@ Private stream (authenticated):
   Auth: HMAC-SHA256 post-connect message
     {"op": "auth", "args": [api_key, expires_ms, signature]}
     signature = HMAC(secret, "GET/realtime{expires}")
-  Subscribe: {"op": "subscribe", "args": ["position", "wallet"]}
+  Subscribe: {"op": "subscribe", "args": ["position", "wallet", "order"]}
   Keepalive: Bybit ping/pong (handled by websockets library)
 
 Public stream (market data):
@@ -243,3 +243,4 @@ These sections are known gaps, marked explicitly for future verification:
 | Date | Reviewer | Scope |
 |---|---|---|
 | 2026-05-13 | Claude Opus 4.6 | Initial creation. Verified surface from AD-2/3/4 sweep (fee-rate, transaction-log, is_close). Remaining surface marked LISTED or ASSUMED. WS order parsing gap identified. |
+| 2026-05-13 | Claude Opus 4.6 | BY-WS-1: Added parse_order_update() + post-connect auth/subscribe. Order topic upgraded from NOT HANDLED to VERIFIED. FE-13 _entry classification included from day 1. |
