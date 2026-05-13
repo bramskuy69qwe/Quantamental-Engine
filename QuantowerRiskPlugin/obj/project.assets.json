@@ -13,11 +13,11 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "E:\\Quantamental Models\\Quantamental Engine v2.0\\Quantamental Engine v2.0 Code Base 1\\QuantowerRiskPlugin\\QuantowerRiskPlugin.csproj",
+      "projectUniqueName": "E:\\Quantamental Models\\Quantamental Engine v2.0\\Quantamental Engine v2.0 Code Base\\QuantowerRiskPlugin\\QuantowerRiskPlugin.csproj",
       "projectName": "QuantowerRiskPlugin",
-      "projectPath": "E:\\Quantamental Models\\Quantamental Engine v2.0\\Quantamental Engine v2.0 Code Base 1\\QuantowerRiskPlugin\\QuantowerRiskPlugin.csproj",
+      "projectPath": "E:\\Quantamental Models\\Quantamental Engine v2.0\\Quantamental Engine v2.0 Code Base\\QuantowerRiskPlugin\\QuantowerRiskPlugin.csproj",
       "packagesPath": "C:\\Users\\Asus\\.nuget\\packages\\",
-      "outputPath": "E:\\Quantamental Models\\Quantamental Engine v2.0\\Quantamental Engine v2.0 Code Base 1\\QuantowerRiskPlugin\\obj\\",
+      "outputPath": "E:\\Quantamental Models\\Quantamental Engine v2.0\\Quantamental Engine v2.0 Code Base\\QuantowerRiskPlugin\\obj\\",
       "projectStyle": "PackageReference",
       "configFilePaths": [
         "C:\\Users\\Asus\\AppData\\Roaming\\NuGet\\NuGet.Config"
