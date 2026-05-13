@@ -5,7 +5,7 @@
     <button id="hp-tab-pos" onclick="hpTab('pos')"
             style="font-family:var(--font-ui);font-size:.6rem;padding:6px 14px;border:none;background:none;cursor:pointer;
                    letter-spacing:.1em;text-transform:uppercase;font-weight:700;
-                   color:var(--blue);border-bottom:2px solid var(--blue);">
+                   color:var(--muted);border-bottom:2px solid transparent;">
       Positions({{ positions | length }})
     </button>
     <button id="hp-tab-oo" onclick="hpTab('oo')"
@@ -18,7 +18,7 @@
   </div>
 
   <!-- ── Panel: Positions ── -->
-  <div id="hp-panel-pos">
+  <div id="hp-panel-pos" style="display:none;">
     {% if positions %}
     <div style="overflow-x:auto;">
       <table>
