@@ -65,11 +65,15 @@ full adapter inventory.
 ## Status
 
 - **Current**: v2.3.1 (audit complete, 6 buckets closed, 40 findings resolved)
-- **Next**: v2.4 (gate promotion, Redis pub/sub + WebSocket push, monthly
-  drawdown, rolling-window enforcement, UI architecture improvements)
-- **Queued**: v2.4.5 (MEXC integration, read-only adapter)
+- **Next**: v2.4 (gate promotion with shadow→enforce rollout, rolling-window
+  DD enforcement with strategy presets, analytics period preferences,
+  slippage tracking via `calc_id` propagation, Redis pub/sub + HTMX
+  morphing, capability-flag adapter pattern, observability via
+  `engine_events`)
+- **Queued**: v2.4.5 (MEXC read-only adapter — first user of capability flags)
 
-See [v2.4.md](v2.4.md) for the full v2.4 planning artifact.
+See [v2.4.md](v2.4.md) for the full v2.4 planning artifact, and
+[v2.5-v2.7_roadmap.md](v2.5-v2.7_roadmap.md) for downstream phases.
 
 ---
 
@@ -133,6 +137,8 @@ See [v2.4.md](v2.4.md) for the full v2.4 planning artifact.
   workflow logs, and prior version specs.
 - **[v2.4 Planning](v2.4.md)** — Gate promotion, execution quality, and UI
   architecture roadmap.
+- **[v2.5–v2.7 Roadmap](v2.5-v2.7_roadmap.md)** — Backtesting subsystem,
+  defensive ML, integration backtest.
 
 ---
 
@@ -173,6 +179,13 @@ Patterns established and validated during the v2.3.1 audit. See
   layer. Engine core imports only vendor-neutral protocols. Adding an
   exchange means implementing `ExchangeAdapter` + `WSAdapter`, not
   modifying core.
+
+- **Adapter capability flags** (v2.4+) — Adapters declare what they
+  support via a `capabilities` dict (`orders`, `conditional_orders`,
+  `market_data`, `account_query`, `position_query`, `historical_equity`).
+  Engine factory checks capabilities at wire time and refuses to
+  instantiate dependent components (e.g. calculator for an adapter
+  without `orders`). First user: v2.4.5 MEXC read-only adapter.
 
 - **Adapter documentation discipline** — Every adapter endpoint tagged
   VERIFIED / LISTED / ASSUMED. Lesson from the audit: 2 of 3 API surface
