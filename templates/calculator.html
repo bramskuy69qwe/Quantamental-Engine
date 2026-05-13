@@ -571,8 +571,11 @@ function recallHistory(idx){
   // Update entry price display immediately
   var epEl=document.getElementById('market-price');
   if(epEl&&h.entry>0)epEl.value=h.entry;
-  // FE-2: submit form directly (no setTimeout race with orderbook hx-get)
-  document.getElementById('calc-form').requestSubmit();
+  // FE-17: defer submit by one frame to let HTMX settle after htmx.process()
+  // in updateOrderbook(). Direct requestSubmit() races with HTMX processing
+  // the new orderbook element (FE-2 removed the 100ms setTimeout which served
+  // as an implicit settling window; requestAnimationFrame is the precise fix).
+  requestAnimationFrame(function(){ document.getElementById('calc-form').requestSubmit(); });
   updatePricePreview();updatePctPreview();saveCalcState();
 }
 
