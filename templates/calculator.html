@@ -438,7 +438,11 @@ function updatePricePreview(){
   document.getElementById('price-preview').innerHTML='TP: <span style="color:var(--green)">'+tpStr+'</span> &nbsp;|&nbsp; SL: <span style="color:var(--red)">'+slStr+'</span>';
 }
 function getEffectiveEntry(){
-  if(_orderType==='market')return _livePrice||0;
+  if(_orderType==='market'){
+    if(_livePrice>0)return _livePrice;
+    // FE-17: fallback to market-price input (set by recallHistory/price fetch)
+    var mp=parseFloat(document.getElementById('market-price').value);return mp>0?mp:0;
+  }
   var v=parseFloat(document.getElementById('limit-price').value);return v>0?v:(_livePrice||0);
 }
 function fmtP(p){if(!p)return '—';var d=p>=1000?2:p>=1?4:6;return p.toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});}
