@@ -475,6 +475,11 @@ function highlightRefreshRate(){
   var pb=document.getElementById('rr-pause');if(pb){pb.className='btn btn-sm '+(!_autoRefreshEnabled?'btn-danger':'btn-secondary');pb.textContent=_autoRefreshEnabled?'⏸':'▶';}
 }
 
+document.body.addEventListener('htmx:configRequest',function(evt){
+  if(evt.detail.elt.id==='calc-form'){
+    console.log('[FE-17c] htmx:configRequest — parameters:', JSON.stringify(evt.detail.parameters));
+  }
+});
 document.body.addEventListener('htmx:beforeRequest',function(evt){
   if(evt.detail.elt.id!=='calc-form')return;
   var isAuto=document.getElementById('auto_refresh_val').value==='1';
@@ -490,11 +495,22 @@ document.body.addEventListener('htmx:beforeRequest',function(evt){
   if(!slP||slP<=0){evt.preventDefault();console.log('[FE-17c] BLOCKED: slP<=0');if(!isAuto)document.getElementById('calc-result').innerHTML='<div class="alert alert-error">SL is required.</div>';_autoRefreshInFlight=false;return;}
   console.log('[FE-17c] htmx:beforeRequest PASSED — form will submit');
   document.getElementById('tp_price_val').value=tpP;document.getElementById('sl_price_val').value=slP;
+  // Log actual hidden field values that will be sent
+  console.log('[FE-17c] hidden fields after set:', {
+    ticker: document.getElementById('ticker-input').value,
+    average: document.getElementById('average_val').value,
+    sl_price: document.getElementById('sl_price_val').value,
+    tp_price: document.getElementById('tp_price_val').value,
+    order_type: document.getElementById('order_type_val').value,
+    auto_refresh: document.getElementById('auto_refresh_val').value
+  });
 });
 
 document.body.addEventListener('htmx:afterRequest',function(evt){
   if(evt.detail.elt.id==='calc-form'){
-    console.log('[FE-17c] htmx:afterRequest — status='+((evt.detail.xhr||{}).status||'?')+', responseLen='+(((evt.detail.xhr||{}).responseText||'').length));
+    var xhr=evt.detail.xhr||{};
+    console.log('[FE-17c] htmx:afterRequest — status='+xhr.status+', responseLen='+(xhr.responseText||'').length);
+    if(xhr.status>=400)console.log('[FE-17c] ERROR RESPONSE BODY:', xhr.responseText);
   }
 });
 document.body.addEventListener('htmx:afterSettle',function(evt){
