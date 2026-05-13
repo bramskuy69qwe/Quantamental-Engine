@@ -102,8 +102,11 @@ _account_refresh_in_flight = False
 
 
 async def _account_refresh_loop():
-    """Refresh account + positions via REST.
-    Skipped when the Quantower plugin is connected — plugin provides live data.
+    """Refresh account + positions via REST, and sync basic open orders.
+
+    Account/position refresh: plugin-gated (plugin is authoritative).
+    Basic order sync: NOT plugin-gated (OM-5b — orders are idempotent by
+    exchange_order_id, safe to run alongside plugin).
     Guards against overlap if a single refresh takes longer than the interval."""
     global _account_refresh_in_flight
     while True:
@@ -112,21 +115,25 @@ async def _account_refresh_loop():
         # RL-1: degraded interval raised from 5s to 15s to avoid 429 cascade
         interval = 30 if app_state.ws_status.connected else 15
         await asyncio.sleep(interval)
-        if platform_bridge.is_connected or _account_refresh_in_flight:
+        if _account_refresh_in_flight:
             continue
         # RL-1: skip if rate-limited
         if app_state.ws_status.is_rate_limited:
             continue
-        # WS freshness guard removed — DataCache now handles conflict resolution
-        # (rejects stale REST position/account updates when WS is fresher)
         _account_refresh_in_flight = True
         try:
-            await fetch_account()
-            await asyncio.sleep(0.5)  # RL-1: per-second burst pacing
-            await fetch_positions()
-            # Note: risk:positions_refreshed now fires inside
-            # DataCache.apply_position_snapshot() — no duplicate needed.
-            # Also sync orders from REST when plugin is disconnected
+            # ── Account + position sync (plugin-gated) ─────────────────────
+            if not platform_bridge.is_connected:
+                await fetch_account()
+                await asyncio.sleep(0.5)  # RL-1: per-second burst pacing
+                await fetch_positions()
+                # Note: risk:positions_refreshed now fires inside
+                # DataCache.apply_position_snapshot() — no duplicate needed.
+
+            # ── Basic order sync (NOT plugin-gated, OM-5b) ─────────────────
+            # Orders are idempotent by exchange_order_id — safe to run
+            # regardless of plugin state. Catches pre-existing orders placed
+            # before engine started or outside plugin scope.
             try:
                 from core.exchange import _get_adapter
                 adapter = _get_adapter()
@@ -282,6 +289,45 @@ async def _startup_fetch():
         except Exception as e:
             log.error(f"Initial {label} fetch failed: {e}")
             app_state.ws_status.add_log(f"INIT ERROR ({label}): {e}")
+
+    # OM-5b: one-shot basic order sync on startup (regardless of plugin state).
+    # Catches pre-existing orders placed before engine started.
+    try:
+        from core.exchange import _get_adapter
+        adapter = _get_adapter()
+        normalized_orders = await adapter.fetch_open_orders()
+        order_dicts = [
+            {
+                "account_id":         app_state.active_account_id,
+                "exchange_order_id":  o.exchange_order_id,
+                "terminal_order_id":  "",
+                "client_order_id":    o.client_order_id,
+                "symbol":             o.symbol,
+                "side":               o.side,
+                "order_type":         o.order_type,
+                "status":             o.status,
+                "price":              o.price,
+                "stop_price":         o.stop_price,
+                "quantity":           o.quantity,
+                "filled_qty":         o.filled_qty,
+                "avg_fill_price":     o.avg_fill_price,
+                "reduce_only":        o.reduce_only,
+                "time_in_force":      o.time_in_force,
+                "position_side":      o.position_side,
+                "exchange_position_id": "",
+                "terminal_position_id": "",
+                "source":             f"{config.EXCHANGE_NAME.lower()}_rest",
+                "created_at_ms":      o.created_at_ms,
+                "updated_at_ms":      o.updated_at_ms,
+            }
+            for o in normalized_orders
+        ]
+        await platform_bridge.order_manager.process_order_snapshot(
+            app_state.active_account_id, order_dicts,
+        )
+        log.info("Startup order sync: %d basic orders", len(order_dicts))
+    except Exception as e:
+        log.warning(f"Startup order sync failed: {e}")
 
     try:
         await populate_open_position_metadata()

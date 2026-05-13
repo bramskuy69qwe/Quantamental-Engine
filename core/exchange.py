@@ -270,16 +270,26 @@ async def populate_open_position_metadata() -> None:
 
 async def fetch_open_orders_tpsl() -> None:
     """
-    Fetch all open orders and map take_profit / stop_loss orders to their
-    respective positions so TP/SL show on the dashboard.
+    Enrich positions with TP/SL from cached open orders.
 
-    When the Quantower plugin is connected, TP/SL comes from the orders DB
-    via OrderManager (fed by order_snapshot events). REST is only used when
-    the plugin is disconnected.
+    OM-5b: Always enriches from OrderManager cache regardless of plugin
+    connection state. The cache is populated by _account_refresh_loop
+    (basic orders) and _algo_order_sync_loop (conditional orders) — both
+    run regardless of plugin state.
+
+    Falls back to direct REST fetch when OrderManager cache is empty and
+    plugin is disconnected.
     """
     from core.platform_bridge import platform_bridge
+    # OM-5b: always enrich from cache (populated by order sync loops)
+    platform_bridge.order_manager.enrich_positions_tpsl(app_state.positions)
+
+    # If cache has TP/SL data, we're done — no need for direct REST fetch
+    if any(p.individual_tpsl for p in app_state.positions):
+        return
+
+    # Fallback: direct REST fetch when cache is empty and plugin is disconnected
     if platform_bridge.is_connected:
-        platform_bridge.order_manager.enrich_positions_tpsl(app_state.positions)
         return
 
     adapter = _get_adapter()
