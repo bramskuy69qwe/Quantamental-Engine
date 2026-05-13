@@ -39,7 +39,7 @@ def _iso_to_ms(iso: str) -> int | None:
 @router.get("/fragments/history/open_orders", response_class=HTMLResponse)
 async def frag_open_orders(
     request: Request,
-    page: int = 1, per_page: int = 25,
+    page: int = 1, per_page: int = 20,
     sort_by: str = "created_at_ms", sort_dir: str = "DESC",
     search: str = "",
 ):
@@ -62,7 +62,7 @@ async def frag_open_orders(
 @router.get("/fragments/history/order_history", response_class=HTMLResponse)
 async def frag_order_history(
     request: Request,
-    page: int = 1, per_page: int = 25,
+    page: int = 1, per_page: int = 20,
     sort_by: str = "updated_at_ms", sort_dir: str = "DESC",
     search: str = "",
     date_from: str = "", date_to: str = "",
