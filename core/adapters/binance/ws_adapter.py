@@ -119,6 +119,11 @@ class BinanceWSAdapter:
         o = msg.get("o", {})
         otype = o.get("ot", o.get("o", ""))
         unified_type = ORDER_TYPE_FROM_BINANCE.get(otype, otype.lower())
+        # FE-13: entry stops get _entry suffix
+        if unified_type in ("stop_loss", "take_profit") \
+                and not o.get("R", False) \
+                and not o.get("cp", False):
+            unified_type += "_entry"
         raw_status = o.get("X", "")
         status = BINANCE_STATUS_MAP.get(raw_status, "new")
 
@@ -154,6 +159,11 @@ class BinanceWSAdapter:
         o = msg.get("o", {})
         otype = o.get("o", "")
         unified_type = ORDER_TYPE_FROM_BINANCE.get(otype, otype.lower())
+        # FE-13: entry stops get _entry suffix
+        if unified_type in ("stop_loss", "take_profit") \
+                and not o.get("R", False) \
+                and not o.get("cp", False):
+            unified_type += "_entry"
         raw_status = o.get("X", "")
         status = ALGO_STATUS_MAP.get(raw_status, "new")
 

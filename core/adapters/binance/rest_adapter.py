@@ -109,6 +109,11 @@ class BinanceUSDMAdapter(BaseExchangeAdapter):
         for o in raw_orders:
             otype = o.get("type", "")
             unified_type = ORDER_TYPE_FROM_BINANCE.get(otype, otype.lower())
+            # FE-13: entry stops (reduceOnly=false, closePosition=false) get _entry suffix
+            if unified_type in ("stop_loss", "take_profit") \
+                    and not o.get("reduceOnly", False) \
+                    and not o.get("closePosition", False):
+                unified_type += "_entry"
             raw_status = o.get("status", "")
             status = BINANCE_STATUS_MAP.get(raw_status, "new")
             if raw_status and raw_status not in BINANCE_STATUS_MAP:
@@ -151,6 +156,11 @@ class BinanceUSDMAdapter(BaseExchangeAdapter):
         for o in raw:
             otype = o.get("orderType", "")
             unified_type = ORDER_TYPE_FROM_BINANCE.get(otype, otype.lower())
+            # FE-13: entry stops get _entry suffix
+            if unified_type in ("stop_loss", "take_profit") \
+                    and not o.get("reduceOnly", False) \
+                    and not o.get("closePosition", False):
+                unified_type += "_entry"
             raw_status = o.get("algoStatus", "")
             status = ALGO_STATUS_MAP.get(raw_status, "new")
             if raw_status and raw_status not in ALGO_STATUS_MAP:
@@ -229,6 +239,11 @@ class BinanceUSDMAdapter(BaseExchangeAdapter):
         for o in raw_orders:
             otype = o.get("type", "")
             unified_type = ORDER_TYPE_FROM_BINANCE.get(otype, otype.lower())
+            # FE-13: entry stops get _entry suffix
+            if unified_type in ("stop_loss", "take_profit") \
+                    and not o.get("reduceOnly", False) \
+                    and not o.get("closePosition", False):
+                unified_type += "_entry"
             raw_status = o.get("status", "")
             status = BINANCE_STATUS_MAP.get(raw_status, "new")
             if raw_status and raw_status not in BINANCE_STATUS_MAP:

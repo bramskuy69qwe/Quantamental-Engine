@@ -153,6 +153,10 @@ class BybitLinearAdapter(BaseExchangeAdapter):
                 unified_type = "stop_loss"
             else:
                 unified_type = ORDER_TYPE_FROM_BYBIT.get(otype, otype.lower())
+            # FE-13: entry stops (reduceOnly=false) get _entry suffix
+            if unified_type in ("stop_loss", "take_profit") \
+                    and not o.get("reduceOnly", False):
+                unified_type += "_entry"
 
             # Bybit positionIdx: 0=one-way, 1=Buy/Long, 2=Sell/Short
             pos_idx = str(info.get("positionIdx", "0"))
@@ -256,6 +260,10 @@ class BybitLinearAdapter(BaseExchangeAdapter):
                 unified_type = "stop_loss"
             else:
                 unified_type = ORDER_TYPE_FROM_BYBIT.get(otype, otype.lower())
+            # FE-13: entry stops get _entry suffix
+            if unified_type in ("stop_loss", "take_profit") \
+                    and not o.get("reduceOnly", False):
+                unified_type += "_entry"
 
             pos_idx = str(info.get("positionIdx", "0"))
             position_side = {"1": "LONG", "2": "SHORT"}.get(pos_idx, "")
