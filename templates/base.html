@@ -300,7 +300,7 @@
     <!-- Account selector -->
     <div style="display:flex;align-items:center;gap:4px;">
       <select id="account-selector"
-              style="width:160px;height:24px;font-size:.68rem;padding:2px 6px;"
+              style="width:160px;height:24px;font-size:.68rem;padding:2px 6px;text-overflow:ellipsis;overflow:hidden;white-space:nowrap;"
               hx-post="/accounts/activate-selected"
               hx-trigger="change"
               hx-target="#account-switch-msg"
@@ -319,7 +319,7 @@
 
     <!-- Platform selector -->
     <select id="platform-selector"
-            style="width:140px;height:24px;font-size:.68rem;padding:2px 6px;"
+            style="width:140px;height:24px;font-size:.68rem;padding:2px 6px;text-overflow:ellipsis;overflow:hidden;white-space:nowrap;"
             hx-post="/api/settings/platform"
             hx-trigger="change"
             hx-swap="none"
