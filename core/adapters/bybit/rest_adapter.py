@@ -287,6 +287,16 @@ class BybitLinearAdapter(BaseExchangeAdapter):
 
     # ── Income history ───────────────────────────────────────────────────────
 
+    # AD-2: Bybit V5 income type → endpoint routing
+    # /v5/position/closed-pnl for realized PnL (existing, fast)
+    # /v5/account/contract-transaction-log for funding fees / all types (unified)
+    _INCOME_TYPE_TO_BYBIT = {
+        "REALIZED_PNL": "TRADE",
+        "FUNDING_FEE":  "SETTLEMENT",
+        "COMMISSION":   "TRADE",
+        "TRANSFER":     "TRANSFER_IN",
+    }
+
     async def fetch_income(
         self,
         income_type: str = "",
@@ -294,33 +304,84 @@ class BybitLinearAdapter(BaseExchangeAdapter):
         end_ms: Optional[int] = None,
         limit: int = 1000,
     ) -> List[NormalizedIncome]:
-        """Fetch closed PnL via Bybit V5 get-closed-pnl endpoint."""
+        """Fetch income history, routing to correct Bybit V5 endpoint per type.
+
+        AD-2: Bybit V5 has no unified income endpoint like Binance's /fapi/v1/income.
+        Routes to:
+        - /v5/position/closed-pnl for REALIZED_PNL (fast, existing behavior)
+        - /v5/account/contract-transaction-log for FUNDING_FEE, COMMISSION, or all
+        """
+        itype = income_type.upper() if income_type else ""
+
+        if itype in ("", "REALIZED_PNL"):
+            return await self._fetch_closed_pnl(start_ms, end_ms, limit)
+
+        if itype == "FUNDING_FEE":
+            return await self._fetch_transaction_log("SETTLEMENT", "FUNDING_FEE", start_ms, end_ms, limit)
+
+        log.debug("Bybit fetch_income: unsupported income_type=%r, returning empty", income_type)
+        return []
+
+    async def _fetch_closed_pnl(
+        self, start_ms: Optional[int], end_ms: Optional[int], limit: int,
+    ) -> List[NormalizedIncome]:
+        """Fetch realized PnL via /v5/position/closed-pnl."""
         def _fetch():
             params = {"category": "linear", "limit": min(limit, 100)}
             if start_ms is not None:
                 params["startTime"] = start_ms
             if end_ms is not None:
                 params["endTime"] = end_ms
-            # Use private V5 closed-pnl endpoint
             return self._ex.private_get_v5_position_closed_pnl(params=params)
 
         try:
             raw = await self._run(_fetch)
             result_list = raw.get("result", {}).get("list", [])
         except Exception as e:
-            log.warning("Bybit fetch_income failed: %s", e)
+            log.warning("Bybit _fetch_closed_pnl failed: %s", e)
             return []
 
-        results = []
-        for r in result_list:
-            results.append(NormalizedIncome(
+        return [
+            NormalizedIncome(
                 symbol=self.normalize_symbol(r.get("symbol", "")),
-                income_type="realized_pnl",
+                income_type="REALIZED_PNL",
                 amount=float(r.get("closedPnl", 0) or 0),
                 timestamp_ms=int(r.get("updatedTime", 0) or 0),
                 trade_id=str(r.get("orderId", "")),
-            ))
-        return results
+            )
+            for r in result_list
+        ]
+
+    async def _fetch_transaction_log(
+        self, bybit_type: str, engine_type: str,
+        start_ms: Optional[int], end_ms: Optional[int], limit: int,
+    ) -> List[NormalizedIncome]:
+        """Fetch from /v5/account/contract-transaction-log filtered by type."""
+        def _fetch():
+            params = {"category": "linear", "type": bybit_type, "limit": min(limit, 50)}
+            if start_ms is not None:
+                params["startTime"] = start_ms
+            if end_ms is not None:
+                params["endTime"] = end_ms
+            return self._ex.privateGetV5AccountContractTransactionLog(params=params)
+
+        try:
+            raw = await self._run(_fetch)
+            result_list = raw.get("result", {}).get("list", [])
+        except Exception as e:
+            log.warning("Bybit _fetch_transaction_log(%s) failed: %s", bybit_type, e)
+            return []
+
+        return [
+            NormalizedIncome(
+                symbol=self.normalize_symbol(r.get("symbol", "")),
+                income_type=engine_type,
+                amount=float(r.get("amount", 0) or 0),
+                timestamp_ms=int(r.get("transactionTime", 0) or 0),
+                trade_id=str(r.get("tradeId", "") or r.get("orderId", "")),
+            )
+            for r in result_list
+        ]
 
     # ── Price extremes ─────────────────────────────────────────────────────────
 

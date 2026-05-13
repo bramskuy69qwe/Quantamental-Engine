@@ -159,12 +159,15 @@ Same grep pattern and routing logic (A/B/C) for all windows.
     (month_peak_equity, reset on 1st only, ~30-50 LOC)
   - MN-2-C (HIGH, v2.4 proper): rolling-window drawdown for gate
     enforcement (addresses "5%/day × 10 days never triggers" gap)
-- **AD-2** (MEDIUM): Bybit adapter `fetch_income()` ignores
-  `income_type` parameter — only returns "realized_pnl". Funding
-  fee, commission, and transfer income types silently return empty.
-  Protocol violation. Fix: implement V5 transaction log endpoint
-  for non-PnL income types. Discovered: 2026-05-11, SR-7 Phase 1
-  audit. Not in SR-7 scope (adapter quality, not protocol design).
+- **AD-2**: **done** — Bybit income_type routing via V5 endpoints.
+  Routes REALIZED_PNL to /v5/position/closed-pnl (existing, fast),
+  FUNDING_FEE to /v5/account/contract-transaction-log (type=SETTLEMENT).
+  Unsupported types return empty with debug log. income_type field now
+  set correctly on NormalizedIncome (was hardcoded "realized_pnl").
+  Discovery: Bybit V5 has /v5/account/contract-transaction-log as
+  unified transaction log (enumeration incorrectly claimed no unified
+  endpoint). 10 regression tests, 547/547 green, baseline empty.
+  AD-2/3/4 sweep complete.
 - **RL-4** (MEDIUM): Periodic 429 bursts at ~8-minute intervals.
   5 bursts on 2026-05-10 18:57-19:25 UTC. Periodicity suggests a
   scheduled task hitting Binance hard enough to trigger rate limits
@@ -331,7 +334,7 @@ Same grep pattern and routing logic (A/B/C) for all windows.
 
 ## Status: Where are we?
 
-Last updated: 2026-05-13 (MN-2 done, OM-5 family closed)
+Last updated: 2026-05-13 (AD-2/3/4 sweep done, MN-2 done, OM-5 family closed)
 - Bucket 0: **done** — RE-9 landed (60 tests, 111-row baseline CSV)
 - Bucket 1: **done** — SC-1, RP-1, RE-1 all landed (branch: audit/v2.3.1)
 - Bucket 2: **done** — all three foundation redesigns landed
