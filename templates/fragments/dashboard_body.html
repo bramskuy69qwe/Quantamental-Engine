@@ -176,9 +176,9 @@
     <!-- ── Panel: Order History ── -->
     <div id="dp-history" style="display:none;">
       {% if recent_orders %}
-      <div style="overflow-x:auto;">
+      <div style="overflow-x:auto;max-height:320px;overflow-y:auto;">
         <table>
-          <thead><tr>
+          <thead style="position:sticky;top:0;z-index:1;"><tr>
             <th>Time</th><th>Symbol</th><th>Side</th><th>Type</th><th>Qty</th>
             <th>Price</th><th>Trigger</th><th>Status</th><th>Avg Fill</th>
           </tr></thead>
