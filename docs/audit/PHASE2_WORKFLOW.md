@@ -168,14 +168,14 @@ Same grep pattern and routing logic (A/B/C) for all windows.
   unified transaction log (enumeration incorrectly claimed no unified
   endpoint). 10 regression tests, 547/547 green, baseline empty.
   AD-2/3/4 sweep complete.
-- **RL-4** (MEDIUM): Periodic 429 bursts at ~8-minute intervals.
-  5 bursts on 2026-05-10 18:57-19:25 UTC. Periodicity suggests a
-  scheduled task hitting Binance hard enough to trigger rate limits
-  every ~8 minutes. Diagnostic: cross-reference burst timestamps
-  with scheduler config in core/schedulers.py; the ~8-minute
-  interval should match one configured loop. May justify promoting
-  RL-2 (proactive weight tracker, currently deferred) earlier —
-  proactive tracking would prevent periodic hits at the source.
+- **RL-4**: Phase 1 complete — root cause: trade-event concurrent REST
+  burst, not periodic scheduler. 6 subsystems fire REST calls within
+  1 second on every trade close (reconciler ×3, ws_manager ×2, fallback
+  ×1). ~8-min periodicity was user's trading cadence, not scheduler freq.
+  Still active post-audit (77 events May 13). NOT auto-resolved.
+  Fix: Option A+B (serialize burst callers + rate-limit guards, ~30 LOC).
+  RL-2 (proactive weight tracker) deferred to v2.4.
+  Design doc: docs/design/RL-4_phase1_investigation.md.
   Discovered: 2026-05-12, SR-7 verification window.
 - **PA-1a**: **done** — WS fill creation + backfill dedup. Fills now
   created from WS TRADE events via _create_fill_from_ws() using native
