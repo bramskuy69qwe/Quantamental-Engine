@@ -147,15 +147,18 @@ Same grep pattern and routing logic (A/B/C) for all windows.
   order sync covers the gap). 3 regression tests, 519/519 green.
   Branch: fix/OM-5b-basic-order-plugin-gating.
   OM-5 family closed (OM-5 + OM-5b).
-- **MN-2** (severity TBD, potentially HIGH): Monthly drawdown
-  shows 0 in dashboard despite real drawdown this month. Failing
-  layer unknown: reset logic, calculation logic, frontend display,
-  or definition mismatch. Diagnostic: query dd_state directly,
-  compare to dashboard render, isolate failing layer.
-  Operational gate: dd_state is being promoted from advisory to
-  gate in v2.4 — this finding must be resolved before v2.4
-  promotion, otherwise a broken metric gets promoted to
-  enforcement role. Discovered: 2026-05-10, verification window.
+- **MN-2**: **done** (label fix, severity revised MEDIUM). Root cause:
+  definition mismatch — engine computes intraday drawdown (resets at
+  BOD), not monthly. Real-time gauge showed 0 after BOD reset; journal
+  "Max DD" correctly showed 11.74%. Fix: label "Drawdown" → "Today's DD"
+  and "Drawdown State" → "Today's DD State" to clarify daily scope.
+  Design doc: docs/design/MN-2_phase1_investigation.md.
+  Branch: fix/MN-2-drawdown-label-clarity.
+  v2.4 deferred items:
+  - MN-2-B (MEDIUM, v2.4 prep): monthly drawdown metric
+    (month_peak_equity, reset on 1st only, ~30-50 LOC)
+  - MN-2-C (HIGH, v2.4 proper): rolling-window drawdown for gate
+    enforcement (addresses "5%/day × 10 days never triggers" gap)
 - **AD-2** (MEDIUM): Bybit adapter `fetch_income()` ignores
   `income_type` parameter — only returns "realized_pnl". Funding
   fee, commission, and transfer income types silently return empty.
@@ -327,7 +330,7 @@ Same grep pattern and routing logic (A/B/C) for all windows.
 
 ## Status: Where are we?
 
-Last updated: 2026-05-13 (OM-5 family closed, adapter docs started)
+Last updated: 2026-05-13 (MN-2 done, OM-5 family closed)
 - Bucket 0: **done** — RE-9 landed (60 tests, 111-row baseline CSV)
 - Bucket 1: **done** — SC-1, RP-1, RE-1 all landed (branch: audit/v2.3.1)
 - Bucket 2: **done** — all three foundation redesigns landed
