@@ -9,7 +9,8 @@ migrations. Use this document to:
 
 **Last reviewed**: 2026-05-13
 **Adapter code**: `core/adapters/binance/rest_adapter.py`, `ws_adapter.py`, `constants.py`
-**CCXT version**: 4.3.20 (`ccxt.binanceusdm`)
+**CCXT version**: >=4.3.20 (pinned in requirements.txt; installed: 4.3.20)
+**CCXT class**: `ccxt.binanceusdm`
 
 ---
 
@@ -17,25 +18,25 @@ migrations. Use this document to:
 
 ### REST Endpoints Used
 
-| CCXT Method / Raw Path | FAPI Path | Purpose | Weight | File:Line | Doc Reference |
+| CCXT Method / Raw Path | FAPI Path | Purpose | Weight | Adapter Method | Doc Reference |
 |---|---|---|---|---|---|
-| `fapiPrivateV2GetAccount()` | GET /fapi/v2/account | Account balances, fee tier, positions | 5 | rest_adapter:54 | [Account Info V2](https://developers.binance.com/docs/derivatives/usds-margined-futures/account/rest-api/Account-Information-V2) |
-| `fapiPrivateGetCommissionRate()` | GET /fapi/v1/commissionRate | Per-symbol maker/taker fee rates | 20 | rest_adapter:57 | [Commission Rate](https://developers.binance.com/docs/derivatives/usds-margined-futures/account/rest-api/User-Commission-Rate) |
-| `fapiPrivateGetOpenOrders()` | GET /fapi/v1/openOrders | Basic open orders (LIMIT, MARKET — NOT conditional) | 1/40 | rest_adapter:105 | [Open Orders](https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/Current-All-Open-Orders) |
-| `request("openAlgoOrders", ...)` | GET /fapi/v1/openAlgoOrders | Conditional/algo orders (TP/SL placed via UI) | 1/40 | rest_adapter:145 | [Algo Open Orders](https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/Current-All-Algo-Open-Orders) |
-| `fapiPrivateGetUserTrades()` | GET /fapi/v1/userTrades | Per-symbol trade history (fills) | 5 | rest_adapter:181 | [User Trades](https://developers.binance.com/docs/derivatives/usds-margined-futures/account/rest-api/Account-Trade-List) |
-| `fapiPrivateGetAllOrders()` | GET /fapi/v1/allOrders | Order history (all statuses) | 5 | rest_adapter:214 | [All Orders](https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/All-Orders) |
-| `fapiPrivateGetIncome()` | GET /fapi/v1/income | Income history (funding fees, realized PnL, transfers) | 30 | rest_adapter:262 | [Income History](https://developers.binance.com/docs/derivatives/usds-margined-futures/account/rest-api/Get-Income-History) |
-| `fapiPublicGetAggTrades()` | GET /fapi/v1/aggTrades | Tick-level trade data for MFE/MAE price extremes | 20 | rest_adapter:328 | [Agg Trades](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Compressed-Aggregate-Trades-List) |
-| `fetch_ohlcv()` | GET /fapi/v1/klines | OHLCV candles (ATR, regime signals, charting) | 5 | rest_adapter:362 | [Klines](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Kline-Candlestick-Data) |
-| `fetch_order_book()` | GET /fapi/v1/depth | Orderbook (VWAP, slippage, 1% depth) | 5/10/20 | rest_adapter:437 | [Depth](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Order-Book) |
-| `fetch_ticker()` | GET /fapi/v1/ticker/price | Mark price via ticker | 1 | rest_adapter:441 | [Price Ticker](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Symbol-Price-Ticker) |
-| `fetch_time()` | GET /fapi/v1/time | Server time for latency measurement | 1 | rest_adapter:446 | [Server Time](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Check-Server-Time) |
-| `fapiPrivatePostListenKey()` | POST /fapi/v1/listenKey | Create user-data stream listen key | 1 | rest_adapter:452 | [Listen Key](https://developers.binance.com/docs/derivatives/usds-margined-futures/account/rest-api/Start-User-Data-Stream) |
-| `fapiPrivatePutListenKey()` | PUT /fapi/v1/listenKey | Keepalive listen key (every 25 min) | 1 | rest_adapter:459 | [Keepalive](https://developers.binance.com/docs/derivatives/usds-margined-futures/account/rest-api/Keepalive-User-Data-Stream) |
-| `fapiPublicGetPremiumIndex()` | GET /fapi/v1/premiumIndex | Funding rates + mark prices (all symbols) | 10 | rest_adapter:471 | [Premium Index](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Mark-Price) |
-| `fapiPublicGetFundingRate()` | GET /fapi/v1/fundingRate | Historical funding rate data | 1 | rest_adapter:499 | [Funding Rate](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Get-Funding-Rate-History) |
-| `fapiDataGetOpenInterestHist()` | GET /futures/data/openInterestHist | Open interest history (regime signals) | 1 | rest_adapter:514 | [OI History](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Open-Interest-Statistics) |
+| `fapiPrivateV2GetAccount()` | GET /fapi/v2/account | Account balances, fee tier, positions | 5 | `fetch_account()` | [Account Info V2](https://developers.binance.com/docs/derivatives/usds-margined-futures/account/rest-api/Account-Information-V2) |
+| `fapiPrivateGetCommissionRate()` | GET /fapi/v1/commissionRate | Per-symbol maker/taker fee rates | 20 | `fetch_account()` | [Commission Rate](https://developers.binance.com/docs/derivatives/usds-margined-futures/account/rest-api/User-Commission-Rate) |
+| `fapiPrivateGetOpenOrders()` | GET /fapi/v1/openOrders | Basic open orders (LIMIT, MARKET — NOT conditional) | 1/40 | `fetch_open_orders()` | [Open Orders](https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/Current-All-Open-Orders) |
+| `request("openAlgoOrders", ...)` | GET /fapi/v1/openAlgoOrders | Conditional/algo orders (TP/SL placed via UI) | 1/40 | `fetch_algo_open_orders()` | [Algo Open Orders](https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/Current-All-Algo-Open-Orders) |
+| `fapiPrivateGetUserTrades()` | GET /fapi/v1/userTrades | Per-symbol trade history (fills) | 5 | `fetch_user_trades()` | [User Trades](https://developers.binance.com/docs/derivatives/usds-margined-futures/account/rest-api/Account-Trade-List) |
+| `fapiPrivateGetAllOrders()` | GET /fapi/v1/allOrders | Order history (all statuses) | 5 | `fetch_order_history()` | [All Orders](https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/All-Orders) |
+| `fapiPrivateGetIncome()` | GET /fapi/v1/income | Income history (funding fees, realized PnL, transfers) | 30 | `fetch_income()` | [Income History](https://developers.binance.com/docs/derivatives/usds-margined-futures/account/rest-api/Get-Income-History) |
+| `fapiPublicGetAggTrades()` | GET /fapi/v1/aggTrades | Tick-level trade data for MFE/MAE price extremes | 20 | `fetch_price_extremes()` | [Agg Trades](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Compressed-Aggregate-Trades-List) |
+| `fetch_ohlcv()` | GET /fapi/v1/klines | OHLCV candles (ATR, regime signals, charting) | 5 | `fetch_ohlcv()` | [Klines](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Kline-Candlestick-Data) |
+| `fetch_order_book()` | GET /fapi/v1/depth | Orderbook (VWAP, slippage, 1% depth) | 5/10/20 | `fetch_orderbook()` | [Depth](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Order-Book) |
+| `fetch_ticker()` | GET /fapi/v1/ticker/price | Mark price via ticker | 1 | `fetch_mark_price()` | [Price Ticker](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Symbol-Price-Ticker) |
+| `fetch_time()` | GET /fapi/v1/time | Server time for latency measurement | 1 | `fetch_server_time()` | [Server Time](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Check-Server-Time) |
+| `fapiPrivatePostListenKey()` | POST /fapi/v1/listenKey | Create user-data stream listen key | 1 | `create_listen_key()` | [Listen Key](https://developers.binance.com/docs/derivatives/usds-margined-futures/account/rest-api/Start-User-Data-Stream) |
+| `fapiPrivatePutListenKey()` | PUT /fapi/v1/listenKey | Keepalive listen key (every 25 min) | 1 | `keepalive_listen_key()` | [Keepalive](https://developers.binance.com/docs/derivatives/usds-margined-futures/account/rest-api/Keepalive-User-Data-Stream) |
+| `fapiPublicGetPremiumIndex()` | GET /fapi/v1/premiumIndex | Funding rates + mark prices (all symbols) | 10 | `fetch_current_funding_rates()` | [Premium Index](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Mark-Price) |
+| `fapiPublicGetFundingRate()` | GET /fapi/v1/fundingRate | Historical funding rate data | 1 | `fetch_funding_rates()` | [Funding Rate](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Get-Funding-Rate-History) |
+| `fapiDataGetOpenInterestHist()` | GET /futures/data/openInterestHist | Open interest history (regime signals) | 1 | `fetch_open_interest_hist()` | [OI History](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Open-Interest-Statistics) |
 
 **Not used** (PAPI): `papiGetUmConditionalOpenOrders()` — requires Portfolio Margin. Tested 2026-05-13, returns 404 on non-PM accounts. Use FAPI `openAlgoOrders` instead.
 
@@ -43,12 +44,12 @@ migrations. Use this document to:
 
 | Event Type | Stream | Handler | Parser | Purpose |
 |---|---|---|---|---|
-| `ACCOUNT_UPDATE` | User-data | `_apply_account_update()` ws_manager:111 | `parse_account_update()` ws_adapter:66 | Position + balance deltas via DataCache |
-| `ORDER_TRADE_UPDATE` | User-data | `_apply_order_update()` ws_manager:114 | `parse_order_update()` ws_adapter:108 | Basic order lifecycle: placement, fill, cancel. TP/SL enrichment for basic stop orders |
-| `ALGO_UPDATE` | User-data | `_apply_algo_update()` ws_manager:117 | `parse_algo_update()` ws_adapter:144 | Conditional order lifecycle: place, trigger, cancel, expire. TP/SL enrichment for algo orders (OM-5) |
-| `kline` | Market combined | Inline ws_manager:520 | `parse_kline()` ws_adapter:178 | Closed candles → OHLCV cache for ATR/charting |
-| `markPriceUpdate` | Market combined | Inline ws_manager:528 | `parse_mark_price()` ws_adapter:195 | Real-time mark price for position valuation |
-| `depthUpdate` | Market combined | Inline ws_manager:524 | `parse_depth()` ws_adapter:204 | Orderbook for VWAP/slippage/1% depth |
+| `ACCOUNT_UPDATE` | User-data | `_apply_account_update()` | `parse_account_update()` | Position + balance deltas via DataCache |
+| `ORDER_TRADE_UPDATE` | User-data | `_apply_order_update()` | `parse_order_update()` | Basic order lifecycle: placement, fill, cancel. TP/SL enrichment for basic stop orders |
+| `ALGO_UPDATE` | User-data | `_apply_algo_update()` | `parse_algo_update()` | Conditional order lifecycle: place, trigger, cancel, expire. TP/SL enrichment for algo orders (OM-5) |
+| `kline` | Market combined | `_on_market_data()` inline | `parse_kline()` | Closed candles → OHLCV cache for ATR/charting |
+| `markPriceUpdate` | Market combined | `_on_market_data()` inline | `parse_mark_price()` | Real-time mark price for position valuation |
+| `depthUpdate` | Market combined | `_on_market_data()` inline | `parse_depth()` | Orderbook for VWAP/slippage/1% depth |
 
 ### WebSocket Events NOT Handled
 
@@ -107,7 +108,7 @@ Market-data stream (public, combined):
 
 | Aspect | Detail |
 |---|---|
-| Model | Per-IP, weight-based. 2400 weight/minute for most endpoints |
+| Model | Per-IP, weight-based. ~2400 weight/minute (subject to Binance adjustments; verify via GET /fapi/v1/exchangeInfo `rateLimits` array) |
 | Engine handling | `RateLimitError` hierarchy (SR-7). `handle_rate_limit_error()` in exchange.py sets global `rate_limited_until` |
 | Monitoring | Check #9 in MN-1 tracks rate-limit event frequency |
 | 429 response | Contains `retry_after_ms` header |
@@ -236,6 +237,30 @@ Binance migrated conditional/strategy orders to a new Algo Service.
 
 ---
 
+## Request Parameters & Conventions
+
+### recvWindow
+CCXT default: 5000ms. Engine does not override. Binance rejects requests
+where server time differs from `timestamp` by more than `recvWindow`.
+Engine syncs via `fetch_server_time()` at startup and periodically via
+`_ping_loop()` (every 10s).
+
+### Symbol Precision
+Tick size, step size, and quantity precision vary per symbol. The engine
+reads these from `exchangeInfo` (loaded by CCXT's `load_markets()` at
+adapter construction). CCXT handles precision rounding internally for
+unified methods; raw CCXT calls must round manually.
+
+### Order Flags
+| Flag | Values | Engine Usage |
+|---|---|---|
+| `timeInForce` | GTC, IOC, FOK, GTX (post-only) | Stored on NormalizedOrder; not currently used in decision logic |
+| `reduceOnly` | true/false | Stored; used in TP/SL position matching (all TP/SL are reduceOnly) |
+| `positionSide` | LONG, SHORT, BOTH | Used for TP/SL → position mapping (see Known Quirks) |
+| `workingType` | CONTRACT_PRICE, MARK_PRICE | Stored on algo orders; not used in engine logic |
+
+---
+
 ## Incomplete Sections
 
 The following are known gaps in this document, to be filled as work progresses:
@@ -247,3 +272,11 @@ The following are known gaps in this document, to be filled as work progresses:
 - **Position TP/SL via API**: Binance may have a dedicated position-level TP/SL
   endpoint separate from algo orders. Not yet investigated.
 - **COIN-M adapter**: Not implemented. Document if added.
+
+---
+
+## Maintenance Log
+
+| Date | Reviewer | Scope |
+|---|---|---|
+| 2026-05-13 | Claude Opus 4.6 | Initial creation. Full audit of REST + WS surface from Buckets 3-4 work. Verified CCXT version, WS URL, endpoint weights. Documented OM-5 algo migration, OM-5b gating fix, all known quirks. |
