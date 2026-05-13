@@ -475,47 +475,22 @@ function highlightRefreshRate(){
   var pb=document.getElementById('rr-pause');if(pb){pb.className='btn btn-sm '+(!_autoRefreshEnabled?'btn-danger':'btn-secondary');pb.textContent=_autoRefreshEnabled?'⏸':'▶';}
 }
 
-document.body.addEventListener('htmx:configRequest',function(evt){
-  if(evt.detail.elt.id==='calc-form'){
-    console.log('[FE-17c] htmx:configRequest — parameters:', JSON.stringify(evt.detail.parameters));
-  }
-});
 document.body.addEventListener('htmx:beforeRequest',function(evt){
   if(evt.detail.elt.id!=='calc-form')return;
   var isAuto=document.getElementById('auto_refresh_val').value==='1';
   _pendingManualCalc=!isAuto;if(!isAuto){stopAutoRefresh();_autoRefreshInFlight=false;}
   var entry=getEffectiveEntry();
-  console.log('[FE-17c] htmx:beforeRequest — entry='+entry+', _tpslMode='+_tpslMode+', _side='+_side+', isAuto='+isAuto);
-  if(!entry||entry<=0){evt.preventDefault();console.log('[FE-17c] BLOCKED: entry<=0');if(!isAuto)document.getElementById('calc-result').innerHTML='<div class="alert alert-error">No entry price — enter a ticker and wait for live price, or type a price manually.</div>';_autoRefreshInFlight=false;return;}
+  if(!entry||entry<=0){evt.preventDefault();if(!isAuto)document.getElementById('calc-result').innerHTML='<div class="alert alert-error">No entry price — enter a ticker and wait for live price, or type a price manually.</div>';_autoRefreshInFlight=false;return;}
   document.getElementById('average_val').value=entry;
   var tpP=0,slP=0;
   if(_tpslMode==='price'){tpP=parseFloat(document.getElementById('tp-price-input').value)||0;slP=parseFloat(document.getElementById('sl-price-input').value)||0;}
   else{var tpPct=parseFloat(document.getElementById('tp-pct-input').value)||0,slPct=parseFloat(document.getElementById('sl-pct-input').value)||0,dir=_side==='long'?1:-1;if(tpPct>0)tpP=entry*(1+dir*tpPct/100);if(slPct>0)slP=entry*(1-dir*slPct/100);}
-  console.log('[FE-17c] htmx:beforeRequest — tpP='+tpP+', slP='+slP);
-  if(!slP||slP<=0){evt.preventDefault();console.log('[FE-17c] BLOCKED: slP<=0');if(!isAuto)document.getElementById('calc-result').innerHTML='<div class="alert alert-error">SL is required.</div>';_autoRefreshInFlight=false;return;}
-  console.log('[FE-17c] htmx:beforeRequest PASSED — form will submit');
+  if(!slP||slP<=0){evt.preventDefault();if(!isAuto)document.getElementById('calc-result').innerHTML='<div class="alert alert-error">SL is required.</div>';_autoRefreshInFlight=false;return;}
   document.getElementById('tp_price_val').value=tpP;document.getElementById('sl_price_val').value=slP;
-  // Log actual hidden field values that will be sent
-  console.log('[FE-17c] hidden fields after set:', {
-    ticker: document.getElementById('ticker-input').value,
-    average: document.getElementById('average_val').value,
-    sl_price: document.getElementById('sl_price_val').value,
-    tp_price: document.getElementById('tp_price_val').value,
-    order_type: document.getElementById('order_type_val').value,
-    auto_refresh: document.getElementById('auto_refresh_val').value
-  });
 });
 
-document.body.addEventListener('htmx:afterRequest',function(evt){
-  if(evt.detail.elt.id==='calc-form'){
-    var xhr=evt.detail.xhr||{};
-    console.log('[FE-17c] htmx:afterRequest — status='+xhr.status+', responseLen='+(xhr.responseText||'').length);
-    if(xhr.status>=400)console.log('[FE-17c] ERROR RESPONSE BODY:', xhr.responseText);
-  }
-});
 document.body.addEventListener('htmx:afterSettle',function(evt){
   if(evt.detail.target.id!=='calc-result')return;
-  console.log('[FE-17c] htmx:afterSettle on #calc-result — content length: '+document.getElementById('calc-result').innerHTML.length);
   _hasCalculated=true;_autoRefreshInFlight=false;document.getElementById('auto_refresh_val').value='0';
   var ticker=document.getElementById('ticker-input').value.trim().toUpperCase();_calcTicker=ticker;
   startAutoRefresh();updateOrderbook(ticker);populateSetupSummary();
@@ -577,11 +552,9 @@ function renderCalcHistory(){
 }
 function recallHistory(idx){
   var h=_calcHistory[idx];if(!h)return;
-  console.log('[FE-17c] recallHistory START idx='+idx, JSON.stringify({ticker:h.ticker, entry:h.entry, orderType:h.orderType, tpslMode:h.tpslMode, side:h.pctSide, tpPrice:h.tpPrice, slPrice:h.slPrice, tpPct:h.tpPct, slPct:h.slPct}));
   stopAutoRefresh();if(_priceInterval){clearInterval(_priceInterval);_priceInterval=null;}_obTicker='';
   // Seed _livePrice from stored entry so getEffectiveEntry() works before price poll returns
   if(h.entry&&h.entry>0)_livePrice=h.entry;
-  console.log('[FE-17c] _livePrice after seed:', _livePrice);
   setOrderType(h.orderType||'market');document.getElementById('ticker-input').value=h.ticker;schedulePricePoll();
   if(h.limitPrice)document.getElementById('limit-price').value=h.limitPrice;
   setTpSlMode(h.tpslMode||'price');if(h.pctSide)setSide(h.pctSide);
@@ -598,13 +571,20 @@ function recallHistory(idx){
   // Update entry price display immediately
   var epEl=document.getElementById('market-price');
   if(epEl&&h.entry>0)epEl.value=h.entry;
-  console.log('[FE-17c] pre-submit state:', {_orderType:_orderType, _tpslMode:_tpslMode, _side:_side, _livePrice:_livePrice, effectiveEntry:getEffectiveEntry(), tpInput:document.getElementById('tp-price-input').value, slInput:document.getElementById('sl-price-input').value, tpPctInput:document.getElementById('tp-pct-input').value, slPctInput:document.getElementById('sl-pct-input').value, marketPrice:document.getElementById('market-price').value});
-  // FE-17: defer submit by one frame to let HTMX settle after htmx.process()
-  requestAnimationFrame(function(){
-    console.log('[FE-17c] rAF firing — calling requestSubmit()');
-    document.getElementById('calc-form').requestSubmit();
-    console.log('[FE-17c] requestSubmit() returned');
-  });
+  // FE-17 final: pre-populate hidden form fields BEFORE requestSubmit().
+  // HTMX serializes form data at htmx:configRequest (before htmx:beforeRequest).
+  // The htmx:beforeRequest handler sets these fields too late — HTMX already
+  // captured the empty/stale values. Setting them here ensures first-click
+  // form data is complete.
+  var entry=getEffectiveEntry();
+  if(entry>0)document.getElementById('average_val').value=entry;
+  var tpP=0,slP=0;
+  if(_tpslMode==='price'){tpP=parseFloat(document.getElementById('tp-price-input').value)||0;slP=parseFloat(document.getElementById('sl-price-input').value)||0;}
+  else{var dir=_side==='long'?1:-1;var tpPct=parseFloat(document.getElementById('tp-pct-input').value)||0;var slPct=parseFloat(document.getElementById('sl-pct-input').value)||0;if(tpPct>0)tpP=entry*(1+dir*tpPct/100);if(slPct>0)slP=entry*(1-dir*slPct/100);}
+  document.getElementById('tp_price_val').value=tpP;
+  document.getElementById('sl_price_val').value=slP;
+  // FE-17b: defer submit by one frame to let HTMX settle after htmx.process()
+  requestAnimationFrame(function(){ document.getElementById('calc-form').requestSubmit(); });
   updatePricePreview();updatePctPreview();saveCalcState();
 }
 
@@ -685,7 +665,6 @@ function restoreCalcState(){
   updatePricePreview();updatePctPreview();}catch(e){}
 }
 document.getElementById('calc-form').addEventListener('input',function(){clearTimeout(_saveDebounce);_saveDebounce=setTimeout(saveCalcState,300);});
-document.getElementById('calc-form').addEventListener('submit',function(evt){console.log('[FE-17c] native submit event fired, defaultPrevented='+evt.defaultPrevented);});
 // IIFE: DOMContentLoaded won't re-fire on hx-boost navigations
 (function(){
   var ghost=document.getElementById('calc-ghost');
