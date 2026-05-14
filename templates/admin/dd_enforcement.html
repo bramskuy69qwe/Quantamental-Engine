@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}DD Enforcement Mode{% endblock %}
+{% block content %}
+<div class="container" style="max-width:500px;margin:0 auto;padding:16px;">
+  <h2 style="font-size:1rem;margin-bottom:12px;">DD Enforcement Mode</h2>
+
+  <div style="margin-bottom:16px;">
+    <span style="font-size:.7rem;color:var(--muted);">Current mode:</span>
+    <span class="badge {{ 'badge-limit' if current_mode=='enforced' else 'badge-ok' }}"
+          style="font-size:.75rem;margin-left:6px;">
+      {{ current_mode | upper }}
+    </span>
+  </div>
+
+  <div class="card" style="border:1px solid var(--border);padding:12px;">
+    <p style="font-size:.65rem;color:var(--muted);margin-bottom:8px;">
+      Switching enforcement mode changes whether dd_state=limit blocks
+      the calculator or only logs shadow events. Type the account name
+      to confirm.
+    </p>
+
+    <form id="enforce-form"
+          hx-post="/admin/dd_enforcement"
+          hx-target="#enforce-result"
+          hx-swap="innerHTML"
+          hx-headers='{"Content-Type": "application/json"}'
+          hx-vals='js:{
+            mode: document.getElementById("enforce-mode").value,
+            account_name_confirm: document.getElementById("enforce-confirm").value
+          }'
+          style="display:flex;flex-direction:column;gap:8px;">
+
+      <label style="font-size:.65rem;">
+        New mode:
+        <select id="enforce-mode" style="padding:4px;background:var(--bg-card);color:var(--text);border:1px solid var(--border);">
+          <option value="advisory" {{ 'selected' if current_mode!='enforced' }}>Advisory (log only)</option>
+          <option value="enforced" {{ 'selected' if current_mode=='enforced' }}>Enforced (blocks calculator)</option>
+        </select>
+      </label>
+
+      <label style="font-size:.65rem;">
+        Type account name to confirm:
+        <input id="enforce-confirm" type="text"
+               placeholder="{{ account_name }}"
+               autocomplete="off"
+               style="padding:4px;width:100%;background:var(--bg-card);color:var(--text);border:1px solid var(--border);">
+      </label>
+
+      <button id="enforce-btn" type="submit" disabled
+              style="padding:6px 16px;align-self:flex-end;
+                     background:var(--accent);color:#fff;border:none;border-radius:4px;
+                     opacity:0.5;cursor:not-allowed;font-size:.65rem;">
+        Change Mode
+      </button>
+    </form>
+    <div id="enforce-result" style="margin-top:8px;"></div>
+  </div>
+
+  <script>
+    (function() {
+      var inp = document.getElementById('enforce-confirm');
+      var btn = document.getElementById('enforce-btn');
+      var expected = '{{ account_name }}';
+      inp.addEventListener('input', function() {
+        if (inp.value.trim() === expected) {
+          btn.disabled = false;
+          btn.style.opacity = '1';
+          btn.style.cursor = 'pointer';
+        } else {
+          btn.disabled = true;
+          btn.style.opacity = '0.5';
+          btn.style.cursor = 'not-allowed';
+        }
+      });
+    })();
+  </script>
+</div>
+{% endblock %}

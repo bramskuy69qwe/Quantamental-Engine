@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Shadow Events{% endblock %}
+{% block content %}
+<div class="container" style="max-width:900px;margin:0 auto;padding:16px;">
+  <h2 style="font-size:1rem;margin-bottom:12px;">Shadow Events ({{ event_count }})</h2>
+
+  <form hx-get="/admin/shadow_events" hx-target="#events-table" hx-swap="outerHTML"
+        style="display:flex;gap:8px;margin-bottom:12px;font-size:.65rem;">
+    <select name="event_type" style="padding:4px;background:var(--bg-card);color:var(--text);border:1px solid var(--border);">
+      <option value="would_have_blocked_dd" {{ 'selected' if event_type=='would_have_blocked_dd' }}>would_have_blocked_dd</option>
+      <option value="would_have_blocked_weekly_pnl" {{ 'selected' if event_type=='would_have_blocked_weekly_pnl' }}>would_have_blocked_weekly_pnl</option>
+      <option value="dd_state_transition" {{ 'selected' if event_type=='dd_state_transition' }}>dd_state_transition</option>
+      <option value="calculator_blocked" {{ 'selected' if event_type=='calculator_blocked' }}>calculator_blocked</option>
+      <option value="enforcement_mode_change" {{ 'selected' if event_type=='enforcement_mode_change' }}>enforcement_mode_change</option>
+      <option value="equity_delta_warning" {{ 'selected' if event_type=='equity_delta_warning' }}>equity_delta_warning</option>
+      <option value="manual_override" {{ 'selected' if event_type=='manual_override' }}>manual_override</option>
+      <option value="" {{ 'selected' if not event_type }}>All types</option>
+    </select>
+    <input type="text" name="date_from" placeholder="From (ISO)" value="{{ date_from }}"
+           style="padding:4px;width:140px;background:var(--bg-card);color:var(--text);border:1px solid var(--border);">
+    <input type="text" name="date_to" placeholder="To (ISO)" value="{{ date_to }}"
+           style="padding:4px;width:140px;background:var(--bg-card);color:var(--text);border:1px solid var(--border);">
+    <button type="submit" style="padding:4px 12px;background:var(--accent);color:#fff;border:none;border-radius:4px;">Filter</button>
+  </form>
+
+  <div id="events-table">
+    <table class="data-table" style="font-size:.6rem;width:100%;">
+      <thead>
+        <tr>
+          <th style="width:160px;">Timestamp</th>
+          <th style="width:180px;">Type</th>
+          <th>Payload</th>
+          <th style="width:100px;">Source</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in events %}
+        <tr>
+          <td class="mono">{{ e.timestamp[:19] }}</td>
+          <td>{{ e.event_type }}</td>
+          <td class="mono" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+            {% for k, v in e.payload.items() %}{{ k }}={{ v }}{% if not loop.last %}, {% endif %}{% endfor %}
+          </td>
+          <td>{{ e.source }}</td>
+        </tr>
+        {% endfor %}
+        {% if not events %}
+        <tr><td colspan="4" style="text-align:center;color:var(--muted);">No events found.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

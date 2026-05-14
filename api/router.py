@@ -22,6 +22,7 @@ from api.routes_news        import router as news_router
 from api.routes_connections import router as connections_router
 from api.routes_config      import router as config_router
 from api.routes_orders      import router as orders_router
+from api.routes_admin       import router as admin_router
 
 router = APIRouter()
 router.include_router(dashboard_router)
@@ -38,3 +39,4 @@ router.include_router(news_router)
 router.include_router(connections_router)
 router.include_router(config_router)
 router.include_router(orders_router)
+router.include_router(admin_router)
