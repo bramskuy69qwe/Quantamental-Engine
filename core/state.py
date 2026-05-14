@@ -8,7 +8,7 @@ import os
 import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Set
 
 import logging
 
@@ -251,6 +251,8 @@ class AppState:
         # Rolling DD episode tracking (keyed by account_id)
         self.dd_episode_peaks: Dict[int, float] = {}
         self.dd_previous_states: Dict[int, str] = {}
+        # Tracks which accounts have had would_have_blocked_dd logged this episode
+        self.dd_would_have_blocked_logged: Set[int] = set()
 
         # True while the background startup fetch is still in progress
         self.is_initializing: bool = True
@@ -302,6 +304,7 @@ class AppState:
         self.mark_price_cache     = {}
         self.dd_episode_peaks     = {}
         self.dd_previous_states   = {}
+        self.dd_would_have_blocked_logged = set()
         self.exchange_trade_history = []
         self.pre_trade_log        = []
         self.is_initializing      = True

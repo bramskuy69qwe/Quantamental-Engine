@@ -65,10 +65,12 @@ _STALE_GATE_SECONDS = 60   # sustained data staleness before not-ready (hysteres
 class ReadyStateEvaluator:
     """Bidirectional ready-state with hysteresis.
 
-    Evaluates three gates:
+    Evaluates four gates:
       1. Bootstrap complete (sticky-once-achieved)
       2. Account data present (equity > 0)
       3. Data flowing (WS or REST fallback, with 60s sustained-fault hysteresis)
+      4. DD state gate (blocks on limit when enforcement_mode == "enforced";
+         logs shadow event when "advisory")
 
     Rate-limit alone does NOT gate — only when co-occurring with sustained
     data staleness (rate-limited AND stale for the full hysteresis window).
@@ -93,6 +95,66 @@ class ReadyStateEvaluator:
         stale_s = ws.seconds_since_update
         if stale_s > _STALE_GATE_SECONDS:
             return False, f"Exchange data offline ({stale_s:.0f}s stale)"
+
+        # Gate 4: DD state — enforce or shadow-log
+        dd_ok, dd_reason = self._check_dd_gate()
+        if not dd_ok:
+            return False, dd_reason
+
+        return True, ""
+
+    def _check_dd_gate(self) -> tuple:
+        """Check dd_state against enforcement mode.
+
+        Returns (eligible: bool, reason: str).
+        Advisory mode: always eligible, but logs would_have_blocked_dd once
+        per limit episode.
+        Enforced mode: blocks on limit.
+        Warning state never blocks in either mode.
+        """
+        pf = app_state.portfolio
+        if pf.dd_state != "limit":
+            return True, ""
+
+        dd_pct = pf.drawdown
+        aid = app_state.active_account_id
+
+        # Read enforcement mode
+        try:
+            from core.db_account_settings import get_account_settings
+            settings = get_account_settings(aid)
+            mode = settings.dd_enforcement_mode
+            limit_t = settings.dd_limit_threshold or 0
+        except Exception:
+            return True, ""  # can't read settings → don't block
+
+        payload = {
+            "gate": "dd_state",
+            "dd_state": "limit",
+            "drawdown": round(dd_pct, 6),
+            "limit_threshold": limit_t,
+        }
+
+        if mode == "enforced":
+            try:
+                from core.event_log import log_event
+                log_event(aid, "calculator_blocked", payload, source="ready_state")
+            except Exception:
+                log.warning("calculator_blocked log failed", exc_info=True)
+            reason = (
+                f"dd_state=limit (drawdown={dd_pct:.2%}, "
+                f"threshold={limit_t:.2%}, mode=enforced)"
+            )
+            return False, reason
+
+        # Advisory mode: log shadow event once per limit episode
+        if aid not in app_state.dd_would_have_blocked_logged:
+            app_state.dd_would_have_blocked_logged.add(aid)
+            try:
+                from core.event_log import log_event
+                log_event(aid, "would_have_blocked_dd", payload, source="ready_state")
+            except Exception:
+                log.warning("would_have_blocked_dd log failed", exc_info=True)
 
         return True, ""
 

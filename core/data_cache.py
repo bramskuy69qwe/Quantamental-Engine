@@ -493,6 +493,9 @@ class DataCache:
                 # Transition detection + event logging
                 if new_state != prev_state:
                     app_state.dd_previous_states[aid] = new_state
+                    # Reset shadow-event dedup when leaving limit
+                    if prev_state == "limit" and new_state != "limit":
+                        app_state.dd_would_have_blocked_logged.discard(aid)
                     try:
                         from core.event_log import log_event
                         log_event(aid, "dd_state_transition", {
