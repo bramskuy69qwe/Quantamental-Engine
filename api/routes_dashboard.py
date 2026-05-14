@@ -9,7 +9,8 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 import config
-from core.state import app_state, TZ_LOCAL
+from core.state import app_state
+from core.tz import get_account_tz, now_in_account_tz
 from core import ws_manager
 from core.database import db
 from core.platform_bridge import platform_bridge
@@ -158,14 +159,15 @@ async def api_dashboard_equity_ohlc(tf: str = "1h"):
 @router.get("/fragments/dashboard/journal_stats", response_class=HTMLResponse)
 async def frag_dashboard_journal_stats(request: Request):
     import calendar as _cal
-    now = datetime.now(TZ_LOCAL)
+    aid = app_state.active_account_id
+    tz = get_account_tz(aid)
+    now = datetime.now(tz)
     _, ndays = _cal.monthrange(now.year, now.month)
-    start = datetime(now.year, now.month, 1, tzinfo=TZ_LOCAL)
-    end   = datetime(now.year, now.month, ndays, 23, 59, 59, tzinfo=TZ_LOCAL)
+    start = datetime(now.year, now.month, 1, tzinfo=tz)
+    end   = datetime(now.year, now.month, ndays, 23, 59, 59, tzinfo=tz)
     from_ms = int(start.timestamp() * 1000)
     to_ms   = int(end.timestamp() * 1000)
 
-    aid = app_state.active_account_id
     stats, boundaries, top_pairs = await asyncio.gather(
         db.get_journal_stats(from_ms, to_ms, account_id=aid),
         db.get_equity_period_boundaries(from_ms, to_ms, account_id=aid),
