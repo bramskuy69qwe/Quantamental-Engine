@@ -9,7 +9,8 @@ from fastapi.responses import HTMLResponse, FileResponse
 
 from starlette.responses import RedirectResponse
 
-from core.state import app_state, TZ_LOCAL, validate_params
+from core.state import app_state, validate_params
+from core.tz import now_in_account_tz
 from core.event_bus import event_bus
 from core.data_logger import export_all_to_excel
 from api.helpers import templates, _ctx
@@ -68,7 +69,7 @@ async def update_params(
     await app_state.save_params_async()
     await event_bus.publish(
         "risk:params_updated",
-        {"ts": datetime.now(TZ_LOCAL).isoformat()},
+        {"ts": now_in_account_tz(app_state.active_account_id).isoformat()},
     )
     return HTMLResponse('<div class="alert alert-success">Parameters saved.</div>')
 
