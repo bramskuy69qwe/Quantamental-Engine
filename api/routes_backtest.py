@@ -8,7 +8,8 @@ from typing import Any, Dict
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from core.state import app_state, TZ_LOCAL
+from core.state import app_state
+from core.tz import now_in_account_tz
 from core.database import db
 from core.backtest_runner import BacktestRunner
 from core.ohlcv_fetcher import OHLCVFetcher
@@ -117,7 +118,7 @@ async def api_backtest_run(request: Request):
     except ValueError:
         return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
 
-    name       = cfg.get("name", f"Backtest {datetime.now(TZ_LOCAL).strftime('%Y-%m-%d %H:%M')}")
+    name       = cfg.get("name", f"Backtest {now_in_account_tz(app_state.active_account_id).strftime('%Y-%m-%d %H:%M')}")
     date_from  = cfg.get("date_from", "")
     date_to    = cfg.get("date_to", "")
     session_id = await db.create_backtest_session(
