@@ -16,11 +16,6 @@ import config
 
 log = logging.getLogger("state")
 
-# DEPRECATED: all core/ sites now use core.tz.get_account_tz(account_id).
-# Retained only for api/ route handlers (~25 references). Migrate in a
-# dedicated api-layer TZ task, then delete this line.
-TZ_LOCAL = timezone(timedelta(hours=config.TIMEZONE_OFFSET_HOURS))
-
 
 # ── Parameter defaults ────────────────────────────────────────────────────────
 
