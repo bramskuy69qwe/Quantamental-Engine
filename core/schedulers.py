@@ -252,6 +252,51 @@ async def _history_refresh_loop():
             log.warning(f"Exchange trade history refresh failed: {e}")
 
 
+# ── Startup equity delta check (v2.4 Priority 2d) ───────────────────────────
+
+def _check_startup_equity_delta() -> None:
+    """Compare live equity to latest snapshot; warn if delta > 1%."""
+    try:
+        aid = app_state.active_account_id
+        live_equity = app_state.account_state.total_equity
+        if live_equity <= 0:
+            return
+
+        import sqlite3
+        from core.db_account_settings import _resolve_db_path
+        db_path = _resolve_db_path(aid)
+        conn = sqlite3.connect(db_path)
+        row = conn.execute(
+            "SELECT total_equity, snapshot_ts FROM account_snapshots "
+            "WHERE account_id = ? ORDER BY snapshot_ts DESC LIMIT 1",
+            (aid,),
+        ).fetchone()
+        conn.close()
+
+        if not row or not row[0]:
+            return
+        snap_equity = row[0]
+        snap_ts = row[1]
+
+        if snap_equity <= 0:
+            return
+        delta_pct = abs(live_equity - snap_equity) / snap_equity
+        if delta_pct > 0.01:
+            from core.event_log import log_event
+            log_event(aid, "equity_delta_warning", {
+                "live": round(live_equity, 2),
+                "snapshot": round(snap_equity, 2),
+                "delta_pct": round(delta_pct, 6),
+                "snapshot_ts": snap_ts,
+            }, source="startup")
+            log.warning(
+                "Startup equity delta: live=%.2f snapshot=%.2f delta=%.4f%%",
+                live_equity, snap_equity, delta_pct * 100,
+            )
+    except Exception:
+        log.warning("Startup equity delta check failed", exc_info=True)
+
+
 # ── Background startup fetch ────────────────────────────────────────────────
 
 async def _startup_fetch():
@@ -290,6 +335,9 @@ async def _startup_fetch():
         except Exception as e:
             log.error(f"Initial {label} fetch failed: {e}")
             app_state.ws_status.add_log(f"INIT ERROR ({label}): {e}")
+
+    # v2.4 Priority 2d: equity delta warning on startup
+    _check_startup_equity_delta()
 
     # OM-5b: one-shot basic order sync on startup (regardless of plugin state).
     # Catches pre-existing orders placed before engine started.
