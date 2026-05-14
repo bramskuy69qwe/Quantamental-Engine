@@ -37,6 +37,9 @@ class AccountSettings:
     weekly_pnl_warning_threshold: Optional[float] = None
     weekly_pnl_limit_threshold: Optional[float] = None
     weekly_pnl_enforcement_mode: str = "advisory"  # "advisory" | "enforced"
+    strategy_preset: Optional[str] = None
+    analytics_default_period: str = "monthly"
+    week_start_dow: int = 1                     # 1=Monday, 7=Sunday
 
 
 _FIELDS = {f.name for f in fields(AccountSettings)}
