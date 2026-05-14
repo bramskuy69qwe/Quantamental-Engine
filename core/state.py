@@ -16,6 +16,7 @@ import config
 
 log = logging.getLogger("state")
 
+# DEPRECATED: prefer core.tz.get_account_tz(account_id). Removal after v2.4 Task 7.
 TZ_LOCAL = timezone(timedelta(hours=config.TIMEZONE_OFFSET_HOURS))
 
 

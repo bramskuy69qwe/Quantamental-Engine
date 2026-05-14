@@ -15,7 +15,8 @@ from typing import Set
 
 import config
 from core.adapters.errors import RateLimitError
-from core.state import app_state, TZ_LOCAL
+from core.state import app_state, TZ_LOCAL  # TZ_LOCAL still used by non-critical sites
+from core.tz import now_in_account_tz
 from core.exchange import (
     fetch_exchange_info, fetch_account, fetch_positions,
     fetch_ohlcv, create_listen_key,
@@ -61,9 +62,9 @@ def _spawn(coro, *, name: str) -> asyncio.Task:
 # ── BOD scheduler ────────────────────────────────────────────────────────────
 
 async def _bod_scheduler():
-    """Wake at midnight UTC+7 to run BOD resets and snapshots."""
+    """Wake at midnight (account TZ) to run BOD resets and snapshots."""
     while True:
-        now = datetime.now(TZ_LOCAL)
+        now = now_in_account_tz(app_state.active_account_id)
         # Sleep until next midnight local
         midnight = now.replace(hour=0, minute=0, second=5, microsecond=0)
         if now >= midnight:
@@ -76,7 +77,7 @@ async def _bod_scheduler():
         app_state.perform_bod_reset()
         take_daily_snapshot()
         # Monthly on the 1st
-        if datetime.now(TZ_LOCAL).day == 1:
+        if now_in_account_tz(app_state.active_account_id).day == 1:
             take_monthly_snapshot()
         app_state.ws_status.add_log("BOD reset completed.")
 

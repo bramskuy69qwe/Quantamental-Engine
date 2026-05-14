@@ -11,7 +11,8 @@ import logging
 from typing import Dict, List, Optional
 from datetime import datetime, timezone, timedelta
 
-from core.state import app_state, TZ_LOCAL
+from core.state import app_state, TZ_LOCAL  # TZ_LOCAL still used by non-critical sites
+from core.tz import now_in_account_tz
 from core.database import db
 from core.constants import MS_PER_DAY
 
@@ -67,7 +68,7 @@ async def fetch_bod_sow_equity() -> None:
     if current_equity == 0:
         return
 
-    now_local = datetime.now(TZ_LOCAL)
+    now_local = now_in_account_tz(app_state.active_account_id)
 
     # Start of today (local midnight) -> UTC ms
     today_midnight = now_local.replace(hour=0, minute=0, second=0, microsecond=0)

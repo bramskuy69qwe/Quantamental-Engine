@@ -4,7 +4,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from core.state import TZ_LOCAL
+from core.state import TZ_LOCAL  # DEPRECATED — kept for non-critical sites
+from core.tz import get_account_tz
 
 log = logging.getLogger("database")
 
@@ -54,7 +55,8 @@ class AnalyticsMixin:
         Ordered oldest-first for chart rendering.
         """
         try:
-            offset_s = int(datetime.now(TZ_LOCAL).utcoffset().total_seconds())
+            tz = get_account_tz(account_id)
+            offset_s = int(datetime.now(tz).utcoffset().total_seconds())
         except (AttributeError, TypeError, OSError):
             offset_s = 0
         offset_h = offset_s // 3600
@@ -87,7 +89,8 @@ class AnalyticsMixin:
         Returns {"YYYY-MM-DD": {"trades": int, "volume": float, "win_rate": float}}
         """
         try:
-            offset_s = int(datetime.now(TZ_LOCAL).utcoffset().total_seconds())
+            tz = get_account_tz(account_id)
+            offset_s = int(datetime.now(tz).utcoffset().total_seconds())
         except (AttributeError, TypeError, OSError):
             offset_s = 0
         offset_h = offset_s // 3600
