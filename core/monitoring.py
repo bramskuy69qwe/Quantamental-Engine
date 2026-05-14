@@ -106,60 +106,43 @@ class ReadyStateEvaluator:
     def _check_dd_gate(self) -> tuple:
         """Check dd_state against enforcement mode.
 
-        Returns (eligible: bool, reason: str).
-        Advisory mode: always eligible, but logs would_have_blocked_dd once
-        per limit episode.
-        Enforced mode: blocks on limit (unless manually overridden).
-        Warning state never blocks in either mode.
+        Delegates to ``dd_gate_allows_new_entry`` for the eligibility check.
+        Handles event logging (calculator_blocked / would_have_blocked_dd)
+        with dedup semantics.
         """
+        from core.dd_gate import dd_gate_allows_new_entry
+
         pf = app_state.portfolio
         if pf.dd_state != "limit":
             return True, ""
 
-        # Manual override bypass — trader explicitly accepted the risk
         aid = app_state.active_account_id
-        if aid in app_state.dd_manually_unblocked:
-            return True, ""
+        allowed, reason = dd_gate_allows_new_entry(aid)
 
-        dd_pct = pf.drawdown
-        aid = app_state.active_account_id
-
-        # Read enforcement mode
-        try:
-            from core.db_account_settings import get_account_settings
-            settings = get_account_settings(aid)
-            mode = settings.dd_enforcement_mode
-            limit_t = settings.dd_limit_threshold or 0
-        except Exception:
-            return True, ""  # can't read settings → don't block
-
-        payload = {
-            "gate": "dd_state",
-            "dd_state": "limit",
-            "drawdown": round(dd_pct, 6),
-            "limit_threshold": limit_t,
-        }
-
-        if mode == "enforced":
+        if not allowed:
+            # Enforced + limit → log calculator_blocked
             try:
                 from core.event_log import log_event
-                log_event(aid, "calculator_blocked", payload, source="ready_state")
+                log_event(aid, "calculator_blocked", {
+                    "gate": "dd_state", "dd_state": "limit",
+                    "drawdown": round(pf.drawdown, 6),
+                }, source="ready_state")
             except Exception:
                 log.warning("calculator_blocked log failed", exc_info=True)
-            reason = (
-                f"dd_state=limit (drawdown={dd_pct:.2%}, "
-                f"threshold={limit_t:.2%}, mode=enforced)"
-            )
             return False, reason
 
-        # Advisory mode: log shadow event once per limit episode
-        if aid not in app_state.dd_would_have_blocked_logged:
-            app_state.dd_would_have_blocked_logged.add(aid)
-            try:
-                from core.event_log import log_event
-                log_event(aid, "would_have_blocked_dd", payload, source="ready_state")
-            except Exception:
-                log.warning("would_have_blocked_dd log failed", exc_info=True)
+        # Advisory + limit → log shadow event once per episode
+        if aid not in app_state.dd_manually_unblocked:
+            if aid not in app_state.dd_would_have_blocked_logged:
+                app_state.dd_would_have_blocked_logged.add(aid)
+                try:
+                    from core.event_log import log_event
+                    log_event(aid, "would_have_blocked_dd", {
+                        "gate": "dd_state", "dd_state": "limit",
+                        "drawdown": round(pf.drawdown, 6),
+                    }, source="ready_state")
+                except Exception:
+                    log.warning("would_have_blocked_dd log failed", exc_info=True)
 
         return True, ""
 

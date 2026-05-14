@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.event_bus import event_bus
 from core.order_state import validate_transition, ACTIVE_STATES, OrderStatus, resolve_tpsl_direction
@@ -151,6 +151,37 @@ class OrderManager:
         await self._db.upsert_order_batch([order])
         await self.refresh_cache(account_id)
         return True
+
+    # ── DD-aware order gate (v2.4 Priority 1c) ─────────────────────────────
+
+    def check_dd_gate_for_order(
+        self, account_id: int, order: Dict[str, Any]
+    ) -> Tuple[bool, Optional[str]]:
+        """Check whether *order* is allowed under current dd_state.
+
+        New entries are gated when dd_state == limit + enforced mode.
+        TP/SL modifications and reduce-only closes always pass.
+
+        Returns ``(allowed, reason_or_None)``.
+        """
+        from core.dd_gate import dd_gate_allows_new_entry, is_new_entry
+
+        if not is_new_entry(order):
+            return True, None
+
+        allowed, reason = dd_gate_allows_new_entry(account_id)
+        if not allowed:
+            try:
+                from core.event_log import log_event
+                log_event(account_id, "calculator_blocked", {
+                    "gate": "order_manager_dd",
+                    "order_type": "new_entry",
+                    "symbol": order.get("symbol", ""),
+                    "side": order.get("side", ""),
+                }, source="order_manager")
+            except Exception:
+                log.warning("order dd gate log failed", exc_info=True)
+        return allowed, reason
 
     # ── Cache Refresh ──────────────────────────────────────────────────────
 
