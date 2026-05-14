@@ -9,7 +9,8 @@ from typing import Any, Dict, List
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from core.state import app_state, TZ_LOCAL
+from core.state import app_state
+from core.tz import get_account_tz, now_in_account_tz
 from core.database import db
 from core import analytics as an
 from core.analytics import (
@@ -26,7 +27,8 @@ router = APIRouter()
 
 def _analytics_range(month: str = "", all: str = "") -> tuple:
     """Return (from_ms, to_ms, period_label, current_month_str)."""
-    now = datetime.now(TZ_LOCAL)
+    tz = get_account_tz(app_state.active_account_id)
+    now = datetime.now(tz)
 
     if all == "1":
         from_ms = 0
@@ -38,16 +40,16 @@ def _analytics_range(month: str = "", all: str = "") -> tuple:
             y, m = int(month[:4]), int(month[5:7])
         except (ValueError, IndexError):
             y, m = now.year, now.month
-        start = datetime(y, m, 1, tzinfo=TZ_LOCAL)
+        start = datetime(y, m, 1, tzinfo=tz)
         _, ndays = _cal.monthrange(y, m)
-        end = datetime(y, m, ndays, 23, 59, 59, tzinfo=TZ_LOCAL)
+        end = datetime(y, m, ndays, 23, 59, 59, tzinfo=tz)
         from_ms = int(start.timestamp() * 1000)
         to_ms   = int(end.timestamp() * 1000)
         label   = start.strftime("%B %Y")
         month_s = f"{y:04d}-{m:02d}"
     else:
         y, m = now.year, now.month
-        start = datetime(y, m, 1, tzinfo=TZ_LOCAL)
+        start = datetime(y, m, 1, tzinfo=tz)
         from_ms = int(start.timestamp() * 1000)
         to_ms   = int(now.timestamp() * 1000)
         label   = start.strftime("%B %Y")
@@ -58,7 +60,7 @@ def _analytics_range(month: str = "", all: str = "") -> tuple:
 
 @router.get("/analytics", response_class=HTMLResponse)
 async def analytics_page(request: Request):
-    now = datetime.now(TZ_LOCAL)
+    now = now_in_account_tz(app_state.active_account_id)
     current_month = f"{now.year:04d}-{now.month:02d}"
     return templates.TemplateResponse(
         request,
@@ -115,7 +117,7 @@ async def frag_analytics_overview(request: Request, month: str = "", all: str = 
 
 @router.get("/fragments/analytics/equity_curve", response_class=HTMLResponse)
 async def frag_analytics_equity(request: Request, tf: str = "1M", log: str = "", dd: str = ""):
-    now = datetime.now(TZ_LOCAL)
+    now = now_in_account_tz(app_state.active_account_id)
     tf_ohlc_map = {
         "1W":  (1440,   7,   7),
         "2W":  (1440,  14,  14),
@@ -154,7 +156,7 @@ async def frag_analytics_equity(request: Request, tf: str = "1M", log: str = "",
 
 @router.get("/api/analytics/equity_ohlc")
 async def api_analytics_equity_ohlc(tf: str = "1M"):
-    now = datetime.now(TZ_LOCAL)
+    now = now_in_account_tz(app_state.active_account_id)
     tf_ohlc_map = {
         "1W":  (1440,   7,   7),
         "2W":  (1440,  14,  14),
@@ -175,7 +177,9 @@ async def api_analytics_equity_ohlc(tf: str = "1M"):
 
 @router.get("/fragments/analytics/calendar", response_class=HTMLResponse)
 async def frag_analytics_calendar(request: Request, month: str = "", all: str = ""):
-    now = datetime.now(TZ_LOCAL)
+    aid = app_state.active_account_id
+    tz = get_account_tz(aid)
+    now = datetime.now(tz)
     if month:
         try:
             y, m = int(month[:4]), int(month[5:7])
@@ -184,14 +188,14 @@ async def frag_analytics_calendar(request: Request, month: str = "", all: str = 
     else:
         y, m = now.year, now.month
 
-    prev_d = datetime(y, m, 1, tzinfo=TZ_LOCAL) - timedelta(days=1)
-    next_d = datetime(y, m, _cal.monthrange(y, m)[1], tzinfo=TZ_LOCAL) + timedelta(days=1)
+    prev_d = datetime(y, m, 1, tzinfo=tz) - timedelta(days=1)
+    next_d = datetime(y, m, _cal.monthrange(y, m)[1], tzinfo=tz) + timedelta(days=1)
     prev_month = f"{prev_d.year:04d}-{prev_d.month:02d}"
     next_month = f"{next_d.year:04d}-{next_d.month:02d}"
 
     _, ndays = _cal.monthrange(y, m)
-    start = datetime(y, m, 1, tzinfo=TZ_LOCAL)
-    end   = datetime(y, m, ndays, 23, 59, 59, tzinfo=TZ_LOCAL)
+    start = datetime(y, m, 1, tzinfo=tz)
+    end   = datetime(y, m, ndays, 23, 59, 59, tzinfo=tz)
     from_ms = int(start.timestamp() * 1000)
     to_ms   = int(end.timestamp() * 1000)
 
@@ -351,7 +355,7 @@ async def frag_analytics_funding(request: Request):
             adverse  = rate > 0 if p.direction == "LONG" else rate < 0
             nft_str  = "—"
             if nft > 0:
-                nft_dt  = datetime.fromtimestamp(nft / 1000, tz=_tz.utc).astimezone(TZ_LOCAL)
+                nft_dt  = datetime.fromtimestamp(nft / 1000, tz=_tz.utc).astimezone(get_account_tz(app_state.active_account_id))
                 nft_str = nft_dt.strftime("%H:%M:%S")
             rows.append({
                 "ticker": p.ticker, "direction": p.direction,
