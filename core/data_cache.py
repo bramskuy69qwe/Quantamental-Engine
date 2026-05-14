@@ -72,6 +72,40 @@ _PRESERVE_FIELDS = (
 _WS_PRIORITY_WINDOW_MS = 5000
 
 
+def _fetch_rolling_peak_equity(
+    account_id: int, window_days: int, current_equity: float
+) -> float:
+    """Query MAX(total_equity) from account_snapshots within the rolling window.
+
+    Uses sync sqlite3 via the same path-resolution pattern as
+    db_account_settings.  Returns *current_equity* if no snapshots exist
+    in the window (defensive — DD = 0).
+    """
+    import sqlite3
+    from datetime import timedelta
+
+    try:
+        from core.db_account_settings import _resolve_db_path
+        db_path = _resolve_db_path(account_id)
+    except KeyError:
+        return current_equity
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=window_days)).isoformat()
+    try:
+        conn = sqlite3.connect(db_path)
+        row = conn.execute(
+            "SELECT MAX(total_equity) FROM account_snapshots "
+            "WHERE account_id = ? AND snapshot_ts >= ?",
+            (account_id, cutoff),
+        ).fetchone()
+        conn.close()
+        db_peak = row[0] if row and row[0] is not None else 0.0
+    except Exception:
+        db_peak = 0.0
+
+    return max(db_peak, current_equity)
+
+
 class DataCache:
     """Single-writer cache for all mutable trading state.
 
@@ -96,10 +130,6 @@ class DataCache:
 
         # ── Account state (Phase 4) ─────────────────────────────────────────
         self._account_version = VersionedState()
-
-        # ── Rolling DD peak cache (v2.4) ─────────────────────────────────────
-        # Keyed by account_id. Updated on every recalc. Cheaper than DB query.
-        self._rolling_peak_equity: Dict[int, float] = {}
 
     # ── Read-only properties ─────────────────────────────────────────────────
 
@@ -426,8 +456,9 @@ class DataCache:
             pf.weekly_pnl_state = "ok"
 
         # ── Rolling DD (v2.4) ────────────────────────────────────────────────
-        # Uses per-account thresholds from account_settings + cached peak.
-        # Falls back to legacy intraday logic if account_settings unavailable.
+        # Uses per-account thresholds from account_settings + rolling-window
+        # peak from account_snapshots. Falls back to legacy intraday logic
+        # if account_settings unavailable.
         try:
             from core.dd_state import dd_state_with_recovery
             from core.db_account_settings import get_account_settings
@@ -439,12 +470,12 @@ class DataCache:
             recov_t = settings.dd_recovery_threshold
 
             if warn_t is not None and limit_t is not None:
-                # Update rolling peak cache
-                prev_peak = self._rolling_peak_equity.get(aid, total_equity)
-                rolling_peak = max(prev_peak, total_equity)
-                self._rolling_peak_equity[aid] = rolling_peak
+                # Query true rolling-window peak from account_snapshots
+                rolling_peak = _fetch_rolling_peak_equity(
+                    aid, settings.dd_rolling_window_days, total_equity,
+                )
 
-                # Compute rolling drawdown from cached peak
+                # Compute rolling drawdown
                 rolling_dd = (rolling_peak - total_equity) / rolling_peak if rolling_peak > 0 else 0.0
                 rolling_dd = max(rolling_dd, 0.0)
                 pf.drawdown = rolling_dd
@@ -471,7 +502,7 @@ class DataCache:
                             "window_days": settings.dd_rolling_window_days,
                         }, source="data_cache")
                     except Exception:
-                        pass  # event logging must not break portfolio recalc
+                        log.warning("dd_state_transition log failed", exc_info=True)
                 else:
                     app_state.dd_previous_states[aid] = new_state
             else:
