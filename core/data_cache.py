@@ -97,6 +97,10 @@ class DataCache:
         # ── Account state (Phase 4) ─────────────────────────────────────────
         self._account_version = VersionedState()
 
+        # ── Rolling DD peak cache (v2.4) ─────────────────────────────────────
+        # Keyed by account_id. Updated on every recalc. Cheaper than DB query.
+        self._rolling_peak_equity: Dict[int, float] = {}
+
     # ── Read-only properties ─────────────────────────────────────────────────
 
     @property
@@ -421,13 +425,67 @@ class DataCache:
         else:
             pf.weekly_pnl_state = "ok"
 
-        dd_ratio = pf.drawdown / prm["max_dd_percent"] if prm["max_dd_percent"] > 0 else 0
-        if dd_ratio >= prm["max_dd_limit_pct"]:
-            pf.dd_state = "limit"
-        elif dd_ratio >= prm["max_dd_warning_pct"]:
-            pf.dd_state = "warning"
-        else:
-            pf.dd_state = "ok"
+        # ── Rolling DD (v2.4) ────────────────────────────────────────────────
+        # Uses per-account thresholds from account_settings + cached peak.
+        # Falls back to legacy intraday logic if account_settings unavailable.
+        try:
+            from core.dd_state import dd_state_with_recovery
+            from core.db_account_settings import get_account_settings
+            aid = app_state.active_account_id
+
+            settings = get_account_settings(aid)
+            warn_t = settings.dd_warning_threshold
+            limit_t = settings.dd_limit_threshold
+            recov_t = settings.dd_recovery_threshold
+
+            if warn_t is not None and limit_t is not None:
+                # Update rolling peak cache
+                prev_peak = self._rolling_peak_equity.get(aid, total_equity)
+                rolling_peak = max(prev_peak, total_equity)
+                self._rolling_peak_equity[aid] = rolling_peak
+
+                # Compute rolling drawdown from cached peak
+                rolling_dd = (rolling_peak - total_equity) / rolling_peak if rolling_peak > 0 else 0.0
+                rolling_dd = max(rolling_dd, 0.0)
+                pf.drawdown = rolling_dd
+
+                # Evaluate state with recovery
+                prev_state = app_state.dd_previous_states.get(aid, "ok")
+                ep_peak = app_state.dd_episode_peaks.get(aid, rolling_dd)
+
+                new_state, new_ep_peak = dd_state_with_recovery(
+                    prev_state, rolling_dd, ep_peak, warn_t, limit_t, recov_t,
+                )
+                pf.dd_state = new_state
+                app_state.dd_episode_peaks[aid] = new_ep_peak
+
+                # Transition detection + event logging
+                if new_state != prev_state:
+                    app_state.dd_previous_states[aid] = new_state
+                    try:
+                        from core.event_log import log_event
+                        log_event(aid, "dd_state_transition", {
+                            "from": prev_state, "to": new_state,
+                            "drawdown": round(rolling_dd, 6),
+                            "peak_equity": round(rolling_peak, 2),
+                            "window_days": settings.dd_rolling_window_days,
+                        }, source="data_cache")
+                    except Exception:
+                        pass  # event logging must not break portfolio recalc
+                else:
+                    app_state.dd_previous_states[aid] = new_state
+            else:
+                # Thresholds not configured — keep drawdown computed above, state ok
+                pf.dd_state = "ok"
+        except Exception:
+            # Fallback: legacy intraday logic
+            dd_ratio = pf.drawdown / prm["max_dd_percent"] if prm["max_dd_percent"] > 0 else 0
+            if dd_ratio >= prm["max_dd_limit_pct"]:
+                pf.dd_state = "limit"
+            elif dd_ratio >= prm["max_dd_warning_pct"]:
+                pf.dd_state = "warning"
+            else:
+                pf.dd_state = "ok"
 
     # ── Account state: conflict resolution ──────────────────────────────────
 
