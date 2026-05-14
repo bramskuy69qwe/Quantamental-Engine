@@ -11,7 +11,7 @@ import logging
 from typing import Dict, List, Optional
 from datetime import datetime, timezone, timedelta
 
-from core.state import app_state, TZ_LOCAL  # TZ_LOCAL still used by non-critical sites
+from core.state import app_state
 from core.tz import now_in_account_tz
 from core.database import db
 from core.constants import MS_PER_DAY

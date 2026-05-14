@@ -18,7 +18,8 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict
 
-from core.state import app_state, TZ_LOCAL
+from core.state import app_state
+from core.tz import now_in_account_tz
 from core.database import db
 
 log = logging.getLogger("handlers")
@@ -166,7 +167,7 @@ async def handle_risk_calculated(payload: Dict[str, Any]) -> None:
 
     # Maintain in-memory cache (same shape as the old CSV-backed list)
     row = {
-        "timestamp":         payload.get("timestamp", datetime.now(TZ_LOCAL).isoformat()),
+        "timestamp":         payload.get("timestamp", now_in_account_tz(app_state.active_account_id).isoformat()),
         "ticker":            payload.get("ticker", ""),
         "average":           payload.get("average", 0),
         "side":              payload.get("side", ""),

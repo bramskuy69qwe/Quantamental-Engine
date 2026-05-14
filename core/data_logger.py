@@ -21,7 +21,8 @@ from typing import Dict, List, Any, Optional
 import pandas as pd
 
 import config
-from core.state import app_state, TZ_LOCAL
+from core.state import app_state
+from core.tz import now_in_account_tz
 from core.database import db
 
 
@@ -77,7 +78,7 @@ EXEC_FIELDS = [
 
 
 def log_execution(row: Dict) -> None:
-    row.setdefault("entry_timestamp", datetime.now(TZ_LOCAL).isoformat())
+    row.setdefault("entry_timestamp", now_in_account_tz(app_state.active_account_id).isoformat())
     _append_csv(config.EXECUTION_LOG, row, EXEC_FIELDS)
 
 
@@ -106,7 +107,7 @@ HISTORY_FIELDS = [
 
 
 def log_trade_close(row: Dict) -> None:
-    row.setdefault("exit_timestamp", datetime.now(TZ_LOCAL).isoformat())
+    row.setdefault("exit_timestamp", now_in_account_tz(app_state.active_account_id).isoformat())
     _append_csv(config.TRADE_HISTORY, row, HISTORY_FIELDS)
 
 
@@ -118,7 +119,7 @@ def _state_to_snapshot_dict() -> Dict:
     ex  = app_state.exchange_info
     prm = app_state.params
     ws  = app_state.ws_status
-    now = datetime.now(TZ_LOCAL).isoformat()
+    now = now_in_account_tz(app_state.active_account_id).isoformat()
 
     snap = {
         "snapshot_time": now,
@@ -175,7 +176,7 @@ def take_daily_snapshot() -> None:
     """Write BOD snapshot CSV."""
     _ensure_dirs()
     snap = _state_to_snapshot_dict()
-    date_str = datetime.now(TZ_LOCAL).strftime("%Y-%m-%d")
+    date_str = now_in_account_tz(app_state.active_account_id).strftime("%Y-%m-%d")
     path = os.path.join(config.SNAPSHOTS_DIR, f"{date_str}_bod.csv")
     pd.DataFrame([snap]).to_csv(path, index=False)
 
@@ -184,7 +185,7 @@ def take_monthly_snapshot() -> None:
     """Overwrite monthly CSV with current state (reset on 1st of month)."""
     _ensure_dirs()
     snap = _state_to_snapshot_dict()
-    month_str = datetime.now(TZ_LOCAL).strftime("%Y-%m")
+    month_str = now_in_account_tz(app_state.active_account_id).strftime("%Y-%m")
     path = os.path.join(config.SNAPSHOTS_DIR, f"{month_str}_monthly.csv")
 
     if os.path.exists(path):
@@ -223,7 +224,7 @@ async def export_all_to_excel(path: Optional[str] = None) -> str:
     """Export all log tables from SQLite to a multi-sheet XLSX file."""
     _ensure_dirs()
     if path is None:
-        ts = datetime.now(TZ_LOCAL).strftime("%Y%m%d_%H%M%S")
+        ts = now_in_account_tz(app_state.active_account_id).strftime("%Y%m%d_%H%M%S")
         path = os.path.join(config.DATA_DIR, f"risk_engine_export_{ts}.xlsx")
 
     pre_trade_df = pd.DataFrame(await db.get_all_pre_trade_log(days=365))

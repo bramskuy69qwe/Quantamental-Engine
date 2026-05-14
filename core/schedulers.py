@@ -15,7 +15,7 @@ from typing import Set
 
 import config
 from core.adapters.errors import RateLimitError
-from core.state import app_state, TZ_LOCAL  # TZ_LOCAL still used by non-critical sites
+from core.state import app_state
 from core.tz import now_in_account_tz
 from core.exchange import (
     fetch_exchange_info, fetch_account, fetch_positions,

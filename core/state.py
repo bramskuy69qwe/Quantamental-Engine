@@ -16,7 +16,9 @@ import config
 
 log = logging.getLogger("state")
 
-# DEPRECATED: prefer core.tz.get_account_tz(account_id). Removal after v2.4 Task 7.
+# DEPRECATED: all core/ sites now use core.tz.get_account_tz(account_id).
+# Retained only for api/ route handlers (~25 references). Migrate in a
+# dedicated api-layer TZ task, then delete this line.
 TZ_LOCAL = timezone(timedelta(hours=config.TIMEZONE_OFFSET_HOURS))
 
 
@@ -182,7 +184,11 @@ class WSStatus:
     logs:               List[str] = field(default_factory=list)
 
     def add_log(self, msg: str):
-        ts = datetime.now(TZ_LOCAL).strftime("%H:%M:%S")
+        try:
+            from core.tz import now_in_account_tz
+            ts = now_in_account_tz(AppState().active_account_id).strftime("%H:%M:%S")
+        except Exception:
+            ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
         self.logs.append(f"[{ts}] {msg}")
         if len(self.logs) > config.WS_LOG_MAX_DISPLAY:
             self.logs = self.logs[-config.WS_LOG_MAX_DISPLAY:]
@@ -386,7 +392,8 @@ class AppState:
     # ── BOD reset ─────────────────────────────────────────────────────────────
 
     def perform_bod_reset(self):
-        now_local = datetime.now(TZ_LOCAL)
+        from core.tz import now_in_account_tz
+        now_local = now_in_account_tz(self.active_account_id)
         acc = self.account_state
         acc.bod_equity       = acc.total_equity
         acc.bod_timestamp    = now_local.isoformat()

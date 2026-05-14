@@ -4,7 +4,6 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from core.state import TZ_LOCAL  # DEPRECATED — kept for non-critical sites
 from core.tz import get_account_tz
 
 log = logging.getLogger("database")

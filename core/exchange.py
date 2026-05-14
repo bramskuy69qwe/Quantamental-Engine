@@ -15,7 +15,7 @@ from datetime import datetime, timezone, timedelta
 import config
 from core.adapters.errors import RateLimitError
 from core.order_state import resolve_tpsl_direction
-from core.state import app_state, PositionInfo, TZ_LOCAL
+from core.state import app_state, PositionInfo
 from core.database import db
 from core.adapters import get_adapter, to_position_info, map_market_type
 from core.adapters.protocols import ExchangeAdapter
