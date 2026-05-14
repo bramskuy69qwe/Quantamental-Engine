@@ -33,6 +33,14 @@ class BinanceUSDMAdapter(BaseExchangeAdapter):
 
     exchange_id = "binance"
     market_type = "linear_perpetual"
+    capabilities = {
+        "orders":            True,
+        "conditional_orders": True,
+        "market_data":       True,
+        "account_query":     True,
+        "position_query":    True,
+        "historical_equity": False,  # no historical equity endpoint
+    }
 
     def __init__(self, api_key: str, api_secret: str, proxy: str = ""):
         super().__init__(api_key, api_secret, proxy)
