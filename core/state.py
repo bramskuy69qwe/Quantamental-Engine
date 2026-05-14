@@ -248,6 +248,10 @@ class AppState:
         # Exchange-fetched realized PnL history (newest first)
         self.exchange_trade_history: List[Dict] = []
 
+        # Rolling DD episode tracking (keyed by account_id)
+        self.dd_episode_peaks: Dict[int, float] = {}
+        self.dd_previous_states: Dict[int, str] = {}
+
         # True while the background startup fetch is still in progress
         self.is_initializing: bool = True
 
@@ -296,6 +300,8 @@ class AppState:
         self.ohlcv_cache          = {}
         self.orderbook_cache      = {}
         self.mark_price_cache     = {}
+        self.dd_episode_peaks     = {}
+        self.dd_previous_states   = {}
         self.exchange_trade_history = []
         self.pre_trade_log        = []
         self.is_initializing      = True
