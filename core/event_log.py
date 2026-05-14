@@ -122,3 +122,47 @@ def log_event(
         return cur.lastrowid  # type: ignore[return-value]
     finally:
         conn.close()
+
+
+# ── Read API ─────────────────────────────────────────────────────────────────
+
+
+def query_events(
+    account_id: int,
+    *,
+    event_type: Optional[str] = None,
+    from_ts: Optional[str] = None,
+    to_ts: Optional[str] = None,
+    limit: int = 100,
+    data_dir: Optional[str] = None,
+) -> list[dict]:
+    """Query engine_events rows for *account_id*.
+
+    Returns list of dicts (newest first). Filters by event_type and
+    timestamp range when provided.
+    """
+    db_path = _resolve_db_path(account_id, data_dir)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        clauses = ["account_id = ?"]
+        params: list = [account_id]
+        if event_type:
+            clauses.append("event_type = ?")
+            params.append(event_type)
+        if from_ts:
+            clauses.append("timestamp >= ?")
+            params.append(from_ts)
+        if to_ts:
+            clauses.append("timestamp <= ?")
+            params.append(to_ts)
+        where = " AND ".join(clauses)
+        params.append(limit)
+        rows = conn.execute(
+            f"SELECT * FROM engine_events WHERE {where} "
+            f"ORDER BY timestamp DESC LIMIT ?",
+            params,
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
