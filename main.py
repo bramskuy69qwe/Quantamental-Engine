@@ -68,6 +68,14 @@ async def lifespan(app: FastAPI):
     # ── SQLite init (fast — local file) ──────────────────────────────────────
     await db.initialize()
 
+    # ── SQL migrations (post-split only — no-op if marker absent) ────────────
+    from core.migrations.runner import run_all as _run_migrations
+    _run_migrations()
+
+    # ── Data migrations (threshold conversion from legacy account_params) ────
+    from core.migrations.convert_thresholds import convert_thresholds as _convert_thresholds
+    _convert_thresholds()
+
     # ── Load account registry (fast — local DB) ──────────────────────────────
     await account_registry.load_all()
     # SR-2: app_state.active_account_id is now a read-through property

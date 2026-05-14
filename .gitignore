@@ -10,6 +10,7 @@ venv/
 # --- Database & Persistence ---
 # Ignore local TimescaleDB/Postgres data dumps or logs
 *.sql
+!core/migrations/*.sql
 *.dump
 *.log
 
