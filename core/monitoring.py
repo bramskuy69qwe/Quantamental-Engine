@@ -109,11 +109,16 @@ class ReadyStateEvaluator:
         Returns (eligible: bool, reason: str).
         Advisory mode: always eligible, but logs would_have_blocked_dd once
         per limit episode.
-        Enforced mode: blocks on limit.
+        Enforced mode: blocks on limit (unless manually overridden).
         Warning state never blocks in either mode.
         """
         pf = app_state.portfolio
         if pf.dd_state != "limit":
+            return True, ""
+
+        # Manual override bypass — trader explicitly accepted the risk
+        aid = app_state.active_account_id
+        if aid in app_state.dd_manually_unblocked:
             return True, ""
 
         dd_pct = pf.drawdown

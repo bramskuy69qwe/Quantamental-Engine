@@ -253,6 +253,8 @@ class AppState:
         self.dd_previous_states: Dict[int, str] = {}
         # Tracks which accounts have had would_have_blocked_dd logged this episode
         self.dd_would_have_blocked_logged: Set[int] = set()
+        # Accounts where trader manually overrode the dd_state gate
+        self.dd_manually_unblocked: Set[int] = set()
 
         # True while the background startup fetch is still in progress
         self.is_initializing: bool = True
@@ -305,6 +307,7 @@ class AppState:
         self.dd_episode_peaks     = {}
         self.dd_previous_states   = {}
         self.dd_would_have_blocked_logged = set()
+        self.dd_manually_unblocked = set()
         self.exchange_trade_history = []
         self.pre_trade_log        = []
         self.is_initializing      = True
