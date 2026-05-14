@@ -27,7 +27,7 @@
       <!-- Drawdown gauge -->
       <div>
         <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px;">
-          <span class="lbl" style="margin-bottom:0;">Today's DD</span>
+          <span class="lbl" style="margin-bottom:0;">Rolling DD</span>
           <div style="display:flex;align-items:center;gap:6px;">
             <span class="mono" style="font-size:.82rem;">{{ fmt(drawdown_pct, 2) }}%</span>
             <span class="badge {{ 'badge-ok' if drawdown_state=='ok' else 'badge-warning' if drawdown_state=='warning' else 'badge-limit' }}">
@@ -52,7 +52,7 @@
         </span>
       </div>
       <div>
-        <span class="lbl" style="font-size:.55rem;color:var(--muted);">Today's DD State</span>
+        <span class="lbl" style="font-size:.55rem;color:var(--muted);">Rolling DD State</span>
         <span class="badge {{ 'badge-ok' if drawdown_state=='ok' else 'badge-warning' if drawdown_state=='warning' else 'badge-limit' }}" style="margin-top:3px;display:inline-block;">
           {{ drawdown_state | upper }}
         </span>
