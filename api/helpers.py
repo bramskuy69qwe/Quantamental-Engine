@@ -16,7 +16,8 @@ from fastapi import Request
 from fastapi.templating import Jinja2Templates
 
 import config
-from core.state import app_state, TZ_LOCAL
+from core.state import app_state
+from core.tz import get_account_tz, now_in_account_tz
 from core.account_registry import account_registry
 
 # ── Templates ────────────────────────────────────────────────────────────────
@@ -83,7 +84,7 @@ def _ms_to_local(ms: int) -> str:
     if not ms:
         return "—"
     try:
-        dt = datetime.fromtimestamp(ms / 1000, tz=TZ_LOCAL)
+        dt = datetime.fromtimestamp(ms / 1000, tz=get_account_tz(app_state.active_account_id))
         return dt.strftime("%Y-%m-%d %H:%M:%S")
     except Exception:
         return "—"
@@ -102,7 +103,7 @@ def _ctx(request: Request, **extra) -> dict:
     """Base template context for every page render."""
     from core.platform_bridge import platform_bridge  # late import: circular dep with exchange
     return {
-        "now":               datetime.now(TZ_LOCAL).strftime("%Y-%m-%d %H:%M:%S"),
+        "now":               now_in_account_tz(app_state.active_account_id).strftime("%Y-%m-%d %H:%M:%S"),
         "ws_status":         app_state.ws_status,
         "plugin_connected":  platform_bridge.is_connected,
         "params":            app_state.params,
