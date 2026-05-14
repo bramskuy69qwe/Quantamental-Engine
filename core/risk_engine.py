@@ -222,6 +222,19 @@ def calculate_position_size(
         result["ineligible_reason"] = f"Engine not ready: {ready_reason}"
         return result
 
+    # 0d: capability gate — refuse sizing if adapter doesn't support orders
+    try:
+        from core.exchange import _get_adapter
+        from core.adapters.protocols import require_capability, AdapterCapabilityError
+        adapter = _get_adapter()
+        require_capability(adapter, "orders")
+    except AdapterCapabilityError as exc:
+        result["eligible"] = False
+        result["ineligible_reason"] = str(exc)
+        return result
+    except Exception:
+        pass  # adapter unavailable — ReadyStateEvaluator already handles this
+
     if average <= 0 or sl_price <= 0:
         result["eligible"] = False
         result["ineligible_reason"] = "Invalid entry or SL price."
