@@ -492,6 +492,11 @@ class DatabaseManager(
             # AN-1: backfill_completed replaces mfe=0/mae=0 sentinel
             "ALTER TABLE exchange_history ADD COLUMN backfill_completed INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE closed_positions ADD COLUMN backfill_completed INTEGER NOT NULL DEFAULT 0",
+            # v2.4: calc_id for calculator-order correlation
+            "ALTER TABLE orders ADD COLUMN calc_id TEXT",
+            "ALTER TABLE fills ADD COLUMN calc_id TEXT",
+            "ALTER TABLE orders ADD COLUMN tp_trigger_price REAL",
+            "ALTER TABLE orders ADD COLUMN sl_trigger_price REAL",
         ]:
             try:
                 await self._conn.execute(migration)
