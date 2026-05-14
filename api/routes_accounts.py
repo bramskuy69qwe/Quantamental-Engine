@@ -389,3 +389,59 @@ async def update_account_detail(
             await event_bus.publish("risk:params_updated", {"ts": "config_save"})
 
     return HTMLResponse('<span style="color:var(--green);font-size:.65rem;">Saved.</span>')
+
+
+# ── DD manual override ───────────────────────────────────────────────────────
+
+
+@router.post("/account/{account_id}/dd_override", response_class=HTMLResponse)
+async def dd_override(account_id: int, request: Request):
+    """Manually override the dd_state gate for an account in limit state.
+
+    Requires a reason (min 10 chars). Override persists until dd_state
+    transitions out of limit; next limit episode re-engages the gate.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    reason = (body.get("reason") or "").strip()
+
+    # Validate reason
+    if len(reason) < 10:
+        return HTMLResponse(
+            '<div class="alert alert-error">Reason must be at least 10 characters.</div>',
+            status_code=400,
+        )
+
+    # Validate account is in limit
+    pf = app_state.portfolio
+    if pf.dd_state != "limit":
+        return HTMLResponse(
+            '<div class="alert alert-error">Account is not in limit state — override not needed.</div>',
+            status_code=400,
+        )
+
+    # Already overridden?
+    if account_id in app_state.dd_manually_unblocked:
+        return HTMLResponse(
+            '<div class="alert alert-warning">Override already active.</div>',
+        )
+
+    # Apply override
+    app_state.dd_manually_unblocked.add(account_id)
+
+    # Log event
+    try:
+        from core.event_log import log_event
+        log_event(account_id, "manual_override", {
+            "reason": reason,
+            "drawdown": round(pf.drawdown, 6),
+            "peak_equity": round(app_state.account_state.total_equity, 2),
+        }, source="api_override")
+    except Exception:
+        log.warning("manual_override event log failed", exc_info=True)
+
+    return HTMLResponse(
+        '<div class="alert alert-success">DD gate overridden. Calculator unblocked until next recovery.</div>'
+    )
