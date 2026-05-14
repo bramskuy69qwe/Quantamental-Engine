@@ -275,6 +275,25 @@ The following are known gaps in this document, to be filled as work progresses:
 
 ---
 
+## Capabilities
+
+Declared on `BinanceUSDMAdapter.capabilities` (class attribute).
+Engine factory and calculator gate check these flags at runtime.
+
+| Capability | Value | Status | Notes |
+|------------|-------|--------|-------|
+| `orders` | True | VERIFIED (2026-05-15) | Full order lifecycle via CCXT `create_order`, `cancel_order` |
+| `conditional_orders` | True | VERIFIED (2026-05-15) | TP/SL via `stop_market`/`take_profit_market` order types |
+| `market_data` | True | VERIFIED (2026-05-15) | OHLCV, orderbook, mark price, funding rates |
+| `account_query` | True | VERIFIED (2026-05-15) | Account balances, margin info via `fetch_balance` |
+| `position_query` | True | VERIFIED (2026-05-15) | Open positions via `fetch_positions` |
+| `historical_equity` | **False** | VERIFIED (2026-05-15) | Binance does not expose a historical equity/balance endpoint. Equity history is reconstructed from income records + snapshots. |
+
+**Reference**: `core/adapters/protocols.py:CAPABILITY_KEYS` for the
+canonical key vocabulary.
+
+---
+
 ## Maintenance Log
 
 | Date | Reviewer | Scope |

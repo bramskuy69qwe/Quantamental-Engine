@@ -238,6 +238,25 @@ These sections are known gaps, marked explicitly for future verification:
 
 ---
 
+## Capabilities
+
+Declared on `BybitLinearAdapter.capabilities` (class attribute).
+Engine factory and calculator gate check these flags at runtime.
+
+| Capability | Value | Status | Notes |
+|------------|-------|--------|-------|
+| `orders` | True | VERIFIED (2026-05-15) | Full order lifecycle via CCXT V5 API |
+| `conditional_orders` | True | VERIFIED (2026-05-15) | TP/SL via conditional order placement |
+| `market_data` | True | VERIFIED (2026-05-15) | OHLCV, orderbook, mark price, funding rates |
+| `account_query` | True | VERIFIED (2026-05-15) | Wallet balance via V5 account endpoint |
+| `position_query` | True | VERIFIED (2026-05-15) | Open positions via V5 position endpoint |
+| `historical_equity` | **False** | VERIFIED (2026-05-15) | Bybit does not expose a historical equity endpoint. Same as Binance: equity reconstructed from income + snapshots. |
+
+**Reference**: `core/adapters/protocols.py:CAPABILITY_KEYS` for the
+canonical key vocabulary.
+
+---
+
 ## Maintenance Log
 
 | Date | Reviewer | Scope |
