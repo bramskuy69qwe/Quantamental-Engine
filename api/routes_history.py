@@ -8,7 +8,8 @@ from fastapi.responses import HTMLResponse
 from markupsafe import escape
 
 import config
-from core.state import app_state, TZ_LOCAL
+from core.state import app_state
+from core.tz import get_account_tz, now_in_account_tz
 from core.database import db
 from core.data_logger import log_execution, log_trade_close, load_recent_history
 from api.helpers import templates, _ctx, _paginate_list, _table_ctx
@@ -19,13 +20,14 @@ router = APIRouter()
 
 @router.get("/history", response_class=HTMLResponse)
 async def history_page(request: Request):
-    now       = datetime.now(TZ_LOCAL)
+    aid = app_state.active_account_id
+    tz = get_account_tz(aid)
+    now = datetime.now(tz)
     date_from = (now - timedelta(days=30)).strftime("%Y-%m-%dT00:00:00")
     date_to   = now.strftime("%Y-%m-%dT23:59:59")
 
-    aid = app_state.active_account_id
     ex_rows, ex_total = await db.query_exchange_history(
-        date_from=date_from, date_to=date_to, tz_local=TZ_LOCAL, account_id=aid,
+        date_from=date_from, date_to=date_to, tz_local=tz, account_id=aid,
     )
     ex_notes = await db.get_position_notes([r["trade_key"] for r in ex_rows])
     ex_pages  = max(1, (ex_total + 19) // 20)
@@ -147,7 +149,7 @@ async def frag_history_exchange(
         page=page, per_page=per_page,
         sort_by=sort_by, sort_dir=sort_dir,
         search=search, date_from=date_from, date_to=date_to,
-        tz_local=TZ_LOCAL,
+        tz_local=get_account_tz(app_state.active_account_id),
         account_id=app_state.active_account_id,
     )
     total_pages = max(1, (total + per_page - 1) // per_page)
