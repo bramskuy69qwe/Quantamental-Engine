@@ -199,7 +199,11 @@ def calculate_position_size(
     Implements the full PRD sizing chain.
     Returns dict including base_size, est_fill_price, atr14, atr100.
     """
+    import uuid
+    calc_id = uuid.uuid4().hex
+
     result: Dict = {
+        "calc_id":         calc_id,
         "atr_c":           None,
         "atr_category":    "unknown",
         "atr14":           None,
@@ -460,6 +464,7 @@ def run_risk_calculator(
         "equity_stale":        equity_stale,
         "total_equity":        total_equity,
         # Misc
+        "calc_id":             calc_id,
         "model_name":          model_name,
         "model_desc":          model_desc,
         "order_type":          order_type,

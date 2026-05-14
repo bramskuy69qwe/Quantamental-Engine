@@ -89,13 +89,13 @@ class TradesMixin:
                     tp_price, tp_amount_pct, tp_usdt, sl_price, sl_amount_pct, sl_usdt,
                     model_name, model_desc, risk_usdt, atr_c, atr_category,
                     est_slippage, effective_entry, size, notional,
-                    est_profit, est_loss, est_r, est_exposure, eligible
+                    est_profit, est_loss, est_r, est_exposure, eligible, calc_id
                 ) VALUES (
                     :account_id, :timestamp, :ticker, :average, :side, :one_percent_depth, :individual_risk,
                     :tp_price, :tp_amount_pct, :tp_usdt, :sl_price, :sl_amount_pct, :sl_usdt,
                     :model_name, :model_desc, :risk_usdt, :atr_c, :atr_category,
                     :est_slippage, :effective_entry, :size, :notional,
-                    :est_profit, :est_loss, :est_r, :est_exposure, :eligible
+                    :est_profit, :est_loss, :est_r, :est_exposure, :eligible, :calc_id
                 )""",
                 {
                     "account_id":        row.get("account_id", 1),
@@ -125,6 +125,7 @@ class TradesMixin:
                     "est_r":             row.get("est_r", 0),
                     "est_exposure":      row.get("est_exposure", 0),
                     "eligible":          1 if row.get("eligible") else 0,
+                    "calc_id":           row.get("calc_id"),
                 },
             )
             await self._conn.commit()
