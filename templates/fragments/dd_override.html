@@ -1,0 +1,63 @@
+{% if dd_state == "limit" and not dd_override_active %}
+<div class="card" style="border:1px solid var(--red);padding:12px;margin-top:8px;">
+  <div style="font-size:.75rem;color:var(--red);font-weight:600;margin-bottom:6px;">
+    DD Gate Active — Calculator Blocked
+  </div>
+  <p style="font-size:.65rem;color:var(--muted);margin-bottom:8px;">
+    Drawdown has reached the limit threshold. To override and unblock the
+    calculator, provide a reason (minimum 10 characters). Override expires
+    when drawdown recovers.
+  </p>
+  <form id="dd-override-form"
+        hx-post="/account/{{ account_id }}/dd_override"
+        hx-target="#dd-override-result"
+        hx-swap="innerHTML"
+        hx-headers='{"Content-Type": "application/json"}'
+        hx-vals="js:{reason: document.getElementById('dd-override-reason').value}"
+        style="display:flex;flex-direction:column;gap:6px;">
+    <textarea id="dd-override-reason"
+              placeholder="Why is this override justified? (min 10 chars)"
+              style="font-size:.65rem;min-height:48px;resize:vertical;padding:6px;
+                     background:var(--bg-card);color:var(--text);border:1px solid var(--border);
+                     border-radius:4px;"
+              required minlength="10"></textarea>
+    <button id="dd-override-btn"
+            type="submit"
+            disabled
+            style="font-size:.65rem;padding:4px 12px;align-self:flex-end;
+                   background:var(--red);color:#fff;border:none;border-radius:4px;
+                   opacity:0.5;cursor:not-allowed;">
+      Override (<span id="dd-countdown">5</span>s)
+    </button>
+  </form>
+  <div id="dd-override-result" style="margin-top:4px;"></div>
+  <script>
+    (function() {
+      var btn = document.getElementById('dd-override-btn');
+      var cd = document.getElementById('dd-countdown');
+      var t = 5;
+      var iv = setInterval(function() {
+        t--;
+        if (cd) cd.textContent = t;
+        if (t <= 0) {
+          clearInterval(iv);
+          btn.disabled = false;
+          btn.style.opacity = '1';
+          btn.style.cursor = 'pointer';
+          btn.textContent = 'Override';
+        }
+      }, 1000);
+    })();
+  </script>
+</div>
+{% elif dd_override_active %}
+<div class="card" style="border:1px solid var(--amber);padding:12px;margin-top:8px;">
+  <div style="font-size:.75rem;color:var(--amber);font-weight:600;">
+    DD Gate Override Active
+  </div>
+  <p style="font-size:.65rem;color:var(--muted);margin-top:4px;">
+    Calculator unblocked by manual override. Gate will re-engage when drawdown
+    recovers and a new limit episode begins.
+  </p>
+</div>
+{% endif %}
