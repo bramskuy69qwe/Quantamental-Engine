@@ -129,10 +129,16 @@ class WSEventType:
 
 @runtime_checkable
 class ExchangeAdapter(Protocol):
-    """REST adapter — what every exchange implementation must provide."""
+    """REST adapter — what every exchange implementation must provide.
+
+    ``capabilities`` declares which feature groups the adapter supports.
+    Keys: ``orders``, ``conditional_orders``, ``market_data``,
+    ``account_query``, ``position_query``, ``historical_equity``.
+    """
 
     exchange_id: str
     market_type: str
+    capabilities: Dict[str, bool]
 
     @property
     def ohlcv_limit(self) -> int:
@@ -303,6 +309,32 @@ class WSAdapter(Protocol):
     def build_subscribe_payload(self, topics: List[str]) -> Optional[dict]:
         """Return subscription message, or None if topics are in URL."""
         ...
+
+
+# ── Capability checks ────────────────────────────────────────────────────────
+
+
+class AdapterCapabilityError(Exception):
+    """Raised when an adapter lacks a required capability."""
+
+
+CAPABILITY_KEYS = frozenset({
+    "orders", "conditional_orders", "market_data",
+    "account_query", "position_query", "historical_equity",
+})
+
+
+def require_capability(adapter: ExchangeAdapter, capability: str) -> None:
+    """Raise ``AdapterCapabilityError`` if *adapter* lacks *capability*.
+
+    Checks that the capability key exists and is True.
+    """
+    caps = getattr(adapter, "capabilities", {})
+    if not caps.get(capability):
+        raise AdapterCapabilityError(
+            f"{type(adapter).__name__} does not support '{capability}' "
+            f"(capabilities={caps})"
+        )
 
 
 # ── Optional capability protocols ────────────────────────────────────────────
