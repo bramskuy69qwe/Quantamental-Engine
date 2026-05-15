@@ -322,6 +322,7 @@ async def update_account_detail(
     max_dd_warning_pct: Optional[float] = Form(None),
     max_dd_limit_pct: Optional[float] = Form(None),
     # Preferences (account_settings table)
+    timezone: Optional[str] = Form(None),
     analytics_default_period: Optional[str] = Form(None),
 ):
     """Save credentials + params + fees for an account in one request."""
@@ -396,17 +397,24 @@ async def update_account_detail(
             await event_bus.publish("risk:params_updated", {"ts": "config_save"})
 
     # Update account_settings preferences
+    settings_updates = {}
     if analytics_default_period is not None:
         from core.period_resolver import VALID_PERIODS
         if analytics_default_period in VALID_PERIODS:
-            from core.db_account_settings import update_account_settings
-            try:
-                update_account_settings(
-                    account_id,
-                    analytics_default_period=analytics_default_period,
-                )
-            except Exception:
-                pass
+            settings_updates["analytics_default_period"] = analytics_default_period
+    if timezone is not None:
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+        try:
+            ZoneInfo(timezone)  # validate
+            settings_updates["timezone"] = timezone
+        except (ZoneInfoNotFoundError, KeyError):
+            pass
+    if settings_updates:
+        from core.db_account_settings import update_account_settings
+        try:
+            update_account_settings(account_id, **settings_updates)
+        except Exception:
+            pass
 
     return HTMLResponse('<span style="color:var(--green);font-size:.65rem;">Saved.</span>')
 

@@ -23,9 +23,6 @@ ENV_MASTER_KEY = os.getenv("ENV_MASTER_KEY", "")
 EXCHANGE_NAME      = "Binance"
 MARKET_TYPE        = "future"          # USD-M perpetuals
 
-# ── Timezone ──────────────────────────────────────────────────────────────────
-TIMEZONE_OFFSET_HOURS = 7             # UTC+7
-
 # ── Fees (Binance USD-M default tiers) ────────────────────────────────────────
 MAKER_FEE = 0.0002                    # 0.02 %
 TAKER_FEE = 0.0005                    # 0.05 %

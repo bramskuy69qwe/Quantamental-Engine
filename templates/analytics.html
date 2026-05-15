@@ -9,14 +9,23 @@
   <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;">
 
     <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
-      <button onclick="shiftMonth(-1)" class="btn btn-ghost btn-sm">‹</button>
-      <span id="month-display" style="font-family:var(--font-mono);font-size:.85rem;font-weight:700;
-            min-width:70px;text-align:center;color:var(--text);">{{ current_month }}</span>
-      <button onclick="shiftMonth(1)"  class="btn btn-ghost btn-sm">›</button>
+      <button id="nav-prev" onclick="navPeriod(-1)" class="btn btn-ghost btn-sm">‹</button>
+      <span id="period-display" style="font-family:var(--font-mono);font-size:.85rem;font-weight:700;
+            min-width:120px;text-align:center;color:var(--text);">Loading...</span>
+      <button id="nav-next" onclick="navPeriod(1)"  class="btn btn-ghost btn-sm">›</button>
       <span style="color:var(--muted);margin:0 2px;">|</span>
-      <button onclick="setMonthPreset(0)"  id="pb-cur" class="preset-btn">This Month</button>
-      <button onclick="setMonthPreset(-1)" id="pb-1"   class="preset-btn">Last Month</button>
-      <button onclick="setMonthAll()"      id="pb-all" class="preset-btn">All Time</button>
+      {% set period_presets = [
+        ('monthly',     'Month'),
+        ('weekly',      'Week'),
+        ('quarterly',   'Quarter'),
+        ('yearly',      'Year'),
+        ('rolling_30d', '30D'),
+        ('rolling_90d', '90D'),
+        ('all_time',    'All'),
+      ] %}
+      {% for val, label in period_presets %}
+      <button onclick="setPeriod('{{ val }}')" id="pp-{{ val }}" class="preset-btn">{{ label }}</button>
+      {% endfor %}
     </div>
   </div>
 
@@ -49,9 +58,12 @@
 </div>
 
 <script>
-var _activeTab='overview',_activeMonth='{{ current_month }}',_allTime=false;
+var _activeTab = 'overview';
+var _period = '{{ default_period | default("monthly") }}';
+var _offset = 0;
+var _noNav = { rolling_30d:1, rolling_90d:1, all_time:1 };
 
-var TAB_ENDPOINTS={
+var TAB_ENDPOINTS = {
   overview:   '/fragments/analytics/overview',
   equity:     '/fragments/analytics/equity_curve',
   calendar:   '/fragments/analytics/calendar',
@@ -63,55 +75,82 @@ var TAB_ENDPOINTS={
   beta:       '/fragments/analytics/beta',
 };
 
-function shiftMonth(delta){
-  _allTime=false;
-  var parts=_activeMonth.split('-').map(Number);
-  var d=new Date(parts[0],parts[1]-1+delta,1);
-  _activeMonth=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
-  document.getElementById('month-display').textContent=_activeMonth;
-  _clearPresets();loadTab(_activeTab);
-}
-function setMonthPreset(offsetMonths){
-  _allTime=false;
-  var now=new Date(),d=new Date(now.getFullYear(),now.getMonth()+offsetMonths,1);
-  _activeMonth=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
-  document.getElementById('month-display').textContent=_activeMonth;
-  _clearPresets();
-  var pid=offsetMonths===0?'pb-cur':'pb-1';
-  document.getElementById(pid).classList.add('active');
-  loadTab(_activeTab);
-}
-function setMonthAll(){
-  _allTime=true;document.getElementById('month-display').textContent='All Time';
-  _clearPresets();document.getElementById('pb-all').classList.add('active');
-  loadTab(_activeTab);
-}
-function _clearPresets(){['pb-cur','pb-1','pb-all'].forEach(id=>document.getElementById(id)?.classList.remove('active'));}
+var PERIOD_IDS = ['monthly','weekly','quarterly','yearly','rolling_30d','rolling_90d','all_time'];
 
-function switchTab(tid){
-  if(_activeTab===tid)return;_activeTab=tid;
-  document.querySelectorAll('#analytics-tabs .tab-btn').forEach(b=>b.classList.remove('active'));
-  document.getElementById('tab-'+tid)?.classList.add('active');
+function setPeriod(p) {
+  _period = p; _offset = 0;
+  _highlightPreset();
+  _updateNav();
+  loadTab(_activeTab);
+}
+
+function navPeriod(dir) {
+  if (_noNav[_period]) return;
+  _offset += dir;
+  loadTab(_activeTab);
+}
+
+function _highlightPreset() {
+  PERIOD_IDS.forEach(function(id) {
+    var el = document.getElementById('pp-' + id);
+    if (el) el.classList.toggle('active', id === _period);
+  });
+}
+
+function _updateNav() {
+  var dis = !!_noNav[_period];
+  document.getElementById('nav-prev').disabled = dis;
+  document.getElementById('nav-next').disabled = dis;
+  document.getElementById('nav-prev').style.opacity = dis ? '.3' : '1';
+  document.getElementById('nav-next').style.opacity = dis ? '.3' : '1';
+}
+
+function switchTab(tid) {
+  if (_activeTab === tid) return;
+  _activeTab = tid;
+  document.querySelectorAll('#analytics-tabs .tab-btn').forEach(function(b) { b.classList.remove('active'); });
+  document.getElementById('tab-' + tid)?.classList.add('active');
   loadTab(tid);
 }
-function loadTab(tid){
-  var ep=TAB_ENDPOINTS[tid];if(!ep)return;
-  var qs=_allTime?'all=1':'month='+encodeURIComponent(_activeMonth);
-  document.getElementById('analytics-content').innerHTML='<div style="text-align:center;color:var(--muted);padding:32px;font-size:.78rem;">Loading...</div>';
-  htmx.ajax('GET',ep+'?'+qs,{target:'#analytics-content',swap:'innerHTML'});
+
+function _periodLabel() {
+  var d = new Date();
+  if (_period === 'monthly') {
+    d.setMonth(d.getMonth() + _offset);
+    return d.toLocaleString('en', {month:'long'}) + ' ' + d.getFullYear();
+  }
+  if (_period === 'weekly') {
+    d.setDate(d.getDate() + _offset * 7);
+    var day = d.getDate(), mo = d.toLocaleString('en',{month:'short'});
+    return 'Week of ' + mo + ' ' + day;
+  }
+  if (_period === 'quarterly') {
+    d.setMonth(d.getMonth() + _offset * 3);
+    var q = Math.floor(d.getMonth() / 3) + 1;
+    return 'Q' + q + ' ' + d.getFullYear();
+  }
+  if (_period === 'yearly') {
+    return String(d.getFullYear() + _offset);
+  }
+  if (_period === 'rolling_30d') return 'Rolling 30 Days';
+  if (_period === 'rolling_90d') return 'Rolling 90 Days';
+  return 'All Time';
 }
 
-// IIFE: apply saved default period, then load first tab
-(function(){
-  var dp = '{{ default_period | default("monthly") }}';
-  if(dp==='all_time'){
-    setMonthAll();
-  } else {
-    // monthly / weekly / quarterly / yearly / rolling — default to This Month view
-    // TODO: add full period support (weekly/quarterly/rolling date ranges)
-    document.getElementById('pb-cur').classList.add('active');
-    loadTab('overview');
-  }
+function loadTab(tid) {
+  var ep = TAB_ENDPOINTS[tid]; if (!ep) return;
+  var qs = 'period=' + encodeURIComponent(_period) + '&offset=' + _offset;
+  document.getElementById('period-display').textContent = _periodLabel();
+  document.getElementById('analytics-content').innerHTML =
+    '<div style="text-align:center;color:var(--muted);padding:32px;font-size:.78rem;">Loading...</div>';
+  htmx.ajax('GET', ep + '?' + qs, {target:'#analytics-content', swap:'innerHTML'});
+}
+
+// Init
+(function() {
+  _highlightPreset();
+  _updateNav();
+  loadTab('overview');
 })();
 </script>
 {% endblock %}

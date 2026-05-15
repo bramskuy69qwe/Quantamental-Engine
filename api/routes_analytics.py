@@ -25,17 +25,76 @@ log = logging.getLogger("routes.analytics")
 router = APIRouter()
 
 
-def _analytics_range(month: str = "", all: str = "") -> tuple:
-    """Return (from_ms, to_ms, period_label, current_month_str)."""
+def _shift_date(dt: datetime, period: str, offset: int) -> datetime:
+    """Shift *dt* by *offset* units of *period* for navigation."""
+    if period == "weekly":
+        return dt + timedelta(weeks=offset)
+    if period == "monthly":
+        m = dt.month + offset
+        y = dt.year + (m - 1) // 12
+        m = (m - 1) % 12 + 1
+        day = min(dt.day, _cal.monthrange(y, m)[1])
+        return dt.replace(year=y, month=m, day=day)
+    if period == "quarterly":
+        return _shift_date(dt, "monthly", offset * 3)
+    if period == "yearly":
+        day = min(dt.day, _cal.monthrange(dt.year + offset, dt.month)[1])
+        return dt.replace(year=dt.year + offset, day=day)
+    return dt  # rolling / all_time don't shift
+
+
+def _period_label(period: str, start: datetime, end: datetime) -> str:
+    """Human-friendly label for the resolved period range."""
+    if period == "weekly":
+        return f"Week of {start.strftime('%b %d')}"
+    if period == "monthly":
+        return start.strftime("%B %Y")
+    if period == "quarterly":
+        q = (start.month - 1) // 3 + 1
+        return f"Q{q} {start.year}"
+    if period == "yearly":
+        return str(start.year)
+    if period == "rolling_30d":
+        return "Rolling 30 Days"
+    if period == "rolling_90d":
+        return "Rolling 90 Days"
+    return "All Time"
+
+
+def _analytics_range(month: str = "", all: str = "",
+                     period: str = "", offset: int = 0) -> tuple:
+    """Return (from_ms, to_ms, period_label, period_or_month_str).
+
+    Accepts either legacy month/all params OR new period+offset params.
+    period+offset takes precedence when present.
+    """
+    from core.period_resolver import resolve_period, VALID_PERIODS
+    from core.db_account_settings import get_account_settings
+
     tz = get_account_tz(app_state.active_account_id)
     now = datetime.now(tz)
 
+    # New period-based path
+    if period and period in VALID_PERIODS:
+        anchor = _shift_date(now, period, offset)
+        try:
+            settings = get_account_settings(app_state.active_account_id)
+            week_dow = settings.week_start_dow
+        except Exception:
+            week_dow = 1
+        start, end = resolve_period(period, tz, now=anchor, week_start_dow=week_dow)
+        from_ms = int(start.timestamp() * 1000)
+        to_ms   = int(end.timestamp() * 1000)
+        label   = _period_label(period, start, end)
+        return from_ms, to_ms, label, period
+
+    # Legacy paths (backward compat)
     if all == "1":
         from_ms = 0
         to_ms   = int(now.timestamp() * 1000)
-        label   = "All Time"
-        month_s = "All Time"
-    elif month:
+        return from_ms, to_ms, "All Time", "All Time"
+
+    if month:
         try:
             y, m = int(month[:4]), int(month[5:7])
         except (ValueError, IndexError):
@@ -47,15 +106,14 @@ def _analytics_range(month: str = "", all: str = "") -> tuple:
         to_ms   = int(end.timestamp() * 1000)
         label   = start.strftime("%B %Y")
         month_s = f"{y:04d}-{m:02d}"
-    else:
-        y, m = now.year, now.month
-        start = datetime(y, m, 1, tzinfo=tz)
-        from_ms = int(start.timestamp() * 1000)
-        to_ms   = int(now.timestamp() * 1000)
-        label   = start.strftime("%B %Y")
-        month_s = f"{y:04d}-{m:02d}"
+        return from_ms, to_ms, label, month_s
 
-    return from_ms, to_ms, label, month_s
+    # Default: current month
+    y, m = now.year, now.month
+    start = datetime(y, m, 1, tzinfo=tz)
+    from_ms = int(start.timestamp() * 1000)
+    to_ms   = int(now.timestamp() * 1000)
+    return from_ms, to_ms, start.strftime("%B %Y"), f"{y:04d}-{m:02d}"
 
 
 @router.get("/analytics", response_class=HTMLResponse)
@@ -80,8 +138,9 @@ async def analytics_page(request: Request):
 
 
 @router.get("/fragments/analytics/overview", response_class=HTMLResponse)
-async def frag_analytics_overview(request: Request, month: str = "", all: str = ""):
-    from_ms, to_ms, period_label, month_s = _analytics_range(month, all)
+async def frag_analytics_overview(request: Request, month: str = "", all: str = "",
+                                   period: str = "", offset: int = 0):
+    from_ms, to_ms, period_label, month_s = _analytics_range(month, all, period, offset)
     aid = app_state.active_account_id
 
     stats, boundaries, top_pairs, cumulative, equity_series = await asyncio.gather(
@@ -239,8 +298,9 @@ async def frag_analytics_pairs(
     request: Request,
     month: str = "", all: str = "",
     sort_by: str = "total", sort_dir: str = "DESC",
+    period: str = "", offset: int = 0,
 ):
-    from_ms, to_ms, period_label, month_s = _analytics_range(month, all)
+    from_ms, to_ms, period_label, month_s = _analytics_range(month, all, period, offset)
     rows = await db.get_traded_pairs_stats(from_ms, to_ms, account_id=app_state.active_account_id)
 
     _allowed = {"symbol", "total", "longs", "shorts", "pnl_long", "pnl_short",
@@ -261,8 +321,9 @@ async def frag_analytics_pairs(
 async def frag_analytics_excursions(
     request: Request,
     month: str = "", all: str = "", dir: str = "all",
+    period: str = "", offset: int = 0,
 ):
-    from_ms, to_ms, period_label, month_s = _analytics_range(month, all)
+    from_ms, to_ms, period_label, month_s = _analytics_range(month, all, period, offset)
     trades = await db.get_mfe_mae_series(from_ms, to_ms, account_id=app_state.active_account_id)
 
     if dir in ("LONG", "SHORT"):
@@ -294,8 +355,9 @@ async def frag_analytics_excursions(
 
 
 @router.get("/fragments/analytics/r_multiples", response_class=HTMLResponse)
-async def frag_analytics_r_multiples(request: Request, month: str = "", all: str = ""):
-    from_ms, to_ms, period_label, month_s = _analytics_range(month, all)
+async def frag_analytics_r_multiples(request: Request, month: str = "", all: str = "",
+                                      period: str = "", offset: int = 0):
+    from_ms, to_ms, period_label, month_s = _analytics_range(month, all, period, offset)
     r_values  = await db.get_r_multiples(from_ms, to_ms, account_id=app_state.active_account_id)
     r_stats   = r_multiple_stats(r_values)
     histogram = r_multiple_histogram(r_values)
@@ -309,8 +371,9 @@ async def frag_analytics_r_multiples(request: Request, month: str = "", all: str
 
 
 @router.get("/fragments/analytics/var", response_class=HTMLResponse)
-async def frag_analytics_var(request: Request, month: str = "", all: str = ""):
-    from_ms, to_ms, period_label, month_s = _analytics_range(month, all)
+async def frag_analytics_var(request: Request, month: str = "", all: str = "",
+                              period: str = "", offset: int = 0):
+    from_ms, to_ms, period_label, month_s = _analytics_range(month, all, period, offset)
     series   = await db.get_daily_equity_series(from_ms, to_ms, account_id=app_state.active_account_id)
     equities = [r["total_equity"] for r in series if r.get("total_equity")]
     returns  = an.daily_returns(equities)

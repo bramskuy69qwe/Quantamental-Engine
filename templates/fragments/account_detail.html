@@ -160,6 +160,29 @@
       <span class="sec-lbl">Preferences</span>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;">
         <div>
+          <label class="lbl">Timezone</label>
+          <select name="timezone" style="width:100%;">
+            {% set timezones = [
+              ('UTC',            'UTC'),
+              ('US/Eastern',     'US/Eastern (ET)'),
+              ('US/Central',     'US/Central (CT)'),
+              ('US/Pacific',     'US/Pacific (PT)'),
+              ('Europe/London',  'Europe/London (GMT/BST)'),
+              ('Europe/Berlin',  'Europe/Berlin (CET)'),
+              ('Asia/Tokyo',     'Asia/Tokyo (JST)'),
+              ('Asia/Shanghai',  'Asia/Shanghai (CST)'),
+              ('Asia/Bangkok',   'Asia/Bangkok (ICT)'),
+              ('Asia/Jakarta',   'Asia/Jakarta (WIB)'),
+              ('Asia/Singapore', 'Asia/Singapore (SGT)'),
+              ('Asia/Kolkata',   'Asia/Kolkata (IST)'),
+              ('Australia/Sydney','Australia/Sydney (AEST)'),
+            ] %}
+            {% for val, label in timezones %}
+            <option value="{{ val }}" {% if settings.timezone == val %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
           <label class="lbl">Default Analytics Period</label>
           <select name="analytics_default_period" style="width:100%;">
             {% set periods = [
