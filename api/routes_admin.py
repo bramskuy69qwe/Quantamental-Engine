@@ -174,3 +174,132 @@ async def trade_events_page(
             active_page="admin",
         ),
     )
+
+
+# ── Manual calc_id link ─────────────────────────────────────────────────────
+
+
+@router.get("/admin/calc_link", response_class=HTMLResponse)
+async def calc_link_page(request: Request):
+    """Table of uncorrelated entry orders for manual linking."""
+    import sqlite3, config as _cfg
+    from datetime import datetime, timedelta, timezone as _tz
+
+    aid = app_state.active_account_id
+    cutoff_ms = int((datetime.now(_tz.utc) - timedelta(hours=168)).timestamp() * 1000)
+
+    orders = []
+    try:
+        conn = sqlite3.connect(_cfg.DB_PATH)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT id, exchange_order_id, symbol, side, order_type, price, "
+            "tp_trigger_price, sl_trigger_price, created_at_ms "
+            "FROM orders WHERE account_id = ? AND calc_id IS NULL "
+            "AND reduce_only = 0 AND created_at_ms >= ? "
+            "ORDER BY created_at_ms DESC LIMIT 50",
+            (aid, cutoff_ms),
+        ).fetchall()
+        conn.close()
+        now = datetime.now(_tz.utc)
+        for r in rows:
+            age_h = (now.timestamp() * 1000 - r["created_at_ms"]) / 3600000 if r["created_at_ms"] else 0
+            orders.append({**dict(r), "age_hours": round(age_h, 1)})
+    except Exception:
+        log.debug("calc_link query failed", exc_info=True)
+
+    return templates.TemplateResponse(
+        request, "admin/calc_link.html",
+        _ctx(request, orders=orders, order_count=len(orders), active_page="admin"),
+    )
+
+
+@router.get("/admin/calc_link/candidates", response_class=HTMLResponse)
+async def calc_link_candidates(request: Request, order_id: int = 0):
+    """Find candidate calcs for an uncorrelated order."""
+    import sqlite3, config as _cfg
+    from core.calc_correlation import find_candidate_calcs
+    from dataclasses import asdict
+
+    aid = app_state.active_account_id
+    conn = sqlite3.connect(_cfg.DB_PATH)
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT * FROM orders WHERE account_id = ? AND id = ?", (aid, order_id)
+    ).fetchone()
+    conn.close()
+
+    if not row:
+        return HTMLResponse('<div class="alert alert-error">Order not found.</div>')
+
+    order = dict(row)
+    candidates = find_candidate_calcs(order, db_path=_cfg.DB_PATH)
+
+    return templates.TemplateResponse(
+        request, "admin/_calc_link_candidates.html",
+        {"request": request, "candidates": [asdict(c) for c in candidates],
+         "order_id": order_id, "order": order},
+    )
+
+
+@router.post("/admin/calc_link/confirm", response_class=HTMLResponse)
+async def calc_link_confirm(request: Request):
+    """Confirm manual link: set calc_id on order + propagate to fills."""
+    import sqlite3, config as _cfg
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    order_id = body.get("order_id")
+    calc_id = body.get("calc_id", "").strip()
+    aid = app_state.active_account_id
+
+    if not order_id or not calc_id:
+        return HTMLResponse(
+            '<div class="alert alert-error">Missing order_id or calc_id.</div>', status_code=400
+        )
+
+    conn = sqlite3.connect(_cfg.DB_PATH)
+    conn.row_factory = sqlite3.Row
+
+    row = conn.execute(
+        "SELECT calc_id, exchange_order_id FROM orders WHERE account_id = ? AND id = ?",
+        (aid, order_id),
+    ).fetchone()
+    if not row:
+        conn.close()
+        return HTMLResponse('<div class="alert alert-error">Order not found.</div>', status_code=400)
+    if row["calc_id"]:
+        conn.close()
+        return HTMLResponse('<div class="alert alert-error">Order already linked.</div>', status_code=400)
+
+    dup = conn.execute(
+        "SELECT 1 FROM orders WHERE calc_id = ? AND account_id = ? LIMIT 1",
+        (calc_id, aid),
+    ).fetchone()
+    if dup:
+        conn.close()
+        return HTMLResponse(
+            '<div class="alert alert-error">calc_id already linked to another order.</div>',
+            status_code=400,
+        )
+
+    eid = row["exchange_order_id"]
+    conn.execute("UPDATE orders SET calc_id = ? WHERE account_id = ? AND id = ?", (calc_id, aid, order_id))
+    conn.execute("UPDATE fills SET calc_id = ? WHERE account_id = ? AND exchange_order_id = ?", (calc_id, aid, eid))
+    conn.commit()
+    conn.close()
+
+    try:
+        from core.trade_event_log import log_trade_event
+        log_trade_event(aid, calc_id, "manual_link_added", {
+            "order_id": order_id, "exchange_order_id": eid,
+        }, source="manual_link")
+    except Exception:
+        log.debug("manual_link_added event failed", exc_info=True)
+
+    return HTMLResponse(
+        '<div class="alert alert-success">Link confirmed. calc_id propagated to order + fills.</div>'
+    )

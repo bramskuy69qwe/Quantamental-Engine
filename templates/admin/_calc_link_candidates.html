@@ -1,0 +1,45 @@
+<div style="padding:8px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;margin:4px 0;">
+  {% if candidates %}
+  <div style="font-size:.6rem;color:var(--muted);margin-bottom:6px;">
+    {{ candidates | length }} candidate(s) found for order #{{ order_id }}
+  </div>
+  {% for c in candidates %}
+  <div style="display:flex;gap:12px;align-items:center;padding:6px;border-bottom:1px solid var(--border);font-size:.58rem;">
+    <div style="flex:1;">
+      <div class="mono" style="font-size:.6rem;" title="{{ c.calc_id }}">{{ c.calc_id[:12] }}...</div>
+      <div style="color:var(--muted);">{{ c.age_hours }}h ago</div>
+    </div>
+    <div style="flex:1;">
+      <span title="Entry: {{ '%.4f' % (c.entry_drift_pct * 100) }}%">
+        Entry: {{ '✓' if c.entry_match else '⚠' }} {{ '%.2f' % (c.entry_drift_pct * 100) }}%
+      </span>
+    </div>
+    <div style="flex:1;">
+      <span title="TP: {{ '%.4f' % (c.tp_drift_pct * 100) }}%">
+        TP: {{ '✓' if c.tp_match else '⚠' }} {{ '%.2f' % (c.tp_drift_pct * 100) }}%
+      </span>
+    </div>
+    <div style="flex:1;">
+      <span title="SL: {{ '%.4f' % (c.sl_drift_pct * 100) }}%">
+        SL: {{ '✓' if c.sl_match else '⚠' }} {{ '%.2f' % (c.sl_drift_pct * 100) }}%
+      </span>
+    </div>
+    <div>
+      <button hx-post="/admin/calc_link/confirm"
+              hx-headers='{"Content-Type": "application/json"}'
+              hx-vals='{"order_id": {{ order_id }}, "calc_id": "{{ c.calc_id }}"}'
+              hx-target="closest div"
+              hx-swap="innerHTML"
+              hx-confirm="Link order #{{ order_id }} to calc {{ c.calc_id[:8] }}?"
+              style="font-size:.55rem;padding:2px 8px;background:var(--green);color:#fff;border:none;border-radius:3px;cursor:pointer;">
+        Link
+      </button>
+    </div>
+  </div>
+  {% endfor %}
+  {% else %}
+  <div style="font-size:.6rem;color:var(--muted);text-align:center;padding:8px;">
+    No candidates found within drift tolerance.
+  </div>
+  {% endif %}
+</div>
