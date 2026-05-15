@@ -150,6 +150,7 @@ class OrderManager:
 
         await self._db.upsert_order_batch([order])
         self._enrich_order_best_effort(order)
+        self._emit_order_events(account_id, order)
         await self.refresh_cache(account_id)
         return True
 
@@ -201,6 +202,81 @@ class OrderManager:
             enrich_fill(fill, config.DB_PATH)
         except Exception:
             log.debug("fill enrichment skipped", exc_info=True)
+
+    # ── Trade event emission (v2.4) ──────────────────────────────────────────
+
+    def _emit_order_events(self, account_id: int, order: Dict[str, Any]) -> None:
+        """Emit trade events for order state changes. Best-effort."""
+        try:
+            from core.trade_event_log import log_trade_event
+            from core.dd_gate import is_new_entry
+
+            status = (order.get("status") or "").lower()
+            eid = order.get("exchange_order_id", "")
+
+            # Read calc_id from DB (may have just been set by enrichment)
+            calc_id = None
+            try:
+                import sqlite3, config
+                conn = sqlite3.connect(config.DB_PATH)
+                row = conn.execute(
+                    "SELECT calc_id FROM orders WHERE account_id=? AND exchange_order_id=?",
+                    (account_id, eid),
+                ).fetchone()
+                conn.close()
+                calc_id = row[0] if row else None
+            except Exception:
+                pass
+
+            if status == "new" and is_new_entry(order):
+                log_trade_event(account_id, calc_id, "order_placed", {
+                    "role": "entry",
+                    "price": order.get("price", 0),
+                    "side": order.get("side", ""),
+                    "qty": order.get("quantity", 0),
+                    "exchange_order_id": eid,
+                }, source="order_manager")
+
+            elif status in ("canceled", "expired"):
+                log_trade_event(account_id, calc_id, "order_canceled", {
+                    "exchange_order_id": eid,
+                    "order_type": order.get("order_type", ""),
+                }, source="order_manager")
+
+        except Exception:
+            log.debug("order event emission failed", exc_info=True)
+
+    def _emit_fill_events(self, account_id: int, fill: Dict[str, Any]) -> None:
+        """Emit trade events for fills. Best-effort."""
+        try:
+            from core.trade_event_log import log_trade_event
+
+            calc_id = fill.get("calc_id")
+            # Try to read calc_id from parent order if not on fill
+            if not calc_id:
+                try:
+                    import sqlite3, config
+                    conn = sqlite3.connect(config.DB_PATH)
+                    row = conn.execute(
+                        "SELECT calc_id FROM orders WHERE account_id=? AND exchange_order_id=?",
+                        (account_id, fill.get("exchange_order_id", "")),
+                    ).fetchone()
+                    conn.close()
+                    calc_id = row[0] if row else None
+                except Exception:
+                    pass
+
+            role = fill.get("role", "")
+            log_trade_event(account_id, calc_id, "order_filled", {
+                "role": role,
+                "fill_price": fill.get("price", 0),
+                "fill_qty": fill.get("quantity", 0),
+                "fee": fill.get("fee", 0),
+                "exchange_order_id": fill.get("exchange_order_id", ""),
+            }, source="order_manager")
+
+        except Exception:
+            log.debug("fill event emission failed", exc_info=True)
 
     # ── Cache Refresh ──────────────────────────────────────────────────────
 
@@ -271,6 +347,7 @@ class OrderManager:
         # 1+2. Upsert fill + update parent order in ONE commit
         await self._db.upsert_fill_and_update_order(fill, exchange_order_id)
         self._enrich_fill_best_effort(fill)
+        self._emit_fill_events(account_id, fill)
 
         # 3. Refresh position fees from DB (SUM query, not accumulate)
         pos_id = fill.get("terminal_position_id", "")
@@ -371,6 +448,14 @@ class OrderManager:
             )
             model_name = shortfall.pop("model_name", "")
 
+            # ── calc_id from earliest entry fill ───────────────────────
+            close_calc_id = None
+            if opens:
+                for f in opens:
+                    if f.get("calc_id"):
+                        close_calc_id = f["calc_id"]
+                        break
+
             # ── Persist ─────────────────────────────────────────────────
             net_pnl = realized_pnl - total_fees
             await self._db.insert_closed_position({
@@ -391,6 +476,7 @@ class OrderManager:
                 "exit_reason":          exit_reason,
                 "model_name":           model_name,
                 "source":               fill.get("source", ""),
+                "calc_id":              close_calc_id,
                 **shortfall,
             })
 
@@ -398,6 +484,20 @@ class OrderManager:
                 "symbol": symbol, "direction": direction,
                 "realized_pnl": realized_pnl, "net_pnl": net_pnl,
             })
+
+            # v2.4: emit position_closed trade event
+            try:
+                from core.trade_event_log import log_trade_event
+                log_trade_event(account_id, close_calc_id, "position_closed", {
+                    "symbol": symbol, "direction": direction,
+                    "entry_price": round(entry_price, 8),
+                    "exit_price": round(exit_price, 8),
+                    "realized_pnl": round(realized_pnl, 4),
+                    "net_pnl": round(net_pnl, 4),
+                    "exit_reason": exit_reason,
+                }, source="order_manager")
+            except Exception:
+                log.debug("position_closed trade event failed", exc_info=True)
             log.info(
                 "Closed position row: %s %s qty=%.4f pnl=%.2f exit=%s",
                 symbol, direction, total_close_qty, realized_pnl, exit_reason,

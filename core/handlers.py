@@ -165,6 +165,25 @@ async def handle_risk_calculated(payload: Dict[str, Any]) -> None:
     except Exception as exc:
         log.error("handle_risk_calculated DB write failed: %s", exc)
 
+    # v2.4: emit calc_created trade event
+    try:
+        from core.trade_event_log import log_trade_event
+        calc_id = payload.get("calc_id")
+        if calc_id and payload.get("eligible"):
+            log_trade_event(app_state.active_account_id, calc_id, "calc_created", {
+                "ticker": payload.get("ticker", ""),
+                "side": payload.get("side", ""),
+                "entry": payload.get("effective_entry", 0),
+                "tp": payload.get("tp_price", 0),
+                "sl": payload.get("sl_price", 0),
+                "size": payload.get("size", 0),
+                "atr_category": payload.get("atr_category", ""),
+                "est_slippage": payload.get("est_slippage", 0),
+                "est_r": payload.get("est_r", 0),
+            }, source="risk_engine")
+    except Exception:
+        log.debug("calc_created trade event failed", exc_info=True)
+
     # Maintain in-memory cache (same shape as the old CSV-backed list)
     row = {
         "timestamp":         payload.get("timestamp", now_in_account_tz(app_state.active_account_id).isoformat()),
