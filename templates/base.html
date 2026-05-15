@@ -335,8 +335,6 @@
         </option>
         {% endfor %}
       </select>
-      <!-- Account connection status badge -->
-      <span id="account-conn-badge" style="display:none;font-size:.65rem;padding:2px 7px;border-radius:99px;white-space:nowrap;font-weight:700;"></span>
       <span id="account-switch-msg" class="htmx-indicator" style="font-size:.62rem;color:var(--sub);"></span>
     </div>
 
@@ -351,9 +349,9 @@
       <option value="quantower"  {% if active_platform=='quantower'  %}selected{% endif %}>Quantower</option>
     </select>
 
-    <!-- Plugin badge (Quantower only) -->
-    <span id="plugin-status" {% if active_platform != 'quantower' %}style="display:none;"{% endif %}>
-      <span id="plugin-dot" style="font-size:.65rem;color:var(--muted);font-family:var(--font-mono);display:inline-block;width:60px;text-align:center;">&#9676; Plugin</span>
+    <!-- Plugin / mode indicator (always visible) -->
+    <span id="plugin-status" style="display:inline-flex;align-items:center;">
+      <span id="plugin-dot" style="font-size:.65rem;color:var(--muted);font-family:var(--font-mono);white-space:nowrap;">&#9676; Plugin</span>
     </span>
 
     <!-- WS status (fixed width to prevent layout shift) -->
@@ -501,32 +499,22 @@ document.body.addEventListener("account-added",function(){
 // ── Plugin / connection polling ───────────────────────────────────────────
 (function(){
   var platSel  = document.getElementById('platform-selector');
-  var plugStat = document.getElementById('plugin-status');
   var plugDot  = document.getElementById('plugin-dot');
   var banner   = document.getElementById('standalone-banner');
   var bannerMsg= document.getElementById('standalone-banner-msg');
-  var connBadge= document.getElementById('account-conn-badge');
 
   function getPlatform(){ return platSel ? platSel.value : '{{ active_platform }}'; }
 
   function updateUI(connected){
     var platform = getPlatform();
-    // Plugin badge
-    if(plugStat) plugStat.style.display = platform==='quantower'?'':'none';
+    // Plugin / mode indicator (always visible)
     if(plugDot){
-      plugDot.textContent = connected ? '● Plugin' : '◌ Plugin';
-      plugDot.style.color = connected ? 'var(--green)' : 'var(--muted)';
-    }
-    // Account connection badge
-    if(connBadge){
-      if(platform==='quantower' && connected){
-        connBadge.style.cssText='display:inline-block;background:#071a10;color:var(--green);font-size:.65rem;padding:2px 7px;border-radius:99px;font-weight:700;';
-        connBadge.textContent='● Live';
-      } else if(platform==='quantower' && !connected){
-        connBadge.style.cssText='display:inline-block;background:#251500;color:var(--amber);font-size:.65rem;padding:2px 7px;border-radius:99px;font-weight:700;';
-        connBadge.textContent='◌ Offline';
+      if(connected){
+        plugDot.textContent = '● Plugin';
+        plugDot.style.color = 'var(--green)';
       } else {
-        connBadge.style.display='none';
+        plugDot.textContent = '◌ Plugin';
+        plugDot.style.color = 'var(--muted)';
       }
     }
     // Standalone banner

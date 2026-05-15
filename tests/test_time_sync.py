@@ -172,18 +172,24 @@ class TestIntegration:
 
 
 class TestHeaderUIPolish:
-    def test_plugin_status_hidden_in_standalone(self):
-        """Plugin badge is hidden when active_platform != 'quantower'."""
+    def test_plugin_indicator_always_visible(self):
+        """Plugin/mode indicator has no display:none conditional."""
         content = open("templates/base.html", encoding="utf-8").read()
         idx = content.find('id="plugin-status"')
         assert idx != -1
         block = content[idx:idx+200]
-        assert "quantower" in block
+        assert "display:none" not in block
 
-    def test_plugin_js_hides_in_standalone(self):
-        """JS updateUI hides plugin badge when platform != quantower."""
+    def test_plugin_js_shows_on_off_states(self):
+        """JS updateUI toggles Plugin between green (on) and muted (off)."""
         content = open("templates/base.html", encoding="utf-8").read()
-        assert "plugStat.style.display = platform==='quantower'" in content
+        assert "● Plugin" in content
+        assert "◌ Plugin" in content
+
+    def test_no_account_conn_badge(self):
+        """account-conn-badge removed (redundant with plugin indicator)."""
+        content = open("templates/base.html", encoding="utf-8").read()
+        assert 'id="account-conn-badge"' not in content
 
     def test_title_uses_project_name(self):
         """App title renders project_name_ (already uppercase in config)."""
