@@ -37,6 +37,7 @@ EventType = Literal[
     "rate_limit_pause",
     "would_have_blocked_dd",
     "would_have_blocked_weekly_pnl",
+    "calc_blocked_contract",
 ]
 
 _VALID_EVENT_TYPES: frozenset[str] = frozenset(EventType.__args__)  # type: ignore[attr-defined]

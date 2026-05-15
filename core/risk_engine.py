@@ -362,6 +362,35 @@ def run_risk_calculator(
     size_raw  = sizing["size"]          # pre-regime
     size      = size_raw * regime_mult  # post-regime
     base_size = sizing["base_size"]
+
+    # v2.4 Priority 2b: validate against exchange contract constraints
+    contract_notes = ""
+    try:
+        from core.contract_validation import validate_and_snap_size
+        vr = validate_and_snap_size(size, ticker, sizing["est_fill_price"])
+        if vr.valid and vr.snapped_size is not None:
+            snapped = float(vr.snapped_size)
+            if snapped != size:
+                contract_notes = f"Size snapped: {size:.8f} -> {snapped:.8f} (lot_step)"
+                size = snapped
+        elif not vr.valid:
+            result["eligible"] = False
+            result["ineligible_reason"] = f"Contract spec: {vr.reason}"
+            if vr.suggested_size:
+                contract_notes = f"Suggested size: {vr.suggested_size}"
+            try:
+                from core.event_log import log_event
+                log_event(app_state.active_account_id, "calc_blocked_contract", {
+                    "ticker": ticker,
+                    "original_size": str(vr.original_size),
+                    "reason": vr.reason,
+                    "suggested_size": str(vr.suggested_size) if vr.suggested_size else None,
+                }, source="risk_engine")
+            except Exception:
+                pass
+    except Exception:
+        pass  # validation unavailable — don't block calculator
+
     est_size  = size * average          # = base_size × regime_mult × (1 − est_slippage)
 
     # TP / SL USDT amounts (applied to the est_size portion being closed)
