@@ -182,12 +182,15 @@ async def frag_dashboard_top(request: Request):
 @router.get("/fragments/dashboard/exchange_info", response_class=HTMLResponse)
 async def frag_dashboard_exchange_info(request: Request):
     ex = app_state.exchange_info
+    ws = app_state.ws_status
+    # Prefer WS latency (updates at sub-second rate) over REST ping (10s)
+    live_ms = ws.latency_ms if ws.connected else ex.latency_ms
     return templates.TemplateResponse(
         request, "fragments/dashboard_exchange_info.html",
         _ctx(request,
              exchange_name=ex.name,
              server_time=ex.server_time or "—",
-             latency_str=f"{ex.latency_ms:.0f}ms" if ex.latency_ms else "—",
+             latency_str=f"{live_ms:.0f}ms" if live_ms else "—",
              maker_fee_str=f"{ex.maker_fee*100:.4f}%" if ex.maker_fee else "—",
              taker_fee_str=f"{ex.taker_fee*100:.4f}%" if ex.taker_fee else "—"),
     )

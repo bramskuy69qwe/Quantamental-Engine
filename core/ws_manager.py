@@ -544,6 +544,10 @@ async def _market_stream_loop(attempt: int = 0) -> None:
                     msg_outer = json.loads(raw)
                     msg = ws_adapter.unwrap_stream_message(msg_outer) if ws_adapter else msg_outer.get("data", msg_outer)
                     ev = ws_adapter.get_event_type(msg) if ws_adapter else msg.get("e", "")
+                    # Track latency from market data events (fires at sub-second rate)
+                    evt_ms = ws_adapter.get_event_time_ms(msg) if ws_adapter else msg.get("E", 0)
+                    if evt_ms:
+                        ws.latency_ms = round(time.time() * 1000 - evt_ms, 1)
                     if ev == "kline":
                         parsed = ws_adapter.parse_kline(msg) if ws_adapter else None
                         if parsed:

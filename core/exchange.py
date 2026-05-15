@@ -108,8 +108,9 @@ async def fetch_exchange_info() -> None:
     except Exception:
         info.name = config.EXCHANGE_NAME
     info.latency_ms = round(latency_ms, 2)
-    # Also sync to ws_status so the WS indicator shows a value immediately
-    app_state.ws_status.latency_ms = info.latency_ms
+    # Seed ws_status latency only if WS hasn't provided a value yet
+    if not app_state.ws_status.connected:
+        app_state.ws_status.latency_ms = info.latency_ms
     info.server_time = datetime.fromtimestamp(
         server_time / 1000, tz=timezone.utc
     ).strftime("%Y-%m-%d %H:%M:%S UTC")
