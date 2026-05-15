@@ -240,6 +240,36 @@ class OrderManager:
         except Exception:
             log.debug("order enrichment skipped", exc_info=True)
 
+    def _snapshot_and_fix_isclose(self, account_id: int, fill: Dict[str, Any]) -> None:
+        """Compute position fill snapshot and override adapter-supplied is_close.
+
+        Best-effort: on failure, retains adapter-supplied value.
+        """
+        try:
+            from core.position_snapshot import compute_fill_snapshot, persist_snapshot
+            import config
+
+            # Detect mode from fill's position_side (direction field)
+            direction = fill.get("direction", "")
+            mode = "hedge" if direction and direction not in ("BOTH", "") else "one_way"
+
+            # Compute snapshot from current position state (pre-fill)
+            snapshot = compute_fill_snapshot(fill, app_state.positions, mode=mode)
+
+            # Override adapter-supplied is_close with snapshot-derived value
+            fill["is_close"] = int(snapshot.is_close)
+
+            # Persist snapshot to per-account DB (where position_fill_snapshots lives)
+            try:
+                from core.db_account_settings import _resolve_db_path
+                pa_path = _resolve_db_path(account_id)
+                persist_snapshot(snapshot, pa_path, account_id)
+            except Exception:
+                log.debug("snapshot persistence to per-account DB failed", exc_info=True)
+
+        except Exception:
+            log.debug("is_close snapshot failed — using adapter value", exc_info=True)
+
     def _enrich_fill_best_effort(self, fill: Dict[str, Any]) -> None:
         try:
             import config
@@ -496,6 +526,12 @@ class OrderManager:
         """Record fill, update parent order, refresh position fees from DB."""
         fill.setdefault("account_id", account_id)
         exchange_order_id = fill.get("exchange_order_id", "")
+
+        # v2.4 Priority 5a: derive is_close from position state snapshot.
+        # Must run BEFORE fill is persisted so qty_before reflects pre-fill state.
+        # app_state.positions is updated by a separate WS event (ACCOUNT_UPDATE),
+        # so at fill-processing time it reflects the state before this fill.
+        self._snapshot_and_fix_isclose(account_id, fill)
 
         # 1+2. Upsert fill + update parent order in ONE commit
         await self._db.upsert_fill_and_update_order(fill, exchange_order_id)
