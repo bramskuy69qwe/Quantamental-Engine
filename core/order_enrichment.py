@@ -93,11 +93,13 @@ def _populate_tp_sl_trigger_prices(order: Dict[str, Any], db_path: str) -> None:
 
 
 def _try_correlate(order: Dict[str, Any], db_path: str) -> None:
-    """If entry order has both trigger prices but no calc_id, try correlation."""
+    """If entry order has trigger prices but no calc_id, try correlation.
+
+    Market orders: correlate on tp+sl only (entry wildcard — Task 24).
+    Limit orders: triple-match on all three legs.
+    """
     order_type = (order.get("order_type") or "").lower()
     if order_type in _CLOSE_TYPES or order.get("reduce_only"):
-        return
-    if order_type == "market":
         return
 
     eid = order.get("exchange_order_id")
@@ -120,7 +122,7 @@ def _try_correlate(order: Dict[str, Any], db_path: str) -> None:
     if row["calc_id"]:
         return  # already correlated
     if not row["tp_trigger_price"] or not row["sl_trigger_price"]:
-        return  # need both for strict triple-match
+        return  # need both trigger prices for correlation
 
     # Build order dict with current DB values for the correlator
     corr_order = {
