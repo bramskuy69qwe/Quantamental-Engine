@@ -184,7 +184,39 @@ class TestRowsOnlyRefresh:
 
 
 class TestPanelHeight:
-    def test_grid_align_items_start(self):
-        """Risk+positions grid should use align-items:start (content-driven height)."""
+    def test_grid_uses_default_stretch(self):
+        """Grid for risk+positions uses default stretch (matched heights)."""
         content = open("templates/dashboard.html", encoding="utf-8").read()
-        assert "align-items:start" in content
+        idx = content.find('id="dash-risk"')
+        block = content[max(0, idx-200):idx]
+        assert "align-items:start" not in block
+
+    def test_risk_card_fills_cell(self):
+        """Risk card has height:100% to fill grid cell."""
+        content = open("templates/fragments/dashboard_risk.html", encoding="utf-8").read()
+        assert "height:100%" in content
+
+    def test_positions_card_fills_cell(self):
+        """Positions card has height:100% + flex column for tab layout."""
+        content = open("templates/fragments/dashboard_positions.html", encoding="utf-8").read()
+        assert "height:100%" in content
+        assert "flex-direction:column" in content
+
+    def test_wrappers_not_modified(self):
+        """Column wrappers (#dash-risk, #dash-positions) have no display:flex."""
+        content = open("templates/dashboard.html", encoding="utf-8").read()
+        for wrapper_id in ["dash-risk", "dash-positions"]:
+            idx = content.find(f'id="{wrapper_id}"')
+            block = content[idx:idx+300]
+            assert "display:flex" not in block, \
+                f"#{wrapper_id} should NOT have display:flex (breaks horizontal width)"
+
+    def test_sticky_thead_has_background(self):
+        """All sticky theads have opaque background to prevent overlap."""
+        content = open("templates/fragments/dashboard_positions.html", encoding="utf-8").read()
+        import re
+        sticky_theads = re.findall(r'<thead[^>]*position:sticky[^>]*>', content)
+        assert len(sticky_theads) >= 3, "Expected 3 sticky theads"
+        for thead in sticky_theads:
+            assert "background:var(--card)" in thead, \
+                f"Sticky thead missing background: {thead[:60]}..."
