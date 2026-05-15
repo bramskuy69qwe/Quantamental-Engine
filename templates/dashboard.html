@@ -3,12 +3,12 @@
 {% block title %}Dashboard — {{ project_name }}{% endblock %}
 
 {% block content %}
-<div style="display:flex;flex-direction:column;gap:6px;">
+<div hx-ext="morph" style="display:flex;flex-direction:column;gap:6px;">
 
-  <!-- ── Exchange strip: 1s refresh (fragment carries its own hx-get for continuity) -->
+  <!-- ── Exchange strip: load once (fragment carries its own hx-get for continuity) -->
   <div hx-get="/fragments/dashboard/exchange_info"
        hx-trigger="load"
-       hx-swap="outerHTML">
+       hx-swap="morph:outerHTML">
     <div class="card" style="display:flex;align-items:center;flex-wrap:wrap;padding:6px 0;gap:0;">
       <div style="display:flex;align-items:center;gap:6px;padding:0 12px;">
         <span class="lbl" style="margin-bottom:0;">connecting...</span>
@@ -18,17 +18,17 @@
 
   <!-- ── Hero row: equity numbers (left) + OHLC chart (right) ──────── -->
   <div style="display:grid;grid-template-columns:280px 1fr;gap:6px;">
-    <!-- Left: equity numbers (2s refresh) -->
+    <!-- Left: equity numbers (2s morph) -->
     <div id="dash-top"
          hx-get="/fragments/dashboard/top"
          hx-trigger="load, every 2s"
-         hx-swap="innerHTML">
+         hx-swap="morph:innerHTML">
       <div class="card" style="min-height:170px;padding:14px 16px;">
         <span class="lbl">Total Equity</span>
         <div class="mono" style="font-size:2rem;line-height:1;color:var(--sub);">—</div>
       </div>
     </div>
-    <!-- Right: equity OHLC candlestick chart -->
+    <!-- Right: equity OHLC candlestick chart (load once, no morph — ECharts manages own DOM) -->
     <div hx-get="/fragments/dashboard/equity_ohlc?tf=1h"
          hx-trigger="load"
          hx-swap="outerHTML">
@@ -38,11 +38,11 @@
     </div>
   </div>
 
-  <!-- ── Secondary stats ──────────────────────────────────────────────── -->
+  <!-- ── Secondary stats (2s morph) ───────────────────────────────────── -->
   <div id="dash-secondary"
        hx-get="/fragments/dashboard/secondary"
        hx-trigger="load, every 2s"
-       hx-swap="innerHTML">
+       hx-swap="morph:innerHTML">
     <div class="card" style="display:flex;overflow:hidden;">
       <div style="flex:1;padding:7px 10px;border-right:1px solid var(--border);">
         <span class="lbl">SOW Equity</span>
@@ -55,13 +55,13 @@
     </div>
   </div>
 
-  <!-- ── Risk / Exposure + Positions (split fragments, 1s refresh each) ── -->
+  <!-- ── Risk / Exposure + Positions (split fragments, 1s morph each) ── -->
   <div style="display:grid;grid-template-columns:1fr 2fr;gap:6px;">
     <!-- Left: risk panel -->
     <div id="dash-risk"
          hx-get="/fragments/dashboard/risk"
          hx-trigger="load, every 1s"
-         hx-swap="innerHTML">
+         hx-swap="morph:innerHTML">
       <div class="card" style="min-height:160px;display:flex;align-items:center;justify-content:center;">
         <span style="color:var(--muted);font-size:.78rem;">Loading risk...</span>
       </div>
@@ -70,17 +70,17 @@
     <div id="dash-positions"
          hx-get="/fragments/dashboard/positions"
          hx-trigger="load, every 1s"
-         hx-swap="innerHTML">
+         hx-swap="morph:innerHTML">
       <div class="card" style="min-height:160px;display:flex;align-items:center;justify-content:center;">
         <span style="color:var(--muted);font-size:.78rem;">Loading positions...</span>
       </div>
     </div>
   </div>
 
-  <!-- ── Monthly stats + Active params (30s refresh) ──────────────────── -->
+  <!-- ── Monthly stats (30s morph) ────────────────────────────────────── -->
   <div hx-get="/fragments/dashboard/journal_stats"
        hx-trigger="load, every 30s"
-       hx-swap="outerHTML">
+       hx-swap="morph:outerHTML">
     <div class="card" style="min-height:60px;display:flex;align-items:center;justify-content:center;">
       <span style="color:var(--muted);font-size:.78rem;">Loading monthly stats...</span>
     </div>
