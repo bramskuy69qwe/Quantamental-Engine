@@ -90,6 +90,9 @@ LOG_FILE = f"{LOGS_DIR}/risk_engine.jsonl"
 # Example: HTTP_PROXY=http://127.0.0.1:7890
 HTTP_PROXY = os.getenv("HTTP_PROXY", "")
 
+# ── Redis pub/sub (v2.4 Phase 5) ────────────────────────────────────────────
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
 # ── UI polling intervals (seconds) ───────────────────────────────────────────
 DASHBOARD_POLL_INTERVAL   = 3
 CALCULATOR_POLL_INTERVAL  = 2

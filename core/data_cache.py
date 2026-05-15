@@ -285,6 +285,23 @@ class DataCache:
             {"trigger": source.value, "ts": datetime.now(timezone.utc).isoformat()},
         )
 
+        # v2.4 Phase 5: dual-publish to Redis for SSE consumers
+        try:
+            from core.pubsub.bus import get_bus
+            from core.pubsub.channels import position_channel
+            from core.state import app_state as _as
+            await get_bus().publish(position_channel(_as.active_account_id), {
+                "trigger": source.value,
+                "positions": [
+                    {"symbol": p.ticker, "side": p.direction,
+                     "size": p.contract_amount, "upnl": p.individual_unrealized}
+                    for p in self._positions
+                ],
+                "ts": datetime.now(timezone.utc).isoformat(),
+            })
+        except Exception:
+            pass  # Redis unavailable — dual-publish is best-effort
+
         log.debug(
             "DataCache: snapshot applied (source=%s, count=%d, closed=%d, new=%d)",
             source.value, len(incoming), len(closed_syms), len(result.new_syms),
