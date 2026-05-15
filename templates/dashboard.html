@@ -55,24 +55,26 @@
     </div>
   </div>
 
-  <!-- ── Risk / Exposure + Positions (1s refresh) ─────────────────────── -->
-  <div id="dashboard-body"
-       hx-get="/fragments/dashboard"
-       hx-trigger="load, every 1s"
-       hx-swap="innerHTML"
-       hx-indicator="#dash-spinner">
-    <div style="display:grid;grid-template-columns:1fr 2fr;gap:6px;">
+  <!-- ── Risk / Exposure + Positions (split fragments, 1s refresh each) ── -->
+  <div style="display:grid;grid-template-columns:1fr 2fr;gap:6px;">
+    <!-- Left: risk panel -->
+    <div id="dash-risk"
+         hx-get="/fragments/dashboard/risk"
+         hx-trigger="load, every 1s"
+         hx-swap="innerHTML">
       <div class="card" style="min-height:160px;display:flex;align-items:center;justify-content:center;">
         <span style="color:var(--muted);font-size:.78rem;">Loading risk...</span>
       </div>
+    </div>
+    <!-- Right: positions + orders -->
+    <div id="dash-positions"
+         hx-get="/fragments/dashboard/positions"
+         hx-trigger="load, every 1s"
+         hx-swap="innerHTML">
       <div class="card" style="min-height:160px;display:flex;align-items:center;justify-content:center;">
         <span style="color:var(--muted);font-size:.78rem;">Loading positions...</span>
       </div>
     </div>
-  </div>
-  <div id="dash-spinner" class="htmx-indicator" style="position:fixed;top:56px;right:12px;
-       background:var(--card);border:1px solid var(--border);border-radius:4px;padding:2px 8px;">
-    ⟳ refreshing
   </div>
 
   <!-- ── Monthly stats + Active params (30s refresh) ──────────────────── -->

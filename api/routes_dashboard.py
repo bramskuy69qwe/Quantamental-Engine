@@ -87,6 +87,53 @@ async def frag_dashboard(request: Request):
     )
 
 
+@router.get("/fragments/dashboard/risk", response_class=HTMLResponse)
+async def frag_dashboard_risk(request: Request):
+    """Risk panel fragment (DD gauge, exposure, weekly PnL, funding, sectors)."""
+    await _ensure_funding_rates()
+    pf  = app_state.portfolio
+    prm = app_state.params
+
+    funding_lines = get_funding_lines()
+    sector_totals: dict = {}
+    for p in app_state.positions:
+        if p.sector:
+            sector_totals[p.sector] = sector_totals.get(p.sector, 0.0) + abs(p.position_value_usdt)
+    sector_lines = [f"{s}: ${v:,.0f}" for s, v in sorted(sector_totals.items(), key=lambda x: -x[1])]
+
+    return templates.TemplateResponse(
+        request, "fragments/dashboard_risk.html",
+        _ctx(request,
+             exposure_pct=pf.total_exposure * 100,
+             max_exposure_pct=prm["max_exposure"] * 100,
+             dd_state=pf.dd_state,
+             drawdown_pct=pf.drawdown * 100,
+             drawdown_state=pf.dd_state,
+             max_dd_pct=prm["max_dd_percent"] * 100,
+             weekly_pnl_state=pf.weekly_pnl_state,
+             funding_lines=funding_lines,
+             sector_lines=sector_lines),
+    )
+
+
+@router.get("/fragments/dashboard/positions", response_class=HTMLResponse)
+async def frag_dashboard_positions(request: Request):
+    """Positions + orders tabbed panel fragment."""
+    prm = app_state.params
+    working_orders = platform_bridge.order_manager.open_orders
+    aid = app_state.active_account_id
+    recent_orders = await _get_cached_recent_orders(aid)
+
+    return templates.TemplateResponse(
+        request, "fragments/dashboard_positions.html",
+        _ctx(request,
+             open_positions=app_state.positions,
+             max_open_positions=prm["max_position_count"],
+             working_orders=working_orders,
+             recent_orders=recent_orders),
+    )
+
+
 @router.get("/fragments/dashboard/top", response_class=HTMLResponse)
 async def frag_dashboard_top(request: Request):
     acc = app_state.account_state
