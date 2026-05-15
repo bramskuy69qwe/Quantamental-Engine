@@ -359,6 +359,7 @@ def run_risk_calculator(
         regime_mult = 1.0
 
     # _size (contracts) and est_size (USDT notional, post-slippage)
+    calc_id   = sizing["calc_id"]       # uuid4 from calculate_position_size
     size_raw  = sizing["size"]          # pre-regime
     size      = size_raw * regime_mult  # post-regime
     base_size = sizing["base_size"]
