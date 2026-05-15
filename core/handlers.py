@@ -73,6 +73,19 @@ async def handle_account_updated(payload: Dict[str, Any]) -> None:
     except Exception as exc:
         log.error("handle_account_updated DB write failed: %s", exc)
 
+    # v2.4 Phase 5: publish equity update to Redis
+    try:
+        from core.pubsub.bus import get_bus
+        from core.pubsub.channels import equity_channel
+        await get_bus().publish(equity_channel(app_state.active_account_id), {
+            "total_equity": snap.get("total_equity", 0),
+            "available_margin": snap.get("available_margin", 0),
+            "unrealized_pnl": snap.get("total_unrealized", 0),
+            "ts": snap.get("snapshot_ts", ""),
+        })
+    except Exception:
+        pass
+
     # Push to Quantower plugin (no-op when standalone or no clients connected)
     if app_state.active_platform == "quantower":
         try:

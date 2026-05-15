@@ -544,6 +544,21 @@ class DataCache:
                         }, source="data_cache")
                     except Exception:
                         log.warning("dd_state_transition log failed", exc_info=True)
+                    # v2.4 Phase 5: publish DD state change to Redis
+                    try:
+                        import asyncio as _aio
+                        from core.pubsub.bus import get_bus
+                        from core.pubsub.channels import dd_state_channel
+                        _aio.get_event_loop().create_task(get_bus().publish(
+                            dd_state_channel(aid), {
+                                "from": prev_state, "to": new_state,
+                                "drawdown": round(rolling_dd, 6),
+                                "degraded": pf.dd_degraded,
+                                "ts": datetime.now(timezone.utc).isoformat(),
+                            }
+                        ))
+                    except Exception:
+                        pass
                 else:
                     app_state.dd_previous_states[aid] = new_state
             else:

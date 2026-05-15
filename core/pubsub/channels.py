@@ -24,3 +24,18 @@ def equity_channel(account_id: int) -> str:
 
 def dd_state_channel(account_id: int) -> str:
     return f"account:{account_id}:dd_state"
+
+
+def weekly_pnl_channel(account_id: int) -> str:
+    return f"account:{account_id}:weekly_pnl"
+
+
+def channel_pattern(account_id: int) -> str:
+    """PSUBSCRIBE pattern matching all channels for an account."""
+    return f"account:{account_id}:*"
+
+
+def extract_event_type(channel: str) -> str:
+    """Extract event type from channel name (last segment after ':')."""
+    parts = channel.split(":")
+    return parts[-1] if len(parts) >= 3 else channel

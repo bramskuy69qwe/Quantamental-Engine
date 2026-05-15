@@ -159,6 +159,7 @@ class OrderManager:
         self._re_enrich_parent_on_child_arrival(account_id, order)
         self._emit_order_events(account_id, order)
         self._detect_modification_events(account_id, order, prev_order)
+        self._publish_order_update(account_id, order)
         await self.refresh_cache(account_id)
         return True
 
@@ -277,6 +278,41 @@ class OrderManager:
             enrich_fill(fill, config.DB_PATH)
         except Exception:
             log.debug("fill enrichment skipped", exc_info=True)
+
+    # ── Redis pub/sub publishers (v2.4 Phase 5) ─────────────────────────────
+
+    def _publish_order_update(self, account_id: int, order: Dict[str, Any]) -> None:
+        try:
+            from core.pubsub.bus import get_bus
+            from core.pubsub.channels import order_channel
+            import asyncio
+            asyncio.get_event_loop().create_task(get_bus().publish(
+                order_channel(account_id), {
+                    "exchange_order_id": order.get("exchange_order_id", ""),
+                    "symbol": order.get("symbol", ""),
+                    "side": order.get("side", ""),
+                    "status": order.get("status", ""),
+                }
+            ))
+        except Exception:
+            pass
+
+    def _publish_fill(self, account_id: int, fill: Dict[str, Any]) -> None:
+        try:
+            from core.pubsub.bus import get_bus
+            from core.pubsub.channels import fill_channel
+            import asyncio
+            asyncio.get_event_loop().create_task(get_bus().publish(
+                fill_channel(account_id), {
+                    "exchange_fill_id": fill.get("exchange_fill_id", ""),
+                    "symbol": fill.get("symbol", ""),
+                    "side": fill.get("side", ""),
+                    "price": fill.get("price", 0),
+                    "quantity": fill.get("quantity", 0),
+                }
+            ))
+        except Exception:
+            pass
 
     # ── Trade event emission (v2.4) ──────────────────────────────────────────
 
@@ -537,6 +573,7 @@ class OrderManager:
         await self._db.upsert_fill_and_update_order(fill, exchange_order_id)
         self._enrich_fill_best_effort(fill)
         self._emit_fill_events(account_id, fill)
+        self._publish_fill(account_id, fill)
 
         # 3. Refresh position fees from DB (SUM query, not accumulate)
         pos_id = fill.get("terminal_position_id", "")
