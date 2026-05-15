@@ -152,6 +152,11 @@ class OrderManager:
 
         await self._db.upsert_order_batch([order])
         self._enrich_order_best_effort(order)
+        # When a TP/SL child arrives, re-enrich the parent entry so its
+        # tp/sl_trigger_price gets populated and correlation can run.
+        # Without this, market orders that fill before children arrive
+        # never get correlated (the parent has no further updates).
+        self._re_enrich_parent_on_child_arrival(account_id, order)
         self._emit_order_events(account_id, order)
         self._detect_modification_events(account_id, order, prev_order)
         await self.refresh_cache(account_id)
@@ -189,6 +194,43 @@ class OrderManager:
         return allowed, reason
 
     # ── calc_id enrichment (v2.4) ────────────────────────────────────────────
+
+    _TPSL_TYPES = frozenset({
+        "stop_loss", "stop_market", "stop_loss_limit",
+        "take_profit", "take_profit_market", "take_profit_limit",
+    })
+
+    def _re_enrich_parent_on_child_arrival(
+        self, account_id: int, order: Dict[str, Any]
+    ) -> None:
+        """When a TP/SL child order is persisted, re-enrich the parent entry.
+
+        The parent's tp/sl_trigger_price gets populated from children, and
+        correlation runs if calc_id is still NULL. Best-effort.
+        """
+        try:
+            otype = (order.get("order_type") or "").lower()
+            if not order.get("reduce_only") or otype not in self._TPSL_TYPES:
+                return
+            pos_id = order.get("exchange_position_id", "")
+            if not pos_id:
+                return
+
+            import sqlite3, config
+            conn = sqlite3.connect(config.DB_PATH)
+            conn.row_factory = sqlite3.Row
+            parent = conn.execute(
+                "SELECT * FROM orders WHERE account_id = ? "
+                "AND exchange_position_id = ? AND reduce_only = 0 LIMIT 1",
+                (account_id, pos_id),
+            ).fetchone()
+            conn.close()
+
+            if parent:
+                from core.order_enrichment import enrich_order
+                enrich_order(dict(parent), config.DB_PATH)
+        except Exception:
+            log.debug("parent re-enrichment on child arrival skipped", exc_info=True)
 
     def _enrich_order_best_effort(self, order: Dict[str, Any]) -> None:
         try:
