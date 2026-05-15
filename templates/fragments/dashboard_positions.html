@@ -1,8 +1,8 @@
 <!-- fragment: positions + orders tabbed panel shell (right column) -->
 <!-- Only the shell loads once; each tbody refreshes independently via SSE -->
-<div class="card">
+<div class="card" style="display:flex;flex-direction:column;min-height:var(--data-panel-h);">
   <!-- ── Subtab row (Positions / Open Orders / Order History) ── -->
-  <div style="display:flex;align-items:center;gap:0;border-bottom:1px solid var(--border);margin-bottom:8px;">
+  <div style="display:flex;align-items:center;gap:0;border-bottom:1px solid var(--border);margin-bottom:8px;flex-shrink:0;">
     <button id="dt-positions" onclick="dtab('positions')"
             style="font-family:var(--font-ui);font-size:.6rem;padding:6px 14px;border:none;background:none;cursor:pointer;
                    letter-spacing:.1em;text-transform:uppercase;font-weight:700;
@@ -26,57 +26,51 @@
   </div>
 
   <!-- ── Panel: Positions (visible by default — active tab) ── -->
-  <div id="dp-positions">
-    <div style="overflow-x:auto;">
-      <table id="positions-table">
-        <thead><tr>
-          <th>Symbol</th><th>Dir</th><th>Hold</th><th>Entry</th><th>Mark</th>
-          <th>Size</th><th>Notional</th><th>uPnL</th><th>Fees</th><th>Net</th><th>MFE</th><th>MAE</th><th>TP</th><th>SL</th>
-        </tr></thead>
-        <tbody id="positions-tbody"
-               hx-get="/fragments/dashboard/positions/rows"
-               hx-trigger="sse:position_update, every 10s"
-               hx-swap="morph:innerHTML">
-          {% include "fragments/dashboard_positions_rows.html" %}
-        </tbody>
-      </table>
-    </div>
+  <div id="dp-positions" style="flex:1;min-height:0;overflow:auto;">
+    <table id="positions-table">
+      <thead style="position:sticky;top:0;z-index:1;background:var(--card);"><tr>
+        <th>Symbol</th><th>Dir</th><th>Hold</th><th>Entry</th><th>Mark</th>
+        <th>Size</th><th>Notional</th><th>uPnL</th><th>Fees</th><th>Net</th><th>MFE</th><th>MAE</th><th>TP</th><th>SL</th>
+      </tr></thead>
+      <tbody id="positions-tbody"
+             hx-get="/fragments/dashboard/positions/rows"
+             hx-trigger="sse:position_update, every 10s"
+             hx-swap="morph:innerHTML">
+        {% include "fragments/dashboard_positions_rows.html" %}
+      </tbody>
+    </table>
   </div>
 
   <!-- ── Panel: Open Orders ── -->
-  <div id="dp-orders" style="display:none;">
-    <div style="overflow-x:auto;">
-      <table id="orders-table">
-        <thead><tr>
-          <th>Symbol</th><th>Side</th><th>Type</th><th>Qty</th><th>Filled</th><th>Remaining</th>
-          <th>Price</th><th>Trigger</th><th>TIF</th><th>Pos Side</th>
-        </tr></thead>
-        <tbody id="orders-tbody"
-               hx-get="/fragments/dashboard/positions/rows?tab=orders"
-               hx-trigger="sse:order_update, every 10s"
-               hx-swap="morph:innerHTML">
-          {% include "fragments/dashboard_orders_rows.html" %}
-        </tbody>
-      </table>
-    </div>
+  <div id="dp-orders" style="display:none;flex:1;min-height:0;overflow:auto;">
+    <table id="orders-table">
+      <thead style="position:sticky;top:0;z-index:1;background:var(--card);"><tr>
+        <th>Symbol</th><th>Side</th><th>Type</th><th>Qty</th><th>Filled</th><th>Remaining</th>
+        <th>Price</th><th>Trigger</th><th>TIF</th><th>Pos Side</th>
+      </tr></thead>
+      <tbody id="orders-tbody"
+             hx-get="/fragments/dashboard/positions/rows?tab=orders"
+             hx-trigger="sse:order_update, every 10s"
+             hx-swap="morph:innerHTML">
+        {% include "fragments/dashboard_orders_rows.html" %}
+      </tbody>
+    </table>
   </div>
 
   <!-- ── Panel: Order History ── -->
-  <div id="dp-history" style="display:none;">
-    <div style="overflow-x:auto;max-height:320px;overflow-y:auto;">
-      <table id="history-table">
-        <thead style="position:sticky;top:0;z-index:1;"><tr>
-          <th>Time</th><th>Symbol</th><th>Side</th><th>Type</th><th>Qty</th>
-          <th>Price</th><th>Trigger</th><th>Status</th><th>Avg Fill</th>
-        </tr></thead>
-        <tbody id="history-tbody"
-               hx-get="/fragments/dashboard/positions/rows?tab=history"
-               hx-trigger="sse:fill, every 10s"
-               hx-swap="morph:innerHTML">
-          {% include "fragments/dashboard_history_rows.html" %}
-        </tbody>
-      </table>
-    </div>
+  <div id="dp-history" style="display:none;flex:1;min-height:0;overflow:auto;">
+    <table id="history-table">
+      <thead style="position:sticky;top:0;z-index:1;background:var(--card);"><tr>
+        <th>Time</th><th>Symbol</th><th>Side</th><th>Type</th><th>Qty</th>
+        <th>Price</th><th>Trigger</th><th>Status</th><th>Avg Fill</th>
+      </tr></thead>
+      <tbody id="history-tbody"
+             hx-get="/fragments/dashboard/positions/rows?tab=history"
+             hx-trigger="sse:fill, every 10s"
+             hx-swap="morph:innerHTML">
+        {% include "fragments/dashboard_history_rows.html" %}
+      </tbody>
+    </table>
   </div>
 </div>
 

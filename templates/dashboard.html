@@ -41,17 +41,19 @@
   </div>
 
   <!-- ── Risk / Exposure + Positions ──────────────────────────────────── -->
-  <div style="display:grid;grid-template-columns:1fr 2fr;gap:6px;align-items:start;">
+  <div style="display:grid;grid-template-columns:1fr 2fr;gap:6px;">
     <div id="dash-risk"
          hx-get="/fragments/dashboard/risk"
          hx-trigger="load, sse:dd_state, sse:weekly_pnl, every 10s"
-         hx-swap="morph:innerHTML">
+         hx-swap="morph:innerHTML"
+         style="display:flex;">
       {% include "fragments/ghosts/risk_ghost.html" %}
     </div>
     <div id="dash-positions"
          hx-get="/fragments/dashboard/positions"
          hx-trigger="load"
-         hx-swap="morph:innerHTML">
+         hx-swap="morph:innerHTML"
+         style="display:flex;">
       {% include "fragments/ghosts/positions_ghost.html" %}
     </div>
   </div>

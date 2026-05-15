@@ -184,7 +184,41 @@ class TestRowsOnlyRefresh:
 
 
 class TestPanelHeight:
-    def test_grid_align_items_start(self):
-        """Risk+positions grid should use align-items:start (content-driven height)."""
+    def test_grid_uses_stretch(self):
+        """Risk+positions grid should use default stretch (matched panel heights)."""
         content = open("templates/dashboard.html", encoding="utf-8").read()
-        assert "align-items:start" in content
+        # Grid for risk+positions should NOT have align-items:start (removed in Task 53)
+        idx = content.find('id="dash-risk"')
+        block = content[max(0, idx-200):idx]
+        assert "align-items:start" not in block
+
+    def test_panel_min_height(self):
+        """Positions card has min-height for consistent panel sizing."""
+        content = open("templates/fragments/dashboard_positions.html", encoding="utf-8").read()
+        assert "min-height:var(--data-panel-h)" in content
+
+    def test_data_panel_css_var(self):
+        """--data-panel-h CSS variable is defined."""
+        content = open("templates/base.html", encoding="utf-8").read()
+        assert "--data-panel-h" in content
+
+    def test_panel_wrappers_use_flex(self):
+        """dash-risk and dash-positions use display:flex for card stretching."""
+        content = open("templates/dashboard.html", encoding="utf-8").read()
+        # Both wrappers need display:flex so cards stretch to grid row height
+        risk_idx = content.find('id="dash-risk"')
+        risk_block = content[risk_idx:risk_idx+300]
+        assert "display:flex" in risk_block
+        pos_idx = content.find('id="dash-positions"')
+        pos_block = content[pos_idx:pos_idx+300]
+        assert "display:flex" in pos_block
+
+    def test_tab_panels_scroll(self):
+        """Each tab panel has overflow:auto for internal scrolling."""
+        content = open("templates/fragments/dashboard_positions.html", encoding="utf-8").read()
+        assert content.count("overflow:auto") >= 3  # positions, orders, history
+
+    def test_sticky_thead_has_background(self):
+        """Sticky thead elements have opaque background to prevent overlap."""
+        content = open("templates/fragments/dashboard_positions.html", encoding="utf-8").read()
+        assert content.count("background:var(--card)") >= 3  # all three theads
