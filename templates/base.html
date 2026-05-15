@@ -271,7 +271,7 @@
 {% if is_initializing %}
 <div id="startup-overlay" style="position:fixed;inset:0;z-index:9999;background:rgba(7,8,15,.85);backdrop-filter:blur(6px);display:flex;flex-direction:column;align-items:center;justify-content:center;">
   <span style="color:var(--blue);font-weight:800;font-size:1.1rem;letter-spacing:.06em;margin-bottom:4px;">
-    QUANTAMENTAL ENGINE <span style="color:var(--sub);font-weight:400;font-size:.8rem;">v2.1</span>
+    {{ project_name_ }} <span style="color:var(--sub);font-weight:400;font-size:.8rem;">{{ project_version_ }}</span>
   </span>
   <p style="color:var(--sub);font-size:.82rem;margin-bottom:22px;">Connecting to exchange...</p>
   <div style="position:relative;width:220px;height:3px;background:var(--panel);border-radius:99px;overflow:hidden;">

@@ -66,6 +66,21 @@ class TestNoHardcodedVersionInRuntime:
                 f"{filepath}:{i} has hardcoded version literal: {matches}"
 
 
+class TestStartupOverlayUsesConfig:
+    def test_overlay_no_hardcoded_version(self):
+        """Startup overlay in base.html must use template vars, not literals."""
+        content = open("templates/base.html", encoding="utf-8").read()
+        idx = content.find("startup-overlay")
+        assert idx != -1
+        block = content[idx:idx+500]
+        assert "project_name_" in block or "project_version_" in block, \
+            "Startup overlay should use {{ project_name_ }} / {{ project_version_ }}"
+        import re
+        matches = re.findall(r'v2\.\d+', block)
+        assert len(matches) == 0, \
+            f"Startup overlay has hardcoded version: {matches}"
+
+
 class TestLauncherReadsConfig:
     """launch.bat reads project name from config.py at runtime."""
 
