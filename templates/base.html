@@ -674,6 +674,29 @@ if ('serviceWorker' in navigator) {
 })();
 </script>
 
+<!-- Dashboard tab switcher (runs once, survives morph cycles) -->
+<script>
+(function(){
+  window._dashTab = window._dashTab || 'positions';
+  function _applyTab(t) {
+    ['positions','orders','history'].forEach(function(k) {
+      var p = document.getElementById('dp-'+k);
+      var b = document.getElementById('dt-'+k);
+      if (!p || !b) return;
+      p.style.display = k===t ? '' : 'none';
+      b.style.color = k===t ? 'var(--blue)' : 'var(--muted)';
+      b.style.borderBottomColor = k===t ? 'var(--blue)' : 'transparent';
+      b.style.fontWeight = k===t ? '600' : '';
+    });
+  }
+  window.dtab = function(t) { window._dashTab = t; _applyTab(t); };
+  // Re-apply after HTMX morph settles (tab panels arrive with display:none)
+  document.body.addEventListener('htmx:afterSettle', function(evt) {
+    if (document.getElementById('dp-positions')) _applyTab(window._dashTab);
+  });
+})();
+</script>
+
 <!-- Client-side time tick: update hold-time and "ago" labels without backend fetch -->
 <script>
 (function(){

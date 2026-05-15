@@ -23,16 +23,16 @@
     <span class="mono" style="margin-left:auto;font-size:.68rem;color:var(--sub);">{{ open_positions | length }}/{{ max_open_positions }}</span>
   </div>
 
-  <!-- ── Panel: Positions ── -->
-  <div id="dp-positions" style="display:none;">
+  <!-- ── Panel: Positions (visible by default — active tab) ── -->
+  <div id="dp-positions">
     {% if open_positions %}
     <div style="overflow-x:auto;">
-      <table>
+      <table id="positions-table">
         <thead><tr>
           <th>Symbol</th><th>Dir</th><th>Hold</th><th>Entry</th><th>Mark</th>
           <th>Size</th><th>Notional</th><th>uPnL</th><th>Fees</th><th>Net</th><th>MFE</th><th>MAE</th><th>TP</th><th>SL</th>
         </tr></thead>
-        <tbody>
+        <tbody id="positions-tbody">
           {% for p in open_positions %}
           {% set net = p.individual_unrealized - p.individual_fees %}
           <tr id="pos-row-{{ p.ticker }}-{{ p.direction }}">
@@ -138,22 +138,5 @@
   </div>
 </div>
 
-<script>
-(function(){
-  var _dt = window._dashTab || 'positions';
-  function dtab(t) { window._dashTab = t; _apply(t); }
-  function _apply(t) {
-    ['positions','orders','history'].forEach(function(k) {
-      var p = document.getElementById('dp-'+k);
-      var b = document.getElementById('dt-'+k);
-      if (!p || !b) return;
-      p.style.display = k===t ? '' : 'none';
-      b.style.color = k===t ? 'var(--blue)' : 'var(--muted)';
-      b.style.borderBottomColor = k===t ? 'var(--blue)' : 'transparent';
-      if (k===t) b.style.fontWeight = '600'; else b.style.fontWeight = '';
-    });
-  }
-  _apply(_dt);
-  window.dtab = dtab;
-})();
+<!-- Tab script moved to base.html to survive morph cycles without re-execution flicker -->
 </script>
