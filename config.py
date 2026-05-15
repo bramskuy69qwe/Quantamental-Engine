@@ -4,8 +4,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ── Project identity ─────────────────────────────────────────────────────────
-PROJECT_NAME_    = "Quantamental Engine"
-PROJECT_VERSION_ = "v2.1"
+PROJECT_NAME_    = "QUANTAMENTAL ENGINE"
+PROJECT_VERSION_ = "v2.4"
 PROJECT_NAME     = f"{PROJECT_NAME_} {PROJECT_VERSION_}"  # "Quantamental Engine v2.1"
 
 # ── Exchange ──────────────────────────────────────────────────────────────────
