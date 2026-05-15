@@ -240,6 +240,27 @@
     .w-full { width:100%; }
     .hidden { display:none !important; }
     .overflow-x-auto { overflow-x:auto; }
+
+    /* ── Ghost interface (skeleton loading states) ── */
+    .ghost {
+      background: var(--panel);
+      border-radius: 4px;
+      animation: ghost-pulse 1.5s ease-in-out infinite;
+    }
+    .ghost-row    { height: 12px; margin-bottom: 8px; }
+    .ghost-box    { height: 32px; }
+    .ghost-chart  { height: 100%; min-height: 140px; }
+    .ghost-text-s { height: 10px; width: 60px; }
+    .ghost-text-l { height: 10px; width: 120px; }
+    .ghost-gauge  { height: 8px; border-radius: 4px; }
+    .ghost-number { height: 28px; width: 140px; }
+    @keyframes ghost-pulse {
+      0%, 100% { opacity: 0.4; }
+      50%      { opacity: 0.7; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .ghost { animation: none; opacity: 0.5; }
+    }
   </style>
 
   {% block extra_head %}{% endblock %}

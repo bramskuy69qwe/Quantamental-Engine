@@ -12,79 +12,55 @@
        hx-swap="morph:outerHTML">
     <div class="card" style="display:flex;align-items:center;flex-wrap:wrap;padding:6px 0;gap:0;">
       <div style="display:flex;align-items:center;gap:6px;padding:0 12px;">
-        <span class="lbl" style="margin-bottom:0;">connecting...</span>
+        <div class="ghost ghost-text-l"></div>
       </div>
     </div>
   </div>
 
   <!-- ── Hero row: equity numbers (left) + OHLC chart (right) ──────── -->
   <div style="display:grid;grid-template-columns:280px 1fr;gap:6px;">
-    <!-- Left: equity numbers — SSE-driven + 30s fallback -->
     <div id="dash-top"
          hx-get="/fragments/dashboard/top"
          hx-trigger="load, sse:equity_update, every 10s"
          hx-swap="morph:innerHTML">
-      <div class="card" style="min-height:170px;padding:14px 16px;">
-        <span class="lbl">Total Equity</span>
-        <div class="mono" style="font-size:2rem;line-height:1;color:var(--sub);">—</div>
-      </div>
+      {% include "fragments/ghosts/top_ghost.html" %}
     </div>
-    <!-- Right: equity OHLC chart (load once, ECharts manages DOM) -->
     <div hx-get="/fragments/dashboard/equity_ohlc?tf=1h"
          hx-trigger="load"
          hx-swap="outerHTML">
-      <div class="card" style="min-height:170px;display:flex;align-items:center;justify-content:center;">
-        <span style="color:var(--muted);font-size:.78rem;">Loading equity chart...</span>
-      </div>
+      {% include "fragments/ghosts/chart_ghost.html" %}
     </div>
   </div>
 
-  <!-- ── Secondary stats — SSE-driven + 10s fallback ──────────────────── -->
+  <!-- ── Secondary stats ──────────────────────────────────────────────── -->
   <div id="dash-secondary"
        hx-get="/fragments/dashboard/secondary"
        hx-trigger="load, sse:equity_update, every 10s"
        hx-swap="morph:innerHTML">
-    <div class="card" style="display:flex;overflow:hidden;">
-      <div style="flex:1;padding:7px 10px;border-right:1px solid var(--border);">
-        <span class="lbl">SOW Equity</span>
-        <div class="mono" style="font-size:.82rem;color:var(--sub);">—</div>
-      </div>
-      <div style="flex:1;padding:7px 10px;">
-        <span class="lbl">BOD Max</span>
-        <div class="mono" style="font-size:.82rem;color:var(--sub);">—</div>
-      </div>
-    </div>
+    {% include "fragments/ghosts/secondary_ghost.html" %}
   </div>
 
-  <!-- ── Risk / Exposure + Positions — SSE-driven + 30s fallback ────── -->
+  <!-- ── Risk / Exposure + Positions ──────────────────────────────────── -->
   <div style="display:grid;grid-template-columns:1fr 2fr;gap:6px;">
-    <!-- Left: risk panel — triggers on DD state or weekly PnL events -->
     <div id="dash-risk"
          hx-get="/fragments/dashboard/risk"
          hx-trigger="load, sse:dd_state, sse:weekly_pnl, every 10s"
          hx-swap="morph:innerHTML">
-      <div class="card" style="min-height:160px;display:flex;align-items:center;justify-content:center;">
-        <span style="color:var(--muted);font-size:.78rem;">Loading risk...</span>
-      </div>
+      {% include "fragments/ghosts/risk_ghost.html" %}
     </div>
-    <!-- Right: positions + orders — triggers on position or order events -->
     <div id="dash-positions"
          hx-get="/fragments/dashboard/positions"
          hx-trigger="load, sse:position_update, sse:order_update, sse:fill, every 10s"
          hx-swap="morph:innerHTML">
-      <div class="card" style="min-height:160px;display:flex;align-items:center;justify-content:center;">
-        <span style="color:var(--muted);font-size:.78rem;">Loading positions...</span>
-      </div>
+      {% include "fragments/ghosts/positions_ghost.html" %}
     </div>
   </div>
 
-  <!-- ── Monthly stats (30s polling, no SSE — low-frequency data) ─────── -->
+  <!-- ── Monthly stats ────────────────────────────────────────────────── -->
   <div hx-get="/fragments/dashboard/journal_stats"
        hx-trigger="load, every 30s"
        hx-swap="morph:outerHTML">
-    <div class="card" style="min-height:60px;display:flex;align-items:center;justify-content:center;">
-      <span style="color:var(--muted);font-size:.78rem;">Loading monthly stats...</span>
-    </div>
+    {% include "fragments/ghosts/journal_ghost.html" %}
   </div>
 
 </div>
