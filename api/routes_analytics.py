@@ -62,10 +62,20 @@ def _analytics_range(month: str = "", all: str = "") -> tuple:
 async def analytics_page(request: Request):
     now = now_in_account_tz(app_state.active_account_id)
     current_month = f"{now.year:04d}-{now.month:02d}"
+    # Read saved default period preference
+    try:
+        from core.db_account_settings import get_account_settings
+        default_period = get_account_settings(
+            app_state.active_account_id
+        ).analytics_default_period
+    except Exception:
+        default_period = "monthly"
     return templates.TemplateResponse(
         request,
         "analytics.html",
-        _ctx(request, active_page="analytics", current_month=current_month),
+        _ctx(request, active_page="analytics",
+             current_month=current_month,
+             default_period=default_period),
     )
 
 

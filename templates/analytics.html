@@ -101,10 +101,17 @@ function loadTab(tid){
   htmx.ajax('GET',ep+'?'+qs,{target:'#analytics-content',swap:'innerHTML'});
 }
 
-// IIFE: DOMContentLoaded won't re-fire on hx-boost navigations
+// IIFE: apply saved default period, then load first tab
 (function(){
-  document.getElementById('pb-cur').classList.add('active');
-  loadTab('overview');
+  var dp = '{{ default_period | default("monthly") }}';
+  if(dp==='all_time'){
+    setMonthAll();
+  } else {
+    // monthly / weekly / quarterly / yearly / rolling — default to This Month view
+    // TODO: add full period support (weekly/quarterly/rolling date ranges)
+    document.getElementById('pb-cur').classList.add('active');
+    loadTab('overview');
+  }
 })();
 </script>
 {% endblock %}

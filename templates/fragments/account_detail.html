@@ -154,6 +154,32 @@
       </div>
     </div>
 
+    <!-- ── Preferences ────────────────────────────────────────────────── -->
+    {% if settings %}
+    <div style="margin-bottom:14px;">
+      <span class="sec-lbl">Preferences</span>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;">
+        <div>
+          <label class="lbl">Default Analytics Period</label>
+          <select name="analytics_default_period" style="width:100%;">
+            {% set periods = [
+              ('monthly',     'Monthly (This Month)'),
+              ('weekly',      'Weekly (This Week)'),
+              ('quarterly',   'Quarterly'),
+              ('yearly',      'Yearly'),
+              ('rolling_30d', 'Rolling 30 Days'),
+              ('rolling_90d', 'Rolling 90 Days'),
+              ('all_time',    'All Time'),
+            ] %}
+            {% for val, label in periods %}
+            <option value="{{ val }}" {% if settings.analytics_default_period == val %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
     <!-- ── Actions ───────────────────────────────────────────────────── -->
     <div style="display:flex;gap:8px;align-items:center;padding-top:8px;border-top:1px solid var(--border);">
       <button type="submit" class="btn btn-primary btn-sm">Save</button>

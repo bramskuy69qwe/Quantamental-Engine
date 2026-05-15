@@ -284,9 +284,14 @@ async def frag_account_detail(account_id: int, request: Request):
     if not acct:
         return HTMLResponse('<div style="color:var(--red);">Account not found.</div>')
     params = account_registry.get_account_params(account_id)
+    try:
+        from core.db_account_settings import get_account_settings
+        settings = get_account_settings(account_id)
+    except Exception:
+        settings = None
     return templates.TemplateResponse(
         request, "fragments/account_detail.html",
-        _ctx(request, acct=acct, params=params),
+        _ctx(request, acct=acct, params=params, settings=settings),
     )
 
 
@@ -316,6 +321,8 @@ async def update_account_detail(
     weekly_loss_limit_pct: Optional[float] = Form(None),
     max_dd_warning_pct: Optional[float] = Form(None),
     max_dd_limit_pct: Optional[float] = Form(None),
+    # Preferences (account_settings table)
+    analytics_default_period: Optional[str] = Form(None),
 ):
     """Save credentials + params + fees for an account in one request."""
     # Update credentials
@@ -387,6 +394,19 @@ async def update_account_detail(
                 app_state.exchange_info.taker_fee = taker_fee
             from core.event_bus import event_bus
             await event_bus.publish("risk:params_updated", {"ts": "config_save"})
+
+    # Update account_settings preferences
+    if analytics_default_period is not None:
+        from core.period_resolver import VALID_PERIODS
+        if analytics_default_period in VALID_PERIODS:
+            from core.db_account_settings import update_account_settings
+            try:
+                update_account_settings(
+                    account_id,
+                    analytics_default_period=analytics_default_period,
+                )
+            except Exception:
+                pass
 
     return HTMLResponse('<span style="color:var(--green);font-size:.65rem;">Saved.</span>')
 
