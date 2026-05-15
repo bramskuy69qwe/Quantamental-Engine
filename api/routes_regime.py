@@ -86,7 +86,8 @@ async def api_regime_backfill(request: Request):
         return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
 
     since_date = body.get("since_date", "2020-01-01")
-    until_date = body.get("until_date", datetime.now().strftime("%Y-%m-%d"))
+    from core.tz import now_in_account_tz
+    until_date = body.get("until_date", now_in_account_tz(app_state.active_account_id).strftime("%Y-%m-%d"))
     mode       = body.get("mode", "macro_only")
 
     _regime_job_counter += 1

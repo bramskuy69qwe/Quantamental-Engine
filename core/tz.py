@@ -42,3 +42,21 @@ def get_account_tz(account_id: int) -> ZoneInfo:
 def now_in_account_tz(account_id: int) -> datetime:
     """Convenience: ``datetime.now`` in the account's configured timezone."""
     return datetime.now(get_account_tz(account_id))
+
+
+def format_tz_display(account_id: int) -> str:
+    """Return a display string like 'UTC+7' for the account's timezone.
+
+    Computes the current UTC offset (DST-aware) from the IANA zone name.
+    """
+    tz = get_account_tz(account_id)
+    offset = datetime.now(tz).utcoffset()
+    if offset is None:
+        return "UTC"
+    total_seconds = int(offset.total_seconds())
+    hours, remainder = divmod(abs(total_seconds), 3600)
+    minutes = remainder // 60
+    sign = "+" if total_seconds >= 0 else "-"
+    if minutes:
+        return f"UTC{sign}{hours}:{minutes:02d}"
+    return f"UTC{sign}{hours}"

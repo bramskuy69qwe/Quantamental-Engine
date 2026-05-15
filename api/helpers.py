@@ -17,8 +17,16 @@ from fastapi.templating import Jinja2Templates
 
 import config
 from core.state import app_state
-from core.tz import get_account_tz, now_in_account_tz
+from core.tz import get_account_tz, now_in_account_tz, format_tz_display
 from core.account_registry import account_registry
+
+
+def _tz_display() -> str:
+    """Current account timezone display string, e.g. 'UTC+7'."""
+    try:
+        return format_tz_display(app_state.active_account_id)
+    except Exception:
+        return "UTC"
 
 # ── Templates ────────────────────────────────────────────────────────────────
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -104,6 +112,7 @@ def _ctx(request: Request, **extra) -> dict:
     from core.platform_bridge import platform_bridge  # late import: circular dep with exchange
     return {
         "now":               now_in_account_tz(app_state.active_account_id).strftime("%Y-%m-%d %H:%M:%S"),
+        "tz_display":        _tz_display(),
         "ws_status":         app_state.ws_status,
         "plugin_connected":  platform_bridge.is_connected,
         "params":            app_state.params,
