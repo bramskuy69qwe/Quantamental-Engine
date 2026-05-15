@@ -574,6 +574,26 @@ class DataCache:
             else:
                 pf.dd_state = "ok"
 
+        # v2.4 Phase 5: publish position_update on every recalc cycle
+        # (covers continuous PnL drift from mark-price ticks between fills)
+        try:
+            import asyncio as _aio2
+            from core.pubsub.bus import get_bus
+            from core.pubsub.channels import position_channel
+            _aio2.get_event_loop().create_task(get_bus().publish(
+                position_channel(app_state.active_account_id), {
+                    "trigger": "recalc_cycle",
+                    "positions": [
+                        {"symbol": p.ticker, "side": p.direction,
+                         "size": p.contract_amount, "upnl": p.individual_unrealized}
+                        for p in self._positions
+                    ],
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                }
+            ))
+        except Exception:
+            pass  # best-effort — never break recalc
+
     # ── Account state: conflict resolution ──────────────────────────────────
 
     def _should_accept_account_update(
