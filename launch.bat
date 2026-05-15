@@ -1,8 +1,12 @@
 @echo off
-title QUANTAMENTAL ENGINE v2.4
+
+REM Read project name from config.py — single source of truth
+for /f "delims=" %%i in ('python -c "import config; print(config.PROJECT_NAME)"') do set QE_NAME=%%i
+
+title %QE_NAME%
 echo.
 echo  ===================================================
-echo   QUANTAMENTAL ENGINE v2.4  --  Binance USD-M
+echo   %QE_NAME%  --  Binance USD-M
 echo  ===================================================
 echo.
 

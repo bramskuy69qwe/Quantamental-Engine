@@ -66,26 +66,46 @@ class TestNoHardcodedVersionInRuntime:
                 f"{filepath}:{i} has hardcoded version literal: {matches}"
 
 
-class TestNonPythonFilesMatchConfig:
-    """Ensure launcher, manifest, and service worker use current version."""
+class TestLauncherReadsConfig:
+    """launch.bat reads project name from config.py at runtime."""
 
-    NON_PY_FILES = [
-        ("launch.bat", "bat"),
-        ("static/manifest.json", "json"),
-        ("static/service-worker.js", "js"),
-    ]
+    def test_launch_bat_uses_python_config(self):
+        if not os.path.exists("launch.bat"):
+            pytest.skip("launch.bat not found")
+        content = open("launch.bat", encoding="utf-8").read()
+        assert "config.PROJECT_NAME" in content, \
+            "launch.bat should read project name from config.py"
 
-    @pytest.mark.parametrize("filepath,ftype", NON_PY_FILES)
-    def test_version_matches_config(self, filepath, ftype):
-        """Non-Python files must use config.PROJECT_VERSION_, not a stale literal."""
-        if not os.path.exists(filepath):
-            pytest.skip(f"{filepath} not found")
-        content = open(filepath, encoding="utf-8").read()
-        # Must contain the current version
-        assert config.PROJECT_VERSION_ in content, \
-            f"{filepath} missing current version {config.PROJECT_VERSION_}"
-        # Must NOT contain old version literals
+    def test_launch_bat_no_hardcoded_version(self):
+        if not os.path.exists("launch.bat"):
+            pytest.skip("launch.bat not found")
+        content = open("launch.bat", encoding="utf-8").read()
         import re
-        for m in re.finditer(r'v2\.\d+', content):
-            assert m.group() == config.PROJECT_VERSION_, \
-                f"{filepath} has stale version '{m.group()}' (expected {config.PROJECT_VERSION_})"
+        matches = re.findall(r'v2\.\d+', content)
+        assert len(matches) == 0, \
+            f"launch.bat has hardcoded version: {matches}"
+
+
+class TestManifestServedDynamically:
+    """manifest.json is served via route (main.py), not a static file."""
+
+    def test_no_static_manifest(self):
+        assert not os.path.exists("static/manifest.json"), \
+            "static/manifest.json should be deleted — route serves dynamic JSON"
+
+    def test_route_uses_config(self):
+        content = open("main.py", encoding="utf-8").read()
+        assert "config.PROJECT_NAME" in content
+
+
+class TestServiceWorkerNoVersion:
+    """service-worker.js comment has no hardcoded version."""
+
+    def test_no_version_in_comment(self):
+        if not os.path.exists("static/service-worker.js"):
+            pytest.skip("service-worker.js not found")
+        content = open("static/service-worker.js", encoding="utf-8").read()
+        import re
+        matches = re.findall(r'v2\.\d+', content)
+        assert len(matches) == 0, \
+            f"service-worker.js has hardcoded version: {matches}"

@@ -1,5 +1,5 @@
 /**
- * QUANTAMENTAL ENGINE v2.4 — Service Worker
+ * Quantamental Engine — Service Worker
  *
  * Strategy:
  *   /api/*, /fragments/*, /ws/* → Network-first (live data must be fresh)
