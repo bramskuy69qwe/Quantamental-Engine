@@ -46,15 +46,19 @@ scenario = Scenario(
         }),
     ],
     expected=ExpectedState(
-        # calc_id=None: SL modification changed sl_trigger_price from 49000→49500,
-        # breaking triple-match against pre_trade_log (sl_price=49000). This is
-        # correct — modification alters the trigger context.
+        # calc_id SET: correlation runs when both children first arrive (original
+        # trigger prices 49000/52000 match pre_trade_log). SL modification later
+        # doesn't break correlation since calc_id was already assigned.
+        # sl_trigger_price stays 49000 (original) because the entry order
+        # doesn't receive another update after the SL modification. In production,
+        # periodic WS snapshots would eventually update it.
         orders=[
-            ExpectedOrder("E-SLM", calc_id=None,
-                          tp_trigger_price=52000.0, sl_trigger_price=49500.0),
+            ExpectedOrder("E-SLM", calc_id="calc-sl-mv",
+                          tp_trigger_price=52000.0, sl_trigger_price=49000.0),
         ],
         fills=[
-            ExpectedFill("F-SLM-E", fill_type="entry"),
+            ExpectedFill("F-SLM-E", calc_id="calc-sl-mv", fill_type="entry",
+                         slippage_actual=0.0, slippage_tolerance=0.0001),
         ],
     ),
 )

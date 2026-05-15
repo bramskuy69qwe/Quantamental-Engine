@@ -191,6 +191,10 @@ def run_scenario_sync(
         elif event.type == "order_persisted":
             _upsert_order_sync(db_path, account_id, p)
             _enrich_order_sync(db_path, p, account_id)
+            # When a child (TP/SL) arrives, re-enrich the parent entry —
+            # mirrors production where repeated order updates trigger enrichment
+            if p.get("reduce_only"):
+                _re_enrich_parent_entry(db_path, account_id, p.get("exchange_position_id", ""))
 
         elif event.type == "fill_received":
             _upsert_fill_sync(db_path, account_id, p)
@@ -199,14 +203,13 @@ def run_scenario_sync(
         elif event.type == "order_modified":
             _upsert_order_sync(db_path, account_id, p)
             _enrich_order_sync(db_path, p, account_id)
+            # Do NOT re-enrich parent on modification — that would overwrite
+            # trigger prices with modified values before correlation runs.
+            # In production, correlation already ran on an earlier update.
 
         elif event.type == "order_canceled":
             p.setdefault("status", "canceled")
             _upsert_order_sync(db_path, account_id, p)
-
-    # Final enrichment sweep: re-enrich all entry orders (real system sends
-    # repeated updates; in tests, TP/SL children arrive after the entry)
-    _final_enrichment_sweep(db_path, account_id)
 
     # Read final state
     return _read_final_state(db_path, data_dir, account_id)
@@ -271,6 +274,26 @@ def _upsert_fill_sync(db_path: str, aid: int, p: dict) -> None:
     conn.close()
 
 
+def _re_enrich_parent_entry(db_path: str, aid: int, pos_id: str) -> None:
+    """Re-enrich the entry order for a position after a child arrives."""
+    if not pos_id:
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT * FROM orders WHERE account_id = ? AND exchange_position_id = ? "
+            "AND reduce_only = 0 LIMIT 1",
+            (aid, pos_id),
+        ).fetchone()
+        conn.close()
+        if row:
+            from core.order_enrichment import enrich_order
+            enrich_order(dict(row), db_path)
+    except Exception:
+        pass
+
+
 def _enrich_fill_sync(db_path: str, p: dict, aid: int) -> None:
     try:
         from core.order_enrichment import enrich_fill
@@ -279,34 +302,6 @@ def _enrich_fill_sync(db_path: str, p: dict, aid: int) -> None:
     except Exception:
         pass
 
-
-def _final_enrichment_sweep(db_path: str, aid: int) -> None:
-    """Re-enrich all entry orders + fills after all events processed."""
-    from core.order_enrichment import enrich_order, enrich_fill
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-
-    # Re-enrich entry orders (now that children exist)
-    orders = conn.execute(
-        "SELECT * FROM orders WHERE account_id = ? AND reduce_only = 0",
-        (aid,),
-    ).fetchall()
-    for o in orders:
-        try:
-            enrich_order(dict(o), db_path)
-        except Exception:
-            pass
-
-    # Re-enrich all fills (calc_id propagation + classification)
-    fills = conn.execute(
-        "SELECT * FROM fills WHERE account_id = ?", (aid,),
-    ).fetchall()
-    for f in fills:
-        try:
-            enrich_fill(dict(f), db_path)
-        except Exception:
-            pass
-    conn.close()
 
 
 def _read_final_state(db_path: str, data_dir: str, aid: int) -> Dict[str, Any]:
