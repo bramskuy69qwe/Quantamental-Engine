@@ -1,5 +1,5 @@
 """
-Risk calculation engine — Quantamental Engine v2.1.
+Risk calculation engine.
 
 PRD step-by-step chain:
   1. atr_c       = ATR(100,4h) / ATR(14,4h), capped at 1.0

@@ -6,7 +6,7 @@ load_dotenv()
 # ── Project identity ─────────────────────────────────────────────────────────
 PROJECT_NAME_    = "QUANTAMENTAL ENGINE"
 PROJECT_VERSION_ = "v2.4"
-PROJECT_NAME     = f"{PROJECT_NAME_} {PROJECT_VERSION_}"  # "Quantamental Engine v2.1"
+PROJECT_NAME     = f"{PROJECT_NAME_} {PROJECT_VERSION_}"
 
 # ── Exchange ──────────────────────────────────────────────────────────────────
 # NOTE: BINANCE_API_KEY / BINANCE_API_SECRET are kept for the one-time seed

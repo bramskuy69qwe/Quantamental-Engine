@@ -1,5 +1,5 @@
 """
-Quantamental Engine v2.1 — FastAPI entry point.
+Quantamental Engine — FastAPI entry point.
 
 Run with:
     uvicorn main:app --host 0.0.0.0 --port 8000 --reload

@@ -185,9 +185,10 @@ class TestHeaderUIPolish:
         content = open("templates/base.html", encoding="utf-8").read()
         assert "plugStat.style.display = platform==='quantower'" in content
 
-    def test_title_uppercase_css(self):
-        """App title span uses text-transform:uppercase."""
+    def test_title_uses_project_name(self):
+        """App title renders project_name_ (already uppercase in config)."""
         content = open("templates/base.html", encoding="utf-8").read()
-        idx = content.find("project_name_")
-        block = content[max(0, idx-200):idx]
-        assert "text-transform:uppercase" in block
+        assert "project_name_" in content
+        import config
+        assert config.PROJECT_NAME_ == config.PROJECT_NAME_.upper(), \
+            "PROJECT_NAME_ should be uppercase in config"
