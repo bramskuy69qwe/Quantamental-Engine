@@ -1,8 +1,8 @@
 @echo off
-title Quantamental Engine v2.1
+title QUANTAMENTAL ENGINE v2.4
 echo.
 echo  ===================================================
-echo   Quantamental Engine v2.1  --  Binance USD-M
+echo   QUANTAMENTAL ENGINE v2.4  --  Binance USD-M
 echo  ===================================================
 echo.
 

@@ -64,3 +64,28 @@ class TestNoHardcodedVersionInRuntime:
             matches = re.findall(r'''["']v2\.\d+["']''', line)
             assert len(matches) == 0, \
                 f"{filepath}:{i} has hardcoded version literal: {matches}"
+
+
+class TestNonPythonFilesMatchConfig:
+    """Ensure launcher, manifest, and service worker use current version."""
+
+    NON_PY_FILES = [
+        ("launch.bat", "bat"),
+        ("static/manifest.json", "json"),
+        ("static/service-worker.js", "js"),
+    ]
+
+    @pytest.mark.parametrize("filepath,ftype", NON_PY_FILES)
+    def test_version_matches_config(self, filepath, ftype):
+        """Non-Python files must use config.PROJECT_VERSION_, not a stale literal."""
+        if not os.path.exists(filepath):
+            pytest.skip(f"{filepath} not found")
+        content = open(filepath, encoding="utf-8").read()
+        # Must contain the current version
+        assert config.PROJECT_VERSION_ in content, \
+            f"{filepath} missing current version {config.PROJECT_VERSION_}"
+        # Must NOT contain old version literals
+        import re
+        for m in re.finditer(r'v2\.\d+', content):
+            assert m.group() == config.PROJECT_VERSION_, \
+                f"{filepath} has stale version '{m.group()}' (expected {config.PROJECT_VERSION_})"
