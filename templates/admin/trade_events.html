@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Trade Events{% endblock %}
+{% block content %}
+<div class="container" style="max-width:960px;margin:0 auto;padding:16px;">
+  <h2 style="font-size:1rem;margin-bottom:12px;">Trade Events ({{ event_count }})</h2>
+
+  <form hx-get="/admin/trade_events" hx-target="#trade-events-table" hx-swap="outerHTML"
+        style="display:flex;gap:8px;margin-bottom:12px;font-size:.65rem;flex-wrap:wrap;">
+    <select name="event_type" style="padding:4px;background:var(--bg-card);color:var(--text);border:1px solid var(--border);">
+      <option value="" {{ 'selected' if not event_type }}>All types</option>
+      <option value="calc_created" {{ 'selected' if event_type=='calc_created' }}>calc_created</option>
+      <option value="order_placed" {{ 'selected' if event_type=='order_placed' }}>order_placed</option>
+      <option value="order_canceled" {{ 'selected' if event_type=='order_canceled' }}>order_canceled</option>
+      <option value="order_filled" {{ 'selected' if event_type=='order_filled' }}>order_filled</option>
+      <option value="position_opened" {{ 'selected' if event_type=='position_opened' }}>position_opened</option>
+      <option value="position_closed" {{ 'selected' if event_type=='position_closed' }}>position_closed</option>
+      <option value="partial_close" {{ 'selected' if event_type=='partial_close' }}>partial_close</option>
+      <option value="tp_modified" {{ 'selected' if event_type=='tp_modified' }}>tp_modified</option>
+      <option value="sl_modified" {{ 'selected' if event_type=='sl_modified' }}>sl_modified</option>
+      <option value="liquidated" {{ 'selected' if event_type=='liquidated' }}>liquidated</option>
+      <option value="manual_close" {{ 'selected' if event_type=='manual_close' }}>manual_close</option>
+    </select>
+    <input type="text" name="calc_id" placeholder="calc_id" value="{{ calc_id_filter }}"
+           style="padding:4px;width:120px;background:var(--bg-card);color:var(--text);border:1px solid var(--border);">
+    <input type="text" name="date_from" placeholder="From (ISO)" value="{{ date_from }}"
+           style="padding:4px;width:140px;background:var(--bg-card);color:var(--text);border:1px solid var(--border);">
+    <input type="text" name="date_to" placeholder="To (ISO)" value="{{ date_to }}"
+           style="padding:4px;width:140px;background:var(--bg-card);color:var(--text);border:1px solid var(--border);">
+    <button type="submit" style="padding:4px 12px;background:var(--accent);color:#fff;border:none;border-radius:4px;">Filter</button>
+  </form>
+
+  <div id="trade-events-table">
+    <table class="data-table" style="font-size:.6rem;width:100%;">
+      <thead>
+        <tr>
+          <th style="width:145px;">Timestamp</th>
+          <th style="width:120px;">Type</th>
+          <th style="width:90px;">calc_id</th>
+          <th>Payload</th>
+          <th style="width:90px;">Source</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in events %}
+        <tr>
+          <td class="mono">{{ e.timestamp[:19] }}</td>
+          <td>{{ e.event_type }}</td>
+          <td class="mono" title="{{ e.calc_id or '' }}" style="max-width:90px;overflow:hidden;text-overflow:ellipsis;">
+            {{ (e.calc_id or '')[:8] }}
+          </td>
+          <td class="mono" style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+            {% for k, v in e.payload.items() %}{{ k }}={{ v }}{% if not loop.last %}, {% endif %}{% endfor %}
+          </td>
+          <td>{{ e.source }}</td>
+        </tr>
+        {% endfor %}
+        {% if not events %}
+        <tr><td colspan="5" style="text-align:center;color:var(--muted);">No trade events found.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

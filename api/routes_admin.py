@@ -1,4 +1,4 @@
-"""Admin routes — shadow events viewer + enforcement mode toggle."""
+"""Admin routes — shadow events viewer + enforcement mode toggle + trade events."""
 from __future__ import annotations
 
 import json
@@ -128,4 +128,49 @@ async def dd_enforcement_toggle(request: Request):
     return HTMLResponse(
         f'<div class="alert alert-success">Enforcement mode changed: '
         f'{prev_mode} &rarr; {new_mode}</div>'
+    )
+
+
+# ── Trade events viewer ─────────────────────────────────────────────────────
+
+
+@router.get("/admin/trade_events", response_class=HTMLResponse)
+async def trade_events_page(
+    request: Request,
+    event_type: str = "",
+    calc_id: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    limit: int = 50,
+):
+    from core.trade_event_log import query_trade_events
+
+    aid = app_state.active_account_id
+    events = query_trade_events(
+        account_id=aid,
+        calc_id=calc_id or None,
+        event_type=event_type or None,
+        since=date_from or None,
+        until=date_to or None,
+        limit=limit,
+    )
+    for e in events:
+        try:
+            e["payload"] = json.loads(e.get("payload_json", "{}"))
+        except (json.JSONDecodeError, TypeError):
+            e["payload"] = {}
+
+    return templates.TemplateResponse(
+        request,
+        "admin/trade_events.html",
+        _ctx(
+            request,
+            events=events,
+            event_type=event_type,
+            calc_id_filter=calc_id,
+            date_from=date_from,
+            date_to=date_to,
+            event_count=len(events),
+            active_page="admin",
+        ),
     )
