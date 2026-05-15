@@ -74,6 +74,38 @@ class MexcLinearAdapter(BaseExchangeAdapter):
     def ohlcv_limit(self) -> int:
         return OHLCV_LIMIT
 
+    # ── Symbol normalization ─────────────────────────────────────────────────
+    # CCXT MEXC: "BTC/USDT:USDT" → Engine canonical: "BTCUSDT"
+
+    def normalize_symbol(self, raw_symbol: str) -> str:
+        """Strip CCXT unified format to engine canonical (BTCUSDT)."""
+        s = raw_symbol.split(":")[0]  # "BTC/USDT:USDT" → "BTC/USDT"
+        return s.replace("/", "").replace("_", "")
+
+    def denormalize_symbol(self, unified_symbol: str) -> str:
+        """Convert engine canonical to CCXT unified for API calls."""
+        # Best effort: insert / before USDT suffix
+        if unified_symbol.endswith("USDT") and "/" not in unified_symbol:
+            base = unified_symbol[:-4]
+            return f"{base}/USDT:USDT"
+        return unified_symbol
+
+    def _get_contract_size(self, symbol: str) -> float:
+        """Get contract multiplier from market metadata.
+
+        MEXC futures qty is in contracts. Multiply by contractSize to get
+        base currency qty (e.g., 10 contracts × 0.0001 BTC = 0.001 BTC).
+        Returns 1.0 if market info unavailable.
+        """
+        if self._markets_loaded and self._ex.markets:
+            # Try CCXT unified format
+            for s, m in self._ex.markets.items():
+                if self.normalize_symbol(s) == self.normalize_symbol(symbol):
+                    cs = m.get("contractSize")
+                    if cs and cs > 0:
+                        return float(cs)
+        return 1.0  # fallback: assume 1:1
+
     # ── Account ──────────────────────────────────────────────────────────────
 
     async def fetch_account(self) -> NormalizedAccount:
@@ -92,16 +124,20 @@ class MexcLinearAdapter(BaseExchangeAdapter):
         raw = await self._run(self._ex.fetch_positions)
         positions = []
         for p in raw:
-            size = abs(float(p.get("contracts", 0) or 0))
-            if size == 0:
+            contracts = abs(float(p.get("contracts", 0) or 0))
+            if contracts == 0:
                 continue
+            symbol = self.normalize_symbol(p.get("symbol", ""))
+            cs = self._get_contract_size(symbol)
+            size = contracts * cs  # convert contracts → base qty
             side = p.get("side", "").upper()
             if side not in ("LONG", "SHORT"):
                 side = "LONG" if float(p.get("contracts", 0) or 0) > 0 else "SHORT"
             positions.append(NormalizedPosition(
-                symbol=p.get("symbol", ""),
+                symbol=symbol,
                 side=side,
                 size=size,
+                contract_size=cs,
                 entry_price=float(p.get("entryPrice", 0) or 0),
                 mark_price=float(p.get("markPrice", 0) or 0),
                 liquidation_price=float(p.get("liquidationPrice", 0) or 0),
@@ -121,7 +157,7 @@ class MexcLinearAdapter(BaseExchangeAdapter):
             orders.append(NormalizedOrder(
                 exchange_order_id=str(o.get("id", "")),
                 client_order_id=str(o.get("clientOrderId", "")),
-                symbol=o.get("symbol", ""),
+                symbol=self.normalize_symbol(o.get("symbol", "")),
                 side=(o.get("side", "") or "").upper(),
                 order_type=(o.get("type", "") or "").lower(),
                 status=(o.get("status", "") or "").lower(),
@@ -138,16 +174,20 @@ class MexcLinearAdapter(BaseExchangeAdapter):
     # ── Trades / Fills ───────────────────────────────────────────────────────
 
     async def fetch_user_trades(self, symbol: str, limit: int = 200) -> List[NormalizedTrade]:
-        raw = await self._run(self._ex.fetch_my_trades, symbol, None, limit)
+        # Denormalize symbol for API call (BTCUSDT → BTC/USDT:USDT)
+        ccxt_symbol = self.denormalize_symbol(symbol)
+        raw = await self._run(self._ex.fetch_my_trades, ccxt_symbol, None, limit)
         trades = []
         for t in raw:
+            sym = self.normalize_symbol(t.get("symbol", ""))
+            cs = self._get_contract_size(sym)
             trades.append(NormalizedTrade(
                 exchange_fill_id=str(t.get("id", "")),
                 exchange_order_id=str(t.get("order", "")),
-                symbol=t.get("symbol", ""),
+                symbol=sym,
                 side=(t.get("side", "") or "").upper(),
                 price=float(t.get("price", 0) or 0),
-                quantity=float(t.get("amount", 0) or 0),
+                quantity=float(t.get("amount", 0) or 0) * cs,  # contracts → base
                 fee=abs(float((t.get("fee") or {}).get("cost", 0) or 0)),
                 fee_asset=(t.get("fee") or {}).get("currency", "USDT"),
                 role="maker" if t.get("takerOrMaker") == "maker" else "taker",
@@ -250,11 +290,7 @@ class MexcLinearAdapter(BaseExchangeAdapter):
             return math.floor(amount * f) / f
         return amount
 
-    def normalize_symbol(self, raw_symbol: str) -> str:
-        return raw_symbol
-
-    def denormalize_symbol(self, unified_symbol: str) -> str:
-        return unified_symbol
+    # normalize_symbol and denormalize_symbol defined above (line ~80)
 
     def get_ccxt_instance(self):
         return self._ex

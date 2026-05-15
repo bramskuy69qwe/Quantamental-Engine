@@ -92,9 +92,9 @@ class TestWeightTrackerIntegration:
 
 
 class TestNormalization:
-    def test_normalize_symbol_passthrough(self):
+    def test_normalize_symbol_strips_ccxt_format(self):
         a = MexcLinearAdapter("", "", "")
-        assert a.normalize_symbol("BTC/USDT:USDT") == "BTC/USDT:USDT"
+        assert a.normalize_symbol("BTC/USDT:USDT") == "BTCUSDT"
 
     def test_precision_defaults(self):
         a = MexcLinearAdapter("", "", "")
