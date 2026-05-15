@@ -130,13 +130,21 @@ class TestAdapterImplementation:
 
 # ── Test 3: Behavioral equivalence ──────────────────────────────────────────
 
+def _make_test_adapter(mock_ex=None):
+    """Create a BinanceUSDMAdapter via __new__ with base-class attrs set."""
+    from core.adapters.binance.rest_adapter import BinanceUSDMAdapter
+    adapter = BinanceUSDMAdapter.__new__(BinanceUSDMAdapter)
+    adapter._ex = mock_ex or MagicMock()
+    adapter._markets_loaded = True
+    adapter._weight_tracker = None
+    adapter._current_priority = "normal"
+    return adapter
+
+
 @pytest.mark.asyncio
 async def test_equivalence_short_trade():
     """Tier 1 (<3 min): aggTrades → (max, min)."""
-    from core.adapters.binance.rest_adapter import BinanceUSDMAdapter
-    adapter = BinanceUSDMAdapter.__new__(BinanceUSDMAdapter)
-    adapter._ex = MagicMock()
-    adapter._markets_loaded = True
+    adapter = _make_test_adapter()
 
     # Mock aggTrades to return fixture data
     adapter._ex.fapiPublicGetAggTrades = MagicMock(return_value=FIXTURE_AGG_TRADES_SHORT)
@@ -148,10 +156,7 @@ async def test_equivalence_short_trade():
 @pytest.mark.asyncio
 async def test_equivalence_very_short_trade():
     """Very short trade (30s): single aggTrades page."""
-    from core.adapters.binance.rest_adapter import BinanceUSDMAdapter
-    adapter = BinanceUSDMAdapter.__new__(BinanceUSDMAdapter)
-    adapter._ex = MagicMock()
-    adapter._markets_loaded = True
+    adapter = _make_test_adapter()
 
     adapter._ex.fapiPublicGetAggTrades = MagicMock(return_value=FIXTURE_VERY_SHORT)
 
@@ -162,10 +167,7 @@ async def test_equivalence_very_short_trade():
 @pytest.mark.asyncio
 async def test_equivalence_empty_agg_ohlcv_fallback():
     """aggTrades returns empty → OHLCV fallback."""
-    from core.adapters.binance.rest_adapter import BinanceUSDMAdapter
-    adapter = BinanceUSDMAdapter.__new__(BinanceUSDMAdapter)
-    adapter._ex = MagicMock()
-    adapter._markets_loaded = True
+    adapter = _make_test_adapter()
 
     adapter._ex.fapiPublicGetAggTrades = MagicMock(return_value=[])
     adapter._ex.fetch_ohlcv = MagicMock(return_value=EXPECTED_EMPTY_AGG_FALLBACK_OHLCV)
