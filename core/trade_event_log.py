@@ -37,6 +37,7 @@ TradeEventType = Literal[
     "sl_modified",
     "liquidated",
     "manual_close",
+    "manual_link_added",
 ]
 
 _VALID_TRADE_EVENT_TYPES: frozenset[str] = frozenset(

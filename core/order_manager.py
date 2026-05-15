@@ -275,6 +275,46 @@ class OrderManager:
                 "exchange_order_id": fill.get("exchange_order_id", ""),
             }, source="order_manager")
 
+            # position_opened: first fill for this calc_id
+            if calc_id and not fill.get("is_close"):
+                try:
+                    import sqlite3, config as _cfg
+                    conn = sqlite3.connect(_cfg.DB_PATH)
+                    prior = conn.execute(
+                        "SELECT COUNT(*) FROM fills WHERE calc_id=? AND account_id=? AND id != ("
+                        "  SELECT id FROM fills WHERE account_id=? AND exchange_fill_id=? LIMIT 1"
+                        ")",
+                        (calc_id, account_id, account_id, fill.get("exchange_fill_id", "")),
+                    ).fetchone()[0]
+                    conn.close()
+                    if prior == 0:
+                        log_trade_event(account_id, calc_id, "position_opened", {
+                            "fill_price": fill.get("price", 0),
+                            "qty": fill.get("quantity", 0),
+                            "exchange_position_id": fill.get("exchange_position_id", ""),
+                        }, source="order_manager")
+                except Exception:
+                    pass
+
+            # partial_close: reduce-only fill, position still open
+            if fill.get("is_close"):
+                try:
+                    import sqlite3, config as _cfg2
+                    pos_id = fill.get("terminal_position_id", "")
+                    if pos_id:
+                        # Check if position still has remaining qty
+                        pos = next(
+                            (p for p in app_state.positions if p.position_id == pos_id), None
+                        )
+                        if pos and pos.contract_amount > 0:
+                            log_trade_event(account_id, calc_id, "partial_close", {
+                                "fill_price": fill.get("price", 0),
+                                "fill_qty": fill.get("quantity", 0),
+                                "remaining_qty": pos.contract_amount,
+                            }, source="order_manager")
+                except Exception:
+                    pass
+
         except Exception:
             log.debug("fill event emission failed", exc_info=True)
 
