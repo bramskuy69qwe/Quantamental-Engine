@@ -66,31 +66,31 @@ class BaseExchangeAdapter:
                 pass
         return self._weight_tracker
 
-    async def _run(self, fn: Callable, *args) -> Any:
+    async def _run(self, fn: Callable, *args, priority: str = "normal") -> Any:
         """Run a blocking CCXT call in the shared thread pool.
 
         Translates ccxt exceptions to neutral adapter error types at the
         boundary — consumers never need to import ccxt for error handling.
         """
-        # v2.4: proactive weight tracking
+        # v2.4: proactive weight tracking with priority-aware fan-out
         endpoint = getattr(fn, "__name__", "")
         tracker = self._get_weight_tracker()
         if tracker:
             cost = tracker.estimate_cost(endpoint)
             try:
-                result = await tracker.reserve(cost)
+                result = await tracker.reserve(cost, priority=priority)
                 if result.blocked:
                     log.warning(
-                        "Weight tracker blocked %s (%.0f%% of budget)",
-                        endpoint, result.current_pct * 100,
+                        "Weight tracker blocked %s [%s] (%.0f%% of budget)",
+                        endpoint, priority, result.current_pct * 100,
                     )
                     raise RateLimitError(
-                        f"Weight budget exceeded ({result.current_pct:.0%})",
+                        f"Weight budget exceeded ({result.current_pct:.0%}, priority={priority})",
                     )
                 if result.throttled:
                     log.info(
-                        "Weight tracker throttling %s for %dms (%.0f%%)",
-                        endpoint, result.delay_ms, result.current_pct * 100,
+                        "Weight tracker throttling %s [%s] for %dms (%.0f%%)",
+                        endpoint, priority, result.delay_ms, result.current_pct * 100,
                     )
                     await asyncio.sleep(result.delay_ms / 1000)
             except RateLimitError:

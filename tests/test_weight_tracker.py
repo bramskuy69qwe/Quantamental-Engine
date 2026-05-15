@@ -13,9 +13,6 @@ def tracker():
         adapter_name="test",
         max_weight=1200,
         window_seconds=60,
-        warn_pct=0.70,
-        throttle_pct=0.85,
-        block_pct=0.95,
     )
 
 
