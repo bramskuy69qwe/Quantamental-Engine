@@ -100,12 +100,30 @@ class RedisBus:
 
 
 # Module-level singleton (lazy-init)
-_bus: Optional[RedisBus] = None
+_bus = None
 
 
-def get_bus() -> RedisBus:
-    """Return the shared RedisBus singleton."""
+def get_bus():
+    """Return the shared PubSubBus singleton (InProcessBus or RedisBus)."""
     global _bus
     if _bus is None:
-        _bus = RedisBus()
+        import config
+        backend = getattr(config, "PUBSUB_BACKEND", "inprocess").lower()
+        if backend == "redis":
+            _bus = RedisBus()
+            log.info("PubSubBus: using RedisBus backend")
+        elif backend == "inprocess":
+            from core.pubsub.in_process_bus import InProcessBus
+            _bus = InProcessBus()
+            log.info("PubSubBus: using InProcessBus backend")
+        else:
+            log.warning("Unknown PUBSUB_BACKEND=%r — falling back to InProcessBus", backend)
+            from core.pubsub.in_process_bus import InProcessBus
+            _bus = InProcessBus()
     return _bus
+
+
+def reset_bus() -> None:
+    """Reset the singleton (for testing)."""
+    global _bus
+    _bus = None

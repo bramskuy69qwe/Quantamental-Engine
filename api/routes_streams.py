@@ -1,4 +1,4 @@
-"""SSE streaming endpoints for real-time state updates via Redis pub/sub."""
+"""SSE streaming endpoints for real-time state updates via pub/sub bus."""
 from __future__ import annotations
 
 import asyncio
@@ -20,28 +20,24 @@ router = APIRouter()
 
 
 async def _multiplexed_event_generator(account_id: int, request: Request):
-    """Yield SSE events from ALL Redis channels for an account.
+    """Yield SSE events from ALL channels for an account.
 
-    Uses PSUBSCRIBE on account:{id}:* pattern. Each message becomes an
-    SSE event with the channel suffix as the event name.
+    Uses the bus's subscribe() with pattern matching — works for both
+    InProcessBus (fnmatch) and RedisBus (PSUBSCRIBE).
     """
     bus = get_bus()
     pattern = channel_pattern(account_id)
     try:
-        await bus._ensure_connection()
-        pubsub = bus._redis.pubsub()
-        await pubsub.psubscribe(pattern)
-        async for message in pubsub.listen():
+        async for payload in bus.subscribe(pattern):
             if await request.is_disconnected():
                 break
-            if message["type"] == "pmessage":
-                channel = message.get("channel", "")
-                event_type = extract_event_type(channel)
-                try:
-                    data = json.loads(message["data"])
-                except (json.JSONDecodeError, TypeError):
-                    continue
-                yield {"event": event_type, "data": json.dumps(data)}
+            # For InProcessBus, payload is the dict directly.
+            # For RedisBus, payload is already parsed by bus.subscribe().
+            # Extract event type from the bus's internal routing.
+            # Since subscribe() returns raw payloads without channel info,
+            # we use a wrapper channel field if available, else default.
+            event_type = payload.pop("_channel_suffix", "update") if isinstance(payload, dict) else "update"
+            yield {"event": event_type, "data": json.dumps(payload)}
     except asyncio.CancelledError:
         pass
     except GeneratorExit:
@@ -63,7 +59,7 @@ async def stream_account(account_id: int, request: Request):
 
 
 async def _position_event_generator(account_id: int, request: Request):
-    """Yield SSE events from the position_update Redis channel."""
+    """Yield SSE events from the position_update channel."""
     bus = get_bus()
     try:
         async for payload in bus.subscribe(position_channel(account_id)):
