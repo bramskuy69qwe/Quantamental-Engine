@@ -5,11 +5,20 @@
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
     <div class="card">
       <span class="sec-lbl">{{ month_label | default('This Month') }} — Summary</span>
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:4px;">
-        <span class="mono" style="font-size:.92rem;color:{{ 'var(--green)' if monthly_pnl >= 0 else 'var(--red)' }};">
-          {{ '+' if monthly_pnl >= 0 else '' }}{{ fmt(monthly_pnl, 2) }}
-          <span style="font-size:.72rem;color:var(--sub);">({{ fmt(monthly_pnl_pct, 2) }}%)</span>
-        </span>
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;flex-wrap:wrap;">
+        {% for lbl, pnl, pct in [
+          ('MTD', monthly_pnl, monthly_pnl_pct),
+          (quarter_label | default('QTD'), quarterly_pnl | default(0), quarterly_pnl_pct | default(0)),
+          (year_label | default('YTD'), yearly_pnl | default(0), yearly_pnl_pct | default(0)),
+        ] %}
+        <div style="{% if not loop.first %}border-left:1px solid var(--border);padding-left:12px;{% endif %}">
+          <span style="font-size:.55rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);display:block;">{{ lbl }}</span>
+          <span class="mono" style="font-size:.88rem;color:{{ 'var(--green)' if pnl >= 0 else 'var(--red)' }};">
+            {{ '+' if pnl >= 0 else '' }}{{ fmt(pnl, 2) }}
+            <span style="font-size:.68rem;color:var(--sub);">({{ fmt(pct, 2) }}%)</span>
+          </span>
+        </div>
+        {% endfor %}
       </div>
       <!-- Win/loss bar -->
       <div class="gauge-track" style="height:5px;margin-bottom:10px;">

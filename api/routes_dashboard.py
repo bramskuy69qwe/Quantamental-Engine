@@ -235,6 +235,7 @@ async def api_dashboard_equity_ohlc(tf: str = "1h"):
 @router.get("/fragments/dashboard/journal_stats", response_class=HTMLResponse)
 async def frag_dashboard_journal_stats(request: Request):
     import calendar as _cal
+    from core.period_resolver import resolve_period
     aid = app_state.active_account_id
     tz = get_account_tz(aid)
     now = datetime.now(tz)
@@ -244,15 +245,27 @@ async def frag_dashboard_journal_stats(request: Request):
     from_ms = int(start.timestamp() * 1000)
     to_ms   = int(end.timestamp() * 1000)
 
-    stats, boundaries, top_pairs = await asyncio.gather(
+    # Quarter + year boundaries for QTD / YTD
+    q_start, q_end = resolve_period("quarterly", tz, now=now)
+    y_start, y_end = resolve_period("yearly", tz, now=now)
+    q_from_ms = int(q_start.timestamp() * 1000)
+    q_to_ms   = int(q_end.timestamp() * 1000)
+    y_from_ms = int(y_start.timestamp() * 1000)
+    y_to_ms   = int(y_end.timestamp() * 1000)
+
+    stats, boundaries, top_pairs, q_boundaries, y_boundaries = await asyncio.gather(
         db.get_journal_stats(from_ms, to_ms, account_id=aid),
         db.get_equity_period_boundaries(from_ms, to_ms, account_id=aid),
         db.get_most_traded_pairs(from_ms, to_ms, limit=3, account_id=aid),
+        db.get_equity_period_boundaries(q_from_ms, q_to_ms, account_id=aid),
+        db.get_equity_period_boundaries(y_from_ms, y_to_ms, account_id=aid),
         return_exceptions=True,
     )
-    if isinstance(stats, Exception):      stats = {}
-    if isinstance(boundaries, Exception): boundaries = {"initial_equity": 0.0, "final_equity": 0.0, "max_drawdown": 0.0}
-    if isinstance(top_pairs, Exception):  top_pairs = []
+    if isinstance(stats, Exception):        stats = {}
+    if isinstance(boundaries, Exception):   boundaries = {"initial_equity": 0.0, "final_equity": 0.0, "max_drawdown": 0.0}
+    if isinstance(top_pairs, Exception):    top_pairs = []
+    if isinstance(q_boundaries, Exception): q_boundaries = {"initial_equity": 0.0, "final_equity": 0.0}
+    if isinstance(y_boundaries, Exception): y_boundaries = {"initial_equity": 0.0, "final_equity": 0.0}
 
     period_label = start.strftime("%B %Y")
 
@@ -261,6 +274,21 @@ async def frag_dashboard_journal_stats(request: Request):
     final_eq   = boundaries.get("final_equity", 0.0)
     monthly_pnl = final_eq - initial_eq
     monthly_pnl_pct = (monthly_pnl / initial_eq * 100) if initial_eq > 0 else 0.0
+
+    # Quarter-to-date
+    q_init = q_boundaries.get("initial_equity", 0.0)
+    q_fin  = q_boundaries.get("final_equity", 0.0)
+    quarterly_pnl = q_fin - q_init
+    quarterly_pnl_pct = (quarterly_pnl / q_init * 100) if q_init > 0 else 0.0
+    q_num = (q_start.month - 1) // 3 + 1
+    quarter_label = f"Q{q_num} {q_start.year}"
+
+    # Year-to-date
+    y_init = y_boundaries.get("initial_equity", 0.0)
+    y_fin  = y_boundaries.get("final_equity", 0.0)
+    yearly_pnl = y_fin - y_init
+    yearly_pnl_pct = (yearly_pnl / y_init * 100) if y_init > 0 else 0.0
+    year_label = f"{y_start.year} YTD"
 
     total_trades = int(stats.get("total_trades", 0))
     win_count    = int(stats.get("winning_trades", 0))
@@ -301,7 +329,13 @@ async def frag_dashboard_journal_stats(request: Request):
              long_count=int(stats.get("num_longs", 0)),
              short_count=int(stats.get("num_shorts", 0)),
              top_pairs=top_pairs,
-             params=params_view),
+             params=params_view,
+             quarterly_pnl=quarterly_pnl,
+             quarterly_pnl_pct=quarterly_pnl_pct,
+             quarter_label=quarter_label,
+             yearly_pnl=yearly_pnl,
+             yearly_pnl_pct=yearly_pnl_pct,
+             year_label=year_label),
     )
 
 
