@@ -27,10 +27,13 @@ from core.adapters.protocols import (
     NormalizedIncome,
     NormalizedFundingRate,
 )
+from core.adapters.mexc.constants import (
+    OHLCV_LIMIT,
+    MAX_REQUESTS_WINDOW,
+    RATE_LIMIT_WINDOW_SECONDS,
+)
 
 log = logging.getLogger("adapters.mexc")
-
-OHLCV_LIMIT = 2000
 
 
 @register_adapter("mexc", "linear_perpetual")
@@ -55,6 +58,17 @@ class MexcLinearAdapter(BaseExchangeAdapter):
         self._ex = self._make_ccxt("mexc", {
             "defaultType": "swap",
         })
+        # Calibrate WeightTracker for MEXC's count-based rate limits.
+        # MEXC: 20 requests / 2 seconds (per category).
+        # We use a unified conservative budget — all endpoints cost 1.
+        # Per-category tracking is v2.5+ work.
+        from core.rate_limit.weight_tracker import WeightTracker
+        self._weight_tracker = WeightTracker(
+            adapter_name="mexc",
+            max_weight=MAX_REQUESTS_WINDOW,
+            window_seconds=RATE_LIMIT_WINDOW_SECONDS,
+            cost_map={},  # count-based: every endpoint costs 1
+        )
 
     @property
     def ohlcv_limit(self) -> int:

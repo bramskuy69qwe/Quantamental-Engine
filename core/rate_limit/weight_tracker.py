@@ -87,10 +87,12 @@ class WeightTracker:
         adapter_name: str = "",
         max_weight: int = 1200,
         window_seconds: int = 60,
+        cost_map: Optional[Dict[str, int]] = None,
     ) -> None:
         self.adapter_name = adapter_name
         self.max_weight = max_weight
         self.window_seconds = window_seconds
+        self._cost_map = cost_map  # None = use _BINANCE_WEIGHTS default
         self._budget = WeightBudget(
             max_weight=max_weight, window_seconds=window_seconds
         )
@@ -107,6 +109,8 @@ class WeightTracker:
             self._budget.window_start_ms = now
 
     def estimate_cost(self, endpoint: str) -> int:
+        if self._cost_map is not None:
+            return self._cost_map.get(endpoint, 1)
         return _BINANCE_WEIGHTS.get(endpoint, 1)
 
     async def reserve(
