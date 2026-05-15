@@ -14,10 +14,13 @@
     <span style="font-family:var(--font-mono);width:42px;text-align:right;display:inline-block;">retry #{{ ws.reconnect_attempts }}</span>
   {% endif %}
 {% endif %}
-{% if clock_severity is defined and clock_severity != 'ok' %}
-  <span title="Clock offset: {{ clock_offset_ms|round|int }}ms"
-        style="font-size:.6rem;font-weight:700;margin-left:2px;
-               color:{{ 'var(--red)' if clock_severity in ('critical','failed') else 'var(--amber)' }};">
-    &#9200;{{ clock_offset_ms|round|int }}ms
+{% if clock_severity is defined %}
+  {% set clk_color = 'var(--red)' if clock_severity in ('critical','failed') else 'var(--amber)' if clock_severity == 'warn' else 'var(--muted)' %}
+  {% set clk_sign = '+' if clock_offset_ms >= 0 else '' %}
+  <span title="Clock offset: {{ clk_sign }}{{ clock_offset_ms|round|int }}ms (exchange − local)"
+        style="font-size:.58rem;font-family:var(--font-mono);margin-left:2px;color:{{ clk_color }};">
+    {% if clock_severity == 'failed' %}sync err
+    {% else %}{{ clk_sign }}{{ clock_offset_ms|round|int }}ms
+    {% endif %}
   </span>
 {% endif %}

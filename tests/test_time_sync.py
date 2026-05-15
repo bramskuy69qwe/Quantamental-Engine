@@ -157,7 +157,37 @@ class TestIntegration:
         assert "clock_severity" in src
         assert "clock_offset_ms" in src
 
+    def test_ws_status_template_shows_clock_always(self):
+        """Clock indicator is always rendered (no severity != 'ok' gate)."""
+        content = open("templates/fragments/ws_status.html", encoding="utf-8").read()
+        # Must NOT hide when ok — the old conditional was: clock_severity != 'ok'
+        assert "clock_severity != 'ok'" not in content
+        # Must render for all severities including ok
+        assert "clock_severity is defined" in content
+
     def test_ws_status_template_shows_skew_warning(self):
         content = open("templates/fragments/ws_status.html", encoding="utf-8").read()
         assert "clock_severity" in content
         assert "clock_offset_ms" in content
+
+
+class TestHeaderUIPolish:
+    def test_plugin_status_hidden_in_standalone(self):
+        """Plugin badge is hidden when active_platform != 'quantower'."""
+        content = open("templates/base.html", encoding="utf-8").read()
+        idx = content.find('id="plugin-status"')
+        assert idx != -1
+        block = content[idx:idx+200]
+        assert "quantower" in block
+
+    def test_plugin_js_hides_in_standalone(self):
+        """JS updateUI hides plugin badge when platform != quantower."""
+        content = open("templates/base.html", encoding="utf-8").read()
+        assert "plugStat.style.display = platform==='quantower'" in content
+
+    def test_title_uppercase_css(self):
+        """App title span uses text-transform:uppercase."""
+        content = open("templates/base.html", encoding="utf-8").read()
+        idx = content.find("project_name_")
+        block = content[max(0, idx-200):idx]
+        assert "text-transform:uppercase" in block

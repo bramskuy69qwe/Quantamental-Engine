@@ -290,7 +290,7 @@
 <header style="background:var(--card);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 10px;height:50px;position:sticky;top:0;z-index:200;flex-shrink:0;gap:8px;">
 
   <div style="display:flex;align-items:center;gap:8px;min-width:0;overflow:hidden;">
-    <span style="font-family:var(--font-ui);font-size:.72rem;font-weight:800;color:var(--blue);letter-spacing:.06em;white-space:nowrap;flex-shrink:0;">
+    <span style="font-family:var(--font-ui);font-size:.72rem;font-weight:800;color:var(--blue);letter-spacing:.06em;white-space:nowrap;flex-shrink:0;text-transform:uppercase;">
       {{ project_name_ }} <span style="color:var(--sub);font-weight:400;font-size:.65rem;">{{ project_version_ }}</span>
     </span>
     <nav hx-boost="true" style="display:flex;overflow-x:auto;scrollbar-width:none;flex-shrink:1;">
@@ -361,7 +361,7 @@
          hx-get="/fragments/ws_status"
          hx-trigger="load, every 1s"
          hx-swap="innerHTML"
-         style="display:flex;align-items:center;gap:4px;font-size:.65rem;color:var(--sub);white-space:nowrap;width:120px;justify-content:flex-end;">
+         style="display:flex;align-items:center;gap:4px;font-size:.65rem;color:var(--sub);white-space:nowrap;justify-content:flex-end;">
       <span style="color:var(--sub);">connecting...</span>
     </div>
 
