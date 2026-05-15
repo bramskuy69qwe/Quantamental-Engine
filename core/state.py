@@ -163,6 +163,7 @@ class PortfolioStats:
     total_correlated_exposure: Dict[str, float] = field(default_factory=dict)
     drawdown:                 float = 0.0   # (max_eq - cur_eq) / max_eq
     dd_baseline_equity:       float = 0.0   # resets every BOD
+    dd_degraded:              bool  = False  # True when DD window has data gaps
     # States
     weekly_pnl_state:  str = "ok"           # ok / warning / limit
     dd_state:          str = "ok"

@@ -106,6 +106,23 @@ def _fetch_rolling_peak_equity(
     return max(db_peak, current_equity)
 
 
+def _check_dd_window_gaps(account_id: int, window_days: int) -> bool:
+    """Return True if any gaps exist in the rolling DD window.
+
+    Uses the equity gap detector to check for data holes.
+    Returns False (no degradation) on any error.
+    """
+    try:
+        from core.equity_gap_detector import detect_gaps
+        from datetime import timedelta
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        since_ms = now_ms - window_days * 24 * 3600 * 1000
+        gaps = detect_gaps(account_id, since_ms, now_ms)
+        return len(gaps) > 0
+    except Exception:
+        return False
+
+
 class DataCache:
     """Single-writer cache for all mutable trading state.
 
@@ -470,6 +487,9 @@ class DataCache:
             recov_t = settings.dd_recovery_threshold
 
             if warn_t is not None and limit_t is not None:
+                # Check for data gaps in the rolling window
+                pf.dd_degraded = _check_dd_window_gaps(aid, settings.dd_rolling_window_days)
+
                 # Query true rolling-window peak from account_snapshots
                 rolling_peak = _fetch_rolling_peak_equity(
                     aid, settings.dd_rolling_window_days, total_equity,

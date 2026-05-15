@@ -303,3 +303,81 @@ async def calc_link_confirm(request: Request):
     return HTMLResponse(
         '<div class="alert alert-success">Link confirmed. calc_id propagated to order + fills.</div>'
     )
+
+
+# ── Equity backfill ──────────────────────────────────────────────────────────
+
+
+@router.post("/admin/equity_backfill", response_class=HTMLResponse)
+async def equity_backfill_trigger(request: Request):
+    """Manually trigger equity backfill from exchange income history."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    aid = body.get("account_id", app_state.active_account_id)
+    since_hours = int(body.get("since_hours", 168))  # default 7 days
+
+    from datetime import datetime, timedelta, timezone as _tz
+    now_ms = int(datetime.now(_tz.utc).timestamp() * 1000)
+    start_ms = now_ms - since_hours * 3600 * 1000
+
+    try:
+        from core.database import db
+        from core.exchange import build_equity_backfill
+
+        current_equity = app_state.account_state.total_equity
+        if current_equity == 0:
+            return HTMLResponse(
+                '<div class="alert alert-error">Cannot backfill: current equity is 0.</div>',
+                status_code=400,
+            )
+
+        # Get earliest real snapshot to avoid overlap
+        earliest_ms = await db.get_earliest_snapshot_ms(account_id=aid)
+        end_ms = earliest_ms if earliest_ms else now_ms
+
+        records, cashflow = await build_equity_backfill(start_ms, end_ms, current_equity)
+        inserted = 0
+        if records:
+            inserted = await db.insert_backfill_snapshots(records, end_ms, account_id=aid)
+
+        return HTMLResponse(
+            f'<div class="alert alert-success">Backfill complete: {inserted} snapshots inserted '
+            f'covering {since_hours}h window.</div>'
+        )
+    except Exception as exc:
+        log.error("equity_backfill failed", exc_info=True)
+        return HTMLResponse(
+            f'<div class="alert alert-error">Backfill failed: {exc}</div>',
+            status_code=500,
+        )
+
+
+@router.get("/admin/equity_gaps", response_class=HTMLResponse)
+async def equity_gaps_page(request: Request):
+    """Show detected equity gaps for the active account."""
+    from core.equity_gap_detector import detect_gaps
+    from datetime import datetime, timedelta, timezone as _tz
+
+    aid = app_state.active_account_id
+    now_ms = int(datetime.now(_tz.utc).timestamp() * 1000)
+    since_ms = now_ms - 30 * 24 * 3600 * 1000  # 30 days
+
+    gaps = detect_gaps(aid, since_ms, now_ms)
+
+    gap_rows = []
+    for g in gaps:
+        start = datetime.fromtimestamp(g.start_ms / 1000, tz=_tz.utc)
+        end = datetime.fromtimestamp(g.end_ms / 1000, tz=_tz.utc)
+        gap_rows.append({
+            "start": start.strftime("%Y-%m-%d %H:%M"),
+            "end": end.strftime("%Y-%m-%d %H:%M"),
+            "hours": round(g.duration_ms / 3600000, 1),
+        })
+
+    return templates.TemplateResponse(
+        request, "admin/equity_gaps.html",
+        _ctx(request, gaps=gap_rows, gap_count=len(gaps), active_page="admin"),
+    )
