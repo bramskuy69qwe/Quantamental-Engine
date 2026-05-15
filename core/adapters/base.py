@@ -38,6 +38,7 @@ class BaseExchangeAdapter:
         self._proxy = proxy
         self._ex: Optional[ccxt.Exchange] = None
         self._markets_loaded: bool = False
+        self._weight_tracker: Optional[Any] = None
 
     def _make_ccxt(self, exchange_class: str, options: Optional[Dict] = None) -> ccxt.Exchange:
         """Create a CCXT exchange instance."""
@@ -53,12 +54,50 @@ class BaseExchangeAdapter:
         cls = getattr(ccxt, exchange_class)
         return cls(params)
 
+    def _get_weight_tracker(self):
+        """Lazy-init weight tracker."""
+        if self._weight_tracker is None:
+            try:
+                from core.rate_limit.weight_tracker import WeightTracker
+                self._weight_tracker = WeightTracker(
+                    adapter_name=self.exchange_id,
+                )
+            except Exception:
+                pass
+        return self._weight_tracker
+
     async def _run(self, fn: Callable, *args) -> Any:
         """Run a blocking CCXT call in the shared thread pool.
 
         Translates ccxt exceptions to neutral adapter error types at the
         boundary — consumers never need to import ccxt for error handling.
         """
+        # v2.4: proactive weight tracking
+        endpoint = getattr(fn, "__name__", "")
+        tracker = self._get_weight_tracker()
+        if tracker:
+            cost = tracker.estimate_cost(endpoint)
+            try:
+                result = await tracker.reserve(cost)
+                if result.blocked:
+                    log.warning(
+                        "Weight tracker blocked %s (%.0f%% of budget)",
+                        endpoint, result.current_pct * 100,
+                    )
+                    raise RateLimitError(
+                        f"Weight budget exceeded ({result.current_pct:.0%})",
+                    )
+                if result.throttled:
+                    log.info(
+                        "Weight tracker throttling %s for %dms (%.0f%%)",
+                        endpoint, result.delay_ms, result.current_pct * 100,
+                    )
+                    await asyncio.sleep(result.delay_ms / 1000)
+            except RateLimitError:
+                raise
+            except Exception:
+                pass  # tracker failure must not block requests
+
         loop = asyncio.get_event_loop()
         try:
             if args:

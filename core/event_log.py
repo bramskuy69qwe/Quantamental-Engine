@@ -35,6 +35,8 @@ EventType = Literal[
     "enforcement_mode_change",
     "equity_delta_warning",
     "rate_limit_pause",
+    "rate_limit_throttle",
+    "rate_limit_block",
     "would_have_blocked_dd",
     "would_have_blocked_weekly_pnl",
     "calc_blocked_contract",
