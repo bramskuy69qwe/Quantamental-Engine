@@ -497,6 +497,7 @@ class DatabaseManager(
             "ALTER TABLE fills ADD COLUMN calc_id TEXT",
             "ALTER TABLE orders ADD COLUMN tp_trigger_price REAL",
             "ALTER TABLE orders ADD COLUMN sl_trigger_price REAL",
+            "ALTER TABLE closed_positions ADD COLUMN calc_id TEXT",
         ]:
             try:
                 await self._conn.execute(migration)

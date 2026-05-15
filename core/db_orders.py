@@ -167,14 +167,14 @@ class OrdersMixin:
                 entry_time_ms, exit_time_ms, realized_pnl, total_fees,
                 net_pnl, funding_fees, mfe, mae, hold_time_ms,
                 exit_reason, model_name, notes,
-                shortfall_entry, shortfall_exit, source
+                shortfall_entry, shortfall_exit, source, calc_id
             ) VALUES (
                 :account_id, :exchange_position_id, :terminal_position_id,
                 :symbol, :direction, :quantity, :entry_price, :exit_price,
                 :entry_time_ms, :exit_time_ms, :realized_pnl, :total_fees,
                 :net_pnl, :funding_fees, :mfe, :mae, :hold_time_ms,
                 :exit_reason, :model_name, :notes,
-                :shortfall_entry, :shortfall_exit, :source
+                :shortfall_entry, :shortfall_exit, :source, :calc_id
             )
         """
         try:
@@ -202,6 +202,7 @@ class OrdersMixin:
                 "shortfall_entry":      row.get("shortfall_entry", 0),
                 "shortfall_exit":       row.get("shortfall_exit", 0),
                 "source":               row.get("source", ""),
+                "calc_id":              row.get("calc_id"),
             })
             await self._conn.commit()
         except Exception:
