@@ -15,5 +15,9 @@ uvloop>=0.21.0; sys_platform != "win32"
 aiosqlite>=0.20.0
 cryptography>=42.0.0
 yfinance>=0.2.36
+redis>=5.0.0
+sse-starlette>=2.0.0
+markupsafe>=2.1.5
 pytest>=8.0.0
 pytest-asyncio>=0.23.0
+fakeredis>=2.20.0

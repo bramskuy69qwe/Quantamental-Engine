@@ -22,7 +22,7 @@
     <!-- Left: equity numbers — SSE-driven + 30s fallback -->
     <div id="dash-top"
          hx-get="/fragments/dashboard/top"
-         hx-trigger="load, sse:equity_update, every 30s"
+         hx-trigger="load, sse:equity_update, every 10s"
          hx-swap="morph:innerHTML">
       <div class="card" style="min-height:170px;padding:14px 16px;">
         <span class="lbl">Total Equity</span>
@@ -39,10 +39,10 @@
     </div>
   </div>
 
-  <!-- ── Secondary stats — SSE-driven + 30s fallback ──────────────────── -->
+  <!-- ── Secondary stats — SSE-driven + 10s fallback ──────────────────── -->
   <div id="dash-secondary"
        hx-get="/fragments/dashboard/secondary"
-       hx-trigger="load, sse:equity_update, every 30s"
+       hx-trigger="load, sse:equity_update, every 10s"
        hx-swap="morph:innerHTML">
     <div class="card" style="display:flex;overflow:hidden;">
       <div style="flex:1;padding:7px 10px;border-right:1px solid var(--border);">
@@ -61,7 +61,7 @@
     <!-- Left: risk panel — triggers on DD state or weekly PnL events -->
     <div id="dash-risk"
          hx-get="/fragments/dashboard/risk"
-         hx-trigger="load, sse:dd_state, sse:weekly_pnl, every 30s"
+         hx-trigger="load, sse:dd_state, sse:weekly_pnl, every 10s"
          hx-swap="morph:innerHTML">
       <div class="card" style="min-height:160px;display:flex;align-items:center;justify-content:center;">
         <span style="color:var(--muted);font-size:.78rem;">Loading risk...</span>
@@ -70,7 +70,7 @@
     <!-- Right: positions + orders — triggers on position or order events -->
     <div id="dash-positions"
          hx-get="/fragments/dashboard/positions"
-         hx-trigger="load, sse:position_update, sse:order_update, sse:fill, every 30s"
+         hx-trigger="load, sse:position_update, sse:order_update, sse:fill, every 10s"
          hx-swap="morph:innerHTML">
       <div class="card" style="min-height:160px;display:flex;align-items:center;justify-content:center;">
         <span style="color:var(--muted);font-size:.78rem;">Loading positions...</span>
