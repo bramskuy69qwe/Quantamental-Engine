@@ -40,16 +40,20 @@ def correlate_order_to_calc(
     """
     # Skip market orders — no reliable entry price intent
     order_type = (order.get("order_type") or "").lower()
-    if order_type == "market":
-        return None
+    is_market = order_type == "market"
 
     entry_price = order.get("price")
     tp_price = order.get("tp_trigger_price")
     sl_price = order.get("sl_trigger_price")
 
-    # Strict: all three legs required
-    if not entry_price or not tp_price or not sl_price:
-        return None
+    # Market orders: match on tp+sl only (entry is wildcard)
+    # Limit orders: strict triple-match (all three required)
+    if is_market:
+        if not tp_price or not sl_price:
+            return None  # need both TP/SL for market correlation
+    else:
+        if not entry_price or not tp_price or not sl_price:
+            return None
 
     ticker = order.get("symbol", "")
     side = order.get("side", "")
@@ -111,10 +115,13 @@ def correlate_order_to_calc(
         if not calc_id:
             continue
 
-        # Check triple-match within tick tolerance
-        if (abs(row["effective_entry"] - entry_price) <= tick_size
-                and abs(row["tp_price"] - tp_price) <= tick_size
-                and abs(row["sl_price"] - sl_price) <= tick_size):
+        # Match within tick tolerance
+        # Market orders: tp+sl only (entry is wildcard)
+        # Limit orders: all three legs
+        tp_ok = abs(row["tp_price"] - tp_price) <= tick_size
+        sl_ok = abs(row["sl_price"] - sl_price) <= tick_size
+        entry_ok = is_market or (entry_price and abs(row["effective_entry"] - entry_price) <= tick_size)
+        if entry_ok and tp_ok and sl_ok:
             # Check this calc_id isn't already used by another order
             try:
                 conn = sqlite3.connect(db_path)

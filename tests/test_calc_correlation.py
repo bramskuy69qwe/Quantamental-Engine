@@ -116,7 +116,8 @@ class TestTripleMatch:
         result = correlate_order_to_calc(order, tick_size=0.1, data_dir=data_dir)
         assert result is None
 
-    def test_market_order_skipped(self, tmp_path, monkeypatch):
+    def test_market_order_matches_on_tp_sl(self, tmp_path, monkeypatch):
+        """Market orders now match on tp+sl only (entry is wildcard)."""
         data_dir, _ = _make_env(tmp_path, ptl_rows=[{
             "timestamp": RECENT, "ticker": "BTCUSDT", "side": "long",
             "effective_entry": 50000.0, "tp_price": 55000.0, "sl_price": 48000.0,
@@ -126,11 +127,11 @@ class TestTripleMatch:
 
         order = {
             "account_id": 1, "symbol": "BTCUSDT", "side": "long",
-            "order_type": "market", "price": 50000.0,
+            "order_type": "market", "price": 50500.0,  # entry ignored
             "tp_trigger_price": 55000.0, "sl_trigger_price": 48000.0,
         }
         result = correlate_order_to_calc(order, tick_size=0.1, data_dir=data_dir)
-        assert result is None
+        assert result == "abc123"
 
     def test_missing_tp_trigger_no_match(self, tmp_path, monkeypatch):
         data_dir, _ = _make_env(tmp_path, ptl_rows=[{
