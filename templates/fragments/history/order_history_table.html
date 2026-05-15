@@ -36,14 +36,14 @@
       <tbody>
         {% for r in rows %}
         <tr>
-          <td style="color:var(--sub);">{{ ms_to_local(r.updated_at_ms) }}</td>
-          <td style="color:var(--blue);font-weight:700;">{{ r.symbol }}</td>
+          <td class="td-ts">{{ ms_to_local(r.updated_at_ms) }}</td>
+          <td class="td-symbol">{{ r.symbol }}</td>
           <td class="{{ 'pos-long' if r.side == 'BUY' else 'pos-short' }}">{{ r.side }}</td>
-          <td style="color:var(--sub);">{{ r.order_type }}</td>
+          <td class="td-sub">{{ r.order_type }}</td>
           <td>{{ fmt(r.quantity, 4) }}</td>
           <td>{{ fmt(r.price, 6) if r.price else "—" }}</td>
           <td>{{ fmt(r.stop_price, 6) if r.stop_price else "—" }}</td>
-          <td style="color:var(--sub);">{{ r.time_in_force }}</td>
+          <td class="td-sub">{{ r.time_in_force }}</td>
           <td>
             {% if r.status == 'filled' %}<span class="badge badge-green">filled</span>
             {% elif r.status == 'canceled' %}<span class="badge badge-red">canceled</span>
@@ -54,7 +54,7 @@
             {% else %}<span class="badge">{{ r.status }}</span>
             {% endif %}
           </td>
-          <td style="color:var(--muted);font-size:.72rem;">{{ r.exchange_order_id[:12] if r.exchange_order_id else "—" }}</td>
+          <td class="td-dim">{{ r.exchange_order_id[:12] if r.exchange_order_id else "—" }}</td>
           <td>{{ fmt(r.avg_fill_price, 6) if r.avg_fill_price else "—" }}</td>
         </tr>
         {% endfor %}

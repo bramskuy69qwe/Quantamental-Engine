@@ -51,21 +51,21 @@
       <tbody>
         {% for r in rows %}
         <tr>
-          <td style="color:var(--sub);">{{ r.exit_timestamp[:19] }}</td>
-          <td style="color:var(--blue);font-weight:700;">{{ r.ticker }}</td>
+          <td class="td-ts">{{ r.exit_timestamp[:19] }}</td>
+          <td class="td-symbol">{{ r.ticker }}</td>
           <td class="{{ 'pos-long' if r.direction == 'LONG' else 'pos-short' }}">{{ r.direction }}</td>
           <td>{{ fmt(r.entry_price, 4) }}</td>
           <td>{{ fmt(r.exit_price, 4) }}</td>
-          <td class="{{ 'pos-long' if r.individual_realized|float >= 0 else 'pos-short' }}" style="font-weight:700;">
+          <td class="td-bold {{ 'pos-long' if r.individual_realized|float >= 0 else 'pos-short' }}">
             {{ fmt(r.individual_realized) }}
           </td>
-          <td style="color:var(--sub);">{{ fmt(r.individual_realized_r, 2) }}R</td>
-          <td style="color:var(--sub);">{{ fmt(r.total_funding_fees) }}</td>
-          <td style="color:var(--sub);">{{ fmt(r.total_fees) }}</td>
-          <td style="color:var(--sub);">{{ fmt(r.slippage_exit * 100, 4) }}%</td>
-          <td style="color:var(--sub);">{{ r.holding_time }}</td>
+          <td class="td-sub">{{ fmt(r.individual_realized_r, 2) }}R</td>
+          <td class="td-sub">{{ fmt(r.total_funding_fees) }}</td>
+          <td class="td-sub">{{ fmt(r.total_fees) }}</td>
+          <td class="td-sub">{{ fmt(r.slippage_exit * 100, 4) }}%</td>
+          <td class="td-sub">{{ r.holding_time }}</td>
           <td class="notes-cell" id="notes-th-{{ r.id }}">
-            <span style="color:var(--sub);cursor:pointer;"
+            <span class="td-sub" style="cursor:pointer;"
                   onclick="editNote(this,{{ r.id }},'trade_history')"
                   title="Click to edit">{{ r.notes or "+ Add note" }}</span>
           </td>

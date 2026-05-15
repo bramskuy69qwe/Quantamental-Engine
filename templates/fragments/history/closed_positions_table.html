@@ -41,21 +41,21 @@
         {% set pnl_pct = (r.net_pnl / (r.entry_price * r.quantity) * 100) if r.entry_price and r.quantity else 0 %}
         {% set hold_h = (r.hold_time_ms / 3600000) | round(1) if r.hold_time_ms else 0 %}
         <tr>
-          <td style="color:var(--sub);">{{ ms_to_local(r.entry_time_ms) }}</td>
-          <td style="color:var(--sub);">{{ ms_to_local(r.exit_time_ms) }}</td>
-          <td style="color:var(--blue);font-weight:700;">{{ r.symbol }}</td>
+          <td class="td-ts">{{ ms_to_local(r.entry_time_ms) }}</td>
+          <td class="td-ts">{{ ms_to_local(r.exit_time_ms) }}</td>
+          <td class="td-symbol">{{ r.symbol }}</td>
           <td class="{{ 'pos-long' if r.direction == 'LONG' else 'pos-short' }}">{{ r.direction }}</td>
           <td>{{ fmt(r.quantity, 4) }}</td>
           <td>{{ fmt(r.entry_price, 6) }}</td>
           <td>{{ fmt(r.exit_price, 6) }}</td>
-          <td class="{{ 'text-green' if r.net_pnl > 0 else 'text-red' if r.net_pnl < 0 else '' }}" style="font-weight:700;">
+          <td class="td-bold {{ 'text-green' if r.net_pnl > 0 else 'text-red' if r.net_pnl < 0 else '' }}">
             {{ fmt(r.net_pnl, 2) }}
           </td>
           <td class="{{ 'text-green' if pnl_pct > 0 else 'text-red' if pnl_pct < 0 else '' }}">
             {{ fmt(pnl_pct, 2) }}%
           </td>
-          <td style="color:var(--sub);">{{ fmt(r.total_fees, 4) }}</td>
-          <td style="color:var(--sub);">{{ hold_h }}h</td>
+          <td class="td-sub">{{ fmt(r.total_fees, 4) }}</td>
+          <td class="td-sub">{{ hold_h }}h</td>
           <td>
             {% if r.exit_reason == 'tp_hit' %}<span class="badge badge-green">TP</span>
             {% elif r.exit_reason == 'sl_hit' %}<span class="badge badge-red">SL</span>
