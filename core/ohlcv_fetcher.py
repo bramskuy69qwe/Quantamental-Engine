@@ -99,6 +99,8 @@ class OHLCVFetcher:
             stored_count,
         )
 
+        adapter.set_priority("background")  # OHLCV fetch is background priority
+
         # Fast-fail connectivity check
         try:
             await adapter.load_markets()

@@ -125,9 +125,19 @@ async def _account_refresh_loop():
         try:
             # ── Account + position sync (plugin-gated) ─────────────────────
             if not platform_bridge.is_connected:
+                # v2.4 Priority 3a: real-time refresh is urgent priority
+                try:
+                    from core.exchange import _get_adapter
+                    _get_adapter().set_priority("urgent")
+                except Exception:
+                    pass
                 await fetch_account()
                 await asyncio.sleep(0.5)  # RL-1: per-second burst pacing
                 await fetch_positions()
+                try:
+                    _get_adapter().set_priority("normal")
+                except Exception:
+                    pass
                 # Note: risk:positions_refreshed now fires inside
                 # DataCache.apply_position_snapshot() — no duplicate needed.
 
@@ -138,6 +148,7 @@ async def _account_refresh_loop():
             try:
                 from core.exchange import _get_adapter
                 adapter = _get_adapter()
+                adapter.set_priority("urgent")  # WS fallback order sync
                 normalized_orders = await adapter.fetch_open_orders()
                 order_dicts = [
                     {
@@ -212,6 +223,11 @@ async def _account_refresh_loop():
             log.warning(f"Periodic account refresh failed: {e}")
         finally:
             _account_refresh_in_flight = False
+            try:
+                from core.exchange import _get_adapter
+                _get_adapter().set_priority("normal")
+            except Exception:
+                pass
 
 
 # ── Latency ping loop ───────────────────────────────────────────────────────

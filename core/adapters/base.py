@@ -39,6 +39,7 @@ class BaseExchangeAdapter:
         self._ex: Optional[ccxt.Exchange] = None
         self._markets_loaded: bool = False
         self._weight_tracker: Optional[Any] = None
+        self._current_priority: str = "normal"
 
     def _make_ccxt(self, exchange_class: str, options: Optional[Dict] = None) -> ccxt.Exchange:
         """Create a CCXT exchange instance."""
@@ -66,31 +67,41 @@ class BaseExchangeAdapter:
                 pass
         return self._weight_tracker
 
-    async def _run(self, fn: Callable, *args, priority: str = "normal") -> Any:
+    def set_priority(self, priority: str) -> None:
+        """Set the request priority for subsequent calls.
+
+        Callers set this before invoking adapter methods; _run() reads it.
+        Avoids changing the Protocol-defined method signatures.
+        """
+        self._current_priority = priority
+
+    async def _run(self, fn: Callable, *args, priority: str = "") -> Any:
         """Run a blocking CCXT call in the shared thread pool.
 
         Translates ccxt exceptions to neutral adapter error types at the
         boundary — consumers never need to import ccxt for error handling.
         """
         # v2.4: proactive weight tracking with priority-aware fan-out
+        # Priority from explicit kwarg > adapter-level context > default
+        effective_priority = priority or self._current_priority or "normal"
         endpoint = getattr(fn, "__name__", "")
         tracker = self._get_weight_tracker()
         if tracker:
             cost = tracker.estimate_cost(endpoint)
             try:
-                result = await tracker.reserve(cost, priority=priority)
+                result = await tracker.reserve(cost, priority=effective_priority)
                 if result.blocked:
                     log.warning(
                         "Weight tracker blocked %s [%s] (%.0f%% of budget)",
-                        endpoint, priority, result.current_pct * 100,
+                        endpoint, effective_priority, result.current_pct * 100,
                     )
                     raise RateLimitError(
-                        f"Weight budget exceeded ({result.current_pct:.0%}, priority={priority})",
+                        f"Weight budget exceeded ({result.current_pct:.0%}, priority={effective_priority})",
                     )
                 if result.throttled:
                     log.info(
                         "Weight tracker throttling %s [%s] for %dms (%.0f%%)",
-                        endpoint, priority, result.delay_ms, result.current_pct * 100,
+                        endpoint, effective_priority, result.delay_ms, result.current_pct * 100,
                     )
                     await asyncio.sleep(result.delay_ms / 1000)
             except RateLimitError:

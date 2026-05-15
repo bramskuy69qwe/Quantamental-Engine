@@ -117,6 +117,7 @@ async def fetch_income_for_backfill(start_ms: int, end_ms: int) -> List[Dict]:
     or the exchange returns fewer than 1000 records.
     """
     adapter = _get_adapter()
+    adapter.set_priority("background")  # backfill is low-priority
     all_events: List[Dict] = []
     cursor = start_ms
 
