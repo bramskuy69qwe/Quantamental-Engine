@@ -149,6 +149,7 @@ class OrderManager:
                     return False
 
         await self._db.upsert_order_batch([order])
+        self._enrich_order_best_effort(order)
         await self.refresh_cache(account_id)
         return True
 
@@ -182,6 +183,24 @@ class OrderManager:
             except Exception:
                 log.warning("order dd gate log failed", exc_info=True)
         return allowed, reason
+
+    # ── calc_id enrichment (v2.4) ────────────────────────────────────────────
+
+    def _enrich_order_best_effort(self, order: Dict[str, Any]) -> None:
+        try:
+            import config
+            from core.order_enrichment import enrich_order
+            enrich_order(order, config.DB_PATH)
+        except Exception:
+            log.debug("order enrichment skipped", exc_info=True)
+
+    def _enrich_fill_best_effort(self, fill: Dict[str, Any]) -> None:
+        try:
+            import config
+            from core.order_enrichment import enrich_fill
+            enrich_fill(fill, config.DB_PATH)
+        except Exception:
+            log.debug("fill enrichment skipped", exc_info=True)
 
     # ── Cache Refresh ──────────────────────────────────────────────────────
 
@@ -251,6 +270,7 @@ class OrderManager:
 
         # 1+2. Upsert fill + update parent order in ONE commit
         await self._db.upsert_fill_and_update_order(fill, exchange_order_id)
+        self._enrich_fill_best_effort(fill)
 
         # 3. Refresh position fees from DB (SUM query, not accumulate)
         pos_id = fill.get("terminal_position_id", "")
