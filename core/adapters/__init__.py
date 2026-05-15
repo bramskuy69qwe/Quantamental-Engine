@@ -38,6 +38,7 @@ from core.adapters.registry import (  # noqa: F401
 # Import exchange packages to trigger registration via decorators
 import core.adapters.binance  # noqa: F401
 import core.adapters.bybit    # noqa: F401
+import core.adapters.mexc     # noqa: F401
 
 
 def get_adapter(
