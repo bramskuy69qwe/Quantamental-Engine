@@ -93,11 +93,21 @@ def _get_adapter() -> ExchangeAdapter:
 
 async def fetch_exchange_info() -> None:
     """Update exchange_info on app_state (latency, server time, name, fees)."""
+    from core import time_sync
     adapter = _get_adapter()
 
     t0 = time.monotonic()
+    wall_before = time.time() * 1000
     server_time = await adapter.fetch_server_time()
+    wall_after = time.time() * 1000
     latency_ms  = (time.monotonic() - t0) * 1000
+
+    # Compute clock offset: exchange_time - local_midpoint
+    local_mid = (wall_before + wall_after) / 2
+    try:
+        time_sync.update(adapter.exchange_id, server_time - local_mid)
+    except Exception:
+        time_sync.mark_failed(adapter.exchange_id)
 
     info = app_state.exchange_info
     # Use active account's exchange name dynamically

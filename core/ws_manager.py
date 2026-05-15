@@ -33,6 +33,14 @@ from core.exchange import (
 log = logging.getLogger("ws_manager")
 
 
+def _exchange_id() -> str:
+    """Current exchange_id for time-sync lookups."""
+    try:
+        return _get_adapter().exchange_id
+    except Exception:
+        return ""
+
+
 def _get_ws_adapter():
     """Return the WS adapter for the currently active account."""
     from core.account_registry import account_registry
@@ -103,10 +111,12 @@ async def _handle_user_event(msg: dict) -> None:
     ev = ws_adapter.get_event_type(msg) if ws_adapter else msg.get("e", "")
     ws = app_state.ws_status
 
-    # Real-time latency: lag between exchange event time and now
+    # Real-time latency: (local_now + clock_offset) - exchange_event_time
+    from core import time_sync
     event_time_ms = ws_adapter.get_event_time_ms(msg) if ws_adapter else msg.get("E", 0)
     if event_time_ms:
-        ws.latency_ms = round(time.time() * 1000 - event_time_ms, 1)
+        offset = time_sync.get_offset_ms(_exchange_id())
+        ws.latency_ms = round((time.time() * 1000 + offset) - event_time_ms, 1)
 
     if ev == "ACCOUNT_UPDATE":
         await _apply_account_update(msg)
@@ -545,9 +555,11 @@ async def _market_stream_loop(attempt: int = 0) -> None:
                     msg = ws_adapter.unwrap_stream_message(msg_outer) if ws_adapter else msg_outer.get("data", msg_outer)
                     ev = ws_adapter.get_event_type(msg) if ws_adapter else msg.get("e", "")
                     # Track latency from market data events (fires at sub-second rate)
+                    from core import time_sync
                     evt_ms = ws_adapter.get_event_time_ms(msg) if ws_adapter else msg.get("E", 0)
                     if evt_ms:
-                        ws.latency_ms = round(time.time() * 1000 - evt_ms, 1)
+                        offset = time_sync.get_offset_ms(_exchange_id())
+                        ws.latency_ms = round((time.time() * 1000 + offset) - evt_ms, 1)
                     if ev == "kline":
                         parsed = ws_adapter.parse_kline(msg) if ws_adapter else None
                         if parsed:

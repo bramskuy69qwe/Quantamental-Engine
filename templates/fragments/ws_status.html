@@ -14,3 +14,10 @@
     <span style="font-family:var(--font-mono);width:42px;text-align:right;display:inline-block;">retry #{{ ws.reconnect_attempts }}</span>
   {% endif %}
 {% endif %}
+{% if clock_severity is defined and clock_severity != 'ok' %}
+  <span title="Clock offset: {{ clock_offset_ms|round|int }}ms"
+        style="font-size:.6rem;font-weight:700;margin-left:2px;
+               color:{{ 'var(--red)' if clock_severity in ('critical','failed') else 'var(--amber)' }};">
+    &#9200;{{ clock_offset_ms|round|int }}ms
+  </span>
+{% endif %}

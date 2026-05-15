@@ -315,9 +315,14 @@ async def frag_dashboard_secondary(request: Request):
 
 @router.get("/fragments/ws_status", response_class=HTMLResponse)
 async def frag_ws_status(request: Request):
+    from core import time_sync
     return templates.TemplateResponse(
         request, "fragments/ws_status.html",
-        {"ws": app_state.ws_status, "ex": app_state.exchange_info},
+        {"ws": app_state.ws_status, "ex": app_state.exchange_info,
+         "clock_severity": time_sync.worst_severity(),
+         "clock_offset_ms": next(
+             (s.offset_ms for s in time_sync.get_all().values()), 0.0,
+         )},
     )
 
 
