@@ -46,17 +46,19 @@ class TestEquityRecalcPublish:
 
 class TestStableRowIDs:
     def test_position_rows_have_ids(self):
-        content = open("templates/fragments/dashboard_positions.html", encoding="utf-8").read()
+        # Rows now in dedicated row template (included by shell)
+        content = open("templates/fragments/dashboard_positions_rows.html", encoding="utf-8").read()
         assert 'id="pos-row-' in content
 
     def test_order_rows_have_ids(self):
-        content = open("templates/fragments/dashboard_positions.html", encoding="utf-8").read()
+        content = open("templates/fragments/dashboard_orders_rows.html", encoding="utf-8").read()
         assert 'id="ord-row-' in content
 
 
 class TestClientSideTick:
     def test_data_entry_ts_attribute(self):
-        content = open("templates/fragments/dashboard_positions.html", encoding="utf-8").read()
+        # data-entry-ts in position rows template (included by shell)
+        content = open("templates/fragments/dashboard_positions_rows.html", encoding="utf-8").read()
         assert "data-entry-ts" in content
 
     def test_setinterval_in_base(self):

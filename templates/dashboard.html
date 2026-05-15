@@ -50,7 +50,7 @@
     </div>
     <div id="dash-positions"
          hx-get="/fragments/dashboard/positions"
-         hx-trigger="load, sse:position_update, sse:order_update, sse:fill, every 10s"
+         hx-trigger="load"
          hx-swap="morph:innerHTML">
       {% include "fragments/ghosts/positions_ghost.html" %}
     </div>

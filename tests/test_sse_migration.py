@@ -78,7 +78,8 @@ class TestSSEExtension:
 
 class TestFragmentTriggers:
     def test_positions_triggers_on_sse(self):
-        content = open("templates/dashboard.html", encoding="utf-8").read()
+        # SSE triggers moved from dashboard.html to individual tbodies in the shell
+        content = open("templates/fragments/dashboard_positions.html", encoding="utf-8").read()
         assert "sse:position_update" in content
 
     def test_risk_triggers_on_sse(self):

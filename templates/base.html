@@ -674,7 +674,7 @@ if ('serviceWorker' in navigator) {
 })();
 </script>
 
-<!-- Dashboard tab switcher (runs once, survives morph cycles) -->
+<!-- Dashboard tab switcher + row-count updater (runs once, survives morph cycles) -->
 <script>
 (function(){
   window._dashTab = window._dashTab || 'positions';
@@ -689,10 +689,47 @@ if ('serviceWorker' in navigator) {
       b.style.fontWeight = k===t ? '600' : '';
     });
   }
+  function _updateCounts() {
+    var posC = document.getElementById('dt-positions-count');
+    var maxS = document.getElementById('dt-pos-max');
+    if (posC) {
+      var n = document.querySelectorAll('#positions-tbody tr:not(#pos-empty-row)').length;
+      posC.textContent = n;
+      if (maxS) maxS.textContent = n + '/' + (maxS.dataset.max || '?');
+    }
+    var ordC = document.getElementById('dt-orders-count');
+    if (ordC) {
+      ordC.textContent = document.querySelectorAll('#orders-tbody tr:not(#ord-empty-row)').length;
+    }
+  }
   window.dtab = function(t) { window._dashTab = t; _applyTab(t); };
-  // Re-apply after HTMX morph settles (tab panels arrive with display:none)
+  // Re-apply tabs + update counts after any row tbody or shell settles
   document.body.addEventListener('htmx:afterSettle', function(evt) {
-    if (document.getElementById('dp-positions')) _applyTab(window._dashTab);
+    if (document.getElementById('dp-positions')) {
+      _applyTab(window._dashTab);
+      _updateCounts();
+    }
+  });
+})();
+</script>
+
+<!-- History page tab switcher (positions/open orders — survives innerHTML cycles) -->
+<script>
+(function(){
+  window._hpTab = window._hpTab || 'pos';
+  function _applyHpTab(t) {
+    ['pos','oo'].forEach(function(k) {
+      var p = document.getElementById('hp-panel-'+k);
+      var b = document.getElementById('hp-tab-'+k);
+      if (!p || !b) return;
+      p.style.display = k===t ? '' : 'none';
+      b.style.color = k===t ? 'var(--blue)' : 'var(--muted)';
+      b.style.borderBottomColor = k===t ? 'var(--blue)' : 'transparent';
+    });
+  }
+  window.hpTab = function(t) { window._hpTab = t; _applyHpTab(t); };
+  document.body.addEventListener('htmx:afterSettle', function(evt) {
+    if (document.getElementById('hp-panel-pos')) _applyHpTab(window._hpTab);
   });
 })();
 </script>

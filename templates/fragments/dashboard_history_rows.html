@@ -1,0 +1,23 @@
+{% for o in recent_orders %}
+<tr>
+  <td style="color:var(--sub);font-size:.68rem;">{{ ms_to_local(o.updated_at_ms) }}</td>
+  <td style="color:var(--blue);font-weight:700;">{{ o.symbol }}</td>
+  <td class="{{ 'pos-long' if o.side == 'BUY' else 'pos-short' }}">{{ o.side }}</td>
+  <td style="color:var(--sub);">{{ o.order_type }}</td>
+  <td>{{ fmt(o.quantity, 4) }}</td>
+  <td>{{ fmt(o.price, 6) if o.price else '—' }}</td>
+  <td>{{ fmt(o.stop_price, 6) if o.stop_price else '—' }}</td>
+  <td>
+    {% if o.status == 'filled' %}<span class="badge badge-green">filled</span>
+    {% elif o.status == 'canceled' %}<span class="badge badge-red">canceled</span>
+    {% elif o.status == 'expired' %}<span class="badge badge-gray">expired</span>
+    {% elif o.status == 'new' %}<span class="badge badge-blue">new</span>
+    {% elif o.status == 'partially_filled' %}<span class="badge badge-yellow">partial</span>
+    {% else %}<span class="badge">{{ o.status }}</span>
+    {% endif %}
+  </td>
+  <td>{{ fmt(o.avg_fill_price, 6) if o.avg_fill_price else '—' }}</td>
+</tr>
+{% else %}
+<tr id="hist-empty-row"><td colspan="9" style="text-align:center;padding:24px 0;color:var(--muted);font-size:.78rem;">No order history.</td></tr>
+{% endfor %}

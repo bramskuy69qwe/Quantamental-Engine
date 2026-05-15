@@ -134,6 +134,32 @@ async def frag_dashboard_positions(request: Request):
     )
 
 
+@router.get("/fragments/dashboard/positions/rows", response_class=HTMLResponse)
+async def frag_dashboard_positions_rows(request: Request, tab: str = "positions"):
+    """Row-only fragment for positions/orders/history tbodies (SSE-driven)."""
+    if tab == "orders":
+        working_orders = platform_bridge.order_manager.open_orders
+        return templates.TemplateResponse(
+            request, "fragments/dashboard_orders_rows.html",
+            _ctx(request, working_orders=working_orders),
+        )
+    if tab == "history":
+        aid = app_state.active_account_id
+        recent_orders = await _get_cached_recent_orders(aid)
+        return templates.TemplateResponse(
+            request, "fragments/dashboard_history_rows.html",
+            _ctx(request, recent_orders=recent_orders),
+        )
+    # Default: positions
+    prm = app_state.params
+    return templates.TemplateResponse(
+        request, "fragments/dashboard_positions_rows.html",
+        _ctx(request,
+             open_positions=app_state.positions,
+             max_open_positions=prm["max_position_count"]),
+    )
+
+
 @router.get("/fragments/dashboard/top", response_class=HTMLResponse)
 async def frag_dashboard_top(request: Request):
     acc = app_state.account_state

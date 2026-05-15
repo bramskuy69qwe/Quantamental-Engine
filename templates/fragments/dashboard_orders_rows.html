@@ -1,0 +1,18 @@
+{% for o in working_orders %}
+<tr id="ord-row-{{ o.exchange_order_id or loop.index }}">
+  <td style="color:var(--blue);font-weight:700;">{{ o.symbol }}</td>
+  <td class="{{ 'pos-long' if o.side == 'BUY' else 'pos-short' }}">{{ o.side }}</td>
+  <td style="color:var(--sub);">{{ o.order_type }}</td>
+  <td>{{ fmt(o.quantity, 4) }}</td>
+  <td>{{ fmt(o.filled_qty, 4) }}</td>
+  <td style="color:var(--sub);">{{ fmt(o.quantity - o.filled_qty, 4) }}</td>
+  <td>{{ fmt(o.price, 6) if o.price else '—' }}</td>
+  <td>{{ fmt(o.stop_price, 6) if o.stop_price else '—' }}</td>
+  <td style="color:var(--sub);">{{ o.time_in_force }}</td>
+  <td class="{{ 'pos-long' if o.position_side == 'LONG' else 'pos-short' if o.position_side == 'SHORT' else '' }}">
+    {{ o.position_side or '—' }}
+  </td>
+</tr>
+{% else %}
+<tr id="ord-empty-row"><td colspan="10" style="text-align:center;padding:24px 0;color:var(--muted);font-size:.78rem;">No open orders.</td></tr>
+{% endfor %}

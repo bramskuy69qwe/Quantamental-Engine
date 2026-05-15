@@ -21,7 +21,7 @@ class TestIdiomorphIncluded:
 class TestDashboardMorphSwaps:
     def test_hx_ext_morph_declared(self):
         content = open("templates/dashboard.html", encoding="utf-8").read()
-        assert 'hx-ext="morph"' in content
+        assert 'hx-ext="morph' in content  # morph,sse or morph alone
 
     def test_risk_uses_morph(self):
         content = open("templates/dashboard.html", encoding="utf-8").read()

@@ -213,24 +213,5 @@
     </div>
   </div>
 
-  <script>
-  (function(){
-    // Persist active tab across HTMX re-renders
-    var _dt = window._dashTab || 'positions';
-    function dtab(t) { window._dashTab = t; _apply(t); }
-    function _apply(t) {
-      ['positions','orders','history'].forEach(function(k) {
-        var p = document.getElementById('dp-'+k);
-        var b = document.getElementById('dt-'+k);
-        if (!p || !b) return;
-        p.style.display = k===t ? '' : 'none';
-        b.style.color = k===t ? 'var(--blue)' : 'var(--muted)';
-        b.style.borderBottomColor = k===t ? 'var(--blue)' : 'transparent';
-        if (k===t) b.style.fontWeight = '600'; else b.style.fontWeight = '';
-      });
-    }
-    _apply(_dt);
-    window.dtab = dtab;
-  })();
-  </script>
+  <!-- Tab script moved to base.html to survive morph cycles without re-execution flicker -->
 </div>

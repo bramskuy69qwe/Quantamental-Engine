@@ -1,4 +1,5 @@
-<!-- fragment: positions + orders tabbed panel (right column) -->
+<!-- fragment: positions + orders tabbed panel shell (right column) -->
+<!-- Only the shell loads once; each tbody refreshes independently via SSE -->
 <div class="card">
   <!-- ── Subtab row (Positions / Open Orders / Order History) ── -->
   <div style="display:flex;align-items:center;gap:0;border-bottom:1px solid var(--border);margin-bottom:8px;">
@@ -6,13 +7,13 @@
             style="font-family:var(--font-ui);font-size:.6rem;padding:6px 14px;border:none;background:none;cursor:pointer;
                    letter-spacing:.1em;text-transform:uppercase;font-weight:700;
                    color:var(--muted);border-bottom:2px solid transparent;">
-      Positions({{ open_positions | length }})
+      Positions(<span id="dt-positions-count">{{ open_positions | length }}</span>)
     </button>
     <button id="dt-orders" onclick="dtab('orders')"
             style="font-family:var(--font-ui);font-size:.6rem;padding:6px 14px;border:none;background:none;cursor:pointer;
                    letter-spacing:.1em;text-transform:uppercase;font-weight:700;
                    color:var(--muted);border-bottom:2px solid transparent;">
-      Open Orders({{ working_orders | length }})
+      Open Orders(<span id="dt-orders-count">{{ working_orders | length }}</span>)
     </button>
     <button id="dt-history" onclick="dtab('history')"
             style="font-family:var(--font-ui);font-size:.6rem;padding:6px 14px;border:none;background:none;cursor:pointer;
@@ -20,123 +21,63 @@
                    color:var(--muted);border-bottom:2px solid transparent;">
       Order History
     </button>
-    <span class="mono" style="margin-left:auto;font-size:.68rem;color:var(--sub);">{{ open_positions | length }}/{{ max_open_positions }}</span>
+    <span id="dt-pos-max" class="mono" style="margin-left:auto;font-size:.68rem;color:var(--sub);"
+          data-max="{{ max_open_positions }}">{{ open_positions | length }}/{{ max_open_positions }}</span>
   </div>
 
   <!-- ── Panel: Positions (visible by default — active tab) ── -->
   <div id="dp-positions">
-    {% if open_positions %}
     <div style="overflow-x:auto;">
       <table id="positions-table">
         <thead><tr>
           <th>Symbol</th><th>Dir</th><th>Hold</th><th>Entry</th><th>Mark</th>
           <th>Size</th><th>Notional</th><th>uPnL</th><th>Fees</th><th>Net</th><th>MFE</th><th>MAE</th><th>TP</th><th>SL</th>
         </tr></thead>
-        <tbody id="positions-tbody">
-          {% for p in open_positions %}
-          {% set net = p.individual_unrealized - p.individual_fees %}
-          <tr id="pos-row-{{ p.ticker }}-{{ p.direction }}">
-            <td style="color:var(--blue);font-weight:700;">{{ p.ticker }}</td>
-            <td class="{{ 'pos-long' if p.direction=='LONG' else 'pos-short' }}">{{ p.direction }}</td>
-            <td style="color:var(--sub);font-size:.68rem;" data-entry-ts="{{ p.entry_timestamp }}">{{ hold_time(p.entry_timestamp) }}</td>
-            <td>{{ fmt(p.average, 4) }}</td>
-            <td>{{ fmt(p.fair_price, 4) }}</td>
-            <td>{{ fmt(p.contract_amount, 4) }}</td>
-            <td>{{ fmt(p.position_value_usdt, 2) }}</td>
-            <td style="color:{{ 'var(--green)' if p.individual_unrealized >= 0 else 'var(--red)' }};">
-              {{ fmt(p.individual_unrealized, 2) }}
-            </td>
-            <td style="color:var(--sub);">{{ fmt(p.individual_fees, 4) }}</td>
-            <td style="color:{{ 'var(--green)' if net >= 0 else 'var(--red)' }};font-weight:700;">
-              {{ fmt(net, 2) }}
-            </td>
-            <td style="color:var(--green);">{{ fmt(p.session_mfe, 2) }}</td>
-            <td style="color:var(--red);">{{ fmt(p.session_mae, 2) }}</td>
-            <td style="color:var(--green);">{{ fmt(p.individual_tp_price, 4) if p.individual_tp_price else '—' }}</td>
-            <td style="color:var(--red);">{{ fmt(p.individual_sl_price, 4) if p.individual_sl_price else '—' }}</td>
-          </tr>
-          {% endfor %}
+        <tbody id="positions-tbody"
+               hx-get="/fragments/dashboard/positions/rows"
+               hx-trigger="sse:position_update, every 10s"
+               hx-swap="morph:innerHTML">
+          {% include "fragments/dashboard_positions_rows.html" %}
         </tbody>
       </table>
     </div>
-    {% else %}
-    <div style="text-align:center;padding:24px 0;color:var(--muted);font-size:.78rem;">No open positions.</div>
-    {% endif %}
   </div>
 
   <!-- ── Panel: Open Orders ── -->
   <div id="dp-orders" style="display:none;">
-    {% if working_orders %}
     <div style="overflow-x:auto;">
-      <table>
+      <table id="orders-table">
         <thead><tr>
           <th>Symbol</th><th>Side</th><th>Type</th><th>Qty</th><th>Filled</th><th>Remaining</th>
           <th>Price</th><th>Trigger</th><th>TIF</th><th>Pos Side</th>
         </tr></thead>
-        <tbody>
-          {% for o in working_orders %}
-          <tr id="ord-row-{{ o.exchange_order_id or loop.index }}">
-            <td style="color:var(--blue);font-weight:700;">{{ o.symbol }}</td>
-            <td class="{{ 'pos-long' if o.side == 'BUY' else 'pos-short' }}">{{ o.side }}</td>
-            <td style="color:var(--sub);">{{ o.order_type }}</td>
-            <td>{{ fmt(o.quantity, 4) }}</td>
-            <td>{{ fmt(o.filled_qty, 4) }}</td>
-            <td style="color:var(--sub);">{{ fmt(o.quantity - o.filled_qty, 4) }}</td>
-            <td>{{ fmt(o.price, 6) if o.price else '—' }}</td>
-            <td>{{ fmt(o.stop_price, 6) if o.stop_price else '—' }}</td>
-            <td style="color:var(--sub);">{{ o.time_in_force }}</td>
-            <td class="{{ 'pos-long' if o.position_side == 'LONG' else 'pos-short' if o.position_side == 'SHORT' else '' }}">
-              {{ o.position_side or '—' }}
-            </td>
-          </tr>
-          {% endfor %}
+        <tbody id="orders-tbody"
+               hx-get="/fragments/dashboard/positions/rows?tab=orders"
+               hx-trigger="sse:order_update, every 10s"
+               hx-swap="morph:innerHTML">
+          {% include "fragments/dashboard_orders_rows.html" %}
         </tbody>
       </table>
     </div>
-    {% else %}
-    <div style="text-align:center;padding:24px 0;color:var(--muted);font-size:.78rem;">No open orders.</div>
-    {% endif %}
   </div>
 
   <!-- ── Panel: Order History ── -->
   <div id="dp-history" style="display:none;">
-    {% if recent_orders %}
     <div style="overflow-x:auto;max-height:320px;overflow-y:auto;">
-      <table>
+      <table id="history-table">
         <thead style="position:sticky;top:0;z-index:1;"><tr>
           <th>Time</th><th>Symbol</th><th>Side</th><th>Type</th><th>Qty</th>
           <th>Price</th><th>Trigger</th><th>Status</th><th>Avg Fill</th>
         </tr></thead>
-        <tbody>
-          {% for o in recent_orders %}
-          <tr>
-            <td style="color:var(--sub);font-size:.68rem;">{{ ms_to_local(o.updated_at_ms) }}</td>
-            <td style="color:var(--blue);font-weight:700;">{{ o.symbol }}</td>
-            <td class="{{ 'pos-long' if o.side == 'BUY' else 'pos-short' }}">{{ o.side }}</td>
-            <td style="color:var(--sub);">{{ o.order_type }}</td>
-            <td>{{ fmt(o.quantity, 4) }}</td>
-            <td>{{ fmt(o.price, 6) if o.price else '—' }}</td>
-            <td>{{ fmt(o.stop_price, 6) if o.stop_price else '—' }}</td>
-            <td>
-              {% if o.status == 'filled' %}<span class="badge badge-green">filled</span>
-              {% elif o.status == 'canceled' %}<span class="badge badge-red">canceled</span>
-              {% elif o.status == 'expired' %}<span class="badge badge-gray">expired</span>
-              {% elif o.status == 'new' %}<span class="badge badge-blue">new</span>
-              {% elif o.status == 'partially_filled' %}<span class="badge badge-yellow">partial</span>
-              {% else %}<span class="badge">{{ o.status }}</span>
-              {% endif %}
-            </td>
-            <td>{{ fmt(o.avg_fill_price, 6) if o.avg_fill_price else '—' }}</td>
-          </tr>
-          {% endfor %}
+        <tbody id="history-tbody"
+               hx-get="/fragments/dashboard/positions/rows?tab=history"
+               hx-trigger="sse:fill, every 10s"
+               hx-swap="morph:innerHTML">
+          {% include "fragments/dashboard_history_rows.html" %}
         </tbody>
       </table>
     </div>
-    {% else %}
-    <div style="text-align:center;padding:24px 0;color:var(--muted);font-size:.78rem;">No order history.</div>
-    {% endif %}
   </div>
 </div>
 
-<!-- Tab script moved to base.html to survive morph cycles without re-execution flicker -->
-</script>
+<!-- Tab script moved to base.html — survives morph cycles without re-execution flicker -->

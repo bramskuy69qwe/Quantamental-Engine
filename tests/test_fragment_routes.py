@@ -43,7 +43,8 @@ class TestDashboardTemplateUsesFragments:
 
     def test_fragments_have_hx_trigger(self):
         content = open("templates/dashboard.html", encoding="utf-8").read()
-        assert 'hx-trigger="load, every 1s"' in content
+        # Shell loads once; SSE triggers are on individual tbodies inside the shell
+        assert 'hx-trigger="load"' in content
 
 
 class TestFragmentContent:
@@ -55,7 +56,7 @@ class TestFragmentContent:
 
     def test_positions_has_table(self):
         content = open("templates/fragments/dashboard_positions.html", encoding="utf-8").read()
-        assert "<table>" in content
+        assert "<table" in content  # tables have id attrs now
         assert "Symbol" in content
         assert "Positions" in content
 
@@ -73,6 +74,10 @@ class TestRouteRegistration:
     def test_positions_route_exists(self):
         from api.routes_dashboard import frag_dashboard_positions
         assert callable(frag_dashboard_positions)
+
+    def test_positions_rows_route_exists(self):
+        from api.routes_dashboard import frag_dashboard_positions_rows
+        assert callable(frag_dashboard_positions_rows)
 
     def test_original_dashboard_route_preserved(self):
         """Backward-compatible: /fragments/dashboard still works."""

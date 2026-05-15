@@ -1,0 +1,25 @@
+{% for p in open_positions %}
+{% set net = p.individual_unrealized - p.individual_fees %}
+<tr id="pos-row-{{ p.ticker }}-{{ p.direction }}">
+  <td style="color:var(--blue);font-weight:700;">{{ p.ticker }}</td>
+  <td class="{{ 'pos-long' if p.direction=='LONG' else 'pos-short' }}">{{ p.direction }}</td>
+  <td style="color:var(--sub);font-size:.68rem;" data-entry-ts="{{ p.entry_timestamp }}">{{ hold_time(p.entry_timestamp) }}</td>
+  <td>{{ fmt(p.average, 4) }}</td>
+  <td>{{ fmt(p.fair_price, 4) }}</td>
+  <td>{{ fmt(p.contract_amount, 4) }}</td>
+  <td>{{ fmt(p.position_value_usdt, 2) }}</td>
+  <td style="color:{{ 'var(--green)' if p.individual_unrealized >= 0 else 'var(--red)' }};">
+    {{ fmt(p.individual_unrealized, 2) }}
+  </td>
+  <td style="color:var(--sub);">{{ fmt(p.individual_fees, 4) }}</td>
+  <td style="color:{{ 'var(--green)' if net >= 0 else 'var(--red)' }};font-weight:700;">
+    {{ fmt(net, 2) }}
+  </td>
+  <td style="color:var(--green);">{{ fmt(p.session_mfe, 2) }}</td>
+  <td style="color:var(--red);">{{ fmt(p.session_mae, 2) }}</td>
+  <td style="color:var(--green);">{{ fmt(p.individual_tp_price, 4) if p.individual_tp_price else '—' }}</td>
+  <td style="color:var(--red);">{{ fmt(p.individual_sl_price, 4) if p.individual_sl_price else '—' }}</td>
+</tr>
+{% else %}
+<tr id="pos-empty-row"><td colspan="14" style="text-align:center;padding:24px 0;color:var(--muted);font-size:.78rem;">No open positions.</td></tr>
+{% endfor %}
