@@ -594,6 +594,23 @@ class DataCache:
         except Exception:
             pass  # best-effort — never break recalc
 
+        # Publish equity_update on every recalc (continuous equity + balance updates)
+        try:
+            import asyncio as _aio3
+            from core.pubsub.bus import get_bus
+            from core.pubsub.channels import equity_channel
+            _aio3.get_event_loop().create_task(get_bus().publish(
+                equity_channel(app_state.active_account_id), {
+                    "trigger": "recalc_cycle",
+                    "total_equity": acc.total_equity,
+                    "available_margin": acc.available_margin,
+                    "unrealized_pnl": acc.total_unrealized,
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                }
+            ))
+        except Exception:
+            pass
+
     # ── Account state: conflict resolution ──────────────────────────────────
 
     def _should_accept_account_update(

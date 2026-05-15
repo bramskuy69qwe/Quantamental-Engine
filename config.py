@@ -95,6 +95,10 @@ HTTP_PROXY = os.getenv("HTTP_PROXY", "")
 PUBSUB_BACKEND = os.getenv("PUBSUB_BACKEND", "inprocess")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
+# Unified exchange refresh rate (Hz). Controls how frequently exchange-derived
+# state publishes to SSE consumers. Default 1.0 = one cycle per second.
+EXCHANGE_REFRESH_HZ = float(os.getenv("EXCHANGE_REFRESH_HZ", "1.0"))
+
 # ── UI polling intervals (seconds) ───────────────────────────────────────────
 DASHBOARD_POLL_INTERVAL   = 3
 CALCULATOR_POLL_INTERVAL  = 2

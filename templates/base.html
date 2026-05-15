@@ -674,5 +674,32 @@ if ('serviceWorker' in navigator) {
 })();
 </script>
 
+<!-- Client-side time tick: update hold-time and "ago" labels without backend fetch -->
+<script>
+(function(){
+  function _fmt(s){
+    var d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60),ss=s%60;
+    var p=[];
+    if(d)p.push(d+'d');
+    if(d||h)p.push(('0'+h).slice(-2)+'h');
+    p.push(('0'+m).slice(-2)+'m');
+    p.push(('0'+ss).slice(-2)+'s');
+    return p.join(' ');
+  }
+  setInterval(function(){
+    document.querySelectorAll('[data-entry-ts]').forEach(function(el){
+      var ts=el.getAttribute('data-entry-ts');
+      if(!ts)return;
+      try{
+        var dt=new Date(ts);
+        var now=new Date();
+        var delta=Math.max(0,Math.floor((now-dt)/1000));
+        el.textContent=_fmt(delta);
+      }catch(e){}
+    });
+  },1000);
+})();
+</script>
+
 </body>
 </html>

@@ -35,10 +35,10 @@
         <tbody>
           {% for p in open_positions %}
           {% set net = p.individual_unrealized - p.individual_fees %}
-          <tr>
+          <tr id="pos-row-{{ p.ticker }}-{{ p.direction }}">
             <td style="color:var(--blue);font-weight:700;">{{ p.ticker }}</td>
             <td class="{{ 'pos-long' if p.direction=='LONG' else 'pos-short' }}">{{ p.direction }}</td>
-            <td style="color:var(--sub);font-size:.68rem;">{{ hold_time(p.entry_timestamp) }}</td>
+            <td style="color:var(--sub);font-size:.68rem;" data-entry-ts="{{ p.entry_timestamp }}">{{ hold_time(p.entry_timestamp) }}</td>
             <td>{{ fmt(p.average, 4) }}</td>
             <td>{{ fmt(p.fair_price, 4) }}</td>
             <td>{{ fmt(p.contract_amount, 4) }}</td>
@@ -75,7 +75,7 @@
         </tr></thead>
         <tbody>
           {% for o in working_orders %}
-          <tr>
+          <tr id="ord-row-{{ o.exchange_order_id or loop.index }}">
             <td style="color:var(--blue);font-weight:700;">{{ o.symbol }}</td>
             <td class="{{ 'pos-long' if o.side == 'BUY' else 'pos-short' }}">{{ o.side }}</td>
             <td style="color:var(--sub);">{{ o.order_type }}</td>
