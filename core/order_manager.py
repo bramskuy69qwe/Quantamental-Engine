@@ -136,10 +136,12 @@ class OrderManager:
         order.setdefault("account_id", account_id)
         eid = order.get("exchange_order_id")
 
+        prev_order = None
         if eid:
             existing = await self._db.get_active_orders_map(account_id)
             if eid in existing:
-                current_status = existing[eid].get("status", "")
+                prev_order = existing[eid]
+                current_status = prev_order.get("status", "")
                 new_status = order.get("status", "new")
                 if not validate_transition(current_status, new_status):
                     log.warning(
@@ -151,6 +153,7 @@ class OrderManager:
         await self._db.upsert_order_batch([order])
         self._enrich_order_best_effort(order)
         self._emit_order_events(account_id, order)
+        self._detect_modification_events(account_id, order, prev_order)
         await self.refresh_cache(account_id)
         return True
 
@@ -245,6 +248,74 @@ class OrderManager:
 
         except Exception:
             log.debug("order event emission failed", exc_info=True)
+
+    def _detect_modification_events(
+        self, account_id: int, order: Dict[str, Any], prev_order: Optional[Dict]
+    ) -> None:
+        """Detect TP/SL price modifications and emit trade events."""
+        if not prev_order:
+            return
+        try:
+            from core.trade_event_log import log_trade_event
+
+            otype = (order.get("order_type") or "").lower()
+            if otype not in ("stop_loss", "stop_market", "stop_loss_limit",
+                             "take_profit", "take_profit_market", "take_profit_limit"):
+                return
+
+            new_stop = order.get("stop_price") or order.get("price", 0)
+            old_stop = prev_order.get("stop_price") or prev_order.get("price", 0)
+            if not new_stop or not old_stop or new_stop == old_stop:
+                return
+
+            # Determine event type
+            is_tp = otype in ("take_profit", "take_profit_market", "take_profit_limit")
+            event_type = "tp_modified" if is_tp else "sl_modified"
+
+            # Time since entry (from position's first fill)
+            time_since = 0
+            try:
+                import sqlite3, config as _cfg
+                pos_id = order.get("exchange_position_id", "")
+                if pos_id:
+                    conn = sqlite3.connect(_cfg.DB_PATH)
+                    row = conn.execute(
+                        "SELECT MIN(timestamp_ms) FROM fills WHERE "
+                        "account_id = ? AND exchange_position_id = ? AND is_close = 0",
+                        (account_id, pos_id),
+                    ).fetchone()
+                    conn.close()
+                    if row and row[0]:
+                        import time
+                        time_since = int(time.time() * 1000) - row[0]
+            except Exception:
+                pass
+
+            # Read calc_id from parent entry order
+            calc_id = None
+            try:
+                import sqlite3, config as _cfg2
+                pos_id = order.get("exchange_position_id", "")
+                conn = sqlite3.connect(_cfg2.DB_PATH)
+                row = conn.execute(
+                    "SELECT calc_id FROM orders WHERE account_id = ? AND "
+                    "exchange_position_id = ? AND reduce_only = 0 AND calc_id IS NOT NULL LIMIT 1",
+                    (account_id, pos_id),
+                ).fetchone()
+                conn.close()
+                calc_id = row[0] if row else None
+            except Exception:
+                pass
+
+            log_trade_event(account_id, calc_id, event_type, {  # type: ignore[arg-type]
+                "exchange_order_id": order.get("exchange_order_id", ""),
+                "from_price": old_stop,
+                "to_price": new_stop,
+                "time_since_entry_ms": time_since,
+            }, source="order_manager")
+
+        except Exception:
+            log.debug("modification event detection failed", exc_info=True)
 
     def _emit_fill_events(self, account_id: int, fill: Dict[str, Any]) -> None:
         """Emit trade events for fills. Best-effort."""
