@@ -10,7 +10,7 @@
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
     <span class="sec-lbl" style="margin-bottom:0;">Trade History — Closed / Manual ({{ total }} entries)</span>
     <div style="display:flex;align-items:center;gap:4px;">
-      <input type="text" placeholder="Search ticker…" class="hist-input"
+      <input type="text" placeholder="Search symbol..." class="hist-input"
              style="width:140px;"
              value="{{ search }}"
              hx-get="{{ ep }}?page=1&per_page={{ per_page }}&sort_by={{ sort_by }}&sort_dir={{ sort_dir }}&date_from={{ df }}&date_to={{ dt }}"
@@ -51,7 +51,7 @@
       <tbody>
         {% for r in rows %}
         <tr>
-          <td class="td-ts">{{ r.exit_timestamp[:19] }}</td>
+          <td class="td-ts">{{ r.exit_timestamp[:19] | replace('T', ' ') }}</td>
           <td class="td-symbol">{{ r.ticker }}</td>
           <td class="{{ 'pos-long' if r.direction == 'LONG' else 'pos-short' }}">{{ r.direction }}</td>
           <td>{{ fmt(r.entry_price, 4) }}</td>

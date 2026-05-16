@@ -10,7 +10,7 @@
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
     <span class="sec-lbl" style="margin-bottom:0;">Execution Log ({{ total }} entries)</span>
     <div style="display:flex;gap:4px;">
-      <input type="text" placeholder="Search ticker…" class="hist-input" style="width:130px;"
+      <input type="text" placeholder="Search symbol..." class="hist-input" style="width:140px;"
              value="{{ search }}"
              hx-get="{{ ep }}?page=1&per_page={{ per_page }}&sort_by={{ sort_by }}&sort_dir={{ sort_dir }}&date_from={{ df }}&date_to={{ dt }}"
              hx-target="#{{ tid }}" hx-swap="innerHTML"
@@ -47,7 +47,7 @@
       <tbody>
         {% for r in rows %}
         <tr>
-          <td style="color:var(--sub);">{{ r.entry_timestamp[:19] }}</td>
+          <td class="td-ts">{{ r.entry_timestamp[:19] | replace('T', ' ') }}</td>
           <td style="color:var(--blue);font-weight:700;">{{ r.ticker }}</td>
           <td class="{{ 'pos-long' if r.side == 'long' else 'pos-short' }}">{{ r.side|upper }}</td>
           <td>{{ fmt(r.entry_price_actual, 4) }}</td>

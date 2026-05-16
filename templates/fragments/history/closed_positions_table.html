@@ -8,7 +8,7 @@
 
 <div class="card card-p8">
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
-    <span class="sec-lbl" style="margin-bottom:0;">Position History ({{ total }})</span>
+    <span class="sec-lbl" style="margin-bottom:0;">Position History ({{ total }} entries)</span>
     <input type="text" placeholder="Search symbol..." class="hist-input" style="width:140px;"
            value="{{ search }}"
            hx-get="{{ ep }}?page=1&per_page={{ per_page }}&sort_by={{ sort_by }}&sort_dir={{ sort_dir }}&date_from={{ df }}&date_to={{ dt }}"
