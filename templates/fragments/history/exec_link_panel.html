@@ -100,10 +100,6 @@
   </div>
   {% endif %}
 
-  {% if has_modifications %}
-  <div style="font-size:.6rem;color:var(--amber);margin-bottom:8px;padding:4px 8px;background:rgba(232,144,32,.08);border-radius:3px;">
-    Note: TP/SL was modified during this trade's lifetime. Partial match reflects plan vs final state.
-  </div>
-  {% endif %}
+  {# has_modifications disclaimer removed in Task 87.1: under 1/1 semantics the "partial match" state is unreachable; the table footer above already notes plan-vs-actual is deferred to Phase 9. Phase 9 will restore partial-state messaging when TP/SL modification tracking lands. #}
 </div>
 {% endif %}
