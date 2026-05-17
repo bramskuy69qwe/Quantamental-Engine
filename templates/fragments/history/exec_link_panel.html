@@ -1,0 +1,110 @@
+<!-- fragment: history/exec_link_panel — 3-criterion comparison panel -->
+{% if not fill or not fill.calc_id %}
+<div style="background:var(--panel);border:1px solid var(--border);border-radius:4px;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;">
+  <span style="color:var(--muted);font-size:.7rem;">No calc_id — likely manual or pre-v2.4 order</span>
+</div>
+
+{% elif not ptl %}
+<div style="background:var(--panel);border:1px solid var(--border);border-radius:4px;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;">
+  <span style="color:var(--muted);font-size:.7rem;">No pre-trade log entry found for calc_id <span class="mono" style="color:var(--blue);">{{ fill.calc_id[-8:] }}</span></span>
+</div>
+
+{% else %}
+{% set resolved = match.auto_link or fill.exec_link_confirmed %}
+<div style="background:#0a0f1a;border:1px solid {{ 'rgba(0,200,85,.25)' if resolved else 'rgba(232,144,32,.25)' }};border-radius:4px;padding:10px 14px;">
+
+  {# Header #}
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <span style="font-size:.58rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);">Exec Link</span>
+      <span class="mono" style="font-size:.68rem;color:var(--sub);">{{ fill.calc_id[-8:] }}</span>
+    </div>
+    <span class="badge {{ 'badge-ok' if resolved else 'badge-warning' }}">
+      {% if match.match_count == 3 %}● AUTO-LINKED
+      {% elif fill.exec_link_confirmed %}✓ CONFIRMED
+      {% else %}⚠ {{ match.match_count }}/3 MATCH
+      {% endif %}
+    </span>
+  </div>
+
+  {# Comparison table #}
+  <div style="overflow-x:auto;margin-bottom:10px;">
+    <table style="width:100%;">
+      <thead><tr>
+        <th style="font-size:.57rem;">Criterion</th>
+        <th style="font-size:.57rem;">Planned</th>
+        <th style="font-size:.57rem;">Actual</th>
+        <th style="font-size:.57rem;width:32px;"></th>
+      </tr></thead>
+      <tbody>
+        {# Entry price #}
+        <tr>
+          <td class="td-sub">Entry Price</td>
+          <td class="mono">{{ fmt(match.pretrade_entry, 6) if match.pretrade_entry else '—' }}</td>
+          <td class="mono" style="{{ '' if match.is_market else ('color:var(--red);' if not match.entry_match else '') }}">
+            {% if match.is_market %}
+              <span style="color:var(--muted);font-style:italic;">MARKET ORDER</span>
+            {% else %}
+              {{ fmt(match.fill_price, 6) }}
+              {% if not match.entry_match %}<span style="margin-left:6px;font-size:.62rem;font-weight:700;color:var(--red);">≠</span>{% endif %}
+            {% endif %}
+          </td>
+          <td style="text-align:center;">
+            {% if match.is_market %}
+              <span style="font-size:.6rem;color:var(--muted);font-style:italic;">skip</span>
+            {% elif match.entry_match %}
+              <span style="color:var(--green);font-size:.8rem;">✓</span>
+            {% else %}
+              <span style="color:var(--red);font-size:.8rem;">✗</span>
+            {% endif %}
+          </td>
+        </tr>
+        {# TP #}
+        <tr>
+          <td class="td-sub">Take Profit</td>
+          <td class="mono">{{ fmt(match.pretrade_tp, 6) if match.pretrade_tp else '—' }}</td>
+          <td class="mono">{{ fmt(match.pretrade_tp, 6) if match.pretrade_tp else '—' }}</td>
+          <td style="text-align:center;">
+            {% if match.tp_match %}<span style="color:var(--green);font-size:.8rem;">✓</span>
+            {% else %}<span style="color:var(--red);font-size:.8rem;">✗</span>{% endif %}
+          </td>
+        </tr>
+        {# SL #}
+        <tr>
+          <td class="td-sub">Stop Loss</td>
+          <td class="mono">{{ fmt(match.pretrade_sl, 6) if match.pretrade_sl else '—' }}</td>
+          <td class="mono">{{ fmt(match.pretrade_sl, 6) if match.pretrade_sl else '—' }}</td>
+          <td style="text-align:center;">
+            {% if match.sl_match %}<span style="color:var(--green);font-size:.8rem;">✓</span>
+            {% else %}<span style="color:var(--red);font-size:.8rem;">✗</span>{% endif %}
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  {# Confirm button for partial matches #}
+  {% if not resolved %}
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+    <button class="btn btn-primary btn-sm"
+            hx-post="/history/exec_link/confirm"
+            hx-vals='{"fill_id": {{ fill.id }}}'
+            hx-target="#exec-link-{{ fill.id }} td"
+            hx-swap="innerHTML">Confirm Link</button>
+    <span style="font-size:.62rem;color:var(--muted);">{{ 3 - match.match_count }} criterion{{ '' if (3 - match.match_count) == 1 else 'a' }} differ{{ 's' if (3 - match.match_count) == 1 else '' }} — review before confirming</span>
+  </div>
+  {% endif %}
+
+  {% if fill.exec_link_confirmed and match.match_count < 3 %}
+  <div style="font-size:.65rem;color:var(--green);margin-bottom:10px;">
+    ✓ Manually confirmed — {{ 3 - match.match_count }} mismatch{{ '' if (3 - match.match_count) == 1 else 'es' }} acknowledged
+  </div>
+  {% endif %}
+
+  {% if has_modifications %}
+  <div style="font-size:.6rem;color:var(--amber);margin-bottom:8px;padding:4px 8px;background:rgba(232,144,32,.08);border-radius:3px;">
+    Note: TP/SL was modified during this trade's lifetime. Partial match reflects plan vs final state.
+  </div>
+  {% endif %}
+</div>
+{% endif %}

@@ -92,6 +92,10 @@ HTTP_PROXY = os.getenv("HTTP_PROXY", "")
 PUBSUB_BACKEND = os.getenv("PUBSUB_BACKEND", "inprocess")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
+# ── Exec Link (v2.4 Task 82) ────────────────────────────────────────────────
+# Relative tolerance for price-near matching (0.0005 = 0.05%)
+EXEC_LINK_PRICE_TOL = float(os.getenv("EXEC_LINK_PRICE_TOL", "0.0005"))
+
 # Unified exchange refresh rate (Hz). Controls how frequently exchange-derived
 # state publishes to SSE consumers. Default 1.0 = one cycle per second.
 EXCHANGE_REFRESH_HZ = float(os.getenv("EXCHANGE_REFRESH_HZ", "1.0"))

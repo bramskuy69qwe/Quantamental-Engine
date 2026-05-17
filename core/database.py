@@ -506,6 +506,10 @@ class DatabaseManager(
             # v2.4 Task 69: TP/SL denormalization on closed_positions
             "ALTER TABLE closed_positions ADD COLUMN tp_price REAL DEFAULT NULL",
             "ALTER TABLE closed_positions ADD COLUMN sl_price REAL DEFAULT NULL",
+            # v2.4 Task 82: exec link confirmation tracking on fills
+            "ALTER TABLE fills ADD COLUMN exec_link_confirmed INTEGER DEFAULT 0",
+            "ALTER TABLE fills ADD COLUMN exec_link_confirmed_at TEXT DEFAULT NULL",
+            "ALTER TABLE fills ADD COLUMN exec_link_confirmed_by TEXT DEFAULT NULL",
         ]:
             try:
                 await self._conn.execute(migration)

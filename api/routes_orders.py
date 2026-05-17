@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse
 
 from fastapi.responses import JSONResponse
@@ -141,9 +141,11 @@ async def frag_closed_positions(
 async def frag_position_fills(request: Request, position_id: int = 0):
     """Return fills for a single closed position (lazy-loaded drawer)."""
     from api.helpers import _ctx
+    from core.exec_link import get_exec_link_status
+
     fills = []
     if position_id:
-        # Look up the closed_position row to get matching params
+        aid = app_state.active_account_id
         async with db._conn.execute(
             "SELECT terminal_position_id, symbol, direction FROM closed_positions WHERE id=?",
             (position_id,),
@@ -151,15 +153,118 @@ async def frag_position_fills(request: Request, position_id: int = 0):
             pos = await cur.fetchone()
         if pos:
             fills = await db.get_position_fills(
-                app_state.active_account_id,
-                pos["terminal_position_id"],
-                pos["symbol"],
-                pos["direction"],
+                aid, pos["terminal_position_id"], pos["symbol"], pos["direction"],
             )
+            # Enrich entry fills with exec link status
+            for f in fills:
+                if f.get("is_close") or not f.get("calc_id"):
+                    f["exec_link_status"] = ""
+                    f["exec_match_count"] = 0
+                    continue
+                # Look up pre_trade_log + parent order type
+                ptl = None
+                async with db._conn.execute(
+                    "SELECT * FROM pre_trade_log WHERE calc_id=? LIMIT 1",
+                    (f["calc_id"],),
+                ) as cur2:
+                    row = await cur2.fetchone()
+                    if row:
+                        ptl = dict(row)
+                order_type = ""
+                if f.get("exchange_order_id"):
+                    async with db._conn.execute(
+                        "SELECT order_type FROM orders WHERE exchange_order_id=? AND account_id=? LIMIT 1",
+                        (f["exchange_order_id"], aid),
+                    ) as cur3:
+                        orow = await cur3.fetchone()
+                        if orow:
+                            order_type = orow["order_type"] or ""
+                status, count = get_exec_link_status(f, ptl, order_type)
+                f["exec_link_status"] = status
+                f["exec_match_count"] = count
+
     return templates.TemplateResponse(
         request, "fragments/history/position_fills.html",
         _ctx(request, fills=fills),
     )
+
+
+@router.get("/fragments/history/exec_link", response_class=HTMLResponse)
+async def frag_exec_link(request: Request, fill_id: int = 0):
+    """Exec link comparison panel for a single fill."""
+    from api.helpers import _ctx
+    from core.exec_link import compute_exec_match
+
+    fill = ptl = match = None
+    order_type = ""
+    has_modifications = False
+
+    if fill_id:
+        aid = app_state.active_account_id
+        async with db._conn.execute(
+            "SELECT * FROM fills WHERE id=? AND account_id=?", (fill_id, aid),
+        ) as cur:
+            row = await cur.fetchone()
+            if row:
+                fill = dict(row)
+
+        if fill and fill.get("calc_id"):
+            async with db._conn.execute(
+                "SELECT * FROM pre_trade_log WHERE calc_id=? LIMIT 1",
+                (fill["calc_id"],),
+            ) as cur:
+                row = await cur.fetchone()
+                if row:
+                    ptl = dict(row)
+
+            if fill.get("exchange_order_id"):
+                async with db._conn.execute(
+                    "SELECT order_type FROM orders WHERE exchange_order_id=? AND account_id=? LIMIT 1",
+                    (fill["exchange_order_id"], aid),
+                ) as cur:
+                    orow = await cur.fetchone()
+                    if orow:
+                        order_type = orow["order_type"] or ""
+
+            # Check for TP/SL modifications on this calc_id
+            try:
+                from core.trade_event_log import query_trade_events
+                import asyncio
+                evts, _ = await asyncio.to_thread(
+                    query_trade_events,
+                    account_id=aid,
+                    calc_id=fill["calc_id"],
+                    event_type=None,
+                    limit=100,
+                )
+                has_modifications = any(
+                    e["event_type"] in ("tp_modified", "sl_modified") for e in evts
+                )
+            except Exception:
+                pass
+
+            if ptl:
+                match = compute_exec_match(fill, ptl, order_type)
+
+    return templates.TemplateResponse(
+        request, "fragments/history/exec_link_panel.html",
+        _ctx(request, fill=fill, ptl=ptl, match=match,
+             has_modifications=has_modifications),
+    )
+
+
+@router.post("/history/exec_link/confirm", response_class=HTMLResponse)
+async def confirm_exec_link(request: Request, fill_id: int = Form(0)):
+    """Persist user-confirmed exec link on a fill."""
+    if fill_id:
+        await db._conn.execute(
+            "UPDATE fills SET exec_link_confirmed=1, "
+            "exec_link_confirmed_at=datetime('now'), exec_link_confirmed_by='user' "
+            "WHERE id=?",
+            (fill_id,),
+        )
+        await db._conn.commit()
+    return await frag_exec_link(request, fill_id=fill_id)
 
 
 # ── Backfill + consistency ───────────────────────────────────────────────────

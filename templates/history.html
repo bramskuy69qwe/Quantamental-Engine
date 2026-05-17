@@ -157,7 +157,25 @@
 </div>
 
 <script>
-// Fill Drawer toggle (page-level to survive fragment innerHTML swaps)
+// Page-level toggles (survive fragment innerHTML swaps)
+
+// Exec Link panel toggle (inside Fill Drawer)
+window.toggleExecLink = function(fillId) {
+  var row = document.getElementById('exec-link-' + fillId);
+  if (!row) return;
+  var isOpen = row.style.display !== 'none';
+  if (isOpen) {
+    row.style.display = 'none';
+  } else {
+    row.style.display = '';
+    if (row.dataset.loaded !== '1') {
+      var target = row.querySelector('td');
+      htmx.ajax('GET', '/fragments/history/exec_link?fill_id=' + fillId, {target: target, swap: 'innerHTML'});
+      row.dataset.loaded = '1';
+    }
+  }
+};
+
 // Trade Events detail toggle
 window.toggleEventDetail = function(evtId) {
   var row = document.getElementById('evt-detail-' + evtId);

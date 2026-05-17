@@ -3,6 +3,7 @@
   <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
     <span style="font-size:.58rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--blue);">▾ Fill Trades</span>
     <span class="mono" style="font-size:.65rem;color:var(--muted);">{{ fills | length }} fills</span>
+    <span style="font-size:.6rem;color:var(--muted);margin-left:auto;">Click <span style="color:var(--amber);">exec badge</span> on entry fills to inspect link</span>
   </div>
 
   {% if fills %}
@@ -17,6 +18,7 @@
         <th style="font-size:.58rem;">Fee</th>
         <th style="font-size:.58rem;">Role</th>
         <th style="font-size:.58rem;">PnL</th>
+        <th style="font-size:.58rem;">Exec Link</th>
       </tr></thead>
       <tbody>
         {% for f in fills %}
@@ -40,7 +42,25 @@
           <td class="{{ 'text-green' if f.realized_pnl > 0 else 'text-red' if f.realized_pnl < 0 else '' }}">
             {{ fmt(f.realized_pnl, 2) if f.realized_pnl else "—" }}
           </td>
+          <td>
+            {% if not is_close and f.exec_link_status %}
+              {% if f.exec_link_status == 'linked' %}
+                <span class="badge badge-ok" style="cursor:pointer;" onclick="event.stopPropagation();toggleExecLink({{ f.id }})">● LINKED</span>
+              {% elif f.exec_link_status == 'partial' %}
+                <span class="badge badge-warning" style="cursor:pointer;" onclick="event.stopPropagation();toggleExecLink({{ f.id }})">⚠ {{ f.exec_match_count }}/3</span>
+              {% else %}
+                <span class="badge badge-limit" style="cursor:pointer;" onclick="event.stopPropagation();toggleExecLink({{ f.id }})">✗ UNLINKED</span>
+              {% endif %}
+            {% else %}
+              <span class="td-dim">—</span>
+            {% endif %}
+          </td>
         </tr>
+        {% if not is_close and f.exec_link_status %}
+        <tr id="exec-link-{{ f.id }}" style="display:none;">
+          <td colspan="9" style="padding:0;"></td>
+        </tr>
+        {% endif %}
         {% endfor %}
       </tbody>
     </table>
