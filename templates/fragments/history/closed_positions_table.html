@@ -37,6 +37,7 @@
         {{ sort_th("SL",         "sl_price",       ep, tid, sort_by, sort_dir, qs) }}
         {{ sort_th("MFE",        "mfe",            ep, tid, sort_by, sort_dir, qs) }}
         {{ sort_th("MAE",        "mae",            ep, tid, sort_by, sort_dir, qs) }}
+        <th>M·R</th>
       </tr></thead>
       <tbody>
         {% for r in rows %}
@@ -71,6 +72,8 @@
           <td class="text-red">{{ fmt(r.sl_price, 4) if r.sl_price else "—" }}</td>
           <td class="text-green">{{ fmt(r.mfe, 2) if r.mfe else "—" }}</td>
           <td class="text-red">{{ fmt(r.mae, 2) if r.mae else "—" }}</td>
+          {% set mer = (r.mfe / (r.mae | abs)) | round(2) if r.mae else 0 %}
+          <td>{{ fmt(mer, 2) if mer else '—' }}</td>
         </tr>
         {% endfor %}
       </tbody>
