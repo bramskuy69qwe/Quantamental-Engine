@@ -615,6 +615,50 @@ class OrdersMixin:
             row = await cur.fetchone()
             return dict(row) if row else None  # get_order_by_exchange_id
 
+    async def get_pretrade_logs_by_calc_ids(
+        self, calc_ids: List[str]
+    ) -> Dict[str, Dict]:
+        """Batch-fetch pre_trade_log rows by calc_id.
+
+        Returns {calc_id: row_dict}. Missing calc_ids are absent from the result.
+        Eliminates the N+1 pattern when enriching a list of fills (CRIT-001).
+        """
+        if not calc_ids:
+            return {}
+        # Dedupe while preserving order. SQLite default param limit is 32766
+        # (since 3.32, 2020); a position with that many distinct calc_ids is
+        # implausible. No chunking.
+        unique_ids = list(dict.fromkeys(calc_ids))
+        placeholders = ",".join("?" * len(unique_ids))
+        async with self._conn.execute(
+            f"SELECT * FROM pre_trade_log WHERE calc_id IN ({placeholders})",
+            unique_ids,
+        ) as cur:
+            rows = await cur.fetchall()
+            # Last row wins on duplicate calc_id (matches LIMIT 1 semantics
+            # of the per-fill query that this replaces).
+            return {r["calc_id"]: dict(r) for r in rows}
+
+    async def get_order_types_by_ids(
+        self, account_id: int, exchange_order_ids: List[str]
+    ) -> Dict[str, str]:
+        """Batch-fetch order_type column by exchange_order_id for one account.
+
+        Returns {exchange_order_id: order_type}. Missing IDs absent from result.
+        Eliminates the N+1 pattern when enriching a list of fills (CRIT-001).
+        """
+        if not exchange_order_ids:
+            return {}
+        unique_ids = list(dict.fromkeys(exchange_order_ids))
+        placeholders = ",".join("?" * len(unique_ids))
+        async with self._conn.execute(
+            f"SELECT exchange_order_id, order_type FROM orders "
+            f"WHERE account_id=? AND exchange_order_id IN ({placeholders})",
+            [account_id, *unique_ids],
+        ) as cur:
+            rows = await cur.fetchall()
+            return {r["exchange_order_id"]: (r["order_type"] or "") for r in rows}
+
     async def get_pre_trade_for_shortfall(
         self, account_id: int, symbol: str, entry_time_ms: int,
         window_ms: int = 300_000,

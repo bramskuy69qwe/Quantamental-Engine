@@ -155,30 +155,29 @@ async def frag_position_fills(request: Request, position_id: int = 0):
             fills = await db.get_position_fills(
                 aid, pos["terminal_position_id"], pos["symbol"], pos["direction"],
             )
-            # Enrich entry fills with exec link status
+            # CRIT-001 fix: batch-fetch pre_trade_log and order_types instead of
+            # per-fill queries. Previously: 2 queries per entry fill (~100 for
+            # 50 fills). Now: 1 batched pre_trade_log + 1 batched orders, then
+            # in-memory lookup during enrichment.
+            entry_fills = [
+                f for f in fills
+                if not f.get("is_close") and f.get("calc_id")
+            ]
+            calc_ids = [f["calc_id"] for f in entry_fills]
+            ex_order_ids = [
+                f["exchange_order_id"] for f in entry_fills
+                if f.get("exchange_order_id")
+            ]
+            ptl_by_id = await db.get_pretrade_logs_by_calc_ids(calc_ids)
+            order_types = await db.get_order_types_by_ids(aid, ex_order_ids)
+
             for f in fills:
                 if f.get("is_close") or not f.get("calc_id"):
                     f["exec_link_status"] = ""
                     f["exec_match_count"] = 0
                     continue
-                # Look up pre_trade_log + parent order type
-                ptl = None
-                async with db._conn.execute(
-                    "SELECT * FROM pre_trade_log WHERE calc_id=? LIMIT 1",
-                    (f["calc_id"],),
-                ) as cur2:
-                    row = await cur2.fetchone()
-                    if row:
-                        ptl = dict(row)
-                order_type = ""
-                if f.get("exchange_order_id"):
-                    async with db._conn.execute(
-                        "SELECT order_type FROM orders WHERE exchange_order_id=? AND account_id=? LIMIT 1",
-                        (f["exchange_order_id"], aid),
-                    ) as cur3:
-                        orow = await cur3.fetchone()
-                        if orow:
-                            order_type = orow["order_type"] or ""
+                ptl = ptl_by_id.get(f["calc_id"])
+                order_type = order_types.get(f.get("exchange_order_id", ""), "")
                 status, count = get_exec_link_status(f, ptl, order_type)
                 f["exec_link_status"] = status
                 f["exec_match_count"] = count
