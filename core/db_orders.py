@@ -23,12 +23,12 @@ class OrdersMixin:
     }
     _FILLS_SORT_COLS = {
         "timestamp_ms", "symbol", "side", "price", "quantity", "fee",
-        "realized_pnl", "role", "direction",
+        "realized_pnl", "role", "direction", "slippage_actual",
     }
     _CLOSED_POS_SORT_COLS = {
         "exit_time_ms", "entry_time_ms", "symbol", "direction", "quantity",
         "entry_price", "exit_price", "realized_pnl", "net_pnl", "total_fees",
-        "hold_time_ms", "exit_reason", "mfe", "mae",
+        "hold_time_ms", "exit_reason", "mfe", "mae", "tp_price", "sl_price",
     }
 
     # ── Write methods ───────────────────────────────────────────────────────

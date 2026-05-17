@@ -29,6 +29,7 @@
         {{ sort_th("Qty",       "quantity",         ep, tid, sort_by, sort_dir, qs) }}
         {{ sort_th("Fee",       "fee",             ep, tid, sort_by, sort_dir, qs) }}
         {{ sort_th("Role",      "role",            ep, tid, sort_by, sort_dir, qs) }}
+        {{ sort_th("Slippage", "slippage_actual", ep, tid, sort_by, sort_dir, qs) }}
         {{ sort_th("PnL",       "realized_pnl",   ep, tid, sort_by, sort_dir, qs) }}
       </tr></thead>
       <tbody>
@@ -51,6 +52,7 @@
           <td>{{ fmt(r.quantity, 4) }}</td>
           <td style="color:var(--sub);">{{ fmt(r.fee, 4) }} {{ r.fee_asset }}</td>
           <td style="color:var(--sub);">{{ r.role }}</td>
+          <td class="td-sub">{{ fmt(r.slippage_actual * 100, 4) ~ '%' if r.slippage_actual else '—' }}</td>
           <td class="{{ 'text-green' if r.realized_pnl > 0 else 'text-red' if r.realized_pnl < 0 else '' }}">
             {{ fmt(r.realized_pnl, 2) if r.realized_pnl else "—" }}
           </td>
