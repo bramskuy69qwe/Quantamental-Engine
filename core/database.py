@@ -555,6 +555,14 @@ class DatabaseManager(
         except _sqlite3.OperationalError:
             pass  # pre_trade_log.calc_id not yet available — backfill skipped
 
+        # ── Task 76: default empty exit_reason to 'manual' on closed_positions
+        # Idempotent: only updates rows where exit_reason is empty string.
+        await self._conn.execute(
+            "UPDATE closed_positions SET exit_reason = 'manual' "
+            "WHERE exit_reason = '' OR exit_reason IS NULL"
+        )
+        await self._conn.commit()
+
         # ── account_id indexes (idempotent) ───────────────────────────────────
         for idx_sql in [
             "CREATE INDEX IF NOT EXISTS idx_snapshots_account ON account_snapshots (account_id, snapshot_ts DESC)",

@@ -114,7 +114,7 @@ async def frag_fills(
 @router.get("/fragments/history/closed_positions", response_class=HTMLResponse)
 async def frag_closed_positions(
     request: Request,
-    page: int = 1, per_page: int = 25,
+    page: int = 1, per_page: int = 20,
     sort_by: str = "exit_time_ms", sort_dir: str = "DESC",
     search: str = "",
     date_from: str = "", date_to: str = "",
