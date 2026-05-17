@@ -209,13 +209,16 @@ def load_recent_history(path: str, days: int = 30) -> List[Dict]:
 async def export_all_to_excel(path: Optional[str] = None) -> str:
     """Export all log tables from SQLite to a multi-sheet XLSX file."""
     _ensure_dirs()
+    aid = app_state.active_account_id
     if path is None:
-        ts = now_in_account_tz(app_state.active_account_id).strftime("%Y%m%d_%H%M%S")
+        ts = now_in_account_tz(aid).strftime("%Y%m%d_%H%M%S")
         path = os.path.join(config.DATA_DIR, f"risk_engine_export_{ts}.xlsx")
 
-    pre_trade_df = pd.DataFrame(await db.get_all_pre_trade_log(days=365))
-    execution_df = pd.DataFrame(await db.get_all_execution_log(days=365))
-    history_df   = pd.DataFrame(await db.get_all_trade_history(days=365))
+    # CRIT-006: scope export to the currently-active account, not the
+    # account_id=1 default in db.get_all_* signatures.
+    pre_trade_df = pd.DataFrame(await db.get_all_pre_trade_log(days=365, account_id=aid))
+    execution_df = pd.DataFrame(await db.get_all_execution_log(days=365, account_id=aid))
+    history_df   = pd.DataFrame(await db.get_all_trade_history(days=365, account_id=aid))
     # live_trades still on CSV (no DB table in Phase 1)
     live_df = pd.read_csv(config.LIVE_TRADES) if os.path.exists(config.LIVE_TRADES) else pd.DataFrame()
 
