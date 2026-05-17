@@ -179,28 +179,166 @@ Tests: each fix gets a regression test exercising the specific edge case.
 
 ---
 
-## Phase 4: High Correctness — WS, Security, Risk
+## Phase 4: Reliability + State Machine Hardening
 
-**Branch:** `v2.4/audit-phase4a` + `v2.4/audit-phase4b`
-**Framing:** Pattern B for 4a, Pattern C for 4b
-**Tasks:** 2
+**Branch prefix:** `v2.4/audit-t{NN}-<finding-or-theme>`
+**Framing:** Mixed — Pattern A (trading-path correctness), B (observability), C (reliability), D (security), F (UX).
+**Tasks:** 11 (Tasks 95-105)
 
-### Task 89: WebSocket + background task reliability
+**Note:** task numbering reflects actual session sequence after Phase 3 (Tasks 91-94 + sub-tasks). Earlier draft of this section used Tasks 89-90 placeholders pre-execution; those numbers were consumed by actual Phase 2 work (Task 89 = CRIT-005/006, Task 90 = HIGH-004/005). Renumbered to current sequence.
 
-- **HIGH-007** `core/adapters/base.py:109-110` — weight tracker exceptions silently swallowed. Add `log.warning`.
-- **HIGH-008** `core/schedulers.py:134-141` — `AuthenticationError` not caught; disable refresh for affected account.
-- **HIGH-010** `core/crypto.py:54-58` — decryption silently returns ""; raise or set app_state flag.
-- **HIGH-018** `core/pubsub/in_process_bus.py:46` — only QueueFull should disconnect; other exceptions log without removing the queue.
+### Phase 4 entry state
 
-### Task 90: Risk engine + DD enforcement correctness
+Active count entering Phase 4: **17 HIGH / 42 MED / 21 LOW = 80 total**.
 
-- **HIGH-011** `core/db_trades.py:57-59` — filter column whitelist
-- **HIGH-017** `core/dd_gate.py:46-47` — DD gate fail-closed instead of fail-open (CRITICAL semantics for enforced mode)
-- **HIGH-022** `api/routes_backtest.py:85` — date range validation (max 730 days)
-- **HIGH-023** `api/routes_params.py:50` — cross-param validation (warning < limit)
-- **HIGH-024** `api/routes_connections.py:55` — API keys in tracebacks; sanitize
+HIGHs by phase target:
+- Phase 4 territory (15): HIGH-007, HIGH-008, HIGH-010, HIGH-011, HIGH-012, HIGH-013, HIGH-014, HIGH-015, HIGH-017, HIGH-018, HIGH-022, HIGH-023, HIGH-024, HIGH-026, HIGH-027.
+- Phase 6 deferred (1): HIGH-002 (`db._conn` refactor).
+- Phase 8 deferred (1): HIGH-001 (no auth).
 
-**Why grouped:** Task 89 is about not-failing-silently in async code; Task 90 is about gates and validation. Both critical for safety.
+Expected exit: **2 HIGH / ~30 MED / ~18 LOW ≈ 50 total** (assuming bundled MEDs land + Phase 3 verify-false rate holds).
+
+### Top-5 clearance gates
+
+Top 5 currently: HIGH-001, HIGH-012, HIGH-026, HIGH-027, HIGH-022. Phase 4 clears slots 2-5 (HIGH-001 stays — Phase 8). Order: Task 95 → slot 3 (HIGH-026), Task 96 → slot 2 (HIGH-012), Task 97 → slot 5 (HIGH-022), Task 104 → slot 4 (HIGH-027). Slots 2-5 exit Top 5 by end of Phase 4; HIGH-001 stays through to Phase 8.
+
+### Task 95: HIGH-026 — Silent-swallow in `_build_close_row_for_fill`
+**Findings:** HIGH-026 (OPEN; VERIFIED REAL per sweep batch 1b).
+**Pattern:** B (observability).
+**Scope:** `core/order_manager.py:737-741` — surface the outer `try/except Exception: log.exception(...)` either by re-raising after logging, emitting `engine_event("close_row_build_failed", ...)`, or returning a structured failure indicator. Pick based on caller contract.
+**Estimated LOC:** ~30-50 production + ~30-50 tests.
+**Verification:** none required — sweep batch 1b confirmed real. No NEEDS DEEP READ gate.
+**Dependencies:** none.
+**Notes:** Top-5 slot 3 clearance. Function was visited in Tasks 86, 86.1, 92 — touch surface is well-understood. Watch for changes to `insert_closed_position` call-pattern that might affect Task 104.
+
+### Task 96: HIGH-012 — Account-switch closure (verify-first)
+**Findings:** HIGH-012 (OPEN; NEEDS DEEP READ per sweep batch 1c — Task 92.5 inspection deferred).
+**Pattern:** A (trading-path correctness) or pin-only.
+**Scope:** `core/order_manager.py:594-599` — closure-over-`account_id` in `loop.call_later` lambda inside `process_fill`. Verify whether `account_id` is rebound anywhere in `process_fill`'s body. If stable (Task 93's halt-report hypothesis), VERIFIED FALSE pin; if rebound, real fix (explicit value capture + verify-active-before-insert).
+**Estimated LOC:** pin-only ~30 LOC; real-fix ~30-50 production + ~30-50 tests.
+**Verification:** **NEEDS DEEP READ gate.** Phase 3 pattern: 5/14 "race"-framed findings verified false. Hold hypothesis that HIGH-012 will also verify false.
+**Dependencies:** none.
+**Notes:** Top-5 slot 2 clearance. If verified false, the resolved/false ratio swings further toward "engine architecture is more correct than audit assumed."
+
+### Task 97: HIGH-022 + HIGH-023 + MED-036 — Route input validation bundle
+**Findings:** HIGH-022 (Top-5 slot 5, backtest date range), HIGH-023 (cross-param validation), MED-036 (max_position_count vs open positions).
+**Pattern:** A (correctness) + D (defense-in-depth).
+**Scope:** `api/routes_backtest.py`, `api/routes_params.py`. Add `(to_date - from_date) <= 730 days` validation; add `warning_threshold < limit_threshold` assert; add `max_position_count >= len(app_state.positions)` check before applying params.
+**Estimated LOC:** ~50-80 production + ~30-50 tests.
+**Verification:** sweep batch 1c VERIFIED REAL for HIGH-022 + HIGH-023; sweep batch 1c VERIFIED REAL for MED-036.
+**Dependencies:** none.
+**Notes:** Top-5 slot 5 clearance (HIGH-022). Bundle AA from sweep reports.
+
+### Task 98: HIGH-017 + HIGH-018 — DD gate fail-closed + pubsub robustness
+**Findings:** HIGH-017 (DD gate fails OPEN on DB error), HIGH-018 (pubsub kills subscriber on any exception).
+**Pattern:** C (reliability).
+**Scope:** `core/dd_gate.py:46-47` — change `except Exception: return True, None` to fail-closed semantics. `core/pubsub/in_process_bus.py:46` — narrow `except Exception` to only QueueFull; log other exceptions without removing the queue.
+**Estimated LOC:** ~30-50 production + ~30-50 tests.
+**Verification:** both VERIFIED REAL per sweep batch 1d.
+**Dependencies:** none.
+**Notes:** Both small single-finding fixes; bundle to share planning + commit overhead.
+
+### Task 99: HIGH-007 + HIGH-014 + HIGH-015 + LOW-019 — Adapter observability/reliability bundle
+**Findings:** HIGH-007 (weight tracker silent swallow), HIGH-014 (weight tracker never reconciles vs response headers), HIGH-015 (commission fetch silent fail in both binance + bybit adapters), LOW-019 (price extremes silent fail).
+**Pattern:** C (reliability) + B (observability).
+**Scope:** `core/adapters/base.py`, `core/adapters/binance/rest_adapter.py`, `core/adapters/bybit/rest_adapter.py`. Add `log.warning` on swallowed exceptions; HIGH-014 needs response-header parsing for reconciliation (moderate effort).
+**Estimated LOC:** ~40-60 production (HIGH-007/HIGH-015/LOW-019 are 1-3 LOC each; HIGH-014 is 20-30 LOC) + ~40-60 tests.
+**Verification:** all VERIFIED REAL per sweep batch 1b (HIGH-007) and 1c (HIGH-014, HIGH-015, LOW-019).
+**Dependencies:** none.
+**Notes:** Bundle K + N per sweep. File locality (all adapter layer) makes context-switching cheap.
+
+### Task 100: HIGH-024 — Credential leak (api_key in traceback)
+**Findings:** HIGH-024.
+**Pattern:** D (security).
+**Scope:** `api/routes_connections.py:128` — wrap api_key in a `SensitiveStr` class that masks `__repr__`. Class lives in `core/security.py` (new file) or as a util in an existing module.
+**Estimated LOC:** ~30 production (class + 1-line wrap at call site) + ~20 tests.
+**Verification:** VERIFIED REAL per sweep batch 1c.
+**Dependencies:** none.
+**Notes:** Bundle BB from sweep.
+
+### Task 101: HIGH-011 + MED-003 + MED-022 — SQL injection defense-in-depth bundle
+**Findings:** HIGH-011 (filter column whitelist in db_trades), MED-003 (sort_by/sort_dir whitelist at route level), MED-022 (parameterize LIKE prefix in mark_stale_orders_canceled).
+**Pattern:** D (security / defense-in-depth).
+**Scope:** `core/db_trades.py:57-59`, `api/routes_orders.py` + `api/routes_history.py`, `core/db_orders.py:362,364`. Add `_ALLOWED_FILTER_COLS` set; route-level `sort_by in ALLOWED` check; replace f-string LIKE with `?` placeholder.
+**Estimated LOC:** ~30-50 production + ~30-50 tests.
+**Verification:** all VERIFIED REAL per sweep batch 1a (MED-003), 1c (HIGH-011, MED-022).
+**Dependencies:** none.
+**Notes:** Bundle J from sweep. All defense-in-depth — no live exploitable injection today, but hardens the layer.
+
+### Task 102: HIGH-013 + MED-018 — Trust-but-verify exchange responses bundle
+**Findings:** HIGH-013 (Binance missing account fields default to 0), MED-018 (negative equity not clamped in data_cache).
+**Pattern:** A (correctness — exchange-data ingest).
+**Scope:** `core/adapters/binance/rest_adapter.py:72-79` — validate critical fields (equity, balance) present and > 0; raise if missing. `core/data_cache.py:768` — clamp `total_equity = max(0.0, balance + unrealized)` or trigger liquidation warning.
+**Estimated LOC:** ~30 production + ~30-50 tests.
+**Verification:** both VERIFIED REAL per sweep batch 1c.
+**Dependencies:** none.
+**Notes:** Bundle M from sweep. Both about not trusting that exchange responses are well-formed; both about not silently using 0/negative values that corrupt downstream risk metrics.
+
+### Task 103: HIGH-008 — Scheduler auth error
+**Findings:** HIGH-008.
+**Pattern:** C (reliability).
+**Scope:** `core/schedulers.py:134-141` — catch `AuthenticationError` in `_account_refresh_loop`; log CRITICAL + disable periodic refresh for affected account (don't crash the task).
+**Estimated LOC:** ~20-30 production + ~20-30 tests.
+**Verification:** VERIFIED REAL per sweep batch 1b. **Light architectural check**: confirm scheduler-side error handling doesn't assume engine-side order placement (Task 93 architecture pattern — should be fine here since this is account-fetch not order-placement, but verify upfront).
+**Dependencies:** none.
+**Notes:** Bundles naturally with MED-012 (no task restart on crash) — could fold MED-012 into this task if scope fits, else defer MED-012 to Phase 4 follow-up. Bundle E from sweep.
+
+### Task 104: HIGH-027 — Calc-to-fill matching window + UI + countdown
+**Findings:** HIGH-027 (Top-5 slot 4; scope refined in Task 94.1 to include UI).
+**Pattern:** A (correctness) + F (UX).
+**Scope:**
+  - Backend: `core/exec_link.py` (time-window check in `compute_exec_match`), `accounts` table migration (per-account `link_window_seconds`), `pre_trade_log` migration (per-pretrade `link_window_seconds_override`).
+  - Frontend: account settings editor, calculator override input, live countdown element near calculator.
+  - DB migration: defensive for existing rows (6h default backfill).
+**Estimated LOC:** ~200-300 total + tests (per Task 94.1 refined estimate). Largest task in Phase 4.
+**Verification:** VERIFIED REAL (architectural gap, not race). Open design decisions per Task 94.1's audit-doc entry need resolution before implementation (MAX_LINK_WINDOW default, countdown precision, expired-state UI).
+**Dependencies:** **Task 95 (HIGH-026) recommended first** — both touch position-lifecycle / close-path code; sequencing avoids merge friction. Could parallelize if branches stay disjoint.
+**Notes:** Slot 4 Top-5 clearance. Sequence after smaller wins (95-103) so design decisions can incubate. May split into 104a (backend + tests) and 104b (UI + countdown) if scope balloons.
+
+### Task 105: HIGH-010 — Crypto silent fallback
+**Findings:** HIGH-010 (HIGH-016 is consolidated duplicate).
+**Pattern:** D (security).
+**Scope:** `core/crypto.py:54-56` — raise on decryption failure OR set `app_state.disable_trading` flag. Audit's `log.error` mitigation (already in code) doesn't propagate; callers still receive `""` and proceed with empty credentials.
+**Estimated LOC:** ~20 production + ~20 tests.
+**Verification:** VERIFIED REAL per sweep batch 1c.
+**Dependencies:** none.
+**Notes:** Standalone. Could ride earlier in Phase 4 (no real dependencies) but parked here so credential-related work clusters with HIGH-024 area (Task 100).
+
+### Phase 4 totals
+
+| Estimate | Value |
+|---|---|
+| Production LOC (sum) | ~620-870 |
+| Test LOC (sum) | ~340-510 |
+| Total | **~960-1380 LOC** |
+| Task count | 11 |
+| HIGH findings cleared | 15 (resolved or verified false) |
+| Bundled MEDs/LOWs | 5 (MED-003, MED-018, MED-022, MED-036, LOW-019); more may ride along during fix work |
+
+Under the 1500 LOC threshold for a single phase. No need for 4a/4b split.
+
+### Bundle drop log (sweep proposals that no longer apply)
+
+Sweep batches 1a-1e proposed Bundles A-GG. Outcomes post-Phase 3:
+
+| Bundle | Original scope | Disposition |
+|---|---|---|
+| V | HIGH-019 + HIGH-025 + HIGH-026 position-protection cluster | **Dropped.** HIGH-019 and HIGH-025 verified false. HIGH-026 remains, but as standalone Task 95. |
+| W | HIGH-020 startup-race null-checks | **Dropped.** HIGH-020 resolved Task 93. |
+| X | HIGH-021 + MED-017 + MED-032 cache freshness | **Partially absorbed.** HIGH-021 resolved Task 94. MED-017 + MED-032 remain — defer to Phase 5 cache-freshness rollup. |
+| Q | MED-002 + MED-016 + MED-018 epsilon hardening | **Partial.** MED-018 absorbed into Task 102. MED-002 + MED-016 remain for Phase 5. |
+| O | MED-005 + MED-028 async-blocking-IO | **Deferred to Phase 5** (performance pass). |
+| F | MED-013 + MED-014 template UI fixes | **Deferred to Phase 11 / frontend pass** (out of Phase 4 reliability scope). |
+| L | MED-020 + LOW-017 graceful shutdown | **Deferred to Phase 5 or Phase 12** (lifecycle hygiene). |
+| P | MED-023 + MED-025 + MED-026 platform-bridge hardening | **Deferred to Phase 5** (platform bridge work clusters). |
+| Y | MED-024 broker_account_id UNIQUE | **Deferred to Phase 5** (DB schema work). |
+| Z | MED-034 + MED-035 order state machine | **Deferred to Phase 5** (state machine batch). |
+
+Bundles A-I and others not listed: either already absorbed into Phase 1-3 tasks or scoped to Phase 5/6/11/12 by theme.
+
+### Phase 4 session count estimate
+
+At observed pace of ~1-2 tasks per session (single bundled task or 2 standalone), Phase 4 = **8-11 sessions**. Sequencing optimization: Task 95 (small, Top-5) + Task 96 (verify-gate, could be pin-only) + Task 98 (small bundle) could fit in 1-2 sessions; Task 104 (HIGH-027 UI) is likely a 2-session task on its own. Roughly **10 sessions = ~3 weeks at one session/2 days**.
 
 ---
 
