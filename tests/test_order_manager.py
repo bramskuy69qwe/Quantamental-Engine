@@ -12,6 +12,7 @@ Run: pytest tests/test_order_manager.py -v
 """
 from __future__ import annotations
 
+import logging
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -599,3 +600,266 @@ class TestStateMachineCompleteness:
         """No state can transition to itself."""
         for state, targets in VALID_TRANSITIONS.items():
             assert state not in targets
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TEST 8: CRIT-003 regression pins — _build_close_row_for_fill
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# CRIT-003 from the v2.4 backend audit claimed two bugs in the close-row path:
+#   1. max() over close_fills could raise ValueError on empty list.
+#   2. The fee-ratio ternary `entry_fees * (total_close_qty / total_open_qty)
+#      if total_open_qty else 0.0` could ZeroDivisionError "in some Python
+#      versions".
+# Both were verified false in Task 86:
+#   - The empty-list case is already guarded by `if not close_fills: return`
+#     a few lines above the max() (line ~650-652).
+#   - Python ternaries (PEP 308) short-circuit by selection. The division
+#     expression is not evaluated when the condition is falsy.
+# These tests pin the existing guards so they cannot be silently removed.
+# See docs/audits/2026-05-17-v2.4-backend-audit.md, CRIT-003 entry.
+
+class TestClosePositionGuards:
+    """CRIT-003 regression pins for _build_close_row_for_fill."""
+
+    def _make_fill(self, qty=1.0, price=100.0, fee=0.1, is_close=False,
+                   ts=1000, exchange_order_id="OID-1", **extra):
+        return {
+            "quantity": qty,
+            "price": price,
+            "fee": fee,
+            "is_close": is_close,
+            "timestamp_ms": ts,
+            "exchange_order_id": exchange_order_id,
+            "terminal_position_id": "POS-1",
+            "exchange_position_id": "EXPOS-1",
+            "symbol": "BTCUSDT",
+            "ticker": "BTCUSDT",
+            "direction": "LONG",
+            "realized_pnl": 0.0,
+            "source": "test",
+            **extra,
+        }
+
+    def _make_om(self, db):
+        om = OrderManager(db)
+        om._determine_exit_reason = AsyncMock(return_value="manual")
+        om._compute_shortfall = AsyncMock(return_value={"model_name": ""})
+        return om
+
+    @pytest.mark.asyncio
+    async def test_empty_close_fills_returns_early(self, caplog):
+        """Pin: early-return at line ~650 keeps max() at line ~659 unreachable
+        when close_fills filters to empty."""
+        db = _mock_db()
+        db.get_position_fills = AsyncMock(return_value=[])
+        # exchange_order_id present, fills present, but none have is_close=True
+        # → after `[f for f in close_fills if f.get("is_close")]` filter,
+        # close_fills == [] → hits the line-650 guard.
+        db.get_fills_by_order = AsyncMock(return_value=[
+            self._make_fill(is_close=False),
+        ])
+        db.insert_closed_position = AsyncMock()
+        om = self._make_om(db)
+
+        trigger = self._make_fill(is_close=True)
+        caplog.set_level(logging.WARNING, logger="order_manager")
+        with patch("core.order_manager.app_state") as st, \
+             patch("core.order_manager.event_bus") as bus:
+            st.positions = []
+            bus.publish = AsyncMock()
+            await om._build_close_row_for_fill(1, trigger)
+
+        db.insert_closed_position.assert_not_called()
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("No closing fills" in r.getMessage() for r in warnings)
+
+    @pytest.mark.asyncio
+    async def test_zero_open_qty_yields_zero_proportional_entry(self):
+        """Pin: prop_entry ternary short-circuits when total_open_qty=0.
+        Set entry_fees=5.0 via opens with qty=0 — if the ternary were rewritten
+        to compute the division unconditionally, this raises ZeroDivisionError."""
+        db = _mock_db()
+        # opens truthy → enters first branch; quantities sum to 0 → total_open_qty=0
+        # but fee non-zero → entry_fees=5.0 → exercises the prop_entry ternary.
+        db.get_position_fills = AsyncMock(return_value=[
+            {"quantity": 0.0, "price": 100.0, "fee": 5.0,
+             "timestamp_ms": 500, "calc_id": None},
+        ])
+        db.get_fills_by_order = AsyncMock(return_value=[
+            self._make_fill(qty=1.0, price=110.0, fee=0.5, is_close=True, ts=1000),
+        ])
+        db.insert_closed_position = AsyncMock()
+        om = self._make_om(db)
+
+        trigger = self._make_fill(qty=1.0, is_close=True)
+        with patch("core.order_manager.app_state") as st, \
+             patch("core.order_manager.event_bus") as bus:
+            st.positions = []
+            bus.publish = AsyncMock()
+            await om._build_close_row_for_fill(1, trigger)
+
+        db.insert_closed_position.assert_called_once()
+        row = db.insert_closed_position.call_args[0][0]
+        # prop_entry must short-circuit to 0.0; total_fees = close_fees only
+        assert row["total_fees"] == pytest.approx(0.5)
+
+    @pytest.mark.asyncio
+    async def test_zero_total_close_qty_yields_zero_exit_price(self):
+        """Pin: exit_price ternary short-circuits when total_close_qty=0.
+        close_fills non-empty (skips line-650 guard) but quantities sum to 0."""
+        db = _mock_db()
+        db.get_position_fills = AsyncMock(return_value=[])
+        db.get_fills_by_order = AsyncMock(return_value=[
+            self._make_fill(qty=0.0, price=110.0, fee=0.5, is_close=True, ts=1000),
+        ])
+        db.insert_closed_position = AsyncMock()
+        om = self._make_om(db)
+
+        trigger = self._make_fill(qty=0.0, is_close=True)
+        with patch("core.order_manager.app_state") as st, \
+             patch("core.order_manager.event_bus") as bus:
+            st.positions = []
+            bus.publish = AsyncMock()
+            await om._build_close_row_for_fill(1, trigger)
+
+        db.insert_closed_position.assert_called_once()
+        row = db.insert_closed_position.call_args[0][0]
+        assert row["exit_price"] == 0.0
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TEST 8: CRIT-003 regression pins — _build_close_row_for_fill guards
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestClosePositionGuards:
+    """CRIT-003 verification: both claims in the original audit were verified
+    false. The bugs do not exist in current code because:
+      - Empty close_fills max() is protected by `if not close_fills: return`
+        at order_manager.py:650.
+      - Ternary div-by-zero is a language-level non-issue (PEP 308).
+    These tests pin the existing protections so a future refactor cannot
+    silently remove them.
+
+    Note: _build_close_row_for_fill wraps its body in a try/except that
+    swallows exceptions and logs them. Tests therefore assert observable
+    behavior (warning logged, insert called) rather than `pytest.raises`.
+    """
+
+    def _make_fill(self, qty=1.0, price=100.0, fee=0.1, is_close=False,
+                   ts=1000, exchange_order_id="OID-1", **extra):
+        return {
+            "quantity": qty,
+            "price": price,
+            "fee": fee,
+            "is_close": is_close,
+            "timestamp_ms": ts,
+            "exchange_order_id": exchange_order_id,
+            "terminal_position_id": "POS-1",
+            "exchange_position_id": "EXPOS-1",
+            "symbol": "BTCUSDT",
+            "ticker": "BTCUSDT",
+            "direction": "LONG",
+            "realized_pnl": 0.0,
+            "source": "test",
+            **extra,
+        }
+
+    def _make_om_with_db(self, db):
+        om = OrderManager(db)
+        om._determine_exit_reason = AsyncMock(return_value="manual")
+        om._compute_shortfall = AsyncMock(return_value={"model_name": ""})
+        return om
+
+    @pytest.mark.asyncio
+    async def test_empty_close_fills_returns_early(self, caplog):
+        """CRIT-003 pin: early-return guard at line ~650 prevents line ~659's
+        max() on empty generator. Without the guard, ValueError would be
+        raised (and silently swallowed by the outer try/except)."""
+        db = _mock_db()
+        db.get_position_fills = AsyncMock(return_value=[])
+        # exchange_order_id present, all returned fills have is_close=False,
+        # so after filter close_fills is empty.
+        db.get_fills_by_order = AsyncMock(return_value=[
+            self._make_fill(is_close=False),
+        ])
+        db.insert_closed_position = AsyncMock()
+        om = self._make_om_with_db(db)
+
+        trigger = self._make_fill(is_close=True)
+        caplog.set_level(logging.WARNING, logger="order_manager")
+        with patch("core.order_manager.app_state") as st, \
+             patch("core.order_manager.event_bus") as bus:
+            st.positions = []
+            bus.publish = AsyncMock()
+            await om._build_close_row_for_fill(1, trigger)
+
+        # Early-return guard fired → no close row inserted
+        db.insert_closed_position.assert_not_called()
+        # The specific warning message at line ~651 must be present
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("No closing fills" in r.getMessage() for r in warnings), \
+            "expected 'No closing fills' warning; if missing, the line-650 " \
+            "guard was removed and max() would raise ValueError on empty list"
+
+    @pytest.mark.asyncio
+    async def test_zero_open_qty_yields_zero_proportional_entry(self):
+        """CRIT-003 pin: prop_entry ternary at line ~665-668 short-circuits
+        when total_open_qty=0. Without short-circuit, ZeroDivisionError fires
+        and is swallowed → insert never called."""
+        db = _mock_db()
+        # opens non-empty (entry_fees accumulates) but all qty=0 → total_open_qty=0
+        db.get_position_fills = AsyncMock(return_value=[
+            {"quantity": 0.0, "price": 100.0, "fee": 5.0,
+             "timestamp_ms": 500, "calc_id": None},
+        ])
+        db.get_fills_by_order = AsyncMock(return_value=[
+            self._make_fill(qty=1.0, price=110.0, fee=0.5,
+                            is_close=True, ts=1000),
+        ])
+        db.insert_closed_position = AsyncMock()
+        om = self._make_om_with_db(db)
+
+        trigger = self._make_fill(qty=1.0, is_close=True)
+        with patch("core.order_manager.app_state") as st, \
+             patch("core.order_manager.event_bus") as bus:
+            st.positions = []
+            bus.publish = AsyncMock()
+            await om._build_close_row_for_fill(1, trigger)
+
+        # If ternary short-circuited: function reaches insert with prop_entry=0
+        db.insert_closed_position.assert_called_once()
+        row = db.insert_closed_position.call_args[0][0]
+        # total_fees = close_fees (0.5) + prop_entry (0.0 because total_open_qty=0)
+        # Even though entry_fees=5.0, the ternary's else-branch zeroes prop_entry.
+        assert row["total_fees"] == pytest.approx(0.5), \
+            "prop_entry must be 0 when total_open_qty=0; if total_fees != 0.5 " \
+            "the ternary at line ~665-668 was 'fixed' incorrectly"
+
+    @pytest.mark.asyncio
+    async def test_zero_total_close_qty_yields_zero_exit_price(self):
+        """CRIT-003 pin: exit_price ternary at line ~655-658 short-circuits
+        when total_close_qty=0. close_fills is non-empty so the line-650
+        guard does NOT fire — this isolates the ternary."""
+        db = _mock_db()
+        db.get_position_fills = AsyncMock(return_value=[])
+        # close_fills non-empty (one entry) but quantity=0 → total_close_qty=0
+        db.get_fills_by_order = AsyncMock(return_value=[
+            self._make_fill(qty=0.0, price=110.0, fee=0.5,
+                            is_close=True, ts=1000),
+        ])
+        db.insert_closed_position = AsyncMock()
+        om = self._make_om_with_db(db)
+
+        trigger = self._make_fill(qty=0.0, is_close=True)
+        with patch("core.order_manager.app_state") as st, \
+             patch("core.order_manager.event_bus") as bus:
+            st.positions = []
+            bus.publish = AsyncMock()
+            await om._build_close_row_for_fill(1, trigger)
+
+        db.insert_closed_position.assert_called_once()
+        row = db.insert_closed_position.call_args[0][0]
+        assert row["exit_price"] == 0.0, \
+            "exit_price must be 0 when total_close_qty=0; if differs, the " \
+            "ternary at line ~655-658 was removed and ZeroDivisionError was " \
+            "swallowed by the outer try/except"
