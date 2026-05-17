@@ -102,10 +102,10 @@
       </div>
     </div>
 
-    <!-- Panel: Trade History (round-trip trades) -->
+    <!-- Panel: Trade History (fills) -->
     <div id="hm-panel-trades" style="display:none;">
-      <div id="trade-history-table"
-           hx-get="/fragments/history/trade_history"
+      <div id="fills-table"
+           hx-get="/fragments/history/fills"
            hx-trigger="load, every 30s"
            hx-swap="innerHTML"
            hx-timeout="25000">
@@ -154,11 +154,11 @@
 
 <script>
 var _dateFrom='', _dateTo='';
-var _HIST_IDS=['closed-positions-table','order-history-table','trade-history-table','pre-trade-table'];
+var _HIST_IDS=['closed-positions-table','order-history-table','fills-table','pre-trade-table'];
 var _HIST_EPS={
   'closed-positions-table':'/fragments/history/closed_positions',
   'order-history-table':'/fragments/history/order_history',
-  'trade-history-table':'/fragments/history/trade_history',
+  'fills-table':'/fragments/history/fills',
   'pre-trade-table':'/fragments/history/pre_trade'
 };
 
