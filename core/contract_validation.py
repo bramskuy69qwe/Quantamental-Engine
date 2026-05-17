@@ -10,6 +10,7 @@ Priority 2b — pre-trade validation before the calculator result is final.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_DOWN, ROUND_UP, InvalidOperation
@@ -17,7 +18,12 @@ from typing import Optional
 
 log = logging.getLogger("contract_validation")
 
-_CACHE_TTL_HOURS = 24
+# HIGH-021 (Task 94): TTL reduced from 24h to 4h default. Crypto-futures
+# listings (new symbols, lot-step adjustments, leverage tier changes) shift
+# fast enough that 24h-stale specs caused valid orders to be silently
+# rejected. 4h is the operator-tunable default; force-refresh available via
+# admin endpoint POST /admin/contract-specs/refresh for on-demand invalidation.
+CONTRACT_SPEC_TTL_SECONDS = int(os.getenv("CONTRACT_SPEC_TTL_SECONDS", "14400"))  # 4h
 
 
 @dataclass
@@ -36,14 +42,15 @@ _spec_cache: dict[str, ContractSpec] = {}
 
 
 def get_contract_spec(symbol: str) -> Optional[ContractSpec]:
-    """Read contract spec from cache. Refresh if stale (> 24h) or missing.
+    """Read contract spec from cache. Refresh if stale or missing.
 
-    Returns None if exchange_info is unavailable.
+    TTL controlled by CONTRACT_SPEC_TTL_SECONDS (default 4h). Returns None
+    if exchange_info is unavailable.
     """
     cached = _spec_cache.get(symbol)
     now = datetime.now(timezone.utc)
 
-    if cached and (now - cached.fetched_at).total_seconds() < _CACHE_TTL_HOURS * 3600:
+    if cached and (now - cached.fetched_at).total_seconds() < CONTRACT_SPEC_TTL_SECONDS:
         return cached
 
     # Fetch from exchange adapter
@@ -51,6 +58,19 @@ def get_contract_spec(symbol: str) -> Optional[ContractSpec]:
     if spec:
         _spec_cache[symbol] = spec
     return spec
+
+
+def force_refresh_specs() -> int:
+    """Clear the contract-spec cache. Next get_contract_spec() per symbol
+    re-fetches from the exchange adapter.
+
+    Returns the number of cached entries that were cleared. Used by the
+    admin force-refresh endpoint (POST /admin/contract-specs/refresh).
+    """
+    count = len(_spec_cache)
+    _spec_cache.clear()
+    log.info("Contract spec cache cleared by force_refresh_specs(); %d entries", count)
+    return count
 
 
 def _fetch_spec_from_adapter(symbol: str) -> Optional[ContractSpec]:

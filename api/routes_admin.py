@@ -381,3 +381,21 @@ async def equity_gaps_page(request: Request):
         request, "admin/equity_gaps.html",
         _ctx(request, gaps=gap_rows, gap_count=len(gaps), active_page="admin"),
     )
+
+
+# ── Contract spec cache (HIGH-021) ───────────────────────────────────────────
+
+
+@router.post("/admin/contract-specs/refresh")
+async def force_refresh_contract_specs():
+    """Clear the contract-spec cache. Next get_contract_spec() per symbol
+    re-fetches from the exchange adapter. Used to surface mid-day exchange
+    spec changes (lot_step / min_qty / leverage tier) without waiting for
+    the CONTRACT_SPEC_TTL_SECONDS window to expire.
+
+    Returns the count of cleared cache entries.
+    """
+    from core.contract_validation import force_refresh_specs
+    cleared = force_refresh_specs()
+    log.info("Admin force-refresh of contract specs: %d entries cleared", cleared)
+    return {"cleared": cleared}
