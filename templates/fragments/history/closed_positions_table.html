@@ -41,7 +41,7 @@
       <tbody>
         {% for r in rows %}
         {% set pnl_pct = (r.net_pnl / (r.entry_price * r.quantity) * 100) if r.entry_price and r.quantity else 0 %}
-        {% set hold_h = (r.hold_time_ms / 3600000) | round(1) if r.hold_time_ms else 0 %}
+        {# hold_time_ms formatted by fmt_duration() helper #}
         <tr>
           <td class="td-ts">{{ ms_to_local(r.entry_time_ms) }}</td>
           <td class="td-ts">{{ ms_to_local(r.exit_time_ms) }}</td>
@@ -57,7 +57,7 @@
             {{ fmt(pnl_pct, 2) }}%
           </td>
           <td class="td-sub">{{ fmt(r.total_fees, 4) }}</td>
-          <td class="td-sub">{{ hold_h }}h</td>
+          <td class="td-sub">{{ fmt_duration(r.hold_time_ms) }}</td>
           <td>
             {% if r.exit_reason == 'tp_hit' %}<span class="badge badge-green">TP</span>
             {% elif r.exit_reason == 'sl_hit' %}<span class="badge badge-red">SL</span>

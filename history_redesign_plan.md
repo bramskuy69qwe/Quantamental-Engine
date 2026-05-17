@@ -109,7 +109,7 @@ Full column order: Symbol · Dir · Hold · Entry · Mark · Size · Notional ·
 |---|---|---|
 | Open | `entry_time_ms` | `ms_to_local()`, class `td-ts` |
 | Close | `exit_time_ms` | `ms_to_local()`, class `td-ts` |
-| Hold | computed | `hold_h`h format |
+| Hold | `hold_time_ms` | `fmt_duration()` helper (matches open_positions) |
 | Symbol | `symbol` | class `td-symbol` |
 | Dir | `direction` | class `pos-long` / `pos-short` |
 | Qty | `quantity` | `fmt(v,4)` |
