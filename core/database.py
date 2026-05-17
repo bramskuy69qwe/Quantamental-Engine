@@ -500,6 +500,10 @@ class DatabaseManager(
             "ALTER TABLE orders ADD COLUMN tp_trigger_price REAL",
             "ALTER TABLE orders ADD COLUMN sl_trigger_price REAL",
             "ALTER TABLE closed_positions ADD COLUMN calc_id TEXT",
+            # CRIT-008 (Task 88.1): legacy DB was missing pre_trade_log.calc_id.
+            # Migration 005 adds it on per-account DBs, where pre_trade_log
+            # doesn't actually exist; it never landed on the legacy DB until now.
+            "ALTER TABLE pre_trade_log ADD COLUMN calc_id TEXT",
             # v2.4 Priority 2a: slippage measurement
             "ALTER TABLE fills ADD COLUMN slippage_actual REAL",
             "ALTER TABLE fills ADD COLUMN fill_type TEXT",
@@ -520,6 +524,18 @@ class DatabaseManager(
                 else:
                     log.error("Schema migration failed (non-duplicate): %r | sql: %s", e, migration)
                     raise
+
+        # HIGH-003 (Task 88.1): indexes on hot calc_id lookup columns. Must run
+        # after the ALTERs above so the columns definitely exist. Idempotent via
+        # IF NOT EXISTS. orders.exchange_order_id is already covered by the
+        # UNIQUE(account_id, exchange_order_id) auto-index — no separate index needed.
+        await self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pretrade_calc_id ON pre_trade_log (calc_id)"
+        )
+        await self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_orders_calc_id ON orders (calc_id)"
+        )
+        await self._conn.commit()
 
         # ── One-shot data migrations (idempotent DELETE/UPDATE — safe to re-run) ─
         await self._conn.execute(
