@@ -1,4 +1,4 @@
-<!-- fragment: history/exec_link_panel — 3-criterion comparison panel -->
+<!-- fragment: history/exec_link_panel — 1-criterion match panel (entry only; TP/SL rows are informational stubs pending Phase 9 plan-vs-actual — see CRIT-004 in v2.4 backend audit) -->
 {% if not fill or not fill.calc_id %}
 <div style="background:var(--panel);border:1px solid var(--border);border-radius:4px;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;">
   <span style="color:var(--muted);font-size:.7rem;">No calc_id — likely manual or pre-v2.4 order</span>
@@ -20,9 +20,9 @@
       <span class="mono" style="font-size:.68rem;color:var(--sub);">{{ fill.calc_id[-8:] }}</span>
     </div>
     <span class="badge {{ 'badge-ok' if resolved else 'badge-warning' }}">
-      {% if match.match_count == 3 %}● AUTO-LINKED
+      {% if match.match_count == 1 %}● AUTO-LINKED
       {% elif fill.exec_link_confirmed %}✓ CONFIRMED
-      {% else %}⚠ {{ match.match_count }}/3 MATCH
+      {% else %}⚠ {{ match.match_count }}/1 MATCH
       {% endif %}
     </span>
   </div>
@@ -59,28 +59,27 @@
             {% endif %}
           </td>
         </tr>
-        {# TP #}
+        {# TP — informational stub (plan-vs-plan); does not contribute to match count #}
         <tr>
-          <td class="td-sub">Take Profit</td>
+          <td class="td-sub">Take Profit <span style="font-size:.55rem;color:var(--muted);font-style:italic;">(plan-vs-plan stub)</span></td>
           <td class="mono">{{ fmt(match.pretrade_tp, 6) if match.pretrade_tp else '—' }}</td>
           <td class="mono">{{ fmt(match.pretrade_tp, 6) if match.pretrade_tp else '—' }}</td>
           <td style="text-align:center;">
-            {% if match.tp_match %}<span style="color:var(--green);font-size:.8rem;">✓</span>
-            {% else %}<span style="color:var(--red);font-size:.8rem;">✗</span>{% endif %}
+            <span style="color:var(--muted);font-size:.6rem;font-style:italic;">n/a</span>
           </td>
         </tr>
-        {# SL #}
+        {# SL — informational stub (plan-vs-plan); does not contribute to match count #}
         <tr>
-          <td class="td-sub">Stop Loss</td>
+          <td class="td-sub">Stop Loss <span style="font-size:.55rem;color:var(--muted);font-style:italic;">(plan-vs-plan stub)</span></td>
           <td class="mono">{{ fmt(match.pretrade_sl, 6) if match.pretrade_sl else '—' }}</td>
           <td class="mono">{{ fmt(match.pretrade_sl, 6) if match.pretrade_sl else '—' }}</td>
           <td style="text-align:center;">
-            {% if match.sl_match %}<span style="color:var(--green);font-size:.8rem;">✓</span>
-            {% else %}<span style="color:var(--red);font-size:.8rem;">✗</span>{% endif %}
+            <span style="color:var(--muted);font-size:.6rem;font-style:italic;">n/a</span>
           </td>
         </tr>
       </tbody>
     </table>
+    <div style="font-size:.55rem;color:var(--muted);margin-top:4px;font-style:italic;">TP/SL plan-vs-actual comparison deferred to Phase 9 (TP/SL modification tracking). Current rows show planned values for reference only.</div>
   </div>
 
   {# Confirm button for partial matches #}
@@ -91,13 +90,13 @@
             hx-vals='{"fill_id": {{ fill.id }}}'
             hx-target="#exec-link-{{ fill.id }} td"
             hx-swap="innerHTML">Confirm Link</button>
-    <span style="font-size:.62rem;color:var(--muted);">{{ 3 - match.match_count }} criterion{{ '' if (3 - match.match_count) == 1 else 'a' }} differ{{ 's' if (3 - match.match_count) == 1 else '' }} — review before confirming</span>
+    <span style="font-size:.62rem;color:var(--muted);">Entry price differs from plan — review before confirming</span>
   </div>
   {% endif %}
 
-  {% if fill.exec_link_confirmed and match.match_count < 3 %}
+  {% if fill.exec_link_confirmed and match.match_count < 1 %}
   <div style="font-size:.65rem;color:var(--green);margin-bottom:10px;">
-    ✓ Manually confirmed — {{ 3 - match.match_count }} mismatch{{ '' if (3 - match.match_count) == 1 else 'es' }} acknowledged
+    ✓ Manually confirmed — entry-price mismatch acknowledged
   </div>
   {% endif %}
 

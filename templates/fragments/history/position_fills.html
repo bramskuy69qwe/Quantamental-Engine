@@ -47,7 +47,7 @@
               {% if f.exec_link_status == 'linked' %}
                 <span class="badge badge-ok" style="cursor:pointer;" onclick="event.stopPropagation();toggleExecLink({{ f.id }})">● LINKED</span>
               {% elif f.exec_link_status == 'partial' %}
-                <span class="badge badge-warning" style="cursor:pointer;" onclick="event.stopPropagation();toggleExecLink({{ f.id }})">⚠ {{ f.exec_match_count }}/3</span>
+                <span class="badge badge-warning" style="cursor:pointer;" onclick="event.stopPropagation();toggleExecLink({{ f.id }})">⚠ {{ f.exec_match_count }}/1</span>
               {% else %}
                 <span class="badge badge-limit" style="cursor:pointer;" onclick="event.stopPropagation();toggleExecLink({{ f.id }})">✗ UNLINKED</span>
               {% endif %}
