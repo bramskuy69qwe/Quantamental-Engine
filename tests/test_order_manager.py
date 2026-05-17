@@ -863,3 +863,136 @@ class TestClosePositionGuards:
             "exit_price must be 0 when total_close_qty=0; if differs, the " \
             "ternary at line ~655-658 was removed and ZeroDivisionError was " \
             "swallowed by the outer try/except"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TEST 9: HIGH-009 overfill cap on close-row fee allocation (Task 92)
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Audit HIGH-009 (core/order_manager.py:654-666): when total_close_qty exceeds
+# total_open_qty (overfill scenario), prop_entry = entry_fees *
+# (total_close_qty / total_open_qty) inflates above 100% of entry_fees.
+# Task 92 added a cap that fires only on overfill, capping close_qty for
+# the fee allocation while preserving the uncapped value for exit_price
+# (line 656) and the persisted "quantity" field (line 699).
+
+class TestClosePositionOverfillCap:
+    """HIGH-009 regression: cap close_qty in fee-proportional calc on overfill."""
+
+    def _make_fill(self, qty=1.0, price=100.0, fee=0.1, is_close=False,
+                   ts=1000, exchange_order_id="OID-1", **extra):
+        return {
+            "quantity": qty, "price": price, "fee": fee, "is_close": is_close,
+            "timestamp_ms": ts, "exchange_order_id": exchange_order_id,
+            "terminal_position_id": "POS-1", "exchange_position_id": "EXPOS-1",
+            "symbol": "BTCUSDT", "ticker": "BTCUSDT", "direction": "LONG",
+            "realized_pnl": 0.0, "source": "test", **extra,
+        }
+
+    def _make_om(self, db):
+        from core.order_manager import OrderManager
+        om = OrderManager(db)
+        om._determine_exit_reason = AsyncMock(return_value="manual")
+        om._compute_shortfall = AsyncMock(return_value={"model_name": ""})
+        return om
+
+    @pytest.mark.asyncio
+    async def test_overfill_caps_prop_entry_at_100pct(self, caplog):
+        """HIGH-009 pin: total_close_qty=1.5, total_open_qty=1.0, entry_fees=5.0.
+        Pre-fix: prop_entry = 5.0 * (1.5/1.0) = 7.5 (over 100% — wrong).
+        Post-fix: prop_entry = 5.0 * (1.0/1.0) = 5.0 (capped at 100%)."""
+        db = _mock_db()
+        # opens: total qty=1.0, entry fees=5.0
+        db.get_position_fills = AsyncMock(return_value=[
+            {"quantity": 1.0, "price": 100.0, "fee": 5.0,
+             "timestamp_ms": 500, "calc_id": None},
+        ])
+        # close fills: total qty=1.5 (overfill), close fees=0.0 so prop_entry == total_fees
+        db.get_fills_by_order = AsyncMock(return_value=[
+            self._make_fill(qty=1.5, price=110.0, fee=0.0, is_close=True, ts=1000),
+        ])
+        db.insert_closed_position = AsyncMock()
+        om = self._make_om(db)
+
+        trigger = self._make_fill(qty=1.5, is_close=True)
+        caplog.set_level(logging.WARNING, logger="order_manager")
+        with patch("core.order_manager.app_state") as st, \
+             patch("core.order_manager.event_bus") as bus:
+            st.positions = []
+            bus.publish = AsyncMock()
+            await om._build_close_row_for_fill(1, trigger)
+
+        db.insert_closed_position.assert_called_once()
+        row = db.insert_closed_position.call_args[0][0]
+        # close_fees=0, so total_fees == prop_entry. Pre-fix would give 7.5; post-fix 5.0.
+        assert row["total_fees"] == pytest.approx(5.0), (
+            f"HIGH-009 overfill cap missing: got total_fees={row['total_fees']!r}; "
+            "expected 5.0 (entry_fees * min(close,open)/open). Pre-fix uncapped "
+            "form would produce 7.5 (entry_fees * 1.5/1.0)."
+        )
+        # Uncapped value preserved for the persisted quantity field
+        assert row["quantity"] == pytest.approx(1.5), \
+            "Persisted quantity must reflect actual close size (uncapped)."
+        # Warning logged
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("overfill" in r.getMessage().lower() for r in warnings), \
+            "Expected overfill warning when total_close_qty > total_open_qty"
+
+    @pytest.mark.asyncio
+    async def test_underfill_no_cap_no_warning(self, caplog):
+        """HIGH-009 anti-over-correction: partial close (50% of opens) → no cap,
+        no warning. prop_entry scales proportionally."""
+        db = _mock_db()
+        db.get_position_fills = AsyncMock(return_value=[
+            {"quantity": 1.0, "price": 100.0, "fee": 5.0,
+             "timestamp_ms": 500, "calc_id": None},
+        ])
+        db.get_fills_by_order = AsyncMock(return_value=[
+            self._make_fill(qty=0.5, price=110.0, fee=0.0, is_close=True, ts=1000),
+        ])
+        db.insert_closed_position = AsyncMock()
+        om = self._make_om(db)
+
+        trigger = self._make_fill(qty=0.5, is_close=True)
+        caplog.set_level(logging.WARNING, logger="order_manager")
+        with patch("core.order_manager.app_state") as st, \
+             patch("core.order_manager.event_bus") as bus:
+            st.positions = []
+            bus.publish = AsyncMock()
+            await om._build_close_row_for_fill(1, trigger)
+
+        row = db.insert_closed_position.call_args[0][0]
+        # prop_entry = 5.0 * (0.5/1.0) = 2.5
+        assert row["total_fees"] == pytest.approx(2.5)
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert not any("overfill" in r.getMessage().lower() for r in warnings), \
+            "No overfill warning expected on underfill case"
+
+    @pytest.mark.asyncio
+    async def test_exact_fill_no_cap_no_warning(self, caplog):
+        """HIGH-009 boundary: total_close_qty == total_open_qty.
+        prop_entry = 100% of entry_fees, no warning."""
+        db = _mock_db()
+        db.get_position_fills = AsyncMock(return_value=[
+            {"quantity": 1.0, "price": 100.0, "fee": 5.0,
+             "timestamp_ms": 500, "calc_id": None},
+        ])
+        db.get_fills_by_order = AsyncMock(return_value=[
+            self._make_fill(qty=1.0, price=110.0, fee=0.0, is_close=True, ts=1000),
+        ])
+        db.insert_closed_position = AsyncMock()
+        om = self._make_om(db)
+
+        trigger = self._make_fill(qty=1.0, is_close=True)
+        caplog.set_level(logging.WARNING, logger="order_manager")
+        with patch("core.order_manager.app_state") as st, \
+             patch("core.order_manager.event_bus") as bus:
+            st.positions = []
+            bus.publish = AsyncMock()
+            await om._build_close_row_for_fill(1, trigger)
+
+        row = db.insert_closed_position.call_args[0][0]
+        assert row["total_fees"] == pytest.approx(5.0)
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert not any("overfill" in r.getMessage().lower() for r in warnings), \
+            "No overfill warning expected on exact-fill boundary"

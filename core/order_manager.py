@@ -662,8 +662,21 @@ class OrderManager:
             # ── Fees: closing fees + proportional entry fees ────────────
             close_fees  = sum(f.get("fee", 0) for f in close_fills)
             entry_fees  = sum(f.get("fee", 0) for f in opens) if opens else 0.0
+            # HIGH-009: cap close-qty for fee allocation only — an overfill
+            # (total_close_qty > total_open_qty) must not inflate prop_entry
+            # beyond 100% of entry_fees. Uncapped total_close_qty is preserved
+            # for exit_price (line 656) and the persisted "quantity" field
+            # (line 699), which must reflect the actual close size.
+            close_qty_for_fees = total_close_qty
+            if total_open_qty and total_close_qty > total_open_qty:
+                log.warning(
+                    "overfill on %s %s: total_close_qty=%.6f exceeds "
+                    "total_open_qty=%.6f; capping for fee allocation only",
+                    symbol, direction, total_close_qty, total_open_qty,
+                )
+                close_qty_for_fees = total_open_qty
             prop_entry  = (
-                entry_fees * (total_close_qty / total_open_qty)
+                entry_fees * (close_qty_for_fees / total_open_qty)
                 if total_open_qty else 0.0
             )
             total_fees  = close_fees + prop_entry
