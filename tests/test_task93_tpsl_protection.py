@@ -12,8 +12,9 @@ event streams. Test pins this architectural invariant by asserting no
 `place_tp_sl` / `place_tpsl` / `create_tpsl` / `_place_protection_orders`
 functions exist in core/.
 
-Related residual concern (no time-bounded check for TP/SL observability
-after entry) is filed separately as HIGH-027.
+Related residual concern (calc-to-fill matching window in core/exec_link.py
+— stale pre_trade_log entries can retroactively match fresh fills due to
+unbounded compute_exec_match) is filed separately as HIGH-027.
 
 Run: pytest tests/test_task93_tpsl_protection.py -v
 """
@@ -69,8 +70,11 @@ def test_engine_does_not_place_tp_sl_orders():
     This test pins the architectural invariant: no `place_tp_sl`-style
     function exists in core/. If a future contributor adds engine-side
     TP/SL placement, the pin fails with explicit guidance to re-evaluate
-    HIGH-019's fix shape and HIGH-027's design (both assumed
-    passive-observer architecture).
+    HIGH-019's fix shape.
+
+    The related concern (calc-to-fill matching window — stale pre_trade_log
+    entries can retroactively match fresh fills due to unbounded
+    compute_exec_match) is tracked separately as HIGH-027.
     """
     forbidden_patterns = [
         r"def\s+place_tp_sl\b",
@@ -102,6 +106,6 @@ def test_engine_does_not_place_tp_sl_orders():
     assert matches == [], (
         f"HIGH-019 architectural invariant violated: engine appears to now "
         f"place TP/SL orders. Matches: {matches}. Re-evaluate HIGH-019's "
-        f"recommended fix and HIGH-027's design — both assumed passive-observer "
-        f"architecture where the engine only observes externally-placed orders."
+        f"recommended fix — it assumed passive-observer architecture where "
+        f"the engine only observes externally-placed orders."
     )
