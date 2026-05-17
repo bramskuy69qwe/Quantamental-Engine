@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse
@@ -11,8 +10,8 @@ import config
 from core.state import app_state
 from core.tz import get_account_tz, now_in_account_tz
 from core.database import db
-from core.data_logger import log_execution, log_trade_close, load_recent_history
-from api.helpers import templates, _ctx, _paginate_list, _table_ctx
+from core.data_logger import log_execution, log_trade_close
+from api.helpers import templates, _ctx, _table_ctx
 
 log = logging.getLogger("routes.history")
 router = APIRouter()
@@ -20,59 +19,10 @@ router = APIRouter()
 
 @router.get("/history", response_class=HTMLResponse)
 async def history_page(request: Request):
-    aid = app_state.active_account_id
-    tz = get_account_tz(aid)
-    now = datetime.now(tz)
-    date_from = (now - timedelta(days=30)).strftime("%Y-%m-%dT00:00:00")
-    date_to   = now.strftime("%Y-%m-%dT23:59:59")
-
-    ex_rows, ex_total = await db.query_exchange_history(
-        date_from=date_from, date_to=date_to, tz_local=tz, account_id=aid,
-    )
-    ex_notes = await db.get_position_notes([r["trade_key"] for r in ex_rows])
-    ex_pages  = max(1, (ex_total + 19) // 20)
-
-    pt_rows, pt_total = await db.query_pre_trade_log(
-        date_from=date_from, date_to=date_to, account_id=aid,
-    )
-    pt_pages = max(1, (pt_total + 19) // 20)
-
+    """Render the history page shell — all table data loads via HTMX."""
     return templates.TemplateResponse(
-        request, "history.html",
-        _ctx(request,
-             _init_date_from=date_from,
-             _init_date_to=date_to,
-             _init_ex_rows=ex_rows,   _init_ex_total=ex_total,
-             _init_ex_pages=ex_pages, _init_ex_notes=ex_notes,
-             _init_pt_rows=pt_rows,   _init_pt_total=pt_total,
-             _init_pt_pages=pt_pages,
-        ),
+        request, "history.html", _ctx(request),
     )
-
-
-@router.get("/fragments/history", response_class=HTMLResponse)
-async def frag_history(request: Request):
-    try:
-        pre_trade_rows = await db.get_all_pre_trade_log(days=30)
-        execution_rows = await db.get_all_execution_log(days=30)
-        history_rows   = await db.get_all_trade_history(days=30)
-        live_trades    = load_recent_history(config.LIVE_TRADES)
-
-        return templates.TemplateResponse(
-            request, "fragments/history_tables.html",
-            _ctx(request,
-                 pre_trade_log=pre_trade_rows,
-                 execution_log=execution_rows,
-                 live_trades=live_trades,
-                 trade_history=history_rows,
-                 exchange_trades=app_state.exchange_trade_history),
-        )
-    except Exception as e:
-        return HTMLResponse(
-            f'<div class="alert alert-error">History load error: {e} &mdash; '
-            f'<button class="btn btn-secondary btn-sm" style="margin-left:8px;" '
-            f'hx-get="/fragments/history" hx-target="#history-tables" hx-swap="innerHTML">Retry</button></div>'
-        )
 
 
 @router.post("/history/log_execution", response_class=HTMLResponse)
@@ -197,57 +147,6 @@ async def frag_history_pre_trade(
                    per_page=per_page, total_pages=total_pages,
                    sort_by=sort_by, sort_dir=sort_dir, search=search,
                    ticker=ticker, side=side,
-                   date_from=date_from, date_to=date_to),
-    )
-
-
-@router.get("/fragments/history/execution", response_class=HTMLResponse)
-async def frag_history_execution(
-    request: Request,
-    page: int = 1, per_page: int = 20,
-    sort_by: str = "entry_timestamp", sort_dir: str = "DESC",
-    search: str = "", ticker: str = "", side: str = "",
-    date_from: str = "", date_to: str = "",
-):
-    rows, total = await db.query_execution_log(
-        date_from=date_from or None, date_to=date_to or None,
-        search=search or None, ticker=ticker or None, side=side or None,
-        sort_by=sort_by, sort_dir=sort_dir, page=page, per_page=per_page,
-        account_id=app_state.active_account_id,
-    )
-    total_pages = max(1, (total + per_page - 1) // per_page)
-    return templates.TemplateResponse(
-        request, "fragments/history/execution_table.html",
-        _table_ctx(request, rows=rows, total=total, page=page,
-                   per_page=per_page, total_pages=total_pages,
-                   sort_by=sort_by, sort_dir=sort_dir, search=search,
-                   ticker=ticker, side=side,
-                   date_from=date_from, date_to=date_to),
-    )
-
-
-@router.get("/fragments/history/live_trades", response_class=HTMLResponse)
-async def frag_history_live_trades(
-    request: Request,
-    page: int = 1, per_page: int = 20,
-    sort_by: str = "entry_timestamp", sort_dir: str = "DESC",
-    search: str = "", date_from: str = "", date_to: str = "",
-):
-    data = load_recent_history(config.LIVE_TRADES)
-    if date_from:
-        data = [r for r in data if str(r.get("entry_timestamp", "")) >= date_from]
-    if date_to:
-        data = [r for r in data if str(r.get("entry_timestamp", "")) <= date_to]
-    rows, total = _paginate_list(
-        data, page, per_page, sort_by, sort_dir,
-        search=search, search_fields=("ticker",),
-    )
-    total_pages = max(1, (total + per_page - 1) // per_page)
-    return templates.TemplateResponse(
-        request, "fragments/history/live_trades_table.html",
-        _table_ctx(request, rows=rows, total=total, page=page,
-                   per_page=per_page, total_pages=total_pages,
-                   sort_by=sort_by, sort_dir=sort_dir, search=search,
                    date_from=date_from, date_to=date_to),
     )
 

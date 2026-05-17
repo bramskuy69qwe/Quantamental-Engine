@@ -49,9 +49,7 @@ class TestTimestampFormat:
         content = open("templates/fragments/history/pre_trade_table.html", encoding="utf-8").read()
         assert "replace('T', ' ')" in content
 
-    def test_execution_replaces_t(self):
-        content = open("templates/fragments/history/execution_table.html", encoding="utf-8").read()
-        assert "replace('T', ' ')" in content
+    # execution_table.html deleted in Task 70 (history page restructure)
 
 
 class TestSearchInputWidth:

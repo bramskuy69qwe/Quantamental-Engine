@@ -4,7 +4,6 @@ CSV logging, periodic snapshots, and manual exports.
 Files:
   data/pre_trade_log.csv       – every risk-calculator calculation
   data/execution_log.csv       – filled trades (manually logged via UI)
-  data/live_trades_log.csv     – live positions tracking
   data/trade_history.csv       – closed trades
   data/snapshots/YYYY-MM-DD_bod.csv – daily snapshot
   data/snapshots/YYYY-MM_monthly.csv – monthly snapshot
@@ -80,19 +79,6 @@ EXEC_FIELDS = [
 def log_execution(row: Dict) -> None:
     row.setdefault("entry_timestamp", now_in_account_tz(app_state.active_account_id).isoformat())
     _append_csv(config.EXECUTION_LOG, row, EXEC_FIELDS)
-
-
-# ── Live trades log ───────────────────────────────────────────────────────────
-
-LIVE_FIELDS = [
-    "ticker", "entry_timestamp", "direction",
-    "max_profit", "max_loss", "hold_time",
-    "stop_adjustments",
-]
-
-
-def update_live_trade(row: Dict) -> None:
-    _append_csv(config.LIVE_TRADES, row, LIVE_FIELDS)
 
 
 # ── Trade history ─────────────────────────────────────────────────────────────
