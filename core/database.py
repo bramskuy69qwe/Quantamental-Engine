@@ -420,6 +420,8 @@ CREATE TABLE IF NOT EXISTS closed_positions (
     shortfall_entry      REAL    NOT NULL DEFAULT 0,
     shortfall_exit       REAL    NOT NULL DEFAULT 0,
     source               TEXT    NOT NULL DEFAULT '',
+    tp_price             REAL    DEFAULT NULL,
+    sl_price             REAL    DEFAULT NULL,
     UNIQUE(account_id, terminal_position_id, exit_time_ms)
 );
 CREATE INDEX IF NOT EXISTS idx_closed_pos_ts     ON closed_positions (account_id, exit_time_ms DESC);
@@ -501,6 +503,9 @@ class DatabaseManager(
             # v2.4 Priority 2a: slippage measurement
             "ALTER TABLE fills ADD COLUMN slippage_actual REAL",
             "ALTER TABLE fills ADD COLUMN fill_type TEXT",
+            # v2.4 Task 69: TP/SL denormalization on closed_positions
+            "ALTER TABLE closed_positions ADD COLUMN tp_price REAL DEFAULT NULL",
+            "ALTER TABLE closed_positions ADD COLUMN sl_price REAL DEFAULT NULL",
         ]:
             try:
                 await self._conn.execute(migration)
@@ -532,6 +537,23 @@ class DatabaseManager(
             " WHERE backfill_completed=0 AND (mfe != 0 OR mae != 0)"
         )
         await self._conn.commit()
+
+        # ── Task 69: backfill closed_positions.tp_price/sl_price from pre_trade_log
+        # Idempotent: only updates rows that have calc_id but NULL tp_price.
+        # Wrapped in try/except because pre_trade_log.calc_id may not exist in
+        # DBs that haven't run migration 005 yet (e.g. test fixtures).
+        try:
+            await self._conn.execute("""
+                UPDATE closed_positions
+                SET tp_price = (SELECT p.tp_price FROM pre_trade_log p
+                                WHERE p.calc_id = closed_positions.calc_id LIMIT 1),
+                    sl_price = (SELECT p.sl_price FROM pre_trade_log p
+                                WHERE p.calc_id = closed_positions.calc_id LIMIT 1)
+                WHERE calc_id IS NOT NULL AND calc_id != '' AND tp_price IS NULL
+            """)
+            await self._conn.commit()
+        except _sqlite3.OperationalError:
+            pass  # pre_trade_log.calc_id not yet available — backfill skipped
 
         # ── account_id indexes (idempotent) ───────────────────────────────────
         for idx_sql in [

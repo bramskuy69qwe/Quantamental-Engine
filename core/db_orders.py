@@ -159,7 +159,27 @@ class OrdersMixin:
 
         Uses REPLACE so a re-computed close row (e.g. after late fill) wins
         over the earlier version rather than being silently dropped.
+
+        If tp_price/sl_price are not provided but calc_id is, resolves them
+        from pre_trade_log automatically (v2.4 Task 69).
         """
+        # Resolve tp_price/sl_price from pre_trade_log if not explicitly provided
+        calc_id = row.get("calc_id")
+        tp_price = row.get("tp_price")
+        sl_price = row.get("sl_price")
+        if calc_id and tp_price is None and sl_price is None:
+            try:
+                async with self._conn.execute(
+                    "SELECT tp_price, sl_price FROM pre_trade_log WHERE calc_id = ? LIMIT 1",
+                    (calc_id,),
+                ) as cur:
+                    ptl = await cur.fetchone()
+                    if ptl:
+                        tp_price = ptl["tp_price"] if ptl["tp_price"] else None
+                        sl_price = ptl["sl_price"] if ptl["sl_price"] else None
+            except Exception:
+                pass  # non-critical — columns stay NULL
+
         sql = """
             INSERT OR REPLACE INTO closed_positions (
                 account_id, exchange_position_id, terminal_position_id,
@@ -167,14 +187,16 @@ class OrdersMixin:
                 entry_time_ms, exit_time_ms, realized_pnl, total_fees,
                 net_pnl, funding_fees, mfe, mae, hold_time_ms,
                 exit_reason, model_name, notes,
-                shortfall_entry, shortfall_exit, source, calc_id
+                shortfall_entry, shortfall_exit, source, calc_id,
+                tp_price, sl_price
             ) VALUES (
                 :account_id, :exchange_position_id, :terminal_position_id,
                 :symbol, :direction, :quantity, :entry_price, :exit_price,
                 :entry_time_ms, :exit_time_ms, :realized_pnl, :total_fees,
                 :net_pnl, :funding_fees, :mfe, :mae, :hold_time_ms,
                 :exit_reason, :model_name, :notes,
-                :shortfall_entry, :shortfall_exit, :source, :calc_id
+                :shortfall_entry, :shortfall_exit, :source, :calc_id,
+                :tp_price, :sl_price
             )
         """
         try:
@@ -202,7 +224,9 @@ class OrdersMixin:
                 "shortfall_entry":      row.get("shortfall_entry", 0),
                 "shortfall_exit":       row.get("shortfall_exit", 0),
                 "source":               row.get("source", ""),
-                "calc_id":              row.get("calc_id"),
+                "calc_id":              calc_id,
+                "tp_price":             tp_price,
+                "sl_price":             sl_price,
             })
             await self._conn.commit()
         except Exception:
