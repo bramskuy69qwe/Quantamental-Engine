@@ -166,7 +166,16 @@ var _HIST_EPS={
 (function(){
   var _t = window._histMainTab || 'positions';
   var tabs = ['positions','orders','trades'];
-  function histMainTab(t){ window._histMainTab=t; _apply(t); }
+  var _tableIds = {positions:'closed-positions-table', orders:'order-history-table', trades:'fills-table'};
+  function histMainTab(t){
+    window._histMainTab=t; _apply(t);
+    // Immediate refresh on tab switch so user sees fresh data
+    var tid = _tableIds[t];
+    if(tid && _dateFrom){
+      var qs='date_from='+encodeURIComponent(_dateFrom)+'&date_to='+encodeURIComponent(_dateTo);
+      htmx.ajax('GET',_HIST_EPS[tid]+'?'+qs,{target:'#'+tid,swap:'innerHTML'});
+    }
+  }
   function _apply(t){
     tabs.forEach(function(k){
       var p=document.getElementById('hm-panel-'+k);
@@ -185,7 +194,15 @@ var _HIST_EPS={
 (function(){
   var _t = window._histLogTab || 'pretrade';
   var tabs = ['pretrade','events'];
-  function histLogTab(t){ window._histLogTab=t; _apply(t); }
+  var _logTableIds = {pretrade:'pre-trade-table'};
+  function histLogTab(t){
+    window._histLogTab=t; _apply(t);
+    var tid = _logTableIds[t];
+    if(tid && _dateFrom){
+      var qs='date_from='+encodeURIComponent(_dateFrom)+'&date_to='+encodeURIComponent(_dateTo);
+      htmx.ajax('GET',_HIST_EPS[tid]+'?'+qs,{target:'#'+tid,swap:'innerHTML'});
+    }
+  }
   function _apply(t){
     tabs.forEach(function(k){
       var p=document.getElementById('hl-panel-'+k);

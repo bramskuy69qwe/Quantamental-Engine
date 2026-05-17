@@ -88,7 +88,7 @@ async def frag_order_history(
 @router.get("/fragments/history/fills", response_class=HTMLResponse)
 async def frag_fills(
     request: Request,
-    page: int = 1, per_page: int = 25,
+    page: int = 1, per_page: int = 20,
     sort_by: str = "timestamp_ms", sort_dir: str = "DESC",
     search: str = "",
     date_from: str = "", date_to: str = "",
