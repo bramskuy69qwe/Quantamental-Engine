@@ -341,6 +341,7 @@ class OrderManager:
 
             if status == "new" and is_new_entry(order):
                 log_trade_event(account_id, calc_id, "order_placed", {
+                    "symbol": order.get("symbol", ""),
                     "role": "entry",
                     "price": order.get("price", 0),
                     "side": order.get("side", ""),
@@ -350,6 +351,7 @@ class OrderManager:
 
             elif status in ("canceled", "expired"):
                 log_trade_event(account_id, calc_id, "order_canceled", {
+                    "symbol": order.get("symbol", ""),
                     "exchange_order_id": eid,
                     "order_type": order.get("order_type", ""),
                 }, source="order_manager")
@@ -416,6 +418,7 @@ class OrderManager:
                 pass
 
             log_trade_event(account_id, calc_id, event_type, {  # type: ignore[arg-type]
+                "symbol": order.get("symbol", ""),
                 "exchange_order_id": order.get("exchange_order_id", ""),
                 "from_price": old_stop,
                 "to_price": new_stop,
@@ -447,6 +450,7 @@ class OrderManager:
 
             role = fill.get("role", "")
             log_trade_event(account_id, calc_id, "order_filled", {
+                "symbol": fill.get("symbol", ""),
                 "role": role,
                 "fill_price": fill.get("price", 0),
                 "fill_qty": fill.get("quantity", 0),
@@ -468,6 +472,7 @@ class OrderManager:
                     conn.close()
                     if prior == 0:
                         log_trade_event(account_id, calc_id, "position_opened", {
+                            "symbol": fill.get("symbol", ""),
                             "fill_price": fill.get("price", 0),
                             "qty": fill.get("quantity", 0),
                             "exchange_position_id": fill.get("exchange_position_id", ""),
@@ -487,6 +492,7 @@ class OrderManager:
                         )
                         if pos and pos.contract_amount > 0:
                             log_trade_event(account_id, calc_id, "partial_close", {
+                                "symbol": fill.get("symbol", ""),
                                 "fill_price": fill.get("price", 0),
                                 "fill_qty": fill.get("quantity", 0),
                                 "remaining_qty": pos.contract_amount,

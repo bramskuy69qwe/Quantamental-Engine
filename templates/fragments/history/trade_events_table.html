@@ -73,8 +73,8 @@
           <td class="td-dim mono" style="font-size:.62rem;">{{ r.calc_id[-8:] if r.calc_id else '—' }}</td>
           <td class="td-sub">{{ r.source }}</td>
           <td class="td-sub" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-            {%- if r.event_type in ('tp_modified', 'sl_modified') and p.get('old_price') is not none -%}
-              {{ fmt(p.old_price, 4) }} → {{ fmt(p.new_price, 4) }}
+            {%- if r.event_type in ('tp_modified', 'sl_modified') and p.get('from_price') is not none -%}
+              {{ fmt(p.from_price, 4) }} → {{ fmt(p.to_price, 4) }}
             {%- elif r.event_type == 'order_filled' and p.get('price') is not none -%}
               Price: {{ fmt(p.price, 4) }} · Qty: {{ fmt(p.get('quantity', p.get('fill_qty', 0)), 4) }}
             {%- elif r.event_type == 'position_closed' and p.get('pnl') is not none -%}
