@@ -281,6 +281,22 @@ class TestSlippage:
         assert slip > 0.0
         assert fill < 100
 
+    def test_best_price_zero_returns_safe_default(self):
+        """CRIT-002 regression: best_price=0 must not raise ZeroDivisionError.
+        Return shape must match the existing entry_price<=0 zero-guard: (0.0, entry_price).
+        """
+        ob = _make_orderbook(asks=[[0, 10.0]], bids=[])
+        slip, fill = self._run("X", "long", 1000, 100, ob)
+        assert slip == 0.0
+        assert fill == 100
+
+    def test_best_price_negative_returns_safe_default(self):
+        """CRIT-002 regression: defensive — guard covers negative as well as zero."""
+        ob = _make_orderbook(asks=[], bids=[[-1.0, 10.0]])
+        slip, fill = self._run("X", "short", 1000, 100, ob)
+        assert slip == 0.0
+        assert fill == 100
+
 
 # ── calculate_one_percent_depth ──────────────────────────────────────────────
 

@@ -152,6 +152,8 @@ def calculate_slippage(
         return 0.0, entry_price
 
     best_price     = float(orders[0][0])            # best ask or best bid
+    if best_price <= 0:
+        return 0.0, entry_price
     est_fill_price = estimate_vwap_fill(symbol, side, notional_usdt, entry_price)
 
     # Market impact: VWAP deviation from top-of-book reference
