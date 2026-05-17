@@ -137,6 +137,10 @@ async def fetch_exchange_info() -> None:
 
 async def fetch_account() -> None:
     """Fetch account balance, fees, and update account_state through DataCache."""
+    if app_state._data_cache is None:
+        log.warning("fetch_account: DataCache not yet initialized — skipping")
+        return
+
     adapter = _get_adapter()
     na = await adapter.fetch_account()
 
