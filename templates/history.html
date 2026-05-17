@@ -153,6 +153,26 @@
 </div>
 
 <script>
+// Fill Drawer toggle (page-level to survive fragment innerHTML swaps)
+window.togglePosRow = function(posId) {
+  var row = document.getElementById('fills-row-' + posId);
+  var chevron = document.getElementById('chev-' + posId);
+  if (!row) return;
+  var isOpen = row.style.display !== 'none';
+  if (isOpen) {
+    row.style.display = 'none';
+    if (chevron) chevron.textContent = '\u25B8';
+  } else {
+    row.style.display = '';
+    if (chevron) chevron.textContent = '\u25BE';
+    if (row.dataset.loaded !== '1') {
+      var target = row.querySelector('td');
+      htmx.ajax('GET', '/fragments/history/position_fills?position_id=' + posId, {target: target, swap: 'innerHTML'});
+      row.dataset.loaded = '1';
+    }
+  }
+};
+
 var _dateFrom='', _dateTo='';
 var _HIST_IDS=['closed-positions-table','order-history-table','fills-table','pre-trade-table'];
 var _HIST_EPS={

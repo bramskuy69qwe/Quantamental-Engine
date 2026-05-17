@@ -1,0 +1,51 @@
+<!-- fragment: history/position_fills — fills mini-table inside Position History drawer -->
+<div style="border-top:1px solid var(--border);border-bottom:2px solid rgba(60,143,245,.2);padding:8px 10px 10px 32px;background:#050810;">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+    <span style="font-size:.58rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--blue);">▾ Fill Trades</span>
+    <span class="mono" style="font-size:.65rem;color:var(--muted);">{{ fills | length }} fills</span>
+  </div>
+
+  {% if fills %}
+  <div style="overflow-x:auto;">
+    <table>
+      <thead><tr>
+        <th style="font-size:.58rem;">Time</th>
+        <th style="font-size:.58rem;">Order No.</th>
+        <th style="font-size:.58rem;">Side</th>
+        <th style="font-size:.58rem;">Price</th>
+        <th style="font-size:.58rem;">Qty</th>
+        <th style="font-size:.58rem;">Fee</th>
+        <th style="font-size:.58rem;">Role</th>
+        <th style="font-size:.58rem;">PnL</th>
+      </tr></thead>
+      <tbody>
+        {% for f in fills %}
+        {% set is_close = f.is_close %}
+        {% set dir = f.direction %}
+        {% if is_close %}
+          {% set side_label = "Close " ~ dir %}
+          {% set side_class = "pos-short" if dir == "LONG" else "pos-long" %}
+        {% else %}
+          {% set side_label = "Open " ~ dir %}
+          {% set side_class = "pos-long" if dir == "LONG" else "pos-short" %}
+        {% endif %}
+        <tr>
+          <td style="color:var(--sub);font-size:.68rem;">{{ ms_to_local(f.timestamp_ms) }}</td>
+          <td class="td-dim" style="font-size:.62rem;">{{ f.exchange_order_id[:12] if f.exchange_order_id else "—" }}</td>
+          <td class="{{ side_class }}" style="font-weight:700;">{{ side_label }}</td>
+          <td>{{ fmt(f.price, 6) }}</td>
+          <td>{{ fmt(f.quantity, 4) }}</td>
+          <td class="td-sub">{{ fmt(f.fee, 4) }} {{ f.fee_asset }}</td>
+          <td class="td-sub">{{ f.role }}</td>
+          <td class="{{ 'text-green' if f.realized_pnl > 0 else 'text-red' if f.realized_pnl < 0 else '' }}">
+            {{ fmt(f.realized_pnl, 2) if f.realized_pnl else "—" }}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div style="color:var(--muted);font-size:.72rem;padding:10px 0;">No fills found for this position.</div>
+  {% endif %}
+</div>

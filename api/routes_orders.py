@@ -135,6 +135,33 @@ async def frag_closed_positions(
     )
 
 
+# ── Fill Drawer (Position History row expand) ────────────────────────────────
+
+@router.get("/fragments/history/position_fills", response_class=HTMLResponse)
+async def frag_position_fills(request: Request, position_id: int = 0):
+    """Return fills for a single closed position (lazy-loaded drawer)."""
+    from api.helpers import _ctx
+    fills = []
+    if position_id:
+        # Look up the closed_position row to get matching params
+        async with db._conn.execute(
+            "SELECT terminal_position_id, symbol, direction FROM closed_positions WHERE id=?",
+            (position_id,),
+        ) as cur:
+            pos = await cur.fetchone()
+        if pos:
+            fills = await db.get_position_fills(
+                app_state.active_account_id,
+                pos["terminal_position_id"],
+                pos["symbol"],
+                pos["direction"],
+            )
+    return templates.TemplateResponse(
+        request, "fragments/history/position_fills.html",
+        _ctx(request, fills=fills),
+    )
+
+
 # ── Backfill + consistency ───────────────────────────────────────────────────
 
 @router.post("/api/orders/backfill")

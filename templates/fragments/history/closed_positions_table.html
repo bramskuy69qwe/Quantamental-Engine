@@ -21,6 +21,7 @@
   <div class="overflow-x-auto">
     <table>
       <thead><tr>
+        <th style="width:18px;"></th>
         {{ sort_th("Open",       "entry_time_ms",  ep, tid, sort_by, sort_dir, qs) }}
         {{ sort_th("Close",      "exit_time_ms",   ep, tid, sort_by, sort_dir, qs) }}
         {{ sort_th("Symbol",     "symbol",         ep, tid, sort_by, sort_dir, qs) }}
@@ -42,8 +43,8 @@
       <tbody>
         {% for r in rows %}
         {% set pnl_pct = (r.net_pnl / (r.entry_price * r.quantity) * 100) if r.entry_price and r.quantity else 0 %}
-        {# hold_time_ms formatted by fmt_duration() helper #}
-        <tr>
+        <tr style="cursor:pointer;" onclick="togglePosRow({{ r.id }})">
+          <td id="chev-{{ r.id }}" style="color:var(--muted);font-size:.65rem;text-align:center;font-weight:700;">▸</td>
           <td class="td-ts">{{ ms_to_local(r.entry_time_ms) }}</td>
           <td class="td-ts">{{ ms_to_local(r.exit_time_ms) }}</td>
           <td class="td-symbol">{{ r.symbol }}</td>
@@ -74,6 +75,9 @@
           <td class="text-red">{{ fmt(r.mae, 2) if r.mae or r.backfill_completed else "—" }}</td>
           {% set mer = (r.mfe / (r.mae | abs)) | round(2) if r.mae else 0 %}
           <td>{{ fmt(mer, 2) if mer else '—' }}</td>
+        </tr>
+        <tr id="fills-row-{{ r.id }}" style="display:none;">
+          <td colspan="18" style="padding:0;background:var(--panel);"></td>
         </tr>
         {% endfor %}
       </tbody>
