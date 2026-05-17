@@ -7,7 +7,7 @@ served as a PWA. It connects to exchanges via a vendor-neutral adapter layer
 and optionally bridges to Quantower for desktop charting integration.
 
 Currently deployed against Binance USDM-M and Bybit Linear perpetuals, with
-MEXC read-only integration queued for v2.4.5.
+MEXC read-only integration via adapter capability flags.
 
 ---
 
@@ -29,12 +29,13 @@ routes through a vendor-neutral adapter layer defined by Python protocols in
                     | core/*.py  |  Engine core (state, risk, scheduling)
                     +-----+-----+
                           |
-              +-----------+-----------+
-              |           |           |
-         +----+----+ +---+---+ +-----+-----+
-         | Binance | | Bybit | | Quantower |
-         | adapter | |adapter| |  bridge   |
-         +---------+ +-------+ +-----------+
+              +-----------+-----------+-----------+
+              |           |           |           |
+         +----+----+ +---+---+ +----+----+ +-----+-----+
+         | Binance | | Bybit | |  MEXC   | | Quantower |
+         | adapter | |adapter| |adapter* | |  bridge   |
+         +---------+ +-------+ +---------+ +-----------+
+                                * read-only (capability flags)
 ```
 
 Engine core never imports exchange libraries directly. Adapters implement
@@ -50,29 +51,33 @@ full adapter inventory.
 |-------|-----------|
 | Language | Python 3.12+ (tested on 3.13) |
 | Web framework | FastAPI + Uvicorn |
-| Frontend | Jinja2 + HTMX (server-rendered HTML fragments), PWA |
-| Database | SQLite via aiosqlite (WAL mode, multi-DB split) |
+| Frontend | Jinja2 + HTMX 1.9.12 + Idiomorph (server-rendered, SSE-driven), PWA |
+| Event bus | InProcessBus (default) or Redis pub/sub (`PUBSUB_BACKEND`) |
+| Database | SQLite via aiosqlite (WAL mode, per-account DB split) |
 | Exchange connectivity | ccxt >=4.3.20 + native WebSocket (websockets) |
 | Macro data | yfinance (VIX), FRED API (yields, spreads) |
 | Data processing | pandas, numpy |
 | Encryption | cryptography (Fernet, AES-256 for API keys) |
 | HTTP client | httpx (async) |
 | Broker bridge | Quantower C# plugin via WebSocket |
-| Testing | pytest + pytest-asyncio (574 tests) |
+| Testing | pytest + pytest-asyncio (1247 tests) |
 
 ---
 
 ## Status
 
-- **Current**: v2.3.1 (audit complete, 6 buckets closed, 40 findings resolved)
-- **Next**: v2.4 (gate promotion with shadow→enforce rollout, rolling-window
-  DD enforcement with strategy presets, analytics period preferences,
-  slippage tracking via `calc_id` propagation, Redis pub/sub + HTMX
-  morphing, capability-flag adapter pattern, observability via
-  `engine_events`)
-- **Queued**: v2.4.5 (MEXC read-only adapter — first user of capability flags)
+- **Current**: v2.4 (in audit phase — 1247 tests passing)
+  - SSE-driven dashboard with HTMX morphing (flicker-free updates)
+  - Multi-exchange: Binance, Bybit, MEXC (read-only via capability flags)
+  - History page redesign: 3-card layout, fill drawer, exec link, trade events log
+  - Per-account timezone, analytics periods, strategy presets
+  - Rate-limit architecture (weight tracker, fan-out coordination)
+  - `calc_id` propagation for slippage tracking and fills↔pre_trade_log matching
+  - Observability: `engine_events` + `trade_events` audit trail
+- **Previous**: v2.3.1 (audit complete, 6 buckets closed, 40 findings resolved)
+- **Next**: v2.5 (backtesting subsystem, defensive ML)
 
-See [v2.4.md](v2.4.md) for the full v2.4 planning artifact, and
+See [v2.4.md](v2.4.md) for spec + implementation status, and
 [v2.5-v2.7_roadmap.md](v2.5-v2.7_roadmap.md) for downstream phases.
 
 ---
@@ -89,7 +94,8 @@ See [v2.4.md](v2.4.md) for the full v2.4 planning artifact, and
 │   ├── adapters/              # Exchange and platform adapters
 │   │   ├── protocols.py       # Vendor-neutral adapter protocols
 │   │   ├── binance/           # Binance USDM-M adapter (REST + WS)
-│   │   └── bybit/             # Bybit Linear adapter (REST + WS)
+│   │   ├── bybit/             # Bybit Linear adapter (REST + WS)
+│   │   └── mexc/              # MEXC read-only adapter (capability flags)
 │   ├── risk_engine.py         # ATR-based position sizing, regime multipliers
 │   ├── exchange.py            # REST orchestration (fetch, enrich, TP/SL)
 │   ├── ws_manager.py          # WebSocket lifecycle and dispatch
@@ -98,7 +104,7 @@ See [v2.4.md](v2.4.md) for the full v2.4 planning artifact, and
 │   ├── data_cache.py          # In-memory data cache (positions, orders)
 │   ├── state.py               # Global state (AppState, RegimeState)
 │   ├── schedulers.py          # Background tasks (BOD, regime, news, ping)
-│   ├── event_bus.py           # In-process async pub/sub
+│   ├── event_bus.py           # Async pub/sub (InProcess or Redis)
 │   ├── regime_classifier.py   # Rule-based 5-state macro regime classifier
 │   ├── platform_bridge.py     # Quantower plugin integration
 │   ├── database.py            # SQLite manager (delegates to db_*.py)
@@ -114,7 +120,7 @@ See [v2.4.md](v2.4.md) for the full v2.4 planning artifact, and
 │   └── fragments/             # HTMX partial fragments (~25 files)
 │
 ├── static/                    # PWA assets (manifest, service worker, icons)
-├── tests/                     # pytest suite (574 tests, 111-row baseline)
+├── tests/                     # pytest suite (1247 tests, 111-row baseline)
 ├── scripts/                   # Utility scripts
 ├── data/                      # Runtime data (gitignored: DBs, logs, snapshots)
 ├── docs/                      # Documentation (see below)
@@ -135,8 +141,10 @@ See [v2.4.md](v2.4.md) for the full v2.4 planning artifact, and
   finding registry from the v2.3.1 audit.
 - **[Historical Audit Artifacts](docs/past/)** — Per-finding design docs,
   workflow logs, and prior version specs.
-- **[v2.4 Planning](v2.4.md)** — Gate promotion, execution quality, and UI
-  architecture roadmap.
+- **[v2.4 Spec + Status](v2.4.md)** — Gate promotion, execution quality, UI
+  architecture, and history redesign. Includes implementation status section.
+- **[v2.4 Release Notes](docs/release_notes/v2.4.md)** — User-facing summary
+  of what v2.4 delivers.
 - **[v2.5–v2.7 Roadmap](v2.5-v2.7_roadmap.md)** — Backtesting subsystem,
   defensive ML, integration backtest.
 
@@ -157,6 +165,8 @@ pip install -r requirements.txt
 cp .env.example .env             # Edit with API keys, master encryption key
 # Required: ENV_MASTER_KEY (Fernet key for API key encryption)
 # Required: Exchange API credentials (added via /accounts UI)
+# Optional: PUBSUB_BACKEND=redis REDIS_URL=redis://localhost:6379/0
+# Optional: EXCHANGE_REFRESH_HZ=1.0 EXEC_LINK_PRICE_TOL=0.0005
 
 # Run
 uvicorn main:app --host 0.0.0.0 --port 8000
