@@ -753,7 +753,7 @@ class OrdersMixin:
                     "total_fees":           total_fee,
                     "net_pnl":              total_pnl - total_fee,
                     "hold_time_ms":         exit_time - open_time,
-                    "exit_reason":          "",
+                    "exit_reason":          "manual",
                     "mfe":                  best_mfe,
                     "mae":                  best_mae,
                     "source":               "exchange_history_backfill",
