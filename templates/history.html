@@ -142,10 +142,14 @@
       </div>
     </div>
 
-    <!-- Panel: Trade Events Log (placeholder for Task 73) -->
+    <!-- Panel: Trade Events Log -->
     <div id="hl-panel-events" style="display:none;">
-      <div style="text-align:center;padding:40px 0;color:var(--muted);font-size:.78rem;">
-        Trade Events Log — coming in Task 73
+      <div id="trade-events-table"
+           hx-get="/fragments/history/trade_events"
+           hx-trigger="load, every 30s"
+           hx-swap="innerHTML"
+           hx-timeout="25000">
+        <div style="text-align:center;padding:20px 0;color:var(--muted);font-size:.78rem;">Loading...</div>
       </div>
     </div>
   </div>
@@ -154,6 +158,12 @@
 
 <script>
 // Fill Drawer toggle (page-level to survive fragment innerHTML swaps)
+// Trade Events detail toggle
+window.toggleEventDetail = function(evtId) {
+  var row = document.getElementById('evt-detail-' + evtId);
+  if (row) row.style.display = row.style.display === 'none' ? '' : 'none';
+};
+
 window.togglePosRow = function(posId) {
   var row = document.getElementById('fills-row-' + posId);
   var chevron = document.getElementById('chev-' + posId);
@@ -174,12 +184,13 @@ window.togglePosRow = function(posId) {
 };
 
 var _dateFrom='', _dateTo='';
-var _HIST_IDS=['closed-positions-table','order-history-table','fills-table','pre-trade-table'];
+var _HIST_IDS=['closed-positions-table','order-history-table','fills-table','pre-trade-table','trade-events-table'];
 var _HIST_EPS={
   'closed-positions-table':'/fragments/history/closed_positions',
   'order-history-table':'/fragments/history/order_history',
   'fills-table':'/fragments/history/fills',
-  'pre-trade-table':'/fragments/history/pre_trade'
+  'pre-trade-table':'/fragments/history/pre_trade',
+  'trade-events-table':'/fragments/history/trade_events'
 };
 
 // Card 2: main history tabs (persists across morphs)
@@ -214,7 +225,7 @@ var _HIST_EPS={
 (function(){
   var _t = window._histLogTab || 'pretrade';
   var tabs = ['pretrade','events'];
-  var _logTableIds = {pretrade:'pre-trade-table'};
+  var _logTableIds = {pretrade:'pre-trade-table', events:'trade-events-table'};
   function histLogTab(t){
     window._histLogTab=t; _apply(t);
     var tid = _logTableIds[t];

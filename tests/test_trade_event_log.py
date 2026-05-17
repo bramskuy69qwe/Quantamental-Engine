@@ -110,8 +110,9 @@ class TestQueryTradeEvents:
         log_trade_event(1, "calc-B", "calc_created", {}, "test", data_dir=data_dir)
         log_trade_event(1, "calc-A", "order_placed", {}, "test", data_dir=data_dir)
 
-        rows = query_trade_events(account_id=1, calc_id="calc-A", data_dir=data_dir)
+        rows, total = query_trade_events(account_id=1, calc_id="calc-A", data_dir=data_dir)
         assert len(rows) == 2
+        assert total == 2
         assert all(r["calc_id"] == "calc-A" for r in rows)
 
     def test_query_no_filters_returns_latest(self, tmp_path, monkeypatch):
@@ -124,8 +125,9 @@ class TestQueryTradeEvents:
                 timestamp=f"2026-05-15T{10+i:02d}:00:00+00:00",
                 data_dir=data_dir,
             )
-        rows = query_trade_events(account_id=1, limit=3, data_dir=data_dir)
+        rows, total = query_trade_events(account_id=1, limit=3, data_dir=data_dir)
         assert len(rows) == 3
+        assert total == 5
         # Newest first
         assert json.loads(rows[0]["payload_json"])["i"] == 4
 

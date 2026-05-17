@@ -51,7 +51,7 @@ class TestCalcCreatedProducer:
             "size": 0.01, "est_r": 2.5,
         }, source="risk_engine", data_dir=data_dir)
 
-        rows = query_trade_events(account_id=1, calc_id="calc-123", data_dir=data_dir)
+        rows, _ = query_trade_events(account_id=1, calc_id="calc-123", data_dir=data_dir)
         assert len(rows) == 1
         assert rows[0]["event_type"] == "calc_created"
         payload = json.loads(rows[0]["payload_json"])
@@ -68,7 +68,7 @@ class TestOrderEventProducers:
             "role": "entry", "price": 50000, "side": "BUY", "qty": 0.01,
         }, source="order_manager", data_dir=data_dir)
 
-        rows = query_trade_events(
+        rows, _ = query_trade_events(
             account_id=1, event_type="order_placed", data_dir=data_dir
         )
         assert len(rows) == 1
@@ -82,7 +82,7 @@ class TestOrderEventProducers:
             "exchange_order_id": "ORD-1",
         }, source="order_manager", data_dir=data_dir)
 
-        rows = query_trade_events(
+        rows, _ = query_trade_events(
             account_id=1, event_type="order_canceled", data_dir=data_dir
         )
         assert len(rows) == 1
@@ -97,7 +97,7 @@ class TestFillEventProducers:
             "role": "maker", "fill_price": 50010, "fill_qty": 0.005, "fee": 0.01,
         }, source="order_manager", data_dir=data_dir)
 
-        rows = query_trade_events(
+        rows, _ = query_trade_events(
             account_id=1, event_type="order_filled", data_dir=data_dir
         )
         assert len(rows) == 1
@@ -111,7 +111,7 @@ class TestFillEventProducers:
             "exit_price": 3200, "realized_pnl": 20.0,
         }, source="order_manager", data_dir=data_dir)
 
-        rows = query_trade_events(
+        rows, _ = query_trade_events(
             account_id=1, event_type="position_closed", data_dir=data_dir
         )
         assert len(rows) == 1
@@ -148,7 +148,7 @@ class TestTradeEventLifecycle:
         log_trade_event(1, calc, "order_filled", {"fill_qty": 0.01}, "order_manager", data_dir=data_dir)
         log_trade_event(1, calc, "position_closed", {"pnl": 5.0}, "order_manager", data_dir=data_dir)
 
-        rows = query_trade_events(account_id=1, calc_id=calc, data_dir=data_dir)
+        rows, _ = query_trade_events(account_id=1, calc_id=calc, data_dir=data_dir)
         types = [r["event_type"] for r in rows]
         # Newest first
         assert types == ["position_closed", "order_filled", "order_placed", "calc_created"]

@@ -176,6 +176,53 @@ async def frag_history_trade_history(
     )
 
 
+@router.get("/fragments/history/trade_events", response_class=HTMLResponse)
+async def frag_history_trade_events(
+    request: Request,
+    page: int = 1, per_page: int = 20,
+    event_type: str = "", search: str = "",
+    date_from: str = "", date_to: str = "",
+):
+    """Trade Events Log tab — reads from trade_events table (sync query)."""
+    import asyncio
+    import json as _json
+    from core.trade_event_log import query_trade_events
+
+    aid = app_state.active_account_id
+    offset = (max(page, 1) - 1) * per_page
+    rows, total = await asyncio.to_thread(
+        query_trade_events,
+        account_id=aid,
+        event_type=event_type or None,
+        since=date_from or None,
+        until=date_to or None,
+        limit=per_page,
+        offset=offset,
+    )
+
+    # Parse payload_json and extract symbol for display + filtering
+    for r in rows:
+        try:
+            r["_payload"] = _json.loads(r.get("payload_json") or "{}")
+        except (ValueError, TypeError):
+            r["_payload"] = {}
+        r["_symbol"] = r["_payload"].get("symbol") or r["_payload"].get("ticker") or ""
+
+    if search:
+        _s = search.upper()
+        rows = [r for r in rows if _s in r["_symbol"].upper()]
+        total = len(rows)  # approximate after client-side filter
+
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    return templates.TemplateResponse(
+        request, "fragments/history/trade_events_table.html",
+        _ctx(request, rows=rows, total=total, page=page,
+             per_page=per_page, total_pages=total_pages,
+             event_type=event_type, search=search,
+             date_from=date_from, date_to=date_to),
+    )
+
+
 @router.put("/history/notes/pre_trade/{row_id}", response_class=HTMLResponse)
 async def update_pre_trade_note(row_id: int, notes: str = Form("")):
     await db.update_pre_trade_notes(row_id, notes)

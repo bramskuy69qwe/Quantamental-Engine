@@ -1,0 +1,125 @@
+{% set ep = "/fragments/history/trade_events" %}
+{% set tid = "trade-events-table" %}
+{% set df = date_from | replace(":", "%3A") | replace("+", "%2B") %}
+{% set dt = date_to   | replace(":", "%3A") | replace("+", "%2B") %}
+{% set qs = "per_page=" ~ per_page ~ "&search=" ~ search ~ "&event_type=" ~ event_type ~ "&date_from=" ~ df ~ "&date_to=" ~ dt %}
+
+{% set badge_map = {
+  'calc_created': 'badge-ok',
+  'order_placed': 'badge-ok',
+  'order_canceled': 'badge-limit',
+  'order_filled': 'badge-ok',
+  'position_opened': 'badge-ok',
+  'position_closed': 'badge-ok',
+  'partial_close': 'badge-ok',
+  'tp_modified': 'badge-warning',
+  'sl_modified': 'badge-warning',
+  'liquidated': 'badge-limit',
+  'manual_close': 'badge-limit',
+  'manual_link_added': 'badge-unknown'
+} %}
+
+<div class="card card-p8">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
+    <span class="sec-lbl" style="margin-bottom:0;">Trade Events Log ({{ total }} entries)</span>
+    <div style="display:flex;gap:4px;">
+      <input type="text" placeholder="Search symbol..." class="hist-input" style="width:140px;"
+             value="{{ search }}"
+             hx-get="{{ ep }}?page=1&{{ qs }}"
+             hx-target="#{{ tid }}" hx-swap="innerHTML"
+             hx-trigger="keyup[key=='Enter']"
+             hx-include="closest div"
+             name="search">
+      <select class="hist-select"
+              hx-get="{{ ep }}?page=1&per_page={{ per_page }}&search={{ search }}&date_from={{ df }}&date_to={{ dt }}"
+              hx-target="#{{ tid }}" hx-swap="innerHTML"
+              hx-trigger="change"
+              name="event_type">
+        <option value="">All Events</option>
+        <option value="calc_created"    {{ "selected" if event_type == "calc_created" }}>calc_created</option>
+        <option value="order_placed"    {{ "selected" if event_type == "order_placed" }}>order_placed</option>
+        <option value="order_canceled"  {{ "selected" if event_type == "order_canceled" }}>order_canceled</option>
+        <option value="order_filled"    {{ "selected" if event_type == "order_filled" }}>order_filled</option>
+        <option value="position_opened" {{ "selected" if event_type == "position_opened" }}>position_opened</option>
+        <option value="position_closed" {{ "selected" if event_type == "position_closed" }}>position_closed</option>
+        <option value="partial_close"   {{ "selected" if event_type == "partial_close" }}>partial_close</option>
+        <option value="tp_modified"     {{ "selected" if event_type == "tp_modified" }}>tp_modified</option>
+        <option value="sl_modified"     {{ "selected" if event_type == "sl_modified" }}>sl_modified</option>
+        <option value="liquidated"      {{ "selected" if event_type == "liquidated" }}>liquidated</option>
+        <option value="manual_close"    {{ "selected" if event_type == "manual_close" }}>manual_close</option>
+        <option value="manual_link_added" {{ "selected" if event_type == "manual_link_added" }}>manual_link_added</option>
+      </select>
+    </div>
+  </div>
+
+  {% if rows %}
+  <div class="overflow-x-auto">
+    <table>
+      <thead><tr>
+        <th>Time</th>
+        <th>Symbol</th>
+        <th>Event</th>
+        <th>Calc ID</th>
+        <th>Source</th>
+        <th>Detail</th>
+      </tr></thead>
+      <tbody>
+        {% for r in rows %}
+        {% set p = r._payload %}
+        <tr style="cursor:pointer;" onclick="toggleEventDetail({{ r.id }})">
+          <td class="td-ts">{{ r.timestamp[:19] | replace('T', ' ') }}</td>
+          <td class="td-symbol">{{ r._symbol or '—' }}</td>
+          <td><span class="badge {{ badge_map.get(r.event_type, 'badge-unknown') }}">{{ r.event_type }}</span></td>
+          <td class="td-dim mono" style="font-size:.62rem;">{{ r.calc_id[-8:] if r.calc_id else '—' }}</td>
+          <td class="td-sub">{{ r.source }}</td>
+          <td class="td-sub" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+            {%- if r.event_type in ('tp_modified', 'sl_modified') and p.get('old_price') is not none -%}
+              {{ fmt(p.old_price, 4) }} → {{ fmt(p.new_price, 4) }}
+            {%- elif r.event_type == 'order_filled' and p.get('price') is not none -%}
+              Price: {{ fmt(p.price, 4) }} · Qty: {{ fmt(p.get('quantity', p.get('fill_qty', 0)), 4) }}
+            {%- elif r.event_type == 'position_closed' and p.get('pnl') is not none -%}
+              PnL: {{ fmt(p.pnl, 2) }}
+            {%- elif r.event_type == 'order_placed' and p.get('side') -%}
+              {{ p.side }} {{ p.get('order_type', '') }}
+            {%- else -%}
+              {{ r.payload_json[:60] }}{{ '...' if r.payload_json|length > 60 else '' }}
+            {%- endif -%}
+          </td>
+        </tr>
+        <tr id="evt-detail-{{ r.id }}" style="display:none;">
+          <td colspan="6" style="padding:8px 12px;background:var(--panel);">
+            <pre style="margin:0;font-size:.62rem;color:var(--sub);white-space:pre-wrap;word-break:break-all;">{{ r.payload_json }}</pre>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {# Simple pagination — reuse updatePerPage from history.html #}
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;flex-wrap:wrap;gap:6px;">
+    <span style="font-size:.65rem;color:var(--sub);">
+      Showing {{ ((page-1)*per_page)+1 }}–{{ [page*per_page, total]|min }} of {{ total }}
+    </span>
+    <div style="display:flex;align-items:center;gap:3px;">
+      <select class="hist-select" style="height:24px;font-size:.65rem;"
+              onchange="updatePerPage('{{ ep }}','{{ tid }}',this.value,'{{ qs }}')">
+        <option value="20" {{ "selected" if per_page == 20 }}>20 / page</option>
+        <option value="50" {{ "selected" if per_page == 50 }}>50 / page</option>
+      </select>
+      {% if page > 1 %}
+      <button class="btn btn-secondary btn-sm"
+              hx-get="{{ ep }}?page={{ page - 1 }}&{{ qs }}"
+              hx-target="#{{ tid }}" hx-swap="innerHTML">«</button>
+      {% endif %}
+      {% if page < total_pages %}
+      <button class="btn btn-secondary btn-sm"
+              hx-get="{{ ep }}?page={{ page + 1 }}&{{ qs }}"
+              hx-target="#{{ tid }}" hx-swap="innerHTML">»</button>
+      {% endif %}
+    </div>
+  </div>
+  {% else %}
+  <div style="color:var(--muted);padding:20px 0;text-align:center;font-size:.78rem;">No trade events found for this period.</div>
+  {% endif %}
+</div>

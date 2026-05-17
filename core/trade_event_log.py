@@ -121,9 +121,10 @@ def query_trade_events(
     since: Optional[str] = None,
     until: Optional[str] = None,
     limit: int = 100,
+    offset: int = 0,
     data_dir: Optional[str] = None,
-) -> list[dict]:
-    """Query trade_events rows. Newest first. Filters by calc_id, type, time."""
+) -> tuple[list[dict], int]:
+    """Query trade_events rows. Newest first. Returns (rows, total_count)."""
     db_path = _resolve_db_path(account_id, data_dir)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -143,12 +144,18 @@ def query_trade_events(
             clauses.append("timestamp <= ?")
             params.append(until)
         where = " AND ".join(clauses)
-        params.append(limit)
+
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM trade_events WHERE {where}", params,
+        ).fetchone()[0]
+
         rows = conn.execute(
             f"SELECT * FROM trade_events WHERE {where} "
-            f"ORDER BY timestamp DESC LIMIT ?",
-            params,
+            f"ORDER BY timestamp DESC LIMIT ? OFFSET ?",
+            params + [limit, offset],
         ).fetchall()
-        return [dict(r) for r in rows]
+        return [dict(r) for r in rows], total
+    except sqlite3.OperationalError:
+        return [], 0  # table may not exist yet
     finally:
         conn.close()
