@@ -9,6 +9,7 @@ Run: pytest tests/test_risk_engine.py -v
 """
 from __future__ import annotations
 
+import logging
 import math
 from unittest.mock import patch, MagicMock
 from typing import List
@@ -235,6 +236,65 @@ class TestVWAPFill:
         result = self._run("BTC", "short", 100000, 50000, ob)
         # Fills from bids: 10 BTC @ 50000 = 500k available, only need 100k
         assert result == pytest.approx(50000, rel=1e-6)
+
+    def test_logs_warning_when_skipping_zero_price(self, caplog):
+        """LOW-022: zero-priced level emits a warning, not silent skip.
+        Result is still derived from the remaining valid level (finite, not inf)."""
+        caplog.set_level(logging.WARNING, logger="core.risk_engine")
+        ob = _make_orderbook(asks=[[0, 10.0], [100, 10.0]], bids=[])
+        result = self._run("X", "long", 500, 100, ob)
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("non-positive price" in r.getMessage() for r in warnings)
+        assert math.isfinite(result)
+        assert result == pytest.approx(100, rel=1e-6)
+
+    def test_logs_warning_when_skipping_negative_price(self, caplog):
+        """LOW-022: negative price also triggers the warning (guard is <= 0)."""
+        caplog.set_level(logging.WARNING, logger="core.risk_engine")
+        ob = _make_orderbook(asks=[[-1.0, 10.0], [100, 10.0]], bids=[])
+        result = self._run("X", "long", 500, 100, ob)
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("non-positive price" in r.getMessage() for r in warnings)
+        assert math.isfinite(result)
+        assert result == pytest.approx(100, rel=1e-6)
+
+    def test_skips_zero_qty_with_warning(self, caplog):
+        """MED-043: zero-qty level is skipped with a warning, not consumed."""
+        caplog.set_level(logging.WARNING, logger="core.risk_engine")
+        ob = _make_orderbook(asks=[[100, 0.0], [105, 10.0]], bids=[])
+        result = self._run("X", "long", 500, 100, ob)
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("non-positive qty" in r.getMessage() for r in warnings)
+        # Zero-qty level contributes nothing; fill comes entirely from second level @ 105.
+        assert result == pytest.approx(105, rel=1e-6)
+
+    def test_skips_negative_qty_with_warning(self, caplog):
+        """MED-043: negative qty is the actual correctness-corrupting case.
+        Under the unguarded code, total_qty would accumulate negative values and
+        remaining_usdt would grow, producing garbage est_fill_price."""
+        caplog.set_level(logging.WARNING, logger="core.risk_engine")
+        # Negative-qty bad level first; valid level second. Budget exactly fills the valid level.
+        ob = _make_orderbook(asks=[[50, -10.0], [100, 5.0]], bids=[])
+        result = self._run("X", "long", 500, 100, ob)
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("non-positive qty" in r.getMessage() for r in warnings)
+        # Result must be positive, finite, and equal to the only valid level's price.
+        assert math.isfinite(result)
+        assert result > 0
+        assert result == pytest.approx(100, rel=1e-6)
+
+    def test_all_invalid_levels_returns_safe_default(self, caplog):
+        """LOW-022 + MED-043: all-invalid book falls through to existing total_qty=0 guard.
+        Existing guard at risk_engine.py:128 returns entry_price."""
+        caplog.set_level(logging.WARNING, logger="core.risk_engine")
+        ob = _make_orderbook(
+            asks=[[0, 10.0], [-1.0, 5.0], [100, 0.0], [105, -2.0]],
+            bids=[],
+        )
+        result = self._run("X", "long", 500, 12345, ob)
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert result == 12345  # entry_price safe default
+        assert len(warnings) == 4  # one warning per skipped level
 
 
 # ── calculate_slippage ───────────────────────────────────────────────────────

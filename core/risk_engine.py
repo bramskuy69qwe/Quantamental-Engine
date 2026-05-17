@@ -16,12 +16,15 @@ PRD step-by-step chain:
   12. est_exposure = (total_notional + est_size) / total_equity
 """
 from __future__ import annotations
+import logging
 import time
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import config
 from core.state import app_state
+
+log = logging.getLogger(__name__)
 
 
 # ── ATR ───────────────────────────────────────────────────────────────────────
@@ -115,6 +118,18 @@ def estimate_vwap_fill(symbol: str, side: str, notional_usdt: float,
         price      = float(price)
         qty        = float(qty)
         if price <= 0:
+            log.warning(
+                "estimate_vwap_fill: skipping invalid orderbook level "
+                "(price=%s, qty=%s) — non-positive price",
+                price, qty,
+            )
+            continue
+        if qty <= 0:
+            log.warning(
+                "estimate_vwap_fill: skipping invalid orderbook level "
+                "(price=%s, qty=%s) — non-positive qty",
+                price, qty,
+            )
             continue
         avail_usdt = price * qty
         fill_usdt  = min(remaining_usdt, avail_usdt)
