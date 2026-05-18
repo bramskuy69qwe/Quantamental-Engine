@@ -83,6 +83,38 @@ failure is silent at file-level greps but loud the moment the template
 is loaded. Same discipline applies to template-touching primitives
 (`templates/primitives/`).
 
+### Audit-time environment verification
+
+Browser-driven audit sessions (Claude in Chrome, Cowork, or similar)
+MUST verify engine reachability before filing findings. A 503 /
+connection-refused cluster across multiple endpoints is almost always
+an audit-time artifact — engine stopped, restarted mid-session, or
+unreachable from the browser-driver — NOT an engine bug.
+
+Pre-flight check before opening sub-tab navigation:
+1. Hit `/` (or any cheap page-load endpoint) and confirm a 200 + valid
+   HTML response.
+2. Confirm at least one fragment endpoint resolves with 200 (e.g.,
+   `/fragments/ws_status` or whichever fragment the audit prompt
+   exercises first).
+
+If endpoints start 503ing mid-session: HALT and surface the
+observation to the operator before filing any 503-based findings.
+"Engine appears unreachable — please confirm engine is running"
+is the right next action.
+
+**Background:** Task 127 reconciled audit-02 Session A and filed
+FE-CRIT-002 (Analytics 7/8 sub-tabs return 503) as a real bug. Task 128
+discovered post-operator-verification that the engine was stopped
+during Session A. FE-CRIT-002 was retracted as VERIFIED-FALSE and
+FE-HIGH-007 (the downstream htmx-error-handling finding driven by the
+503 cluster) was reframed to MED-tier (FE-MED-019). Cost: one full
+reconciliation task spent on a false-positive cluster, plus a brief
+push-to-origin freeze on v2.4.3 while the CRIT was investigated.
+This discipline addition is the guardrail against recurrence —
+audit-time-artifact is a new false-positive class alongside
+race-framing FPs (8/15 ≈ 53%) and audit-impact-imprecision.
+
 ### Audit-doc source documents
 
 Audit / inventory tasks that reference external source documents
