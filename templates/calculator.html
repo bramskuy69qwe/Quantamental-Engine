@@ -181,6 +181,27 @@
             <input type="text" name="model_desc" tabindex="8" placeholder="optional notes" />
           </div>
         </div>
+        {# HIGH-027 (Task 104b) — per-calc link window override. Preset
+           dropdown matches the account settings shape. Empty / "default"
+           submits as the empty string, parsed server-side as "no override
+           — use account default". Custom seconds available via the form's
+           inline integer input. #}
+        <div style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          <label class="lbl" style="margin-bottom:0;">Link window override:</label>
+          <select name="link_window_seconds_override" tabindex="11"
+                  style="height:24px;font-size:.65rem;">
+            <option value="">(use account default)</option>
+            <option value="1800">30 min</option>
+            <option value="3600">1 h</option>
+            <option value="14400">4 h</option>
+            <option value="21600">6 h</option>
+            <option value="43200">12 h</option>
+            <option value="86400">24 h</option>
+          </select>
+          <span style="font-size:.6rem;color:var(--muted);">
+            (max 86400 s = 24 h; blank → account default)
+          </span>
+        </div>
         <div style="display:flex;gap:6px;align-items:center;margin-top:8px;">
           <button type="submit" class="btn btn-primary btn-md" tabindex="9">Calculate</button>
           <button type="button" onclick="clearCalculator()" class="btn btn-secondary btn-md" tabindex="10">Clear</button>

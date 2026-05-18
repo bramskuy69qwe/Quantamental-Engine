@@ -324,6 +324,9 @@ async def update_account_detail(
     # Preferences (account_settings table)
     timezone: Optional[str] = Form(None),
     analytics_default_period: Optional[str] = Form(None),
+    # HIGH-027 (Task 104b): per-account default link window. Bounded
+    # 1..MAX_LINK_WINDOW_SECONDS (24h).
+    link_window_seconds: Optional[int] = Form(None),
 ):
     """Save credentials + params + fees for an account in one request."""
     # Update credentials
@@ -334,6 +337,25 @@ async def update_account_detail(
         cred_kwargs["api_secret"] = api_secret
     if broker_account_id is not None:
         cred_kwargs["broker_account_id"] = broker_account_id
+    # HIGH-027 (Task 104b): validate + thread the link-window setting.
+    # Reject negative or excessive values with a 400-style error fragment
+    # rather than silently clamping — operator should see when input was bad.
+    if link_window_seconds is not None:
+        from core.exec_link import MAX_LINK_WINDOW_SECONDS
+        if link_window_seconds < 1:
+            return HTMLResponse(
+                '<span style="color:var(--red);font-size:.65rem;">'
+                'Link window must be at least 1 second.</span>',
+                status_code=400,
+            )
+        if link_window_seconds > MAX_LINK_WINDOW_SECONDS:
+            return HTMLResponse(
+                f'<span style="color:var(--red);font-size:.65rem;">'
+                f'Link window must be ≤ {MAX_LINK_WINDOW_SECONDS} s '
+                f'(24 h); got {link_window_seconds}.</span>',
+                status_code=400,
+            )
+        cred_kwargs["link_window_seconds"] = link_window_seconds
     if cred_kwargs:
         await account_registry.update_account(account_id, **cred_kwargs)
 

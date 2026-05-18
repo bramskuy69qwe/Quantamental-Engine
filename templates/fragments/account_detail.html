@@ -209,6 +209,48 @@
     </div>
     {% endif %}
 
+    {# HIGH-027 (Task 104b) — Calc Link Window editor. Bounded 1..86400 s
+       at the server. Preset dropdown covers the common operator workflows
+       (30m scalp / 6h swing / 24h discretionary); seconds field allows
+       custom values. The current value is reflected as the selected
+       preset OR populates the custom seconds field below. #}
+    {% set lw_current = acct.get('link_window_seconds', 21600) %}
+    {% set lw_presets = [
+      (1800,  '30 min'),
+      (3600,  '1 h'),
+      (14400, '4 h'),
+      (21600, '6 h (default)'),
+      (43200, '12 h'),
+      (86400, '24 h (max)'),
+    ] %}
+    {% set lw_is_preset = lw_current in [p[0] for p in lw_presets] %}
+    <div style="margin-bottom:14px;">
+      <span class="sec-lbl">Calc Link Window</span>
+      <div style="font-size:.6rem;color:var(--muted);margin-bottom:6px;">
+        Fills are linked to a recent calculator entry only if they arrive within
+        this window. Per-calc override available on the calculator. Confirmed
+        links bypass the check.
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;">
+        <div>
+          <label class="lbl">Preset</label>
+          <select name="link_window_seconds" style="width:100%;height:30px;font-size:.7rem;">
+            {% for val, label in lw_presets %}
+            <option value="{{ val }}" {% if lw_is_preset and lw_current == val %}selected{% endif %}>
+              {{ label }}
+            </option>
+            {% endfor %}
+            {% if not lw_is_preset %}
+            <option value="{{ lw_current }}" selected>Custom ({{ lw_current }} s)</option>
+            {% endif %}
+          </select>
+          <div style="font-size:.54rem;color:var(--muted);margin-top:1px;">
+            current: {{ lw_current }} s
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- ── Actions ───────────────────────────────────────────────────── -->
     <div style="display:flex;gap:8px;align-items:center;padding-top:8px;border-top:1px solid var(--border);">
       <button type="submit" class="btn btn-primary btn-sm">Save</button>

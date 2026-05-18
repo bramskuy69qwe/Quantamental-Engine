@@ -17,6 +17,7 @@ See: docs/audits/2026-05-17-v2.4-backend-audit.md [CRIT-004]
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -49,6 +50,70 @@ def price_near(a: Optional[float], b: Optional[float]) -> bool:
 
 
 DEFAULT_LINK_WINDOW_SECONDS = 21600  # 6 h — matches accounts.link_window_seconds default
+
+EXPIRING_SOON_THRESHOLD_S = 300  # 5 min — UI flips to yellow/warning at this point
+
+# Upper bound for the account-default + per-calc override settings. Anything
+# beyond 24 h does not have a realistic workflow case for calc-to-fill linkage
+# (a discretionary trader planning a trade more than a day ahead is uncommon
+# enough that we'd rather force a recalculation than allow stale matches).
+MAX_LINK_WINDOW_SECONDS = 86400  # 24 h
+
+
+def compute_link_window_status(
+    pretrade_ts_ms: Optional[int],
+    account_link_window_seconds: int,
+    *,
+    override_seconds: Optional[int] = None,
+    exec_link_confirmed: bool = False,
+    now_ms: Optional[int] = None,
+) -> dict:
+    """HIGH-027 (Task 104b): compute the link-window UI state for a pretrade.
+
+    Returns a dict shape consumed by templates/fragments/link_window_countdown.html:
+      - status: "LINKABLE" | "EXPIRING_SOON" | "EXPIRED" | "LINKED_CONFIRMED"
+      - effective_window_s: int — override if set, else account default
+      - remaining_s: int — seconds until expiry (0 if expired or confirmed)
+      - expires_at_ms: int | None — absolute expiry epoch ms (None if no ts)
+
+    LINKED_CONFIRMED takes precedence over EXPIRED. Operator confirmation is
+    authoritative (per Task 104a backend logic): a confirmed-past-expiry
+    link must NOT render as "Expired" — that would suggest the link is
+    broken when it is in fact load-bearing for analytics.
+    """
+    effective = (
+        override_seconds if override_seconds is not None else account_link_window_seconds
+    )
+    if exec_link_confirmed:
+        return {
+            "status": "LINKED_CONFIRMED",
+            "effective_window_s": effective,
+            "remaining_s": 0,
+            "expires_at_ms": None,
+        }
+    if pretrade_ts_ms is None or effective <= 0:
+        return {
+            "status": "EXPIRED",
+            "effective_window_s": effective,
+            "remaining_s": 0,
+            "expires_at_ms": None,
+        }
+    if now_ms is None:
+        now_ms = int(time.time() * 1000)
+    expires_at_ms = pretrade_ts_ms + effective * 1000
+    remaining_s = max(0, int((expires_at_ms - now_ms) / 1000))
+    if remaining_s <= 0:
+        status = "EXPIRED"
+    elif remaining_s <= EXPIRING_SOON_THRESHOLD_S:
+        status = "EXPIRING_SOON"
+    else:
+        status = "LINKABLE"
+    return {
+        "status": status,
+        "effective_window_s": effective,
+        "remaining_s": remaining_s,
+        "expires_at_ms": expires_at_ms,
+    }
 
 
 def compute_exec_match(

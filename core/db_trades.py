@@ -106,13 +106,15 @@ class TradesMixin:
                     tp_price, tp_amount_pct, tp_usdt, sl_price, sl_amount_pct, sl_usdt,
                     model_name, model_desc, risk_usdt, atr_c, atr_category,
                     est_slippage, effective_entry, size, notional,
-                    est_profit, est_loss, est_r, est_exposure, eligible, calc_id
+                    est_profit, est_loss, est_r, est_exposure, eligible, calc_id,
+                    link_window_seconds_override
                 ) VALUES (
                     :account_id, :timestamp, :ticker, :average, :side, :one_percent_depth, :individual_risk,
                     :tp_price, :tp_amount_pct, :tp_usdt, :sl_price, :sl_amount_pct, :sl_usdt,
                     :model_name, :model_desc, :risk_usdt, :atr_c, :atr_category,
                     :est_slippage, :effective_entry, :size, :notional,
-                    :est_profit, :est_loss, :est_r, :est_exposure, :eligible, :calc_id
+                    :est_profit, :est_loss, :est_r, :est_exposure, :eligible, :calc_id,
+                    :link_window_seconds_override
                 )""",
                 {
                     "account_id":        row.get("account_id", 1),
@@ -143,6 +145,10 @@ class TradesMixin:
                     "est_exposure":      row.get("est_exposure", 0),
                     "eligible":          1 if row.get("eligible") else 0,
                     "calc_id":           row.get("calc_id"),
+                    # HIGH-027 (Task 104b): per-calc override of the account
+                    # link window. None → use account default at match time.
+                    "link_window_seconds_override":
+                        row.get("link_window_seconds_override"),
                 },
             )
             await self._conn.commit()

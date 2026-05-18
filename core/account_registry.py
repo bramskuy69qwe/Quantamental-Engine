@@ -79,6 +79,9 @@ class AccountRegistry:
                     "maker_fee":         full.get("maker_fee", 0.0002),
                     "taker_fee":         full.get("taker_fee", 0.0005),
                     "environment":       full.get("environment", "live"),
+                    # HIGH-027 (Task 104b): per-account link window default
+                    # (6 h fallback matches DB default + DEFAULT_LINK_WINDOW_SECONDS).
+                    "link_window_seconds": full.get("link_window_seconds", 21600),
                     "params":            params,
                 }
             if active_id in self._cache:
@@ -183,6 +186,7 @@ class AccountRegistry:
         api_key: Optional[str] = None,
         api_secret: Optional[str] = None,
         broker_account_id: Optional[str] = None,
+        link_window_seconds: Optional[int] = None,
     ) -> None:
         kwargs: Dict[str, Any] = {}
         if name is not None:
@@ -193,6 +197,8 @@ class AccountRegistry:
             kwargs["api_secret_enc"] = encrypt(api_secret)
         if broker_account_id is not None:
             kwargs["broker_account_id"] = broker_account_id
+        if link_window_seconds is not None:
+            kwargs["link_window_seconds"] = link_window_seconds
         if kwargs:
             await db.update_account(account_id, **kwargs)
 
@@ -207,6 +213,8 @@ class AccountRegistry:
                     self._cache[account_id]["api_secret"] = api_secret
                 if broker_account_id is not None:
                     self._cache[account_id]["broker_account_id"] = broker_account_id
+                if link_window_seconds is not None:
+                    self._cache[account_id]["link_window_seconds"] = link_window_seconds
         detail = "credentials_changed" if (api_key or api_secret) else "metadata_updated"
         # HIGH-008 (Task 103): on credential update, clear any auth-failed
         # flag so the scheduler resumes periodic refresh for this account.
@@ -241,6 +249,8 @@ class AccountRegistry:
             "maker_fee":         v.get("maker_fee", 0.0002),
             "taker_fee":         v.get("taker_fee", 0.0005),
             "environment":       v.get("environment", "live"),
+            # HIGH-027 (Task 104b): expose link window setting to UI fragments.
+            "link_window_seconds": v.get("link_window_seconds", 21600),
         }
 
     async def list_accounts(self) -> List[Dict[str, Any]]:

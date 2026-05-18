@@ -1,0 +1,63 @@
+{# HIGH-027 (Task 104b) — calc-to-fill link-window countdown.
+   Polled every 5 s from the calc_result template.
+   Four states: LINKABLE / EXPIRING_SOON / EXPIRED / LINKED_CONFIRMED.
+   Display format: hybrid — precise (Hh Mm Ss) when < 1h, coarse ("~Nh") otherwise.
+#}
+{% set s = lw.status %}
+{% set rem = lw.remaining_s %}
+{% set h = (rem // 3600) %}
+{% set m = ((rem % 3600) // 60) %}
+{% set sec = (rem % 60) %}
+
+{% if s == "LINKED_CONFIRMED" %}
+  <div id="link-window-countdown" class="card card-p8"
+       style="margin-bottom:6px;border-left:3px solid var(--green);">
+    <div style="display:flex;align-items:center;gap:6px;font-size:.7rem;">
+      <span style="color:var(--green);font-weight:700;">&#10003; LINKED (CONFIRMED)</span>
+      <span style="color:var(--muted);">— operator confirmation bypasses window check</span>
+    </div>
+  </div>
+{% elif s == "EXPIRED" %}
+  <div id="link-window-countdown" class="card card-p8"
+       style="margin-bottom:6px;border-left:3px solid var(--red);">
+    <div style="display:flex;align-items:center;gap:6px;font-size:.7rem;">
+      <span style="color:var(--red);font-weight:700;">&#10007; PLAN EXPIRED</span>
+      <span style="color:var(--muted);">— recalculate to link new fills</span>
+    </div>
+  </div>
+{% elif s == "EXPIRING_SOON" %}
+  <div id="link-window-countdown" class="card card-p8"
+       hx-get="/calculator/link-window-status/{{ calc_id }}"
+       hx-trigger="every 5s"
+       hx-swap="outerHTML"
+       style="margin-bottom:6px;border-left:3px solid var(--amber);">
+    <div style="display:flex;align-items:center;gap:6px;font-size:.7rem;">
+      <span style="color:var(--amber);font-weight:700;">&#9888; EXPIRING SOON</span>
+      <span style="font-family:var(--font-mono);color:var(--amber);">
+        {{ m }}m {{ sec }}s left
+      </span>
+      <span style="color:var(--muted);">(window: {{ lw.effective_window_s }} s)</span>
+    </div>
+  </div>
+{% else %}
+  {# LINKABLE — hybrid display: precise when < 1h, coarse otherwise #}
+  <div id="link-window-countdown" class="card card-p8"
+       hx-get="/calculator/link-window-status/{{ calc_id }}"
+       hx-trigger="every 5s"
+       hx-swap="outerHTML"
+       style="margin-bottom:6px;border-left:3px solid var(--green);">
+    <div style="display:flex;align-items:center;gap:6px;font-size:.7rem;">
+      <span style="color:var(--green);font-weight:700;">Linkable for:</span>
+      <span style="font-family:var(--font-mono);color:var(--text);">
+        {% if h >= 1 %}
+          ~{{ h }}h {{ m }}m
+        {% else %}
+          {{ m }}m {{ sec }}s
+        {% endif %}
+      </span>
+      <span style="color:var(--muted);font-size:.6rem;">
+        (window: {{ (lw.effective_window_s // 60) }} min)
+      </span>
+    </div>
+  </div>
+{% endif %}

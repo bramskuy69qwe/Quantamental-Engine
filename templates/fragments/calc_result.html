@@ -12,6 +12,16 @@
   </div>
 </div>
 
+{# HIGH-027 (Task 104b) — link-window countdown. Initial render only fires
+   after a calc has been persisted (eligible + has calc_id). Subsequent
+   updates come via the fragment's own hx-trigger="every 5s" polling. #}
+{% if c.calc_id and c.eligible %}
+<div id="link-window-countdown"
+     hx-get="/calculator/link-window-status/{{ c.calc_id }}"
+     hx-trigger="load, every 5s"
+     hx-swap="outerHTML"></div>
+{% endif %}
+
 <!-- ── Hard stops ─────────────────────────────────────────────────────────── -->
 {% if c.weekly_pnl_state == 'limit' %}
 <div class="alert alert-error" style="margin-bottom:6px;">⛔ Weekly loss LIMIT — trading halted.</div>
