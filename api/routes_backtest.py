@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
-from typing import Any, Dict
+from datetime import datetime, timedelta
+from typing import Any, Dict, Optional, Tuple
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -23,6 +23,43 @@ router = APIRouter()
 _backtest_tasks: Dict[int, asyncio.Task] = {}
 _fetch_jobs: Dict[int, Dict[str, Any]] = {}
 _fetch_job_counter = 0
+
+# HIGH-022 (Task 97): cap on backtest date range. 1 year of crypto-futures
+# OHLCV at 1-minute granularity = ~525k bars per symbol; multi-year crafted
+# requests can exhaust memory before BacktestRunner aborts. Cap matches
+# typical strategy-research horizons; can be raised via env if needed.
+MAX_BACKTEST_DURATION_DAYS = 365
+MIN_BACKTEST_DURATION_DAYS = 1
+
+
+def _validate_date_range(date_from: str, date_to: str) -> Optional[str]:
+    """HIGH-022 validation helper. Returns None if valid, else an error string.
+
+    Accepts ISO-8601 date strings (`YYYY-MM-DD`). Empty strings short-circuit
+    to None (caller decides whether empty is acceptable — typical backtest
+    submission requires both fields, but qt-import treats them as metadata).
+    """
+    if not date_from or not date_to:
+        return None
+    try:
+        d_from = datetime.fromisoformat(date_from).date()
+        d_to = datetime.fromisoformat(date_to).date()
+    except (TypeError, ValueError):
+        return f"invalid date format (expected YYYY-MM-DD): from={date_from!r}, to={date_to!r}"
+    if d_to < d_from:
+        return f"date_to ({date_to}) must be >= date_from ({date_from})"
+    span = d_to - d_from
+    if span < timedelta(days=MIN_BACKTEST_DURATION_DAYS):
+        return (
+            f"date range must span at least {MIN_BACKTEST_DURATION_DAYS} day "
+            f"(got {span.days})"
+        )
+    if span > timedelta(days=MAX_BACKTEST_DURATION_DAYS):
+        return (
+            f"date range exceeds maximum {MAX_BACKTEST_DURATION_DAYS} days "
+            f"(got {span.days})"
+        )
+    return None
 
 
 @router.get("/backtest", response_class=HTMLResponse)
@@ -121,6 +158,10 @@ async def api_backtest_run(request: Request):
     name       = cfg.get("name", f"Backtest {now_in_account_tz(app_state.active_account_id).strftime('%Y-%m-%d %H:%M')}")
     date_from  = cfg.get("date_from", "")
     date_to    = cfg.get("date_to", "")
+    # HIGH-022: bound the date range before scheduling the runner.
+    err = _validate_date_range(date_from, date_to)
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
     session_id = await db.create_backtest_session(
         name=name, session_type="macro", date_from=date_from, date_to=date_to, config=cfg,
     )
@@ -182,6 +223,13 @@ async def api_qt_import(request: Request):
     date_to      = body.get("date_to", "")
     raw_trades   = body.get("trades", [])
     qt_summary   = body.get("summary", {})
+
+    # HIGH-022: bound the date range. Qt-import doesn't actually run a backtest
+    # but the metadata is stored alongside the trades; reject malformed ranges
+    # at the boundary rather than letting them propagate into analytics.
+    err = _validate_date_range(date_from, date_to)
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
 
     session_id = await db.create_backtest_session(
         name=session_name, session_type="microstructure",

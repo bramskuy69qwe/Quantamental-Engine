@@ -61,6 +61,20 @@ async def update_params(
         "max_dd_limit_pct":          max_dd_limit_pct,
     }
     errors = validate_params(new_params)
+    # MED-036 (Task 97): runtime-state check. If max_position_count would drop
+    # below the count of currently-open positions, the risk engine will throw
+    # `at_max_positions` on every cycle until positions close. Reject the
+    # update unless the operator explicitly acknowledges by passing
+    # force_during_active=true (not implemented as a UI field yet — exposed
+    # for programmatic override).
+    open_count = len(app_state.positions)
+    if max_position_count < open_count:
+        errors.append(
+            f"max_position_count ({max_position_count}) is below current open "
+            f"position count ({open_count}); close positions first or raise the "
+            f"limit. Reducing the cap below the active count would cause the "
+            f"risk engine to mark all positions as over-limit until they close."
+        )
     if errors:
         return HTMLResponse(
             f'<div class="alert alert-error">Validation error: {"; ".join(errors)}</div>'

@@ -50,7 +50,13 @@ PARAM_BOUNDS: Dict[str, tuple] = {
 
 
 def validate_params(params: Dict[str, Any]) -> List[str]:
-    """Validate param values against PARAM_BOUNDS. Returns list of error messages."""
+    """Validate param values against PARAM_BOUNDS + cross-parameter relationships.
+
+    Returns list of error messages (empty list = valid).
+
+    HIGH-023 (Task 97): added cross-parameter checks for warning<limit pairs.
+    Per-param bound validation is unchanged.
+    """
     errors = []
     for key, (lo, hi) in PARAM_BOUNDS.items():
         if key not in params:
@@ -63,6 +69,27 @@ def validate_params(params: Dict[str, Any]) -> List[str]:
             continue
         if val < lo or val > hi:
             errors.append(f"{key}: must be between {lo} and {hi} (got {val})")
+
+    # HIGH-023 cross-parameter relationships: warning thresholds must be strictly
+    # below their corresponding limit thresholds. Inverted thresholds cause the
+    # DD / weekly-loss state machines to fire warnings AFTER (or instead of)
+    # limits, producing surprising operator behavior.
+    _CROSS_PARAM_PAIRS = [
+        ("max_dd_warning_pct", "max_dd_limit_pct"),
+        ("weekly_loss_warning_pct", "weekly_loss_limit_pct"),
+    ]
+    for warn_key, limit_key in _CROSS_PARAM_PAIRS:
+        if warn_key in params and limit_key in params:
+            try:
+                w = float(params[warn_key])
+                l = float(params[limit_key])
+            except (TypeError, ValueError):
+                continue  # per-param error already recorded above
+            if w >= l:
+                errors.append(
+                    f"{warn_key} ({w}) must be strictly less than {limit_key} ({l})"
+                )
+
     return errors
 
 
