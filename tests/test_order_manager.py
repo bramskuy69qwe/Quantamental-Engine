@@ -996,3 +996,143 @@ class TestClosePositionOverfillCap:
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert not any("overfill" in r.getMessage().lower() for r in warnings), \
             "No overfill warning expected on exact-fill boundary"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TEST 10: HIGH-026 silent-swallow remediation (Task 95)
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# _build_close_row_for_fill wraps its body in try/except. Pre-Task-95 the
+# except logged via log.exception but emitted no structured engine_event.
+# Both callers are fire-and-forget (ensure_future at line 599, await-no-check
+# at line 782), so re-raising can't surface failures. Task 95 keeps the
+# log.exception and ADDS a log_event("close_row_build_failed", ...) so
+# failures appear in the queryable event log and the UI.
+
+class TestClosePositionSilentSwallow:
+    """HIGH-026 (Task 95): exception inside _build_close_row_for_fill must
+    surface as a structured engine event, not just a raw log line."""
+
+    def _make_fill(self, qty=1.0, price=100.0, fee=0.1, is_close=False,
+                   ts=1000, exchange_order_id="OID-1", **extra):
+        return {
+            "quantity": qty, "price": price, "fee": fee, "is_close": is_close,
+            "timestamp_ms": ts, "exchange_order_id": exchange_order_id,
+            "terminal_position_id": "POS-1", "exchange_position_id": "EXPOS-1",
+            "symbol": "BTCUSDT", "ticker": "BTCUSDT", "direction": "LONG",
+            "realized_pnl": 0.0, "source": "test",
+            "exchange_fill_id": "FILL-1",
+            **extra,
+        }
+
+    def _make_om(self, db):
+        from core.order_manager import OrderManager
+        om = OrderManager(db)
+        om._determine_exit_reason = AsyncMock(return_value="manual")
+        om._compute_shortfall = AsyncMock(return_value={"model_name": ""})
+        return om
+
+    @pytest.mark.asyncio
+    async def test_silent_swallow_emits_close_row_build_failed_event(self, caplog):
+        """HIGH-026 load-bearing pin: an exception inside _build_close_row_for_fill
+        must emit a structured `close_row_build_failed` engine event with
+        identifying context (symbol, direction, position_id, fill_id, error_type)."""
+        db = _mock_db()
+        # Force an exception inside the try block by making get_position_fills raise.
+        db.get_position_fills = AsyncMock(side_effect=RuntimeError("forced db failure"))
+        db.insert_closed_position = AsyncMock()
+        om = self._make_om(db)
+
+        trigger = self._make_fill(is_close=True)
+        caplog.set_level(logging.ERROR, logger="order_manager")
+        emitted_events = []
+
+        # Patch log_event at the import site inside the except block.
+        from unittest.mock import patch
+        def _capture_event(account_id, event_type, payload, source=None, **kw):
+            emitted_events.append({
+                "account_id": account_id,
+                "event_type": event_type,
+                "payload": payload,
+                "source": source,
+            })
+            return 1  # mimic real log_event returning row id
+
+        with patch("core.event_log.log_event", new=_capture_event), \
+             patch("core.order_manager.app_state") as st, \
+             patch("core.order_manager.event_bus") as bus:
+            st.positions = []
+            bus.publish = AsyncMock()
+            await om._build_close_row_for_fill(7, trigger)
+
+        # log.exception still fires (pre-existing behavior preserved)
+        errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+        assert any(
+            "_build_close_row_for_fill failed" in r.getMessage() for r in errors
+        ), "Pre-existing log.exception was removed"
+
+        # New: structured event emitted with context
+        failure_events = [
+            e for e in emitted_events if e["event_type"] == "close_row_build_failed"
+        ]
+        assert len(failure_events) == 1, (
+            f"Expected exactly one close_row_build_failed event; got {len(failure_events)}. "
+            f"All events: {emitted_events}"
+        )
+        ev = failure_events[0]
+        assert ev["account_id"] == 7
+        assert ev["source"] == "order_manager"
+        p = ev["payload"]
+        assert p["symbol"] == "BTCUSDT"
+        assert p["direction"] == "LONG"
+        assert p["terminal_position_id"] == "POS-1"
+        assert p["exchange_fill_id"] == "FILL-1"
+        assert p["exchange_order_id"] == "OID-1"
+        assert p["error_type"] == "RuntimeError"
+        assert "forced db failure" in p["error_msg"]
+
+    @pytest.mark.asyncio
+    async def test_normal_path_no_failure_event(self, caplog):
+        """HIGH-026 anti-over-correction: normal close-row build path must NOT
+        emit a close_row_build_failed event."""
+        db = _mock_db()
+        db.get_position_fills = AsyncMock(return_value=[])
+        db.get_fills_by_order = AsyncMock(return_value=[
+            self._make_fill(qty=1.0, price=110.0, fee=0.5, is_close=True, ts=1000),
+        ])
+        db.insert_closed_position = AsyncMock()
+        om = self._make_om(db)
+
+        trigger = self._make_fill(qty=1.0, is_close=True)
+        caplog.set_level(logging.ERROR, logger="order_manager")
+        emitted_events = []
+
+        from unittest.mock import patch
+        def _capture_event(account_id, event_type, payload, source=None, **kw):
+            emitted_events.append(event_type)
+            return 1
+
+        with patch("core.event_log.log_event", new=_capture_event), \
+             patch("core.order_manager.app_state") as st, \
+             patch("core.order_manager.event_bus") as bus:
+            st.positions = []
+            bus.publish = AsyncMock()
+            await om._build_close_row_for_fill(1, trigger)
+
+        errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+        assert not any(
+            "_build_close_row_for_fill failed" in r.getMessage() for r in errors
+        ), "Normal path should not log close-row failure"
+        assert "close_row_build_failed" not in emitted_events, (
+            f"Normal path emitted unexpected failure event. Events: {emitted_events}"
+        )
+
+    def test_close_row_build_failed_event_type_registered(self):
+        """HIGH-026 schema pin: `close_row_build_failed` is in the EventType
+        whitelist so log_event accepts it. If a future refactor removes the
+        whitelist entry, the silent-swallow path's event emission becomes a
+        silent ValueError (caught by the inner try/except) and we're back to
+        invisible failures."""
+        from core.event_log import _VALID_EVENT_TYPES
+        assert "close_row_build_failed" in _VALID_EVENT_TYPES
+

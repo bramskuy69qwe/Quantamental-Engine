@@ -747,11 +747,36 @@ class OrderManager:
                 "Closed position row: %s %s qty=%.4f pnl=%.2f exit=%s",
                 symbol, direction, total_close_qty, realized_pnl, exit_reason,
             )
-        except Exception:
+        except Exception as e:
             log.exception(
                 "_build_close_row_for_fill failed for %s",
                 fill.get("symbol", "?"),
             )
+            # HIGH-026 (Task 95): surface the failure as a structured engine event
+            # so it appears in the event-log UI and survives log rotation. Both
+            # callers (line 599 ensure_future, line 782 await-without-check) are
+            # fire-and-forget, so re-raising buys nothing — the event log is the
+            # only way operators learn about silently-failed close-row builds.
+            # Inner try/except keeps event emission failure from masking the
+            # original exception that already logged above.
+            try:
+                from core.event_log import log_event
+                log_event(
+                    account_id,
+                    "close_row_build_failed",
+                    {
+                        "symbol": fill.get("symbol", ""),
+                        "direction": fill.get("direction", ""),
+                        "terminal_position_id": fill.get("terminal_position_id", ""),
+                        "exchange_fill_id": fill.get("exchange_fill_id", ""),
+                        "exchange_order_id": fill.get("exchange_order_id", ""),
+                        "error_type": type(e).__name__,
+                        "error_msg": str(e)[:500],
+                    },
+                    source="order_manager",
+                )
+            except Exception:
+                log.debug("close_row_build_failed event emission failed", exc_info=True)
 
     async def build_final_close_row(self, prev: PositionInfo) -> None:
         """Safety net: when position fully disappears, check for unrecorded
