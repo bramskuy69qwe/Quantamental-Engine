@@ -61,7 +61,17 @@ class BybitLinearAdapter(BaseExchangeAdapter):
                 fees = self._ex.privateGetV5AccountFeeRate(
                     params={"category": "linear", "symbol": "BTCUSDT"}
                 )
-            except Exception:
+            except Exception as e:
+                # HIGH-015 (Task 99): defaulting fees={} drops us to VIP0 defaults
+                # below — caller can no longer distinguish "we asked and got
+                # default" from "fetch failed and we guessed". Keep the swallow
+                # (fee_source="default" handles the empty case) but log so the
+                # operator can see when live fees actually aren't being read.
+                log.warning(
+                    "bybit fee-rate fetch failed for BTCUSDT (linear); "
+                    "falling back to VIP0 defaults (maker=0.0002, taker=0.00055): %s: %s",
+                    type(e).__name__, e,
+                )
                 fees = {}
             return balance, fees
 

@@ -8,8 +8,9 @@ a priority tier that determines threshold behavior:
   normal     — periodic operations (startup, snapshots): standard thresholds
   background — batch operations (backfill, history): strictest thresholds
 
-v2.4 scope: client-side estimation only. Server-side header
-reconciliation (X-MBX-USED-WEIGHT-1M) deferred to v2.5.
+v2.4 scope: client-side estimation + server-side reconciliation for
+Binance (X-MBX-USED-WEIGHT-1M, wired in Task 99 / HIGH-014). Bybit
+header reconciliation (X-Bapi-Limit-Status) still pending.
 """
 from __future__ import annotations
 

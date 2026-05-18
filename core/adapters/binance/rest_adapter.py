@@ -53,6 +53,39 @@ class BinanceUSDMAdapter(BaseExchangeAdapter):
     def ohlcv_limit(self) -> int:
         return OHLCV_LIMIT
 
+    # ── HIGH-014: server-side weight reconciliation ─────────────────────────
+
+    def _reconcile_from_response(self, endpoint: str, tracker) -> None:
+        """Reconcile tracker from X-MBX-USED-WEIGHT-1M response header.
+
+        ccxt stores the last HTTP response headers in
+        ``self._ex.last_response_headers`` (case-insensitive on real ccxt
+        instances; we tolerate both cases defensively). Binance fAPI
+        returns used weight as an integer string. We call tracker.reconcile
+        only when the header is present *and* parses cleanly — otherwise
+        the estimate stands.
+        """
+        headers = getattr(self._ex, "last_response_headers", None)
+        if not headers:
+            return
+        # ccxt lowercases header names; try both for safety
+        raw = (
+            headers.get("X-MBX-USED-WEIGHT-1M")
+            or headers.get("x-mbx-used-weight-1m")
+            or headers.get("X-MBX-USED-WEIGHT")
+            or headers.get("x-mbx-used-weight")
+        )
+        if raw is None:
+            return
+        try:
+            used = int(raw)
+        except (TypeError, ValueError):
+            return
+        # Negative or absurdly large values: ignore (don't poison the budget)
+        if used < 0 or used > tracker.max_weight * 10:
+            return
+        tracker.reconcile(used)
+
     # ── Account ──────────────────────────────────────────────────────────────
 
     async def fetch_account(self) -> NormalizedAccount:
@@ -63,7 +96,16 @@ class BinanceUSDMAdapter(BaseExchangeAdapter):
             # Fetch commission rates for BTCUSDT as representative rate
             try:
                 comm = self._ex.fapiPrivateGetCommissionRate({"symbol": "BTCUSDT"})
-            except Exception:
+            except Exception as e:
+                # HIGH-015 (Task 99): defaulting comm={} drives maker_fee/taker_fee
+                # to 0, which silently underestimates expected costs in slippage /
+                # PnL calc. Keep the swallow (callers depend on a default return)
+                # but surface the failure so the operator sees stale-fee risk.
+                log.warning(
+                    "binance commission-rate fetch failed for BTCUSDT; "
+                    "defaulting to maker=taker=0 (fees will read low): %s: %s",
+                    type(e).__name__, e,
+                )
                 comm = {}
             return account, comm
 
@@ -381,7 +423,17 @@ class BinanceUSDMAdapter(BaseExchangeAdapter):
                     await _aio.sleep(0.25)
             except RateLimitError:
                 raise  # Let caller handle
-            except Exception:
+            except Exception as e:
+                # LOW-019 (Task 99): a None,None return from price extremes is
+                # consumed silently by Tier 2/3 fallbacks to OHLCV. The original
+                # cause (malformed payload, transient network, schema drift)
+                # was being lost. Log at WARNING because this is a degraded-
+                # accuracy path, not a no-op.
+                log.warning(
+                    "binance _agg_extremes failed for %s [%d-%d]; "
+                    "returning None,None and falling back to OHLCV: %s: %s",
+                    symbol, start, end, type(e).__name__, e,
+                )
                 return None, None
             return max_p, min_p
 
@@ -506,7 +558,16 @@ class BinanceUSDMAdapter(BaseExchangeAdapter):
 
         try:
             raw_list = await self._run(_fetch)
-        except Exception:
+        except Exception as e:
+            # LOW-019 (Task 99): defaulting all symbols to zero funding silently
+            # makes upstream funding-aware sizing/PnL look "no carry cost" when
+            # the real fetch failed. Keep the zero-default behaviour (callers
+            # depend on the shape) but log so the operator can see the gap.
+            log.warning(
+                "binance premiumIndex fetch failed for %d symbol(s); "
+                "defaulting funding=0/next=0/mark=0 (carry costs will read low): %s: %s",
+                len(symbols), type(e).__name__, e,
+            )
             return {s: {"funding_rate": 0.0, "next_funding_time": 0, "mark_price": 0.0} for s in symbols}
 
         wanted = set(symbols)

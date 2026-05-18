@@ -64,7 +64,15 @@ class BaseExchangeAdapter:
                     adapter_name=self.exchange_id,
                 )
             except Exception:
-                pass
+                # HIGH-007 (Task 99): tracker is best-effort (None disables
+                # throttling) but a silent init failure means every request
+                # runs un-throttled with no visible cause. Log once per
+                # adapter instance so the operator sees that requests are
+                # bypassing the budget.
+                log.exception(
+                    "weight tracker init failed for %s; running un-throttled",
+                    self.exchange_id,
+                )
         return self._weight_tracker
 
     def set_priority(self, priority: str) -> None:
@@ -107,13 +115,38 @@ class BaseExchangeAdapter:
             except RateLimitError:
                 raise
             except Exception:
-                pass  # tracker failure must not block requests
+                # HIGH-007 (Task 99): tracker failure must not block requests
+                # (preserve the original control flow). But silent swallow hides
+                # tracker bugs and feeds back into HIGH-014 (estimate divergence)
+                # by erasing evidence that the budget accounting is broken. Log
+                # with full traceback so an operator can correlate 429 bursts
+                # against tracker faults.
+                log.exception(
+                    "weight tracker raised on reserve(%s, priority=%s); "
+                    "letting request through unthrottled",
+                    endpoint, effective_priority,
+                )
 
         loop = asyncio.get_event_loop()
         try:
             if args:
-                return await loop.run_in_executor(_REST_POOL, fn, *args)
-            return await loop.run_in_executor(_REST_POOL, fn)
+                result_val = await loop.run_in_executor(_REST_POOL, fn, *args)
+            else:
+                result_val = await loop.run_in_executor(_REST_POOL, fn)
+            # HIGH-014 (Task 99): reconcile tracker with server-side truth from
+            # response headers (X-MBX-USED-WEIGHT-1M on Binance, etc.). The
+            # estimate-only tracker drifts otherwise. Reconciliation is best-
+            # effort — a parse failure must not corrupt the successful result.
+            if tracker is not None:
+                try:
+                    self._reconcile_from_response(endpoint, tracker)
+                except Exception:
+                    log.exception(
+                        "weight tracker reconciliation failed for %s; "
+                        "tracker estimate may drift from server",
+                        endpoint,
+                    )
+            return result_val
         except (ccxt.RateLimitExceeded, ccxt.DDoSProtection) as e:
             # Parse "banned until <epoch_ms>" for precise retry hint
             match = _re.search(r"banned until (\d+)", str(e))
@@ -127,6 +160,17 @@ class BaseExchangeAdapter:
             raise ValidationError(str(e)) from e
         except (ccxt.ExchangeError, ccxt.ExchangeNotAvailable) as e:
             raise ExchangeError(str(e)) from e
+
+    def _reconcile_from_response(self, endpoint: str, tracker) -> None:
+        """Reconcile tracker from exchange response headers (HIGH-014).
+
+        Default is a no-op. Subclasses override to parse exchange-specific
+        usage headers (X-MBX-USED-WEIGHT-1M on Binance, X-Bapi-Limit-Status
+        on Bybit) and call tracker.reconcile(used_weight, reset_time_ms).
+        Called from _run() after each successful executor return. Failures
+        are caught by the caller — overrides may raise freely.
+        """
+        return None
 
     def get_ccxt_instance(self) -> ccxt.Exchange:
         """Return underlying CCXT instance (escape hatch)."""
