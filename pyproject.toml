@@ -1,0 +1,24 @@
+# Project tool config. Runtime dependencies stay in requirements.txt so the
+# existing pip-install workflow keeps working; this file is for tooling
+# configuration only.
+#
+# Task 101.1: pytest-timeout was added to prevent the failure mode seen
+# during Task 101 (test suite hung for ~1 hour; pytest workers piled up
+# until ~32 GB RAM was exhausted; only resolved by killing Python procs
+# manually). A 30-second per-test timeout fails fast with a clear stack
+# trace identifying the hung test, so a regression cannot quietly burn
+# resources again.
+
+[tool.pytest.ini_options]
+# Per-test timeout. Any test exceeding this fails with a TimeoutExpired
+# error naming the hung test. 30 s is generous for the unit + lightweight
+# integration shape of this suite; if a specific test needs more, mark it
+# individually with @pytest.mark.timeout(N) rather than raising the
+# global default.
+timeout = 30
+# "thread" method is safer than the default "signal" on Windows (signal
+# doesn't interrupt blocking syscalls reliably on Win32) and during
+# multi-threaded tests. This project runs on Windows (per setup notes).
+timeout_method = "thread"
+# Default test path so plain `pytest` (no args) targets only the tests dir.
+testpaths = ["tests"]
