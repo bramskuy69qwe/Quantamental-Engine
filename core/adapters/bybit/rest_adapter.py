@@ -156,8 +156,78 @@ class BybitLinearAdapter(BaseExchangeAdapter):
 
         # Bybit V5 unified account structure
         result = info.get("result", {})
-        account_list = result.get("list", [{}])
-        account = account_list[0] if account_list else {}
+        account_list = result.get("list", [])
+
+        # HIGH-030 (Task 117): trust-but-verify the response shape before
+        # extracting equity. Parallel to HIGH-013's Binance fix, adapted
+        # for Bybit's two-layer (account-level + per-coin USDT) fallback
+        # structure. Silent zero-fallback on a malformed response would
+        # propagate phantom equity into apply_account_update_rest,
+        # overwriting a known-good prior balance with 0 — and downstream
+        # risk_engine.py:440 falls through to micro-positions via the
+        # `total_equity > 0 else 1.0 phantom` shape audited at HIGH-013.
+        # Failing loud here lets the caller's exception handler
+        # (schedulers._account_refresh_loop) skip the cycle and preserve
+        # prior state. Two structural checks (list presence, account-
+        # level fields) and one fallback check (per-coin USDT if the
+        # account aggregate is zero) — mirrors Binance's required-field
+        # check while respecting Bybit's documented response shape for
+        # the UNIFIED account type (queried above with type=unified).
+        if not account_list:
+            raise ValueError(
+                "bybit fetch_account: result.list missing or empty from "
+                "wallet-balance response — refusing to apply phantom-zero "
+                "equity. Response structure violated Bybit V5 contract."
+            )
+        account = account_list[0]
+        if not isinstance(account, dict):
+            raise ValueError(
+                "bybit fetch_account: result.list[0] is not a dict "
+                "(got %s) — response shape violation; refusing to apply "
+                "phantom-zero equity." % type(account).__name__
+            )
+        # Account-level required fields (Bybit V5 UNIFIED docs guarantee
+        # presence even when the value is "0"). Either both keys present
+        # OR a USDT coin entry must compensate (some isolated-margin
+        # configurations zero-aggregate at the account level and rely
+        # on per-coin balances).
+        has_account_total = "totalEquity" in account
+        has_account_avail = "totalAvailableBalance" in account
+        coins = account.get("coin", [])
+        usdt_entry = next(
+            (c for c in coins if isinstance(c, dict) and c.get("coin") == "USDT"),
+            None,
+        )
+        has_usdt_equity = usdt_entry is not None and "equity" in usdt_entry
+
+        if not has_account_total and not has_usdt_equity:
+            raise ValueError(
+                "bybit fetch_account: neither result.list[0].totalEquity "
+                "nor result.list[0].coin[USDT].equity present — refusing "
+                "to apply phantom-zero equity. Check Bybit account-type "
+                "configuration (UNIFIED vs CONTRACT)."
+            )
+        if not has_account_avail and not (
+            usdt_entry is not None and "availableToWithdraw" in usdt_entry
+        ):
+            raise ValueError(
+                "bybit fetch_account: neither result.list[0].totalAvailableBalance "
+                "nor result.list[0].coin[USDT].availableToWithdraw present — "
+                "refusing to apply phantom-zero available margin."
+            )
+        # Non-critical fields (margins / unrealized PnL): log when absent
+        # but do not raise — these don't gate sizing the same way equity
+        # and available margin do. Parallel to Binance's non-critical
+        # warning list.
+        for non_critical in (
+            "totalPerpUPL", "totalInitialMargin", "totalMaintenanceMargin",
+        ):
+            if non_critical not in account:
+                log.warning(
+                    "bybit fetch_account: %s missing from response; "
+                    "defaulting to 0 (non-critical field)",
+                    non_critical,
+                )
 
         total_equity = float(account.get("totalEquity", 0) or 0)
         available = float(account.get("totalAvailableBalance", 0) or 0)
@@ -165,14 +235,16 @@ class BybitLinearAdapter(BaseExchangeAdapter):
         initial_margin = float(account.get("totalInitialMargin", 0) or 0)
         maint_margin = float(account.get("totalMaintenanceMargin", 0) or 0)
 
-        # Try USDT coin entry for wallet balance
-        coins = account.get("coin", [])
-        for coin in coins:
-            if coin.get("coin") == "USDT":
-                total_equity = float(coin.get("equity", total_equity) or total_equity)
-                available = float(coin.get("availableToWithdraw", available) or available)
-                unrealized = float(coin.get("unrealisedPnl", unrealized) or unrealized)
-                break
+        # Per-coin USDT override (Bybit V5 quirk: some account configurations
+        # aggregate at zero account-level and require per-coin extraction).
+        if usdt_entry is not None:
+            total_equity = float(usdt_entry.get("equity", total_equity) or total_equity)
+            available = float(
+                usdt_entry.get("availableToWithdraw", available) or available
+            )
+            unrealized = float(
+                usdt_entry.get("unrealisedPnl", unrealized) or unrealized
+            )
 
         # AD-3: parse live fee rates, fall back to VIP0 defaults
         fee_list = fee_resp.get("result", {}).get("list", []) if fee_resp else []
