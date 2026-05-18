@@ -24,6 +24,14 @@ class TradesMixin:
         "individual_realized", "individual_realized_r", "total_funding_fees",
         "total_fees", "slippage_exit", "holding_time",
     }
+    # HIGH-011 (Task 101): whitelist of filter column names accepted by
+    # _paginated_query. SQL placeholders parameterize values, not identifiers,
+    # so any column name reaching f"{col} = ?" would be raw-interpolated if
+    # untrusted. Today's callers (query_pre_trade_log / query_execution_log /
+    # query_trade_history) all pass hardcoded keys from this set — the
+    # whitelist is defense-in-depth against a future caller that might
+    # forward user-controlled filter dict keys.
+    _ALLOWED_FILTER_COLS = frozenset({"ticker", "side", "direction"})
 
     async def _paginated_query(
         self,
@@ -56,6 +64,15 @@ class TradesMixin:
             params.append(like)
         for col, val in filters.items():
             if val:
+                # HIGH-011 (Task 101): reject any column name not in the
+                # class-level whitelist. Raising here is a fail-fast guard
+                # against accidental injection — current callers pass only
+                # safe hardcoded keys, so this never fires in practice.
+                if col not in self._ALLOWED_FILTER_COLS:
+                    raise ValueError(
+                        f"_paginated_query: unsafe filter column {col!r} "
+                        f"(not in _ALLOWED_FILTER_COLS)"
+                    )
                 clauses.append(f"{col} = ?")
                 params.append(val)
 

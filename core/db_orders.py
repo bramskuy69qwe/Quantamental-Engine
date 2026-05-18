@@ -357,11 +357,23 @@ class OrdersMixin:
             (e.g., 'algo:' to scope stale-cancel to algo orders only)
         """
         now_ms = int(time.time() * 1000)
+        # MED-022 (Task 101): build the LIKE clause via ? placeholder rather
+        # than f-string interpolation. The old form wrapped exclude_prefix in
+        # single-quote SQL literals via f-string substitution, making any
+        # quote in the prefix terminate the literal early and inject arbitrary SQL.
+        # Callers today pass only hardcoded prefixes ("algo:"), so no current
+        # exploit — defense-in-depth against future user-supplied prefixes.
+        # NOTE: % and _ inside the prefix are LEFT UNESCAPED (LIKE wildcards).
+        # Callers wanting literal-match semantics for a user-supplied prefix
+        # must escape themselves; that is out of scope for this fix.
         scope_clause = ""
+        scope_params: list = []
         if exclude_prefix:
-            scope_clause = f" AND exchange_order_id NOT LIKE '{exclude_prefix}%'"
+            scope_clause = " AND exchange_order_id NOT LIKE ?"
+            scope_params.append(f"{exclude_prefix}%")
         elif only_prefix:
-            scope_clause = f" AND exchange_order_id LIKE '{only_prefix}%'"
+            scope_clause = " AND exchange_order_id LIKE ?"
+            scope_params.append(f"{only_prefix}%")
 
         if not active_ids:
             if not allow_cancel_all:
@@ -370,7 +382,7 @@ class OrdersMixin:
             cur = await self._conn.execute(
                 "UPDATE orders SET status='canceled', updated_at_ms=? "
                 f"WHERE account_id=? AND status IN ('new','partially_filled'){scope_clause}",
-                (now_ms, account_id),
+                [now_ms, account_id] + scope_params,
             )
             await self._conn.commit()
             return cur.rowcount
@@ -380,7 +392,7 @@ class OrdersMixin:
             f"UPDATE orders SET status='canceled', updated_at_ms=? "
             f"WHERE account_id=? AND status IN ('new','partially_filled') "
             f"AND exchange_order_id NOT IN ({placeholders}){scope_clause}",
-            [now_ms, account_id] + active_ids,
+            [now_ms, account_id] + active_ids + scope_params,
         )
         await self._conn.commit()
         return cur.rowcount

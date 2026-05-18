@@ -11,6 +11,7 @@ from core.state import app_state
 from core.tz import get_account_tz, now_in_account_tz
 from core.database import db
 from core.data_logger import log_execution, log_trade_close
+from core.sql_safety import validate_sort_params
 from api.helpers import templates, _ctx, _table_ctx
 
 log = logging.getLogger("routes.history")
@@ -95,6 +96,8 @@ async def frag_history_exchange(
     sort_by: str = "time", sort_dir: str = "DESC",
     search: str = "", date_from: str = "", date_to: str = "",
 ):
+    # MED-003 (Task 101): route-level defense-in-depth for sort_by/sort_dir.
+    sort_by, sort_dir = validate_sort_params(sort_by, sort_dir, db._EXCHANGE_HISTORY_SORT_COLS)
     rows, total = await db.query_exchange_history(
         page=page, per_page=per_page,
         sort_by=sort_by, sort_dir=sort_dir,
@@ -134,6 +137,8 @@ async def frag_history_pre_trade(
     search: str = "", ticker: str = "", side: str = "",
     date_from: str = "", date_to: str = "",
 ):
+    # MED-003 (Task 101): route-level defense-in-depth for sort_by/sort_dir.
+    sort_by, sort_dir = validate_sort_params(sort_by, sort_dir, db._PRE_TRADE_SORT_COLS)
     rows, total = await db.query_pre_trade_log(
         date_from=date_from or None, date_to=date_to or None,
         search=search or None, ticker=ticker or None, side=side or None,
@@ -159,6 +164,8 @@ async def frag_history_trade_history(
     search: str = "", ticker: str = "", direction: str = "",
     date_from: str = "", date_to: str = "",
 ):
+    # MED-003 (Task 101): route-level defense-in-depth for sort_by/sort_dir.
+    sort_by, sort_dir = validate_sort_params(sort_by, sort_dir, db._TRADE_HISTORY_SORT_COLS)
     rows, total = await db.query_trade_history(
         date_from=date_from or None, date_to=date_to or None,
         search=search or None, ticker=ticker or None, direction=direction or None,

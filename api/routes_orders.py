@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 
 from core.state import app_state
 from core.database import db
+from core.sql_safety import validate_sort_params
 from api.helpers import templates, _table_ctx
 
 log = logging.getLogger("routes.orders")
@@ -43,6 +44,8 @@ async def frag_open_orders(
     sort_by: str = "created_at_ms", sort_dir: str = "DESC",
     search: str = "",
 ):
+    # MED-003 (Task 101): route-level defense-in-depth for sort_by/sort_dir.
+    sort_by, sort_dir = validate_sort_params(sort_by, sort_dir, db._ORDERS_SORT_COLS)
     rows, total = await db.query_open_orders(
         account_id=app_state.active_account_id,
         page=page, per_page=per_page,
@@ -67,6 +70,8 @@ async def frag_order_history(
     search: str = "",
     date_from: str = "", date_to: str = "",
 ):
+    # MED-003 (Task 101): route-level defense-in-depth for sort_by/sort_dir.
+    sort_by, sort_dir = validate_sort_params(sort_by, sort_dir, db._ORDERS_SORT_COLS)
     rows, total = await db.query_order_history(
         account_id=app_state.active_account_id,
         page=page, per_page=per_page,
@@ -93,6 +98,8 @@ async def frag_fills(
     search: str = "",
     date_from: str = "", date_to: str = "",
 ):
+    # MED-003 (Task 101): route-level defense-in-depth for sort_by/sort_dir.
+    sort_by, sort_dir = validate_sort_params(sort_by, sort_dir, db._FILLS_SORT_COLS)
     rows, total = await db.query_fills(
         account_id=app_state.active_account_id,
         page=page, per_page=per_page,
@@ -119,6 +126,8 @@ async def frag_closed_positions(
     search: str = "",
     date_from: str = "", date_to: str = "",
 ):
+    # MED-003 (Task 101): route-level defense-in-depth for sort_by/sort_dir.
+    sort_by, sort_dir = validate_sort_params(sort_by, sort_dir, db._CLOSED_POS_SORT_COLS)
     rows, total = await db.query_closed_positions(
         account_id=app_state.active_account_id,
         page=page, per_page=per_page,
