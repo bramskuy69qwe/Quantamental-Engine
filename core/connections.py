@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional
 
 import config
 from core.database import db
-from core.crypto import decrypt, encrypt, mask_key
+from core.crypto import decrypt, encrypt, mask_key, CredentialDecryptionError
 from core.audit import log_event as _audit
 
 log = logging.getLogger("connections")
@@ -37,14 +37,33 @@ class ConnectionsManager:
             self._cache.clear()
             for row in rows:
                 provider = row["provider"]
-                api_key = decrypt(row.get("api_key_enc", ""))
-                extra = decrypt(row.get("extra_enc", "")) if row.get("extra_enc") else ""
+                # HIGH-010 (Task 105): catch decrypt failures per-row so one
+                # corrupted connection credential doesn't prevent the others
+                # from loading. The connection is loaded with blank credential
+                # and is_active=0 (effectively disabled) so the provider-test
+                # path skips it gracefully; operator sees the CRITICAL log and
+                # the "no API key configured" status on the connections page.
+                try:
+                    api_key = decrypt(row.get("api_key_enc", ""))
+                    extra = decrypt(row.get("extra_enc", "")) if row.get("extra_enc") else ""
+                    is_active = row.get("is_active", 1)
+                except CredentialDecryptionError as e:
+                    log.critical(
+                        "ConnectionsManager.load_all: credential decryption "
+                        "failed for provider=%r — %s. Loading with blank key; "
+                        "the connection will register as not-configured until "
+                        "ENV_MASTER_KEY is corrected or the key is re-entered.",
+                        provider, e,
+                    )
+                    api_key = ""
+                    extra = ""
+                    is_active = 0
                 self._cache[provider] = {
                     "provider":  provider,
                     "label":     row["label"],
                     "api_key":   api_key,
                     "extra":     extra,
-                    "is_active": row.get("is_active", 1),
+                    "is_active": is_active,
                 }
         log.info("ConnectionsManager loaded %d connection(s)", len(self._cache))
 

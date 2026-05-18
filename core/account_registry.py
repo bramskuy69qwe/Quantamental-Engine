@@ -18,7 +18,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from core.database import db
-from core.crypto import decrypt, encrypt, safe_exchange_error
+from core.crypto import decrypt, encrypt, safe_exchange_error, CredentialDecryptionError
 from core.exchange_factory import exchange_factory
 from core.audit import log_event as _audit
 
@@ -58,8 +58,34 @@ class AccountRegistry:
                 full = await db.get_account(acct_id)   # includes encrypted secrets
                 if full is None:
                     continue
-                api_key    = decrypt(full.get("api_key_enc", ""))
-                api_secret = decrypt(full.get("api_secret_enc", ""))
+                # HIGH-010 (Task 105): decrypt may now raise on key mismatch.
+                # We catch per-account so one corrupted credential doesn't
+                # block other accounts from loading, and mark the affected
+                # account in app_state.auth_failed_accounts (Task 103's
+                # set — the scheduler already skips refresh for accounts in
+                # that set, which is the correct behavior here too). Reason
+                # is distinct from "wrong API key" but the remediation
+                # blocker is the same: no operations possible until the
+                # operator fixes the source of the failure.
+                try:
+                    api_key    = decrypt(full.get("api_key_enc", ""))
+                    api_secret = decrypt(full.get("api_secret_enc", ""))
+                except CredentialDecryptionError as e:
+                    log.critical(
+                        "AccountRegistry.load_all: credential decryption "
+                        "failed for account_id=%d name=%r — %s. Loading "
+                        "with blank credentials; scheduler refresh disabled "
+                        "until ENV_MASTER_KEY is corrected or credentials "
+                        "are re-entered.",
+                        acct_id, full.get("name", "?"), e,
+                    )
+                    try:
+                        from core.state import app_state
+                        app_state.auth_failed_accounts.add(acct_id)
+                    except Exception:
+                        pass
+                    api_key = ""
+                    api_secret = ""
 
                 # Per-account params: from DB, or seed defaults
                 params = all_params.get(acct_id)

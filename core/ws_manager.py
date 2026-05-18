@@ -444,9 +444,37 @@ async def _user_data_loop(listen_key: str, attempt: int = 0) -> None:
                 from core.account_registry import account_registry
                 acct = account_registry.get_active_account()
                 if acct:
-                    from core.crypto import decrypt
-                    api_key = decrypt(acct.get("api_key_enc", ""))
-                    api_secret = decrypt(acct.get("api_secret_enc", ""))
+                    # HIGH-010 (Task 105): catch decrypt failures here so a
+                    # bad master key during reconnect doesn't crash the WS
+                    # loop (which would push us into the reconnect-retry
+                    # cycle without surfacing the real cause). Mark the
+                    # active account as auth-failed and abort this connect;
+                    # the outer reconnect loop will see the flag (Task 103
+                    # scheduler / WS-manager skip checks) and stop hammering.
+                    from core.crypto import decrypt, CredentialDecryptionError
+                    try:
+                        api_key = decrypt(acct.get("api_key_enc", ""))
+                        api_secret = decrypt(acct.get("api_secret_enc", ""))
+                    except CredentialDecryptionError as e:
+                        log.critical(
+                            "ws_manager: credential decryption failed during "
+                            "WS reconnect for account_id=%s — %s. Aborting "
+                            "this connect; account marked auth-failed until "
+                            "credentials are re-entered.",
+                            acct.get("id", "?"), e,
+                        )
+                        try:
+                            from core.state import app_state
+                            aid = acct.get("id")
+                            if aid is not None:
+                                app_state.auth_failed_accounts.add(aid)
+                            ws.add_log(
+                                f"WS auth FAILED for account {aid}: "
+                                "decryption error — update credentials in Config."
+                            )
+                        except Exception:
+                            pass
+                        return
                     auth_msg = ws_adapter.build_auth_payload(api_key, api_secret)
                     await sock.send(json.dumps(auth_msg))
                     sub_msg = ws_adapter.build_subscribe_payload(["position", "wallet", "order"])
