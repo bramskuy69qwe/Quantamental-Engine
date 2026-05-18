@@ -177,14 +177,24 @@ class TestHeaderUIPolish:
         content = open("templates/base.html", encoding="utf-8").read()
         idx = content.find('id="plugin-status"')
         assert idx != -1
-        block = content[idx:idx+200]
+        block = content[idx:idx+400]
         assert "display:none" not in block
 
-    def test_plugin_js_shows_on_off_states(self):
-        """JS updateUI toggles Plugin between green (on) and muted (off)."""
+    def test_plugin_js_shows_connected_and_disconnected_states(self):
+        """FE-HIGH-001 (Task 121): JS updateUI swaps StatusIndicator
+        severity class + value text between 'Connected' (success/green)
+        and 'Disconnected' (error/red). The old ● Plugin / ◌ Plugin
+        markup is replaced by the StatusIndicator primitive — the JS
+        now drives `.si-value` text + severity class swap."""
         content = open("templates/base.html", encoding="utf-8").read()
-        assert "● Plugin" in content
-        assert "◌ Plugin" in content
+        assert "'Connected'" in content, (
+            "FE-HIGH-001 regression: JS no longer sets value to "
+            "'Connected' on connect."
+        )
+        assert "'Disconnected'" in content
+        # Severity class names the JS swaps between
+        assert "si-success" in content
+        assert "si-error" in content
 
     def test_no_account_conn_badge(self):
         """account-conn-badge removed (redundant with plugin indicator)."""

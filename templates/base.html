@@ -268,6 +268,48 @@
     @media (prefers-reduced-motion: reduce) {
       .ghost { animation: none; opacity: 0.5; }
     }
+
+    /* ── Primitives (Bundle A — Task 121) ── */
+    /* StatusIndicator: ●  Label: value  — one labeled status component.
+       Reusable for plugin/connection/health indicators across the UI.
+       Severity → colour mapping uses the same CSS vars as the rest of
+       the chrome, so dark/light theme variants stay consistent. */
+    .si {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 0.65rem;
+      font-family: var(--font-mono);
+      white-space: nowrap;
+      color: var(--sub);
+    }
+    .si-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      background: currentColor;
+    }
+    .si-label {
+      color: inherit;
+    }
+    /* Value: separated visually from label by an em-space via ::before so
+       there's no extra DOM text node for screen readers to announce. */
+    .si-value::before {
+      content: "·";
+      margin: 0 4px;
+      color: var(--muted);
+    }
+    .si-value {
+      color: var(--text);
+    }
+    /* Severity → colour. The dot inherits via `background: currentColor`,
+       so setting `color` on the wrapper drives everything. */
+    .si-success { color: var(--green); }
+    .si-warning { color: var(--amber); }
+    .si-error   { color: var(--red); }
+    .si-info    { color: var(--blue); }
+    .si-neutral { color: var(--muted); }
   </style>
 
   {% block extra_head %}{% endblock %}
@@ -356,9 +398,22 @@
       <option value="quantower"  {% if active_platform=='quantower'  %}selected{% endif %}>Quantower</option>
     </select>
 
-    <!-- Plugin / mode indicator (always visible) -->
+    {# FE-HIGH-001 (Task 121): Plugin/connection indicator migrated to
+       the Bundle A StatusIndicator primitive. Replaces the bare
+       open-circle + "Plugin" text whose adjacent WS-status "OFF" and
+       "+437ms" were visually grouped by the eye into a misleading
+       composite. Now: "Quantower : Connecting..." (neutral grey on
+       init), "Quantower : Connected" (green), or "Quantower :
+       Disconnected" (red). JS in pollConnection() swaps the severity
+       class + value text. #}
+    {% from "primitives/status_indicator.html" import status_indicator %}
     <span id="plugin-status" style="display:inline-flex;align-items:center;">
-      <span id="plugin-dot" style="font-size:.65rem;color:var(--muted);font-family:var(--font-mono);white-space:nowrap;">&#9676; Plugin</span>
+      {{ status_indicator(
+          severity="neutral",
+          label="Quantower",
+          value="Connecting…",
+          id="plugin-indicator",
+      ) }}
     </span>
 
     <!-- WS status (fixed width to prevent layout shift) -->
@@ -516,22 +571,36 @@ document.body.addEventListener("account-added",function(){
 // ── Plugin / connection polling ───────────────────────────────────────────
 (function(){
   var platSel  = document.getElementById('platform-selector');
-  var plugDot  = document.getElementById('plugin-dot');
+  // FE-HIGH-001 (Task 121): swap severity class + value text on the
+  // StatusIndicator primitive (template macro renders the initial neutral
+  // state; JS drives state transitions).
+  var plugIndicator = document.getElementById('plugin-indicator');
+  var plugValue     = plugIndicator ? plugIndicator.querySelector('.si-value') : null;
   var banner   = document.getElementById('standalone-banner');
   var bannerMsg= document.getElementById('standalone-banner-msg');
 
   function getPlatform(){ return platSel ? platSel.value : '{{ active_platform }}'; }
 
+  function setSeverity(el, sev){
+    if(!el) return;
+    el.classList.remove('si-success','si-warning','si-error','si-info','si-neutral');
+    el.classList.add('si-'+sev);
+  }
+
   function updateUI(connected){
     var platform = getPlatform();
-    // Plugin / mode indicator (always visible)
-    if(plugDot){
+    // Plugin / mode indicator (always visible) — single labeled component:
+    // "Quantower · Connected" (green) or "Quantower · Disconnected" (red).
+    // No competing "OFF" or "+437ms" lives in this slot anymore; the value
+    // is the connection state, full stop. Latency lives in the WS status
+    // bar to its right (separate visual cluster).
+    if(plugIndicator && plugValue){
       if(connected){
-        plugDot.textContent = '● Plugin';
-        plugDot.style.color = 'var(--green)';
+        setSeverity(plugIndicator, 'success');
+        plugValue.textContent = 'Connected';
       } else {
-        plugDot.textContent = '◌ Plugin';
-        plugDot.style.color = 'var(--muted)';
+        setSeverity(plugIndicator, 'error');
+        plugValue.textContent = 'Disconnected';
       }
     }
     // Standalone banner

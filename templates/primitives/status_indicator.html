@@ -1,0 +1,57 @@
+{# ──────────────────────────────────────────────────────────────────────────
+   StatusIndicator — Bundle A primitive #1 (Task 121, FE-HIGH-001)
+
+   Single labeled status component. Renders a coloured dot + label, with an
+   optional value (e.g. "43ms" or "Disconnected"). Replaces ad-hoc patterns
+   like ``● Plugin`` + free-floating ``OFF`` + free-floating ``+437ms`` that
+   the eye visually groups into a misleading composite ("engine offline").
+
+   Usage:
+       {% from "primitives/status_indicator.html" import status_indicator %}
+       {{ status_indicator("success", "Quantower", value="43ms") }}
+       {{ status_indicator("error",   "Quantower", value="Disconnected") }}
+       {{ status_indicator("neutral", "Quantower") }}
+       {{ status_indicator("warning", "API",      value="rate-limited",
+                           id="api-status") }}
+
+   Parameters:
+       severity   one of {success, warning, error, info, neutral}.
+                  Maps to existing CSS vars: --green / --amber / --red /
+                  --blue / --muted. Strict — unknown values fall through to
+                  neutral (defensive).
+       label      primary text — the *what* (e.g. "Quantower", "API").
+                  Always rendered.
+       value      optional secondary text — the *state value* (e.g. "43ms",
+                  "Disconnected", "rate-limited"). Pass empty string to
+                  omit. Renders separated from label by a thin colon
+                  rendered via CSS pseudo-element (no DOM text colon, so
+                  screen readers don't read it twice).
+       dot        boolean, default True. Set False to suppress the leading
+                  dot (rare — only when the indicator is purely textual).
+       id         optional DOM id for JS targeting / HTMX swaps. Default
+                  empty (no id attribute emitted).
+
+   Why a macro (not an include):
+       StatusIndicator is stateless — parameters fully determine the
+       output. No slot content. Macros are tighter for this shape and
+       avoid the per-call template-load overhead an include incurs. The
+       Bundle A primitives convention (see templates/primitives/README.md)
+       prefers macros for stateless components, include-with-blocks for
+       primitives with slot content (Card will likely use the latter).
+
+   CSS:
+       Co-located in base.html's <style> block under the "── Primitives ──"
+       section. All primitive selectors use a 2-3 letter class prefix
+       (StatusIndicator → ``.si``) so the namespace stays clean. When
+       primitives grow, extract to a static/css file. State the decision
+       in templates/primitives/README.md.
+   ────────────────────────────────────────────────────────────────────────── #}
+
+{% macro status_indicator(severity, label, value="", dot=true, id="") %}
+{%- set sev = severity if severity in ("success", "warning", "error", "info", "neutral") else "neutral" -%}
+<span {% if id %}id="{{ id }}" {% endif %}class="si si-{{ sev }}"{% if value %} data-has-value="1"{% endif %}>
+  {%- if dot %}<span class="si-dot" aria-hidden="true"></span>{% endif -%}
+  <span class="si-label">{{ label }}</span>
+  {%- if value %}<span class="si-value">{{ value }}</span>{% endif -%}
+</span>
+{%- endmacro %}
