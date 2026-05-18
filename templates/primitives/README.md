@@ -57,7 +57,7 @@ requests, no template-loader configuration changes.
 | --------------- | --------- | ----------------------------------------- |
 | StatusIndicator | `si`      | `.si`, `.si-dot`, `.si-label`, `.si-value`, `.si-success` |
 | Card            | `card`    | `.card-header`, `.card-body`, `.card-footer`, `.card-title`, `.card-subtitle` (builds on existing `.card` + `.card-p8` utility classes) |
-| TableRow (future)| `tr-p`   | `.tr-p`, `.tr-p-cell`, `.tr-p-actions`                    |
+| TableRow        | `tr-p`    | `.tr-p`, `.tr-p-clickable`, `.tr-p-selected` (composes on existing cell typography classes `.td-*` / `.mono`) |
 | EmptyState      | `es`      | `.es`, `.es-icon`, `.es-msg`                              |
 | PeriodSelector  | `ps`      | `.ps`, `.ps-pill`, `.ps-pill-active`                      |
 
@@ -114,6 +114,35 @@ action buttons in the header right corner), the choice is:
 Defer the open/close pair until a real consumer needs it. Adding
 params one-by-one as needs surface is fine; over-engineering ahead of
 that is what bloats primitives.
+
+## Adding a primitive that wraps a sibling list (open/close pair)
+
+When the primitive body is a **list of sibling elements**, not one
+contiguous block, `{% call %}` + `caller()` doesn't fit naturally —
+callers would have to wrap their siblings in a single block, losing
+per-sibling structure. The convention is an **open/close pair**:
+
+```jinja2
+{% from "primitives/table_row.html" import tr_open, tr_close %}
+
+{{ tr_open(state="clickable", on_click="togglePosRow(7)") }}
+  <td>cell 1</td>
+  <td>cell 2</td>
+  <td>cell 3</td>
+{{ tr_close() }}
+```
+
+TableRow is the convention example. Reasons:
+- `<tr>` body is naturally a sibling list of `<td>` cells.
+- Existing markup is `<tr><td>...</td>...</tr>` — open/close lets
+  callers migrate incrementally without restructuring cells.
+- Adds structural hooks (hover/selection state classes) without
+  reinventing cell typography.
+
+**Decision tree:**
+- Body is **one contiguous block** (Card's title-and-grid) → `{% call %}` + `caller()`.
+- Body is a **list of sibling elements** (TableRow's `<td>` cells) → open/close pair.
+- Body is **stateless parameter-driven** (StatusIndicator's label+value) → plain macro.
 
 ## Jinja2 gotchas (learned-the-hard-way)
 
@@ -212,9 +241,49 @@ alternatives: (a) extends/blocks is for page layouts, heavyweight;
 (c) the open/close pair is more verbose for a primitive whose 95% case
 is title + body. When a primitive needs more than one slot, revisit.
 
-### TableRow (planned)
+### TableRow (Task 123)
 
-TBD.
+`templates/primitives/table_row.html` — sibling-list-slot primitive
+via open/close pair. Used at all three history tables (Position
+History, Order History, Trade History — fills) to lock consistent
+hover / selection / clickable state behaviour without reinventing
+cell typography. Resolves FE-MED-002.
+
+```jinja2
+{% from "primitives/table_row.html" import tr_open, tr_close %}
+
+{# Default (non-clickable) — Order History pattern #}
+{{ tr_open() }}
+  <td class="td-ts">{{ ms_to_local(r.updated_at_ms) }}</td>
+  <td class="td-symbol">{{ r.symbol }}</td>
+  ...
+{{ tr_close() }}
+
+{# Clickable + on_click — Position History click-to-expand pattern.
+   on_click implies state="clickable" automatically. #}
+{{ tr_open(on_click="togglePosRow(" ~ r.id ~ ")") }}
+  ...
+{{ tr_close() }}
+
+{# Explicit state + id for JS targeting #}
+{{ tr_open(state="clickable", on_click="select(7)", id="row-7") }}
+  ...
+{{ tr_close() }}
+
+{# Selected state is dynamic — JS toggles .tr-p-selected at runtime
+   via classList. Macro params don't model selection (since the
+   initial-state render is rarely "already selected"). #}
+```
+
+States exposed via class:
+- `.tr-p` (always) — base, faint hover background.
+- `.tr-p-clickable` — cursor:pointer + stronger hover. Set by
+  `state="clickable"` or implied by `on_click=...`.
+- `.tr-p-selected` — selection background. JS-driven, not macro-param.
+
+Cell typography classes (`.td-symbol`, `.td-ts`, `.td-sub`,
+`.td-dim`, `.mono`, badges, etc.) keep working unchanged — TableRow
+only owns the row-level state structure.
 
 ### EmptyState (planned)
 

@@ -1,5 +1,6 @@
 {% from "fragments/history/_sort_header.html" import sort_th %}
 {% from "fragments/history/_pagination.html" import pagination %}
+{% from "primitives/table_row.html" import tr_open, tr_close %}
 {% set ep = "/fragments/history/fills" %}
 {% set tid = "fills-table" %}
 {% set df = date_from | replace(":", "%3A") | replace("+", "%2B") %}
@@ -24,6 +25,12 @@
         {{ sort_th("Time",      "timestamp_ms",   ep, tid, sort_by, sort_dir, qs) }}
         <th>Order No.</th>
         {{ sort_th("Symbol",    "symbol",          ep, tid, sort_by, sort_dir, qs) }}
+        {# FE-MED-002 (Task 123) calibration #3: SIDE column split into
+           ACTION (Open/Close) + SIDE (LONG/SHORT), each single-coloured.
+           The prior compound "Close LONG" / "Open SHORT" cell mixed two
+           orthogonal concepts and was visually noisier than the
+           single-word cells in Position History and Order History. #}
+        <th>Action</th>
         {{ sort_th("Side",      "side",            ep, tid, sort_by, sort_dir, qs) }}
         {{ sort_th("Price",     "price",           ep, tid, sort_by, sort_dir, qs) }}
         {{ sort_th("Qty",       "quantity",         ep, tid, sort_by, sort_dir, qs) }}
@@ -34,20 +41,17 @@
       </tr></thead>
       <tbody>
         {% for r in rows %}
-        {% set is_close = r.is_close %}
-        {% set dir = r.direction %}
-        {% if is_close %}
-          {% set side_label = "Close " ~ dir %}
-          {% set side_class = "pos-short" if dir == "LONG" else "pos-long" %}
-        {% else %}
-          {% set side_label = "Open " ~ dir %}
-          {% set side_class = "pos-long" if dir == "LONG" else "pos-short" %}
-        {% endif %}
-        <tr>
+        {# FE-MED-002 (Task 123): row migrated to TableRow primitive +
+           ACTION/SIDE column split. Each cell is single-coloured —
+           ACTION uses green for Open (entering exposure) / red for
+           Close (exiting); SIDE uses green for LONG / red for SHORT,
+           matching Position History's single-word LONG/SHORT pattern. #}
+        {{ tr_open() }}
           <td style="color:var(--sub);">{{ ms_to_local(r.timestamp_ms) }}</td>
           <td style="color:var(--muted);font-size:.72rem;">{{ r.exchange_order_id[:12] if r.exchange_order_id else "—" }}</td>
           <td style="color:var(--blue);font-weight:700;">{{ r.symbol }}</td>
-          <td class="{{ side_class }}">{{ side_label }}</td>
+          <td class="{{ 'pos-short' if r.is_close else 'pos-long' }}">{{ 'Close' if r.is_close else 'Open' }}</td>
+          <td class="{{ 'pos-long' if r.direction == 'LONG' else 'pos-short' }}">{{ r.direction }}</td>
           <td>{{ fmt(r.price, 6) }}</td>
           <td>{{ fmt(r.quantity, 4) }}</td>
           <td style="color:var(--sub);">{{ fmt(r.fee, 4) }} {{ r.fee_asset }}</td>
@@ -56,7 +60,7 @@
           <td class="{{ 'text-green' if r.realized_pnl > 0 else 'text-red' if r.realized_pnl < 0 else '' }}">
             {{ fmt(r.realized_pnl, 2) if r.realized_pnl else "—" }}
           </td>
-        </tr>
+        {{ tr_close() }}
         {% endfor %}
       </tbody>
     </table>

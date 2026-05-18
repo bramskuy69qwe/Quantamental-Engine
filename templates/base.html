@@ -341,6 +341,17 @@
       font-size: .62rem;
       color: var(--sub);
     }
+
+    /* TableRow (Task 123, FE-MED-002) — sibling-list-slot primitive
+       via open/close pair. Adds hover + selection + clickable states
+       to <tr> without disturbing existing cell typography classes
+       (.td-symbol, .td-ts, .td-sub, .td-dim, .mono, etc.). */
+    .tr-p { transition: background .12s ease-out; }
+    .tr-p:hover { background: rgba(255,255,255,.02); }
+    .tr-p-clickable { cursor: pointer; }
+    .tr-p-clickable:hover { background: rgba(59,130,246,.04); }
+    .tr-p-selected,
+    .tr-p-selected:hover { background: rgba(59,130,246,.08); }
   </style>
 
   {% block extra_head %}{% endblock %}

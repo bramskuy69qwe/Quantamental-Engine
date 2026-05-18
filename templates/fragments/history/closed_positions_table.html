@@ -1,5 +1,6 @@
 {% from "fragments/history/_sort_header.html" import sort_th %}
 {% from "fragments/history/_pagination.html" import pagination %}
+{% from "primitives/table_row.html" import tr_open, tr_close %}
 {% set ep = "/fragments/history/closed_positions" %}
 {% set tid = "closed-positions-table" %}
 {% set df = date_from | replace(":", "%3A") | replace("+", "%2B") %}
@@ -43,7 +44,9 @@
       <tbody>
         {% for r in rows %}
         {% set pnl_pct = (r.net_pnl / (r.entry_price * r.quantity) * 100) if r.entry_price and r.quantity else 0 %}
-        <tr style="cursor:pointer;" onclick="togglePosRow({{ r.id }})">
+        {# FE-MED-002 (Task 123): row migrated to TableRow primitive.
+           Clickable state derived from on_click param. #}
+        {{ tr_open(on_click="togglePosRow(" ~ r.id ~ ")") }}
           <td id="chev-{{ r.id }}" style="color:var(--muted);font-size:.65rem;text-align:center;font-weight:700;">▸</td>
           <td class="td-ts">{{ ms_to_local(r.entry_time_ms) }}</td>
           <td class="td-ts">{{ ms_to_local(r.exit_time_ms) }}</td>
@@ -75,7 +78,7 @@
           <td class="text-red">{{ fmt(r.mae, 2) if r.mae or r.backfill_completed else "—" }}</td>
           {% set mer = (r.mfe / (r.mae | abs)) | round(2) if r.mae else 0 %}
           <td>{{ fmt(mer, 2) if mer else '—' }}</td>
-        </tr>
+        {{ tr_close() }}
         <tr id="fills-row-{{ r.id }}" style="display:none;">
           <td colspan="18" style="padding:0;background:var(--panel);"></td>
         </tr>
