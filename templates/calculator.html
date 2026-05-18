@@ -528,7 +528,11 @@ function saveToCalcHistory(){
   var ticker=data.getAttribute('data-ticker')||'';if(!ticker)return;
   var entry=parseFloat(data.getAttribute('data-entry')||0),tp=parseFloat(data.getAttribute('data-tp')||0),sl=parseFloat(data.getAttribute('data-sl')||0);
   var side=(sl>0&&sl<entry)?'LONG':'SHORT',now=new Date();
-  var ts=now.getHours().toString().padStart(2,'0')+':'+now.getMinutes().toString().padStart(2,'0');
+  // FE-MED-005 (Task 112): store epoch ms instead of HH:MM string so the
+  // render path can compute relative format ("2h ago" / "Yesterday HH:MM" /
+  // absolute date). Old localStorage entries still render via the string
+  // fallback in renderCalcHistory.
+  var ts=now.getTime();
   var rec={ts,ticker,orderType:_orderType,side,entry,tp,sl,
     regimeLabel:data.getAttribute('data-regime-label')||'neutral',
     regimeMult:parseFloat(data.getAttribute('data-regime-mult')||'1.0'),
@@ -549,6 +553,25 @@ function saveToCalcHistory(){
   renderCalcHistory();
 }
 function loadCalcHistory(){try{_calcHistory=JSON.parse(localStorage.getItem('calc_history')||'[]');}catch(e){_calcHistory=[];}renderCalcHistory();}
+// FE-MED-005 (Task 112): render h.ts as relative time. Three buckets:
+//   < 60s     → "Just now"
+//   < 24h     → "Nm ago" / "Nh ago"
+//   24-48h    → "Yesterday HH:MM"
+//   older     → "YYYY-MM-DD HH:MM"
+// Backward-compat: if h.ts is a string (pre-Task-112 entries stored as
+// "HH:MM"), render it as-is rather than treating it as an invalid number.
+function formatCalcTs(ts){
+  if(typeof ts==='string')return ts;  // legacy "HH:MM" format
+  if(typeof ts!=='number'||!isFinite(ts))return '';
+  var now=Date.now(),diffMs=now-ts;
+  if(diffMs<0)return 'Just now';                       // clock skew tolerance
+  if(diffMs<60000)return 'Just now';
+  if(diffMs<3600000)return Math.floor(diffMs/60000)+'m ago';
+  if(diffMs<86400000)return Math.floor(diffMs/3600000)+'h ago';
+  var d=new Date(ts),hh=d.getHours().toString().padStart(2,'0'),mm=d.getMinutes().toString().padStart(2,'0');
+  if(diffMs<172800000)return 'Yesterday '+hh+':'+mm;   // 24-48 h
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+' '+hh+':'+mm;
+}
 function renderCalcHistory(){
   var panel=document.getElementById('calc-history-panel'),list=document.getElementById('calc-history-list');
   if(!panel||!list)return;
@@ -565,7 +588,7 @@ function renderCalcHistory(){
       +'<span style="font-family:var(--font-mono);font-size:.7rem;font-weight:700;color:var(--blue);">'+h.ticker+'</span>'
       +'<span class="badge" style="background:#200808;color:'+sc+';">'+h.side+'</span>'
       +'<span style="font-size:.62rem;color:var(--sub);text-transform:uppercase;">'+h.orderType+'</span>'
-      +'<span style="margin-left:auto;font-family:var(--font-mono);font-size:.62rem;color:var(--sub);">'+h.ts+'</span></div>'
+      +'<span style="margin-left:auto;font-family:var(--font-mono);font-size:.62rem;color:var(--sub);">'+formatCalcTs(h.ts)+'</span></div>'
       +'<div style="font-family:var(--font-mono);font-size:.65rem;color:var(--sub);">Entry '+fmtP(h.entry)+' · TP '+fmtP(h.tp)+' · SL '+fmtP(h.sl)+'</div>'
       +'<div style="font-size:.6rem;margin-top:1px;"><span style="color:'+rc+';">'+rl+'</span><span style="color:var(--sub);"> ×'+rm.toFixed(1)+' size</span></div>'
       +'</button>';

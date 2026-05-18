@@ -120,7 +120,11 @@
     <div class="stat"><span class="lbl">Risk USDT</span><div class="val">{{ fmt(c.risk_usdt) }} USDT</div></div>
     <div class="stat"><span class="lbl">Base Size (USDT)</span><div class="val">{{ fmt(c.base_size) }}</div></div>
     <div class="stat"><span class="lbl">Est. Fill Price</span><div class="val">{{ fmt(c.est_fill_price, 4) }}</div></div>
-    <div class="stat"><span class="lbl">1% Depth (USDT)</span><div class="val">{{ fmt(c.one_percent_depth) }}</div></div>
+    {# FE-MED-012 (Task 112): "1% Depth (USDT)" was ambiguous — operators not
+       deep on orderbook semantics had to guess what "1%" referenced. Renamed
+       to explicit "1% Depth from Mid (USDT)" so the reference point is clear.
+       Rename over tooltip: no JS dependency, screen-reader friendly. #}
+    <div class="stat"><span class="lbl">1% Depth from Mid (USDT)</span><div class="val">{{ fmt(c.one_percent_depth) }}</div></div>
     <div class="stat" style="grid-column:1/-1;">
       <span class="lbl">Best Bid / Ask</span>
       <div class="val">
@@ -144,8 +148,12 @@
   </div>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;">
     <div>
+      {# FE-MED-011 (Task 112): label rename — `_size (contracts)` was the
+         raw code-identifier name leaking into UI. Operator-facing label is
+         the title-cased human form. Underlying variable (`c.size`) is
+         unchanged. #}
       <span class="lbl">
-        _size (contracts)
+        Size (Contracts)
         {% if c.regime_multiplier != 1.0 and c.apply_regime_multiplier and not c.regime_stale %}
         <span style="font-size:.58rem;color:var(--muted);font-weight:400;">×{{ fmt(c.regime_multiplier,1) }} regime</span>
         {% endif %}
@@ -159,7 +167,8 @@
         {% endif %}
       {% endif %}
     </div>
-    <div class="stat"><span class="lbl">Notional / est_size (USDT)</span><div class="val">{{ fmt(c.notional) }}</div></div>
+    {# FE-MED-011 (Task 112): `est_size` → `Est. Size` (title case, no underscore). #}
+    <div class="stat"><span class="lbl">Notional / Est. Size (USDT)</span><div class="val">{{ fmt(c.notional) }}</div></div>
     <div class="stat"><span class="lbl">TP → USDT profit</span><div class="val text-green">{{ fmt(c.tp_usdt) }}</div></div>
     <div class="stat"><span class="lbl">SL → USDT loss</span><div class="val text-red">{{ fmt(c.sl_usdt) }}</div></div>
   </div>
@@ -178,7 +187,10 @@
       <div class="val {{ 'text-green' if c.est_r >= 1 else 'text-amber' }}">{{ fmt(c.est_r, 2) }}</div></div>
     <div class="stat"><span class="lbl">Est. Portfolio Exp.</span>
       <div class="val {{ 'text-red' if c.est_exposure > params.max_exposure else '' }}">{{ fmt(c.est_exposure, 2) }}×</div></div>
-    <div class="stat"><span class="lbl">{{ 'Taker' if c.order_type in ('market','stop') else 'Maker' }} Fee (2×)</span>
+    {# FE-MED-012 (Task 112): "Fee (2×)" was ambiguous — "2×" could read as
+       leverage or just "two times". Explicit "Round-trip (Entry + Exit)"
+       removes the guess. Rename over tooltip per consistency policy. #}
+    <div class="stat"><span class="lbl">{{ 'Taker' if c.order_type in ('market','stop') else 'Maker' }} Fee — Round-trip (Entry + Exit)</span>
       <div class="val">{{ fmt(c.fee_rate * 2 * 100, 3) }}%</div></div>
   </div>
 </div>
