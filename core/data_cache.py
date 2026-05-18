@@ -765,8 +765,30 @@ class DataCache:
         acc.total_position_value = sum(p.position_value_usdt for p in self._positions)
         acc.total_margin_used = sum(p.individual_margin_used for p in self._positions)
         if acc.balance_usdt > 0:
-            acc.total_equity = acc.balance_usdt + acc.total_unrealized
-            acc.available_margin = acc.total_equity - acc.total_margin_used
+            # MED-018 (Task 102): clamp negative equity at the boundary.
+            # raw_equity goes negative when unrealized losses exceed balance
+            # (near-liquidation). Downstream consumers (risk_engine sizing,
+            # drawdown calc, exposure ratio) expect non-negative equity —
+            # negative values produce phantom > 100 % drawdown displays and
+            # micro-position fallbacks via risk_engine.py:351's
+            # `total_equity if > 0 else 1.0` guard. Clamping to 0 keeps
+            # downstream math coherent; the warning ensures the operator sees
+            # the underlying near-liquidation condition.
+            raw_equity = acc.balance_usdt + acc.total_unrealized
+            if raw_equity < 0:
+                log.warning(
+                    "apply_mark_price: computed equity is negative "
+                    "(%.2f = balance %.2f + unrealized %.2f); clamping to 0 "
+                    "(near-liquidation condition)",
+                    raw_equity, acc.balance_usdt, acc.total_unrealized,
+                )
+                acc.total_equity = 0.0
+            else:
+                acc.total_equity = raw_equity
+            # available_margin can never exceed equity. With equity clamped
+            # to 0, the prior `equity - margin_used` would emit a negative
+            # available_margin; clamp downstream of the equity clamp too.
+            acc.available_margin = max(0.0, acc.total_equity - acc.total_margin_used)
 
         self._recalculate_portfolio()
 

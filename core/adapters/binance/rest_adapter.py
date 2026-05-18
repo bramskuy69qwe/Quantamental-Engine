@@ -110,6 +110,34 @@ class BinanceUSDMAdapter(BaseExchangeAdapter):
             return account, comm
 
         info, comm = await self._run(_fetch)
+        # HIGH-013 (Task 102): the two critical fields (totalWalletBalance,
+        # availableBalance) gate risk sizing and margin checks downstream.
+        # Silent-default to 0 on missing/null would propagate into
+        # apply_account_update_rest and overwrite a known-good prior balance
+        # with a phantom zero — better to raise here and let the caller
+        # (schedulers._account_refresh_loop's except handler) skip the cycle,
+        # leaving the prior state intact. The remaining numeric fields
+        # (unrealized, margins) are non-fatal — keep the .get default but
+        # log when they are absent so the operator sees partial responses.
+        if info.get("totalWalletBalance") is None:
+            raise ValueError(
+                "binance fetch_account: totalWalletBalance missing from response — "
+                "refusing to apply phantom-zero equity"
+            )
+        if info.get("availableBalance") is None:
+            raise ValueError(
+                "binance fetch_account: availableBalance missing from response — "
+                "refusing to apply phantom-zero available margin"
+            )
+        for non_critical in (
+            "totalUnrealizedProfit", "totalInitialMargin", "totalMaintMargin",
+        ):
+            if info.get(non_critical) is None:
+                log.warning(
+                    "binance fetch_account: %s missing from response; "
+                    "defaulting to 0 (non-critical field)",
+                    non_critical,
+                )
         return NormalizedAccount(
             total_equity=float(info.get("totalWalletBalance", 0) or 0),
             available_margin=float(info.get("availableBalance", 0) or 0),
