@@ -473,10 +473,15 @@ class DatabaseManager(
         self._conn.row_factory = aiosqlite.Row
         await self._conn.execute("PRAGMA journal_mode=WAL")
         await self._conn.execute("PRAGMA foreign_keys=ON")
-        for stmt in _CREATE_STATEMENTS.strip().split(";"):
-            stmt = stmt.strip()
-            if stmt and not stmt.upper().startswith("PRAGMA"):
-                await self._conn.execute(stmt)
+        # MED-046 (Task 119): use executescript() so the schema blob may
+        # contain SQL comments with semicolons. The prior naive
+        # ``.split(";")`` loop hit `sqlite3.OperationalError: incomplete
+        # input` whenever a ``--`` comment line contained a `;`
+        # (Task 104a discovery). executescript() parses the full blob
+        # via sqlite3's tokenizer and handles comments correctly.
+        # PRAGMA statements at the top are no-ops here (already issued
+        # above) but executescript runs them harmlessly.
+        await self._conn.executescript(_CREATE_STATEMENTS)
         await self._conn.commit()
 
         # Schema migrations — idempotent column additions (safe to retry on every start)

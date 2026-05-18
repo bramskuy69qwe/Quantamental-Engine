@@ -108,6 +108,40 @@ def is_valid_rest_exchange(
     return f"{exchange_id}:{market_type}" in _REST_REGISTRY
 
 
+def is_valid_market_type(market_type: str) -> bool:
+    """MED-049 (Task 119): server-side whitelist check for client-supplied
+    ``market_type`` form fields.
+
+    Accepts engine-canonical market types (any registered adapter key)
+    plus the legacy DB alias ``future`` (which `map_market_type` rewrites
+    to `linear_perpetual`). Strict, case-sensitive — matches the
+    MED-048 case-sensitivity decision for `exchange`.
+    """
+    if not isinstance(market_type, str) or not market_type:
+        return False
+    if market_type == "future":
+        # Legacy DB alias — map_market_type rewrites this to linear_perpetual,
+        # which is currently the only registered market_type. Accept as long
+        # as at least one adapter is registered under linear_perpetual.
+        return any(k.endswith(":linear_perpetual") for k in _REST_REGISTRY)
+    # Canonical form — must appear as the suffix of at least one registered
+    # adapter key.
+    return any(k.split(":", 1)[1] == market_type for k in _REST_REGISTRY)
+
+
+def get_supported_market_types() -> list:
+    """MED-049 (Task 119): flat list of accepted market_type form values
+    (canonical + legacy aliases). Used to build operator-friendly error
+    messages."""
+    canonical = sorted(
+        {k.split(":", 1)[1] for k in _REST_REGISTRY}
+    )
+    # Surface the legacy alias when it routes to a registered adapter.
+    has_linear = "linear_perpetual" in canonical
+    legacy = ["future"] if has_linear else []
+    return legacy + canonical
+
+
 def get_supported_rest_exchanges(market_type: str = "linear_perpetual") -> list:
     """MED-048 (Task 114): flat list of exchange_id strings for a given
     market_type — used to build operator-friendly error messages when

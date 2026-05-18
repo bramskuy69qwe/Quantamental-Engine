@@ -177,6 +177,19 @@ class MexcLinearAdapter(BaseExchangeAdapter):
         raw = await self._run(self._ex.fetch_positions)
         positions = []
         for p in raw:
+            # MED-050 (Task 119): per-record critical-field validation
+            # (see Binance fetch_positions for rationale).
+            missing = [
+                k for k in ("symbol", "contracts")
+                if k not in p or p.get(k) is None
+            ]
+            if missing:
+                log.warning(
+                    "mexc fetch_positions: skipping record missing "
+                    "critical field(s) %s; record=%r",
+                    missing, p,
+                )
+                continue
             contracts = abs(float(p.get("contracts", 0) or 0))
             if contracts == 0:
                 continue
@@ -207,6 +220,19 @@ class MexcLinearAdapter(BaseExchangeAdapter):
         raw = await self._run(self._ex.fetch_open_orders)
         orders = []
         for o in raw:
+            # MED-050 (Task 119): per-record critical-field validation.
+            # CCXT normalizes to `id` (not exchange-raw orderId).
+            missing = [
+                k for k in ("id", "symbol")
+                if k not in o or o.get(k) is None
+            ]
+            if missing:
+                log.warning(
+                    "mexc fetch_open_orders: skipping record missing "
+                    "critical field(s) %s; record=%r",
+                    missing, o,
+                )
+                continue
             orders.append(NormalizedOrder(
                 exchange_order_id=str(o.get("id", "")),
                 client_order_id=str(o.get("clientOrderId", "")),

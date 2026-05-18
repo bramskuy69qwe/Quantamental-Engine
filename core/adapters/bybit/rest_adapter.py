@@ -279,6 +279,19 @@ class BybitLinearAdapter(BaseExchangeAdapter):
         raw_list = await self._run(_fetch)
         positions = []
         for r in raw_list or []:
+            # MED-050 (Task 119): per-record critical-field validation
+            # (see Binance fetch_positions for rationale).
+            missing = [
+                k for k in ("symbol", "contracts")
+                if k not in r or r.get(k) is None
+            ]
+            if missing:
+                log.warning(
+                    "bybit fetch_positions: skipping record missing "
+                    "critical field(s) %s; record=%r",
+                    missing, r,
+                )
+                continue
             contracts = float(r.get("contracts", 0) or 0)
             if contracts == 0:
                 continue
@@ -309,6 +322,19 @@ class BybitLinearAdapter(BaseExchangeAdapter):
         raw_orders = await self._run(_fetch)
         orders = []
         for o in raw_orders or []:
+            # MED-050 (Task 119): per-record critical-field validation.
+            # CCXT normalizes to `id` (not Bybit's raw `orderId`).
+            missing = [
+                k for k in ("id", "symbol")
+                if k not in o or o.get(k) is None
+            ]
+            if missing:
+                log.warning(
+                    "bybit fetch_open_orders: skipping record missing "
+                    "critical field(s) %s; record=%r",
+                    missing, o,
+                )
+                continue
             otype = o.get("type", "")
             info = o.get("info", {})
             # CCXT normalizes Bybit order types; also check stopOrderType

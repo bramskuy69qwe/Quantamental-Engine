@@ -159,6 +159,23 @@ class BinanceUSDMAdapter(BaseExchangeAdapter):
         raw_list = await self._run(_fetch)
         positions = []
         for r in raw_list or []:
+            # MED-050 (Task 119): per-record critical-field validation.
+            # Account-fetch is fail-closed (HIGH-013), but position lists
+            # tolerate per-record drop — a malformed row vanishing is
+            # operator-visible (missing position in UI), whereas blanking
+            # the whole list silently is much harder to detect. Log +
+            # skip the offending record; let valid records through.
+            missing = [
+                k for k in ("symbol", "positionAmt")
+                if k not in r or r.get(k) is None
+            ]
+            if missing:
+                log.warning(
+                    "binance fetch_positions: skipping record missing "
+                    "critical field(s) %s; record=%r",
+                    missing, r,
+                )
+                continue
             amt = float(r.get("positionAmt", 0) or 0)
             if amt == 0:
                 continue
@@ -185,6 +202,20 @@ class BinanceUSDMAdapter(BaseExchangeAdapter):
         raw_orders = await self._run(_fetch)
         orders = []
         for o in raw_orders:
+            # MED-050 (Task 119): per-record critical-field validation
+            # (see fetch_positions). orderId + symbol are required to
+            # route/identify the record.
+            missing = [
+                k for k in ("orderId", "symbol")
+                if k not in o or o.get(k) is None
+            ]
+            if missing:
+                log.warning(
+                    "binance fetch_open_orders: skipping record missing "
+                    "critical field(s) %s; record=%r",
+                    missing, o,
+                )
+                continue
             otype = o.get("type", "")
             unified_type = ORDER_TYPE_FROM_BINANCE.get(otype, otype.lower())
             # FE-13: entry stops (reduceOnly=false, closePosition=false) get _entry suffix
@@ -232,6 +263,20 @@ class BinanceUSDMAdapter(BaseExchangeAdapter):
             raw = [raw] if raw else []
         orders = []
         for o in raw:
+            # MED-050 (Task 119): per-record critical-field validation.
+            # algoId + symbol are required (the routing key is
+            # f"algo:{algoId}").
+            missing = [
+                k for k in ("algoId", "symbol")
+                if k not in o or o.get(k) is None
+            ]
+            if missing:
+                log.warning(
+                    "binance fetch_algo_open_orders: skipping record missing "
+                    "critical field(s) %s; record=%r",
+                    missing, o,
+                )
+                continue
             otype = o.get("orderType", "")
             unified_type = ORDER_TYPE_FROM_BINANCE.get(otype, otype.lower())
             # FE-13: entry stops get _entry suffix

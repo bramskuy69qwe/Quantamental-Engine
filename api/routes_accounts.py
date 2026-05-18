@@ -56,6 +56,25 @@ def _validate_exchange(exchange: str, market_type: str) -> str:
     )
 
 
+def _validate_market_type(market_type: str) -> str:
+    """MED-049 (Task 119): server-side whitelist for client-supplied
+    ``market_type`` form fields. Returns an empty string on success,
+    or an operator-friendly error message on rejection.
+
+    Strict case-sensitive. Symmetric to `_validate_exchange` — closes
+    the gap where a market_type-only edit on `update_account_detail`
+    skipped re-validation (since MED-048's check only fires when
+    `exchange` is also supplied).
+    """
+    from core.adapters.registry import (
+        is_valid_market_type, get_supported_market_types,
+    )
+    if is_valid_market_type(market_type):
+        return ""
+    supported = ", ".join(get_supported_market_types()) or "(none registered)"
+    return f"Unknown market_type: '{market_type}'. Supported: {supported}."
+
+
 @router.get("/accounts", response_class=JSONResponse)
 async def list_accounts(request: Request):
     return JSONResponse(await account_registry.list_accounts())
@@ -440,6 +459,15 @@ async def update_account_detail(
             )
         db_kwargs["exchange"] = exchange
     if market_type is not None:
+        # MED-049 (Task 119): whitelist the new market_type. Symmetric to
+        # MED-048's exchange check — closes the gap for market_type-only
+        # edits that previously bypassed re-validation.
+        mt_err = _validate_market_type(market_type)
+        if mt_err:
+            return HTMLResponse(
+                f'<span style="color:var(--red);font-size:.65rem;">{mt_err}</span>',
+                status_code=400,
+            )
         db_kwargs["market_type"] = market_type
     if environment is not None:
         db_kwargs["environment"] = environment
