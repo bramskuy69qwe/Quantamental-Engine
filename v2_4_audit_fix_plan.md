@@ -725,15 +725,15 @@ Phase 5 tag candidate: v2.5.0 (or v2.4.2 / v2.4.3 if scope contracts).
 
 ### 5.5 Open dependencies (must answer before relevant mini-phase)
 
-These are audit-01's open questions, surfaced for the operator. Some affect bundle scope; others affect individual fix shape.
+These are audit-01's open questions. **All 5 ANSWERED by operator 2026-05-18 — encoded in Task 110.** No remaining blockers for Phase 5 entry.
 
-1. **Mobile / narrow viewport intended?** (audit-01 Open Q #1) — drives Bundle A scope (responsive breakpoints in primitives). If desktop-only, document and stop optimising for narrow.
-2. **Calculator timestamp format preference?** (audit-01 Open Q #2) — drives FE-MED-005 fix (relative "Today 16:07" vs absolute "2026-05-18 16:07"). Product-preference call.
-3. **`ws_status` polling cadence intentional?** (audit-01 Open Q #3) — drives FE-HIGH-004 fix (SSE vs back off to 5-10 s vs leave alone).
-4. **BTCUSDT events real / replay / test?** (audit-01 Open Q #4) — drives FE-HIGH-003 + FE-MED-004 scope (clean DB + write-time validation vs filter at display time).
-5. **Add Account Bybit/MEXC presentation?** (audit-01 Open Q #5) — drives FE-HIGH-002 fix detail (beta tag vs warning vs full enable).
+1. ~~**Mobile / narrow viewport intended?**~~ — **ANSWERED: NO** — desktop-only product. Mobile / narrow-viewport breakpoints are NOT in scope. Bundle A primitives skip responsive design below ~1100 px.
+2. ~~**Calculator timestamp format preference?**~~ — **ANSWERED: RELATIVE** — `2h ago` / `Yesterday 22:37` for < 24 h, `2026-05-15 22:37` absolute for older. Drives FE-MED-005 fix.
+3. ~~**`ws_status` polling cadence intentional?**~~ — **ANSWERED: YES, BY DESIGN** — endpoint carries live latency display, not boolean state. FE-HIGH-004 reframed to FE-MED-016 (SSE-migration is optimization, not bug; defer indefinitely).
+4. ~~**BTCUSDT events real / replay / test?**~~ — **ANSWERED: TEST POLLUTION** — no real BTCUSDT trading in the relevant period. FE-HIGH-003 demoted to FE-MED-017 (severity HIGH → MED; log-hygiene only, no real-data corruption). FE-MED-004 collapses into FE-MED-017's UI-filter remediation.
+5. ~~**Add Account Bybit/MEXC presentation?**~~ — **ANSWERED: BETA TAG** — expose `Bybit (Beta)` and `MEXC (Beta)` in the dropdown, no separate warning banner. Drives FE-HIGH-002 fix.
 
-These should be answered during mini-phase 5.0 (audit-02) so the rest of Phase 5 isn't blocked on operator decisions.
+Phase 5 is unblocked from operator-decision dependencies. Mini-phase 5.0 (audit-02) still happens — it's the coverage-gap pass, not the operator-decisions pass.
 
 ### 5.6 Calibration patterns to carry forward
 
