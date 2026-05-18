@@ -1,5 +1,6 @@
 {% from "fragments/history/_sort_header.html" import sort_th %}
 {% from "fragments/history/_pagination.html" import pagination %}
+{% from "primitives/empty_state.html" import empty_state %}
 {% set ep = "/fragments/history/pre_trade" %}
 {% set tid = "pre-trade-table" %}
 {% set df = date_from | replace(":", "%3A") | replace("+", "%2B") %}
@@ -81,6 +82,6 @@
   </div>
   {{ pagination(ep, tid, page, per_page, total, total_pages, qs) }}
   {% else %}
-  <div style="color:var(--muted);padding:20px 0;text-align:center;font-size:.78rem;">No pre-trade entries found for this period.</div>
+  {{ empty_state(message="No pre-trade entries found for this period.") }}
   {% endif %}
 </div>

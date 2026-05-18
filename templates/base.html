@@ -352,6 +352,42 @@
     .tr-p-clickable:hover { background: rgba(59,130,246,.04); }
     .tr-p-selected,
     .tr-p-selected:hover { background: rgba(59,130,246,.08); }
+
+    /* EmptyState (Task 124, FE-MED-006 + FE-MED-008) — parameter-driven
+       primitive. Centered message + optional CTA. Two tones: info
+       (muted grey, default) and action (slightly brighter, used with
+       CTA buttons). NOT for use directly inside <tbody>. */
+    .es {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      padding: 20px 0;
+      text-align: center;
+      font-size: .78rem;
+    }
+    .es-msg { color: var(--muted); }
+    .es-info .es-msg { color: var(--muted); }
+    .es-action .es-msg { color: var(--sub); }
+    a.es-action,
+    button.es-action {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-size: .68rem;
+      font-family: var(--font-mono);
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--blue);
+      text-decoration: none;
+      cursor: pointer;
+      transition: background .12s ease-out, border-color .12s ease-out;
+    }
+    a.es-action:hover,
+    button.es-action:hover {
+      background: rgba(59,130,246,.06);
+      border-color: var(--blue);
+    }
   </style>
 
   {% block extra_head %}{% endblock %}

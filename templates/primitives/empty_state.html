@@ -1,0 +1,77 @@
+{# EmptyState — Bundle A primitive #4 (Task 124, FE-MED-006 + FE-MED-008)
+
+   Parameter-driven empty state. No slot content — message + optional
+   action are all params. Plain macro pattern, third in Bundle A
+   alongside StatusIndicator (stateless params) and TableRow/Card
+   (sibling-list / contiguous-body slot pattern).
+
+   Wraps a centered "No <X>" message with optional call-to-action
+   button. Consolidates 7 ad-hoc empty-state treatments inventoried
+   in FE-MED-006 audit finding: history tables, dashboard, analytics
+   fragments, Regime not-backfilled cards.
+
+   Usage:
+       {% from "primitives/empty_state.html" import empty_state %}
+
+       Info tone, just a message (most common):
+       {{ empty_state(message="No closed positions found for this period.") }}
+
+       Action tone with navigational CTA (Regime "not backfilled" cards):
+       {{ empty_state(
+           message="Not yet backfilled.",
+           tone="action",
+           action_label="Use Backfill tab",
+           action_url="/regime#backfill",
+       ) }}
+
+       Action tone with HTMX attrs (passes through to the button):
+       {{ empty_state(
+           message="No data loaded yet.",
+           tone="action",
+           action_label="Load",
+           action_attrs='hx-get="/load" hx-target="#x"',
+       ) }}
+
+   Parameters:
+       message       required plain-text message. HTML-escaped.
+       tone          "info" (default — muted grey) or "action" (slightly
+                     brighter when paired with a CTA). Unknown tones
+                     fall through to "info" (defensive, parallel to
+                     StatusIndicator's bogus-severity handling).
+       action_label  optional button text. Empty omits the button row.
+       action_url    optional href for an <a> button. Required for a
+                     navigational action.
+       action_attrs  optional HTMX (or other) raw attrs string —
+                     e.g., 'hx-get="/x" hx-target="#y" hx-swap="innerHTML"'.
+                     Rendered via | safe; caller is responsible for
+                     escaping. Without action_url, attrs render on a
+                     <button> instead of an <a>.
+
+   Wrapper semantics:
+       Renders as a <div class="es es-{tone}">. NOT suitable for placement
+       directly inside <tbody> — table semantics break (browsers
+       drop non-<tr> children of <tbody>). Use in the parent
+       container's empty branch — the "else" of the row loop's
+       surrounding "if rows" block — or inside a Card body slot, or
+       as a standalone block on a page.
+
+   Why plain macro (not call/caller or open/close):
+       - Body is parameter-driven; no slot content shape.
+       - 9 of 10 migration sites use just (message,) — params are the
+         right interface.
+       - Matches StatusIndicator's pattern (Bundle A.1).
+#}
+
+{% macro empty_state(message, tone="info", action_label="", action_url="", action_attrs="") %}
+{%- set t = tone if tone in ("info", "action") else "info" -%}
+<div class="es es-{{ t }}">
+  <div class="es-msg">{{ message }}</div>
+  {%- if action_label %}
+  {%- if action_url %}
+  <a class="es-action" href="{{ action_url }}"{% if action_attrs %} {{ action_attrs | safe }}{% endif %}>{{ action_label }}</a>
+  {%- else %}
+  <button class="es-action" type="button"{% if action_attrs %} {{ action_attrs | safe }}{% endif %}>{{ action_label }}</button>
+  {%- endif %}
+  {%- endif %}
+</div>
+{% endmacro %}

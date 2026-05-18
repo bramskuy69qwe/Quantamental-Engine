@@ -469,7 +469,16 @@ async function loadSignalCard(sig){
       if(signalCharts[sig.key]){QE.disposeChart(document.getElementById('chart-'+sig.key));delete signalCharts[sig.key];}
       var cov=signalCoverage[sig.key];
       valEl.textContent=cov&&cov.count>0?'no data in range':'not backfilled';
-      chartEl.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:.65rem;color:var(--muted);">'+(cov&&cov.count>0?'No data for range':'Not yet backfilled — use Backfill tab')+'</div>';
+      // FE-MED-008 (Task 124): not-backfilled state uses EmptyState
+      // primitive's class structure (.es .es-action) for consistent
+      // treatment with the rest of the engine. Action-tone CTA points
+      // operator to the Backfill tab. The feature-level "pre-select
+      // this signal in Backfill" remains a follow-up — out of scope.
+      if(cov&&cov.count>0){
+        chartEl.innerHTML='<div class="es es-info" style="height:100%;justify-content:center;padding:0;"><div class="es-msg">No data for range</div></div>';
+      }else{
+        chartEl.innerHTML='<div class="es es-action" style="height:100%;justify-content:center;padding:0;"><div class="es-msg">Not yet backfilled</div><a class="es-action" href="#backfill" onclick="showPanel(\'backfill\');return false;">Use Backfill tab</a></div>';
+      }
       return;
     }
     var latest=data[data.length-1];valEl.textContent=latest.value.toFixed(sig.decimals)+(sig.unit?' '+sig.unit:'');

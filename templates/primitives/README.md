@@ -58,7 +58,7 @@ requests, no template-loader configuration changes.
 | StatusIndicator | `si`      | `.si`, `.si-dot`, `.si-label`, `.si-value`, `.si-success` |
 | Card            | `card`    | `.card-header`, `.card-body`, `.card-footer`, `.card-title`, `.card-subtitle` (builds on existing `.card` + `.card-p8` utility classes) |
 | TableRow        | `tr-p`    | `.tr-p`, `.tr-p-clickable`, `.tr-p-selected` (composes on existing cell typography classes `.td-*` / `.mono`) |
-| EmptyState      | `es`      | `.es`, `.es-icon`, `.es-msg`                              |
+| EmptyState      | `es`      | `.es`, `.es-msg`, `.es-action`, `.es-info`, `.es-action` (tone)  |
 | PeriodSelector  | `ps`      | `.ps`, `.ps-pill`, `.ps-pill-active`                      |
 
 When the inline-style block in base.html crosses ~500 lines of
@@ -142,7 +142,7 @@ TableRow is the convention example. Reasons:
 **Decision tree:**
 - Body is **one contiguous block** (Card's title-and-grid) → `{% call %}` + `caller()`.
 - Body is a **list of sibling elements** (TableRow's `<td>` cells) → open/close pair.
-- Body is **stateless parameter-driven** (StatusIndicator's label+value) → plain macro.
+- Body is **stateless parameter-driven** (StatusIndicator's label+value, EmptyState's message+action) → plain macro.
 
 ## Jinja2 gotchas (learned-the-hard-way)
 
@@ -285,9 +285,70 @@ Cell typography classes (`.td-symbol`, `.td-ts`, `.td-sub`,
 `.td-dim`, `.mono`, badges, etc.) keep working unchanged — TableRow
 only owns the row-level state structure.
 
-### EmptyState (planned)
+### EmptyState (Task 124)
 
-TBD.
+`templates/primitives/empty_state.html` — parameter-driven "No X
+found" / "Not yet backfilled" / etc. Consolidates 7 ad-hoc empty-state
+treatments inventoried in FE-MED-006. Plain-macro pattern (third
+pattern in the decision tree, alongside Card's call/caller and
+TableRow's open/close).
+
+```jinja2
+{% from "primitives/empty_state.html" import empty_state %}
+
+{# Info tone (default) — the 90% case #}
+{{ empty_state(message="No closed positions found for this period.") }}
+
+{# Action tone with navigational CTA — Regime not-backfilled pattern #}
+{{ empty_state(
+    message="Not yet backfilled.",
+    tone="action",
+    action_label="Use Backfill tab",
+    action_url="/regime#backfill",
+) }}
+
+{# Action tone with HTMX attrs (rendered on the button) #}
+{{ empty_state(
+    message="No data loaded yet.",
+    tone="action",
+    action_label="Load",
+    action_attrs='hx-get="/load" hx-target="#x"',
+) }}
+```
+
+Parameters:
+- `message` (required) — plain-text message, HTML-escaped.
+- `tone` — `"info"` (default, muted grey) or `"action"` (slightly
+  brighter when paired with a CTA). Unknown tones fall through to
+  `"info"` (defensive, parallel to StatusIndicator's bogus-severity
+  fallthrough).
+- `action_label` — button text. Empty omits the button row entirely.
+- `action_url` — href; when set, renders `<a class="es-action">`.
+- `action_attrs` — raw attrs string for HTMX or similar (`hx-get=
+  "..." hx-target="..."`). Renders via `| safe` — caller is
+  responsible for escaping. Without `action_url`, attrs render on a
+  `<button>` instead.
+
+**Wrapper semantics** (load-bearing — read before using):
+- Renders as `<div class="es es-{tone}">`.
+- **NOT suitable for placement directly inside `<tbody>`.** Browsers
+  drop non-`<tr>` children of `<tbody>`. Use in the parent
+  container's empty branch (the `else` of the row loop's `if rows`
+  block, OUTSIDE the `<table>`), or inside a Card body slot, or as
+  a standalone block on a page.
+
+When **JS** renders an empty state (e.g., the Regime chart card
+`chartEl.innerHTML = ...`), reuse the same `.es / .es-action /
+.es-info / .es-msg` class names. The primitive's CSS becomes the
+shared visual language; JS just composes HTML with the same classes.
+See `templates/regime.html` `loadSignalCard` for the convention.
+
+Out of EmptyState's scope:
+- **Placeholder text** like "—" / "awaiting calculation" — different
+  semantic (a value isn't yet computed; the slot is reserved).
+- **Page-layout empty states** like "right half of Backtest is
+  empty" — that's a layout decision (collapse to one column when
+  right empty), not an empty-message component.
 
 ### PeriodSelector (planned)
 

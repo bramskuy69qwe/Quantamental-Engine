@@ -68,6 +68,7 @@
     </table>
   </div>
   {% else %}
-  <div style="color:var(--muted);font-size:.78rem;padding:20px 0;">No closed trades found for this period.</div>
+  {% from "primitives/empty_state.html" import empty_state %}
+  {{ empty_state(message="No closed trades found for this period.") }}
   {% endif %}
 </div>
