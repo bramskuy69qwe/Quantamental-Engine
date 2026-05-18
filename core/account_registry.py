@@ -68,8 +68,21 @@ class AccountRegistry:
                 # blocker is the same: no operations possible until the
                 # operator fixes the source of the failure.
                 try:
+                    # HIGH-029 (Task 116): decrypt() returns SensitiveStr.
+                    # Unwrap at the cache boundary — downstream consumers
+                    # (exchange_factory → CCXT) feed the value into HTTP
+                    # paths that may call str() / urlencode internally.
+                    # The wrap window from decrypt-return to this unwrap
+                    # is brief but covers the period during which a
+                    # cache-write exception (locked map, OOM, etc.) could
+                    # otherwise show raw credentials in a traceback.
+                    from core.security import SensitiveStr as _SS
                     api_key    = decrypt(full.get("api_key_enc", ""))
                     api_secret = decrypt(full.get("api_secret_enc", ""))
+                    if isinstance(api_key, _SS):
+                        api_key = api_key.unwrap()
+                    if isinstance(api_secret, _SS):
+                        api_secret = api_secret.unwrap()
                 except CredentialDecryptionError as e:
                     log.critical(
                         "AccountRegistry.load_all: credential decryption "
@@ -172,6 +185,13 @@ class AccountRegistry:
         from core.state import DEFAULT_PARAMS
         import config as _cfg
 
+        # HIGH-029 (Task 116): callers (api/routes_accounts.*) may pass
+        # SensitiveStr for api_key / api_secret. encrypt() works on it
+        # directly (str.encode() is a C-slot operation that bypasses the
+        # masking __str__). The cache value is unwrapped because
+        # exchange_factory feeds it into CCXT, whose HTTP layer may call
+        # str() / urlencode internally — same trap Task 100 documented
+        # for the connections-credentials path.
         key_enc = encrypt(api_key)
         sec_enc = encrypt(api_secret)
         new_id = await db.insert_account(
@@ -186,14 +206,18 @@ class AccountRegistry:
         params = dict(params_template) if params_template else DEFAULT_PARAMS.copy()
         await db.set_account_params(new_id, params)
 
+        from core.security import SensitiveStr as _SS
+        cache_key    = api_key.unwrap()    if isinstance(api_key, _SS)    else api_key
+        cache_secret = api_secret.unwrap() if isinstance(api_secret, _SS) else api_secret
+
         async with self._lock:
             self._cache[new_id] = {
                 "id":                new_id,
                 "name":              name,
                 "exchange":          exchange,
                 "market_type":       market_type,
-                "api_key":           api_key,
-                "api_secret":        api_secret,
+                "api_key":           cache_key,
+                "api_secret":        cache_secret,
                 "is_active":         0,
                 "broker_account_id": broker_account_id,
                 "maker_fee":         _cfg.MAKER_FEE,
@@ -228,15 +252,22 @@ class AccountRegistry:
         if kwargs:
             await db.update_account(account_id, **kwargs)
 
+        # HIGH-029 (Task 116): unwrap SensitiveStr at the cache boundary —
+        # same rationale as add_account above (downstream CCXT consumers).
+        from core.security import SensitiveStr as _SS
         async with self._lock:
             if account_id in self._cache:
                 acct_name = self._cache[account_id].get("name", str(account_id))
                 if name is not None:
                     self._cache[account_id]["name"] = name
                 if api_key is not None:
-                    self._cache[account_id]["api_key"] = api_key
+                    self._cache[account_id]["api_key"] = (
+                        api_key.unwrap() if isinstance(api_key, _SS) else api_key
+                    )
                 if api_secret is not None:
-                    self._cache[account_id]["api_secret"] = api_secret
+                    self._cache[account_id]["api_secret"] = (
+                        api_secret.unwrap() if isinstance(api_secret, _SS) else api_secret
+                    )
                 if broker_account_id is not None:
                     self._cache[account_id]["broker_account_id"] = broker_account_id
                 if link_window_seconds is not None:

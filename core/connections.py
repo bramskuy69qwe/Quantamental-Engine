@@ -44,8 +44,17 @@ class ConnectionsManager:
                 # path skips it gracefully; operator sees the CRITICAL log and
                 # the "no API key configured" status on the connections page.
                 try:
+                    # HIGH-029 (Task 116): decrypt() returns SensitiveStr —
+                    # unwrap at the cache boundary so _test_provider's httpx
+                    # path receives a raw str (urlencode/URL would otherwise
+                    # serialize "<masked>" into the live request).
+                    from core.security import SensitiveStr as _SS
                     api_key = decrypt(row.get("api_key_enc", ""))
                     extra = decrypt(row.get("extra_enc", "")) if row.get("extra_enc") else ""
+                    if isinstance(api_key, _SS):
+                        api_key = api_key.unwrap()
+                    if isinstance(extra, _SS):
+                        extra = extra.unwrap()
                     is_active = row.get("is_active", 1)
                 except CredentialDecryptionError as e:
                     log.critical(

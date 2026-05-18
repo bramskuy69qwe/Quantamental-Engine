@@ -453,8 +453,21 @@ async def _user_data_loop(listen_key: str, attempt: int = 0) -> None:
                     # scheduler / WS-manager skip checks) and stop hammering.
                     from core.crypto import decrypt, CredentialDecryptionError
                     try:
+                        # HIGH-029 (Task 116): decrypt() now returns
+                        # SensitiveStr. Unwrap before passing to
+                        # build_auth_payload — that builder constructs a
+                        # JSON payload (json.dumps → str() on values) and
+                        # the WS protocol embeds the raw key in the
+                        # signed payload. The unwrap moves the leak
+                        # surface from "any exception in build_auth_payload"
+                        # to "any exception inside this short try block."
+                        from core.security import SensitiveStr as _SS
                         api_key = decrypt(acct.get("api_key_enc", ""))
                         api_secret = decrypt(acct.get("api_secret_enc", ""))
+                        if isinstance(api_key, _SS):
+                            api_key = api_key.unwrap()
+                        if isinstance(api_secret, _SS):
+                            api_secret = api_secret.unwrap()
                     except CredentialDecryptionError as e:
                         log.critical(
                             "ws_manager: credential decryption failed during "

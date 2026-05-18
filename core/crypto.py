@@ -70,11 +70,22 @@ def decrypt(ciphertext: str) -> str:
     connections.load_all, ws_manager reconnect) had no way to
     distinguish "no credential" from "wrong master key," leaving the
     operator blind when keys were intact but ENV_MASTER_KEY drifted.
+
+    HIGH-029 (Task 116): the non-empty return is wrapped in SensitiveStr
+    so a traceback fired between this call and the consumer's cache
+    write masks the credential in stack frames. SensitiveStr is a
+    `str` subclass, so callers that pass the return through
+    ``.encode()`` (e.g., HMAC, Fernet re-encrypt) are unaffected — the
+    C-slot bypasses the Python-level ``__str__`` override. Callers that
+    eventually store the value in a cache consumed by HTTP / urlencode
+    code paths MUST call ``.unwrap()`` at the cache boundary; today
+    those are ``account_registry.load_all``, ``connections.load_all``,
+    and ``ws_manager`` user-data reconnect.
     """
     if not ciphertext:
         return ""
     try:
-        return _fernet().decrypt(ciphertext.encode()).decode()
+        plaintext = _fernet().decrypt(ciphertext.encode()).decode()
     except (InvalidToken, Exception) as e:
         log.error(
             "credential decryption failed (%s) — encryption-key mismatch "
@@ -85,6 +96,8 @@ def decrypt(ciphertext: str) -> str:
         raise CredentialDecryptionError(
             "decryption failed — check ENV_MASTER_KEY"
         ) from e
+    from core.security import SensitiveStr
+    return SensitiveStr(plaintext)
 
 
 def safe_exchange_error(e: Exception) -> str:

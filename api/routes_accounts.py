@@ -15,6 +15,7 @@ from core.crypto import safe_exchange_error
 from core.database import db
 from core.account_registry import account_registry
 from core.exchange_factory import exchange_factory, _make_ccxt_instance
+from core.security import SensitiveStr
 from core.exchange import (
     fetch_exchange_info, fetch_account, fetch_positions,
     fetch_ohlcv, create_listen_key, fetch_bod_sow_equity,
@@ -72,6 +73,12 @@ async def create_account(
     err = _validate_exchange(exchange, market_type)
     if err:
         return JSONResponse({"status": "error", "error": err}, status_code=400)
+    # HIGH-029 (Task 116): wrap form-received credentials so an exception
+    # during add_account (encrypt, DB insert, cache write) masks the raw
+    # value in stack frames. account_registry unwraps at the cache
+    # boundary; encrypt() goes through .encode() (C-slot safe).
+    api_key = SensitiveStr(api_key)
+    api_secret = SensitiveStr(api_secret)
     try:
         new_id = await account_registry.add_account(name, exchange, market_type, api_key, api_secret)
         return JSONResponse({"status": "ok", "id": new_id, "name": name})
@@ -89,6 +96,11 @@ async def update_account(
     api_secret: Optional[str] = Form(None),
     broker_account_id: Optional[str] = Form(None),
 ):
+    # HIGH-029 (Task 116): wrap form-received credentials (see create_account).
+    if api_key is not None:
+        api_key = SensitiveStr(api_key)
+    if api_secret is not None:
+        api_secret = SensitiveStr(api_secret)
     await account_registry.update_account(
         account_id, name=name, api_key=api_key, api_secret=api_secret,
         broker_account_id=broker_account_id,
@@ -234,6 +246,9 @@ async def add_account_modal(
             f'<span class="text-red" style="font-size:.65rem;">Error: {err}</span>',
             status_code=400,
         )
+    # HIGH-029 (Task 116): wrap form-received credentials (see create_account).
+    api_key = SensitiveStr(api_key)
+    api_secret = SensitiveStr(api_secret)
     try:
         # Resolve params template
         params_template = None
@@ -271,8 +286,14 @@ async def test_account_preview(
             f'<span class="text-red" style="font-size:.65rem;">Failed: {err}</span>',
             status_code=400,
         )
+    # HIGH-029 (Task 116): direct-CCXT shape. The credentials never reach
+    # account_registry's cache — they pass straight into _make_ccxt_instance.
+    # Wrap on receipt, then unwrap immediately before ccxt construction so
+    # ccxt's internal URL / header serialization receives raw strings.
+    api_key = SensitiveStr(api_key)
+    api_secret = SensitiveStr(api_secret)
     try:
-        ex = _make_ccxt_instance(api_key, api_secret, exchange, market_type)
+        ex = _make_ccxt_instance(api_key.unwrap(), api_secret.unwrap(), exchange, market_type)
         loop = asyncio.get_event_loop()
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             t0 = time.monotonic()
@@ -370,11 +391,12 @@ async def update_account_detail(
 ):
     """Save credentials + params + fees for an account in one request."""
     # Update credentials
+    # HIGH-029 (Task 116): wrap form-received credentials (see create_account).
     cred_kwargs = {}
     if api_key:
-        cred_kwargs["api_key"] = api_key
+        cred_kwargs["api_key"] = SensitiveStr(api_key)
     if api_secret:
-        cred_kwargs["api_secret"] = api_secret
+        cred_kwargs["api_secret"] = SensitiveStr(api_secret)
     if broker_account_id is not None:
         cred_kwargs["broker_account_id"] = broker_account_id
     # HIGH-027 (Task 104b): validate + thread the link-window setting.
