@@ -1,5 +1,136 @@
 # Changelog
 
+## [v2.4.2] — 2026-05-18
+
+### Summary
+
+Bundle B closure release — wraps the Phase 5 adapter-hardening + credential-
+hardening + input-validation + DB-init follow-ups into one tag. 11 tasks since
+v2.4.1.1 (Tasks 109-119), 6 HIGH + 7 MED resolved, 2 reframings, 2 operator-
+decision encodings. Combined ledger drops from 92 active at v2.4.1.1 to 82
+active at v2.4.2.
+
+No money-at-risk fixes in this release — v2.4.1's CRIT/HIGH-tier trading-loop
+work was already complete. v2.4.2 is the operational-hardening tag.
+
+### Resolved (HIGH)
+
+- **FE-HIGH-002** (Task 111) Add Account modal — Bybit / MEXC now exposed
+  alongside Binance with `(Beta)` tag suffix. Registry-driven dropdown via
+  new `list_rest_exchanges()` helper. Unblocked Phase 5 Bundle B end-to-end
+  verification for non-Binance accounts.
+- **FE-HIGH-006** (Task 113) Trade Events Log row expansion — raw single-line
+  JSON `<pre>` replaced with a CSS-grid key-value layout. Nested values use
+  `tojson`; null renders as muted-italic "null"; empty payload surfaces a
+  "No payload data." hint.
+- **HIGH-028** (Task 115) Bybit weight-tracker reconciliation — adapted mirror
+  of Task 99's Binance HIGH-014. Bybit V5 publishes per-endpoint remaining
+  quota rather than global used weight, so saturation `(limit - status) / limit`
+  scales to `tracker.max_weight` for a unit-compatible reconcile signal.
+  Fail-safe across 7 edge cases.
+- **HIGH-029** (Task 116) Credential traceback leak parallels — `SensitiveStr`
+  applied at 5 routes_accounts entry points (`create_account`, `update_account`,
+  `add_account_modal`, `test_account_preview`, `update_account_detail`) +
+  `crypto.decrypt` return + 3 production decrypt consumers
+  (`account_registry.load_all`, `connections.load_all`, `ws_manager` user-data
+  reconnect). Closes the broader exchange-credential surface Task 100's narrow
+  fix had explicitly left for follow-up.
+- **HIGH-030** (Task 117) Bybit account-field validation — adapted mirror of
+  HIGH-013. Bybit V5 UNIFIED responses have two layers (`result.list[0]`
+  account-aggregate + per-coin USDT); validation accepts either layer as
+  authoritative. Structural-path checks + critical-field presence checks +
+  non-critical-field warn-only handling.
+- **HIGH-031** (Task 118) MEXC account-field validation — pure mirror of
+  HIGH-013 with one Bybit-style structural-path check (`raw['USDT'] or
+  raw['total']` fallback). Read-only adapter context bounds blast radius to
+  display/analytics, but validation fails loud anyway. Closes the "adapter
+  response sanity" family (HIGH-013/030/031 — all 3 production REST adapters
+  now validated).
+
+### Resolved (MED)
+
+- **FE-MED-005** (Task 112) Calculator Recent card — timestamps now relative
+  ("Just now", "5m ago", "2h ago", "Yesterday HH:MM", absolute fallback).
+  Storage switched from `HH:MM` string to epoch ms. Backward-compat with
+  legacy localStorage entries.
+- **FE-MED-011** (Task 112) Calculator preview labels — `_size (contracts)`
+  → `Size (Contracts)`; `Notional / est_size (USDT)` → `Notional / Est. Size
+  (USDT)`. Underscore-style identifiers no longer leak to operator UI.
+- **FE-MED-012** (Task 112) Calculator depth / fee labels disambiguated —
+  `1% Depth (USDT)` → `1% Depth from Mid (USDT)`; `{Maker|Taker} Fee (2×)`
+  → `{Maker|Taker} Fee — Round-trip (Entry + Exit)`.
+- **MED-046** (Task 119) DB init SQL split footgun — `_CREATE_STATEMENTS.split(";")`
+  loop replaced with `sqlite3.executescript()`. Handles `--` line comments
+  containing semicolons (the Task 104a `incomplete input` failure mode).
+- **MED-048** (Task 114) Server-side exchange whitelist — `_validate_exchange`
+  + new registry helpers (`is_valid_rest_exchange`, `get_supported_rest_exchanges`)
+  wired into all 4 client-trust account routes. Strict case-sensitive; 400
+  with operator-friendly message on rejection.
+- **MED-049** (Task 119) market_type whitelist — symmetric helper
+  `_validate_market_type` + registry primitives (`is_valid_market_type`,
+  `get_supported_market_types`) wired into `update_account_detail`. Closes
+  the gap where market_type-only edits skipped re-validation.
+- **MED-050** (Task 119) Position / order fetch per-record validation across
+  Binance + Bybit + MEXC adapters. Per-record granularity (not fail-closed)
+  — vanishing position is operator-visible in UI while list-blanking is not.
+  Routing-critical fields validated (symbol + amount for positions; id +
+  symbol for orders); malformed records logged + skipped, valid records
+  pass through unchanged.
+
+### Reframed
+
+- **FE-HIGH-003** → **FE-MED-017** (Task 110) BTCUSDT events confirmed test
+  pollution per operator. No real-data corruption — log-hygiene severity.
+- **FE-HIGH-004** → **FE-MED-016** (Task 110) 1 Hz `ws_status` polling is
+  intentional for live-latency display (`+437ms` in header), not a static-
+  boolean concern. SSE migration is optimization opportunity, not a bug.
+  Audit-impact-imprecision calibration: 5th example in the pattern.
+
+### Operator decisions encoded (Task 110, 2026-05-18)
+
+- Desktop-only product (no mobile support targeted).
+- Calculator timestamps: relative format ("Just now", "5m ago", etc.).
+- Bybit / MEXC Add Account modal: `(Beta)` tag suffix presentation.
+- Decision provenance recorded in `v2_4_audit_fix_plan.md` Open Dependencies
+  section.
+
+### New findings filed (deferred)
+
+- **MED-047** (Task 109) Template wiring pins use source-string greps without
+  compile-test — surfaced when Task 108 caught FE-CRIT-001 via a behavioral
+  test that source-grep pins missed. Discipline addition in CLAUDE.md.
+- **MED-048** (Task 112, resolved Task 114).
+- **MED-049** (Task 115, resolved Task 119).
+- **MED-050** (Task 118, resolved Task 119).
+
+### Audit ledger state at tag
+
+**82 active findings** — 0 CRIT / 3 HIGH / 52 MED / 27 LOW.
+
+Remaining HIGHs:
+- **HIGH-001** — No API auth (architecturally deferred to Phase 8;
+  deployment-context decision needed).
+- **HIGH-002** — Engine ↔ Quantower plugin coupling via WebSocket + DB polling
+  rather than well-defined contract (architecturally deferred to Phase 6).
+- **FE-HIGH-001** — Header "Plugin OFF" misread as "engine offline"
+  (operationally actionable inside Phase 5 Bundle A — header redesign +
+  primitives).
+
+Closed families this release:
+- **Adapter response-sanity** (HIGH-013/030/031) — all 3 production REST
+  adapters have account-field validation.
+- **Credential-hardening** (HIGH-024/029) — full credential lifecycle
+  wrapped in SensitiveStr at boundaries.
+- **Defense-in-depth input + DB-init** (MED-046/048/049/050) — Bundle B
+  MED-tier follow-ups fully resolved.
+
+### Test suite
+
+1602 passed, 6 skipped (`LOW-023` TestClient deadlock pattern — see
+`tests/test_task108_hotfix_v2_4_1_1.py` for the skip rationale).
+
+---
+
 ## [v2.4.1.1] — 2026-05-18
 
 ### Summary

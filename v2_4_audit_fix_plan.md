@@ -751,3 +751,30 @@ Documented Phase 1-4 patterns, top-of-mind for Phase 5:
 - **MED-047 retrofit cost is opportunistic, not standalone.** Bundles A / D / E all touch templates; each task in those bundles should adopt the compile-render pattern. Counting MED-047 as a standalone task is double-counting.
 - **Audit-02 prerequisites mini-phase 5.1.** Audit-02 itself might surface FE-CRIT or FE-HIGH that displaces primitive work. Run audit-02 first, then plan 5.1 against the post-02 inventory.
 - **No Phase 5 finding has a money-at-risk shape** — the four deferred backend HIGHs are all Bybit / MEXC parallels or credential-traceback parallels (operational hardening, not active trading correctness). v2.4.1's CRIT/HIGH-tier trading-loop work is done. Phase 5 is hygiene + UX.
+
+### Phase 5 Bundle B — CLOSED (tagged v2.4.2 at 5d550c9 → tag commit follows)
+
+Tasks: 111-119 (9 tasks; 13 branches counting t107-110 audit infrastructure
+that landed via merges into t110 before the bundle proper began).
+
+Findings resolved: 6 HIGH (FE-HIGH-002, FE-HIGH-006, HIGH-028, HIGH-029,
+HIGH-030, HIGH-031) + 7 MED (FE-MED-005, FE-MED-011, FE-MED-012, MED-046,
+MED-048, MED-049, MED-050) + 2 reframings (FE-HIGH-003 → FE-MED-017,
+FE-HIGH-004 → FE-MED-016).
+
+Stat Summary at Bundle B close: **0 CRIT / 3 HIGH / 52 MED / 27 LOW = 82 active.**
+
+Closed families:
+- Adapter response-sanity (HIGH-013/030/031) — all 3 production REST adapters.
+- Credential-hardening (HIGH-024/029) — full lifecycle wrap.
+- Defense-in-depth input + DB-init (MED-046/048/049/050).
+
+Remaining Phase 5 work:
+- **Bundle A** (FE-HIGH-001 + frontend MED leverage refactors) — only
+  operationally-actionable HIGH remaining.
+- **Audit-02** (untracked working-tree file
+  `docs/audits/2026-05-18-v2.4-frontend-audit-02-session-A.md` — interrupted;
+  may surface new HIGH-tier findings that re-populate the Top list).
+- **Scattered MED/LOW cleanup** (Bundle G, opportunistic).
+
+Phase 5 close target unchanged: Stat Summary < 30 active across all severities.
