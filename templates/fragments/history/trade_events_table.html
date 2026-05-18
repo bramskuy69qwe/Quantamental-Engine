@@ -88,7 +88,29 @@
         </tr>
         <tr id="evt-detail-{{ r.id }}" style="display:none;">
           <td colspan="6" style="padding:8px 12px;background:var(--panel);">
-            <pre style="margin:0;font-size:.62rem;color:var(--sub);white-space:pre-wrap;word-break:break-all;">{{ r.payload_json }}</pre>
+            {# FE-HIGH-006 (Task 113): raw JSON-on-one-line replaced with a
+               key-value grid. Operator scanning for a specific field anchors
+               on the label column; nested values (rare) render as inline
+               JSON via tojson. Empty payload shows a muted hint instead of
+               an empty <pre>. #}
+            {% if p %}
+            <div style="display:grid;grid-template-columns:max-content 1fr;gap:4px 12px;font-size:.65rem;">
+              {% for key, value in p.items() %}
+              <div style="color:var(--sub);font-family:var(--font-mono);">{{ key }}</div>
+              <div class="mono" style="color:var(--text);word-break:break-all;">
+                {%- if value is mapping or (value is sequence and value is not string) -%}
+                  {{ value | tojson }}
+                {%- elif value is none -%}
+                  <span style="color:var(--muted);font-style:italic;">null</span>
+                {%- else -%}
+                  {{ value }}
+                {%- endif -%}
+              </div>
+              {% endfor %}
+            </div>
+            {% else %}
+            <span style="color:var(--muted);font-size:.65rem;font-style:italic;">No payload data.</span>
+            {% endif %}
           </td>
         </tr>
         {% endfor %}
