@@ -89,6 +89,10 @@ CREATE TABLE IF NOT EXISTS pre_trade_log (
     atr_category      TEXT NOT NULL DEFAULT '',
     est_slippage      REAL NOT NULL DEFAULT 0,
     effective_entry   REAL NOT NULL DEFAULT 0,
+    -- HIGH-027 (Task 104a) per-calc override of the account-level
+    -- link_window_seconds. NULL means use account default. Surfaced to
+    -- operator via the calculator UI in Task 104b.
+    link_window_seconds_override INTEGER DEFAULT NULL,
     size              REAL NOT NULL DEFAULT 0,
     notional          REAL NOT NULL DEFAULT 0,
     est_profit        REAL NOT NULL DEFAULT 0,
@@ -192,7 +196,14 @@ CREATE TABLE IF NOT EXISTS accounts (
     api_secret_enc    TEXT    NOT NULL DEFAULT '',
     is_active         INTEGER NOT NULL DEFAULT 0,
     created_at        TEXT    NOT NULL DEFAULT (datetime('now')),
-    broker_account_id TEXT
+    broker_account_id TEXT,
+    -- HIGH-027 (Task 104a) account-level default link window. Pretrade
+    -- entries older than this many seconds at fill time are rejected by
+    -- compute_exec_match. Per-calc override available via
+    -- pre_trade_log.link_window_seconds_override. Default 21600 s = 6 h
+    -- (conservative for crypto-futures swing/intraday workflows, tunable
+    -- via the settings UI in Task 104b).
+    link_window_seconds INTEGER NOT NULL DEFAULT 21600
 );
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -514,6 +525,12 @@ class DatabaseManager(
             "ALTER TABLE fills ADD COLUMN exec_link_confirmed INTEGER DEFAULT 0",
             "ALTER TABLE fills ADD COLUMN exec_link_confirmed_at TEXT DEFAULT NULL",
             "ALTER TABLE fills ADD COLUMN exec_link_confirmed_by TEXT DEFAULT NULL",
+            # HIGH-027 (Task 104a): bounded calc-to-fill matching window.
+            # Account-level default 6 h; per-pretrade override allowed. CREATE
+            # TABLE above already includes the columns for fresh installs;
+            # these ALTERs cover legacy DBs.
+            "ALTER TABLE accounts ADD COLUMN link_window_seconds INTEGER NOT NULL DEFAULT 21600",
+            "ALTER TABLE pre_trade_log ADD COLUMN link_window_seconds_override INTEGER DEFAULT NULL",
         ]:
             try:
                 await self._conn.execute(migration)

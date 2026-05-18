@@ -146,6 +146,39 @@ async def frag_closed_positions(
 
 # ── Fill Drawer (Position History row expand) ────────────────────────────────
 
+async def _account_link_window_seconds(account_id: int) -> int:
+    """HIGH-027 (Task 104a): one-shot lookup of the per-account link window
+    (accounts.link_window_seconds). Returns DEFAULT_LINK_WINDOW_SECONDS if
+    the account row is missing (defensive — shouldn't happen at runtime,
+    but a deleted account shouldn't crash the history fragment)."""
+    from core.exec_link import DEFAULT_LINK_WINDOW_SECONDS
+    async with db._conn.execute(
+        "SELECT link_window_seconds FROM accounts WHERE id=?",
+        (account_id,),
+    ) as cur:
+        row = await cur.fetchone()
+        if row is None or row[0] is None:
+            return DEFAULT_LINK_WINDOW_SECONDS
+        return int(row[0])
+
+
+def _pretrade_ts_to_ms(pretrade: dict) -> int | None:
+    """HIGH-027 (Task 104a): convert pre_trade_log.timestamp (ISO string)
+    to epoch milliseconds. Returns None on parse failure — caller skips
+    the window check in that case, which falls through to the pre-fix
+    behavior (no reject). Defensive against malformed legacy rows."""
+    ts = pretrade.get("timestamp")
+    if not ts:
+        return None
+    try:
+        dt = datetime.fromisoformat(ts)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return int(dt.timestamp() * 1000)
+    except (ValueError, TypeError):
+        return None
+
+
 @router.get("/fragments/history/position_fills", response_class=HTMLResponse)
 async def frag_position_fills(request: Request, position_id: int = 0):
     """Return fills for a single closed position (lazy-loaded drawer)."""
@@ -179,6 +212,9 @@ async def frag_position_fills(request: Request, position_id: int = 0):
             ]
             ptl_by_id = await db.get_pretrade_logs_by_calc_ids(calc_ids)
             order_types = await db.get_order_types_by_ids(aid, ex_order_ids)
+            # HIGH-027 (Task 104a): one-shot account link-window lookup;
+            # reused for every fill in this position's drawer.
+            account_link_window = await _account_link_window_seconds(aid)
 
             for f in fills:
                 if f.get("is_close") or not f.get("calc_id"):
@@ -187,7 +223,13 @@ async def frag_position_fills(request: Request, position_id: int = 0):
                     continue
                 ptl = ptl_by_id.get(f["calc_id"])
                 order_type = order_types.get(f.get("exchange_order_id", ""), "")
-                status, count = get_exec_link_status(f, ptl, order_type)
+                pretrade_ts_ms = _pretrade_ts_to_ms(ptl) if ptl else None
+                status, count = get_exec_link_status(
+                    f, ptl, order_type,
+                    fill_ts_ms=f.get("timestamp_ms"),
+                    pretrade_ts_ms=pretrade_ts_ms,
+                    account_link_window_seconds=account_link_window,
+                )
                 f["exec_link_status"] = status
                 f["exec_match_count"] = count
 
@@ -252,7 +294,18 @@ async def frag_exec_link(request: Request, fill_id: int = 0):
                 pass
 
             if ptl:
-                match = compute_exec_match(fill, ptl, order_type)
+                # HIGH-027 (Task 104a): pass timestamps + account window so
+                # the comparison panel reflects window-rejection (a past-
+                # window match shows as None here, which the template will
+                # render as 'unlinked' or 'expired' once Task 104b lands).
+                account_link_window = await _account_link_window_seconds(aid)
+                pretrade_ts_ms = _pretrade_ts_to_ms(ptl)
+                match = compute_exec_match(
+                    fill, ptl, order_type,
+                    fill_ts_ms=fill.get("timestamp_ms"),
+                    pretrade_ts_ms=pretrade_ts_ms,
+                    account_link_window_seconds=account_link_window,
+                )
 
     return templates.TemplateResponse(
         request, "fragments/history/exec_link_panel.html",
