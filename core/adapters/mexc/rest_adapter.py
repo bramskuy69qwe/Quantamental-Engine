@@ -110,7 +110,60 @@ class MexcLinearAdapter(BaseExchangeAdapter):
 
     async def fetch_account(self) -> NormalizedAccount:
         raw = await self._run(self._ex.fetch_balance)
-        usdt = raw.get("USDT", raw.get("total", {}))
+        # HIGH-031 (Task 118): trust-but-verify the response shape before
+        # extracting equity. Pure mirror of HIGH-013's Binance fix with a
+        # Bybit-style structural-path check (the USDT-or-total fallback).
+        # Silent zero-fallback on a malformed response would propagate into
+        # dashboards, BOD/SOW init, and any downstream consumer of MEXC
+        # equity. Read-only adapter (capabilities.orders=False) bounds the
+        # blast radius to display + analytics — no live-trade sizing — but
+        # the silent-corruption shape is identical to HIGH-013/HIGH-030
+        # and the operator should see the failure, not silently bad data.
+        if not isinstance(raw, dict):
+            raise ValueError(
+                "mexc fetch_account: balance response is not a dict "
+                "(got %s) — response shape violation; refusing to apply "
+                "phantom-zero equity." % type(raw).__name__
+            )
+        # Structural path: either raw["USDT"] or raw["total"] must
+        # supply the per-currency entry. CCXT's mexc adapter normalizes
+        # to the unified shape, so "USDT" is the common case; the
+        # "total" fallback covers older response shapes.
+        usdt = raw.get("USDT")
+        if usdt is None:
+            usdt = raw.get("total")
+        if usdt is None or not isinstance(usdt, dict):
+            raise ValueError(
+                "mexc fetch_account: neither raw['USDT'] nor raw['total'] "
+                "present as a dict — refusing to apply phantom-zero "
+                "equity. Response structure violated CCXT's unified "
+                "balance contract."
+            )
+        # Critical fields: both must be present (value may be 0 for a
+        # legitimately empty account, but the key must exist —
+        # distinguishes "empty account" from "broken response").
+        if "total" not in usdt:
+            raise ValueError(
+                "mexc fetch_account: usdt['total'] missing from response "
+                "— refusing to apply phantom-zero equity."
+            )
+        if "free" not in usdt:
+            raise ValueError(
+                "mexc fetch_account: usdt['free'] missing from response "
+                "— refusing to apply phantom-zero available margin."
+            )
+        # Null-value rejection (parallel to Binance HIGH-013): CCXT may
+        # surface explicit None values from unusual response shapes.
+        if usdt.get("total") is None:
+            raise ValueError(
+                "mexc fetch_account: usdt['total'] is null — refusing "
+                "to apply phantom-zero equity."
+            )
+        if usdt.get("free") is None:
+            raise ValueError(
+                "mexc fetch_account: usdt['free'] is null — refusing "
+                "to apply phantom-zero available margin."
+            )
         return NormalizedAccount(
             currency="USDT",
             total_equity=float(usdt.get("total", 0) or 0),
