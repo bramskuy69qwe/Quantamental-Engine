@@ -91,6 +91,35 @@ _EXCHANGE_LABEL_OVERRIDES = {
 }
 
 
+def is_valid_rest_exchange(
+    exchange_id: str, market_type: str = "linear_perpetual"
+) -> bool:
+    """MED-048 (Task 114): server-side whitelist check for client-supplied
+    exchange values.
+
+    Strict, case-sensitive: only the exact lowercase IDs used at adapter
+    registration match. Every registered adapter uses a lowercase key
+    (``binance``, ``bybit``, ``mexc``); accepting case variants would only
+    hide frontend bugs that pass through non-canonical strings. Reject
+    rather than normalize.
+    """
+    if not isinstance(exchange_id, str) or not exchange_id:
+        return False
+    return f"{exchange_id}:{market_type}" in _REST_REGISTRY
+
+
+def get_supported_rest_exchanges(market_type: str = "linear_perpetual") -> list:
+    """MED-048 (Task 114): flat list of exchange_id strings for a given
+    market_type — used to build operator-friendly error messages when
+    validation rejects a client-supplied value."""
+    out = []
+    for key in _REST_REGISTRY.keys():
+        ex_id, mt = key.split(":", 1)
+        if mt == market_type:
+            out.append(ex_id)
+    return sorted(set(out))
+
+
 def list_rest_exchanges(market_type: str = "linear_perpetual") -> list:
     """FE-HIGH-002 (Task 111): list registered REST exchanges for the
     Add Account modal dropdown.

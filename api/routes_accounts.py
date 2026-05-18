@@ -30,6 +30,31 @@ router = APIRouter()
 _switch_lock = asyncio.Lock()
 
 
+def _validate_exchange(exchange: str, market_type: str) -> str:
+    """MED-048 (Task 114): server-side whitelist for client-supplied
+    ``exchange`` form fields. Returns an empty string on success, or an
+    operator-friendly error message on rejection.
+
+    Strict case-sensitive — registry keys are lowercase by convention,
+    and any case variation from the dropdown means the frontend was
+    tampered with. ``market_type`` is mapped through ``map_market_type``
+    (the DB stores ``future``; the registry keys on ``linear_perpetual``)
+    before lookup so the same caller form values used elsewhere apply
+    here unchanged.
+    """
+    from core.adapters import map_market_type
+    from core.adapters.registry import (
+        is_valid_rest_exchange, get_supported_rest_exchanges,
+    )
+    mapped = map_market_type(exchange, market_type)
+    if is_valid_rest_exchange(exchange, mapped):
+        return ""
+    supported = ", ".join(get_supported_rest_exchanges(mapped)) or "(none registered)"
+    return (
+        f"Unknown exchange: '{exchange}'. Supported: {supported}."
+    )
+
+
 @router.get("/accounts", response_class=JSONResponse)
 async def list_accounts(request: Request):
     return JSONResponse(await account_registry.list_accounts())
@@ -44,6 +69,9 @@ async def create_account(
     api_key: str = Form(...),
     api_secret: str = Form(...),
 ):
+    err = _validate_exchange(exchange, market_type)
+    if err:
+        return JSONResponse({"status": "error", "error": err}, status_code=400)
     try:
         new_id = await account_registry.add_account(name, exchange, market_type, api_key, api_secret)
         return JSONResponse({"status": "ok", "id": new_id, "name": name})
@@ -200,6 +228,12 @@ async def add_account_modal(
     environment: str = Form("live"),
     params_source: str = Form("defaults"),
 ):
+    err = _validate_exchange(exchange, market_type)
+    if err:
+        return HTMLResponse(
+            f'<span class="text-red" style="font-size:.65rem;">Error: {err}</span>',
+            status_code=400,
+        )
     try:
         # Resolve params template
         params_template = None
@@ -231,6 +265,12 @@ async def test_account_preview(
     exchange: str = Form("binance"),
     market_type: str = Form("future"),
 ):
+    err = _validate_exchange(exchange, market_type)
+    if err:
+        return HTMLResponse(
+            f'<span class="text-red" style="font-size:.65rem;">Failed: {err}</span>',
+            status_code=400,
+        )
     try:
         ex = _make_ccxt_instance(api_key, api_secret, exchange, market_type)
         loop = asyncio.get_event_loop()
@@ -362,6 +402,20 @@ async def update_account_detail(
     # Update exchange/market_type/environment via DB directly
     db_kwargs = {}
     if exchange is not None:
+        # MED-048 (Task 114): whitelist the new exchange against the
+        # adapter registry. If market_type wasn't also supplied, fall back
+        # to the account's current market_type so the validation key is
+        # complete.
+        effective_mt = market_type
+        if effective_mt is None:
+            cur = next((a for a in await account_registry.list_accounts() if a["id"] == account_id), None)
+            effective_mt = (cur or {}).get("market_type", "future")
+        err = _validate_exchange(exchange, effective_mt)
+        if err:
+            return HTMLResponse(
+                f'<span style="color:var(--red);font-size:.65rem;">{err}</span>',
+                status_code=400,
+            )
         db_kwargs["exchange"] = exchange
     if market_type is not None:
         db_kwargs["market_type"] = market_type
