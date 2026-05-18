@@ -9,6 +9,7 @@ from fastapi import APIRouter, Form
 from fastapi.responses import HTMLResponse
 
 from core.connections import connections_manager, KNOWN_PROVIDERS
+from core.security import SensitiveStr
 
 log = logging.getLogger("routes_connections")
 
@@ -128,6 +129,13 @@ async def upsert_connection(
     api_key: str = Form(...),
 ):
     """Add or update a connection, then test it."""
+    # HIGH-024 (Task 100): wrap before the call that may raise. If
+    # encrypt() or db.upsert_connection() throws, the api_key local in
+    # the propagated traceback frames renders as <SensitiveStr ... masked>
+    # rather than the raw key. connections_manager.upsert() unwraps before
+    # storing in the in-memory cache so _test_provider's httpx URL/header
+    # serialization still receives a plain string.
+    api_key = SensitiveStr(api_key)
     await connections_manager.upsert(provider, label, api_key)
 
     # Re-render the full list

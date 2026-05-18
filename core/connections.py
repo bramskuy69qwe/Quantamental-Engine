@@ -66,15 +66,26 @@ class ConnectionsManager:
     async def upsert(
         self, provider: str, label: str, api_key: str, extra: str = "",
     ) -> None:
-        """Add or update a connection (encrypts before storing)."""
+        """Add or update a connection (encrypts before storing).
+
+        HIGH-024 (Task 100): callers may pass a SensitiveStr for api_key.
+        encrypt() works on it directly (str.encode() goes through a C-level
+        slot that bypasses the masking __str__). The cache value is unwrapped
+        because _test_provider feeds it into httpx URL params / headers,
+        and urlencode would otherwise serialize "<masked>" into the live
+        request and break authentication.
+        """
         api_key_enc = encrypt(api_key)
         extra_enc = encrypt(extra) if extra else ""
         await db.upsert_connection(provider, label, api_key_enc, extra_enc)
+        # HIGH-024 unwrap boundary — see docstring above.
+        from core.security import SensitiveStr
+        cache_key = api_key.unwrap() if isinstance(api_key, SensitiveStr) else api_key
         async with self._lock:
             self._cache[provider] = {
                 "provider":  provider,
                 "label":     label,
-                "api_key":   api_key,
+                "api_key":   cache_key,
                 "extra":     extra,
                 "is_active": 1,
             }
