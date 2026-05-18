@@ -1,16 +1,24 @@
 """
-JSON log formatter for RotatingFileHandler.
+JSON log formatter for the rotating file handler.
 
 Produces newline-delimited JSON (one object per line) compatible with
 log aggregators (Grafana Loki, jq, etc.).
 
 Usage in main.py:
-    from logging.handlers import RotatingFileHandler
+    from concurrent_log_handler import ConcurrentRotatingFileHandler
     from core.log_formatter import JsonFormatter
 
-    handler = RotatingFileHandler(config.LOG_FILE, maxBytes=10*1024*1024, backupCount=5)
+    handler = ConcurrentRotatingFileHandler(
+        config.LOG_FILE, maxBytes=10*1024*1024, backupCount=5, encoding="utf-8",
+    )
     handler.setFormatter(JsonFormatter())
     logging.getLogger().addHandler(handler)
+
+Why ConcurrentRotatingFileHandler instead of stdlib RotatingFileHandler:
+MED-045 (Task 103.5) — stdlib rotation uses os.rename, which fails on
+Windows when another process holds the file open. ConcurrentRotatingFileHandler
+uses OS-level file locks (msvcrt on Win, fcntl on Unix) and is the
+drop-in fix.
 """
 from __future__ import annotations
 

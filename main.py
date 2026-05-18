@@ -43,12 +43,23 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 
-# Attach rotating JSON file handler to root logger so all modules write to it
+# Attach rotating JSON file handler to root logger so all modules write to it.
+# MED-045 (Task 103.5): use ConcurrentRotatingFileHandler instead of the stdlib
+# RotatingFileHandler. The stdlib version uses os.rename for rotation, which
+# fails on Windows with PermissionError [WinError 32] whenever another process
+# (e.g., a uvicorn worker subprocess) holds the file open. ConcurrentRotatingFileHandler
+# is a drop-in replacement that coordinates via OS-level file locks
+# (msvcrt on Windows, fcntl on Unix). maxBytes / backupCount / encoding match
+# the prior configuration verbatim.
 os.makedirs(config.LOGS_DIR, exist_ok=True)
-from logging.handlers import RotatingFileHandler
+from concurrent_log_handler import ConcurrentRotatingFileHandler
 from core.log_formatter import JsonFormatter
-_json_handler = RotatingFileHandler(
-    config.LOG_FILE, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"
+_json_handler = ConcurrentRotatingFileHandler(
+    config.LOG_FILE,
+    maxBytes=10 * 1024 * 1024,
+    backupCount=5,
+    encoding="utf-8",
+    use_gzip=False,  # match prior behavior — flip later if rotated-log size becomes a concern
 )
 _json_handler.setFormatter(JsonFormatter())
 logging.getLogger().addHandler(_json_handler)
