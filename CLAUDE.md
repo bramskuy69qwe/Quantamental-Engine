@@ -61,3 +61,23 @@ the per-test timeout still fires per worker, but worker accumulation is
 still possible if many tests deadlock simultaneously. The timeout
 shortens the wait but does not eliminate the failure mode — keep the
 process-count check in step 2 above.
+
+### Template wiring tests
+
+When a task touches Jinja2 templates, source-string grep tests are
+insufficient — Python-syntax-inside-Jinja errors (list comprehensions,
+walrus, f-strings, etc.) slip through. Include a compile-and-render
+test that loads the template via `jinja2.Environment(loader=FileSystemLoader("templates"))`
+with a minimal synthetic context and asserts the rendered HTML contains
+the expected structure. See MED-047 (filed Task 109) for the calibration
+finding and Task 108's `TestAccountDetailTemplateCompiles` for the
+reference pattern.
+
+### Audit-doc source documents
+
+Audit / inventory tasks that reference external source documents
+(audit reports, planning notes, screenshots) must commit those source
+documents in the same commit. References to docs outside the repo
+dangle and degrade traceability. Task 107's frontend-audit merge
+referenced `docs/audits/2026-05-18-v2.4-frontend-audit-01.md` but
+didn't commit it; Task 108 had to backfill the file. Don't repeat.

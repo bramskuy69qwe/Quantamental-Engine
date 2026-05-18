@@ -564,3 +564,190 @@ After each phase commit lands:
 
 After Phase 5 (v2.4.1): tag, write release notes, ship.
 After Phase 11 or earlier exit criteria for v2.5: tag, write release notes, ship, then start frontend audit phase.
+
+---
+
+## Phase 5 — Bundle Plan (Task 109)
+
+### 5.0 Status at planning time
+
+Plan written against **current main** (`c2bd969`, v2.4.1 tag commit). Audit doc Stat Summary: **67 active — 0 CRIT / 6 HIGH / 40 MED / 21 LOW** (backend-only, including MED-047 filed this task).
+
+Two branches exist but are NOT in main's lineage:
+- `v2.4/audit-t107-frontend-merge` (`970b130`) — audit-doc-only merge of audit-01's 28 FE-* findings into the unified ledger.
+- `v2.4.1/hotfix-t108-crit001` (`4ecd75d`) — v2.4.1.1 hotfix; resolves FE-CRIT-001 + FE-HIGH-005 + FE-MED-014 + FE-LOW-001, files + resolves FE-MED-015. Also includes a fast-forward merge of Task 107 inside.
+
+After both merge into main, the ledger reaches the combined post-hotfix state (~91 active, 0 CRIT, 11 HIGH including the 5 unresolved FE-HIGHs, 54 MED, 27 LOW). Phase 5 bundle execution is keyed to that post-merge state; pre-Phase-5 merge is itself a prerequisite mini-task.
+
+### 5.1 Pre-Phase-5 prerequisites (must merge before mini-phase 5.1 starts)
+
+These are not Phase 5 work themselves — they restore the lineage the rest of Phase 5 plans against.
+
+| Step | Action | Outcome |
+|------|--------|---------|
+| 1 | `git checkout main && git merge v2.4/audit-t107-frontend-merge --ff-only` | Audit doc gains 28 FE-* entries (Sections 30-35). Stat Summary becomes 94 active. |
+| 2 | `git merge v2.4.1/hotfix-t108-crit001` | Resolves FE-CRIT-001 + 4 bundled + FE-MED-015. Stat Summary becomes 91 active. Tag v2.4.1.1 already exists locally. |
+| 3 | Reconcile any merge conflict on the audit doc Stat Summary (the +MED-047 line filed this task may collide with Task 108's combined-ledger updates). | Single coherent post-merge Stat Summary. |
+| 4 | Operator smoke-checks v2.4.1.1 per smoke-checklist document; pushes tag to origin when satisfied. | v2.4.1.1 operationally trusted. |
+
+If the operator decides NOT to merge the hotfix (intentional rollback was visible in earlier session reminders), then FE-CRIT-001 stays open and must be re-addressed inside Phase 5. The bundle plan below assumes the hotfix lands.
+
+### 5.2 Inventory (post-prerequisite-merge)
+
+| Source | CRIT | HIGH | MED | LOW | Total |
+|---|---|---|---|---|---|
+| Backend audit (Phase 1-4 deferred + MED-047) | 0 | 6 | 40 | 21 | 67 |
+| Frontend audit-01 (minus v2.4.1.1 hotfix) | 0 | 5 | 14 | 6 | 25 |
+| **Combined Phase 5 scope** | **0** | **11** | **54** | **27** | **92** |
+
+If t107/t108 are NOT merged before Phase 5 begins, the in-scope inventory shrinks to the 67 backend-only entries — FE-* work moves to a later phase.
+
+### 5.3 Pattern groups (leverage-first bundles)
+
+Same approach as Task 94.2: group by leverage / pattern, not severity.
+
+**Bundle A — Missing UI primitives (leverage refactor; biggest payoff)**
+
+Build Card / TableRow / EmptyState / StatusIndicator / PeriodSelector primitives. Migrate page-by-page.
+
+Resolves (post-merge):
+- FE-MED-001 (Analytics card spacing)
+- FE-MED-002 (TableRow drift)
+- FE-MED-006 (7 empty-state treatments)
+- FE-MED-007 (Regime period selector duplication)
+- FE-MED-008 (regime not-backfilled inconsistent)
+- FE-LOW-003 (Connections card layout drift)
+- FE-LOW-005 (provider naming inconsistency)
+- Possibly FE-HIGH-001 (Plugin OFF — touches StatusIndicator)
+
+Estimated: 5-7 tasks (one per primitive + first-migration reference page each). The mini-phase that pays for itself fastest — 8+ findings resolved per 5 primitives.
+
+**Bundle B — Bybit/MEXC adapter completeness (Phase 4 deferred follow-ups)**
+
+Sequence-critical: FE-HIGH-002 (UI exposure) MUST come first; the three backend parallels can't be verified end-to-end without it.
+
+1. **FE-HIGH-002** — populate Add Account modal's EXCHANGE dropdown from the adapter registry.
+2. **HIGH-028** — Bybit `_reconcile_from_response()` override (parallel to Task 99's Binance fix).
+3. **HIGH-030** — Bybit account-field validation (parallel to Task 102's Binance fix).
+4. **HIGH-031** — MEXC account-field validation (parallel; reduced impact since read-only adapter).
+
+Estimated: 4 tasks. Each ~1 of the prior Phase 4 tasks in size.
+
+**Bundle C — Credential & security hardening**
+
+- **HIGH-029** — credential traceback leak in `api/routes_accounts.py` (5 sites) + `core/account_registry.py` post-decryption sites. Parallel to Task 100's narrow-scope SensitiveStr fix.
+- **MED-046** — `_CREATE_STATEMENTS.split(";")` footgun. Switch to `sqlite3.executescript()`.
+- **MED-047** — template wiring-pin retrofit. Opportunistic — done in-place when each template is next touched, not as a standalone task.
+
+Estimated: 2-3 tasks. MED-047 is mostly absorbed by Bundles A/D/E touching templates.
+
+**Bundle D — Data quality + performance (FE-side; needs operator answers first)**
+
+Blocked by audit-01 Open Questions:
+- **FE-HIGH-003** + **FE-MED-004** — Trade Events Log BTCUSDT entries (`entry_price: 0.0`, CALC ID always `—`). Audit-01 Open Q #4: are these real / replay / test pollution? Answer determines fix scope (clean DB + add write-time validation vs. ignore as test artifact).
+- **FE-HIGH-004** — Dashboard 1Hz `/fragments/ws_status` polling → SSE. Audit-01 Open Q #3: is the 1Hz cadence intentional?
+- **FE-HIGH-006** — Trade Events Log raw-JSON expansion → key-value grid.
+- **FE-MED-003** — duplicate timestamps in Events Log (group under parent row, or fix duplicate emission).
+- **FE-MED-013** — Analytics Performance Ratios partial coverage (SORTINO MAE / PROFIT FACTOR / EXPECTANCY missing).
+- **FE-MED-009** — Equity Curve y-axis auto-scale.
+
+Estimated: 3-4 tasks after operator answers.
+
+**Bundle E — Calculator / Settings UX polish**
+
+- **FE-MED-005** — Calculator Recent card date-less timestamps. Audit-01 Open Q #2 (relative vs absolute format).
+- **FE-MED-011** — Calculator `_SIZE`, `EST_SIZE` underscore labels.
+- **FE-MED-012** — `1% DEPTH` / `FEE (2X)` ambiguous labels (tooltip or rename).
+
+Estimated: 1-2 tasks.
+
+**Bundle F — Deferred architectural (NOT Phase 5 work; documented as deferred)**
+
+- **HIGH-001** — auth on all endpoints. Phase 8 (deployment context decision).
+- **HIGH-002** — `db._conn` private-attribute access across 24 sites. Phase 6 (architectural refactor).
+
+**Bundle G — Remaining backend MEDs + LOWs**
+
+Backend MEDs + LOWs not pattern-matched above. Audit individually, bundle by pattern as opportunities emerge during execution. Includes MED-044 (ws_manager recursion-vs-iteration), MED-007 (cache eviction), and others not yet pattern-matched.
+
+Estimated: variable — 5-10 tasks depending on bundling success.
+
+### 5.4 Execution order
+
+```
+Pre-5.0 — Merge t107 + t108 into main (lineage restoration; see 5.1)
+          Outcome: combined ledger at 91 active.
+
+Mini-phase 5.0 — Audit-02 pass (close coverage gaps)
+                 Tasks: 1 (Claude-in-Chrome session, ~60-90 min)
+                 Coverage: Analytics sub-tabs (8), Regime sub-tabs (3),
+                           Backtest sub-tabs (3), Calculator populated state
+                           + countdown UI states, mobile breakpoint,
+                           multi-account behavior, hover/focus, number
+                           formatting scan, SSE flicker.
+                 Output: docs/audits/2026-05-XX-v2.4-frontend-audit-02.md +
+                         unified-ledger merge into the main audit doc
+                         (Task 107 pattern).
+                 Operator-decisions gate: answers to audit-01 Open Qs #1-#5
+                                          must be captured here.
+
+Mini-phase 5.1 — Primitive scaffolding (Bundle A)
+                 Tasks: 5-7
+                 Sequence: Card → TableRow → EmptyState → StatusIndicator →
+                           PeriodSelector. Migrate one reference page per
+                           primitive (Analytics for Card; History for TableRow;
+                           Dashboard for EmptyState; header for StatusIndicator;
+                           Regime for PeriodSelector).
+
+Mini-phase 5.2 — Bybit/MEXC adapter completeness (Bundle B)
+                 Tasks: 4
+                 Sequence-critical: FE-HIGH-002 → HIGH-028 → HIGH-030 → HIGH-031.
+
+Mini-phase 5.3 — Credential hardening + housekeeping (Bundle C)
+                 Tasks: 2-3
+                 Includes opportunistic MED-047 retrofits as 5.1 / 5.4 / 5.5
+                 touch templates.
+
+Mini-phase 5.4 — Data quality + performance (Bundle D)
+                 Tasks: 3-4
+                 Dependency: audit-01 Open Qs #3 + #4 answered.
+
+Mini-phase 5.5 — Calculator / Settings UX polish (Bundle E)
+                 Tasks: 1-2
+                 Dependency: audit-01 Open Q #2 answered.
+
+Mini-phase 5.6 — Remaining MED/LOW cleanup (Bundle G)
+                 Tasks: variable (~5-10).
+
+Phase 5 close target: Stat Summary < 30 active across all severities.
+Phase 5 tag candidate: v2.5.0 (or v2.4.2 / v2.4.3 if scope contracts).
+```
+
+### 5.5 Open dependencies (must answer before relevant mini-phase)
+
+These are audit-01's open questions, surfaced for the operator. Some affect bundle scope; others affect individual fix shape.
+
+1. **Mobile / narrow viewport intended?** (audit-01 Open Q #1) — drives Bundle A scope (responsive breakpoints in primitives). If desktop-only, document and stop optimising for narrow.
+2. **Calculator timestamp format preference?** (audit-01 Open Q #2) — drives FE-MED-005 fix (relative "Today 16:07" vs absolute "2026-05-18 16:07"). Product-preference call.
+3. **`ws_status` polling cadence intentional?** (audit-01 Open Q #3) — drives FE-HIGH-004 fix (SSE vs back off to 5-10 s vs leave alone).
+4. **BTCUSDT events real / replay / test?** (audit-01 Open Q #4) — drives FE-HIGH-003 + FE-MED-004 scope (clean DB + write-time validation vs filter at display time).
+5. **Add Account Bybit/MEXC presentation?** (audit-01 Open Q #5) — drives FE-HIGH-002 fix detail (beta tag vs warning vs full enable).
+
+These should be answered during mini-phase 5.0 (audit-02) so the rest of Phase 5 isn't blocked on operator decisions.
+
+### 5.6 Calibration patterns to carry forward
+
+Documented Phase 1-4 patterns, top-of-mind for Phase 5:
+
+1. **Race-framing FP rate: 8 / 15 (53 %)** — race-framed findings default to verify-before-fix. Audit's "race / concurrent / interleave" language typically describes a real bug but with the wrong mechanism.
+2. **Audit-impact-imprecision (4 examples in Phase 4 — HIGH-019, HIGH-026, HIGH-013, HIGH-008)** — trace downstream consumers independently of the audit's described mechanism. Real bug, wrong description; fix the real harm.
+3. **Template compile-test discipline (MED-047)** — source-string greps are insufficient for Jinja2. Every template-touching task needs a real `jinja2.Environment.render` test against a synthetic context.
+4. **Audit-doc-source-document commit discipline** — referenced source docs (audit reports, screenshots) must commit in the same commit. Task 107 referenced audit-01 but didn't commit it; Task 108 had to backfill. Don't repeat.
+5. **Branch lineage discipline (introduced this task)** — release-tag tasks (Task 106) and audit-merge tasks (Task 107) and hotfix tasks (Task 108) all need to be checked into main's lineage before the next planning cycle. Otherwise downstream tasks (like Task 109) hit Stat-Summary drift and have to choose between three reconciliation paths.
+
+### 5.7 Latent observations (surfaced during this inventory pass)
+
+- **Bundle A's biggest payoff is the StatusIndicator primitive resolving the Plugin OFF misread (FE-HIGH-001).** This is the only Bundle A item that touches a HIGH-tier finding; the rest are MED/LOW. Worth sequencing StatusIndicator early in 5.1 so FE-HIGH-001 closes alongside the leverage refactor.
+- **MED-047 retrofit cost is opportunistic, not standalone.** Bundles A / D / E all touch templates; each task in those bundles should adopt the compile-render pattern. Counting MED-047 as a standalone task is double-counting.
+- **Audit-02 prerequisites mini-phase 5.1.** Audit-02 itself might surface FE-CRIT or FE-HIGH that displaces primitive work. Run audit-02 first, then plan 5.1 against the post-02 inventory.
+- **No Phase 5 finding has a money-at-risk shape** — the four deferred backend HIGHs are all Bybit / MEXC parallels or credential-traceback parallels (operational hardening, not active trading correctness). v2.4.1's CRIT/HIGH-tier trading-loop work is done. Phase 5 is hygiene + UX.
