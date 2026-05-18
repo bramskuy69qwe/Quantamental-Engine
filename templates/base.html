@@ -595,6 +595,65 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
 });
 </script>
 
+<style>
+  /* FE-MED-015 (Task 108): htmx error banner. Fixed-position toast at top of
+     viewport, fades out after ~5 s. Minimal — the goal is "user knows the
+     request failed", not fancy notification UX. */
+  #htmx-error-toast {
+    position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+    z-index: 9999;
+    background: rgba(239, 68, 68, 0.95); color: #fff;
+    padding: 8px 16px; border-radius: 4px;
+    font-family: var(--font-mono, monospace); font-size: .72rem;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+    opacity: 0; pointer-events: none;
+    transition: opacity 200ms ease-in-out;
+    max-width: 80vw; word-wrap: break-word;
+  }
+  #htmx-error-toast.visible { opacity: 1; pointer-events: auto; }
+</style>
+<div id="htmx-error-toast" role="alert" aria-live="polite"></div>
+<script>
+// ── FE-MED-015 (Task 108): global htmx error surface ────────────────────
+// Previously, an htmx swap whose server returned 4xx/5xx silently aborted
+// the swap with no user visible signal — exactly how FE-CRIT-001 hid for
+// the entire Phase 4 window. This listener catches every htmx:responseError
+// and renders a fixed-position toast for ~5 s. Logs to console with the
+// detail object so developers still get the full diagnostic.
+(function() {
+  var toast = document.getElementById('htmx-error-toast');
+  var hideTimer = null;
+  function showError(msg) {
+    if (!toast) return;
+    toast.textContent = msg;
+    toast.classList.add('visible');
+    if (hideTimer) clearTimeout(hideTimer);
+    hideTimer = setTimeout(function() {
+      toast.classList.remove('visible');
+    }, 5000);
+  }
+  document.body.addEventListener('htmx:responseError', function(evt) {
+    var xhr = evt.detail && evt.detail.xhr;
+    var cfg = evt.detail && evt.detail.requestConfig;
+    var status = xhr ? xhr.status : '?';
+    var path = cfg ? (cfg.path || cfg.verb || '?') : '?';
+    var msg = 'Request failed: ' + status + ' ' + path;
+    console.error('htmx:responseError', msg, evt.detail);
+    showError(msg);
+  });
+  // Network-level failures (DNS, server down, etc.) come through send-error,
+  // not response-error. Surface those too so a dead engine doesn't look
+  // like "click did nothing."
+  document.body.addEventListener('htmx:sendError', function(evt) {
+    var cfg = evt.detail && evt.detail.requestConfig;
+    var path = cfg ? (cfg.path || '?') : '?';
+    var msg = 'Network error reaching ' + path + ' (engine offline?)';
+    console.error('htmx:sendError', msg, evt.detail);
+    showError(msg);
+  });
+})();
+</script>
+
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/service-worker.js', { scope: '/' })

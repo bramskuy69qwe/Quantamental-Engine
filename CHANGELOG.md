@@ -1,5 +1,63 @@
 # Changelog
 
+## [v2.4.1.1] — 2026-05-18
+
+### Summary
+
+Hotfix release closing the FE-CRIT-001 release-blocker discovered by the
+frontend audit-01 immediately after the v2.4.1 tag. The account detail panel
+silently returned HTTP 500 because Task 104b's template addition used a
+Python list comprehension inside a Jinja2 `{% set %}` (`[p[0] for p in ...]`
+— not Jinja2-valid syntax). Bundled four other small fixes since the same
+audit-01 pass surfaced them and they all touch UI / config / template files.
+
+### Resolved
+
+- **FE-CRIT-001** Account detail panel HTTP 500 → namespace-based loop pattern
+  in `templates/fragments/account_detail.html` replaces the invalid
+  comprehension. Pre-fix the template never rendered; the audit-01 silent-500
+  was the render-failure surfacing.
+- **FE-HIGH-005** Regime "As of undefined" → JS in `templates/regime.html`
+  read `data.date`; endpoint at `api/routes_regime.py:42` returns
+  `computed_at`. JS rewritten with the correct field name + null fallback.
+- **FE-MED-014** Account auto-load on single-account install → collapsed by
+  FE-CRIT-001 fix. `templates/config.html:38-43` already had
+  `hx-trigger="load"` on the detail panel; only the 500 was blocking it.
+- **FE-LOW-001** `PROJECT_VERSION_` stale at `"v2.4"` → bumped to `"v2.4.1.1"`.
+
+### Filed + Resolved same commit
+
+- **FE-MED-015** HTMX 4xx/5xx swaps fail silently with no user surface →
+  global `htmx:responseError` + `htmx:sendError` listeners added to
+  `templates/base.html`. Renders a fixed-position toast for ~5 s; logs full
+  detail to console. Audit-01 explicitly called for this as FE-CRIT-001's
+  recommended secondary fix; if it had existed pre-FE-CRIT-001 the audit
+  would have surfaced the 500 in one click instead of hiding for a full
+  audit pass.
+
+### Audit ledger state after v2.4.1.1
+
+**91 active** — 0 CRIT / 11 HIGH / 53 MED / 27 LOW.
+
+CRIT count returned to zero. Top 5 now headed by HIGH-001 (auth, Phase 8
+deferred); no active CRIT-tier blocker remains for the v2.4.1.1 tag push.
+
+### Tests
+
+- `tests/test_task108_hotfix_v2_4_1_1.py` adds 12 cases (9 active + 3 skipped
+  per LOW-023 pattern). Full pytest: 1465 passed, 6 skipped, 26.47 s.
+- Direct Jinja2-render test (`TestAccountDetailTemplateCompiles`) loads the
+  actual template file and renders against a synthetic context — catches
+  FE-CRIT-001-class syntax errors without needing the FastAPI/uvicorn stack
+  (which is what previously deadlocked TestClient-based pin tests).
+
+### Out of scope (deferred)
+
+- Other FE-* findings (Phase 5 work; bundle plan = Task 109).
+- Pushing v2.4.1.1 to origin (operator decision after smoke confirms).
+
+---
+
 ## [v2.4.1] — 2026-05-18
 
 ### Summary
