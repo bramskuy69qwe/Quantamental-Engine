@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Set
 
 import config
-from core.adapters.errors import RateLimitError
+from core.adapters.errors import RateLimitError, AuthenticationError
 from core.state import app_state
 from core.tz import now_in_account_tz
 from core.exchange import (
@@ -121,6 +121,14 @@ async def _account_refresh_loop():
         # RL-1: skip if rate-limited
         if app_state.ws_status.is_rate_limited:
             continue
+        # HIGH-008 (Task 103): skip if account previously hit AuthenticationError.
+        # The earlier broad `except Exception` caught the auth error but treated
+        # it as transient — hammering the exchange every 15-30s with invalid creds
+        # generated log noise and risked IP-level bans for repeated auth failures.
+        # The flag is set in the AuthenticationError except below and cleared by
+        # account_registry.update_account when the operator updates credentials.
+        if app_state.active_account_id in app_state.auth_failed_accounts:
+            continue
         _account_refresh_in_flight = True
         try:
             # ── Account + position sync (plugin-gated) ─────────────────────
@@ -219,6 +227,25 @@ async def _account_refresh_loop():
         except RateLimitError as e:
             from core.exchange import handle_rate_limit_error
             handle_rate_limit_error(e)
+        except AuthenticationError as e:
+            # HIGH-008 (Task 103): auth errors are terminal without operator
+            # action — keys are wrong / expired / lacking permission, and
+            # retrying does no good. Log CRITICAL (above the WARNING used for
+            # transient errors below), mark the account in app_state, and
+            # surface in the WS log so the operator notices on the next page
+            # load. Cleared by account_registry.update_account when the
+            # operator updates the credentials.
+            aid = app_state.active_account_id
+            log.critical(
+                "Periodic account refresh hit AuthenticationError for "
+                "account %d: %s — disabling periodic refresh for this account "
+                "until credentials are updated",
+                aid, e,
+            )
+            app_state.auth_failed_accounts.add(aid)
+            app_state.ws_status.add_log(
+                f"AUTH FAILED for account {aid}: {e} — update credentials in Config."
+            )
         except Exception as e:
             log.warning(f"Periodic account refresh failed: {e}")
         finally:

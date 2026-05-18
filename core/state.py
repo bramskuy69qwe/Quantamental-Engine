@@ -283,6 +283,12 @@ class AppState:
         self.dd_would_have_blocked_logged: Set[int] = set()
         # Accounts where trader manually overrode the dd_state gate
         self.dd_manually_unblocked: Set[int] = set()
+        # HIGH-008 (Task 103): account IDs whose periodic refresh hit an
+        # AuthenticationError. Subsequent refresh ticks skip these accounts
+        # silently (after the first CRITICAL log) until the operator updates
+        # credentials via account_registry.update_account, which discards
+        # the ID from this set.
+        self.auth_failed_accounts: Set[int] = set()
 
         # True while the background startup fetch is still in progress
         self.is_initializing: bool = True

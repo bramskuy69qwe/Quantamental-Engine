@@ -208,6 +208,16 @@ class AccountRegistry:
                 if broker_account_id is not None:
                     self._cache[account_id]["broker_account_id"] = broker_account_id
         detail = "credentials_changed" if (api_key or api_secret) else "metadata_updated"
+        # HIGH-008 (Task 103): on credential update, clear any auth-failed
+        # flag so the scheduler resumes periodic refresh for this account.
+        # No-op when the flag was never set or only metadata changed.
+        if api_key is not None or api_secret is not None:
+            try:
+                from core.state import app_state
+                app_state.auth_failed_accounts.discard(account_id)
+            except Exception:
+                # State module not importable in some test paths — non-fatal.
+                pass
         acct_name = name or self._cache.get(account_id, {}).get("name", str(account_id))
         _audit("update", "account", acct_name, detail)
 
