@@ -223,7 +223,13 @@
       (43200, '12 h'),
       (86400, '24 h (max)'),
     ] %}
-    {% set lw_is_preset = lw_current in [p[0] for p in lw_presets] %}
+    {# FE-CRIT-001 (Task 108): Jinja2 has no Python list-comprehension syntax;
+       the prior `[p[0] for p in lw_presets]` raised TemplateSyntaxError at
+       render time, surfacing as a silent 500 on /fragments/account-detail/{id}.
+       Use a namespace to set a flag across the loop instead. #}
+    {% set ns = namespace(is_preset=false) %}
+    {% for p in lw_presets %}{% if p[0] == lw_current %}{% set ns.is_preset = true %}{% endif %}{% endfor %}
+    {% set lw_is_preset = ns.is_preset %}
     <div style="margin-bottom:14px;">
       <span class="sec-lbl">Calc Link Window</span>
       <div style="font-size:.6rem;color:var(--muted);margin-bottom:6px;">

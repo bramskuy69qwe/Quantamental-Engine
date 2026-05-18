@@ -430,7 +430,13 @@ async function loadTimeline(){
 async function loadCurrentRegime(){
   try{var resp=await fetch('/api/regime/current');var data=await resp.json();
   var badge=document.getElementById('regime-badge');
-  if(data.label){var rc=REGIME_COLORS[data.label]||REGIME_COLORS.neutral;badge.textContent=rc.label;badge.style.background=rc.bg;badge.style.color=rc.text;document.getElementById('regime-date').textContent='As of '+data.date;document.getElementById('regime-mode').textContent=data.mode+' mode';}
+  if(data.label){var rc=REGIME_COLORS[data.label]||REGIME_COLORS.neutral;badge.textContent=rc.label;badge.style.background=rc.bg;badge.style.color=rc.text;
+    // FE-HIGH-005 (Task 108): endpoint returns `computed_at` ISO string, not
+    // `date`. The prior code read data.date which is always undefined, so the
+    // page rendered literal "As of undefined". Use computed_at + fall back to
+    // "—" when null (no live regime + no historical label timestamp yet).
+    var asOf = data.computed_at ? data.computed_at.replace('T',' ').slice(0,16) + ' UTC' : '—';
+    document.getElementById('regime-date').textContent='As of '+asOf;document.getElementById('regime-mode').textContent=(data.mode||'')+' mode';}
   else{badge.textContent='No Data';badge.style.background='var(--panel)';badge.style.color='var(--muted)';document.getElementById('regime-date').textContent='Run a backfill first';}}catch(e){}
 }
 

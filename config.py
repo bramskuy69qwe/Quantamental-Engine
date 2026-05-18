@@ -5,7 +5,7 @@ load_dotenv()
 
 # ── Project identity ─────────────────────────────────────────────────────────
 PROJECT_NAME_    = "QUANTAMENTAL ENGINE"
-PROJECT_VERSION_ = "v2.4"
+PROJECT_VERSION_ = "v2.4.1.1"
 PROJECT_NAME     = f"{PROJECT_NAME_} {PROJECT_VERSION_}"
 
 # ── Exchange ──────────────────────────────────────────────────────────────────
