@@ -1,5 +1,150 @@
 # Changelog
 
+## [v2.4.3] — 2026-05-19
+
+### Summary
+
+Bundle A closure release — wraps the Phase 5 UX primitive chapter into
+one tag. 5 tasks since v2.4.2 (Tasks 121-125), 1 HIGH + 3 MEDs full + 2
+MEDs partial resolved. Five reusable primitives shipped with a
+documented decision-tree convention. Combined ledger drops from 82
+active at v2.4.2 to 76 active at v2.4.3.
+
+This is the UX-polish chapter — no money-at-risk or hardening work.
+v2.4.1 closed CRIT/HIGH-tier trading-loop work; v2.4.2 closed
+adapter-hardening + credential surface; v2.4.3 closes the UX primitive
+foundation.
+
+### Resolved (HIGH)
+
+- **FE-HIGH-001** (Task 121) Plugin OFF indicator misread — header
+  "◌ Plugin · OFF · +437ms" composite that the eye grouped into
+  "engine offline · 437ms latency" replaced by the StatusIndicator
+  primitive showing `Quantower · Connected` (green) or `Quantower
+  · Disconnected` (red). WS-status latency display kept in its own
+  cluster to the right; no longer visually grouped with the plugin
+  state.
+
+### Resolved (MED)
+
+- **FE-MED-001** (Task 122) Analytics overview card spacing — 5 cards
+  on Analytics → Overview drifted to loose 10px×12px rhythm vs
+  History's tight 8px×10px. Card primitive built (slot-content via
+  `{% call %}` + `caller()`); all 5 cards migrated to tight rhythm
+  matching History.
+- **FE-MED-002** (Task 123) History table row drift — TableRow
+  primitive built (open/close pair for sibling-list bodies). All 3
+  history tables migrated (Position History, Order History, Trade
+  History/fills). Trade History SIDE column split into ACTION
+  (Open/Close) + SIDE (LONG/SHORT) per calibration #3 — each cell
+  now single-coloured, matching Position History rhythm.
+- **FE-MED-006** (Task 124) 7 empty-state treatments consolidated —
+  EmptyState primitive built (plain macro, info / action tones).
+  9 template-side migrations (5 history tables, dashboard, 3
+  analytics fragments) + 1 JS-side migration (Regime not-backfilled
+  cards). JS-consumable primitive pattern surfaced: client-side JS
+  emits the same `.es-*` class structure as the macro.
+- **FE-MED-007** (Task 125, partial) PeriodSelector visual
+  normalization — primitive built; Regime global "All:" selector +
+  History page presets + Regime per-card JS-rendered selectors all
+  migrated to the same `.ps + .preset-btn` class structure.
+  Precedence-rule operator-UX question (which selector wins when
+  global and per-card both set?) explicitly deferred.
+- **FE-MED-008** (Task 124, partial) Regime not-backfilled cards —
+  visual treatment normalized via EmptyState action tone (BTC
+  Market Cap + Aggregate OI Change cards). Feature-level
+  pre-select-signal-in-Backfill deferred (data/feature work, not
+  UI primitive).
+
+### Infrastructure / architecture
+
+- **5 UX primitives shipped** in `templates/primitives/`:
+  - StatusIndicator (Task 121) — plain macro for parameter-driven
+    state displays. Severity vocab: `success / warning / error /
+    info / neutral` mapped to existing CSS vars.
+  - Card (Task 122) — slot-content panel via `{% call %}` +
+    `caller()`. Title + subtitle + body + footer, composes on
+    existing `.card` + `.card-p8` utility classes.
+  - TableRow (Task 123) — sibling-list-slot via open/close pair
+    (`tr_open` + `tr_close`). Hover + clickable + selected states
+    without disturbing cell typography.
+  - EmptyState (Task 124) — plain macro, info / action tones,
+    optional CTA (button or anchor).
+  - PeriodSelector (Task 125) — plain macro, options list +
+    current value, two transition modes (JS template / HTMX
+    template).
+- **Pattern conventions documented** in `templates/primitives/README.md`:
+  - Decision tree: contiguous block → `{% call %}` + `caller()`;
+    sibling list → open/close pair; parameter-driven → plain macro.
+  - Class-prefix table per primitive (`.si-*`, `.card-*`, `.tr-p-*`,
+    `.es-*`, `.ps-*`).
+  - Jinja2 nested-comment gotcha + compile-render-before-commit
+    discipline documented (MED-047 cross-reference).
+  - "Compose on existing utility classes" convention — primitives
+    don't reinvent typography or spacing utilities, they build
+    structure atop what exists.
+- **CLAUDE.md updated** with the Jinja2 nested-comment gotcha alongside
+  MED-047 template-wiring discipline. Reinforces "compile-render
+  before committing" rule.
+- **JS-consumable primitive pattern** established (Tasks 124 + 125):
+  when a primitive's consumer is JS-rendered (Regime chart cards), the
+  JS emits the same class structure the macro emits. Primitive CSS
+  becomes a shared visual language across server- and client-rendered
+  surfaces.
+
+### Reframed / clarified
+
+- Audit-doc clarification: FE-MED-002's "Trade History" screenshot
+  evidence (`ss_4313zsgql`) maps to `fills_table.html` (whose section
+  label is `Trade History (N entries)`), not `trade_history_table.html`
+  (the closed-trades summary). Path made explicit in the audit-doc
+  entry.
+
+### Audit ledger state at tag
+
+**76 active findings** — 0 CRIT / 2 HIGH / 47 MED / 27 LOW.
+
+Remaining HIGHs (both architecturally deferred):
+- **HIGH-001** — No API authentication. Architecturally deferred to
+  Phase 8 (deployment-context decision needed).
+- **HIGH-002** — Engine ↔ Quantower plugin coupling via WebSocket + DB
+  polling. Architecturally deferred to Phase 6 (broader rework).
+
+**First time the ledger has held at Top 2 across multiple consecutive
+tasks** (Tasks 121-125 all resolved MED-tier without HIGH movement).
+All actionable HIGH-tier work in the audit response is now closed; the
+remaining HIGHs are explicitly named-phase deferrals, not open work.
+
+### Test suite
+
+1752 passed, 6 skipped. Test count growth across Bundle A:
+- Task 121 (+21 cases): StatusIndicator + FE-HIGH-001 migration pins.
+- Task 122 (+21): Card + Analytics migration.
+- Task 123 (+29): TableRow + 3 history-table migrations + Trade
+  History column split.
+- Task 124 (+46): EmptyState + 10 migration sites.
+- Task 125 (+33): PeriodSelector + 3 migration sites.
+
+### Latent observations (recorded in audit doc, not filed as findings)
+
+Bundle A surfaced 4 composite-primitive candidates worth tracking:
+- WsStatus composite (Task 121 latent) — multi-field display in
+  `ws_status.html`: StatusIndicator + numeric readouts (latency + age
+  + clock offset). Card has now landed; natural follow-up.
+- Regime Timeline mode+period combo (Task 125 latent) — two segmented
+  controls (Swim/Bars/Blocks/Heat/Stack + period) that should
+  visually coordinate.
+- Card header_actions slot (Task 122 latent) — action buttons in card
+  header right corner. Future header-slot expansion.
+- Form-field cluster (Task 125 latent) — Config / Add Account modal
+  has 15-20 repeated `<label>` + `<input>` clusters.
+
+None blocked Bundle A close. Filed as latent in the audit doc, not as
+new findings; consumer-driven filing when a real second use case
+appears.
+
+---
+
 ## [v2.4.2] — 2026-05-18
 
 ### Summary

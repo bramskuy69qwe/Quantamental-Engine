@@ -778,3 +778,32 @@ Remaining Phase 5 work:
 - **Scattered MED/LOW cleanup** (Bundle G, opportunistic).
 
 Phase 5 close target unchanged: Stat Summary < 30 active across all severities.
+
+### Phase 5 Bundle A — CLOSED (tagged v2.4.3 at 12d9e96 → tag commit follows)
+
+Tasks: 121-125 (5 primitives + reference migrations across 13+ template / JS sites).
+
+Findings resolved: 1 HIGH (FE-HIGH-001) + 3 MEDs full (FE-MED-001 / FE-MED-002 / FE-MED-006) + 2 MEDs partial (FE-MED-007 visual normalization only — precedence-rule deferred; FE-MED-008 visual treatment only — feature-level pre-select deferred).
+
+Architectural artifact: `templates/primitives/README.md` (≈430 lines).
+- Three-pattern decision tree: contiguous-block → `{% call %}` + `caller()`; sibling-list → open/close pair; parameter-driven → plain macro.
+- Class-prefix table covering all 5 primitives.
+- Jinja2 nested-comment gotcha + compile-render-before-commit discipline (MED-047 cross-reference).
+- "Compose on existing utility classes" convention — primitives don't reinvent typography or spacing utilities.
+
+Composite-primitive observations (recorded as latent in audit doc, not filed as findings):
+- **WsStatus composite** (StatusIndicator + numeric readouts) — Task 121 latent. ws_status.html fragment is the natural consumer; Card has landed so the composite path is now unblocked. Strongest filing candidate of the four.
+- **Regime Timeline mode+period combo** (Task 125 latent) — two segmented controls (Swim/Bars/Blocks/Heat/Stack + period) that should visually coordinate. Possibly two PeriodSelector instances inside a flex container vs a SegmentedToolbar composite.
+- **Card header_actions slot** (Task 122 latent) — action buttons in card header right corner. Future header-slot expansion when a real consumer surfaces.
+- **Form-field cluster** (Task 125 latent) — Config / Add Account modal has 15-20 repeated `<label>` + `<input>` clusters. Out of Bundle A scope; potential Bundle F/G.
+
+Decision recorded: composite-primitive observations NOT filed as new findings during Bundle A close. Consumer-driven filing — wait until a real second use case appears or operator decides to schedule composite work explicitly. Defer-discipline parallel to Card's "defer open/close pair until needed" reasoning.
+
+Remaining Phase 5 surface:
+- Scattered MED/LOW migrations using the new primitives (opportunistic — analytics period controls, equity_ohlc empty state, position_fills/exchange_table empty states with non-default padding, etc.).
+- audit-02 sessions (Session A doc committed in `bb06f35` between v2.4.2 and Bundle A; coverage gaps deferred for future audit pass).
+- Composite-primitive design (if filed as new findings or scheduled directly by operator).
+
+Stat Summary at Bundle A close: **0 CRIT / 2 HIGH / 47 MED / 27 LOW = 76 active.**
+
+Combined Bundle B + Bundle A delta (v2.4.1.1 → v2.4.3): 92 → 76 = -16 active. Phase 5 target (<30 active) requires another ~46 net resolutions across audit-02 sessions + remaining MED/LOW cleanup + any composite-primitive findings filed.
