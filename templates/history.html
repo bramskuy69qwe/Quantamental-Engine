@@ -33,14 +33,23 @@
       </div>
     </div>
 
-    <!-- Presets -->
-    <div style="display:flex;gap:3px;margin-top:7px;flex-wrap:wrap;">
-      <button class="preset-btn" data-preset="90d"       onclick="setPreset('90d')">Last 90 days</button>
-      <button class="preset-btn" data-preset="30d"       onclick="setPreset('30d')">Last 30 days</button>
-      <button class="preset-btn" data-preset="15d"       onclick="setPreset('15d')">Last 15 days</button>
-      <button class="preset-btn" data-preset="7d"        onclick="setPreset('7d')">Last 7 days</button>
-      <button class="preset-btn" data-preset="yesterday" onclick="setPreset('yesterday')">Yesterday</button>
-      <button class="preset-btn" data-preset="today"     onclick="setPreset('today')">Today</button>
+    <!-- FE-MED-007 (Task 125): History presets migrated to PeriodSelector
+         primitive. `data-preset` attr replaced with primitive-standard
+         `data-value`; JS highlightPreset below reads dataset.value. -->
+    {% from "primitives/period_selector.html" import period_selector %}
+    <div style="margin-top:7px;">
+      {{ period_selector(
+          options=[
+            {"value":"90d",       "label":"Last 90 days"},
+            {"value":"30d",       "label":"Last 30 days"},
+            {"value":"15d",       "label":"Last 15 days"},
+            {"value":"7d",        "label":"Last 7 days"},
+            {"value":"yesterday", "label":"Yesterday"},
+            {"value":"today",     "label":"Today"},
+          ],
+          current="30d",
+          on_change_template="setPreset('{value}')",
+      ) }}
     </div>
 
     <!-- Calendar dropdown -->
@@ -308,7 +317,9 @@ function setPreset(preset){
   setDates(from,to);highlightPreset(preset);refreshAllTables();
 }
 function resetDateRange(){setPreset('30d');}
-function highlightPreset(active){document.querySelectorAll('.preset-btn').forEach(function(b){b.classList.toggle('active',b.dataset.preset===active);});}
+// FE-MED-007 (Task 125): PeriodSelector primitive emits data-value
+// (not data-preset). Read .dataset.value to find the active button.
+function highlightPreset(active){document.querySelectorAll('.preset-btn').forEach(function(b){b.classList.toggle('active',b.dataset.value===active);});}
 
 // Calendar
 var _calViewYear,_calViewMonth,_calSelStart=null,_calSelEnd=null,_calPicking=0;

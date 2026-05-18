@@ -89,14 +89,25 @@
     <!-- Signal cards -->
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:4px;">
       <span class="mono" style="font-size:.82rem;">Macro Signals</span>
-      <div style="display:flex;gap:3px;align-items:center;">
-        <span style="font-size:.62rem;color:var(--sub);">All:</span>
-        {% for days, label in [(30,'30d'),(90,'90d'),(365,'1y'),(1825,'5y'),(0,'All')] %}
-        <button onclick="setAllCardRanges({{ days }},this)"
-                class="global-range-btn preset-btn {% if days==365 %}active{% endif %}"
-                style="font-size:.62rem;">{{ label }}</button>
-        {% endfor %}
-      </div>
+      {# FE-MED-007 (Task 125): global signal-card range selector
+         migrated to PeriodSelector primitive. label_prefix carries
+         the "All:" hint inline; on_change_template renders the
+         existing setAllCardRanges(days,this) handler with `{value}`
+         interpolated raw (integer days, unquoted). #}
+      {% from "primitives/period_selector.html" import period_selector %}
+      {{ period_selector(
+          options=[
+            {"value":30,   "label":"30d"},
+            {"value":90,   "label":"90d"},
+            {"value":365,  "label":"1y"},
+            {"value":1825, "label":"5y"},
+            {"value":0,    "label":"All"},
+          ],
+          current=365,
+          on_change_template="setAllCardRanges({value},this)",
+          label_prefix="All:",
+          extra_class="global-range-group",
+      ) }}
     </div>
     <div id="signal-cards" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:6px;margin-bottom:6px;"></div>
 
@@ -448,8 +459,8 @@ function buildSignalCards(){
         <span style="width:6px;height:6px;border-radius:50%;background:${sig.color};display:inline-block;flex-shrink:0;"></span>
         <span style="font-size:.7rem;font-weight:600;color:var(--text);">${sig.label}</span>
         <span id="val-${sig.key}" style="font-family:var(--font-mono);font-size:.72rem;color:var(--sub);">--</span>
-        <div style="margin-left:auto;display:flex;gap:2px;">
-          ${[30,90,365,1825,0].map((d,i)=>`<button onclick="setCardRange('${sig.key}',${d},this)" class="sc-btn-${sig.key} preset-btn ${d===365?'active':''}" style="font-size:.58rem;padding:2px 5px;">${['30d','90d','1y','5y','All'][i]}</button>`).join('')}
+        <div class="ps" style="margin-left:auto;">
+          ${[30,90,365,1825,0].map((d,i)=>`<button type="button" onclick="setCardRange('${sig.key}',${d},this)" class="sc-btn-${sig.key} preset-btn ${d===365?'active':''}" data-value="${d}" style="font-size:.58rem;padding:2px 5px;">${['30d','90d','1y','5y','All'][i]}</button>`).join('')}
         </div>
       </div>
       <div id="chart-${sig.key}" style="height:100px;"></div>

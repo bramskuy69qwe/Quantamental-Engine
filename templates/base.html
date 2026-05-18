@@ -388,6 +388,22 @@
       background: rgba(59,130,246,.06);
       border-color: var(--blue);
     }
+
+    /* PeriodSelector (Task 125, FE-MED-007) — segmented control wrapping
+       a list of period buttons. Composes on .preset-btn for the button
+       look; the .ps wrapper adds flex layout + gap. Optional .ps-label
+       renders an inline prefix (e.g. "All:") before the buttons. */
+    .ps {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      flex-wrap: wrap;
+    }
+    .ps-label {
+      font-size: .62rem;
+      color: var(--sub);
+      margin-right: 2px;
+    }
   </style>
 
   {% block extra_head %}{% endblock %}

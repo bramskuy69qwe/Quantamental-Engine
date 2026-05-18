@@ -59,7 +59,7 @@ requests, no template-loader configuration changes.
 | Card            | `card`    | `.card-header`, `.card-body`, `.card-footer`, `.card-title`, `.card-subtitle` (builds on existing `.card` + `.card-p8` utility classes) |
 | TableRow        | `tr-p`    | `.tr-p`, `.tr-p-clickable`, `.tr-p-selected` (composes on existing cell typography classes `.td-*` / `.mono`) |
 | EmptyState      | `es`      | `.es`, `.es-msg`, `.es-action`, `.es-info`, `.es-action` (tone)  |
-| PeriodSelector  | `ps`      | `.ps`, `.ps-pill`, `.ps-pill-active`                      |
+| PeriodSelector  | `ps`      | `.ps`, `.ps-label` (composes on existing `.preset-btn` for the button look + `.active`) |
 
 When the inline-style block in base.html crosses ~500 lines of
 primitive CSS, **extract to `static/css/primitives.css`** loaded via
@@ -142,7 +142,7 @@ TableRow is the convention example. Reasons:
 **Decision tree:**
 - Body is **one contiguous block** (Card's title-and-grid) → `{% call %}` + `caller()`.
 - Body is a **list of sibling elements** (TableRow's `<td>` cells) → open/close pair.
-- Body is **stateless parameter-driven** (StatusIndicator's label+value, EmptyState's message+action) → plain macro.
+- Body is **stateless parameter-driven** (StatusIndicator's label+value, EmptyState's message+action, PeriodSelector's options+current) → plain macro.
 
 ## Jinja2 gotchas (learned-the-hard-way)
 
@@ -350,6 +350,83 @@ Out of EmptyState's scope:
   empty" — that's a layout decision (collapse to one column when
   right empty), not an empty-message component.
 
-### PeriodSelector (planned)
+### PeriodSelector (Task 125)
 
-TBD.
+`templates/primitives/period_selector.html` — segmented control for
+selecting a period / range / time-window from a list of options.
+Third plain-macro primitive in Bundle A (StatusIndicator + EmptyState
+were the first two). Stateless from the primitive's POV — server
+renders buttons with the current selection marked `.active`; JS or
+HTMX handles transitions. Resolves FE-MED-007 visual normalization
+across 3 distinct option-set shapes.
+
+```jinja2
+{% from "primitives/period_selector.html" import period_selector %}
+
+{# History presets — string values, single-quoted in JS handler #}
+{{ period_selector(
+    options=[
+      {"value":"90d", "label":"Last 90 days"},
+      {"value":"30d", "label":"Last 30 days"},
+    ],
+    current="30d",
+    on_change_template="setPreset('{value}')",
+) }}
+
+{# Regime global — integer values, with inline label prefix #}
+{{ period_selector(
+    options=[
+      {"value":30,   "label":"30d"},
+      {"value":365,  "label":"1y"},
+      {"value":1825, "label":"5y"},
+      {"value":0,    "label":"All"},
+    ],
+    current=365,
+    on_change_template="setAllCardRanges({value},this)",
+    label_prefix="All:",
+    extra_class="global-range-group",
+) }}
+
+{# HTMX-driven (server fragment swap) #}
+{{ period_selector(
+    options=[...],
+    current="30d",
+    hx_get_template="/fragments/period?p={value}",
+    extra_btn_attrs='hx-target="#out" hx-swap="innerHTML"',
+) }}
+```
+
+Parameters (load-bearing):
+- `options` (required) — list of `{value, label}` dicts. Caller
+  controls the option set; primitive doesn't pick.
+- `current` (required) — selected value. Compared via string-cast,
+  so int values match int options and string values match string
+  options consistently. Unknown current → no `.active` anywhere
+  (defensive, no crash).
+- `on_change_template` — JS expression template; `{value}` is
+  interpolated raw. Caller controls quoting + arg shape.
+- `hx_get_template` — HTMX URL template; `{value}` interpolated.
+  Pair with `extra_btn_attrs` for `hx-target` / `hx-swap`.
+- `extra_btn_attrs` — raw attrs on every button (via `| safe`;
+  caller escapes).
+- `label_prefix` — inline text prefix (e.g. `"All:"`) before the
+  buttons. Renders as `<span class="ps-label">`. Empty omits.
+- `id`, `extra_class` — optional wrapper customization.
+
+Mutual exclusivity: if both `on_change_template` and `hx_get_template`
+are set, both attributes are emitted (HTMX wins at runtime). Caller
+should pick one.
+
+`data-value="{value}"` is emitted on every button. JS callers
+target by value via `b.dataset.value` (History migration renamed the
+existing `dataset.preset` reading to `dataset.value` to match).
+
+**Placement constraint**: `.ps` wrapper is `display:inline-flex` with
+gap. Works inside flex / grid / block parents. Same `<tbody>` warning
+as EmptyState — don't place inside table-row contexts.
+
+**For JS-rendered selectors** (e.g. Regime per-card chart selectors
+built in `buildSignalCards`'s template literal): JS emits the same
+`.ps` + `.preset-btn` class structure as the primitive. Primitive
+becomes a shared visual language across server- and client-rendered
+selectors — same pattern as Task 124's EmptyState Regime migration.

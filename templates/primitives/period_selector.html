@@ -1,0 +1,145 @@
+{# PeriodSelector — Bundle A primitive #5 (Task 125, FE-MED-007)
+
+   Third plain-macro primitive (StatusIndicator + EmptyState were the
+   first two). Wraps a segmented control of period buttons with current
+   selection highlighted. Composes on the existing .preset-btn utility
+   class so callers keep its hover + active styling unchanged.
+
+   Stateless from the primitive's POV — server renders the initial
+   markup with the selected option marked .active; client-side JS or
+   HTMX drives selection-change transitions. Two transition modes:
+
+       on_change_template   JS expression template, "{value}" is
+                            interpolated per button as raw text
+                            (caller adds quoting via the template:
+                            "setPreset('{value}')" vs
+                            "setTimelineRange({value})").
+       hx_get_template      HTMX hx-get URL template; same {value}
+                            interpolation. Pair with extra_btn_attrs
+                            for hx-target / hx-swap.
+
+   Mutually informative: setting both is unusual; the primitive emits
+   both attributes (HTMX wins at runtime). Caller should pick one.
+
+   Usage:
+
+       {% from "primitives/period_selector.html" import period_selector %}
+
+       History page presets (string values, single-quoted in JS):
+       {{ period_selector(
+           options=[
+             {"value":"90d", "label":"Last 90 days"},
+             {"value":"30d", "label":"Last 30 days"},
+             {"value":"7d",  "label":"Last 7 days"},
+           ],
+           current="30d",
+           on_change_template="setPreset('{value}')",
+       ) }}
+
+       Regime Timeline range picker (integer values, unquoted):
+       {{ period_selector(
+           options=[
+             {"value":30,   "label":"30d"},
+             {"value":90,   "label":"90d"},
+             {"value":365,  "label":"1y"},
+             {"value":0,    "label":"All"},
+           ],
+           current=365,
+           on_change_template="setTimelineRange({value})",
+       ) }}
+
+       Regime "All:" global, with label prefix + extra arg via template:
+       {{ period_selector(
+           options=[
+             {"value":30,   "label":"30d"},
+             {"value":90,   "label":"90d"},
+             {"value":365,  "label":"1y"},
+             {"value":1825, "label":"5y"},
+             {"value":0,    "label":"All"},
+           ],
+           current=365,
+           on_change_template="setAllCardRanges({value},this)",
+           label_prefix="All:",
+           extra_class="global-range-group",
+       ) }}
+
+   Parameters:
+
+       options              required list of dicts: [{"value", "label"}, ...].
+                            Caller controls the option set; primitive
+                            doesn't pick (Regime / History / Analytics
+                            all have different shapes).
+       current              required currently selected value. Compared
+                            via string-cast so int values match int
+                            options and string values match string options
+                            consistently. Unknown value -> no .active
+                            class anywhere (defensive, no crash).
+       on_change_template   optional JS expression template; "{value}"
+                            is interpolated raw. The caller controls
+                            quoting and arg shape. Two examples in this
+                            docstring.
+       hx_get_template      optional HTMX URL template; "{value}"
+                            interpolated. Caller pairs with
+                            extra_btn_attrs for hx-target / hx-swap.
+       extra_btn_attrs      optional raw attrs string applied to every
+                            button (e.g. 'hx-target="#out" hx-swap="innerHTML"').
+                            Rendered via | safe; caller escapes.
+       label_prefix         optional text label rendered before the
+                            buttons (e.g. "All:"). Empty omits.
+       id                   optional id on the wrapper for JS targeting.
+       extra_class          optional extra space-separated classes on
+                            the wrapper.
+
+   DOM shape:
+       <div class="ps {extra_class}" id="{id}">
+         <span class="ps-label">{label_prefix}</span>
+         <button class="preset-btn[ active]" type="button"
+                 data-value="{value}"
+                 onclick="..." | hx-get="..."
+                 {extra_btn_attrs}>
+           {label}
+         </button>
+         ...
+       </div>
+
+   Every button carries data-value="{value}" so callers can target by
+   value via b.dataset.value (History's existing highlightPreset
+   convention — read b.dataset.value not b.dataset.preset).
+
+   Placement constraint:
+       The .ps wrapper is display:flex (gap 3px, align baseline,
+       flex-wrap). Works inside both flex and grid parents. NOT a
+       float/inline layout — placing inside <p> or other inline-only
+       parents breaks the segmented look. Same wrapper-semantics
+       discipline as EmptyState (Task 124).
+
+   Why plain macro (not call/caller or open/close):
+       Body is parameter-driven by `options`; no slot content. Third
+       plain-macro primitive confirming the pattern.
+
+   For JS-rendered period selectors (e.g. Regime per-card chart
+   selectors built by JS template literal in buildSignalCards):
+       JS emits the same .ps + .preset-btn class structure as the
+       primitive. Primitive becomes a shared visual language across
+       server- and client-rendered selectors. Same pattern as
+       Task 124's EmptyState Regime migration.
+#}
+
+{% macro period_selector(options, current, on_change_template="", hx_get_template="", extra_btn_attrs="", label_prefix="", id="", extra_class="") %}
+{%- set cur_s = current | string -%}
+<div class="ps{% if extra_class %} {{ extra_class }}{% endif %}"{% if id %} id="{{ id }}"{% endif %}>
+  {%- if label_prefix %}
+  <span class="ps-label">{{ label_prefix }}</span>
+  {%- endif %}
+  {%- for opt in options %}
+  {%- set is_active = (opt.value | string) == cur_s -%}
+  {%- set onchange_js = on_change_template | replace("{value}", opt.value | string) if on_change_template else "" -%}
+  {%- set hxget_url = hx_get_template | replace("{value}", opt.value | string) if hx_get_template else "" -%}
+  <button type="button" class="preset-btn{% if is_active %} active{% endif %}" data-value="{{ opt.value }}"
+    {%- if onchange_js %} onclick="{{ onchange_js }}"{% endif %}
+    {%- if hxget_url %} hx-get="{{ hxget_url }}"{% endif %}
+    {%- if extra_btn_attrs %} {{ extra_btn_attrs | safe }}{% endif -%}
+  >{{ opt.label }}</button>
+  {%- endfor %}
+</div>
+{% endmacro %}
