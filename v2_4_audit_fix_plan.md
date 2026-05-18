@@ -340,6 +340,27 @@ Bundles A-I and others not listed: either already absorbed into Phase 1-3 tasks 
 
 At observed pace of ~1-2 tasks per session (single bundled task or 2 standalone), Phase 4 = **8-11 sessions**. Sequencing optimization: Task 95 (small, Top-5) + Task 96 (verify-gate, could be pin-only) + Task 98 (small bundle) could fit in 1-2 sessions; Task 104 (HIGH-027 UI) is likely a 2-session task on its own. Roughly **10 sessions = ~3 weeks at one session/2 days**.
 
+### Phase 4 Status: COMPLETE (tagged v2.4.1)
+
+11 main tasks executed (95-105) + 9 interstitials (94.1, 94.2, 97.1, 99.1, 101.1, 102.1, 103.5, plus the 104a/104b split).
+
+Stat Summary at Phase 4 close:
+- 0 CRIT
+- 6 HIGH (all deferred follow-ups or architectural — HIGH-001, HIGH-002, HIGH-028, HIGH-029, HIGH-030, HIGH-031)
+- 39 MED
+- 21 LOW
+- **66 active**
+
+Tagged **v2.4.1** at the Task 106 commit (which adds CHANGELOG.md + this closure note). Task 105 tip was 938e50f; the tag attaches to the Task 106 commit one level above.
+
+Calibration patterns documented across Phase 4:
+- Race-framing false-positive rate stable at 8 / 15 (53 %).
+- Audit-impact-imprecision pattern at 4 examples (HIGH-019, HIGH-026, HIGH-013, HIGH-008) — all real bugs but with mechanism / direction the audit described incorrectly. Implication recorded: trace downstream consumers independently when investigating, fix the real harm not the described one.
+
+Resolved this phase: HIGH-008, HIGH-010, HIGH-011, HIGH-013, HIGH-014, HIGH-015, HIGH-017, HIGH-018, HIGH-022, HIGH-023, HIGH-024, HIGH-026, HIGH-027, plus the supporting MED + LOW (see CHANGELOG.md for the full list).
+
+Phase 5 entry: addresses analytics + quality findings + the four deferred follow-ups (HIGH-028 / 029 / 030 / 031) + MED batch + LOW batch. Pre-Phase-5 task: draft Phase 5 bundle plan parallel to Task 94.2's structure.
+
 ---
 
 ## Phase 5: Performance
