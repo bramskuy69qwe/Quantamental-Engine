@@ -51,6 +51,82 @@ class BybitLinearAdapter(BaseExchangeAdapter):
     def ohlcv_limit(self) -> int:
         return OHLCV_LIMIT
 
+    # ── HIGH-028 (Task 115): server-side weight reconciliation ──────────────
+
+    def _reconcile_from_response(self, endpoint: str, tracker) -> None:
+        """Reconcile tracker from Bybit V5 rate-limit response headers.
+
+        Bybit's rate-limit model differs from Binance's: instead of a single
+        global used-weight counter, Bybit publishes a **per-endpoint
+        countdown of remaining requests** plus the endpoint's total quota:
+
+            X-Bapi-Limit-Status         remaining requests for this endpoint
+            X-Bapi-Limit                total quota for this endpoint
+            X-Bapi-Limit-Reset-Timestamp  window reset epoch ms
+
+        The WeightTracker is global (one budget shared across endpoints), so
+        a pure mirror of Binance's "used weight" semantics is impossible.
+        Instead we compute the *saturation ratio* of the just-called
+        endpoint and scale it to the tracker's max_weight:
+
+            saturation = (limit - status) / limit
+            tracker.reconcile(int(saturation * tracker.max_weight))
+
+        Interpretation: when *any* single endpoint becomes highly
+        saturated, the global tracker reflects that pressure (subsequent
+        reserve() calls hit the throttle/block thresholds earlier). It's
+        an upper-bound proxy rather than a sum-across-endpoints account,
+        but it preserves the defense-in-depth goal of HIGH-028: server
+        truth catches drift the client-side estimator cannot.
+
+        Failure modes (all fail-safe → no-op, estimate stands):
+          - either header missing / unreadable
+          - non-numeric value
+          - limit <= 0 (avoid divide-by-zero)
+          - status > limit (would make `used_proxy` negative)
+          - resulting `used_proxy` outside [0, max_weight*10] (don't poison
+            the budget on a clearly bogus header pair)
+        """
+        headers = getattr(self._ex, "last_response_headers", None)
+        if not headers:
+            return
+        # ccxt may lowercase header names; try both cases defensively.
+        status_raw = (
+            headers.get("X-Bapi-Limit-Status")
+            or headers.get("x-bapi-limit-status")
+        )
+        limit_raw = (
+            headers.get("X-Bapi-Limit")
+            or headers.get("x-bapi-limit")
+        )
+        if status_raw is None or limit_raw is None:
+            return
+        try:
+            status = int(status_raw)
+            limit = int(limit_raw)
+        except (TypeError, ValueError):
+            return
+        if limit <= 0 or status < 0 or status > limit:
+            return
+        saturation = (limit - status) / limit
+        used_proxy = int(saturation * tracker.max_weight)
+        if used_proxy < 0 or used_proxy > tracker.max_weight * 10:
+            return
+        # Optional reset timestamp — if Bybit gave us one, snap the window.
+        reset_raw = (
+            headers.get("X-Bapi-Limit-Reset-Timestamp")
+            or headers.get("x-bapi-limit-reset-timestamp")
+        )
+        reset_ms = 0
+        if reset_raw is not None:
+            try:
+                reset_ms = int(reset_raw)
+                if reset_ms < 0:
+                    reset_ms = 0
+            except (TypeError, ValueError):
+                reset_ms = 0
+        tracker.reconcile(used_proxy, reset_time_ms=reset_ms)
+
     # ── Account ──────────────────────────────────────────────────────────────
 
     async def fetch_account(self) -> NormalizedAccount:
