@@ -310,6 +310,37 @@
     .si-error   { color: var(--red); }
     .si-info    { color: var(--blue); }
     .si-neutral { color: var(--muted); }
+
+    /* Card (Task 122, FE-MED-001) — slot-content primitive built on the
+       existing `.card` + `.card-p8` utility classes. Adds structured
+       header / body / footer rows with consistent spacing so pages
+       no longer drift in card rhythm. Default rhythm matches History
+       (tight); the loose default is opt-in via `padding="loose"`. */
+    .card-header {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+    .card-title {
+      margin-bottom: 0;  /* sec-lbl has margin-bottom:8px; we manage spacing on .card-header instead */
+    }
+    .card-subtitle {
+      font-size: .62rem;
+      color: var(--muted);
+      font-family: var(--font-mono);
+      letter-spacing: .02em;
+    }
+    /* .card-body has no rules — content drives layout. Primitive
+       provides the wrapper for selector targeting + future hooks. */
+    .card-footer {
+      margin-top: 8px;
+      padding-top: 6px;
+      border-top: 1px solid var(--border);
+      font-size: .62rem;
+      color: var(--sub);
+    }
   </style>
 
   {% block extra_head %}{% endblock %}

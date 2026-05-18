@@ -1,3 +1,10 @@
+{# FE-MED-001 (Task 122): migrated 5 overview cards from bare `.card`
+   (loose 10px x 12px rhythm) to the Bundle A Card primitive (tight
+   8px x 10px, History-matching). Card titles move into the primitive's
+   title param; subtitle param carries the period label so it visually
+   separates from the section name. #}
+{% from "primitives/card.html" import card %}
+
 {% macro kv(label, value, cls='') %}
 <div style="display:flex;flex-direction:column;gap:2px;">
   <span class="lbl">{{ label }}</span>
@@ -17,9 +24,8 @@
 
 <div style="display:flex;flex-direction:column;gap:10px;">
 
-  <!-- ── Volume & Activity ──────────────────────────────────────────────── -->
-  <div class="card">
-    <div class="lbl" style="margin-bottom:10px;">Volume &amp; Activity — {{ period_label }}</div>
+  <!-- Volume & Activity -->
+  {% call card(title="Volume & Activity", subtitle=period_label) %}
     <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:14px;">
       {{ kv("Monthly Trading Volume", "$" ~ fmt(stats.trading_volume, 0)) }}
       {{ kv("Est. Broker Fee",        "$" ~ fmt(stats.total_fees, 2)) }}
@@ -32,11 +38,10 @@
         </span>
       </div>
     </div>
-  </div>
+  {% endcall %}
 
-  <!-- ── Equity & PnL ────────────────────────────────────────────────────── -->
-  <div class="card">
-    <div class="lbl" style="margin-bottom:10px;">Equity &amp; PnL</div>
+  <!-- Equity & PnL -->
+  {% call card(title="Equity & PnL") %}
     <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:14px;">
       {{ kv("Initial Equity", "$" ~ fmt(boundaries.initial_equity)) }}
       {% set monthly_pnl = boundaries.final_equity - boundaries.initial_equity %}
@@ -69,11 +74,10 @@
         </span>
       </div>
     </div>
-  </div>
+  {% endcall %}
 
-  <!-- ── Trade Statistics ─────────────────────────────────────────────────── -->
-  <div class="card">
-    <div class="lbl" style="margin-bottom:10px;">Trade Statistics</div>
+  <!-- Trade Statistics -->
+  {% call card(title="Trade Statistics") %}
     <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:14px;">
       {{ kv("Total Trades",   stats.total_trades | int) }}
       {{ kv("Winning Trades", stats.winning_trades | int, 'pos-long') }}
@@ -95,11 +99,10 @@
         <span class="mono pos-short" style="font-size:.82rem;">{{ fmt(max_dd_pct, 2) }}%</span>
       </div>
     </div>
-  </div>
+  {% endcall %}
 
-  <!-- ── Cash Flows ──────────────────────────────────────────────────────── -->
-  <div class="card">
-    <div class="lbl" style="margin-bottom:10px;">Cash &amp; Cumulative</div>
+  <!-- Cash Flows -->
+  {% call card(title="Cash & Cumulative") %}
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;">
       {{ kv("Deposit",    "$" ~ fmt(stats.deposits,    2)) }}
       {{ kv("Withdrawal", "$" ~ fmt(stats.withdrawals, 2)) }}
@@ -118,11 +121,10 @@
         </span>
       </div>
     </div>
-  </div>
+  {% endcall %}
 
-  <!-- ── Performance Ratios ─────────────────────────────────────────────── -->
-  <div class="card">
-    <div class="lbl" style="margin-bottom:10px;">Performance Ratios</div>
+  <!-- Performance Ratios -->
+  {% call card(title="Performance Ratios") %}
     <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:14px;">
 
       {% macro ratio_card(label, val, desc) %}
@@ -169,6 +171,6 @@
       </div>
 
     </div>
-  </div>
+  {% endcall %}
 
 </div>

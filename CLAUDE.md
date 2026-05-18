@@ -73,6 +73,16 @@ the expected structure. See MED-047 (filed Task 109) for the calibration
 finding and Task 108's `TestAccountDetailTemplateCompiles` for the
 reference pattern.
 
+**Jinja2 nested-comment gotcha (Task 121 + Task 122 reinforcement):**
+`{# ... #}` blocks do not nest. An inner `{# #}` closes the outer
+block, leaving the remainder of the docstring as live template code
+which usually fails with `UndefinedError` on the first identifier the
+parser hits. Compile-render the macro file via
+`jinja2.Environment.get_template(path)` BEFORE committing — the
+failure is silent at file-level greps but loud the moment the template
+is loaded. Same discipline applies to template-touching primitives
+(`templates/primitives/`).
+
 ### Audit-doc source documents
 
 Audit / inventory tasks that reference external source documents

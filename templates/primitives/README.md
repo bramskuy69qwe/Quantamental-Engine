@@ -56,7 +56,7 @@ requests, no template-loader configuration changes.
 | Primitive       | Prefix    | Examples                                  |
 | --------------- | --------- | ----------------------------------------- |
 | StatusIndicator | `si`      | `.si`, `.si-dot`, `.si-label`, `.si-value`, `.si-success` |
-| Card (future)   | `card`    | `.card-header`, `.card-body`, `.card-footer`              |
+| Card            | `card`    | `.card-header`, `.card-body`, `.card-footer`, `.card-title`, `.card-subtitle` (builds on existing `.card` + `.card-p8` utility classes) |
 | TableRow (future)| `tr-p`   | `.tr-p`, `.tr-p-cell`, `.tr-p-actions`                    |
 | EmptyState      | `es`      | `.es`, `.es-icon`, `.es-msg`                              |
 | PeriodSelector  | `ps`      | `.ps`, `.ps-pill`, `.ps-pill-active`                      |
@@ -82,6 +82,57 @@ is fine — matches the codebase's existing convention.
    render with synthetic context. Source-string greps are insufficient
    for Jinja2 syntax errors (the MED-047 calibration finding).
 7. **Update this README** — add the primitive to the prefix table.
+
+## Adding a primitive that needs slot content
+
+Slot primitives use Jinja2's `{% call %}` mechanism:
+
+```jinja2
+{% from "primitives/card.html" import card %}
+
+{% call card(title="Volume & Activity", subtitle="October 2025") %}
+  <div style="display:grid;...">
+    ... body content ...
+  </div>
+{% endcall %}
+```
+
+Inside the macro, `{{ caller() }}` renders whatever the caller passes
+between `{% call %}` and `{% endcall %}`. Header + footer remain
+parameters so callers don't have to thread markup through `caller()`
+twice. Card is the convention example — see its source for the shape.
+
+When a primitive's "header" needs richer content than text (e.g.,
+action buttons in the header right corner), the choice is:
+
+1. **Add more macro params** for the slot — e.g., `header_actions=""`
+   accepting raw HTML. Simple but rigid.
+2. **Add an `open` / `close` pair**: `{{ card_open(...) }} body
+   {{ card_close() }}` — explicit, no `caller()`, callers can put
+   arbitrary template structure between. More verbose at call sites.
+
+Defer the open/close pair until a real consumer needs it. Adding
+params one-by-one as needs surface is fine; over-engineering ahead of
+that is what bloats primitives.
+
+## Jinja2 gotchas (learned-the-hard-way)
+
+- **Nested `{# ... #}` comments don't nest.** An inner `{# #}` closes
+  the outer block, leaving the rest of your docstring as live template
+  code (which usually parses as undefined-symbol errors). Compile-
+  render the macro file via `jinja2.Environment.get_template()` BEFORE
+  committing — source-string greps will not catch this. Surfaced in
+  Task 121 during StatusIndicator's docstring; MED-047's discipline
+  applies.
+
+- **`call` / `caller` requires a body slot.** If your primitive has
+  no body slot (StatusIndicator), use plain `{% macro %}` and have
+  callers `{{ status_indicator(...) }}` not `{% call status_indicator(...) %}{% endcall %}`.
+
+- **`safe` filter on caller-supplied footer markup.** Card's footer
+  param accepts raw HTML via `{{ footer | safe }}`. Caller is
+  responsible for escaping anything user-derived. Don't pass raw user
+  input as footer.
 
 ## Current primitives
 
@@ -123,9 +174,43 @@ setSeverity(indicator, 'success');
 value.textContent = 'Connected';
 ```
 
-### Card (planned — Task 122)
+### Card (Task 122)
 
-TBD.
+`templates/primitives/card.html` — slot-content panel. Used at the
+Analytics Overview migration (FE-MED-001 fix). Defaults to tight
+History-matching rhythm (8px × 10px padding via the existing
+`.card-p8` utility class). Header has optional title + subtitle;
+body is a required slot via `caller()`; footer is optional raw HTML.
+
+```jinja2
+{% from "primitives/card.html" import card %}
+
+{# Minimal — title + body only #}
+{% call card(title="Equity & PnL") %}
+  ... body ...
+{% endcall %}
+
+{# Title + subtitle (period label, etc.) #}
+{% call card(title="Volume & Activity", subtitle=period_label) %}
+  ... body ...
+{% endcall %}
+
+{# With footer #}
+{% call card(title="Section", footer='<a href="#">More</a>') %}
+  ... body ...
+{% endcall %}
+
+{# Loose padding (back-compat with original .card default) #}
+{% call card(title="Section", padding="loose") %}
+  ... body ...
+{% endcall %}
+```
+
+Slot pattern: `{% call %}` + `caller()` for the body. Why this over
+alternatives: (a) extends/blocks is for page layouts, heavyweight;
+(b) include-with-context can't take arbitrary template structure;
+(c) the open/close pair is more verbose for a primitive whose 95% case
+is title + body. When a primitive needs more than one slot, revisit.
 
 ### TableRow (planned)
 

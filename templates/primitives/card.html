@@ -1,0 +1,76 @@
+{# Card — Bundle A primitive #2 (Task 122, FE-MED-001)
+
+   First slot-content primitive in Bundle A. Wraps a panel with optional
+   title / subtitle header, required body slot, optional footer. Locks
+   the tight rhythm History established (8px x 10px padding) so pages
+   that previously used the loose `.card` default (Analytics overview)
+   align with the rest of the engine.
+
+   Slot pattern: ``{% call card(...) %}body{% endcall %}`` — Jinja2's
+   call/caller mechanism. Single body slot covers the 95% case
+   (Analytics has 5 cards, all title + grid-body, no footer). Header
+   and footer remain parameters so callers don't have to thread
+   markup through caller() multiple times. When a future card needs
+   richer header content (action buttons, etc.) we'll add an
+   open/close primitive pair as a second usage shape; defer.
+
+   Usage:
+       {% from "primitives/card.html" import card %}
+
+       {% call card(title="Volume and Activity") %}
+         <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:14px;">
+           ... body ...
+         </div>
+       {% endcall %}
+
+       {% call card(title="Equity and PnL", subtitle="October 2025") %}
+         ... body ...
+       {% endcall %}
+
+       {% call card(title="Section", footer='<a href="#">Details</a>') %}
+         ... body ...
+       {% endcall %}
+
+   Parameters:
+       title       optional plain-text title (rendered as ``.sec-lbl`` —
+                   matches the existing section-label chrome elsewhere
+                   in the engine). Empty string suppresses the title
+                   row. HTML-escaped.
+       subtitle    optional plain-text subtitle (e.g., period label
+                   like "October 2025"). Renders next to title.
+       footer      optional HTML markup for a footer row (rendered as
+                   ``| safe`` — caller is responsible for escaping).
+                   Empty string suppresses the footer row + border.
+       padding     "tight" (default — 8px x 10px, History rhythm) or
+                   "loose" (10px x 12px, the original ``.card`` default
+                   kept for backward-compat). New code uses "tight".
+
+   Design tokens (CSS lives in base.html primitives section):
+       --card padding/spacing reuses the existing `.card` + `.card-p8`
+       classes so callers can keep existing utility classes alongside
+       the primitive. Title styling reuses `.sec-lbl`. Footer adds a
+       1px top border + small top padding via `.card-footer`.
+
+   Why call/caller (not extends/blocks):
+       extends/blocks are for page-layout inheritance — heavyweight,
+       template-level concept. call/caller is exactly the slot
+       semantics we want: caller supplies the body, primitive controls
+       the chrome. Per templates/primitives/README.md's "macro vs
+       include" decision tree.
+#}
+
+{% macro card(title="", subtitle="", footer="", padding="tight") %}
+{%- set pad_cls = "card-p8" if padding == "tight" else "" -%}
+<div class="card {{ pad_cls }}">
+  {%- if title or subtitle %}
+  <div class="card-header">
+    {%- if title %}<span class="sec-lbl card-title">{{ title }}</span>{% endif -%}
+    {%- if subtitle %}<span class="card-subtitle">{{ subtitle }}</span>{% endif -%}
+  </div>
+  {%- endif %}
+  <div class="card-body">{{ caller() }}</div>
+  {%- if footer %}
+  <div class="card-footer">{{ footer | safe }}</div>
+  {%- endif %}
+</div>
+{% endmacro %}
