@@ -428,7 +428,17 @@
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
         <div>
           <label class="lbl" style="display:block;margin-bottom:3px;">Exchange</label>
-          <select name="exchange"><option value="binance">Binance</option></select>
+          {# FE-HIGH-002 (Task 111): populate from the adapter registry via
+             `available_exchanges` in _ctx. Non-canonical exchanges render
+             with a "(Beta)" suffix on the label so the operator sees that
+             Bybit / MEXC are adapter-supported but not yet operator-verified
+             in production trading. Beta status is governed by
+             core.adapters.registry._CANONICAL_EXCHANGES. #}
+          <select name="exchange">
+            {% for ex in available_exchanges %}
+            <option value="{{ ex.value }}">{{ ex.label }}</option>
+            {% endfor %}
+          </select>
         </div>
         <div>
           <label class="lbl" style="display:block;margin-bottom:3px;">Market Type</label>
