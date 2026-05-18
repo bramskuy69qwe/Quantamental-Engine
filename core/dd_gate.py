@@ -43,8 +43,18 @@ def dd_gate_allows_new_entry(account_id: int) -> Tuple[bool, Optional[str]]:
         settings = get_account_settings(account_id)
         mode = settings.dd_enforcement_mode
         limit_t = settings.dd_limit_threshold or 0
-    except Exception:
-        return True, None  # can't read settings → don't block
+    except Exception as e:
+        # HIGH-017 (Task 98): fail-closed on settings-read failure. Trading-block
+        # gates default to BLOCK on unknown state — the alternative (fail-open
+        # → allow trading because we can't determine enforcement mode) silently
+        # bypasses configured DD limits during DB stress, which is the exact
+        # scenario the limit is meant to protect against.
+        log.error(
+            "dd_gate: can't read enforcement settings for account %d (%s); "
+            "failing closed (blocking new entries)",
+            account_id, type(e).__name__,
+        )
+        return False, "dd_gate_settings_unreadable"
 
     if mode != "enforced":
         return True, None  # advisory: allowed (caller may log shadow event)

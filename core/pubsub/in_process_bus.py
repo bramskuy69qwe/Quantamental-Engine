@@ -34,7 +34,6 @@ class InProcessBus:
         async with self._lock:
             for pattern, queues in self._subscribers.items():
                 if fnmatch.fnmatchcase(channel, pattern):
-                    dead: list = []
                     for q in queues:
                         try:
                             q.put_nowait(enriched)
@@ -44,9 +43,20 @@ class InProcessBus:
                                 channel,
                             )
                         except Exception:
-                            dead.append(q)
-                    for q in dead:
-                        queues.discard(q)
+                            # HIGH-018 (Task 98): keep the subscriber. Previously
+                            # any exception added q to a `dead` list and discarded
+                            # it from the subscriber set — a transient error
+                            # (payload serialization, recoverable bug) silently
+                            # disconnected SSE consumers with no recovery short
+                            # of page reload. Now: log with full traceback and
+                            # let the next event delivery retry. Normal cleanup
+                            # still happens in subscribe()'s finally block when
+                            # the consumer generator ends.
+                            log.exception(
+                                "InProcessBus: unexpected error delivering "
+                                "to subscriber on %s; keeping subscription",
+                                channel,
+                            )
 
     async def subscribe(self, channel_pattern: str) -> AsyncIterator[Dict[str, Any]]:
         """Subscribe and yield messages matching the pattern."""
