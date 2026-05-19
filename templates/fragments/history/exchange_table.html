@@ -113,6 +113,11 @@
     });
   </script>
   {% else %}
-  <div style="color:var(--muted);font-size:.78rem;padding:16px 0;">No position history found for this period.</div>
+  {# Task 130: migrated to EmptyState with default 20px padding. The
+     prior inline empty was 16px + left-aligned; accepting the 4px
+     padding shift + center alignment to converge with primitive
+     convention (single-consumer 16px doesn't justify a new preset). #}
+  {% from "primitives/empty_state.html" import empty_state %}
+  {{ empty_state(message="No position history found for this period.") }}
   {% endif %}
 </div>

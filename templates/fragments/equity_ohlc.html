@@ -57,7 +57,10 @@
   </div>
   <div id="{{ EID }}-chart" style="height:{{ HEIGHT }};"></div>
   {% else %}
-  <div style="color:var(--muted);font-size:.78rem;padding:32px 0;text-align:center;">No snapshot data available yet.</div>
+  {# Task 130: full-page empty state — padding="loose" (32px) preset
+     from the Task 129 EmptyState API extension. #}
+  {% from "primitives/empty_state.html" import empty_state %}
+  {{ empty_state(message="No snapshot data available yet.", padding="loose") }}
   {% endif %}
 </div>
 
