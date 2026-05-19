@@ -62,9 +62,18 @@
        - Matches StatusIndicator's pattern (Bundle A.1).
 #}
 
-{% macro empty_state(message, tone="info", action_label="", action_url="", action_attrs="") %}
+{# Task 129: padding param added. Default 20px y-padding (the dominant
+   shape across the 9 Task-124 migration sites). "tight" (10px) is for
+   inline sub-tables / drawer expansions where the surrounding chrome
+   already provides padding. "loose" (32px) is for full-page empty
+   states (e.g., equity_ohlc landing). Unknown value falls through to
+   "default" (defensive — parallel to tone fallthrough). Mirrors
+   Card's tight/loose precedent established in Task 122. #}
+{% macro empty_state(message, tone="info", action_label="", action_url="", action_attrs="", padding="default") %}
 {%- set t = tone if tone in ("info", "action") else "info" -%}
-<div class="es es-{{ t }}">
+{%- set p = padding if padding in ("default", "tight", "loose") else "default" -%}
+{%- set pad_cls = " es-" ~ p if p != "default" else "" -%}
+<div class="es es-{{ t }}{{ pad_cls }}">
   <div class="es-msg">{{ message }}</div>
   {%- if action_label %}
   {%- if action_url %}

@@ -328,6 +328,12 @@ Parameters:
   "..." hx-target="..."`). Renders via `| safe` — caller is
   responsible for escaping. Without `action_url`, attrs render on a
   `<button>` instead.
+- `padding` (Task 129) — `"default"` (20 px y-padding, the 90% case),
+  `"tight"` (10 px y-padding + smaller font, for inline sub-tables /
+  drawer expansions where the surrounding chrome already provides
+  spacing), or `"loose"` (32 px y-padding, for full-page empty states
+  like equity_ohlc landing). Unknown values fall through to
+  `"default"`. Mirrors Card's tight/loose padding precedent.
 
 **Wrapper semantics** (load-bearing — read before using):
 - Renders as `<div class="es es-{tone}">`.

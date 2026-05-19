@@ -1,4 +1,11 @@
 <!-- fragment: history/position_fills — fills mini-table inside Position History drawer -->
+{# Task 129: TableRow primitive migration + ACTION/SIDE column split
+   (carries Task 123 calibration #3 closure to this inline sub-table) +
+   EmptyState primitive migration via new padding="tight" param
+   (Task 124 deferred this site due to padding mismatch; resolved by
+   extending the API). #}
+{% from "primitives/table_row.html" import tr_open, tr_close %}
+{% from "primitives/empty_state.html" import empty_state %}
 <div style="border-top:1px solid var(--border);border-bottom:2px solid rgba(60,143,245,.2);padding:8px 10px 10px 32px;background:#050810;">
   <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
     <span style="font-size:.58rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--blue);">▾ Fill Trades</span>
@@ -12,6 +19,9 @@
       <thead><tr>
         <th style="font-size:.58rem;">Time</th>
         <th style="font-size:.58rem;">Order No.</th>
+        {# Task 129 calibration #3: SIDE split into ACTION + SIDE,
+           matches fills_table.html post-Task-123 rhythm. #}
+        <th style="font-size:.58rem;">Action</th>
         <th style="font-size:.58rem;">Side</th>
         <th style="font-size:.58rem;">Price</th>
         <th style="font-size:.58rem;">Qty</th>
@@ -22,19 +32,11 @@
       </tr></thead>
       <tbody>
         {% for f in fills %}
-        {% set is_close = f.is_close %}
-        {% set dir = f.direction %}
-        {% if is_close %}
-          {% set side_label = "Close " ~ dir %}
-          {% set side_class = "pos-short" if dir == "LONG" else "pos-long" %}
-        {% else %}
-          {% set side_label = "Open " ~ dir %}
-          {% set side_class = "pos-long" if dir == "LONG" else "pos-short" %}
-        {% endif %}
-        <tr>
+        {{ tr_open() }}
           <td style="color:var(--sub);font-size:.68rem;">{{ ms_to_local(f.timestamp_ms) }}</td>
           <td class="td-dim" style="font-size:.62rem;">{{ f.exchange_order_id[:12] if f.exchange_order_id else "—" }}</td>
-          <td class="{{ side_class }}" style="font-weight:700;">{{ side_label }}</td>
+          <td class="{{ 'pos-short' if f.is_close else 'pos-long' }}" style="font-weight:700;">{{ 'Close' if f.is_close else 'Open' }}</td>
+          <td class="{{ 'pos-long' if f.direction == 'LONG' else 'pos-short' }}" style="font-weight:700;">{{ f.direction }}</td>
           <td>{{ fmt(f.price, 6) }}</td>
           <td>{{ fmt(f.quantity, 4) }}</td>
           <td class="td-sub">{{ fmt(f.fee, 4) }} {{ f.fee_asset }}</td>
@@ -43,7 +45,7 @@
             {{ fmt(f.realized_pnl, 2) if f.realized_pnl else "—" }}
           </td>
           <td>
-            {% if not is_close and f.exec_link_status %}
+            {% if not f.is_close and f.exec_link_status %}
               {% if f.exec_link_status == 'linked' %}
                 <span class="badge badge-ok" style="cursor:pointer;" onclick="event.stopPropagation();toggleExecLink({{ f.id }})">● LINKED</span>
               {% elif f.exec_link_status == 'partial' %}
@@ -55,10 +57,10 @@
               <span class="td-dim">—</span>
             {% endif %}
           </td>
-        </tr>
-        {% if not is_close and f.exec_link_status %}
+        {{ tr_close() }}
+        {% if not f.is_close and f.exec_link_status %}
         <tr id="exec-link-{{ f.id }}" style="display:none;">
-          <td colspan="9" style="padding:0;"></td>
+          <td colspan="10" style="padding:0;"></td>
         </tr>
         {% endif %}
         {% endfor %}
@@ -66,6 +68,6 @@
     </table>
   </div>
   {% else %}
-  <div style="color:var(--muted);font-size:.72rem;padding:10px 0;">No fills found for this position.</div>
+  {{ empty_state(message="No fills found for this position.", padding="tight") }}
   {% endif %}
 </div>

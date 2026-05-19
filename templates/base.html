@@ -366,6 +366,11 @@
       text-align: center;
       font-size: .78rem;
     }
+    /* Task 129: padding variants for inline / loose contexts.
+       Inline sub-tables (position_fills, etc.) use tight; full-page
+       empty states (equity_ohlc landing) use loose. */
+    .es-tight { padding: 10px 0; font-size: .72rem; }
+    .es-loose { padding: 32px 0; }
     .es-msg { color: var(--muted); }
     .es-info .es-msg { color: var(--muted); }
     .es-action .es-msg { color: var(--sub); }
