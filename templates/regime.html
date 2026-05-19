@@ -94,6 +94,19 @@
          the "All:" hint inline; on_change_template renders the
          existing setAllCardRanges(days,this) handler with `{value}`
          interpolated raw (integer days, unquoted). #}
+      {# FE-MED-007 (Task 136): id="signal-cards-range" so the init
+         IIFE can set a title= attribute documenting the precedence
+         model (set-all + override-clears-global). Investigation
+         outcome (rejected the audit's "precedence ambiguity"
+         framing): the precedence model already exists in code —
+         setAllCardRanges() sets every per-card range; setCardRange()
+         clears global active state. Two bugs were latent though:
+         (1) the Task-125 migration renamed the buttons from
+         `.global-range-btn` to `.preset-btn` (with `.global-range-
+         group` on the wrapper), but two JS callsites still queried
+         the dead `.global-range-btn` selector — the visual
+         clear-on-override silently stopped working post-migration;
+         (2) the model was undocumented. Task 136 fixes both. #}
       {% from "primitives/period_selector.html" import period_selector %}
       {{ period_selector(
           options=[
@@ -107,6 +120,7 @@
           on_change_template="setAllCardRanges({value},this)",
           label_prefix="All:",
           extra_class="global-range-group",
+          id="signal-cards-range",
       ) }}
     </div>
     <div id="signal-cards" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:6px;margin-bottom:6px;"></div>
@@ -521,11 +535,20 @@ function setCardRange(key,days,btn){
   signalRanges[key]=days;
   document.querySelectorAll('.sc-btn-'+key).forEach(b=>b.classList.remove('active'));
   if(btn)btn.classList.add('active');
-  document.querySelectorAll('.global-range-btn').forEach(b=>b.classList.remove('active'));
+  // FE-MED-007 (Task 136): per-card override clears the global
+  // "All:" active state — visual signal that cards are no longer
+  // all-in-sync. Selector was `.global-range-btn` pre-Task-125;
+  // PeriodSelector migration renamed it to `.preset-btn` under
+  // `.global-range-group` wrapper. Old selector silently matched
+  // nothing post-migration.
+  document.querySelectorAll('.global-range-group .preset-btn').forEach(b=>b.classList.remove('active'));
   var sig=SIGNALS.find(s=>s.key===key);if(sig)loadSignalCard(sig);
 }
 function setAllCardRanges(days,btn){
-  document.querySelectorAll('.global-range-btn').forEach(b=>b.classList.remove('active'));
+  // FE-MED-007 (Task 136): same selector-regression fix as above.
+  // Without this, clicking "All: 30d" then "All: 90d" left both
+  // active simultaneously.
+  document.querySelectorAll('.global-range-group .preset-btn').forEach(b=>b.classList.remove('active'));
   if(btn)btn.classList.add('active');
   SIGNALS.forEach(sig=>{signalRanges[sig.key]=days;document.querySelectorAll('.sc-btn-'+sig.key).forEach(b=>b.classList.remove('active'));var labels={0:'All',1825:'5y',365:'1y',90:'90d',30:'30d'};document.querySelectorAll('.sc-btn-'+sig.key).forEach(b=>{if(b.textContent.trim()===labels[days])b.classList.add('active');});loadSignalCard(sig);});
 }
@@ -911,6 +934,13 @@ function tickNewsClock(){
 // IIFE: DOMContentLoaded won't re-fire on hx-boost navigations
 (function(){
   document.getElementById('bf-until').value=new Date().toISOString().slice(0,10);
+  // FE-MED-007 (Task 136): title attribute documents the precedence
+  // model on hover. The model is implemented in code (setAllCardRanges
+  // overrides every per-card; setCardRange clears the global active
+  // state) but was previously undocumented. Audit recommendation (b):
+  // "Document precedence in a tooltip on the global selector."
+  var globalRange=document.getElementById('signal-cards-range');
+  if(globalRange)globalRange.title='Sets the range for all macro signal cards. Clicking a per-card range overrides it for that card only; the All: highlight clears when any card is overridden.';
   buildSignalCards();loadCurrentRegime();loadTimeline();loadAllSignalCharts();
 })();
 </script>
