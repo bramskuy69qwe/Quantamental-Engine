@@ -225,7 +225,7 @@ Practical checklist when starting a fix task:
 5. The corrected-mechanism fix is usually smaller, more surgical, and
    has fewer regression surfaces than the spec-recommended one.
 
-**Calibration examples** (audit-impact-imprecision pattern, 8 examples
+**Calibration examples** (audit-impact-imprecision pattern, 9 examples
 as of Task 152):
 
 - **Task 139 (FE-HIGH-009)**: filing framed Calculator countdown bug
@@ -244,6 +244,17 @@ as of Task 152):
   module-level import already provided the binding). Fix was a
   one-line deletion of the inline import, NOT the spec's proposed
   init+nil-check shutdown-defense.
+
+- **Task 152 (FE-LOW-024)**: T138 filing cross-linked the finding with
+  FE-MED-021 + FE-LOW-022 as "centralized number-formatting helper
+  family" — implying `format_price` would close all three.
+  Investigation: FE-LOW-024's mechanism is a display-layer **sanity
+  clamp** (`abs(percent) > 100` → render `>100%`), not per-symbol
+  formatting. No helper closes it; the fix is a JS `fmtPct` clamp.
+  The audit grouped by surface symptom ("noisy number display")
+  rather than mechanism. **Pattern**: when a filing tags a finding
+  cluster as "family", verify mechanism overlap before trusting the
+  leverage claim. Loose "same family" tags are hints, not proofs.
 
 **Implication for fix-task specs**: when a spec lists a recommended
 fix, treat it as auxiliary information. The fix-task report should
