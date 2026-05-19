@@ -8,7 +8,15 @@
   <!-- ── Header ───────────────────────────────────────────────────────── -->
   <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;">
 
-    <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+    {# FE-MED-018 (Task 135): the page-level period selector below is
+       wrapped in #analytics-period-bar so JS can disable+dim it as a
+       unit on sub-tabs that don't consume the `period` query param
+       (Equity Curve, Calendar, Funding, Beta — see _periodTabs below).
+       The audit's framing as "precedence ambiguity" turned out to be a
+       dead-control problem on those tabs: the page period had no
+       effect on the data. Model D fix — dim/disable on dead-control
+       tabs rather than inventing precedence semantics. #}
+    <div id="analytics-period-bar" style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
       <button id="nav-prev" onclick="navPeriod(-1)" class="btn btn-ghost btn-sm">‹</button>
       <span id="period-display" style="font-family:var(--font-mono);font-size:.85rem;font-weight:700;
             min-width:120px;text-align:center;color:var(--text);">Loading...</span>
@@ -77,6 +85,32 @@ var TAB_ENDPOINTS = {
 
 var PERIOD_IDS = ['monthly','weekly','quarterly','yearly','rolling_30d','rolling_90d','all_time'];
 
+// FE-MED-018 (Task 135): sub-tabs whose route handler READS the
+// `period` query param. Verified empirically in api/routes_analytics.py:
+//   - overview, pairs, excursions, rmultiples, risk → take period=...
+//   - equity, calendar, live (funding), beta → ignore period
+// On tabs that ignore period, the page-level period selector is a
+// dead control. We dim+disable it rather than hide (avoids layout
+// jump on tab switch + operator still sees what's there).
+var _periodTabs = { overview:1, pairs:1, excursions:1, rmultiples:1, risk:1 };
+
+function _setPeriodBarEnabled(enabled) {
+  var bar = document.getElementById('analytics-period-bar');
+  if (!bar) return;
+  bar.style.opacity = enabled ? '1' : '.4';
+  bar.style.pointerEvents = enabled ? '' : 'none';
+  // Mirror to the actual disabled attribute so keyboard focus + AT
+  // tools also see the inactive state.
+  var btns = bar.querySelectorAll('button');
+  for (var i = 0; i < btns.length; i++) {
+    btns[i].disabled = !enabled;
+  }
+  // Title attribute on the wrapper communicates why it's inactive
+  bar.title = enabled
+    ? ''
+    : "Period filter doesn't apply to this sub-tab. Use the chart's own period buttons.";
+}
+
 function setPeriod(p) {
   _period = p; _offset = 0;
   _highlightPreset();
@@ -110,6 +144,9 @@ function switchTab(tid) {
   _activeTab = tid;
   document.querySelectorAll('#analytics-tabs .tab-btn').forEach(function(b) { b.classList.remove('active'); });
   document.getElementById('tab-' + tid)?.classList.add('active');
+  // FE-MED-018 (Task 135): dim+disable the page-level period selector
+  // on sub-tabs that don't consume `period`.
+  _setPeriodBarEnabled(!!_periodTabs[tid]);
   loadTab(tid);
 }
 
@@ -150,6 +187,9 @@ function loadTab(tid) {
 (function() {
   _highlightPreset();
   _updateNav();
+  // FE-MED-018: initial tab is 'overview' which DOES consume period;
+  // bar starts enabled.
+  _setPeriodBarEnabled(!!_periodTabs[_activeTab]);
   loadTab('overview');
 })();
 </script>
