@@ -164,3 +164,42 @@ during Task 136's orthogonality investigation (commit `cd367c8`).
 Task 137 swept the other 4 Bundle A primitives (StatusIndicator,
 Card, TableRow, EmptyState) — no further drift. This discipline
 is the guardrail against future regressions of the same shape.
+
+### In-flight Phase cleanup — don't extend the pattern being removed
+
+When a Phase-N cleanup task is in flight (refactor removing pattern X
+across the codebase), in-flight Phase-M tasks must not extend
+pattern X. Task specs for parallel work should explicitly forbid the
+pattern being removed.
+
+The asymmetry: refactor tasks complete a finite set of known sites;
+feature work introduces new sites. If feature work adds sites
+faster than the refactor removes them, the cleanup never converges.
+
+Practical checklist when starting a feature task during a Phase-N
+cleanup:
+1. Identify the pattern being removed (`db._conn` direct access,
+   inline `<style>`, raw `<button>` outside StatusIndicator, etc.).
+2. Confirm the task spec forbids the pattern; if it doesn't, ask
+   before introducing new sites.
+3. When the task naturally needs a similar operation, route through
+   the public helper / primitive being established by the cleanup.
+4. Anchor-comment any deliberate use of an old pattern with
+   justification — "intentional, see Task X spec" — so future
+   refactor sweeps can distinguish drift from legitimate use.
+
+**Background:** Task 139 introduced 3 new `db._conn` direct-access
+sites in `api/routes_calculator.py` (the PENDING-state fix for
+FE-HIGH-009) during the active Phase 6 `db._conn` cleanup. Task
+144's broad re-grep surfaced these mid-Phase-6, requiring scope
+extension to cover them. Spec did not forbid the pattern; the
+introduction was inadvertent. Tasks 142 + 143 had locked in the
+"public helper, no `db._conn`" convention by then, so the right
+shape was discoverable — just not specified. This discipline closes
+that gap for future Phase-N work.
+
+Related: audit-inventory-incomplete pattern in the audit doc
+(`docs/audits/2026-05-17-v2.4-backend-audit.md`). The same
+broad-re-grep discipline catches both "audit missed sites" and
+"in-flight tasks added sites." Two failure modes, one detection
+mechanism.

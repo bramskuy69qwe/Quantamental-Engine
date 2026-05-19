@@ -12,32 +12,42 @@ class NewsMixin:
     # ── HIGH-002 (Task 144, Phase 6 monitoring/reconciler) ──────────────────
 
     async def get_latest_news_timestamp(self) -> Optional[Any]:
-        """Return MAX(published_at) from the `news` table — used by the
-        monitoring layer's news-feed-staleness check.
+        """Return MAX(published_at) from the `news_items` table — used
+        by the monitoring layer's news-feed-staleness check.
 
-        **Known bug preserved byte-for-byte**: the original query in
-        `core/monitoring.py:331` (pre-Task-144) reads `FROM news`, but
-        the actual table is `news_items` (see CREATE TABLE in
-        `core/database.py:316`). The original caller wraps the call in
-        try/except + returns silently on failure, so the monitoring
-        check has been silently dead-coded since whenever the typo was
-        introduced. This refactor preserves byte-for-byte to avoid a
-        behavior change. The bug is filed as a latent finding (Task 144
-        latent observations) — fix is one-character (news → news_items)
-        but a separate task because it activates a previously-dead
-        monitoring event.
+        FE-LOW-027 (Task 145): table-name typo fix. Pre-Task-145 this
+        helper (and its inline predecessor in `core/monitoring.py`)
+        queried `FROM news` — a table that does not exist. The schema
+        defines `news_items` (`core/database.py:316`). The original
+        caller wrapped in `try/except: return` which silently swallowed
+        the resulting OperationalError, making the news-staleness
+        check dead code since whenever the typo was introduced.
 
-        Returns the raw column value (int epoch-ms or ISO-8601 string,
-        depending on producer) or None if the table is missing / the
-        query fails / the table is empty.
+        Task 144 preserved the typo byte-for-byte (refactor + bugfix
+        kept orthogonal). Task 145 fixes both: (1) table name corrected
+        to `news_items`; (2) the broad `except Exception` narrowed —
+        we log on failure now instead of silently swallowing, so a
+        future regression that breaks this query is loud, not silent.
+
+        Returns the raw column value (ISO-8601 string per the schema —
+        `published_at TEXT NOT NULL`) or None if the table is empty or
+        a transient DB error occurs.
         """
         try:
             async with self._conn.execute(
-                "SELECT MAX(published_at) FROM news"
+                "SELECT MAX(published_at) FROM news_items"
             ) as cur:
                 row = await cur.fetchone()
                 return row[0] if row else None
-        except Exception:
+        except Exception as exc:
+            # FE-LOW-027 (Task 145): log instead of swallow. The pre-
+            # Task-145 silent catch hid the FROM-news typo for an
+            # unknown duration. Future failures should surface in logs.
+            log.warning(
+                "get_latest_news_timestamp failed: %r — news-staleness "
+                "monitoring check will return None this cycle.",
+                exc,
+            )
             return None
 
     async def upsert_news_items(self, rows: List[Dict[str, Any]]) -> int:

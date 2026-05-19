@@ -327,10 +327,12 @@ class MonitoringService:
 
     async def _check_news_feed_health(self) -> None:
         # HIGH-002 (Task 144) — refactored to db.get_latest_news_timestamp.
-        # Helper preserves the original try/except behavior and the buggy
-        # table-name ('news' vs actual 'news_items') byte-for-byte. The
-        # silent-dead-code aspect of this check is filed as a latent
-        # finding for a future task to address separately.
+        # FE-LOW-027 (Task 145) — the helper's `FROM news` typo is now
+        # fixed to `FROM news_items` (actual table per schema). Pre-
+        # Task-145, this check was dead code: the OperationalError was
+        # silently swallowed by the inline try/except. The helper now
+        # logs on failure instead of swallowing, so future regressions
+        # are loud.
         latest_ts = await db.get_latest_news_timestamp()
 
         if latest_ts is None:
