@@ -12,6 +12,24 @@ from typing import Any, Dict, List, Optional, Tuple
 log = logging.getLogger("database")
 
 
+def _escape_like(value: str) -> str:
+    """MED-022 (Task 147): escape SQL LIKE wildcards (`%`, `_`) so a
+    user-supplied prefix/search string is matched literally rather
+    than as a pattern.
+
+    Order matters: backslash MUST be doubled first; otherwise the
+    backslashes we add for `%` and `_` get caught by the backslash
+    pass and become double-escaped. Used with `LIKE ? ESCAPE '\\'`
+    in the SQL clause.
+
+    Module-local rather than a shared util — only one consumer
+    (mark_stale_orders_canceled) so far. Promote to a shared module
+    when a second consumer needs it. Per Task 142 convention
+    (single-consumer helper extensions are over-engineering).
+    """
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 class OrdersMixin:
     """Domain methods for the orders, fills, and closed_positions tables."""
 
@@ -363,17 +381,23 @@ class OrdersMixin:
         # quote in the prefix terminate the literal early and inject arbitrary SQL.
         # Callers today pass only hardcoded prefixes ("algo:"), so no current
         # exploit — defense-in-depth against future user-supplied prefixes.
-        # NOTE: % and _ inside the prefix are LEFT UNESCAPED (LIKE wildcards).
-        # Callers wanting literal-match semantics for a user-supplied prefix
-        # must escape themselves; that is out of scope for this fix.
+        #
+        # MED-022 (Task 147): close the second half — wildcard escape.
+        # Task 101 left `%` and `_` in the prefix UNESCAPED (acting as
+        # LIKE wildcards). For a hardcoded "algo:" prefix this is fine;
+        # for any future user-supplied prefix, `%foo` or `_bar` would
+        # match unintended rows. Now escaped via `_escape_like()` +
+        # `ESCAPE '\'` clause — the prefix is matched literally; the
+        # trailing `%` (appended after escaping) remains the
+        # legitimate prefix-match wildcard.
         scope_clause = ""
         scope_params: list = []
         if exclude_prefix:
-            scope_clause = " AND exchange_order_id NOT LIKE ?"
-            scope_params.append(f"{exclude_prefix}%")
+            scope_clause = " AND exchange_order_id NOT LIKE ? ESCAPE '\\'"
+            scope_params.append(f"{_escape_like(exclude_prefix)}%")
         elif only_prefix:
-            scope_clause = " AND exchange_order_id LIKE ?"
-            scope_params.append(f"{only_prefix}%")
+            scope_clause = " AND exchange_order_id LIKE ? ESCAPE '\\'"
+            scope_params.append(f"{_escape_like(only_prefix)}%")
 
         if not active_ids:
             if not allow_cancel_all:
