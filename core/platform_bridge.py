@@ -1,9 +1,33 @@
 """
 PlatformBridge — engine-side integration for external trading platforms.
 
+**LEGACY — DEPRECATION NOTICE (Task 150, 2026-05-19).**
+The engine no longer relies on the Quantower plugin for data flow.
+Exchange-WS (Binance / Bybit / MEXC) is the primary data path as of
+v2.5. This module is retained for optional execution-side integration
+(plugin pushes fills + position snapshots when the operator chooses
+to run QT alongside the engine), but it is no longer a data
+dependency. Operating in "standalone" mode with the plugin absent is
+the supported default.
+
+Archive candidate after 4 weeks of stable exchange-WS-only operation
+(target: 2026-06-16). If no operator workflow has surfaced that
+genuinely requires the plugin push path by then, this module + its
+routes (/ws/platform + /api/platform/*) should be removed; the
+HIGH-002 Phase-6 refactor work (Tasks 142-144) means no remaining
+non-bridge code depends on its public surface.
+
+Cross-reference: FE-MED-033 (Task 149) introduced per-field click-
+to-copy on calculator outputs as the click-driven QT integration
+path (operator copies values into QT order entry). A future v3.0
+DnD path (filed in `v2.5-v2.7_roadmap.md` v3.0 deferred section)
+would be a plugin-side enhancement, but the engine-side bridge
+remains optional regardless of which integration path the operator
+chooses.
+
 In "standalone" mode this module is completely dormant — no overhead.
 
-In "quantower" mode:
+In "quantower" mode (optional execution-side integration):
   - Maintains persistent WebSocket connections from the Quantower plugin
     (endpoint: /ws/platform in routes.py)
   - Receives fill and position-snapshot events from the plugin and

@@ -3,8 +3,9 @@
 Pre-trade risk gatekeeper and post-trade logger for discretionary crypto
 futures trading. The engine provides real-time position monitoring, ATR-based
 position sizing with macro regime multipliers, and a browser-based dashboard
-served as a PWA. It connects to exchanges via a vendor-neutral adapter layer
-and optionally bridges to Quantower for desktop charting integration.
+served as a PWA. It connects to exchanges via a vendor-neutral adapter layer.
+A Quantower plugin is an **optional execution-side integration** — the
+engine does not depend on it for data flow.
 
 Currently deployed against Binance USDM-M and Bybit Linear perpetuals, with
 MEXC read-only integration via adapter capability flags.
@@ -15,9 +16,8 @@ MEXC read-only integration via adapter capability flags.
 
 The engine follows a **core + adapter ring** pattern established during the
 v2.3.1 audit. The core engine is broker-agnostic: every external connection
-(exchanges, the Quantower platform bridge, regime data sources, news feeds)
-routes through a vendor-neutral adapter layer defined by Python protocols in
-`core/adapters/protocols.py`.
+(exchanges, regime data sources, news feeds) routes through a vendor-neutral
+adapter layer defined by Python protocols in `core/adapters/protocols.py`.
 
 ```
                     +-----------+
@@ -29,14 +29,22 @@ routes through a vendor-neutral adapter layer defined by Python protocols in
                     | core/*.py  |  Engine core (state, risk, scheduling)
                     +-----+-----+
                           |
-              +-----------+-----------+-----------+
-              |           |           |           |
-         +----+----+ +---+---+ +----+----+ +-----+-----+
-         | Binance | | Bybit | |  MEXC   | | Quantower |
-         | adapter | |adapter| |adapter* | |  bridge   |
-         +---------+ +-------+ +---------+ +-----------+
+              +-----------+-----------+
+              |           |           |
+         +----+----+ +---+---+ +----+----+      [Quantower plugin]
+         | Binance | | Bybit | |  MEXC   |  ←   (optional, execution-side
+         | adapter | |adapter| |adapter* |       only; not a data dependency)
+         +---------+ +-------+ +---------+
                                 * read-only (capability flags)
 ```
+
+**Quantower plugin (optional execution-side integration).** As of v2.5,
+exchange-WS is the primary data path. The plugin — if the operator chooses
+to run QT alongside the engine — pushes fills + position snapshots to
+`/ws/platform` and consumes risk-state updates for chart overlays. Operating
+in "standalone" mode (plugin absent) is the supported default. The
+`core/platform_bridge.py` module that handles plugin traffic is marked
+legacy / archive-candidate; see its docstring for the deprecation timeline.
 
 Engine core never imports exchange libraries directly. Adapters implement
 `ExchangeAdapter` / `WSAdapter` protocols and are resolved at runtime by
@@ -59,7 +67,7 @@ full adapter inventory.
 | Data processing | pandas, numpy |
 | Encryption | cryptography (Fernet, AES-256 for API keys) |
 | HTTP client | httpx (async) |
-| Broker bridge | Quantower C# plugin via WebSocket |
+| Broker bridge | Quantower C# plugin via WebSocket *(legacy / optional — not a data dependency as of v2.5; archive candidate)* |
 | Testing | pytest + pytest-asyncio (1247 tests) |
 
 ---
