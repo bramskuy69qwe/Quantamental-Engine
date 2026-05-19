@@ -215,6 +215,16 @@
 
       <!-- ── Setup Summary ────────────────────────────────────────────── -->
       <div class="card card-p8">
+        {# FE-MED-033 (Task 149): click-to-copy targets on each Setup
+           Summary field. Each readonly input has `data-copy-source`
+           pointing to the raw value in `#calc-data` (clean float
+           strings, no thousand separators / currency symbols /
+           percent signs that would break QT order-entry paste).
+           `copyField(this)` reads the raw, writes to clipboard,
+           briefly flashes the input border green. LOT button is
+           hidden on non-commodity tickers (lot is contracts in
+           disguise on crypto — `populateSetupSummary` toggles
+           visibility). #}
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px;flex-wrap:wrap;gap:4px;">
           <span class="sec-lbl" style="margin-bottom:0;">Setup Summary</span>
           <div style="display:flex;gap:3px;">
@@ -229,28 +239,38 @@
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:6px;">
           <div>
             <span class="lbl" style="display:block;margin-bottom:3px;">Symbol</span>
-            <input type="text" readonly id="ss-ticker" value="—" onclick="this.select()"
-                   style="cursor:text;" />
+            <input type="text" readonly id="ss-ticker" value="—"
+                   data-copy-source="ticker" onclick="copyField(this)"
+                   title="Click to copy ticker"
+                   style="cursor:pointer;" />
           </div>
           <div>
             <span class="lbl" style="display:block;margin-bottom:3px;">Entry Price</span>
-            <input type="text" readonly id="ss-entry" value="—" onclick="this.select()"
-                   style="cursor:text;" />
+            <input type="text" readonly id="ss-entry" value="—"
+                   data-copy-source="entry" onclick="copyField(this)"
+                   title="Click to copy entry price"
+                   style="cursor:pointer;" />
           </div>
           <div>
             <span class="lbl" style="display:block;margin-bottom:3px;">TP Price</span>
-            <input type="text" readonly id="ss-tp" value="—" onclick="this.select()"
-                   style="color:var(--green);cursor:text;" />
+            <input type="text" readonly id="ss-tp" value="—"
+                   data-copy-source="tp" onclick="copyField(this)"
+                   title="Click to copy TP price"
+                   style="color:var(--green);cursor:pointer;" />
           </div>
           <div>
             <span class="lbl" style="display:block;margin-bottom:3px;">SL Price</span>
-            <input type="text" readonly id="ss-sl" value="—" onclick="this.select()"
-                   style="color:var(--red);cursor:text;" />
+            <input type="text" readonly id="ss-sl" value="—"
+                   data-copy-source="sl" onclick="copyField(this)"
+                   title="Click to copy SL price"
+                   style="color:var(--red);cursor:pointer;" />
           </div>
           <div style="grid-column:1/-1;">
             <span class="lbl" id="ss-size-label" style="display:block;margin-bottom:3px;">Size (NOTIONAL)</span>
-            <input type="text" readonly id="ss-size" value="—" onclick="this.select()"
-                   style="color:var(--blue);font-weight:700;cursor:text;" />
+            <input type="text" readonly id="ss-size" value="—"
+                   data-copy-source="size" onclick="copyField(this)"
+                   title="Click to copy size (uses raw value for active unit)"
+                   style="color:var(--blue);font-weight:700;cursor:pointer;" />
           </div>
         </div>
         <div style="display:flex;align-items:center;gap:8px;">
@@ -655,7 +675,54 @@ function populateSetupSummary(){
   document.getElementById('ss-entry').value=entry>0?fmtP(entry):'—';
   document.getElementById('ss-tp').value=tp>0?fmtP(tp):'—';
   document.getElementById('ss-sl').value=sl>0?fmtP(sl):'—';
+  // FE-MED-033 (Task 149): hide LOT button on non-commodity tickers.
+  // Lot is a dead alias for contracts on crypto pairs (the existing
+  // setSizeUnit logic shows '—' for non-commodity); hiding the button
+  // avoids operator confusion about which unit to use for QT paste.
+  var ticker=data.getAttribute('data-ticker')||'',lotBtn=document.getElementById('su-lot');
+  if(lotBtn)lotBtn.style.display=isCommodityTicker(ticker)?'':'none';
+  // If lot is currently selected on a non-commodity ticker, fall back
+  // to contracts so the size field shows a real value.
+  if(!isCommodityTicker(ticker)&&_sizeUnit==='lot')_sizeUnit='contracts';
   setSizeUnit(_sizeUnit);
+}
+// FE-MED-033 (Task 149): click-to-copy on individual Setup Summary
+// fields. Copies the RAW value from #calc-data (no thousand separators,
+// no currency symbols, no percent signs) so the paste lands cleanly
+// in QT order-entry. Flash the input border green for 1s as visual
+// feedback.
+//
+// data-copy-source attr maps to a key in #calc-data:
+//   'ticker' → data-ticker (string)
+//   'entry'  → data-entry (raw float string)
+//   'tp'     → data-tp
+//   'sl'     → data-sl
+//   'size'   → resolved at click time based on _sizeUnit
+//              (notional|contracts|lot — lot maps to contracts on
+//              non-commodity since lot is contracts-in-disguise there).
+function copyField(el){
+  if(!el)return;
+  var source=el.getAttribute('data-copy-source');
+  var data=document.getElementById('calc-data');
+  if(!data||!source)return;
+  var raw;
+  if(source==='size'){
+    if(_sizeUnit==='notional')raw=data.getAttribute('data-notional');
+    else if(_sizeUnit==='contracts')raw=data.getAttribute('data-contracts');
+    else raw=data.getAttribute('data-contracts'); // lot==contracts on non-commodity
+  }else{
+    raw=data.getAttribute('data-'+source);
+  }
+  if(!raw||raw==='0'||raw==='—')return;
+  if(!navigator.clipboard||!navigator.clipboard.writeText)return;
+  navigator.clipboard.writeText(String(raw)).then(function(){
+    // Visual feedback: brief border-color flash via inline style swap.
+    // Inline (vs CSS class) keeps the change scoped to this fragment
+    // and avoids needing a base.html stylesheet edit.
+    var orig=el.style.borderColor;
+    el.style.borderColor='var(--green)';
+    setTimeout(function(){el.style.borderColor=orig;},1000);
+  }).catch(function(){});
 }
 function copySetupSummary(){
   var text=['Symbol:  '+(document.getElementById('ss-ticker').value||'—'),'Entry:   '+(document.getElementById('ss-entry').value||'—'),'TP:      '+(document.getElementById('ss-tp').value||'—'),'SL:      '+(document.getElementById('ss-sl').value||'—'),'Size:    '+(document.getElementById('ss-size').value||'—')].join('\n');
