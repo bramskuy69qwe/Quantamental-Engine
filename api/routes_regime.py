@@ -105,7 +105,13 @@ async def api_regime_backfill(request: Request):
 
             results = await fetcher.fetch_all(since_date, until_date, mode=mode, progress_cb=progress)
             job["results"] = results
-            await fetcher.close()
+            # FE-HIGH-008 (Task 140): removed orphan `await fetcher.close()`
+            # that raised `'RegimeFetcher' object has no attribute 'close'`
+            # and aborted the backfill at ~80% (before the classify_range
+            # step). RegimeFetcher holds no persistent resources — only
+            # `self._adapter` (caller-owned); each fetch_* method uses its
+            # own `async with httpx.AsyncClient(...)` context manager which
+            # closes per-call. Nothing to clean up at fetcher level.
 
             job["detail"] = "Classifying regimes..."
             job["pct"] = 82
