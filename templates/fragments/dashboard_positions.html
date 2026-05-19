@@ -21,7 +21,9 @@
                    color:var(--muted);border-bottom:2px solid transparent;">
       Order History
     </button>
+    <!-- FE-MED-010 (Task 131): see fragments/dashboard_body.html for rationale. -->
     <span id="dt-pos-max" class="mono" style="margin-left:auto;font-size:.68rem;color:var(--sub);"
+          title="Open positions / max positions"
           data-max="{{ max_open_positions }}">{{ open_positions | length }}/{{ max_open_positions }}</span>
   </div>
 

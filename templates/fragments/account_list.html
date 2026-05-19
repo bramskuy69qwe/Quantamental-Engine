@@ -10,7 +10,13 @@
       {% if acct.is_active %}&#9679;{% else %}&#9675;{% endif %}
     </span>
     <div style="min-width:0;flex:1;">
-      <div style="font-size:.72rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+      {# FE-LOW-002 (Task 131): removed white-space:nowrap + ellipsis
+         so long names wrap at word boundaries instead of truncating
+         mid-word ("Binance Fu..."). Added title attribute for hover
+         tooltip with the full name. word-break:break-word covers the
+         rare case where a single word is longer than the card width. #}
+      <div style="font-size:.72rem;font-weight:600;word-break:break-word;"
+           title="{{ acct.name }}">
         {{ acct.name }}
       </div>
       <div style="font-size:.6rem;color:var(--sub);">

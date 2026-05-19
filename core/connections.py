@@ -228,12 +228,18 @@ class ConnectionsManager:
 
 
 # Known providers shown by default in UI (even if not yet configured)
+# FE-LOW-005 (Task 131): all 5 providers now carry a parenthetical hint.
+# Finnhub + CoinGecko were the two outliers without parens; added the
+# minimal-information labels that disambiguate provider purpose.
+# Federal Reserve (FRED) keeps its parens (abbreviation, not category)
+# rather than rewriting all 5 to a single taxonomy — minimal-invasive
+# fix per the audit's "add to all or strip from all" framing.
 KNOWN_PROVIDERS = [
     {"provider": "binance_market_data", "label": "Binance Market Data (OI/Funding)"},
     {"provider": "bwe_news",            "label": "BWE News (Crypto)"},
     {"provider": "fred",                "label": "Federal Reserve (FRED)"},
-    {"provider": "finnhub",             "label": "Finnhub"},
-    {"provider": "coingecko",           "label": "CoinGecko"},
+    {"provider": "finnhub",             "label": "Finnhub (Equities)"},
+    {"provider": "coingecko",           "label": "CoinGecko (Crypto)"},
 ]
 
 # Module-level singleton

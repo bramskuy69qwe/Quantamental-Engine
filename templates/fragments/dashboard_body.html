@@ -94,8 +94,12 @@
                      color:var(--muted);border-bottom:2px solid transparent;">
         Order History
       </button>
-      <!-- capacity indicator, right-aligned -->
-      <span class="mono" style="margin-left:auto;font-size:.68rem;color:var(--sub);">{{ open_positions | length }}/{{ max_open_positions }}</span>
+      <!-- FE-MED-010 (Task 131): capacity indicator now has hover
+           label clarifying "Open positions / max positions". The
+           number sits next to the Positions tab — tooltip is the
+           least-invasive disambiguation per the audit recommendation. -->
+      <span class="mono" style="margin-left:auto;font-size:.68rem;color:var(--sub);"
+            title="Open positions / max positions">{{ open_positions | length }}/{{ max_open_positions }}</span>
     </div>
 
     <!-- ── Panel: Positions ── -->

@@ -122,8 +122,13 @@ function _eqReload_{{ EID }}(tf) {
       '<span><span style="color:var(--muted)">C</span> <span style="color:var(--text)">' + fmt(c.c) + '</span></span>' +
       '<span><span style="color:var(--muted)">Chg</span> <span style="color:' + chgCol + '">' + sign + fmtAbs(chg) + ' (' + sign + Math.abs(chgPct).toFixed(2) + '%)</span></span>' +
       '<span><span style="color:var(--muted)">Range</span> <span style="color:var(--text)">' + fmt(rng) + ' (' + rngPct.toFixed(2) + '%)</span></span>' +
-      '<span><span style="color:var(--muted)">CF</span> <span style="color:' + cfCol + '">' + cfSign + fmtAbs(cf) + '</span></span>' +
-      '<span><span style="color:var(--muted)">Adj Chg</span> <span style="color:' + adjCol + '">' + adjSign + fmtAbs(adjChg) + ' (' + adjSign + Math.abs(adjChgPct).toFixed(2) + '%)</span></span>';
+      // FE-LOW-009 (Task 131): CF → Cash Flow, Adj Chg → Adjusted
+      // Change. Matches Task 112's Calculator convention (no
+      // tooltips, full title-case labels). The stats container is
+      // flex-wrap (line 56) so the expansion wraps gracefully on
+      // narrow viewports.
+      '<span><span style="color:var(--muted)">Cash Flow</span> <span style="color:' + cfCol + '">' + cfSign + fmtAbs(cf) + '</span></span>' +
+      '<span><span style="color:var(--muted)">Adjusted Change</span> <span style="color:' + adjCol + '">' + adjSign + fmtAbs(adjChg) + ' (' + adjSign + Math.abs(adjChgPct).toFixed(2) + '%)</span></span>';
   }
 
   if (raw.length) renderStats(raw[raw.length - 1]);
@@ -240,8 +245,11 @@ function _eqReload_{{ EID }}(tf) {
           row('Change', sign + fmtAbs(chg) + ' (' + sign + Math.abs(chgPct).toFixed(2) + '%)', chgCol) +
           row('Range',  fmt(rng) + ' (' + rngPct.toFixed(2) + '%)') +
           '<div style="border-top:1px solid #18253a;margin:4px 0"></div>' +
-          row('Cashflow', cfSign + fmtAbs(cf), cfCol) +
-          row('Adj Chg',  adjSign + fmtAbs(adjChg) + ' (' + adjSign + Math.abs(adjChgPct).toFixed(2) + '%)', adjCol);
+          // FE-LOW-009 (Task 131): match the stats-line labels —
+          // Cash Flow + Adjusted Change consistently across the
+          // inline stats and the hover tooltip.
+          row('Cash Flow',       cfSign + fmtAbs(cf), cfCol) +
+          row('Adjusted Change', adjSign + fmtAbs(adjChg) + ' (' + adjSign + Math.abs(adjChgPct).toFixed(2) + '%)', adjCol);
         if (showDD) {
           html += row('Drawdown', Math.abs(ddValues[idx] || 0).toFixed(2) + '%', '#e83535');
         }
