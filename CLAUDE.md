@@ -123,3 +123,44 @@ documents in the same commit. References to docs outside the repo
 dangle and degrade traceability. Task 107's frontend-audit merge
 referenced `docs/audits/2026-05-18-v2.4-frontend-audit-01.md` but
 didn't commit it; Task 108 had to backfill the file. Don't repeat.
+
+### Post-primitive-migration sweep
+
+When a primitive migration renames or removes CSS classes, JS
+callsites that query the old class drift silently — template wiring
+tests pass (correct render output) while runtime behavior breaks
+(clicks don't update state, selectors return empty NodeLists,
+visual cross-clearing stops working). Compile-render assertions
+catch Jinja syntax bugs (MED-047), not stale JS selectors.
+
+After any class-renaming migration, grep the codebase for the OLD
+class names — across JS, inline `<script>` blocks, HTMX attrs, and
+any `static/` assets. Don't trust template wiring tests alone. The
+rename catches the template; the JS drift is invisible to template
+tests.
+
+Practical checklist when renaming or removing a CSS class:
+1. Grep the old class name across `templates/`, `static/`, inline
+   scripts (`<script>` blocks inside templates).
+2. Check `querySelector`/`querySelectorAll`/`classList.*`/
+   `getElementsByClassName` calls — those are the executing
+   callsites that depend on the old name.
+3. For each surfaced callsite, update to the new selector AND
+   verify the semantic intent still holds (the new class may live
+   on a different element, requiring a different selector path —
+   e.g., `.foo` on a button became `.bar` on the wrapper).
+4. Anchor-comment any non-obvious selector with the migration's
+   task reference so future maintainers can trace.
+
+**Background:** Task 125 migrated Regime's global signal-card range
+selector to the PeriodSelector primitive, renaming the button class
+from `.global-range-btn` to `.preset-btn` (under a `.global-range-
+group` wrapper). Two JS callsites — `setCardRange` and
+`setAllCardRanges` in `templates/regime.html` — still queried the
+dead `.global-range-btn` class. Visual cross-clearing (per-card
+override clears global active state; clicking a second global
+clears the first) silently stopped working. Surfaced 11 tasks later
+during Task 136's orthogonality investigation (commit `cd367c8`).
+Task 137 swept the other 4 Bundle A primitives (StatusIndicator,
+Card, TableRow, EmptyState) — no further drift. This discipline
+is the guardrail against future regressions of the same shape.
