@@ -102,26 +102,42 @@ function _eqReload_{{ EID }}(tf) {
   function fmtAbs(v) { return '$' + Math.abs(v).toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
   function renderStats(c) {
-    var chg       = c.c - c.o;
-    var chgPct    = c.o !== 0 ? (chg / c.o) * 100 : 0;
-    var rng       = c.h - c.l;
-    var rngPct    = c.l !== 0 ? (rng / c.l) * 100 : 0;
+    // FE-LOW-008 (Task 133): cache c.h/c.l/c.o/c.c into locals before
+    // any computation OR rendering. Forecloses the theoretical race
+    // where another async path mutates `c` between rng-compute and
+    // fmt(c.h) rendering. Audit-02 Session A observed an internally-
+    // inconsistent screenshot (rng/l matched 126.55%, but rng didn't
+    // match displayed h-l) which is consistent with that race, or
+    // simply a screenshot-timing artifact during the 1 Hz refresh.
+    // Either way, snapshotting locals at function entry is cheap +
+    // makes the rendering atomic with respect to `c`.
+    var o = c.o, h = c.h, l = c.l, cc = c.c;
+    var chg       = cc - o;
+    var chgPct    = o !== 0 ? (chg / o) * 100 : 0;
+    var rng       = h - l;
+    var rngPct    = l !== 0 ? (rng / l) * 100 : 0;
     var cf        = c.cf || 0;
     var adjChg    = chg - cf;
-    var adjChgPct = c.o !== 0 ? (adjChg / c.o) * 100 : 0;
+    var adjChgPct = o !== 0 ? (adjChg / o) * 100 : 0;
     var sign      = chg >= 0 ? '+' : '-';
     var adjSign   = adjChg >= 0 ? '+' : '-';
     var cfSign    = cf >= 0 ? '+' : '-';
     var chgCol    = chg >= 0 ? 'var(--green)' : 'var(--red)';
     var adjCol    = adjChg >= 0 ? 'var(--green)' : 'var(--red)';
     var cfCol     = cf >= 0 ? 'var(--blue)' : 'var(--amber)';
+    // FE-LOW-008 (Task 133): "Range" → "Bar Range". The original
+    // "Range" label was ambiguous (could mean bar H-L, lifetime
+    // range, drawdown range, etc.). "Bar Range" anchors it as the
+    // current bar's H-L. All field reads use the local snapshots
+    // (o/h/l/cc) so the rendered values are guaranteed consistent
+    // with the rng / rngPct computation above.
     document.getElementById(STATS_ID).innerHTML =
-      '<span><span style="color:var(--muted)">O</span> <span style="color:var(--text)">' + fmt(c.o) + '</span></span>' +
-      '<span><span style="color:var(--muted)">H</span> <span style="color:var(--green)">' + fmt(c.h) + '</span></span>' +
-      '<span><span style="color:var(--muted)">L</span> <span style="color:var(--red)">' + fmt(c.l) + '</span></span>' +
-      '<span><span style="color:var(--muted)">C</span> <span style="color:var(--text)">' + fmt(c.c) + '</span></span>' +
+      '<span><span style="color:var(--muted)">O</span> <span style="color:var(--text)">' + fmt(o) + '</span></span>' +
+      '<span><span style="color:var(--muted)">H</span> <span style="color:var(--green)">' + fmt(h) + '</span></span>' +
+      '<span><span style="color:var(--muted)">L</span> <span style="color:var(--red)">' + fmt(l) + '</span></span>' +
+      '<span><span style="color:var(--muted)">C</span> <span style="color:var(--text)">' + fmt(cc) + '</span></span>' +
       '<span><span style="color:var(--muted)">Chg</span> <span style="color:' + chgCol + '">' + sign + fmtAbs(chg) + ' (' + sign + Math.abs(chgPct).toFixed(2) + '%)</span></span>' +
-      '<span><span style="color:var(--muted)">Range</span> <span style="color:var(--text)">' + fmt(rng) + ' (' + rngPct.toFixed(2) + '%)</span></span>' +
+      '<span><span style="color:var(--muted)">Bar Range</span> <span style="color:var(--text)">' + fmt(rng) + ' (' + rngPct.toFixed(2) + '%)</span></span>' +
       // FE-LOW-009 (Task 131): CF → Cash Flow, Adj Chg → Adjusted
       // Change. Matches Task 112's Calculator convention (no
       // tooltips, full title-case labels). The stats container is
@@ -218,13 +234,17 @@ function _eqReload_{{ EID }}(tf) {
         var idx = cp.dataIndex;
         var c = raw[idx];
         if (!c) return '';
-        var chg       = c.c - c.o;
-        var chgPct    = c.o !== 0 ? (chg / c.o) * 100 : 0;
-        var rng       = c.h - c.l;
-        var rngPct    = c.l !== 0 ? (rng / c.l) * 100 : 0;
+        // FE-LOW-008 (Task 133): cache fields locally to match
+        // renderStats's atomic-snapshot pattern. See renderStats for
+        // rationale.
+        var o = c.o, h = c.h, l = c.l, cc = c.c;
+        var chg       = cc - o;
+        var chgPct    = o !== 0 ? (chg / o) * 100 : 0;
+        var rng       = h - l;
+        var rngPct    = l !== 0 ? (rng / l) * 100 : 0;
         var cf        = c.cf || 0;
         var adjChg    = chg - cf;
-        var adjChgPct = c.o !== 0 ? (adjChg / c.o) * 100 : 0;
+        var adjChgPct = o !== 0 ? (adjChg / o) * 100 : 0;
         var sign      = chg >= 0 ? '+' : '-';
         var adjSign   = adjChg >= 0 ? '+' : '-';
         var cfSign    = cf >= 0 ? '+' : '-';
@@ -237,13 +257,14 @@ function _eqReload_{{ EID }}(tf) {
             '<span style="color:' + (col || '#e8f2ff') + '">' + val + '</span></div>';
         }
         var html = '<div style="padding:10px 12px;font-size:11px;font-family:JetBrains Mono,monospace;line-height:1.9;min-width:200px">' +
-          row('Open',  fmt(c.o)) +
-          row('High',  fmt(c.h), '#00c855') +
-          row('Low',   fmt(c.l), '#e83535') +
-          row('Close', fmt(c.c)) +
+          row('Open',  fmt(o)) +
+          row('High',  fmt(h), '#00c855') +
+          row('Low',   fmt(l), '#e83535') +
+          row('Close', fmt(cc)) +
           '<div style="border-top:1px solid #18253a;margin:4px 0"></div>' +
           row('Change', sign + fmtAbs(chg) + ' (' + sign + Math.abs(chgPct).toFixed(2) + '%)', chgCol) +
-          row('Range',  fmt(rng) + ' (' + rngPct.toFixed(2) + '%)') +
+          // FE-LOW-008 (Task 133): Range → Bar Range. See renderStats.
+          row('Bar Range',  fmt(rng) + ' (' + rngPct.toFixed(2) + '%)') +
           '<div style="border-top:1px solid #18253a;margin:4px 0"></div>' +
           // FE-LOW-009 (Task 131): match the stats-line labels —
           // Cash Flow + Adjusted Change consistently across the
