@@ -807,3 +807,29 @@ Remaining Phase 5 surface:
 Stat Summary at Bundle A close: **0 CRIT / 2 HIGH / 47 MED / 27 LOW = 76 active.**
 
 Combined Bundle B + Bundle A delta (v2.4.1.1 → v2.4.3): 92 → 76 = -16 active. Phase 5 target (<30 active) requires another ~46 net resolutions across audit-02 sessions + remaining MED/LOW cleanup + any composite-primitive findings filed.
+
+### Phase 5 cleanup chapter — CLOSED (tagged v2.4.4 at cdabf43 → tag commit follows)
+
+Tasks: 127-131 (audit-02 Session A reconcile + retriage + Bundle A migration cleanup + polish bundle).
+
+Net findings movement: **76 → 75 active** across the chapter, with substantial internal reshuffling:
+- 5 net-new from Session A (T127).
+- 1 verified-false (FE-CRIT-002, T128 — first audit-time-artifact FP).
+- 1 reframed (FE-HIGH-007 → FE-MED-019, T128).
+- 4 polish-resolved (FE-MED-010, FE-LOW-002/005/009, T131).
+- 1 status-normalized (FE-LOW-004 → DEFERRED-PER-AUDIT-01, T131).
+- 3 Bundle A migration sites closed (position_fills T129, equity_ohlc + exchange_table T130) — no finding-count change; closure of latent migration targets.
+
+Architectural artifact: **EmptyState `padding` param** added (T129); covers default / tight / loose presets. Mirrors Card's tight/loose precedent. CSS classes `.es-tight` + `.es-loose` added to base.html primitives section.
+
+Calibration roster expansion: **4th false-positive class** — audit-time-artifact (1 example). Sits alongside race-framing FPs (8/15 = 53%), audit-impact-imprecision (5 examples), template wiring compile-test discipline (MED-047). CLAUDE.md updated with pre-flight engine-reachability check.
+
+Remaining Phase 5 surface:
+- **Audit-02 Sessions B+C** — unblocked (FE-CRIT-002 was false positive); gated on operator re-running with engine confirmed running. Estimated 10-20 additional findings.
+- **Heterogeneous MED/LOW cleanup** — 73 findings across diverse concerns (architectural deferrals, data investigations, page-layout, content design). Polish-tier work is exhausted; remaining work is real per-finding investigation/implementation.
+- **Composite-primitive scheduling** — still consumer-driven defer. None gained a second consumer in this chapter.
+- **FE-LOW-007 normalization candidate** — same shape as FE-LOW-004 (audit-01 recommended defer-indefinitely). Could be normalized to DEFERRED-PER-AUDIT-01 cheaply.
+
+Phase 5 target tracking: **75 active vs <30 internal target. ~45 net resolutions remain**; most are MED-tier real work, not polish.
+
+Combined v2.4.1.1 → v2.4.4: **92 → 75 = -17 active** across 26 tasks (107-131, including infrastructure / release tasks). Per-task average ~0.65 findings/task; many tasks resolve 0 findings (release tags, calibration, reconciliation) while others resolve multiple at once.

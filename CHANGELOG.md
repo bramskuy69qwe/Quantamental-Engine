@@ -1,5 +1,177 @@
 # Changelog
 
+## [v2.4.4] — 2026-05-19
+
+### Summary
+
+Bundle A cleanup chapter + audit-02 Session A reconciliation release.
+5 tasks since v2.4.3 (Tasks 127-131). Combined ledger drops from 76
+active at v2.4.3 to 75 active at v2.4.4, with substantial internal
+reshuffling: 5 net-new findings filed from Session A, 1 verified-false,
+1 reframed, 4 polish-resolved, 1 status-normalized.
+
+This is the "cleanup + reconcile" chapter:
+- Closes out the remaining Bundle A primitive migrations
+  (position_fills, equity_ohlc, exchange_table).
+- Reconciles audit-02 Session A into the unified ledger then
+  retraces the false-positive.
+- Resolves the label/format polish backlog from audit-01 + Session A.
+- Adds the 4th calibration false-positive class to the audit-doc
+  pattern roster.
+
+### Resolved (MED + LOW polish)
+
+- **FE-MED-010** (Task 131) Dashboard "0/10.0" capacity badge
+  unlabeled → `title="Open positions / max positions"` tooltip on
+  both indicator sites (`dashboard_body.html` + `dashboard_positions.html`).
+  Tooltip-only fix; layout unchanged.
+- **FE-LOW-002** (Task 131) Account card name truncation ("Binance
+  Fu...") → removed `white-space:nowrap;overflow:hidden;text-overflow:
+  ellipsis;` so long names wrap at word boundaries naturally; added
+  `word-break:break-word` for single-long-word edge cases; added
+  `title` attribute for full-name hover tooltip.
+- **FE-LOW-005** (Task 131) Connections provider names mix abbreviation
+  styles → Finnhub gained "(Equities)" and CoinGecko gained "(Crypto)"
+  parentheticals. All 5 entries now carry parens. Existing 3 kept
+  unchanged (Federal Reserve (FRED) keeps the abbreviation since
+  operators search "FRED" specifically).
+- **FE-LOW-009** (Task 131) Equity Curve "CF" + "Adj Chg" unlabeled
+  abbreviations → expanded to "Cash Flow" + "Adjusted Change" across
+  both the inline stats line and the hover tooltip. Matches Task 112's
+  Calculator convention (full title-case labels, no separate tooltip).
+- **FE-LOW-004** (Task 131) Order History ORDER ID column mixed formats
+  → status normalized to **DEFERRED-PER-AUDIT-01** (no code change;
+  audit-01 explicitly recommended defer-indefinitely as internal-tool
+  grade).
+
+### Resolved (Bundle A migration closure)
+
+- **`position_fills.html`** (Task 129) — 3 primitives applied to the
+  Position History expansion sub-table:
+  - TableRow primitive (default, non-clickable state).
+  - SIDE column split into ACTION (Open/Close) + SIDE (LONG/SHORT)
+    per Task 123 calibration #3 — closure now complete across both
+    primary and inline sub-table consumers.
+  - EmptyState primitive with new `padding="tight"` param for the
+    "No fills found" branch.
+- **`equity_ohlc.html`** (Task 130) — full-page empty state migrated
+  to EmptyState with `padding="loose"` (32px preset, first consumer).
+- **`exchange_table.html`** (Task 130) — empty state migrated with
+  default `padding="default"` (accepts 4px shift from prior 16px +
+  left→center alignment convergence with primitive convention).
+
+### Infrastructure / architecture
+
+- **EmptyState API extended** (Task 129) with `padding` parameter:
+  - `"default"` (20px y-padding, dominant case, 11 consumers)
+  - `"tight"` (10px y-padding + smaller font, inline sub-tables)
+  - `"loose"` (32px y-padding, full-page contexts)
+  - Unknown values → fall through to `"default"` (defensive, parallel
+    to tone fallthrough discipline)
+  - Mirrors Card's tight/loose padding precedent (Task 122)
+  - **No `medium` (16px) preset** — single-consumer (exchange_table)
+    didn't justify API bloat; accepted convergence to default
+
+### Audit-02 Session A reconciliation (Tasks 127-128)
+
+- **Task 127** reconciled `docs/audits/2026-05-18-v2.4-frontend-audit-02-session-A.md`
+  (committed to main at `bb06f35`, between v2.4.2 and Bundle A) into
+  the unified ledger. Coverage outcome: 1 of 8 Analytics sub-tabs
+  audited (Equity Curve only). The other 7 returned HTTP 503 from
+  their `/fragments/analytics/*` endpoints.
+- **5 findings filed initially**: FE-CRIT-002 (Analytics 7/8 sub-tabs
+  503), FE-HIGH-007 (htmx 5xx stuck Loading), FE-MED-018 (Analytics
+  Equity Curve dual period selector), FE-LOW-008 (Equity Curve Range
+  value off), FE-LOW-009 (CF / Adj Chg unlabeled).
+- **Session A's `FE-MED-017` numbering clashed** with existing
+  FE-MED-017 (BTCUSDT test pollution, Task 110 reframe) → renumbered
+  to FE-MED-018 during reconciliation.
+- **Task 128 retriage post-operator-verification**:
+  - **FE-CRIT-002 → VERIFIED-FALSE.** Operator confirmed engine was
+    stopped during the audit-02 Session A browser session. The 503
+    cluster was an audit-time artifact, NOT a real backend bug.
+    Analytics sub-tabs render correctly with engine running. First
+    audit-time-artifact false positive in the ledger; new calibration
+    class added.
+  - **FE-HIGH-007 → REFRAMED to FE-MED-019.** Underlying htmx
+    target-element gap (target stays on "Loading..." text when 5xx
+    response fires) is real but lower-urgency without a real failure
+    surface demonstrating it. HIGH severity was driven by the
+    now-invalidated FE-CRIT-002 evidence. Demoted to MED — design-
+    discipline concern for future failure paths.
+  - **FE-MED-018, FE-LOW-008, FE-LOW-009 remain OPEN.** Equity Curve
+    was the one sub-tab that loaded successfully in Session A; the
+    evidence is real, independent of the 503 cluster. (FE-LOW-009
+    subsequently resolved in Task 131 above.)
+
+### Calibration patterns
+
+- **New 4th false-positive class: audit-time-artifact.** Added
+  alongside the existing three patterns (race-framing FPs at
+  8/15 ≈ 53%, audit-impact-imprecision at 5 examples, template
+  wiring compile-test discipline / MED-047).
+- **CLAUDE.md updated** with the pre-flight engine-reachability
+  discipline: browser-driven audit sessions MUST verify engine is
+  reachable before filing findings (`/` returns 200 + valid HTML;
+  at least one fragment endpoint resolves with 200). Halt-and-surface
+  on a 503/connection-refused cluster mid-session before filing as
+  findings.
+- **EmptyState README** documents the new `padding` param + decision
+  rules (tight for inline, loose for full-page, default elsewhere).
+
+### Audit ledger state at tag
+
+**75 active findings** — 0 CRIT / 2 HIGH / 48 MED / 25 LOW.
+
+Remaining HIGHs (both architecturally deferred, unchanged through
+this chapter):
+- **HIGH-001** — No API authentication. Phase 8 deferral.
+- **HIGH-002** — Engine ↔ Quantower plugin coupling. Phase 6 deferral.
+
+Top 2 stable across the entire cleanup chapter — Tasks 127-131 all
+resolved MED-tier or below, plus the FE-CRIT-002 false-positive
+retraction kept the CRIT count at 0.
+
+### Trajectory tracking
+
+| Tag | Active | Delta |
+|---|---|---|
+| v2.4.1.1 | 92 | — |
+| v2.4.2 (Bundle B close) | 82 | -10 |
+| v2.4.3 (Bundle A close) | 76 | -6 |
+| v2.4.4 (this tag — cleanup chapter) | 75 | -1 |
+
+Combined v2.4.1.1 → v2.4.4: **-17 active**. Phase 5 close target is
+<30 active. Still ~45 net resolutions needed; most are MED-tier real
+work, not polish.
+
+### Test suite
+
+1809 passed, 6 skipped. Bundle A cleanup added:
+- Task 127/128: documentation-only (no test changes; 2 commits at 0 net).
+- Task 129 (+24 cases): position_fills migration + EmptyState API
+  extension.
+- Task 130 (+14 cases): equity_ohlc + exchange_table migrations.
+- Task 131 (+19 cases): label & format polish bundle.
+
+### Latent observations carried forward
+
+- **Audit-02 Sessions B+C** are NOT gated on a backend fix (FE-CRIT-002
+  was a false positive). They're gated on the operator re-running
+  Session A (or pivoting to B/C) with the new pre-flight engine-
+  reachability discipline. Estimated 10-20 additional findings if
+  Sessions B/C complete.
+- **Composite-primitive candidates still deferred** (single-consumer
+  defer discipline): WsStatus composite (T121 latent), Regime Timeline
+  mode+period combo (T125 latent), Card header_actions slot (T122
+  latent), Form-field cluster (T125 latent). None gained a second
+  consumer through this chapter.
+- **EmptyState `tone="error"` preset still deferred** — FE-MED-019
+  is the first consumer-trigger; will be implemented when that
+  finding is scheduled.
+
+---
+
 ## [v2.4.3] — 2026-05-19
 
 ### Summary
