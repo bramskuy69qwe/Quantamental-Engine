@@ -160,6 +160,9 @@ async def test_rl3_rate_limit_propagation(site_id):
                 mock_conn = _mock_db_with_symbols([])
                 with patch("core.reconciler.db") as mock_db:
                     mock_db._conn = mock_conn
+                    # HIGH-002 (Task 144): reconciler now routes through
+                    # db.get_pending_reconciler_symbols helper.
+                    mock_db.get_pending_reconciler_symbols = AsyncMock(return_value=[])
                     await r.backfill_all()
 
     elif site_id == "reconciler__backfill_process":
@@ -172,6 +175,9 @@ async def test_rl3_rate_limit_propagation(site_id):
             mock_conn = _mock_db_with_symbols(["BTCUSDT"])
             with patch("core.reconciler.db") as mock_db:
                 mock_db._conn = mock_conn
+                # HIGH-002 (Task 144): reconciler now routes through
+                # db.get_pending_reconciler_symbols helper.
+                mock_db.get_pending_reconciler_symbols = AsyncMock(return_value=["BTCUSDT"])
                 mock_db.get_uncalculated_exchange_rows = AsyncMock(
                     return_value=[{
                         "trade_key": "test_key", "open_time": 1000,

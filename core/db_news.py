@@ -9,6 +9,37 @@ log = logging.getLogger("database")
 class NewsMixin:
     """news_items + economic_calendar domain methods."""
 
+    # ── HIGH-002 (Task 144, Phase 6 monitoring/reconciler) ──────────────────
+
+    async def get_latest_news_timestamp(self) -> Optional[Any]:
+        """Return MAX(published_at) from the `news` table — used by the
+        monitoring layer's news-feed-staleness check.
+
+        **Known bug preserved byte-for-byte**: the original query in
+        `core/monitoring.py:331` (pre-Task-144) reads `FROM news`, but
+        the actual table is `news_items` (see CREATE TABLE in
+        `core/database.py:316`). The original caller wraps the call in
+        try/except + returns silently on failure, so the monitoring
+        check has been silently dead-coded since whenever the typo was
+        introduced. This refactor preserves byte-for-byte to avoid a
+        behavior change. The bug is filed as a latent finding (Task 144
+        latent observations) — fix is one-character (news → news_items)
+        but a separate task because it activates a previously-dead
+        monitoring event.
+
+        Returns the raw column value (int epoch-ms or ISO-8601 string,
+        depending on producer) or None if the table is missing / the
+        query fails / the table is empty.
+        """
+        try:
+            async with self._conn.execute(
+                "SELECT MAX(published_at) FROM news"
+            ) as cur:
+                row = await cur.fetchone()
+                return row[0] if row else None
+        except Exception:
+            return None
+
     async def upsert_news_items(self, rows: List[Dict[str, Any]]) -> int:
         """Bulk upsert news items. Each row needs source, external_id, headline, published_at."""
         if not rows:

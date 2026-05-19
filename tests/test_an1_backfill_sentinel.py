@@ -211,15 +211,29 @@ async def test_update_closed_position_mfe_mae_sets_backfill_completed():
 @pytest.mark.asyncio
 async def test_reconciler_backfill_query_uses_backfill_completed():
     """The reconciler backfill_all query must use backfill_completed,
-    not mfe=0/mae=0 as sentinel."""
+    not mfe=0/mae=0 as sentinel.
+
+    HIGH-002 (Task 144): the SQL moved from inline `db._conn.execute(...)`
+    in `ReconcilerWorker.backfill_all` to the public helper
+    `ExchangeMixin.get_pending_reconciler_symbols`. The pin now checks
+    both: (a) the caller routes through the helper, and (b) the helper
+    still uses the backfill_completed column.
+    """
     import inspect
-    from core import reconciler
-    source = inspect.getsource(reconciler.ReconcilerWorker.backfill_all)
-    assert "backfill_completed" in source, (
-        "backfill_all query must use backfill_completed column"
+    from core import reconciler, db_exchange
+    # Caller now routes through the helper, not inline SQL
+    caller_src = inspect.getsource(reconciler.ReconcilerWorker.backfill_all)
+    assert "get_pending_reconciler_symbols" in caller_src, (
+        "backfill_all must call db.get_pending_reconciler_symbols "
+        "(Task 144 refactor); inline SQL is no longer expected."
     )
-    assert "mfe=0" not in source and "mae=0" not in source, (
-        "backfill_all must NOT use mfe=0/mae=0 as sentinel"
+    # Helper source must still use backfill_completed
+    helper_src = inspect.getsource(db_exchange.ExchangeMixin.get_pending_reconciler_symbols)
+    assert "backfill_completed" in helper_src, (
+        "get_pending_reconciler_symbols query must use backfill_completed column"
+    )
+    assert "mfe=0" not in helper_src and "mae=0" not in helper_src, (
+        "get_pending_reconciler_symbols must NOT use mfe=0/mae=0 as sentinel"
     )
 
 

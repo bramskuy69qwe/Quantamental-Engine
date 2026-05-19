@@ -693,6 +693,54 @@ class OrdersMixin:
         )
         await self._conn.commit()
 
+    # ── HIGH-002 (Task 144, Phase 6 monitoring/reconciler) ──────────────────
+    # Helpers below replace `db._conn` direct access in
+    # `api/routes_calculator.py::calculator_link_window_status` (the
+    # link-window countdown polling endpoint).
+
+    async def get_pretrade_timestamp_for_link_window(
+        self, *, calc_id: str, account_id: int,
+    ) -> Optional[Dict]:
+        """Minimal pre_trade_log lookup for the link-window countdown:
+        returns `{timestamp, link_window_seconds_override}` for the
+        matching row, or None.
+
+        Distinct from `get_pretrade_log_by_calc_id` (Task 142): that
+        helper returns the FULL row; this one returns only the two
+        columns the countdown endpoint reads. Narrower because the
+        full pre_trade_log row is wide and pulling it all over the
+        wire per 1Hz poll is wasteful.
+        """
+        if not calc_id:
+            return None
+        async with self._conn.execute(
+            "SELECT timestamp, link_window_seconds_override "
+            "FROM pre_trade_log WHERE calc_id=? AND account_id=? LIMIT 1",
+            (calc_id, account_id),
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+    async def has_confirmed_fill_for_calc(
+        self, *, calc_id: str, account_id: int,
+    ) -> bool:
+        """Return True if any fill exists for `calc_id` within the
+        account that has `exec_link_confirmed=1`. Used by the link-
+        window countdown to surface LINKED_CONFIRMED state.
+
+        Returns False (not None) — boolean shape matches the caller's
+        intent of "did we find one or not".
+        """
+        if not calc_id:
+            return False
+        async with self._conn.execute(
+            "SELECT 1 FROM fills WHERE calc_id=? AND account_id=? "
+            "AND exec_link_confirmed=1 LIMIT 1",
+            (calc_id, account_id),
+        ) as cur:
+            row = await cur.fetchone()
+            return row is not None
+
     async def get_pretrade_logs_by_calc_ids(
         self, calc_ids: List[str]
     ) -> Dict[str, Dict]:

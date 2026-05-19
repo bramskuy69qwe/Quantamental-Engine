@@ -465,6 +465,29 @@ class DatabaseManager(
         self._conn: Optional[aiosqlite.Connection] = None
         self.path: str = path if path is not None else config.DB_PATH
 
+    # ── HIGH-002 (Task 144, Phase 6 monitoring/reconciler) ──────────────────
+
+    async def check_db_alive(self, timeout_s: Optional[float] = None) -> bool:
+        """Liveness probe — `SELECT 1`. Returns True on success, False
+        on any exception (including timeout). Used by the monitoring
+        layer's db_health check.
+
+        Optional `timeout_s` wraps the fetch in `asyncio.wait_for`.
+        The original monitoring caller applied the timeout to the
+        `fetchone()` call only (not the `execute()`), so behavior is
+        preserved byte-for-byte when caller passes timeout_s.
+        """
+        import asyncio as _asyncio
+        try:
+            async with self._conn.execute("SELECT 1") as cur:
+                if timeout_s is not None:
+                    await _asyncio.wait_for(cur.fetchone(), timeout=timeout_s)
+                else:
+                    await cur.fetchone()
+            return True
+        except Exception:
+            return False
+
     async def initialize(self) -> None:
         """Create DB file + all tables (idempotent). Call once in lifespan startup."""
         import os

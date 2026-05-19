@@ -185,6 +185,42 @@ class ExchangeMixin:
         )
         await self._conn.commit()
 
+    # ── HIGH-002 (Task 144, Phase 6 monitoring/reconciler) ──────────────────
+    # Helpers below replace `db._conn` direct access in monitoring.py +
+    # reconciler.py. Shared "pending reconciler work" filter:
+    # `WHERE NOT backfill_completed AND open_time>0 AND trade_key NOT LIKE 'qt:%'`
+    # — excludes Quantower-sourced individual fills (round-trip pairing
+    # doesn't apply) and rows that haven't been opened yet.
+
+    async def count_pending_reconciler_rows(self) -> int:
+        """Count rows in exchange_history that the reconciler still
+        needs to backfill (MFE/MAE). Used by the monitoring layer's
+        reconciler-backlog health check.
+
+        Excludes Quantower-sourced rows (trade_key starts with 'qt:')
+        and rows with no open_time (haven't been entered yet).
+        """
+        async with self._conn.execute(
+            "SELECT COUNT(*) FROM exchange_history"
+            " WHERE NOT backfill_completed AND open_time>0"
+            " AND trade_key NOT LIKE 'qt:%'"
+        ) as cur:
+            row = await cur.fetchone()
+            return row[0] if row else 0
+
+    async def get_pending_reconciler_symbols(self) -> List[str]:
+        """Return distinct symbols with pending-reconciler rows in
+        exchange_history. Used by the reconciler backfill loop to
+        decide which symbols to process. Same WHERE filter as
+        count_pending_reconciler_rows (count vs list shape).
+        """
+        async with self._conn.execute(
+            "SELECT DISTINCT symbol FROM exchange_history"
+            " WHERE NOT backfill_completed AND open_time>0"
+            " AND trade_key NOT LIKE 'qt:%'"
+        ) as cur:
+            return [r[0] for r in await cur.fetchall()]
+
     async def get_uncalculated_exchange_rows(self, symbol: str) -> List[Dict]:
         """Return exchange_history rows for symbol where backfill has not completed."""
         async with self._conn.execute(

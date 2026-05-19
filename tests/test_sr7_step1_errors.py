@@ -158,6 +158,9 @@ async def test_rl3_preserved_with_neutral_errors(site_id):
             mock_conn.execute = MagicMock(return_value=mock_ctx)
             with patch("core.reconciler.db") as mock_db:
                 mock_db._conn = mock_conn
+                # HIGH-002 (Task 144): reconciler now routes through
+                # db.get_pending_reconciler_symbols helper.
+                mock_db.get_pending_reconciler_symbols = AsyncMock(return_value=["BTCUSDT"])
                 mock_db.get_uncalculated_exchange_rows = AsyncMock(
                     return_value=[{
                         "trade_key": "k", "open_time": 1000,

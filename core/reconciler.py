@@ -121,12 +121,8 @@ class ReconcilerWorker:
 
         # Exclude Quantower-sourced rows (trade_key starts with 'qt:') — these
         # are individual fills, not round-trip trades, so MFE/MAE pairing doesn't apply.
-        async with db._conn.execute(
-            "SELECT DISTINCT symbol FROM exchange_history"
-            " WHERE NOT backfill_completed AND open_time>0"
-            " AND trade_key NOT LIKE 'qt:%'"
-        ) as cur:
-            symbols = [r[0] for r in await cur.fetchall()]
+        # HIGH-002 (Task 144) — refactored to db.get_pending_reconciler_symbols.
+        symbols = await db.get_pending_reconciler_symbols()
 
         if not symbols:
             return

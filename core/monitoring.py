@@ -326,14 +326,12 @@ class MonitoringService:
     # ── Check 5: News feed health ────────────────────────────────────────────
 
     async def _check_news_feed_health(self) -> None:
-        try:
-            async with db._conn.execute(
-                "SELECT MAX(published_at) FROM news"
-            ) as cur:
-                row = await cur.fetchone()
-                latest_ts = row[0] if row else None
-        except Exception:
-            return  # News table may not exist or DB unavailable
+        # HIGH-002 (Task 144) — refactored to db.get_latest_news_timestamp.
+        # Helper preserves the original try/except behavior and the buggy
+        # table-name ('news' vs actual 'news_items') byte-for-byte. The
+        # silent-dead-code aspect of this check is filed as a latent
+        # finding for a future task to address separately.
+        latest_ts = await db.get_latest_news_timestamp()
 
         if latest_ts is None:
             return  # No news data yet
@@ -380,14 +378,9 @@ class MonitoringService:
     # ── Check 7: Reconciler health ───────────────────────────────────────────
 
     async def _check_reconciler_health(self) -> None:
+        # HIGH-002 (Task 144) — refactored to db.count_pending_reconciler_rows.
         try:
-            async with db._conn.execute(
-                "SELECT COUNT(*) FROM exchange_history"
-                " WHERE NOT backfill_completed AND open_time>0"
-                " AND trade_key NOT LIKE 'qt:%'"
-            ) as cur:
-                row = await cur.fetchone()
-                pending = row[0] if row else 0
+            pending = await db.count_pending_reconciler_rows()
         except Exception:
             return
 
@@ -402,11 +395,12 @@ class MonitoringService:
     # ── Check 8: Database health ─────────────────────────────────────────────
 
     async def _check_db_health(self) -> None:
-        try:
-            async with db._conn.execute("SELECT 1") as cur:
-                await asyncio.wait_for(cur.fetchone(), timeout=_DB_HEALTH_TIMEOUT)
+        # HIGH-002 (Task 144) — refactored to db.check_db_alive.
+        # Helper preserves the timeout-on-fetchone semantics byte-for-byte
+        # via its optional timeout_s parameter.
+        if await db.check_db_alive(timeout_s=_DB_HEALTH_TIMEOUT):
             self.resolve("db_unreachable")
-        except Exception:
+        else:
             if not any(e.kind == "db_unreachable" and not e.resolved for e in self.events):
                 self.emit("db_unreachable", "critical",
                           "Database health check failed (SELECT 1 timeout or error)",

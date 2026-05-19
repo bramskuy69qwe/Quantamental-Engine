@@ -118,33 +118,25 @@ async def calculator_link_window_status(request: Request, calc_id: str):
 
     aid = app_state.active_account_id
 
-    pretrade: dict | None = None
-    async with _db._conn.execute(
-        "SELECT timestamp, link_window_seconds_override FROM pre_trade_log "
-        "WHERE calc_id=? AND account_id=? LIMIT 1",
-        (calc_id, aid),
-    ) as cur:
-        row = await cur.fetchone()
-        if row:
-            pretrade = dict(row)
+    # HIGH-002 (Task 144) — refactored to db.get_pretrade_timestamp_for_link_window.
+    pretrade = await _db.get_pretrade_timestamp_for_link_window(
+        calc_id=calc_id, account_id=aid,
+    )
 
     # Account link window
-    account_window = DEFAULT_LINK_WINDOW_SECONDS
-    async with _db._conn.execute(
-        "SELECT link_window_seconds FROM accounts WHERE id=?", (aid,),
-    ) as cur:
-        row = await cur.fetchone()
-        if row and row[0] is not None:
-            account_window = int(row[0])
+    # HIGH-002 (Task 144) — refactored to db.get_account_link_window_seconds
+    # (helper added by Task 142; cross-task reuse).
+    account_window_value = await _db.get_account_link_window_seconds(aid)
+    account_window = (
+        int(account_window_value) if account_window_value is not None
+        else DEFAULT_LINK_WINDOW_SECONDS
+    )
 
     # exec_link_confirmed: any fill for this calc_id confirmed?
-    confirmed = False
-    async with _db._conn.execute(
-        "SELECT 1 FROM fills WHERE calc_id=? AND account_id=? "
-        "AND exec_link_confirmed=1 LIMIT 1",
-        (calc_id, aid),
-    ) as cur:
-        confirmed = (await cur.fetchone()) is not None
+    # HIGH-002 (Task 144) — refactored to db.has_confirmed_fill_for_calc.
+    confirmed = await _db.has_confirmed_fill_for_calc(
+        calc_id=calc_id, account_id=aid,
+    )
 
     # FE-HIGH-009 + FE-MED-030 (Task 139): PENDING short-circuit for the
     # event-bus-publish-vs-htmx-load race. event_bus.publish() only
