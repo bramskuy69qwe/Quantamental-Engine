@@ -24,14 +24,35 @@
   {# FE-HIGH-009 + FE-MED-030 (Task 139): transient race-window state.
      Poll every 1s (vs 5s for stable states) so the widget transitions
      to the real state quickly once the pretrade INSERT commits. No
-     scary text — just "Confirming calc..." muted indicator. #}
+     scary text — just "Confirming calc..." muted indicator.
+
+     FE-MED-032 (Task 146): the hx-get URL echoes `t0` (epoch ms of
+     the first PENDING poll) so the route handler can detect timeout
+     across the polling chain. Without t0 in the URL, the server would
+     have no way to track elapsed time from a stateless endpoint. #}
   <div id="link-window-countdown" class="card card-p8"
-       hx-get="/calculator/link-window-status/{{ calc_id }}"
+       hx-get="/calculator/link-window-status/{{ calc_id }}?t0={{ t0 }}"
        hx-trigger="every 1s"
        hx-swap="outerHTML"
        style="margin-bottom:6px;border-left:3px solid var(--muted);">
     <div style="display:flex;align-items:center;gap:6px;font-size:.7rem;">
       <span style="color:var(--muted);font-weight:700;">&#8987; Confirming calc...</span>
+    </div>
+  </div>
+{% elif s == "ERROR" %}
+  {# FE-MED-032 (Task 146): terminal ERROR state — PENDING exceeded the
+     5-second timeout, indicating the event-bus consumer didn't commit
+     the pre_trade_log INSERT (consumer crash, DB lock, disk error).
+     Friendly text ("Submission failed to record"), red border matching
+     EXPIRED severity, NO hx-trigger so polling stops. Operator retries
+     via the Calculate button. Distinct from EXPIRED's "window elapsed"
+     framing — this is "submission didn't land", not "submission landed
+     too long ago". #}
+  <div id="link-window-countdown" class="card card-p8"
+       style="margin-bottom:6px;border-left:3px solid var(--red);">
+    <div style="display:flex;align-items:center;gap:6px;font-size:.7rem;">
+      <span style="color:var(--red);font-weight:700;">&#10007; Submission failed to record</span>
+      <span style="color:var(--muted);">— please retry</span>
     </div>
   </div>
 {% elif s == "LINKED_CONFIRMED" %}

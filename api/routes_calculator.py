@@ -98,7 +98,9 @@ async def calculate_risk(
 
 
 @router.get("/calculator/link-window-status/{calc_id}", response_class=HTMLResponse)
-async def calculator_link_window_status(request: Request, calc_id: str):
+async def calculator_link_window_status(
+    request: Request, calc_id: str, t0: int = 0,
+):
     """HIGH-027 (Task 104b): countdown fragment renderer.
 
     Polled at 5 s by the calculator result template. Looks up the pretrade
@@ -109,12 +111,29 @@ async def calculator_link_window_status(request: Request, calc_id: str):
     Path: /calculator/link-window-status/{calc_id} — calc_id is opaque
     string the calculator already generates; no further validation needed
     (a bad/unknown calc_id renders the 'unknown calc' fragment branch).
+
+    FE-MED-032 (Task 146): `t0` query param tracks the epoch-ms of the
+    first PENDING poll for this calc_id. The PENDING template echoes
+    it on subsequent polls (preserves across the 1Hz polling chain).
+    When `now - t0 > PENDING_TIMEOUT_MS` and the pretrade row STILL
+    isn't in DB, the route returns the ERROR state (terminal, no
+    hx-trigger) so the operator sees a friendly "Submission failed to
+    record — please retry" message instead of polling forever. Default
+    t0=0 means "first poll" — the route sets t0 to now and echoes it.
     """
+    import time as _time
     from core.database import db as _db
     from core.exec_link import (
         DEFAULT_LINK_WINDOW_SECONDS, compute_link_window_status,
     )
     from datetime import datetime, timezone
+
+    # FE-MED-032 (Task 146): cap PENDING at 5s. Per Task 139's analysis
+    # the race window is sub-second; 5s = 5 polling cycles at 1Hz which
+    # is a generous buffer for transient slow. Past 5s, the failure is
+    # genuinely something the user should see (consumer crash, DB lock,
+    # disk error) — better visible-broken than silent-broken.
+    PENDING_TIMEOUT_MS = 5000
 
     aid = app_state.active_account_id
 
@@ -146,10 +165,37 @@ async def calculator_link_window_status(request: Request, calc_id: str):
     # hx-trigger) → polling stopped → widget stuck on PLAN EXPIRED.
     # Returning PENDING here keeps polling at 1s; once the INSERT
     # commits, the next poll picks up the real state.
+    #
+    # FE-MED-032 (Task 146): cap PENDING at PENDING_TIMEOUT_MS (5s).
+    # Without the cap, a consumer crash / INSERT failure leaves the
+    # widget polling PENDING forever (silent-broken). With the cap,
+    # the route transitions to ERROR state after the timeout —
+    # operator sees a friendly retry prompt instead of an indefinite
+    # spinner.
     if pretrade is None:
+        now_ms = int(_time.time() * 1000)
+        if t0 <= 0:
+            # First PENDING poll — start the clock.
+            t0_to_echo = now_ms
+        elif now_ms - t0 > PENDING_TIMEOUT_MS:
+            # Exceeded timeout — surface as ERROR. Terminal state
+            # (no hx-trigger); polling stops; user retries via the
+            # Calculate button.
+            return templates.TemplateResponse(
+                request, "fragments/link_window_countdown.html",
+                _ctx(request, calc_id=calc_id, lw={
+                    "status": "ERROR",
+                    "effective_window_s": account_window,
+                    "remaining_s": 0,
+                    "expires_at_ms": None,
+                }),
+            )
+        else:
+            # Within timeout window — preserve t0 for the next poll.
+            t0_to_echo = t0
         return templates.TemplateResponse(
             request, "fragments/link_window_countdown.html",
-            _ctx(request, calc_id=calc_id, lw={
+            _ctx(request, calc_id=calc_id, t0=t0_to_echo, lw={
                 "status": "PENDING",
                 "effective_window_s": account_window,
                 "remaining_s": 0,
