@@ -43,6 +43,31 @@ class SettingsMixin:
             row = await cur.fetchone()
         return dict(row) if row else None
 
+    async def get_account_link_window_seconds(
+        self, account_id: int,
+    ) -> Optional[int]:
+        """HIGH-002 (Task 142, Phase 6 routes): minimal helper for the
+        per-account link-window lookup hot path.
+
+        Returns the account's `link_window_seconds` value, or None if
+        the account row is missing OR the column is NULL. Caller is
+        responsible for falling back to `DEFAULT_LINK_WINDOW_SECONDS`
+        when None is returned — the helper does not bake the default
+        in to keep the "row missing vs column NULL" distinction
+        observable by callers that want different fallbacks.
+
+        Returns just the int (not the full row) — keeps encrypted
+        account secrets out of helpers that don't need them.
+        """
+        async with self._conn.execute(
+            "SELECT link_window_seconds FROM accounts WHERE id=?",
+            (account_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            if row is None:
+                return None
+            return row[0]
+
     async def insert_account(
         self,
         name: str,

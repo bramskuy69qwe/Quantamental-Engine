@@ -150,16 +150,18 @@ async def _account_link_window_seconds(account_id: int) -> int:
     """HIGH-027 (Task 104a): one-shot lookup of the per-account link window
     (accounts.link_window_seconds). Returns DEFAULT_LINK_WINDOW_SECONDS if
     the account row is missing (defensive — shouldn't happen at runtime,
-    but a deleted account shouldn't crash the history fragment)."""
+    but a deleted account shouldn't crash the history fragment).
+
+    HIGH-002 (Task 142, Phase 6 routes): refactored to use
+    `db.get_account_link_window_seconds` helper instead of `db._conn`
+    direct access. The helper returns None for both "row missing" and
+    "column NULL"; this wrapper applies the DEFAULT fallback.
+    """
     from core.exec_link import DEFAULT_LINK_WINDOW_SECONDS
-    async with db._conn.execute(
-        "SELECT link_window_seconds FROM accounts WHERE id=?",
-        (account_id,),
-    ) as cur:
-        row = await cur.fetchone()
-        if row is None or row[0] is None:
-            return DEFAULT_LINK_WINDOW_SECONDS
-        return int(row[0])
+    value = await db.get_account_link_window_seconds(account_id)
+    if value is None:
+        return DEFAULT_LINK_WINDOW_SECONDS
+    return int(value)
 
 
 def _pretrade_ts_to_ms(pretrade: dict) -> int | None:
@@ -188,11 +190,8 @@ async def frag_position_fills(request: Request, position_id: int = 0):
     fills = []
     if position_id:
         aid = app_state.active_account_id
-        async with db._conn.execute(
-            "SELECT terminal_position_id, symbol, direction FROM closed_positions WHERE id=?",
-            (position_id,),
-        ) as cur:
-            pos = await cur.fetchone()
+        # HIGH-002 (Task 142): db._conn direct access replaced by helper.
+        pos = await db.get_closed_position_terminal_key(position_id)
         if pos:
             fills = await db.get_position_fills(
                 aid, pos["terminal_position_id"], pos["symbol"], pos["direction"],
@@ -251,30 +250,19 @@ async def frag_exec_link(request: Request, fill_id: int = 0):
 
     if fill_id:
         aid = app_state.active_account_id
-        async with db._conn.execute(
-            "SELECT * FROM fills WHERE id=? AND account_id=?", (fill_id, aid),
-        ) as cur:
-            row = await cur.fetchone()
-            if row:
-                fill = dict(row)
+        # HIGH-002 (Task 142): db._conn direct access replaced by helpers.
+        # L271's order_type lookup reuses the existing
+        # `get_order_by_exchange_id` (returns full row; we pull
+        # `order_type` field) instead of a new field-specific helper.
+        fill = await db.get_fill_by_id(fill_id, aid)
 
         if fill and fill.get("calc_id"):
-            async with db._conn.execute(
-                "SELECT * FROM pre_trade_log WHERE calc_id=? LIMIT 1",
-                (fill["calc_id"],),
-            ) as cur:
-                row = await cur.fetchone()
-                if row:
-                    ptl = dict(row)
+            ptl = await db.get_pretrade_log_by_calc_id(fill["calc_id"])
 
             if fill.get("exchange_order_id"):
-                async with db._conn.execute(
-                    "SELECT order_type FROM orders WHERE exchange_order_id=? AND account_id=? LIMIT 1",
-                    (fill["exchange_order_id"], aid),
-                ) as cur:
-                    orow = await cur.fetchone()
-                    if orow:
-                        order_type = orow["order_type"] or ""
+                orow = await db.get_order_by_exchange_id(aid, fill["exchange_order_id"])
+                if orow:
+                    order_type = orow.get("order_type") or ""
 
             # Check for TP/SL modifications on this calc_id
             try:
@@ -317,14 +305,9 @@ async def frag_exec_link(request: Request, fill_id: int = 0):
 @router.post("/history/exec_link/confirm", response_class=HTMLResponse)
 async def confirm_exec_link(request: Request, fill_id: int = Form(0)):
     """Persist user-confirmed exec link on a fill."""
-    if fill_id:
-        await db._conn.execute(
-            "UPDATE fills SET exec_link_confirmed=1, "
-            "exec_link_confirmed_at=datetime('now'), exec_link_confirmed_by='user' "
-            "WHERE id=?",
-            (fill_id,),
-        )
-        await db._conn.commit()
+    # HIGH-002 (Task 142): db._conn UPDATE+commit replaced by helper.
+    # No-op on fill_id=0 lives in the helper itself.
+    await db.confirm_fill_exec_link(fill_id)
     return await frag_exec_link(request, fill_id=fill_id)
 
 

@@ -627,6 +627,72 @@ class OrdersMixin:
             row = await cur.fetchone()
             return dict(row) if row else None  # get_order_by_exchange_id
 
+    async def get_closed_position_terminal_key(
+        self, closed_pos_id: int,
+    ) -> Optional[Dict]:
+        """HIGH-002 (Task 142, Phase 6 routes): minimal lookup for the
+        closed_positions row's terminal_position_id + symbol + direction
+        composite key. Used by the position-fills drawer to resolve
+        which fills belong to a closed_positions row.
+
+        Returns {terminal_position_id, symbol, direction} or None if
+        the row is missing.
+        """
+        async with self._conn.execute(
+            "SELECT terminal_position_id, symbol, direction "
+            "FROM closed_positions WHERE id=?",
+            (closed_pos_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+    async def get_fill_by_id(
+        self, fill_id: int, account_id: int,
+    ) -> Optional[Dict]:
+        """HIGH-002 (Task 142, Phase 6 routes): single-fill lookup
+        scoped to the active account. Used by the exec-link comparison
+        panel for one row at a time."""
+        async with self._conn.execute(
+            "SELECT * FROM fills WHERE id=? AND account_id=?",
+            (fill_id, account_id),
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+    async def get_pretrade_log_by_calc_id(
+        self, calc_id: str,
+    ) -> Optional[Dict]:
+        """HIGH-002 (Task 142, Phase 6 routes): singular variant of
+        `get_pretrade_logs_by_calc_ids`. LIMIT 1 semantics — when
+        multiple rows share a calc_id (duplicate-write race), the
+        DB's natural order picks one; not deterministic but matches
+        the previous direct-query behavior."""
+        if not calc_id:
+            return None
+        async with self._conn.execute(
+            "SELECT * FROM pre_trade_log WHERE calc_id=? LIMIT 1",
+            (calc_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+    async def confirm_fill_exec_link(self, fill_id: int) -> None:
+        """HIGH-002 (Task 142, Phase 6 routes): persist user-confirmed
+        exec link on a fill. Sets `exec_link_confirmed=1`,
+        `exec_link_confirmed_at=now()`, `exec_link_confirmed_by='user'`
+        and commits. No-op if fill_id is 0/falsy — caller may pass
+        Form(0) on missing input."""
+        if not fill_id:
+            return
+        await self._conn.execute(
+            "UPDATE fills SET exec_link_confirmed=1, "
+            "exec_link_confirmed_at=datetime('now'), "
+            "exec_link_confirmed_by='user' "
+            "WHERE id=?",
+            (fill_id,),
+        )
+        await self._conn.commit()
+
     async def get_pretrade_logs_by_calc_ids(
         self, calc_ids: List[str]
     ) -> Dict[str, Dict]:
