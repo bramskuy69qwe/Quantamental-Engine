@@ -69,8 +69,15 @@
    states (e.g., equity_ohlc landing). Unknown value falls through to
    "default" (defensive — parallel to tone fallthrough). Mirrors
    Card's tight/loose precedent established in Task 122. #}
+{# Task 134: tone="error" added — third tone after info + action.
+   Triggered by the htmx:responseError target-swap handler in base.html
+   (FE-MED-019 fix). Visual treatment uses the --red palette token
+   (more pronounced than action's --blue, less aggressive than the
+   full-bleed error banner). Recoverable user state, not catastrophic
+   — the action (typically "Retry") is the path forward. Unknown tones
+   continue to fall through to "info" (defensive). #}
 {% macro empty_state(message, tone="info", action_label="", action_url="", action_attrs="", padding="default") %}
-{%- set t = tone if tone in ("info", "action") else "info" -%}
+{%- set t = tone if tone in ("info", "action", "error") else "info" -%}
 {%- set p = padding if padding in ("default", "tight", "loose") else "default" -%}
 {%- set pad_cls = " es-" ~ p if p != "default" else "" -%}
 <div class="es es-{{ t }}{{ pad_cls }}">

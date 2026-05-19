@@ -318,10 +318,14 @@ TableRow's open/close).
 
 Parameters:
 - `message` (required) — plain-text message, HTML-escaped.
-- `tone` — `"info"` (default, muted grey) or `"action"` (slightly
-  brighter when paired with a CTA). Unknown tones fall through to
-  `"info"` (defensive, parallel to StatusIndicator's bogus-severity
-  fallthrough).
+- `tone` — `"info"` (default, muted grey), `"action"` (slightly
+  brighter when paired with a CTA), or `"error"` (recoverable
+  failure state, --red palette; Task 134 addition triggered by the
+  htmx:responseError target-swap handler in base.html). Unknown
+  tones fall through to `"info"` (defensive, parallel to
+  StatusIndicator's bogus-severity fallthrough). Tone vocabulary
+  now considered complete — any future tone proposals follow the
+  same consumer-driven defer-discipline.
 - `action_label` — button text. Empty omits the button row entirely.
 - `action_url` — href; when set, renders `<a class="es-action">`.
 - `action_attrs` — raw attrs string for HTMX or similar (`hx-get=

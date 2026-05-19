@@ -374,6 +374,23 @@
     .es-msg { color: var(--muted); }
     .es-info .es-msg { color: var(--muted); }
     .es-action .es-msg { color: var(--sub); }
+    /* Task 134: error tone — recoverable user state. --red palette for
+       the message + retry-button border; less aggressive than the
+       full-bleed #htmx-error-toast (which fires alongside for global
+       notification). Different concerns: toast = "something failed
+       somewhere"; .es-error = "this specific element couldn't load,
+       here's how to retry". */
+    .es-error .es-msg { color: var(--red); }
+    .es-error a.es-action,
+    .es-error button.es-action {
+      color: var(--red);
+      border-color: var(--red);
+    }
+    .es-error a.es-action:hover,
+    .es-error button.es-action:hover {
+      background: rgba(239,68,68,.08);
+      border-color: var(--red);
+    }
     a.es-action,
     button.es-action {
       display: inline-block;
@@ -792,12 +809,27 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
 </style>
 <div id="htmx-error-toast" role="alert" aria-live="polite"></div>
 <script>
-// ── FE-MED-015 (Task 108): global htmx error surface ────────────────────
-// Previously, an htmx swap whose server returned 4xx/5xx silently aborted
-// the swap with no user visible signal — exactly how FE-CRIT-001 hid for
-// the entire Phase 4 window. This listener catches every htmx:responseError
-// and renders a fixed-position toast for ~5 s. Logs to console with the
-// detail object so developers still get the full diagnostic.
+// ── FE-MED-015 (Task 108) + FE-MED-019 (Task 134): global htmx error
+// surface. Task 108 added the toast (FE-MED-015) so users see SOMETHING
+// when an htmx request fails. Task 134 extends the handlers to ALSO
+// swap the htmx target element's content with an EmptyState error-tone
+// fragment — closes the gap where the target stayed on its pre-swap
+// "Loading..." text indefinitely after the toast auto-dismissed.
+//
+// Two concerns, both fire on the same events:
+//   • toast = global "something failed somewhere" (FE-MED-015).
+//   • target swap = local "this specific element couldn't load —
+//     here's how to retry" (FE-MED-019, this task).
+//
+// Approach decision: in-place JS swap. Server-side error templates
+// per endpoint would require touching every 5xx path; in-place works
+// uniformly with no backend changes.
+//
+// Retry semantics: the EmptyState error fragment emits a Retry
+// <button> with an explicit onclick that re-fires htmx.ajax against
+// the original (target, verb, path). No automatic retry-attempt
+// limits — a persistent failure simply re-renders the same error
+// state on each click. The user controls the retry pace.
 (function() {
   var toast = document.getElementById('htmx-error-toast');
   var hideTimer = null;
@@ -810,6 +842,68 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
       toast.classList.remove('visible');
     }, 5000);
   }
+
+  // ── FE-MED-019 (Task 134): target-element swap ─────────────────────
+  // Build an EmptyState error-tone fragment matching the macro output:
+  //   <div class="es es-error">
+  //     <div class="es-msg">{message}</div>
+  //     <button class="es-action" onclick="...retry...">Retry</button>
+  //   </div>
+  // Uses the same .es-* class structure the server-side macro emits,
+  // so the visual treatment is identical to a server-rendered error
+  // state.
+  function _esc(s) {
+    return String(s).replace(/[&<>"']/g, function(c) {
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  }
+  function buildErrorFragment(message, retryHandlerName) {
+    return '<div class="es es-error">' +
+      '<div class="es-msg">' + _esc(message) + '</div>' +
+      '<button class="es-action" type="button" onclick="' +
+        retryHandlerName + '()">Retry</button>' +
+      '</div>';
+  }
+  // Per-target retry function counter. Each failed target gets a uniquely
+  // named global retry function that re-fires htmx.ajax with the original
+  // (verb, path, target, swap) preserved. Avoids closure-over-loop bugs
+  // and lets the onclick attribute reference the function by name.
+  var _retryCount = 0;
+  window._htmxRetry = window._htmxRetry || {};
+  function installRetry(target, verb, path, swap) {
+    var key = '_r' + (++_retryCount);
+    var fnName = '_htmxRetry.' + key;
+    window._htmxRetry[key] = function() {
+      // Re-fire the original request. On success, htmx swaps in the
+      // real content (replacing the EmptyState fragment); on persistent
+      // failure, this handler installs a new retry button atop the new
+      // EmptyState fragment.
+      try {
+        if (window.htmx && window.htmx.ajax) {
+          window.htmx.ajax(verb || 'GET', path, {
+            target: target,
+            swap: swap || 'innerHTML',
+          });
+        }
+      } catch (e) { console.error('htmx retry failed', e); }
+    };
+    return fnName;
+  }
+  function swapTargetWithError(evt, message) {
+    var cfg = evt.detail && evt.detail.requestConfig;
+    if (!cfg) return;
+    // Resolve target element. htmx requestConfig.target is usually
+    // an Element (resolved by htmx before dispatching the event).
+    var target = cfg.target;
+    if (!target || !target.nodeType) return;
+    var verb = (cfg.verb || 'GET').toUpperCase();
+    var path = cfg.path;
+    var swap = cfg.swap || 'innerHTML';
+    if (!path) return;
+    var retryName = installRetry(target, verb, path, swap);
+    target.innerHTML = buildErrorFragment(message, retryName);
+  }
+
   document.body.addEventListener('htmx:responseError', function(evt) {
     var xhr = evt.detail && evt.detail.xhr;
     var cfg = evt.detail && evt.detail.requestConfig;
@@ -818,6 +912,10 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
     var msg = 'Request failed: ' + status + ' ' + path;
     console.error('htmx:responseError', msg, evt.detail);
     showError(msg);
+    // FE-MED-019: also swap the target with an error EmptyState +
+    // Retry button. Operator-facing message is generic; status code
+    // lives in the toast + console for diagnostic.
+    swapTargetWithError(evt, "Couldn't load this section.");
   });
   // Network-level failures (DNS, server down, etc.) come through send-error,
   // not response-error. Surface those too so a dead engine doesn't look
@@ -828,6 +926,9 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
     var msg = 'Network error reaching ' + path + ' (engine offline?)';
     console.error('htmx:sendError', msg, evt.detail);
     showError(msg);
+    // FE-MED-019: same target swap on network errors. The retry
+    // button will work once the engine is reachable again.
+    swapTargetWithError(evt, "Network error. Engine offline?");
   });
 })();
 </script>
