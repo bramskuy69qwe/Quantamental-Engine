@@ -322,7 +322,8 @@ function pollFetchJob(jobId){
         document.getElementById('fetch-btn').disabled=false; document.getElementById('fetch-btn').textContent='Start Fetch';
         document.getElementById('fetch-progress-bar').style.width='100%';
         if(d.status==='completed'){ showToast('Data fetch complete: '+d.detail,'success'); _fetchJobs.unshift({id:jobId,status:'completed',detail:d.detail}); renderFetchJobs(); }
-        else showToast('Data fetch failed: '+d.detail,'error');
+        // FE-MED-031 (Task 153): server `d.detail` may be raw exception.
+        else showErrorToast(d.detail, {fallback:'Data fetch didn\'t complete.'});
         setTimeout(function(){ document.getElementById('fetch-progress-wrap').classList.add('hidden'); document.getElementById('fetch-progress-bar').style.width='0%'; },3000);
       }
     }catch(e){}

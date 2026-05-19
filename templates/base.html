@@ -233,6 +233,13 @@
     #standalone-banner svg { flex-shrink:0; }
 
     /* ── Toast ── */
+    /* FE-MED-031 (Task 153): two-line error toast — friendly prose
+       prominent, raw detail dim/smaller. .toast-msg is the operator-
+       facing message; .toast-detail is the diagnostic raw for context. */
+    .toast-msg    { font-weight: 600; }
+    .toast-detail { display:block; margin-top:2px; font-size:.66rem;
+                    color:var(--muted); font-family:var(--font-mono);
+                    word-break: break-word; opacity:.85; }
     .toast { padding:7px 12px; border-radius:4px; font-size:.75rem; font-family:var(--font-ui);
              box-shadow:0 4px 16px rgba(0,0,0,.5); pointer-events:auto;
              opacity:0; transform:translateX(8px); transition:all .2s; }
@@ -743,15 +750,81 @@ document.body.addEventListener("account-added",function(){
 })();
 
 // ── Global toast helper ───────────────────────────────────────────────────
+// Accepts either a plain string (back-compat) OR an object
+// {message, detail} where `message` is friendly prose and `detail`
+// is the raw diagnostic. Object form renders the detail as a smaller
+// dim second line. Used together with friendlyError() below.
 function showToast(msg, type){
   type = type||'info';
   var c = document.getElementById('toast-container');
   var t = document.createElement('div');
   t.className = 'toast toast-'+(type==='success'?'success':type==='error'?'error':'info');
-  t.textContent = msg;
+  // FE-MED-031 (Task 153): support {message, detail} shape. Plain
+  // strings keep the legacy single-line render. Use innerText/innerHTML
+  // mix carefully — _esc() guards both fields against XSS.
+  if (msg && typeof msg === 'object' && msg.message != null) {
+    var html = '<span class="toast-msg">' + _toastEsc(msg.message) + '</span>';
+    if (msg.detail && String(msg.detail) !== String(msg.message)) {
+      html += '<span class="toast-detail">' + _toastEsc(msg.detail) + '</span>';
+    }
+    t.innerHTML = html;
+  } else {
+    t.textContent = msg;
+  }
   c.appendChild(t);
   requestAnimationFrame(function(){ t.classList.add('show'); });
   setTimeout(function(){ t.classList.remove('show'); setTimeout(function(){ t.remove(); },250); },5000);
+}
+function _toastEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
+}
+
+// ── FE-MED-031 (Task 153): friendly-error message helper ──────────────────
+// Pattern-matches known raw-error shapes into friendly prose. Returns
+// {message, detail} — detail is the raw input preserved verbatim for
+// diagnostic context (rendered dim in showToast).
+//
+// Pattern priority (first match wins):
+//   1. HTTP status code (opts.status). Status-specific copy for common 4xx/5xx.
+//   2. Python AttributeError shape (`'X' object has no attribute 'Y'`).
+//   3. Network failure shape.
+//   4. Timeout shape.
+//   5. Generic fallback ("Couldn't complete this action.").
+//
+// Callers can pass opts.fallback to override the generic message
+// (e.g., showErrorToast(err, {fallback: "Backfill couldn't run."})).
+function friendlyError(raw, opts) {
+  opts = opts || {};
+  raw = (raw == null) ? '' : String(raw);
+  var status = opts.status || 0;
+  // Status-code patterns (most specific first).
+  if (status >= 500) return {message: "The server hit an error. Please try again.", detail: raw};
+  if (status === 404) return {message: "That resource couldn't be found.", detail: raw};
+  if (status === 422) return {message: "Some inputs aren't valid. Please review and try again.", detail: raw};
+  if (status === 403) return {message: "You don't have permission for this action.", detail: raw};
+  if (status === 401) return {message: "Your session needs to be re-authenticated.", detail: raw};
+  if (status === 429) return {message: "Too many requests — slow down for a moment.", detail: raw};
+  if (status >= 400) return {message: "The request couldn't be completed.", detail: raw};
+  // Body-shape patterns (no HTTP status, e.g. fetch().catch() with err.message).
+  if (/object has no attribute|'\w+' object has no/.test(raw)) {
+    return {message: "An internal operation failed (code-level error — please report).", detail: raw};
+  }
+  if (/Network ?[Ee]rror|Failed to fetch|NetworkError|engine offline|ECONNREFUSED|net::ERR/.test(raw)) {
+    return {message: "Couldn't reach the engine. It may be offline.", detail: raw};
+  }
+  if (/timeout|timed out|ETIMEDOUT/i.test(raw)) {
+    return {message: "The request took too long. Try again in a moment.", detail: raw};
+  }
+  return {message: opts.fallback || "Couldn't complete this action.", detail: raw};
+}
+
+// Convenience wrapper: friendly-ify + push to toast in one call.
+// Callers replace `showToast('X failed: ' + err.message, 'error')` with
+// `showErrorToast(err.message, {fallback: 'X failed.'})`.
+function showErrorToast(raw, opts) {
+  showToast(friendlyError(raw, opts), 'error');
 }
 
 // ── Shared note editing ───────────────────────────────────────────────────
@@ -833,9 +906,21 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
 (function() {
   var toast = document.getElementById('htmx-error-toast');
   var hideTimer = null;
+  // FE-MED-031 (Task 153): showError accepts either a plain string
+  // (legacy) OR a {message, detail} object from friendlyError. Object
+  // form renders the two-line layout (friendly prose prominent, dim
+  // raw detail). Plain-string back-compat preserved. T134 + downstream
+  // tests pin showError() as the entry point — keep this signature.
   function showError(msg) {
     if (!toast) return;
-    toast.textContent = msg;
+    if (msg && typeof msg === 'object' && msg.message != null) {
+      toast.innerHTML = '<span class="toast-msg">' + _toastEsc(msg.message) + '</span>' +
+        (msg.detail && String(msg.detail) !== String(msg.message)
+          ? '<span class="toast-detail">' + _toastEsc(msg.detail) + '</span>'
+          : '');
+    } else {
+      toast.textContent = msg;
+    }
     toast.classList.add('visible');
     if (hideTimer) clearTimeout(hideTimer);
     hideTimer = setTimeout(function() {
@@ -904,14 +989,18 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
     target.innerHTML = buildErrorFragment(message, retryName);
   }
 
+  // FE-MED-031 (Task 153): route raw HTTP details through friendlyError
+  // before user-facing display. Raw "Request failed: 422 /calculator/
+  // calculate" was the audit's Session-C example. Status-coded friendly
+  // copy now; raw stays visible (dim, second line) for diagnostic.
   document.body.addEventListener('htmx:responseError', function(evt) {
     var xhr = evt.detail && evt.detail.xhr;
     var cfg = evt.detail && evt.detail.requestConfig;
-    var status = xhr ? xhr.status : '?';
+    var status = xhr ? xhr.status : 0;
     var path = cfg ? (cfg.path || cfg.verb || '?') : '?';
-    var msg = 'Request failed: ' + status + ' ' + path;
-    console.error('htmx:responseError', msg, evt.detail);
-    showError(msg);
+    var raw = 'Request failed: ' + (status || '?') + ' ' + path;
+    console.error('htmx:responseError', raw, evt.detail);
+    showError(friendlyError(raw, {status: status}));
     // FE-MED-019: also swap the target with an error EmptyState +
     // Retry button. Operator-facing message is generic; status code
     // lives in the toast + console for diagnostic.
@@ -923,9 +1012,9 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
   document.body.addEventListener('htmx:sendError', function(evt) {
     var cfg = evt.detail && evt.detail.requestConfig;
     var path = cfg ? (cfg.path || '?') : '?';
-    var msg = 'Network error reaching ' + path + ' (engine offline?)';
-    console.error('htmx:sendError', msg, evt.detail);
-    showError(msg);
+    var raw = 'Network error reaching ' + path + ' (engine offline?)';
+    console.error('htmx:sendError', raw, evt.detail);
+    showError(friendlyError(raw, {}));
     // FE-MED-019: same target swap on network errors. The retry
     // button will work once the engine is reachable again.
     swapTargetWithError(evt, "Network error. Engine offline?");

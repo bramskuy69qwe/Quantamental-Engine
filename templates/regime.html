@@ -571,7 +571,11 @@ async function submitBackfill(e){
   document.getElementById('bf-submit').disabled=true;document.getElementById('bf-progress').classList.remove('hidden');
   try{var resp=await fetch('/api/regime/backfill',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode,since_date:since,until_date:until})});
   var data=await resp.json();if(data.job_id)pollBackfill(data.job_id);}
-  catch(err){showToast('Backfill failed: '+err.message,'error');document.getElementById('bf-submit').disabled=false;}
+  // FE-MED-031 (Task 153): route raw err.message through friendlyError —
+  // audit's Session-B example was 'RegimeFetcher' object has no attribute
+  // 'close' surfacing directly via err.message. Pattern matcher catches
+  // AttributeError shape + status codes.
+  catch(err){showErrorToast(err && err.message, {fallback:'Backfill couldn\'t start.'});document.getElementById('bf-submit').disabled=false;}
 }
 function pollBackfill(jobId){
   var iv=setInterval(async()=>{
@@ -581,7 +585,9 @@ function pollBackfill(jobId){
     document.getElementById('bf-progress-bar').style.width=data.pct+'%';
     if(data.status==='completed'||data.status==='failed'){clearInterval(iv);document.getElementById('bf-submit').disabled=false;
     if(data.status==='completed'){var r=data.results||{},parts=Object.entries(r).filter(([k])=>k!=='labels_classified').map(([k,v])=>k+': '+v);showToast('Backfill complete — '+parts.join(', ')+(r.labels_classified?' | '+r.labels_classified+' classified':''));loadCoverage();loadCurrentRegime();loadTimeline();loadAllSignalCharts();}
-    else showToast('Backfill failed: '+data.detail,'error');}
+    // FE-MED-031 (Task 153): server data.detail may carry raw exception
+    // strings (FastAPI HTTPException + str(exc)). Friendly-fy at toast-time.
+    else showErrorToast(data.detail, {fallback:'Backfill didn\'t complete.'});}
     }catch(err){clearInterval(iv);document.getElementById('bf-submit').disabled=false;}
   },1500);
 }
@@ -601,7 +607,7 @@ async function reclassify(){
   var btn=document.getElementById('reclassify-btn'),status=document.getElementById('reclassify-status');
   btn.disabled=true;status.textContent='Reclassifying...';
   try{var resp=await fetch('/api/regime/reclassify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});var data=await resp.json();status.textContent='Classified '+data.labels_classified+' dates';showToast('Reclassified '+data.labels_classified+' dates');loadTimeline();loadCurrentRegime();}
-  catch(e){status.textContent='Error: '+e.message;showToast('Reclassify failed','error');}
+  catch(e){status.textContent='Error: '+(e && e.message);showErrorToast(e && e.message, {fallback:'Reclassify failed.'});}
   finally{btn.disabled=false;}
 }
 
@@ -909,7 +915,7 @@ async function loadNewsFeed(){
 async function refreshNews(){
   showToast('Refreshing news + calendar...');
   try{var resp=await fetch('/api/news/refresh',{method:'POST'});var r=await resp.json();showToast('+'+(r.news_added||0)+' news, +'+(r.calendar_added||0)+' events');_newsDataKey='';_calDataKey='';loadCalendar();loadNewsFeed();}
-  catch(e){showToast('Refresh failed','error');}
+  catch(e){showErrorToast(e && e.message, {fallback:'News + calendar refresh failed.'});}
 }
 function startNewsAutoRefresh(){
   stopNewsAutoRefresh();
