@@ -79,6 +79,112 @@ class ExchangeMixin:
         )
         await self._conn.commit()
 
+    # ── HIGH-002 (Task 143, Phase 6 platform_bridge) ────────────────────────
+    # Helpers below replace `db._conn` direct access in
+    # `core/platform_bridge.py::handle_historical_fill`. All scoped to
+    # exchange_history; merge + open-time-resolution logic for closing fills.
+
+    async def find_realized_pnl_for_merge(
+        self, *, time_ms: int, symbol: str, direction: str, account_id: int,
+    ) -> Optional[Dict]:
+        """Find an existing REALIZED_PNL row matching (time, symbol,
+        direction, account_id) — used by handle_historical_fill to detect
+        partial-fills-from-same-order and merge them rather than insert
+        a duplicate.
+
+        Returns the matching row (dict) or None if no match. Caller
+        decides whether to aggregate or insert based on this result.
+
+        Original query carried `LIMIT 1` — when multiple rows match
+        (would only happen on prior duplicate-insert bug), the DB's
+        natural order picks one; behavior preserved.
+        """
+        async with self._conn.execute(
+            "SELECT trade_key, income, qty, fee, exit_price, notional"
+            " FROM exchange_history"
+            " WHERE time=? AND symbol=? AND direction=?"
+            " AND income_type='REALIZED_PNL' AND account_id=? LIMIT 1",
+            (time_ms, symbol, direction, account_id),
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+    async def merge_realized_pnl_into(
+        self, *, trade_key: str,
+        income_delta: float, new_total_qty: float, fee_delta: float,
+        wavg_exit: float, notional_delta: float,
+    ) -> None:
+        """Aggregate-merge a partial fill into an existing REALIZED_PNL
+        row. Adds income/fee/notional deltas, replaces qty with the new
+        total, replaces exit_price with the caller-computed weighted
+        average. Commits.
+
+        Caller is responsible for computing weighted-average exit and
+        new total qty — this helper only persists. No idempotency check;
+        calling twice double-merges.
+        """
+        await self._conn.execute(
+            "UPDATE exchange_history SET"
+            " income=income+?, qty=?, fee=fee+?,"
+            " exit_price=?, notional=notional+?"
+            " WHERE trade_key=?",
+            (income_delta, new_total_qty, fee_delta,
+             wavg_exit, notional_delta, trade_key),
+        )
+        await self._conn.commit()
+
+    async def find_nearest_open_time_before(
+        self, *, symbol: str, account_id: int,
+        before_ms: int, window_ms: int = 604_800_000,
+    ) -> Optional[int]:
+        """Find the most recent OPEN-fill timestamp for `symbol`
+        strictly before `before_ms` and within `window_ms` of it
+        (default 7 days). Used to resolve open_time on closing fills.
+
+        Returns the MAX(time) or None if no qualifying OPEN fill.
+        """
+        async with self._conn.execute(
+            "SELECT MAX(time) FROM exchange_history"
+            " WHERE symbol=? AND income_type='OPEN'"
+            " AND account_id=? AND time<=? AND time>?-?",
+            (symbol, account_id, before_ms, before_ms, window_ms),
+        ) as cur:
+            r = await cur.fetchone()
+            return r[0] if r and r[0] else None
+
+    async def find_earliest_open_time(
+        self, *, symbol: str, account_id: int,
+    ) -> Optional[int]:
+        """Fallback OPEN-time resolution: earliest OPEN fill for the
+        symbol within the account. Used when no time-windowed match
+        exists for the closing fill (rare; covers reconciliation gaps).
+        """
+        async with self._conn.execute(
+            "SELECT MIN(time) FROM exchange_history"
+            " WHERE symbol=? AND income_type='OPEN' AND account_id=?",
+            (symbol, account_id),
+        ) as cur:
+            r = await cur.fetchone()
+            return r[0] if r and r[0] else None
+
+    async def set_close_fill_open_time(
+        self, *, trade_key: str, open_time: int, current_close_ts: int,
+    ) -> None:
+        """Set open_time on a closing fill's trade_key, but ONLY if the
+        existing open_time is 0 (unresolved) or equal to the current
+        close timestamp (placeholder). Prevents overwriting a properly-
+        resolved open_time on re-entry. Commits.
+
+        The (open_time=0 OR open_time=?) guard matches the original
+        platform_bridge logic byte-for-byte.
+        """
+        await self._conn.execute(
+            "UPDATE exchange_history SET open_time=?"
+            " WHERE trade_key=? AND (open_time=0 OR open_time=?)",
+            (open_time, trade_key, current_close_ts),
+        )
+        await self._conn.commit()
+
     async def get_uncalculated_exchange_rows(self, symbol: str) -> List[Dict]:
         """Return exchange_history rows for symbol where backfill has not completed."""
         async with self._conn.execute(

@@ -297,29 +297,24 @@ class PlatformBridge:
             # If so, aggregate into the existing row instead of inserting.
             merged = False
             if is_close and ts:
-                async with db._conn.execute(
-                    "SELECT trade_key, income, qty, fee, exit_price, notional"
-                    " FROM exchange_history"
-                    " WHERE time=? AND symbol=? AND direction=? AND income_type='REALIZED_PNL'"
-                    " AND account_id=? LIMIT 1",
-                    (ts, symbol, direction, aid),
-                ) as cur:
-                    existing = await cur.fetchone()
+                # HIGH-002 (Task 143): db._conn SELECT → find_realized_pnl_for_merge.
+                existing = await db.find_realized_pnl_for_merge(
+                    time_ms=ts, symbol=symbol, direction=direction, account_id=aid,
+                )
                 if existing:
                     # Aggregate: sum income/qty/fee, weighted-avg exit_price
-                    old_qty = float(existing[2])
+                    old_qty = float(existing["qty"])
                     new_total_qty = old_qty + qty
-                    wavg_exit = (float(existing[4]) * old_qty + price * qty) / new_total_qty if new_total_qty else price
-                    await db._conn.execute(
-                        "UPDATE exchange_history SET"
-                        " income=income+?, qty=?, fee=fee+?,"
-                        " exit_price=?, notional=notional+?"
-                        " WHERE trade_key=?",
-                        (gross_pnl, new_total_qty, fee,
-                         round(wavg_exit, 8), round(price * qty, 2),
-                         existing[0]),
+                    wavg_exit = (float(existing["exit_price"]) * old_qty + price * qty) / new_total_qty if new_total_qty else price
+                    # HIGH-002 (Task 143): db._conn UPDATE+commit → merge_realized_pnl_into.
+                    await db.merge_realized_pnl_into(
+                        trade_key=existing["trade_key"],
+                        income_delta=gross_pnl,
+                        new_total_qty=new_total_qty,
+                        fee_delta=fee,
+                        wavg_exit=round(wavg_exit, 8),
+                        notional_delta=round(price * qty, 2),
                     )
-                    await db._conn.commit()
                     merged = True
 
             if not merged:
@@ -332,35 +327,27 @@ class PlatformBridge:
                     tk = f"qt:{trade_id}"
                     resolved = False
                     # 1) Nearest OPEN fill before this close (within 7 days)
-                    async with db._conn.execute(
-                        "SELECT MAX(time) FROM exchange_history"
-                        " WHERE symbol=? AND income_type='OPEN'"
-                        " AND account_id=? AND time<=? AND time>?-604800000",
-                        (symbol, aid, ts, ts),
-                    ) as cur:
-                        r = await cur.fetchone()
-                    if r and r[0] and r[0] != ts:
-                        await db._conn.execute(
-                            "UPDATE exchange_history SET open_time=?"
-                            " WHERE trade_key=? AND (open_time=0 OR open_time=?)",
-                            (r[0], tk, ts),
+                    # HIGH-002 (Task 143): db._conn SELECT → find_nearest_open_time_before.
+                    nearest = await db.find_nearest_open_time_before(
+                        symbol=symbol, account_id=aid, before_ms=ts,
+                    )
+                    if nearest and nearest != ts:
+                        # HIGH-002 (Task 143): db._conn UPDATE+commit → set_close_fill_open_time.
+                        await db.set_close_fill_open_time(
+                            trade_key=tk, open_time=nearest, current_close_ts=ts,
                         )
                         resolved = True
                     # 2) Fallback: earliest OPEN fill for this symbol
                     if not resolved:
-                        async with db._conn.execute(
-                            "SELECT MIN(time) FROM exchange_history"
-                            " WHERE symbol=? AND income_type='OPEN' AND account_id=?",
-                            (symbol, aid),
-                        ) as cur:
-                            r = await cur.fetchone()
-                        if r and r[0] and r[0] != ts:
-                            await db._conn.execute(
-                                "UPDATE exchange_history SET open_time=?"
-                                " WHERE trade_key=? AND (open_time=0 OR open_time=?)",
-                                (r[0], tk, ts),
+                        # HIGH-002 (Task 143): db._conn SELECT → find_earliest_open_time.
+                        earliest = await db.find_earliest_open_time(
+                            symbol=symbol, account_id=aid,
+                        )
+                        if earliest and earliest != ts:
+                            # HIGH-002 (Task 143): UPDATE+commit → set_close_fill_open_time.
+                            await db.set_close_fill_open_time(
+                                trade_key=tk, open_time=earliest, current_close_ts=ts,
                             )
-                    await db._conn.commit()
                 except Exception:
                     pass  # best-effort — reconciler can fix later
 
