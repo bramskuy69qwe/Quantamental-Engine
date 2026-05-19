@@ -475,7 +475,14 @@ function updatePctPreview(){
 function updatePricePreview(){
   var entry=getEffectiveEntry(),tpP=parseFloat(document.getElementById('tp-price-input').value)||0;
   var slP=parseFloat(document.getElementById('sl-price-input').value)||0,tpStr='—',slStr='—';
-  if(entry>0){if(tpP>0)tpStr=Math.abs((tpP-entry)/entry*100).toFixed(2)+'%';if(slP>0)slStr=Math.abs((slP-entry)/entry*100).toFixed(2)+'%';}
+  // FE-LOW-024 (Task 152): clamp at >100%. When TP/SL are out-of-scale
+  // for the current symbol (e.g., TP=80000 left over from BTC ticker
+  // while BNB is now selected at 644), the percent blows up to numbers
+  // like 12314.75%. The literal value is mathematically correct but
+  // visually misleading — operator should update TP/SL before reading
+  // the percent at all. >100% surfaces the out-of-range condition
+  // without exposing absurd precision.
+  if(entry>0){if(tpP>0)tpStr=fmtPct((tpP-entry)/entry*100);if(slP>0)slStr=fmtPct((slP-entry)/entry*100);}
   document.getElementById('price-preview').innerHTML='TP: <span style="color:var(--green)">'+tpStr+'</span> &nbsp;|&nbsp; SL: <span style="color:var(--red)">'+slStr+'</span>';
 }
 function getEffectiveEntry(){
@@ -487,6 +494,18 @@ function getEffectiveEntry(){
   var v=parseFloat(document.getElementById('limit-price').value);return v>0?v:(_livePrice||0);
 }
 function fmtP(p){if(!p)return '—';var d=p>=1000?2:p>=1?4:6;return p.toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});}
+// FE-LOW-022 (Task 152): contract-size formatter, always 4 decimals.
+// Mirrors core/formatters.py:format_size — SETUP SUMMARY (here) and
+// CALCULATED POSITION (server-rendered via fmt_size) now share the
+// same precision. Pre-fix divergence: fmtP used adaptive 6 decimals
+// for sub-$1 values, server used hardcoded 4 → same number rendered
+// two different ways across two display sites.
+function fmtSize(v){if(!v&&v!==0)return '—';return v.toLocaleString('en-US',{minimumFractionDigits:4,maximumFractionDigits:4});}
+// FE-LOW-024 (Task 152): percent display clamp. Surface out-of-range
+// TP/SL conditions without exposing absurd precision; calling code
+// supplies a signed percent, fmtPct returns ">100%" when abs exceeds
+// 100, otherwise 2-decimal abs value with trailing %.
+function fmtPct(pct){if(pct===null||pct===undefined||isNaN(pct))return '—';return Math.abs(pct)>100?'>100%':Math.abs(pct).toFixed(2)+'%';}
 
 function updateOrderbook(ticker){
   if(!ticker||ticker===_obTicker)return;_obTicker=ticker;
@@ -661,9 +680,13 @@ function setSizeUnit(unit){
   var data=document.getElementById('calc-data'),sizeEl=document.getElementById('ss-size');
   if(data&&sizeEl){
     var ticker=data.getAttribute('data-ticker')||'',notional=parseFloat(data.getAttribute('data-notional')||0),contracts=parseFloat(data.getAttribute('data-contracts')||0),commodity=isCommodityTicker(ticker),val;
+    // FE-LOW-022 (Task 152): contracts uses fmtSize (4 decimals fixed) to
+    // match the server-rendered CALCULATED POSITION SIZE. Pre-fix: fmtP
+    // gave 6 decimals on sub-$1 contract counts → "0.031400" here vs
+    // "0.0314" in CALCULATED POSITION for the same underlying value.
     if(unit==='notional')val=notional>0?fmtP(notional):'—';
-    else if(unit==='contracts')val=contracts>0?fmtP(contracts):'—';
-    else val=(commodity&&contracts>0)?fmtP(contracts):'—';
+    else if(unit==='contracts')val=contracts>0?fmtSize(contracts):'—';
+    else val=(commodity&&contracts>0)?fmtSize(contracts):'—';
     sizeEl.value=val;
   }
   ['notional','contracts','lot'].forEach(function(u){var b=document.getElementById('su-'+u);if(b)b.className='btn btn-sm '+(u===unit?'btn-primary':'btn-secondary');});

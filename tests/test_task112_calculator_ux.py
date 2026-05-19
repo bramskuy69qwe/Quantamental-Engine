@@ -121,6 +121,11 @@ class TestCalcResultLabelsTitleCase:
         # The template uses helpers exposed via the env globals. We need to
         # mimic that: register the same helpers our app does.
         env.globals["fmt"] = lambda v, n=2: f"{v:.{n}f}" if isinstance(v, (int, float)) else str(v)
+        # Task 152: calc_result now also calls fmt_size / fmt_price for
+        # contracts and prices. Register matching helpers for the fixture.
+        from core.formatters import format_price, format_size
+        env.globals["fmt_size"] = format_size
+        env.globals["fmt_price"] = format_price
         tpl = env.get_template("fragments/calc_result.html")
         return tpl.render(calc=calc, params={"max_exposure": 5.0, "max_correlated_exposure": 0.30})
 
@@ -181,6 +186,11 @@ class TestCalcResultLabelsDisambiguated:
             autoescape=jinja2.select_autoescape(["html"]),
         )
         env.globals["fmt"] = lambda v, n=2: f"{v:.{n}f}" if isinstance(v, (int, float)) else str(v)
+        # Task 152: calc_result now also calls fmt_size / fmt_price for
+        # contracts and prices. Register matching helpers for the fixture.
+        from core.formatters import format_price, format_size
+        env.globals["fmt_size"] = format_size
+        env.globals["fmt_price"] = format_price
         tpl = env.get_template("fragments/calc_result.html")
         return tpl.render(calc=calc, params={"max_exposure": 5.0, "max_correlated_exposure": 0.30})
 

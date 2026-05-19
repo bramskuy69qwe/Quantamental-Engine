@@ -49,7 +49,10 @@
         <tr>
           <td style="font-weight:700;">{{ t.symbol }}</td>
           <td class="{{ 'pos-long' if t.direction == 'LONG' else 'pos-short' }}">{{ t.direction }}</td>
-          <td>{{ fmt(t.entry_price, 4) if t.entry_price else '—' }}</td>
+          {# FE-MED-021 (Task 152): magnitude-adaptive precision via fmt_price.
+             Was: fmt(t.entry_price, 4) — uniform 4 decimals across all symbols
+             produced visual noise on high-priced assets (80,816.3000). #}
+          <td>{{ fmt_price(t.entry_price) if t.entry_price else '—' }}</td>
           <td class="pos-long">{{ fmt(t.mfe, 2) }}</td>
           <td class="pos-short">{{ fmt(t.mae, 2) }}</td>
           <td style="color:var(--text);">{{ fmt(mer, 2) if mer else '—' }}</td>

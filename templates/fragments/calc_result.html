@@ -158,12 +158,16 @@
         <span style="font-size:.58rem;color:var(--muted);font-weight:400;">×{{ fmt(c.regime_multiplier,1) }} regime</span>
         {% endif %}
       </span>
-      <div class="mono" style="font-size:1.4rem;color:{% if c.eligible %}var(--blue){% else %}var(--sub){% endif %};">{{ fmt(c.size, 4) }}</div>
+      {# FE-LOW-022 (Task 152): fmt_size routes contract-size display through
+         the centralized helper. SETUP SUMMARY (JS-side, calculator.html
+         fmtSize) and CALCULATED POSITION (here) now share the same 4-decimal
+         precision — they previously diverged (0.0314 here vs 0.031400 there). #}
+      <div class="mono" style="font-size:1.4rem;color:{% if c.eligible %}var(--blue){% else %}var(--sub){% endif %};">{{ fmt_size(c.size) }}</div>
       {% if c.regime_multiplier != 1.0 and not c.regime_stale %}
         {% if c.apply_regime_multiplier %}
-        <div style="font-size:.6rem;color:var(--muted);">without regime: {{ fmt(c.size_raw, 4) }}</div>
+        <div style="font-size:.6rem;color:var(--muted);">without regime: {{ fmt_size(c.size_raw) }}</div>
         {% else %}
-        <div style="font-size:.6rem;color:var(--muted);">with regime (×{{ fmt(c.regime_multiplier,1) }}): {{ fmt(c.size_raw * c.regime_multiplier, 4) }}</div>
+        <div style="font-size:.6rem;color:var(--muted);">with regime (×{{ fmt(c.regime_multiplier,1) }}): {{ fmt_size(c.size_raw * c.regime_multiplier) }}</div>
         {% endif %}
       {% endif %}
     </div>

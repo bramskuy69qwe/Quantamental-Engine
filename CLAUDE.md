@@ -203,3 +203,57 @@ Related: audit-inventory-incomplete pattern in the audit doc
 broad-re-grep discipline catches both "audit missed sites" and
 "in-flight tasks added sites." Two failure modes, one detection
 mechanism.
+
+### Re-investigation discipline — verify mechanism before applying recommended fix
+
+Audit / spec filings name a mechanism (race, shutdown, precedence, etc.)
+and propose a fix. Both can be wrong while the bug-as-reported is real.
+Read the filing for the symptom; investigate the mechanism
+**independently** before scoping the fix. Don't pattern-match the
+filing's framing onto the recommended remediation.
+
+Practical checklist when starting a fix task:
+
+1. Reproduce or pin the symptom from the filing.
+2. Trace the actual call path / data flow / scope rules that produce
+   it. Don't assume the filing's mechanism is correct.
+3. If the investigated mechanism diverges from the filing's, FIX THE
+   INVESTIGATED ONE — not the one the filing proposed remediation for.
+   The recommended fix is a hypothesis, not a contract.
+4. Report the divergence: update the audit doc with the corrected
+   mechanism + increment the audit-impact-imprecision counter.
+5. The corrected-mechanism fix is usually smaller, more surgical, and
+   has fewer regression surfaces than the spec-recommended one.
+
+**Calibration examples** (audit-impact-imprecision pattern, 8 examples
+as of Task 152):
+
+- **Task 139 (FE-HIGH-009)**: filing framed Calculator countdown bug
+  as semantic-tracking mismatch ("widget tracks last-submitted calc
+  rather than current form"). Investigation found the actual
+  mechanism was event-bus-publish-vs-htmx-load race causing the
+  FIRST poll to render terminal EXPIRED. Single PENDING-state fix
+  closed both FE-HIGH-009 + FE-MED-030 — the spec's per-widget
+  tracking semantics never needed to change.
+
+- **Task 151 (FE-MED-034)**: filing framed `_user_data_loop`
+  UnboundLocalError as a shutdown race ("cancelled during shutdown
+  before app_state is initialized"). Investigation found the actual
+  mechanism was Python local-shadow caused by a redundant inline
+  `from core.state import app_state` inside an except branch (the
+  module-level import already provided the binding). Fix was a
+  one-line deletion of the inline import, NOT the spec's proposed
+  init+nil-check shutdown-defense.
+
+**Implication for fix-task specs**: when a spec lists a recommended
+fix, treat it as auxiliary information. The fix-task report should
+explicitly note when the investigated mechanism differs from the
+filed one, so the calibration record grows. If the recommended fix
+turns out to be wrong shape, the task summary should explain why —
+that's the operator-facing trace of the pattern's strength.
+
+**Anti-pattern**: applying the recommended fix without investigation,
+then discovering the bug isn't fixed (or worse, a different bug is
+introduced because the wrong site was touched). The cost of a
+30-minute re-investigation is small compared to a partial fix that
+ships and decays. Prefer slow + correct over fast + speculative.

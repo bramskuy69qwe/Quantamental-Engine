@@ -19,6 +19,7 @@ import config
 from core.state import app_state
 from core.tz import get_account_tz, now_in_account_tz, format_tz_display
 from core.account_registry import account_registry
+from core.formatters import format_price as _fmt_price, format_size as _fmt_size
 
 
 def _tz_display() -> str:
@@ -99,6 +100,8 @@ def _ms_to_local(ms: int) -> str:
 
 
 templates.env.globals["fmt"] = _fmt
+templates.env.globals["fmt_price"] = _fmt_price
+templates.env.globals["fmt_size"] = _fmt_size
 templates.env.globals["fmt_duration"] = _fmt_duration
 templates.env.globals["hold_time"] = _hold_time
 templates.env.globals["ms_to_local"] = _ms_to_local
