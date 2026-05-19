@@ -476,8 +476,23 @@ async def _user_data_loop(listen_key: str, attempt: int = 0) -> None:
                             "credentials are re-entered.",
                             acct.get("id", "?"), e,
                         )
+                        # FE-MED-034 (Task 151): redundant `from core.state
+                        # import app_state` removed from this nested except
+                        # block. The module-level import at line 24 already
+                        # provides app_state. The inline re-import (any
+                        # `from ... import name` is an assignment) made
+                        # Python's compiler treat app_state as LOCAL
+                        # throughout `_user_data_loop` — every reference
+                        # before this except branch ran raised
+                        # UnboundLocalError. The "shutdown race" framing
+                        # in the FE-MED-034 filing was based on observation
+                        # timing (asyncio cancel surfaces buffered task
+                        # exceptions); actual mechanism is the local-
+                        # shadow rule, which fires on every function call
+                        # that reaches the unbound read. With the inline
+                        # import gone, app_state resolves to the module-
+                        # level binding throughout the function.
                         try:
-                            from core.state import app_state
                             aid = acct.get("id")
                             if aid is not None:
                                 app_state.auth_failed_accounts.add(aid)
