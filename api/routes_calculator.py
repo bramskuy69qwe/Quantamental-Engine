@@ -146,8 +146,27 @@ async def calculator_link_window_status(request: Request, calc_id: str):
     ) as cur:
         confirmed = (await cur.fetchone()) is not None
 
+    # FE-HIGH-009 + FE-MED-030 (Task 139): PENDING short-circuit for the
+    # event-bus-publish-vs-htmx-load race. event_bus.publish() only
+    # enqueues; htmx fires the first poll before insert_pre_trade_log
+    # commits. Previously the missing row fell through to
+    # compute_link_window_status(None) → EXPIRED (terminal, no
+    # hx-trigger) → polling stopped → widget stuck on PLAN EXPIRED.
+    # Returning PENDING here keeps polling at 1s; once the INSERT
+    # commits, the next poll picks up the real state.
+    if pretrade is None:
+        return templates.TemplateResponse(
+            request, "fragments/link_window_countdown.html",
+            _ctx(request, calc_id=calc_id, lw={
+                "status": "PENDING",
+                "effective_window_s": account_window,
+                "remaining_s": 0,
+                "expires_at_ms": None,
+            }),
+        )
+
     pretrade_ts_ms: int | None = None
-    if pretrade and pretrade.get("timestamp"):
+    if pretrade.get("timestamp"):
         try:
             dt = datetime.fromisoformat(pretrade["timestamp"])
             if dt.tzinfo is None:
@@ -159,7 +178,7 @@ async def calculator_link_window_status(request: Request, calc_id: str):
     status = compute_link_window_status(
         pretrade_ts_ms=pretrade_ts_ms,
         account_link_window_seconds=account_window,
-        override_seconds=pretrade.get("link_window_seconds_override") if pretrade else None,
+        override_seconds=pretrade.get("link_window_seconds_override"),
         exec_link_confirmed=confirmed,
     )
 

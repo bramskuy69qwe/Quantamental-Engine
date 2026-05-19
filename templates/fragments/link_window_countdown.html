@@ -2,6 +2,17 @@
    Polled every 5 s from the calc_result template.
    Four states: LINKABLE / EXPIRING_SOON / EXPIRED / LINKED_CONFIRMED.
    Display format: hybrid — precise (Hh Mm Ss) when < 1h, coarse ("~Nh") otherwise.
+
+   FE-HIGH-009 + FE-MED-030 (Task 139) — fifth, transient state: PENDING.
+   When the route handler queries pre_trade_log and the row isn't yet
+   committed (event-bus-publish-vs-htmx-load race), the handler returns
+   status="PENDING" + we render a fragment that KEEPS POLLING (every 1s,
+   fast-retry during the race window). This decouples "calc not yet in
+   DB" (transient — keep polling) from "EXPIRED" (terminal — stop
+   polling). Without PENDING, the first race-window poll renders the
+   terminal EXPIRED state, polling stops, and the widget displays
+   PLAN EXPIRED forever (even 30s+ later when the DB row exists) —
+   that's the visible bug.
 #}
 {% set s = lw.status %}
 {% set rem = lw.remaining_s %}
@@ -9,7 +20,21 @@
 {% set m = ((rem % 3600) // 60) %}
 {% set sec = (rem % 60) %}
 
-{% if s == "LINKED_CONFIRMED" %}
+{% if s == "PENDING" %}
+  {# FE-HIGH-009 + FE-MED-030 (Task 139): transient race-window state.
+     Poll every 1s (vs 5s for stable states) so the widget transitions
+     to the real state quickly once the pretrade INSERT commits. No
+     scary text — just "Confirming calc..." muted indicator. #}
+  <div id="link-window-countdown" class="card card-p8"
+       hx-get="/calculator/link-window-status/{{ calc_id }}"
+       hx-trigger="every 1s"
+       hx-swap="outerHTML"
+       style="margin-bottom:6px;border-left:3px solid var(--muted);">
+    <div style="display:flex;align-items:center;gap:6px;font-size:.7rem;">
+      <span style="color:var(--muted);font-weight:700;">&#8987; Confirming calc...</span>
+    </div>
+  </div>
+{% elif s == "LINKED_CONFIRMED" %}
   <div id="link-window-countdown" class="card card-p8"
        style="margin-bottom:6px;border-left:3px solid var(--green);">
     <div style="display:flex;align-items:center;gap:6px;font-size:.7rem;">
