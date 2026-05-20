@@ -268,3 +268,60 @@ then discovering the bug isn't fixed (or worse, a different bug is
 introduced because the wrong site was touched). The cost of a
 30-minute re-investigation is small compared to a partial fix that
 ships and decays. Prefer slow + correct over fast + speculative.
+
+### Deviation discipline — explain "X instead of Y because Z"
+
+Task specs frequently list multiple candidate fix shapes (Option A /
+B / C) or carry implicit assumptions (e.g., "per-symbol tick-size
+lookup", "Show details toggle"). When implementation deviates from
+what the spec lists or assumes, the deviation is almost always
+defensible — but if the reasoning lives only in your head (or only
+in a "latent obs" footnote), the operator has to reverse-engineer
+why you took the path you did.
+
+**Practical rule**: in the task report's *Fix shape* section, write
+"X instead of Y because Z" — not just "X". The deviation and the
+reason go in the same sentence, in the load-bearing section, not
+buried in a latent-obs aside.
+
+Examples that triggered this discipline:
+
+- **Task 152 (format_price spec deviation)**: spec described
+  `format_price(symbol, value)` with adapter-spec tick-size lookup
+  for sub-$1 prices. Implementation shipped magnitude-only
+  (no symbol arg, no tick-size dependency). Reasoning was sound
+  ("tick-size adds adapter-metadata coupling without proven
+  benefit for audit-cited examples") but lived only in the commit
+  message body. Operator had to infer from the absence of the
+  symbol parameter.
+
+- **Task 153 (Show details toggle deviation)**: spec recommended
+  "wrap error messages with friendly prose + optional 'Show
+  details' expand". Implementation shipped always-visible dim
+  second line (no toggle). Reasoning ("5s toast auto-dismiss makes
+  click-to-reveal impractical; always-visible respects diagnostic
+  need without adding interaction complexity") landed in the
+  T153 latent-obs section, not the Fix-shape report.
+
+- **Task 149 (LOT button visibility, click-to-copy)**: spec said
+  per-field click-to-copy on Setup Summary; implementation also
+  hid the LOT button on non-commodity tickers (out-of-scope
+  addition) on the grounds it was dead-aliased to contracts.
+  Defensible cleanup but the *why* (LOT is contracts in disguise
+  on crypto pairs) only surfaced when the test class probed for
+  it during T149 implementation, not when the spec was scoped.
+
+**Anti-pattern**: shipping a defensible deviation without naming
+it. The implementation may be correct, but the operator's mental
+model of "what the spec asked for vs. what shipped" diverges
+silently. Future tasks that re-read the spec will be surprised by
+the codebase state.
+
+**Symmetric rule for the operator side**: when a spec lists Option
+A / B / C without picking, the report should name the chosen
+option AND the one-line rationale ("Option B: server-side N=5s
+timeout — htmx-native idiom over client-side setTimeout because
+no inactive-tab throttling concern", T146 did this correctly).
+When a spec implies a fix shape via wording (e.g., "tick-size
+lookup", "Show details toggle"), the report should either confirm
+that shape OR call out the deviation explicitly.
