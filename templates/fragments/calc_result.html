@@ -219,12 +219,20 @@
 </div>
 
 <!-- Hidden data for Setup Summary -->
+{# Task 159 (MED-019): when calc is ineligible (at_max_positions /
+   at_max_exposure / exceeds_corr_limit / sizing-path reject), zero the
+   pastable size+notional attrs so T149's click-to-copy returns a
+   non-actionable value. The eligibility banner already explains why
+   above; this is the second-layer barrier against an operator pasting
+   the computed-but-blocked size into QT order entry. Entry/TP/SL are
+   plan values (operator's reference) and stay populated. #}
 <div id="calc-data" class="hidden"
      data-ticker="{{ c.ticker }}"
      data-entry="{{ c.average }}"
      data-tp="{{ c.tp_price if c.tp_price else 0 }}"
      data-sl="{{ c.sl_price if c.sl_price else 0 }}"
-     data-notional="{{ c.notional|round(2) }}"
-     data-contracts="{{ c.size|round(4) }}"
+     data-notional="{{ (c.notional|round(2)) if c.eligible else 0 }}"
+     data-contracts="{{ (c.size|round(4)) if c.eligible else 0 }}"
+     data-eligible="{{ '1' if c.eligible else '0' }}"
      data-regime-label="{{ c.regime_label }}"
      data-regime-mult="{{ c.regime_multiplier }}"></div>

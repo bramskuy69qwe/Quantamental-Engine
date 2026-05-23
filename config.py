@@ -1,7 +1,37 @@
+import math
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+# Task 159 (MED-021): fail-loud bounded float parse for env-derived numeric
+# config. Bare `float(os.getenv(...))` previously accepted 0 / negative /
+# NaN / inf — each had a downstream failure mode (div-by-zero on
+# EXCHANGE_REFRESH_HZ, logic inversion on EXEC_LINK_PRICE_TOL when
+# negative, NaN propagation through all consumers). Reject at module
+# import with a clear RuntimeError; let startup fail loudly instead of
+# misbehaving silently downstream.
+def _bounded_float_env(name: str, default: str, *, lo: float, hi: float) -> float:
+    raw = os.getenv(name, default)
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        raise RuntimeError(
+            f"Config {name}={raw!r} is not a valid float "
+            f"(expected finite value in [{lo}, {hi}])."
+        )
+    if not math.isfinite(v):
+        raise RuntimeError(
+            f"Config {name}={v!r} must be finite "
+            f"(NaN/inf rejected; expected [{lo}, {hi}])."
+        )
+    if not (lo <= v <= hi):
+        raise RuntimeError(
+            f"Config {name}={v} out of range [{lo}, {hi}]. "
+            f"Adjust the value in .env or the deployment environment."
+        )
+    return v
 
 # ── Project identity ─────────────────────────────────────────────────────────
 PROJECT_NAME_    = "QUANTAMENTAL ENGINE"
@@ -93,12 +123,22 @@ PUBSUB_BACKEND = os.getenv("PUBSUB_BACKEND", "inprocess")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 # ── Exec Link (v2.4 Task 82) ────────────────────────────────────────────────
-# Relative tolerance for price-near matching (0.0005 = 0.05%)
-EXEC_LINK_PRICE_TOL = float(os.getenv("EXEC_LINK_PRICE_TOL", "0.0005"))
+# Relative tolerance for price-near matching (0.0005 = 0.05%).
+# Task 159 (MED-021): bounded float parse. 0 = no tolerance (all calcs
+# fail to match → silent linkage break); negative = logic inversion;
+# above 10% is so loose it matches arbitrary orders → meaningless.
+EXEC_LINK_PRICE_TOL = _bounded_float_env(
+    "EXEC_LINK_PRICE_TOL", "0.0005", lo=1e-6, hi=0.1,
+)
 
 # Unified exchange refresh rate (Hz). Controls how frequently exchange-derived
 # state publishes to SSE consumers. Default 1.0 = one cycle per second.
-EXCHANGE_REFRESH_HZ = float(os.getenv("EXCHANGE_REFRESH_HZ", "1.0"))
+# Task 159 (MED-021): bounded float parse. 0 = div-by-zero (1/Hz → inf);
+# negative = asyncio.sleep raises; above 100 Hz = wasteful (no consumer
+# benefits from >100 Hz; almost certainly a typo).
+EXCHANGE_REFRESH_HZ = _bounded_float_env(
+    "EXCHANGE_REFRESH_HZ", "1.0", lo=0.01, hi=100.0,
+)
 
 # ── UI polling intervals (seconds) ───────────────────────────────────────────
 DASHBOARD_POLL_INTERVAL   = 3

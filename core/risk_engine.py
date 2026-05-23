@@ -27,6 +27,15 @@ from core.state import app_state
 log = logging.getLogger(__name__)
 
 
+# Task 159 (MED-002): cap est_r so tiny est_loss doesn't display as
+# "amazing setup" R:R. 50× = "professional trader sanity bound" — above
+# this the inputs are degenerate (sub-fee SL distance, or other
+# epsilon-vulnerability per MED-002's family with MED-031 / MED-007).
+# Display value caps at MAX_REASONABLE_RR; log fires when clamp hits so
+# operator can investigate inputs.
+MAX_REASONABLE_RR = 50.0
+
+
 # ── ATR ───────────────────────────────────────────────────────────────────────
 
 def _wilder_atr(ohlcv: List, period: int) -> Optional[float]:
@@ -297,9 +306,31 @@ def calculate_position_size(
     result["effective_entry"] = 1.0 - est_slippage
     result["est_fill_price"]  = est_fill_price
 
+    # Task 159 (MED-016): catastrophic-book gate. If slippage estimate reaches
+    # or exceeds 100%, the VWAP fill is so far from entry that the size
+    # formula `base_size * (1 - est_slippage)` would go ≤ 0. A negative
+    # size at the exchange API can be interpreted as an opposite-side order
+    # — direction inversion is the HIGH-shape failure mode the audit
+    # under-rated. Reject the sizing path (eligible=False) and surface the
+    # mechanism instead of silently zeroing. Defensive clamp on the size
+    # field still applies below in case downstream callers ignore eligible.
+    if est_slippage >= 1.0:
+        result["eligible"] = False
+        result["ineligible_reason"] = (
+            f"Orderbook too thin: est_slippage={est_slippage:.2%} ≥ 100% — "
+            "refusing to size against catastrophic book conditions."
+        )
+        log.warning(
+            "risk_engine MED-016 reject: symbol=%s est_slippage=%.4f base_size=%.2f",
+            symbol, est_slippage, base_size,
+        )
+
     # Step 6–8: est_size = base_size × (1 − est_slippage); _size = est_size / average
     if result["eligible"]:
         est_size = base_size * (1.0 - est_slippage)
+        # Belt-and-suspenders clamp: even if a future path lets est_slippage
+        # > 1 through with eligible=True, we never propagate a negative size.
+        est_size = max(0.0, est_size)
         result["size"] = est_size / average if average > 0 else 0.0
     # else size stays 0.0
 
@@ -438,7 +469,21 @@ def run_risk_calculator(
     # est_loss:   SL loss plus round-trip costs (fees + slippage increase loss)
     est_profit = tp_usdt - fee_cost - 2 * est_slip_usdt
     est_loss   = sl_usdt + fee_cost + 2 * est_slip_usdt
-    est_r      = est_profit / est_loss if est_loss > 0 else 0.0
+    # Task 159 (MED-002): zero-denominator guard preserved; additional clamp
+    # at MAX_REASONABLE_RR catches the epsilon-vulnerability case (est_loss
+    # > 0 but ≪ est_profit → R:R unbounded). Trader scanning for "great
+    # setups" should not see 500× displayed as if it were a real number.
+    if est_loss > 0:
+        raw_r = est_profit / est_loss
+        est_r = min(raw_r, MAX_REASONABLE_RR) if raw_r > 0 else raw_r
+        if raw_r > MAX_REASONABLE_RR:
+            log.warning(
+                "risk_engine MED-002 R:R clamp: symbol=%s raw_r=%.2f "
+                "(profit=%.4f loss=%.6f) → clamped to %.1f",
+                ticker, raw_r, est_profit, est_loss, MAX_REASONABLE_RR,
+            )
+    else:
+        est_r = 0.0
 
     # PRD step 12: est_exposure = (total_notional + est_size) / total_equity
     total_notional = sum(abs(p.position_value_usdt) for p in app_state.positions)
@@ -450,6 +495,31 @@ def run_risk_calculator(
 
     at_max_positions = len(app_state.positions) >= prm["max_position_count"]
     at_max_exposure  = est_exposure > prm["max_exposure"]
+
+    # Task 159 (MED-019): populate ineligible_reason for the three
+    # portfolio-level gates so a single uniform error surface exists. The
+    # template (calc_result.html) renders specific banners per-gate, but
+    # downstream consumers (event_log, regime analytics, anything reading
+    # the calc dict) needed a populated reason field. Order priority:
+    # at_max_positions > at_max_exposure > exceeds_corr — matches the
+    # template's elif chain. sizing["ineligible_reason"] (sizing-path
+    # rejects from calculate_position_size — Engine not ready, capability
+    # gate, invalid SL, too volatile, MED-016 slippage) takes precedence
+    # because it's earlier in the pipeline.
+    portfolio_reason = ""
+    if at_max_positions:
+        portfolio_reason = (
+            f"Max position count reached ({prm['max_position_count']}). "
+            "Close a position first."
+        )
+    elif at_max_exposure:
+        portfolio_reason = (
+            f"Estimated exposure {est_exposure:.2f}× exceeds max "
+            f"{prm['max_exposure']:.2f}×."
+        )
+    elif exceeds_corr:
+        portfolio_reason = "Sector correlated exposure limit exceeded."
+    final_reason = sizing.get("ineligible_reason", "") or portfolio_reason
 
     one_pct_depth = calculate_one_percent_depth(ticker, average)
     ob       = app_state.orderbook_cache.get(ticker, {})
@@ -511,7 +581,10 @@ def run_risk_calculator(
         "at_max_exposure":     at_max_exposure,
         "eligible":            sizing["eligible"] and not at_max_positions
                                and not at_max_exposure and not exceeds_corr,
-        "ineligible_reason":   sizing.get("ineligible_reason", ""),
+        # Task 159 (MED-019): non-empty reason for every ineligible path —
+        # was sizing.get("ineligible_reason", "") which left at_max_*/
+        # exceeds_corr cases with empty reason despite eligible=False.
+        "ineligible_reason":   final_reason,
         # Portfolio state
         "weekly_pnl_state":    pf.weekly_pnl_state,
         "dd_state":            pf.dd_state,
