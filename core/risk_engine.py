@@ -367,6 +367,11 @@ def run_risk_calculator(
     regime        = app_state.current_regime
     regime_stale  = regime.is_stale if regime else True
     regime_label  = regime.label      if regime else "neutral"
+    # Task 157: thread mode through to the calc dict so insert_pre_trade_log
+    # can persist it (full / macro_only marks which signal-set the live
+    # classifier saw at decision time; matters for forward-validation
+    # comparisons of macro-only vs full-mode reasoning).
+    regime_mode   = regime.mode       if regime else "macro_only"
     # Stale regime → fall back to 1.0 (safer than applying a stale label)
     if regime and not regime_stale:
         regime_mult = regime.multiplier
@@ -473,6 +478,9 @@ def run_risk_calculator(
         "regime_multiplier":         regime_mult,
         "apply_regime_multiplier":   apply_regime_multiplier,
         "regime_stale":              regime_stale,
+        # Task 157: persisted by insert_pre_trade_log so the forward
+        # two-track's "actual" arm can replay decisions at full fidelity.
+        "regime_mode":               regime_mode,
         "size_raw":                  size_raw,       # contracts, without regime multiplier
         # Sizing chain
         "base_size":           base_size,           # USDT notional, pre-slippage

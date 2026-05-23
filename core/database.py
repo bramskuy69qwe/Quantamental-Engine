@@ -100,7 +100,15 @@ CREATE TABLE IF NOT EXISTS pre_trade_log (
     est_r             REAL NOT NULL DEFAULT 0,
     est_exposure      REAL NOT NULL DEFAULT 0,
     eligible          INTEGER NOT NULL DEFAULT 0,
-    notes             TEXT NOT NULL DEFAULT ''
+    notes             TEXT NOT NULL DEFAULT '',
+    -- Task 157: regime decision recorded at plan time. NULL on every
+    -- column = "pre-T157 row, decision unrecorded" (forward-analytics
+    -- excludes; does NOT coerce to 1.0 which would falsely read as
+    -- "regime ran and chose x1"). Defaults left as NULL deliberately.
+    regime_label             TEXT,
+    regime_multiplier        REAL,
+    regime_mode              TEXT,
+    apply_regime_multiplier  INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_pretrade_ts     ON pre_trade_log (timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_pretrade_ticker ON pre_trade_log (ticker);
@@ -559,6 +567,14 @@ class DatabaseManager(
             # these ALTERs cover legacy DBs.
             "ALTER TABLE accounts ADD COLUMN link_window_seconds INTEGER NOT NULL DEFAULT 21600",
             "ALTER TABLE pre_trade_log ADD COLUMN link_window_seconds_override INTEGER DEFAULT NULL",
+            # Task 157: per-trade regime decision logging. NULL-default
+            # columns; pre-T157 rows excluded from forward analytics via
+            # IS NOT NULL filter. Standalone migration 011_v2_5_pretrade_
+            # regime_columns.sql covers split-DB setups too.
+            "ALTER TABLE pre_trade_log ADD COLUMN regime_label TEXT",
+            "ALTER TABLE pre_trade_log ADD COLUMN regime_multiplier REAL",
+            "ALTER TABLE pre_trade_log ADD COLUMN regime_mode TEXT",
+            "ALTER TABLE pre_trade_log ADD COLUMN apply_regime_multiplier INTEGER",
         ]:
             try:
                 await self._conn.execute(migration)

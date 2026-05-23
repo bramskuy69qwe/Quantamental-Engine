@@ -99,6 +99,20 @@ class TradesMixin:
 
     async def insert_pre_trade_log(self, row: Dict[str, Any]) -> None:
         """Insert a pre_trade_log row from a risk-calculator result dict."""
+        # Task 157 (FE-MED-035 foundation): persist the regime decision the
+        # engine actually made at plan time. Calc dict carries effective
+        # `regime_multiplier` (post-toggle: 1.0 if apply_regime_multiplier
+        # was False or regime was stale) + `apply_regime_multiplier` flag +
+        # `regime_label` + `regime_mode`. NULL = "pre-T157 row, decision
+        # unrecorded" — never coerce to 1.0 default; that would conflate
+        # "unknown" with "toggle-OFF used x1" downstream.
+        apply_flag = row.get("apply_regime_multiplier")
+        if apply_flag is True:
+            apply_val: int | None = 1
+        elif apply_flag is False:
+            apply_val = 0
+        else:
+            apply_val = None
         try:
             await self._conn.execute(
                 """INSERT INTO pre_trade_log (
@@ -107,14 +121,16 @@ class TradesMixin:
                     model_name, model_desc, risk_usdt, atr_c, atr_category,
                     est_slippage, effective_entry, size, notional,
                     est_profit, est_loss, est_r, est_exposure, eligible, calc_id,
-                    link_window_seconds_override
+                    link_window_seconds_override,
+                    regime_label, regime_multiplier, regime_mode, apply_regime_multiplier
                 ) VALUES (
                     :account_id, :timestamp, :ticker, :average, :side, :one_percent_depth, :individual_risk,
                     :tp_price, :tp_amount_pct, :tp_usdt, :sl_price, :sl_amount_pct, :sl_usdt,
                     :model_name, :model_desc, :risk_usdt, :atr_c, :atr_category,
                     :est_slippage, :effective_entry, :size, :notional,
                     :est_profit, :est_loss, :est_r, :est_exposure, :eligible, :calc_id,
-                    :link_window_seconds_override
+                    :link_window_seconds_override,
+                    :regime_label, :regime_multiplier, :regime_mode, :apply_regime_multiplier
                 )""",
                 {
                     "account_id":        row.get("account_id", 1),
@@ -149,6 +165,14 @@ class TradesMixin:
                     # link window. None → use account default at match time.
                     "link_window_seconds_override":
                         row.get("link_window_seconds_override"),
+                    # Task 157: regime decision at plan time. NULL on any
+                    # missing field — distinguishes pre-T157 rows + handlers
+                    # that don't supply regime data (e.g. backtest harness)
+                    # from rows where regime ran and was recorded.
+                    "regime_label":              row.get("regime_label"),
+                    "regime_multiplier":         row.get("regime_multiplier"),
+                    "regime_mode":               row.get("regime_mode"),
+                    "apply_regime_multiplier":   apply_val,
                 },
             )
             await self._conn.commit()
