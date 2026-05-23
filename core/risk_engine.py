@@ -521,6 +521,25 @@ def run_risk_calculator(
         portfolio_reason = "Sector correlated exposure limit exceeded."
     final_reason = sizing.get("ineligible_reason", "") or portfolio_reason
 
+    # Task 160: dict-level size enforcement. T159 zeroed size only at the
+    # template data-* attrs; downstream consumers (regime leaderboard,
+    # API, logs, T157 pre_trade_log regime row) still saw the breaching
+    # size in the calc dict. Move enforcement to the source so no caller
+    # needs to re-check `eligible`. Compute final_eligible first, snapshot
+    # the computed values into `would_be_*` for forensic display, then
+    # zero the actionable fields when not eligible.
+    final_eligible = (
+        sizing["eligible"]
+        and not at_max_positions
+        and not at_max_exposure
+        and not exceeds_corr
+    )
+    would_be_size     = size          # contracts as computed (after regime + contract validation)
+    would_be_notional = est_size      # USDT notional as computed
+    if not final_eligible:
+        size = 0.0
+        est_size = 0.0
+
     one_pct_depth = calculate_one_percent_depth(ticker, average)
     ob       = app_state.orderbook_cache.get(ticker, {})
     best_bid = ob.get("bids", [[0]])[0][0] if ob.get("bids") else 0
@@ -557,8 +576,18 @@ def run_risk_calculator(
         "est_fill_price":      sizing["est_fill_price"],
         "est_slippage":        sizing["est_slippage"],
         "effective_entry":     sizing["effective_entry"],
-        "size":                size,                # _size in contracts
-        "notional":            est_size,            # est_size in USDT
+        "size":                size,                # _size in contracts (0 if ineligible per T160)
+        "notional":            est_size,            # est_size in USDT (0 if ineligible per T160)
+        # Task 160: forensic counterparts — what the size/notional WOULD
+        # have been if the eligibility gate hadn't fired. Surfaces "you'd
+        # have placed 0.05 BTC but you're at max positions" via downstream
+        # analytics / regime leaderboard without re-running the calc.
+        # Sizing-stage rejects (engine-not-ready, capability, invalid SL,
+        # too_volatile, MED-016 slippage>=1) set these to 0 too because
+        # calculate_position_size returns size=0 — no computation was
+        # possible, so "would have been" is genuinely 0.
+        "would_be_size":       would_be_size,
+        "would_be_notional":   would_be_notional,
         # TP / SL
         "tp_price":            tp_price,
         "tp_amount_pct":       tp_amount_pct,
@@ -579,8 +608,9 @@ def run_risk_calculator(
         # Eligibility
         "at_max_positions":    at_max_positions,
         "at_max_exposure":     at_max_exposure,
-        "eligible":            sizing["eligible"] and not at_max_positions
-                               and not at_max_exposure and not exceeds_corr,
+        # Task 160: use precomputed final_eligible (same logic as
+        # before, just hoisted so size/notional zeroing can branch on it).
+        "eligible":            final_eligible,
         # Task 159 (MED-019): non-empty reason for every ineligible path —
         # was sizing.get("ineligible_reason", "") which left at_max_*/
         # exceeds_corr cases with empty reason despite eligible=False.

@@ -228,20 +228,27 @@ class TestMed019AtMaxPositionsHasReasonAndZeroedCopy:
     def test_calc_result_template_zeros_copy_attrs_on_ineligible(self):
         """T149's click-to-copy reads data-contracts / data-notional from
         the hidden #calc-data div. When eligible=False, those attrs must
-        render as 0 so paste returns non-actionable values."""
+        render as 0 so paste returns non-actionable values.
+
+        Task 160 superseded T159's per-attr Jinja ternary with dict-level
+        enforcement — risk_engine now zeros size+notional in the calc
+        dict directly, so the template reads them as-is. The contract
+        (ineligible → data-contracts=0) holds; the implementation moved
+        from template to source."""
         src = Path("templates/fragments/calc_result.html").read_text(
             encoding="utf-8"
         )
-        # The gate pattern: `data-notional="{{ (...|round(2)) if c.eligible else 0 }}"`
-        assert "if c.eligible else 0" in src, (
-            "MED-019 regression: data-contracts / data-notional unconditionally "
-            "rendered — click-to-copy could paste blocked size."
-        )
-        # Both attrs gated
-        assert ("data-notional=\"{{ (c.notional|round(2)) if c.eligible else 0 }}\""
-                in src)
-        assert ("data-contracts=\"{{ (c.size|round(4)) if c.eligible else 0 }}\""
-                in src)
+        # Post-T160: template reads dict directly. The zero-on-ineligible
+        # guarantee is enforced by risk_engine.run_risk_calculator's
+        # `if not final_eligible: size = 0.0; est_size = 0.0` block.
+        # Verify the dict-level enforcement is wired:
+        risk_src = Path("core/risk_engine.py").read_text(encoding="utf-8")
+        assert "if not final_eligible:" in risk_src
+        assert "size = 0.0" in risk_src
+        assert "est_size = 0.0" in risk_src
+        # Template reads the (now-zeroed-when-ineligible) dict values:
+        assert 'data-notional="{{ c.notional|round(2) }}"' in src
+        assert 'data-contracts="{{ c.size|round(4) }}"' in src
 
     def test_calc_result_template_compile_renders(self):
         """MED-047 discipline — compile + render with a synthetic
@@ -255,10 +262,15 @@ class TestMed019AtMaxPositionsHasReasonAndZeroedCopy:
 
         tpl = env.get_template("fragments/calc_result.html")
 
+        # Task 160: ineligible calc has size=0 + notional=0 in the dict
+        # (enforcement moved from template to source). would_be_size /
+        # would_be_notional surface the would-have-been values for
+        # forensic display.
         ineligible_calc = {
             "ticker": "BTCUSDT", "side": "long",
             "average": 80000.0, "tp_price": 82000.0, "sl_price": 79000.0,
-            "size": 0.1234, "notional": 9872.0,
+            "size": 0.0, "notional": 0.0,                 # T160: zeroed
+            "would_be_size": 0.1234, "would_be_notional": 9872.0,
             "weekly_pnl_state": "ok", "dd_state": "ok",
             "equity_stale": False, "total_equity": 1000,
             "eligible": False,           # ← the load-bearing input
@@ -289,13 +301,19 @@ class TestMed019AtMaxPositionsHasReasonAndZeroedCopy:
                     "max_correlated_exposure": 0.30,
                     "individual_risk_per_trade": 0.01},
         )
-        # data-contracts and data-notional render as 0 / 0.0 — NOT the
-        # nonzero computed value
-        assert 'data-contracts="0"' in html, (
+        # T160: data-contracts and data-notional render as the dict
+        # values (post-zero). Jinja2 stringifies float 0.0 as "0.0"
+        # (not "0"); accept either form.
+        assert ('data-contracts="0"' in html
+                or 'data-contracts="0.0"' in html), (
             f"MED-019 regression: data-contracts not zeroed when "
             f"eligible=False. Rendered HTML excerpt: {html[2000:3500]}"
         )
-        assert 'data-notional="0"' in html
+        assert ('data-notional="0"' in html
+                or 'data-notional="0.0"' in html)
+        # T160: would-be attrs surface the original computed values
+        assert 'data-would-be-contracts="0.1234"' in html
+        assert 'data-would-be-notional="9872.0"' in html
         # data-eligible flag exposed for JS gating
         assert 'data-eligible="0"' in html
 

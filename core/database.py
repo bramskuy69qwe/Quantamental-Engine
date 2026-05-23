@@ -19,6 +19,9 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import aiosqlite
+# Task 160 (MED-024): exception class for "no such table" path in the
+# duplicate pre-check (aiosqlite re-exports sqlite3's OperationalError).
+from aiosqlite import OperationalError as _aiosqlite_OperationalError
 
 import config
 
@@ -213,6 +216,13 @@ CREATE TABLE IF NOT EXISTS accounts (
     -- via the settings UI in Task 104b).
     link_window_seconds INTEGER NOT NULL DEFAULT 21600
 );
+-- Task 160 (MED-024): partial UNIQUE on (exchange, broker_account_id) so
+-- Quantower fill routing cannot land on the wrong account. Partial WHERE
+-- excludes NULL/empty broker_account_id rows (accounts that haven't been
+-- broker-linked yet — multiple unset accounts are valid).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_broker_unique
+    ON accounts (exchange, broker_account_id)
+    WHERE broker_account_id IS NOT NULL AND broker_account_id != '';
 
 CREATE TABLE IF NOT EXISTS settings (
     key        TEXT PRIMARY KEY,
@@ -504,6 +514,44 @@ class DatabaseManager(
         self._conn.row_factory = aiosqlite.Row
         await self._conn.execute("PRAGMA journal_mode=WAL")
         await self._conn.execute("PRAGMA foreign_keys=ON")
+        # Task 160 (MED-024): duplicate pre-check must run BEFORE
+        # executescript because _CREATE_STATEMENTS includes the partial
+        # UNIQUE INDEX on (exchange, broker_account_id). If the accounts
+        # table already exists with duplicate rows, executescript hits
+        # the CREATE UNIQUE INDEX and raises a cryptic sqlite3.IntegrityError.
+        # The pre-check below queries existing duplicates and raises
+        # RuntimeError with a clear, operator-actionable message instead.
+        # On a fresh DB (no accounts table yet), the SELECT raises
+        # OperationalError("no such table") which we swallow — the
+        # executescript that follows creates the table.
+        try:
+            async with self._conn.execute(
+                """SELECT exchange, broker_account_id, COUNT(*) AS n,
+                          GROUP_CONCAT(id) AS ids
+                   FROM accounts
+                   WHERE broker_account_id IS NOT NULL
+                     AND broker_account_id != ''
+                   GROUP BY exchange, broker_account_id
+                   HAVING n > 1"""
+            ) as cur:
+                dup_rows = await cur.fetchall()
+        except _aiosqlite_OperationalError:
+            dup_rows = []  # fresh DB — no accounts table yet
+        if dup_rows:
+            details = "; ".join(
+                f"({r[0]!r}, {r[1]!r}) → {r[2]} rows (account ids: {r[3]})"
+                for r in dup_rows
+            )
+            raise RuntimeError(
+                "MED-024 migration aborted: accounts table has duplicate "
+                "(exchange, broker_account_id) tuples — these create silent "
+                "Quantower fill-misrouting risk and must be resolved before "
+                "the UNIQUE index can land. Duplicates: " + details + ". "
+                "Resolution: identify which account is the canonical owner "
+                "of each broker_account_id and clear or correct the others "
+                "via the Config UI / direct DB edit, then restart."
+            )
+
         # MED-046 (Task 119): use executescript() so the schema blob may
         # contain SQL comments with semicolons. The prior naive
         # ``.split(";")`` loop hit `sqlite3.OperationalError: incomplete
@@ -595,6 +643,22 @@ class DatabaseManager(
         )
         await self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_orders_calc_id ON orders (calc_id)"
+        )
+
+        # Task 160 (MED-024): UNIQUE index install is now done by
+        # _CREATE_STATEMENTS (canonical schema). Duplicate pre-check
+        # runs at the top of initialize() before executescript fires,
+        # so an existing-duplicates DB gets the loud RuntimeError there.
+        # Re-run a no-op idempotent CREATE here so that DBs where the
+        # accounts table existed before _CREATE_STATEMENTS gained the
+        # CREATE UNIQUE INDEX line still get the index installed on
+        # first post-T160 startup (executescript runs CREATE TABLE IF
+        # NOT EXISTS which skips the existing table; the CREATE UNIQUE
+        # INDEX IF NOT EXISTS following it still fires).
+        await self._conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_broker_unique "
+            "ON accounts (exchange, broker_account_id) "
+            "WHERE broker_account_id IS NOT NULL AND broker_account_id != ''"
         )
         await self._conn.commit()
 
