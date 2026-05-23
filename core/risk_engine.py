@@ -17,6 +17,7 @@ PRD step-by-step chain:
 """
 from __future__ import annotations
 import logging
+import sqlite3
 import time
 from typing import Dict, List, Optional, Tuple
 
@@ -262,8 +263,23 @@ def calculate_position_size(
         result["eligible"] = False
         result["ineligible_reason"] = str(exc)
         return result
-    except Exception:
-        pass  # adapter unavailable — ReadyStateEvaluator already handles this
+    # Task 162: narrow the "adapter unavailable" swallow. ReadyStateEvaluator
+    # above gates engine_ready; reaching here means the engine should
+    # have an adapter. Catch the "infrastructure not loaded" shapes:
+    # ImportError (module-load failure), AttributeError (adapter chain
+    # absent), KeyError (missing config), RuntimeError (the explicit
+    # `_get_adapter` raises `RuntimeError("No active account
+    # credentials available")` for the no-active-account case —
+    # legitimate in test envs + during account-switch transitions).
+    # Programming errors (NameError, TypeError) propagate so a future
+    # regression here surfaces immediately. The pre-T162 broad
+    # `except Exception: pass` was the same anti-pattern as the T161
+    # NameError swallow.
+    except (ImportError, AttributeError, KeyError, RuntimeError) as exc:
+        log.debug(
+            "risk_engine T162: capability gate skipped — adapter "
+            "infrastructure unavailable: %r", exc,
+        )
 
     if average <= 0 or sl_price <= 0:
         result["eligible"] = False
@@ -462,6 +478,15 @@ def run_risk_calculator(
                 contract_reason  = f"Contract spec: {vr.reason}"
                 if vr.suggested_size:
                     contract_notes = f"Suggested size: {vr.suggested_size}"
+                # Task 162: narrow the event-log swallow (T161 latent #1).
+                # log_event can legitimately fail on DB / FS / import-time
+                # issues — those are operational concerns the operator
+                # should see. Programming errors in log_event (e.g.
+                # signature mismatch on a future refactor) must NOT be
+                # silently swallowed. ImportError covers module-not-loaded;
+                # sqlite3.Error / OSError cover DB+FS infra failures.
+                # Narrower than T161's `except (ImportError, AttributeError)`
+                # because the event_log write path uses sqlite3 + file I/O.
                 try:
                     from core.event_log import log_event
                     log_event(app_state.active_account_id, "calc_blocked_contract", {
@@ -470,8 +495,12 @@ def run_risk_calculator(
                         "reason": vr.reason,
                         "suggested_size": str(vr.suggested_size) if vr.suggested_size else None,
                     }, source="risk_engine")
-                except Exception:
-                    pass  # event-log fail is independent of the sizing path
+                except (ImportError, sqlite3.Error, OSError) as exc:
+                    log.warning(
+                        "risk_engine T162: calc_blocked_contract event "
+                        "not recorded (event_log infrastructure failed): %r",
+                        exc,
+                    )
     # Task 161: narrow the swallow to the "validation infrastructure
     # unavailable" case ONLY. The prior `except Exception: pass` hid
     # the NameError that made the rejection branch dead. Programming

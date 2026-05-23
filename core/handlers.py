@@ -15,6 +15,7 @@ Import graph (no circular deps):
 from __future__ import annotations
 
 import logging
+import sqlite3
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict
 
@@ -74,6 +75,12 @@ async def handle_account_updated(payload: Dict[str, Any]) -> None:
         log.error("handle_account_updated DB write failed: %s", exc)
 
     # v2.4 Phase 5: publish equity update to Redis
+    # Task 162: narrow the silent swallow. publish() can fail on
+    # legitimate operational conditions (redis down, network blip, bus
+    # backend swap mid-call). Those deserve a warning so the operator
+    # sees pub/sub degradation. Programming errors in the bus shim must
+    # propagate. ConnectionError + TimeoutError + OSError cover network/
+    # backend infra; ImportError covers module-not-loaded.
     try:
         from core.pubsub.bus import get_bus
         from core.pubsub.channels import equity_channel
@@ -83,8 +90,8 @@ async def handle_account_updated(payload: Dict[str, Any]) -> None:
             "unrealized_pnl": snap.get("total_unrealized", 0),
             "ts": snap.get("snapshot_ts", ""),
         })
-    except Exception:
-        pass
+    except (ImportError, ConnectionError, TimeoutError, OSError) as exc:
+        log.warning("handle_account_updated: equity publish failed: %r", exc)
 
     # Push to Quantower plugin (no-op when standalone or no clients connected)
     if app_state.active_platform == "quantower":
@@ -127,8 +134,16 @@ async def handle_positions_refreshed(payload: Dict[str, Any]) -> None:
         try:
             from core import ws_manager
             await ws_manager.restart_market_streams()
-        except Exception:
-            pass
+        except (ImportError, ConnectionError, TimeoutError, OSError) as exc:
+            # Task 162: narrow the silent swallow. WS restart failure is
+            # operationally important — operator should see when a
+            # subscription rebuild doesn't happen on symbol-set change
+            # (positions will use stale market data until next restart).
+            log.warning(
+                "handle_positions_refreshed: market-stream restart "
+                "failed (symbol-set change to %s): %r",
+                sorted(current_syms), exc,
+            )
 
     trigger = payload.get("trigger", "unknown")
 
@@ -179,6 +194,13 @@ async def handle_risk_calculated(payload: Dict[str, Any]) -> None:
         log.error("handle_risk_calculated DB write failed: %s", exc)
 
     # v2.4: emit calc_created trade event
+    # Task 162: narrow + upgrade from log.debug → log.warning. The
+    # pre-T162 form (`except Exception: log.debug(..., exc_info=True)`)
+    # silently swallowed every failure at a log level the operator
+    # almost never sees. trade_event_log is the forensic trail the
+    # regime build's leaderboard will consume; missed events are real
+    # operational concerns. Narrow to infra-failure shapes; programming
+    # errors propagate.
     try:
         from core.trade_event_log import log_trade_event
         calc_id = payload.get("calc_id")
@@ -194,8 +216,11 @@ async def handle_risk_calculated(payload: Dict[str, Any]) -> None:
                 "est_slippage": payload.get("est_slippage", 0),
                 "est_r": payload.get("est_r", 0),
             }, source="risk_engine")
-    except Exception:
-        log.debug("calc_created trade event failed", exc_info=True)
+    except (ImportError, sqlite3.Error, OSError) as exc:
+        log.warning(
+            "handle_risk_calculated: calc_created trade event not "
+            "recorded (event_log infrastructure failed): %r", exc,
+        )
 
     # Maintain in-memory cache (same shape as the old CSV-backed list)
     row = {

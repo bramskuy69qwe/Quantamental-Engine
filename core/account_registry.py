@@ -92,11 +92,15 @@ class AccountRegistry:
                         "are re-entered.",
                         acct_id, full.get("name", "?"), e,
                     )
+                    # Task 162: narrow the silent swallow. Same shape
+                    # as account_registry.py:283 — state module may not
+                    # be importable during early startup. Narrow to
+                    # ImportError; programming errors propagate.
                     try:
                         from core.state import app_state
                         app_state.auth_failed_accounts.add(acct_id)
-                    except Exception:
-                        pass
+                    except ImportError:
+                        pass  # state module not importable in this load path
                     api_key = ""
                     api_secret = ""
 
@@ -277,11 +281,14 @@ class AccountRegistry:
         # flag so the scheduler resumes periodic refresh for this account.
         # No-op when the flag was never set or only metadata changed.
         if api_key is not None or api_secret is not None:
+            # Task 162: narrow to ImportError. State module not
+            # importable in some test paths — non-fatal. Programming
+            # errors (NameError, TypeError on auth_failed_accounts
+            # shape) propagate.
             try:
                 from core.state import app_state
                 app_state.auth_failed_accounts.discard(account_id)
-            except Exception:
-                # State module not importable in some test paths — non-fatal.
+            except ImportError:
                 pass
         acct_name = name or self._cache.get(account_id, {}).get("name", str(account_id))
         _audit("update", "account", acct_name, detail)
