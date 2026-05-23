@@ -150,7 +150,39 @@ class RegimeFetcher:
             resp.raise_for_status()
             data = resp.json()
 
-        observations = data.get("observations", [])
+        # Task 163 (MED-030): validate FRED response structure.
+        # The pre-T163 `data.get("observations", [])` silently swallowed
+        # FRED error envelopes (HTTP 200 + {"error_code": N, ...}) —
+        # `observations` defaulted to empty, zero rows stored, and the
+        # regime stayed at last-known with no operator-visible signal.
+        # Detect and surface: if `observations` is absent, log + signal
+        # the failure by writing a warning then returning 0 (no rows).
+        # raise would propagate up the backfill chain; caller (backfill
+        # job) can decide whether to retry.
+        if "observations" not in data:
+            err_code = data.get("error_code")
+            err_msg = data.get("error_message", "")
+            log.warning(
+                "FRED %s: response missing 'observations' key — "
+                "API likely returned an error envelope. error_code=%r "
+                "error_message=%r. Skipping signal write; regime will "
+                "use last-known value until next successful fetch.",
+                series_id, err_code, err_msg,
+            )
+            await _progress(
+                progress_cb, 100,
+                f"{signal_name}: FRED error ({err_code or 'no error_code'})",
+            )
+            return 0
+
+        observations = data["observations"]
+        if not isinstance(observations, list):
+            log.warning(
+                "FRED %s: 'observations' key present but not a list "
+                "(got %s). Schema drift; skipping write.",
+                series_id, type(observations).__name__,
+            )
+            return 0
         rows = []
         for obs in observations:
             val_str = obs.get("value", ".")

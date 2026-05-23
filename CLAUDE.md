@@ -325,3 +325,28 @@ no inactive-tab throttling concern", T146 did this correctly).
 When a spec implies a fix shape via wording (e.g., "tick-size
 lookup", "Show details toggle"), the report should either confirm
 that shape OR call out the deviation explicitly.
+
+### Deployment context (settled 2026-05-24, Task 163)
+
+**Single-tenant local.** The engine binds to localhost only; no
+external exposure (no LAN access, no cloud, no multi-tenant). Auth,
+CSRF, CSP, SRI hardening, and similar exposure-driven hardening
+work are **not required** at this deployment shape.
+
+What this changes in the audit ledger:
+- **HIGH-001** (no API authentication) — closed / not-applicable.
+  Re-open trigger: any deployment change that exposes the engine
+  beyond localhost.
+- **Phase 7 remainder** (MED-040 SRI, MED-041 CSP, LOW-001 ticker
+  regex) — downgraded to opportunistic. Real findings, but not
+  audit-cycle priority work at this deployment shape.
+- **MED-023** (empty PLATFORM_TOKEN bypass) — same logic if it
+  resurfaces; localhost-only deployment makes the bypass moot.
+
+Future tasks SHOULD reference this section before doing
+exposure-driven hardening. If the deployment context changes,
+update this section + re-elevate the deferred items.
+
+The threat model is now: corrupt local state, faulty exchange
+adapter, miscalibrated math, silent data drift. Auth is not the
+operative concern; **correctness + observability + recovery** are.

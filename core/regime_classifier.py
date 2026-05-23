@@ -15,6 +15,16 @@ Two modes:
                   Only works for recent data (~2-3 years).
 
 The classifier auto-detects mode when not specified.
+
+Task 163 (regime build 1a):
+  Cascade rules migrated to a JSON rule set (core/regime/v1_rules.json)
+  consumed by a JsonRuleClassifier (core/regime/json_interpreter.py).
+  classify_regime() now delegates to the interpreter for label
+  selection. compute_current_regime + classify_range share that
+  single source of truth — the T156-caveat-d divergence between the
+  fallback path and the persisted-label path is closed.
+  The original cascade is preserved here as `_legacy_classify_regime`
+  for parity testing only; do not call from production paths.
 """
 from __future__ import annotations
 
@@ -22,13 +32,19 @@ import json
 import logging
 import math
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import config
 from core.database import db
+from core.regime import JsonRuleClassifier, HysteresisWrapper, RegimeResult
 from core.state import RegimeState
 
 log = logging.getLogger("regime_classifier")
+
+# Stage A v1 rule set, loaded once at module import.
+_V1_RULES_PATH = Path(__file__).parent / "regime" / "v1_rules.json"
+_V1_CLASSIFIER = JsonRuleClassifier.from_file(_V1_RULES_PATH)
 
 REGIMES = [
     "risk_on_trending",
@@ -60,9 +76,43 @@ def classify_regime(
 
     signals: {"vix_close": 15.2, "us10y_yield": 4.3, ...}
     mode: "full", "macro_only", or "auto" (auto-detect based on available signals)
-    thresholds: override config.REGIME_THRESHOLDS if provided
+    thresholds: ignored (kept for backward-compat; v1 rules embed values).
 
     Returns one of the 5 regime labels.
+
+    Task 163: delegates to JsonRuleClassifier via the v1 rule set. The
+    `mode` is injected into the signal dict before classify() so the
+    JSON's mode-conditional rules can fire. `thresholds` arg is now a
+    no-op (parameterised thresholds were never used by callers; the v1
+    rule set hard-codes the same values config.REGIME_THRESHOLDS had).
+    """
+    if thresholds is not None:
+        log.debug(
+            "classify_regime: `thresholds` arg ignored post-T163 — "
+            "values are baked into core/regime/v1_rules.json. Update "
+            "the rule set if you need different thresholds."
+        )
+    # Mode auto-detect (preserved from legacy cascade)
+    if mode == "auto":
+        oi_change = signals.get("agg_oi_change")
+        funding = signals.get("avg_funding")
+        mode = "full" if (oi_change is not None or funding is not None) else "macro_only"
+    # Inject mode as a synthesised signal for the JSON `mode == ...` rules.
+    enriched = {**signals, "mode": mode}
+    return _V1_CLASSIFIER.classify(enriched).label
+
+
+def _legacy_classify_regime(
+    signals: Dict[str, Optional[float]],
+    mode: str = "auto",
+    thresholds: Optional[Dict[str, float]] = None,
+) -> str:
+    """LEGACY hand-rolled cascade — preserved post-T163 for parity
+    testing only. Do not call from production paths.
+
+    Returns one of the 5 regime labels using the pre-T163 if/else chain.
+    Behavior is identical to the original `classify_regime` so the
+    parity golden-master can compare label outputs grid-by-grid.
     """
     t = thresholds or config.REGIME_THRESHOLDS
 
@@ -78,33 +128,26 @@ def classify_regime(
         mode = "full" if (oi_change is not None or funding is not None) else "macro_only"
 
     # ── PANIC ────────────────────────────────────────────────────────────────
-    # VIX spiking + credit stress OR extreme negative funding (liquidation cascade)
     if vix is not None and vix > t.get("vix_panic", 30):
         if hy is not None and hy > t.get("hy_spread_panic", 5.0):
             return "risk_off_panic"
         if mode == "full" and funding is not None and funding < t.get("funding_panic", -0.01):
             return "risk_off_panic"
-        # VIX alone above panic threshold is at minimum defensive
         return "risk_off_panic" if (hy is not None and hy > t.get("hy_spread_defensive", 4.5)) else "risk_off_defensive"
 
     # ── DEFENSIVE ────────────────────────────────────────────────────────────
-    # Elevated VIX or widening HY spreads
     if vix is not None and vix > t.get("vix_defensive", 25):
         return "risk_off_defensive"
     if hy is not None and hy > t.get("hy_spread_defensive", 4.5):
         return "risk_off_defensive"
 
     # ── HY NEUTRAL FLOOR ─────────────────────────────────────────────────────
-    # Credit spreads at or above this level cap the regime at neutral —
-    # below the defensive line, but still elevated enough that risk-on is unsafe.
     if hy is not None and hy >= t.get("hy_spread_neutral", 4.0):
         return "neutral"
 
-    # Risk-on requires HY below this gate — uninfluenced if HY signal is missing.
     hy_allows_risk_on = hy is None or hy < t.get("hy_spread_risk_on", 3.5)
 
     # ── RISK-ON TRENDING ─────────────────────────────────────────────────────
-    # Low VIX + vol compressing + (in full mode) OI expanding with positive funding
     is_low_vix = vix is not None and vix < t.get("vix_risk_on", 20)
     is_vol_compressed = rvol is not None and rvol < t.get("rvol_ratio_trending", 1.2)
 
@@ -119,12 +162,10 @@ def classify_regime(
             if is_low_vix and is_leverage_expanding:
                 return "risk_on_trending"
         else:
-            # macro_only: low VIX + vol compressed is sufficient (no btc_dominance)
             if is_low_vix and is_vol_compressed:
                 return "risk_on_trending"
 
         # ── RISK-ON CHOPPY ───────────────────────────────────────────────────
-        # Moderately low VIX but short-term vol elevated (rvol > threshold)
         is_moderate_vix = vix is not None and vix < t.get("vix_choppy", 22)
         is_vol_elevated = rvol is not None and rvol > t.get("rvol_ratio_choppy", 1.3)
 
