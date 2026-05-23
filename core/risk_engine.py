@@ -418,7 +418,20 @@ def run_risk_calculator(
     base_size = sizing["base_size"]
 
     # v2.4 Priority 2b: validate against exchange contract constraints
-    contract_notes = ""
+    # Task 161: the prior implementation referenced `result["eligible"]`
+    # and `result["ineligible_reason"]` inside this block — but
+    # `result` is a local var name from `calculate_position_size`, NOT
+    # defined in run_risk_calculator's scope. The reference raised
+    # NameError on every contract-validation-failure path, which the
+    # broad `except Exception: pass` outside silently swallowed. Net
+    # effect: contract validation rejection was DEAD CODE — invalid
+    # sizes proceeded as eligible with their un-snapped value. T161
+    # routes the eligibility flag through local `contract_invalid` /
+    # `contract_reason` vars that feed into the existing final_eligible
+    # / final_reason computation below.
+    contract_notes   = ""
+    contract_invalid = False
+    contract_reason  = ""
     try:
         from core.contract_validation import validate_and_snap_size
         vr = validate_and_snap_size(size, ticker, sizing["est_fill_price"])
@@ -428,22 +441,53 @@ def run_risk_calculator(
                 contract_notes = f"Size snapped: {size:.8f} -> {snapped:.8f} (lot_step)"
                 size = snapped
         elif not vr.valid:
-            result["eligible"] = False
-            result["ineligible_reason"] = f"Contract spec: {vr.reason}"
-            if vr.suggested_size:
-                contract_notes = f"Suggested size: {vr.suggested_size}"
-            try:
-                from core.event_log import log_event
-                log_event(app_state.active_account_id, "calc_blocked_contract", {
-                    "ticker": ticker,
-                    "original_size": str(vr.original_size),
-                    "reason": vr.reason,
-                    "suggested_size": str(vr.suggested_size) if vr.suggested_size else None,
-                }, source="risk_engine")
-            except Exception:
-                pass
-    except Exception:
-        pass  # validation unavailable — don't block calculator
+            # Task 161: distinguish "validation infra unavailable"
+            # (don't block — same intent as the pre-T161 comment "don't
+            # block calculator") from "contract spec says invalid"
+            # (block). validate_and_snap_size returns
+            # `exchange_info_unavailable` when get_contract_spec(symbol)
+            # is None — no grounds to block a trade just because the
+            # spec hasn't loaded for this ticker yet. Other reasons
+            # (below_min_qty / below_min_notional / invalid_numeric_input)
+            # are real rejects — block.
+            if vr.reason == "exchange_info_unavailable":
+                log.warning(
+                    "risk_engine T161: contract validation skipped for %s — "
+                    "no contract spec loaded; calc proceeds without contract "
+                    "constraints",
+                    ticker,
+                )
+            else:
+                contract_invalid = True
+                contract_reason  = f"Contract spec: {vr.reason}"
+                if vr.suggested_size:
+                    contract_notes = f"Suggested size: {vr.suggested_size}"
+                try:
+                    from core.event_log import log_event
+                    log_event(app_state.active_account_id, "calc_blocked_contract", {
+                        "ticker": ticker,
+                        "original_size": str(vr.original_size),
+                        "reason": vr.reason,
+                        "suggested_size": str(vr.suggested_size) if vr.suggested_size else None,
+                    }, source="risk_engine")
+                except Exception:
+                    pass  # event-log fail is independent of the sizing path
+    # Task 161: narrow the swallow to the "validation infrastructure
+    # unavailable" case ONLY. The prior `except Exception: pass` hid
+    # the NameError that made the rejection branch dead. Programming
+    # errors (NameError, TypeError, KeyError, etc.) must propagate —
+    # let them surface as test/runtime failures rather than silently
+    # disabling a safety check. ImportError covers module-not-loaded;
+    # AttributeError covers contract_validation API drift (vr missing
+    # an attr). Validation-infrastructure unavailability is logged at
+    # warning level so the operator at least sees that contract
+    # checking is silently no-op for this calc cycle.
+    except (ImportError, AttributeError) as exc:
+        log.warning(
+            "risk_engine T161: contract validation skipped for %s — "
+            "validation infrastructure unavailable: %r",
+            ticker, exc,
+        )
 
     est_size  = size * average          # = base_size × regime_mult × (1 − est_slippage)
 
@@ -519,7 +563,16 @@ def run_risk_calculator(
         )
     elif exceeds_corr:
         portfolio_reason = "Sector correlated exposure limit exceeded."
-    final_reason = sizing.get("ineligible_reason", "") or portfolio_reason
+    # Task 161: contract-validation reject feeds the same chain. Reason
+    # precedence: sizing-path reject (earliest) > contract-validation
+    # reject (priced at sizing time, before portfolio assembly) >
+    # portfolio reject. First-non-empty wins so the operator sees the
+    # most specific cause.
+    final_reason = (
+        sizing.get("ineligible_reason", "")
+        or contract_reason
+        or portfolio_reason
+    )
 
     # Task 160: dict-level size enforcement. T159 zeroed size only at the
     # template data-* attrs; downstream consumers (regime leaderboard,
@@ -528,11 +581,15 @@ def run_risk_calculator(
     # needs to re-check `eligible`. Compute final_eligible first, snapshot
     # the computed values into `would_be_*` for forensic display, then
     # zero the actionable fields when not eligible.
+    # Task 161: contract_invalid joins the final_eligible AND — the
+    # contract-spec safety check that was silently dead now actually
+    # blocks the trade.
     final_eligible = (
         sizing["eligible"]
         and not at_max_positions
         and not at_max_exposure
         and not exceeds_corr
+        and not contract_invalid
     )
     would_be_size     = size          # contracts as computed (after regime + contract validation)
     would_be_notional = est_size      # USDT notional as computed

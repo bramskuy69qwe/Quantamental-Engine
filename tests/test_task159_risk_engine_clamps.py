@@ -205,10 +205,11 @@ class TestMed019AtMaxPositionsHasReasonAndZeroedCopy:
         """sizing-path reason (Engine not ready / capability / SL invalid
         / too volatile / MED-016 slippage) wins over portfolio gates;
         portfolio gates fill in when sizing path is fine but portfolio
-        limits hit."""
+        limits hit. T161 inserted contract_reason between sizing and
+        portfolio in the chain."""
         src = Path("core/risk_engine.py").read_text(encoding="utf-8")
-        # Pattern: final_reason = sizing.get(...) or portfolio_reason
-        assert "final_reason = sizing.get" in src
+        # Pattern: final_reason = sizing.get(...) [...] or portfolio_reason
+        assert "final_reason = (" in src or "final_reason = sizing.get" in src
         assert "or portfolio_reason" in src
 
     def test_returned_dict_uses_final_reason_not_bare_get(self):

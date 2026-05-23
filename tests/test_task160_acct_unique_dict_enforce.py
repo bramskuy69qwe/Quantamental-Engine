@@ -581,10 +581,15 @@ class TestT159AntiRegression:
         assert "data-eligible=" in src
 
     def test_t159_ineligible_reason_population_intact(self):
-        """portfolio_reason + final_reason from T159 still wired."""
+        """portfolio_reason + final_reason from T159 still wired.
+        T161 inserted contract_reason between sizing and portfolio; the
+        expression is now a parenthesised multi-line `or` chain."""
         src = Path("core/risk_engine.py").read_text(encoding="utf-8")
         assert "portfolio_reason" in src
-        assert "final_reason = sizing.get" in src
+        # T161-compatible form: either the original single-line form
+        # OR the parenthesised multi-line chain.
+        assert ("final_reason = sizing.get" in src
+                or "final_reason = (" in src)
 
     def test_t159_med016_slippage_gate_intact(self):
         """MED-016 slippage gate from T159 still fires."""
