@@ -54,18 +54,19 @@ Safe to deploy independently.
 
 | # | Task | File(s) |
 |---|---|---|
-| 0.1 | Add `positions_calcs` junction table | `core/database.py` (migrate), `core/db_orders.py` (CRUD helpers) |
-| 0.2 | Add `order_amendments` table | `core/database.py`, `core/db_orders.py` |
-| 0.3 | Add `funding_events` table | `core/database.py`, `core/db_orders.py` |
+| 0.1 | Add `positions_calcs` junction table (incl. `lifecycle_id` column + index) | `core/database.py` (migrate), `core/db_orders.py` (CRUD helpers) |
+| 0.2 | Add `order_amendments` table (incl. `lifecycle_id` column + index) | `core/database.py`, `core/db_orders.py` |
+| 0.3 | Add `funding_events` table (incl. `lifecycle_id` column + index) | `core/database.py`, `core/db_orders.py` |
 | 0.4 | Add `calc_match_audit` table | `core/database.py`, `core/db_orders.py` |
 | 0.5 | Add `operator_sessions` table | `core/database.py`, `core/auth_state.py` (new) |
-| 0.6 | Add columns to `pre_trade_log`: status, window_seconds, account_id, operator_id, superseded_by_calc_id, cancelled_reason, planned_size, overridden_size, planned_tp, overridden_tp, planned_sl, overridden_sl, tp_levels (JSON), filled_pct, tags (JSON) | `core/database.py` |
-| 0.7 | Add columns to `orders`: link_status, operator_id, cancel_reason_category, cancel_reason_raw, cancel_ts_ms | `core/database.py` |
-| 0.8 | Add columns to `closed_positions`: exit_reason (re-mapped), close_note, entry_px_delta_pct, size_delta_pct, tp_drift_pct, sl_drift_pct, exit_vs_target_pct, realized_r, planned_r, hold_time_actual_ms, hold_time_planned_ms, cumulative_amendment_count, funding_fees (already exists, repurpose), liquidation_px, bankruptcy_px, insurance_fund_fee, adl_indicator | `core/database.py` |
-| 0.9 | Add `accounts.config_json` column | `core/database.py` |
-| 0.10 | Create all indexes per spec §3.1 | `core/database.py` |
-| 0.11 | Migration script: backfill `positions_calcs` from existing `fills WHERE calc_id IS NOT NULL`, grouped by (position lifecycle, calc_id), `contributed_qty = SUM(fill_qty)` | `migrations/` (new dir or extend existing) |
+| 0.6 | Add columns to `pre_trade_log`: status, window_seconds, account_id, operator_id, superseded_by_calc_id, cancelled_reason, planned_size, overridden_size, planned_tp, overridden_tp, planned_sl, overridden_sl, tp_levels (JSON), filled_pct, tags (JSON), **lifecycle_id** | `core/database.py` |
+| 0.7 | Add columns to `orders`: link_status, operator_id, cancel_reason_category, cancel_reason_raw, cancel_ts_ms, **lifecycle_id** | `core/database.py` |
+| 0.8 | Add columns to `closed_positions`: exit_reason (re-mapped), close_note, entry_px_delta_pct, size_delta_pct, tp_drift_pct, sl_drift_pct, exit_vs_target_pct, realized_r, planned_r, hold_time_actual_ms, hold_time_planned_ms, cumulative_amendment_count, funding_fees (already exists, repurpose), liquidation_px, bankruptcy_px, insurance_fund_fee, adl_indicator, **lifecycle_id** | `core/database.py` |
+| 0.9 | Add `accounts.config_json` column (incl. `entry_tolerance_pct` and `snapshot_drift_tolerance_pct` defaults) | `core/database.py` |
+| 0.10 | Create all indexes per spec §3.1 (incl. `lifecycle_id` indexes on every carrying table) | `core/database.py` |
+| 0.11 | Migration script: backfill `positions_calcs` from existing `fills WHERE calc_id IS NOT NULL`, grouped by (position lifecycle, calc_id), `contributed_qty = SUM(fill_qty)`; back-fill `lifecycle_id` per historical position lifecycle | `migrations/` (new dir or extend existing) |
 | 0.12 | Re-map existing `closed_positions.exit_reason`: `'manual'`→`MANUAL_OTHER`; `'tp'`→`TP_PLANNED`; `'sl'`→`SL_PLANNED`; default to `MANUAL_OTHER` if NULL | same migration script |
+| 0.13 | State-machine enforcement helpers: `core/calc_state.py` + `core/link_state.py` with valid-transition dicts + `transition()` choke-point + `IllegalStateTransition` exception (per spec §3.6) | `core/calc_state.py` (new), `core/link_state.py` (new) |
 
 ### Tests
 
@@ -153,16 +154,16 @@ Deltas computed at close.
 
 | # | Task | File(s) |
 |---|---|---|
-| 2.1 | On every opening fill, insert/update `positions_calcs` row (single row per order, `contributed_qty` updated on each fill) | [core/order_manager.py](core/order_manager.py) `process_fill()` |
-| 2.2 | Stamp `calc_id` on every closing fill (inherited from position's primary calc_id) | `core/order_manager.py` close-side fill handler |
+| 2.1 | On every opening fill, insert/update `positions_calcs` row (single row per order, `contributed_qty` updated on each fill). **At first fill that opens a new position, generate UUID `lifecycle_id`** and back-fill onto matched `pre_trade_log.lifecycle_id`, `orders.lifecycle_id`, and the junction row. Scale-in calcs inherit the position's existing `lifecycle_id`. | [core/order_manager.py](core/order_manager.py) `process_fill()` |
+| 2.2 | Stamp `calc_id` AND `lifecycle_id` on every closing fill (both inherited from position's primary) | `core/order_manager.py` close-side fill handler |
 | 2.3 | Add `calc_id` field to `PositionInfo`; populate from junction on first fill + on rehydrate | [core/state.py:115-160](core/state.py#L115-L160), `core/exchange.py:350` |
 | 2.4 | Scale-in path: if new calc fires while position open and resulting fill arrives, append to junction with new calc_id; per-calc planned_tp/sl/size copied from calc at contribution time | `core/order_manager.py` |
-| 2.5 | At position close, compute all deltas: `entry_px_delta_pct`, `size_delta_pct`, `tp_drift_pct`, `sl_drift_pct`, `exit_vs_target_pct`, `realized_r`, `cumulative_amendment_count`, `hold_time_actual_ms` | `core/order_manager.py:_build_close_row_for_fill()` |
+| 2.5 | At position close, compute all deltas: `entry_px_delta_pct`, `size_delta_pct`, `tp_drift_pct`, `sl_drift_pct`, `exit_vs_target_pct`, `realized_r`, `cumulative_amendment_count`, `hold_time_actual_ms`. **Use delta basis rule (spec §3.2)**: all deltas computed against most-contributing calc (largest `contributed_qty` in junction); tie-break first-entry. Same basis as live deviation badge. | `core/order_manager.py:_build_close_row_for_fill()` |
 | 2.6 | At close, set `closed_positions.calc_id` = most-contributing calc (largest contributed_qty); tie-break first-entry | `core/order_manager.py` |
 | 2.7 | At close, set `exit_reason` based on plan-vs-realized + close-detection: PLANNED if final TP/SL prices match plan within tolerance, AMENDED if `cumulative_amendment_count > 0` and prices differ | `core/order_manager.py` |
 | 2.8 | TP/SL bracket detection: implement per-adapter `detect_bracket()` using venue-native fields (Bybit `orderLinkId`, Binance `positionSide` clustering, OKX `algoOrdId`) with 2s time-window fallback | [core/adapters/bybit/rest_adapter.py](core/adapters/bybit/rest_adapter.py), [core/adapters/binance/rest_adapter.py](core/adapters/binance/rest_adapter.py) |
 | 2.9 | TP/SL inheritance from entry: when bracket detected, propagate entry's `calc_id` to TP and SL orders | `core/order_manager.py` order-arrival handler |
-| 2.10 | Standalone TP/SL on existing position: auto-inherit from position's latest calc (per Q19 rule) | `core/order_manager.py` |
+| 2.10 | ~~Standalone TP/SL auto-inherit~~ — REMOVED per Q19/Q54 unification (spec §15 R2). All standalone TP/SL goes through the standard matcher (Phase 1); 5/5 or 6/6 match → auto-link, else manual-link tab. No special-case logic needed in `core/order_manager.py`. | (no file changes; behavior covered by Phase 1) |
 | 2.11 | Multi-TP partial-close lifecycle: on each TP fill, emit `position:partial_close`; position stays OPEN until size=0; final `exit_reason=TP_LADDER_COMPLETE` or `MIXED` | `core/order_manager.py` |
 | 2.12 | Restart rehydrate: pull all open positions; for each, populate `calc_id` and `contributing_calc_ids` from `positions_calcs`; recompute deviation flags | `core/state.py`, `core/exchange.py`, startup hook |
 
@@ -329,7 +330,7 @@ All new events from Phases 1-5 actually emitted.
 | 6.5 | Emit order:duplicate_detected when matcher sees 2+ near-identical orders within N ms window | new in `core/order_manager.py` order-arrival path |
 | 6.6 | Position:closed payload expansion: replace anemic current payload at [core/order_manager.py:728-731](core/order_manager.py#L728-L731) with full payload per spec §9 (calc_ids, model_names, deltas, exit_reason, MFE/MAE, funding_fees, etc.) | `core/order_manager.py` |
 | 6.7 | Position:liquidated dedicated event with liquidation-specific fields | `core/order_manager.py` close path when exit_reason=LIQUIDATION |
-| 6.8 | Position:size_drift event when snapshot disagrees with fill-derived size beyond tolerance | [core/data_cache.py:159-194](core/data_cache.py#L159-L194) — INVERT the WS-fills-win-within-5s policy to snapshot-wins-with-drift-event |
+| 6.8 | Position:size_drift event when snapshot disagrees with fill-derived size beyond tolerance. **Read `snapshot_drift_tolerance_pct` from `accounts.config_json` (default 0.5%) — event fires only when delta exceeds tolerance**. Feature-flag the inversion behind `config_json.feature_flags.snapshot_wins_drift` so it can be reverted per-account without code change. | [core/data_cache.py:159-194](core/data_cache.py#L159-L194) — INVERT the WS-fills-win-within-5s policy to snapshot-wins-with-drift-event |
 
 ### Tests
 
@@ -615,7 +616,7 @@ for task N" follow-up. Merge.
 
 | Phase | Sub-items listed | Recommended tasks | Rationale |
 |---|---|---|---|
-| 0 Foundation | 12 | **5** | Group by table family; schema bundles read better than micro-PRs |
+| 0 Foundation | 13 | **6** | Group by table family + state-machine helpers as own task |
 | 1 Matcher | 10 | **7** | Each state-machine transition is its own task with event emission |
 | 2 Junction attribution | 12 | **10** | Hottest-path phase; keep small for review safety |
 | 3 Link status + UI | 8 | **4** | UI naturally bundles: backend (1), endpoints (1), tab (1), badges (1) |
@@ -625,28 +626,30 @@ for task N" follow-up. Merge.
 | 7 Reverse query + export | 7 | **6** | Per-endpoint task; PDF isolated from JSON |
 | 8 Operator UX | 9 | **8** | Each major UI surface is its own task |
 | 9 Multi-operator | 4 | **4** | Lock+takeover, operator_id sweep, timeout, UI |
-| **Total** | — | **~60 tasks** | ~6 weeks @ 2 tasks/day; ~12 weeks @ 1/day with review |
+| **Total** | — | **~61 tasks** | ~6 weeks @ 2 tasks/day; ~12 weeks @ 1/day with review |
 
 ### 14.3 Concrete task lists
 
-#### Phase 0 — Foundation (5 tasks)
+#### Phase 0 — Foundation (6 tasks)
 
 | # | Task | Scope |
 |---|---|---|
-| P0.T1 | New tables + indexes + CRUD helpers | `positions_calcs`, `order_amendments`, `funding_events`, `calc_match_audit` |
+| P0.T1 | New tables + indexes + CRUD helpers (incl. `lifecycle_id` columns + indexes per spec §3.5) | `positions_calcs`, `order_amendments`, `funding_events`, `calc_match_audit` |
 | P0.T2 | New table + scaffold | `operator_sessions` table + `core/auth_state.py` (logic deferred to Phase 9) |
-| P0.T3 | Column additions to existing tables (part 1) | `pre_trade_log` (15 fields) + `accounts.config_json` |
-| P0.T4 | Column additions to existing tables (part 2) | `orders` (5 fields) + `closed_positions` (15+ fields) |
-| P0.T5 | Migration backfill script | Junction backfill from historical fills + `exit_reason` re-map |
+| P0.T3 | Column additions to existing tables (part 1) | `pre_trade_log` (16 fields incl. `lifecycle_id`) + `accounts.config_json` (incl. `entry_tolerance_pct` and `snapshot_drift_tolerance_pct` defaults) |
+| P0.T4 | Column additions to existing tables (part 2) | `orders` (6 fields incl. `lifecycle_id`) + `closed_positions` (16+ fields incl. `lifecycle_id`) |
+| P0.T5 | Migration backfill script | Junction backfill from historical fills + `exit_reason` re-map + `lifecycle_id` back-fill per historical position lifecycle |
+| P0.T6 | State-machine enforcement helpers | `core/calc_state.py` + `core/link_state.py` with valid-transition dicts + `transition()` choke-point + `IllegalStateTransition` exception (per spec §3.6) |
 
 **Sequence**: T1-T4 loosely parallel (different tables); T5 depends on
-all schema in place.
+all schema in place; T6 fully independent (no schema dep) — can ship
+first or alongside.
 
 #### Phase 1 — Matcher tightening (7 tasks)
 
 | # | Task | Scope |
 |---|---|---|
-| P1.T1 | Strict matcher rewrite | 5/5 limit + 6/6 market; tolerance config; `calc_match_audit` row writes |
+| P1.T1 | Strict matcher rewrite | 5/5 limit + 6/6 market; tolerance config (incl. `entry_tolerance_pct` from `config_json`); `calc_match_audit` row writes; **all calc.status transitions go through `core/calc_state.transition()` choke-point (P0.T6)** so events fire automatically and illegal transitions raise |
 | P1.T2 | Per-account window from `config_json` | Read window_seconds + clock_skew_tolerance; freeze on calc creation |
 | P1.T3 | Calc revision detection | Supersede prior calc + `calc:superseded` event |
 | P1.T4 | Calc cancel by operator | Endpoint + status transition + `calc:cancelled` event |
@@ -661,11 +664,11 @@ loosely parallel after.
 
 | # | Task | Scope |
 |---|---|---|
-| P2.T1 | Opening-fill junction upsert | Single row per order, cumulative qty as fills arrive |
-| P2.T2 | Closing-fill calc_id stamping | Inherit from position's primary |
+| P2.T1 | Opening-fill junction upsert + `lifecycle_id` generation | Single row per order, cumulative qty as fills arrive. **At first fill that opens a position, generate UUID `lifecycle_id`** and back-fill onto matched `pre_trade_log.lifecycle_id`, `orders.lifecycle_id`, and the junction row. Subsequent scale-in calcs inherit the position's existing `lifecycle_id`. |
+| P2.T2 | Closing-fill calc_id + lifecycle_id stamping | Inherit from position's primary calc. Stamp `fills.calc_id` and `fills.lifecycle_id` on every closing fill. |
 | P2.T3 | `PositionInfo.calc_id` field + restart rehydrate | From junction on first fill + on restart |
 | P2.T4 | Scale-in junction-append | New calc → new junction row; per-calc planned values |
-| P2.T5 | Delta computation at close | All 8 delta columns on `closed_positions` |
+| P2.T5 | Delta computation at close | All 8 delta columns on `closed_positions`. **Use delta basis rule (spec §3.2)**: deltas computed against most-contributing calc (largest `contributed_qty`); tie-break first-entry. Same basis as live deviation badge (Phase 4) for consistency. |
 | P2.T6 | Primary calc_id + `exit_reason` classification | Most-contributing calc; planned-vs-amended detection |
 | P2.T7 | Bracket detection — Bybit adapter | `orderLinkId` + time-window fallback |
 | P2.T8 | Bracket detection — Binance adapter | `positionSide` clustering + fallback |
@@ -679,7 +682,7 @@ T10 needs T1-T9 done.
 
 | # | Task | Scope |
 |---|---|---|
-| P3.T1 | `link_status` auto-classification | LINKED / NEEDS_REVIEW / UNLINKED / UNPLANNED on order arrival |
+| P3.T1 | `link_status` auto-classification | LINKED / NEEDS_REVIEW / UNLINKED / UNPLANNED on order arrival. **All link_status transitions go through `core/link_state.transition()` choke-point (P0.T6)**. |
 | P3.T2 | Endpoints | `manual_link`, `mark_unplanned`, `needs_review` listing |
 | P3.T3 | Needs-link tab UI | Template + JS + per-criterion diff panel (template wiring tests per CLAUDE.md) |
 | P3.T4 | Status badges + nav counter | History tab badges + nav badge count |
@@ -690,7 +693,7 @@ T10 needs T1-T9 done.
 |---|---|---|
 | P4.T1 | Amendment detection from WS | Compare incoming order_update; write `order_amendments` row |
 | P4.T2 | Deviation pct + amendment count rollup | `deviation_pct` per row; `cumulative_amendment_count` at close |
-| P4.T3 | Live deviation badge logic + frontend | Per-position live computation; yellow/red thresholds from config |
+| P4.T3 | Live deviation badge logic + frontend | Per-position live computation; yellow/red thresholds from config. **Use delta basis rule (spec §3.2)**: live live-vs-planned delta computed against most-contributing calc; tie-break first-entry. Same basis as close-time delta (P2.T5). |
 | P4.T4 | `position:amended` event emission | On each amendment row insert |
 | P4.T5 | TP/SL drift columns at close | `tp_drift_pct`, `sl_drift_pct` from amendments vs first calc |
 
@@ -713,14 +716,14 @@ T10 needs T1-T9 done.
 | P6.T3 | All `calc:*` event emissions (sweep) | Verify Phase 1 sites emit; backfill any missed |
 | P6.T4 | All `position:*` event emissions (sweep) | Verify Phase 2 sites; add `position:opened`, `scale_in`, `liquidated` |
 | P6.T5 | `order:duplicate_detected` | Near-dup detection + event + UI badge |
-| P6.T6 | `position:size_drift` + snapshot-wins inversion | Invert WS-fills-win-within-5s; isolated for easy revert |
+| P6.T6 | `position:size_drift` + snapshot-wins inversion | Invert WS-fills-win-within-5s. **Read `snapshot_drift_tolerance_pct` from `config_json` (default 0.5%) — event only fires when delta exceeds tolerance** (prevents drift-event noise during high-volume periods). Feature-flag the inversion behind `config_json.feature_flags.snapshot_wins_drift` for per-account revertability. |
 
 #### Phase 7 — Reverse query + export (6 tasks)
 
 | # | Task | Scope |
 |---|---|---|
-| P7.T1 | `GET /context/calc/{id}` | Full graph payload assembly |
-| P7.T2 | `GET /context/position/{id}` | Position-keyed equivalent |
+| P7.T1 | `GET /context/calc/{id}` + `GET /context/lifecycle/{lifecycle_id}` | Full graph payload assembly (shared helper). Lifecycle endpoint pivots on `lifecycle_id` (spec §3.5) and is the single-key audit query that joins every table for one trade. |
+| P7.T2 | `GET /context/position/{id}` | Position-keyed equivalent (same helper as T1) |
 | P7.T3 | Webhook dispatcher + retry + dead-letter | Per-account webhook URL from `config_json`; exponential backoff |
 | P7.T4 | Audit export — JSON only | `POST /export/closed_position/{id}` |
 | P7.T5 | PDF generation + signed timestamp | Add to audit export; reportlab or similar |
@@ -810,8 +813,9 @@ parallel-safe tasks following:
 - Live time-series snapshots for per-second position state history
 - Multi-leg / pairs strategies
 - Role-based access control beyond single-operator lock
-- Q19 vs Q54 unification (auto-inherit vs manual-link for standalone
-  TP/SL); defer to operator feedback after Phase 3 ships
+- ~~Q19 vs Q54 unification~~ **RESOLVED 2026-05-24** (spec §15 R2): unified
+  under standard-matcher rule. No auto-inherit; all standalone TP/SL
+  through 5/5 or 6/6 matcher. Plan P2.T10 (auto-inherit task) removed.
 
 ---
 

@@ -59,6 +59,36 @@ def _spawn(coro, *, name: str) -> asyncio.Task:
     return task
 
 
+# ── Periodic MFE/MAE sweep ───────────────────────────────────────────────────
+
+async def _reconcile_closed_positions_periodic(
+    reconciler: ReconcilerWorker, interval_s: int = 900,
+) -> None:
+    """Periodically retry MFE/MAE backfill for closed_positions rows stuck at
+    backfill_completed=0.
+
+    Why: ReconcilerWorker._reconcile_closed_positions only runs once at startup
+    (after backfill_all) and per-position on risk:position_closed events. If
+    fetch_hl_for_trade returns None (illiquid symbol, sparse kline coverage,
+    short-duration trade with no kline bucket) or the startup sweep aborts on
+    rate-limit, those rows stay backfill_completed=0 indefinitely and render
+    as "—" in Position History.
+
+    This loop retries every `interval_s` seconds so transient fetch failures
+    eventually recover without requiring an engine restart.
+    """
+    while True:
+        await asyncio.sleep(interval_s)
+        try:
+            await reconciler._reconcile_closed_positions()
+        except Exception:
+            # CancelledError is BaseException in 3.8+ — not caught here, propagates
+            # cleanly so cancellation works as expected.
+            log.warning(
+                "Periodic closed_positions MFE/MAE sweep failed", exc_info=True,
+            )
+
+
 # ── BOD scheduler ────────────────────────────────────────────────────────────
 
 async def _bod_scheduler():
@@ -359,6 +389,10 @@ async def _startup_fetch():
         event_bus.subscribe(CH_TRADE_CLOSED, _reconciler.on_trade_closed)
         event_bus.subscribe("risk:position_closed", _reconciler.on_position_closed)
         _spawn(_reconciler.backfill_all(), name="reconciler_backfill")
+        _spawn(
+            _reconcile_closed_positions_periodic(_reconciler),
+            name="reconciler_closed_positions_periodic",
+        )
 
         _spawn(event_bus.run(), name="event_bus")
     except Exception as e:

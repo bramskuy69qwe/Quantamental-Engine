@@ -400,7 +400,14 @@ async def fetch_exchange_trade_history(limit: int = 200) -> None:
             r["qty"]         = qty
             r["open_time"]   = open_time
             r["notional"]    = notional
-            r["trade_key"]   = f"{r.get('time', '')}_{r.get('symbol', '')}_{r.get('incomeType', '')}"
+            # tradeId appended for uniqueness: multi-fill closes (and especially
+            # simultaneous LONG+SHORT hedge-mode closes on the same symbol) emit
+            # multiple REALIZED_PNL events with the same (time, symbol, incomeType).
+            # Without tradeId, they collide on trade_key and the DB upsert keeps only
+            # one — silently dropping the rest. Result: exchange_history is missing
+            # the dropped rows, backfill_fills_from_exchange_history can't see them,
+            # and Position History never shows the corresponding closed_positions.
+            r["trade_key"]   = f"{r.get('time', '')}_{r.get('symbol', '')}_{r.get('incomeType', '')}_{r.get('tradeId', '')}"
 
         raw_pnl.sort(key=lambda x: x.get("time", 0), reverse=True)
         app_state.exchange_trade_history = raw_pnl

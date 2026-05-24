@@ -354,13 +354,29 @@ async def _create_fill_from_ws(order, raw_msg: dict) -> None:
     Extracts fill-specific fields from the raw message (tradeId, lastFilledQty,
     lastFilledPrice, realizedProfit, commission) that are NOT on NormalizedOrder.
     Uses tradeId as exchange_fill_id for natural dedup with backfill path.
-    """
-    from core.database import db
 
+    Routes through `order_manager.process_fill` so the close-aggregation pipeline
+    (_build_close_row_for_fill → insert_closed_position) fires for closing fills.
+    Without this, WS-arrived fills land in the fills table but never produce a
+    closed_positions row until the next engine restart's backfill sweep — leaving
+    Position History stale whenever the Quantower plugin is disconnected and the
+    engine's own user-data WS is the sole fill source.
+    """
     o = raw_msg.get("o", {})
     trade_id = str(o.get("t", ""))
     if not trade_id or trade_id == "0":
         return  # No trade ID — not a real fill
+
+    sym = o.get("s", "")
+    direction = o.get("ps", "") or ("LONG" if o.get("S") == "BUY" else "SHORT")
+    # Match the open position (if any) to populate terminal_position_id. Lets
+    # _build_close_row_for_fill use the indexed terminal_position_id path instead
+    # of falling back to (symbol, direction) — cleaner data + faster lookup.
+    pos = next(
+        (p for p in app_state.positions if p.ticker == sym and p.direction == direction),
+        None,
+    )
+    terminal_position_id = pos.position_id if pos else ""
 
     realized_pnl = float(o.get("rp", 0) or 0)
     fill = {
@@ -368,23 +384,47 @@ async def _create_fill_from_ws(order, raw_msg: dict) -> None:
         "exchange_fill_id":     trade_id,
         "terminal_fill_id":     "",
         "exchange_order_id":    str(o.get("i", "")),
-        "symbol":               o.get("s", ""),
+        "symbol":               sym,
         "side":                 o.get("S", ""),
-        "direction":            o.get("ps", "") or ("LONG" if o.get("S") == "BUY" else "SHORT"),
+        "direction":            direction,
         "price":                float(o.get("L", 0) or 0),   # lastFilledPrice
         "quantity":             float(o.get("l", 0) or 0),   # lastFilledQty
         "fee":                  abs(float(o.get("n", 0) or 0)),
         "fee_asset":            o.get("N", "USDT"),
         "exchange_position_id": "",
-        "terminal_position_id": "",
+        "terminal_position_id": terminal_position_id,
         "is_close":             int(realized_pnl != 0),
         "realized_pnl":         realized_pnl,
         "role":                 "maker" if o.get("m") else "taker",
         "source":               "binance_ws",
         "timestamp_ms":         int(o.get("T", 0)),
     }
+
+    # Primary path: route through order_manager.process_fill so closing fills
+    # trigger _build_close_row_for_fill → insert_closed_position. Falls back to
+    # bare db.upsert_fill if platform_bridge is unavailable (very early startup)
+    # or if process_fill raises — the fill must always be persisted.
+    try:
+        from core.platform_bridge import platform_bridge as _pb
+        om = _pb.order_manager
+    except Exception:
+        om = None
+
+    if om is not None:
+        try:
+            await om.process_fill(app_state.active_account_id, fill)
+            log.debug(
+                "WS fill via process_fill: %s %s qty=%.4f pnl=%.4f tpid='%s'",
+                fill["symbol"], trade_id, fill["quantity"], realized_pnl,
+                terminal_position_id,
+            )
+            return
+        except Exception:
+            log.exception("WS fill process_fill failed — falling back to upsert_fill")
+
+    from core.database import db
     await db.upsert_fill(fill)
-    log.debug("WS fill created: %s %s qty=%.4f pnl=%.4f",
+    log.debug("WS fill upserted (fallback): %s %s qty=%.4f pnl=%.4f",
               fill["symbol"], trade_id, fill["quantity"], realized_pnl)
 
 

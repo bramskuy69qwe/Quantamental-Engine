@@ -140,8 +140,9 @@ within a configurable window.
 | size_delta_pct | REAL | (contributed_qty - planned_size) / planned_size * 100 |
 | planned_tp | REAL | snapshot from calc at contribution time |
 | planned_sl | REAL | snapshot from calc at contribution time |
+| lifecycle_id | TEXT | UUID; see §3.5; same value across all rows for one position |
 
-Indexes: `(position_id)`, `(calc_id)`, `(order_id)`, `(account_id, calc_id)`.
+Indexes: `(position_id)`, `(calc_id)`, `(order_id)`, `(account_id, calc_id)`, `(lifecycle_id)`.
 
 **order_amendments** (polymorphic field-level audit)
 
@@ -156,8 +157,9 @@ Indexes: `(position_id)`, `(calc_id)`, `(order_id)`, `(account_id, calc_id)`.
 | ts_ms | INTEGER | |
 | operator_id | TEXT | |
 | deviation_pct | REAL | (new - old) / old * 100; signed |
+| lifecycle_id | TEXT | denormalized from order; see §3.5 |
 
-Indexes: `(order_id)`, `(calc_id)`, `(calc_id, ts_ms)`.
+Indexes: `(order_id)`, `(calc_id)`, `(calc_id, ts_ms)`, `(lifecycle_id)`.
 
 **funding_events** (per-event funding attribution)
 
@@ -173,8 +175,9 @@ Indexes: `(order_id)`, `(calc_id)`, `(calc_id, ts_ms)`.
 | funding_rate | REAL | venue-reported rate |
 | ts_ms | INTEGER | |
 | venue_event_id | TEXT | for dedup |
+| lifecycle_id | TEXT | denormalized from position; see §3.5 |
 
-Indexes: `(position_id)`, `(account_id, ts_ms)`.
+Indexes: `(position_id)`, `(account_id, ts_ms)`, `(lifecycle_id)`.
 
 **calc_match_audit** (per-criterion match evidence)
 
@@ -225,6 +228,7 @@ Indexes: `(order_id)`, `(calc_id)`.
 | tp_levels | TEXT (JSON) | multi-TP array: [{price, size_pct}, ...]; nullable |
 | filled_pct | REAL | for partially_actioned state |
 | tags | TEXT (JSON) | freeform array for secondary model attribution |
+| lifecycle_id | TEXT | UUID; see §3.5; nullable (set when calc first contributes to a position) |
 
 **orders** (additions)
 
@@ -235,6 +239,7 @@ Indexes: `(order_id)`, `(calc_id)`.
 | cancel_reason_category | TEXT | enum: OPERATOR / GTC_EXPIRED / IOC_NO_FILL / VENUE_REJECTED / AUTO_REPLACE / MARGIN_CALL / ENGINE_RESTART |
 | cancel_reason_raw | TEXT | venue's raw reason string |
 | cancel_ts_ms | INTEGER | |
+| lifecycle_id | TEXT | UUID; see §3.5; populated when order links to position |
 
 **closed_positions** (additions)
 
@@ -259,6 +264,30 @@ Indexes: `(order_id)`, `(calc_id)`.
 | adl_indicator | BOOLEAN | nullable |
 | calc_id | TEXT | denormalized PRIMARY (most-contributing); junction has full detail |
 | close_calc_id | TEXT | DROPPED — engine computes deviations automatically; no operator close-calc |
+| lifecycle_id | TEXT | UUID; see §3.5 |
+
+**Delta basis rule** (applies to ALL delta computations — live deviation
+badge AND close-time `closed_positions.*_delta_pct` columns):
+
+Deltas are computed against the **most-contributing calc** for the
+position (i.e., the calc in `positions_calcs` with the largest
+`contributed_qty`). Tie-break: **first-entry calc** (earliest
+`first_fill_ts`). Same basis applies to:
+
+- Live deviation badge (live TP/SL vs planned)
+- `closed_positions.entry_px_delta_pct` (avg actual entry vs planned)
+- `closed_positions.size_delta_pct` (total filled size vs planned)
+- `closed_positions.tp_drift_pct` / `sl_drift_pct` (final TP/SL vs
+  planned)
+- `closed_positions.exit_vs_target_pct` (actual exit vs planned target)
+- `closed_positions.realized_r` denominator `(planned_entry -
+  planned_sl)`
+- `closed_positions.hold_time_planned_ms` (from most-contributing calc's
+  planned duration estimate, if present)
+
+For per-calc breakdown (e.g., "calc B's slice of this position
+deviated by X"), use `positions_calcs.size_delta_pct` directly per
+junction row.
 
 **accounts** (additions)
 
@@ -272,6 +301,8 @@ Indexes: `(order_id)`, `(calc_id)`.
 {
   "window_seconds": 300,                        // 60 / 300 / 900 = 1/5/15 min
   "clock_skew_tolerance_sec": 10,
+  "entry_tolerance_pct": 0.25,                  // loose-entry band for matcher (separate from tick-size)
+  "snapshot_drift_tolerance_pct": 0.5,          // position size drift threshold before emit position:size_drift
   "deviation_thresholds": {
     "yellow_pct": 5,
     "red_pct": 15
@@ -289,7 +320,7 @@ Indexes: `(order_id)`, `(calc_id)`.
 
 ### 3.4 Status / enum reference
 
-**calc.status**: `active` → {`matched` | `superseded` | `expired` | `cancelled_by_operator` | `completed_via_position` | `partially_actioned`}
+**calc.status**: `active` → {`matched` | `superseded` | `expired` | `cancelled_by_operator` | `completed_via_position` | `partially_actioned` | `released`}
 
 **order.link_status**: `LINKED` | `NEEDS_MANUAL_REVIEW` | `UNLINKED` | `UNPLANNED`
 
@@ -298,6 +329,76 @@ Indexes: `(order_id)`, `(calc_id)`.
 **order_amendments.field**: `entry_price` | `tp_price` | `sl_price` | `size` | `leverage`
 
 **cancel_reason_category**: `OPERATOR` | `GTC_EXPIRED` | `IOC_NO_FILL` | `VENUE_REJECTED` | `AUTO_REPLACE` | `MARGIN_CALL` | `ENGINE_RESTART`
+
+### 3.5 Internal correlation IDs (`lifecycle_id`)
+
+The engine generates an internal `lifecycle_id` (UUID) at the moment the
+**first fill arrives that opens a position**. This ID is the
+operator-facing trade reference and the internal correlation handle
+across all tables and events for that one trade lifecycle.
+
+**Critical constraint**: `lifecycle_id` is INTERNAL only. It is never
+sent to Quantower, the venue, or any external system. The engine's
+linkage to venue orders is via fuzzy matching on calc criteria (§4),
+not via any external tag.
+
+**Why it exists**:
+- Scale-in positions have multiple `calc_id`s but should have one
+  operator-facing reference: "Trade #abc-123".
+- Reports, exports, events, UI all reference one ID instead of
+  composing keys from `(position_id, calc_id, ts)`.
+- Audit chain becomes single-key joinable across every table.
+
+**Lifecycle**:
+1. **Generated**: at first fill that opens a position. UUID v4.
+2. **Stamped onto**:
+   - `positions_calcs.lifecycle_id` (every row for this position carries same value)
+   - `orders.lifecycle_id` (denormalized; copied from junction when order links to position)
+   - `fills.lifecycle_id` (denormalized; copied from parent order)
+   - `pre_trade_log.lifecycle_id` (back-filled when calc first contributes to a position; multi-calc scale-ins share same lifecycle_id across all their pre_trade_log rows)
+   - `closed_positions.lifecycle_id` (sealed at close)
+   - `order_amendments.lifecycle_id` (denormalized)
+   - `funding_events.lifecycle_id` (denormalized)
+3. **Surfaced in**:
+   - All `position:*` event payloads (in addition to position_id)
+   - All `calc:*` events for calcs that have contributed to a position
+   - Reverse-query API (`GET /context/lifecycle/{lifecycle_id}` — new
+     endpoint; sibling to /context/calc and /context/position)
+   - Audit export header
+   - UI: visible as the trade's reference handle ("Trade abc-123")
+
+**Pre-position state**: calcs that have not yet matched an order (or
+whose matched order has not yet filled) carry `lifecycle_id=NULL`. The
+field is populated retroactively when the first contributing fill
+arrives.
+
+**Indexes**: every table carrying `lifecycle_id` has an index on it
+(supports the single-key audit query).
+
+### 3.6 State-machine enforcement helpers
+
+Multiple state machines coexist (`calc.status`, `order.link_status`,
+`positions_calcs` join state). Informal transitions in handlers
+have a history of silent drift when one site is missed. Centralized
+helpers prevent this.
+
+New modules (Phase 0):
+
+- **`core/calc_state.py`** — defines `CALC_TRANSITIONS` dict of valid
+  `current → {allowed_next}` and `transition(calc_id, target_status,
+  reason=None)` helper. Raises `IllegalStateTransition` if move not
+  allowed. Mirrors existing `core/order_state.py` pattern.
+
+- **`core/link_state.py`** — same pattern for `order.link_status`
+  transitions. `LINKED ↔ NEEDS_MANUAL_REVIEW` not allowed (LINKED is
+  terminal forward); `UNLINKED → UNPLANNED` allowed (operator
+  downgrade); etc.
+
+All handlers MUST go through these helpers — direct UPDATE statements
+on `pre_trade_log.status` or `orders.link_status` are linter-flagged.
+
+Transition events fire automatically from the helper (no manual
+`event_bus.publish` at every call site).
 
 ---
 
@@ -373,10 +474,17 @@ Detection priority per adapter:
    `(symbol, direction)` within N seconds (default 2s) treated as
    bracket siblings.
 
-If detection fails (e.g., operator places TP/SL separately after entry),
-the standalone stop falls to needs-link tab (per §6.2). For TP/SL on
-an already-OPEN position (operator adds protective stop mid-trade), see
-Q19 / §6.2.
+If detection fails (e.g., operator places TP/SL separately after entry,
+OR operator places a protective stop on an already-open position),
+the standalone stop goes through the **standard matcher** (§4.1) — no
+auto-inherit. If its TP/SL/entry values match an active calc 5/5 (limit)
+or 6/6 (market), it auto-links. Otherwise it lands in the needs-link
+tab (§6.2). This unifies what was previously Q19 (auto-inherit on
+existing position) and Q54 (manual-link for post-entry separately-placed
+TP/SL) under a single rule: **the matcher is the only auto-link path,
+period**. Operator workflow: to get a standalone stop to auto-link to a
+position's calc, ensure an active calc with matching SL value exists in
+the window when the stop order is placed.
 
 ---
 
@@ -760,7 +868,7 @@ On engine startup:
 | Q16 | Replacement | Operator-prompted on near-match (modal at placement) |
 | Q17 | Window freeze | Frozen at calc creation; immune to mid-flight config changes |
 | Q18 | Close event | Full payload |
-| Q19 | Standalone stop | Inherit from position's latest calc |
+| Q19 | Standalone stop | ~~Inherit from position's latest calc~~ → **REVISED**: unified with Q54 under standard-matcher rule (see §15 R2). No auto-inherit. |
 | Q20 | Live deviation | Per-position badge (green/yellow/red) |
 | Q21 | Partial fill | `partially_actioned` state + `filled_pct` + event |
 | Q22 | Calc scope | Per-account |
@@ -795,7 +903,7 @@ On engine startup:
 | Q51 | Event topics | Hierarchical per-account on in-process `event_bus` (NOT Redis) |
 | Q52 | Hedge mode | Natural fit via (account, symbol, direction) keying |
 | Q53 | Migration | Backfill `positions_calcs` from existing `fills.calc_id` |
-| Q54 | Loose TP/SL | Manual-link tab |
+| Q54 | Loose TP/SL | Manual-link tab → **UNIFIED RULE** (post-Q19 revision): standard matcher is the only auto-link path; standalone TP/SL goes through 5/5 or 6/6 like any other order, fails to manual-link if criteria don't match. |
 | Q55 | Dashboard | Multi-pane workspace |
 | Q56 | Operator ID | On every action row + session-handoff audit |
 | Q57 | Junction grain | Single row per order; per-fill via JOIN to fills |
@@ -813,20 +921,45 @@ On engine startup:
 
 ---
 
-## 15. Open / pending review
+## 15. Post-spec refinements applied (2026-05-24)
 
-- **Q19 vs Q54 reconciliation**: standalone stop on existing position
-  auto-inherits (Q19), but TP+SL placed separately just after entry
-  goes to manual-link (Q54). Distinction is timing/context — may
-  warrant a unified rule like "auto-inherit if ≥N seconds after
-  position open OR if position has had any reduce activity". Defer to
-  implementation phase 3.
+Five architectural tensions surfaced in self-review; operator-confirmed
+resolutions applied to spec:
+
+- **R1 — Internal correlation `lifecycle_id` ADDED** (§3.5): engine
+  generates UUID at first opening fill; propagates across all
+  tables/events. Internal-only — never sent to Quantower or venue.
+  External tagging (gap #10) stays out of scope; internal tagging is
+  the affirmative architecture for cross-table correlation.
+- **R2 — Q19 vs Q54 UNIFIED**: auto-inherit dropped. All standalone
+  TP/SL (whether placed after entry-but-before-position-established or
+  on long-running open positions) go through the standard matcher
+  (§4.5). 5/5 (limit) or 6/6 (market) value-sync against active calc →
+  auto-link; otherwise → manual-link tab. No special-case logic.
+- **R3 — Drift tolerance ADDED** to `config_json`
+  (`snapshot_drift_tolerance_pct`, default 0.5%): `position:size_drift`
+  event only fires when delta exceeds tolerance (§3.3). Prevents
+  noise from WS-vs-snapshot ordering during high-volume periods.
+- **R4 — Delta basis rule ADDED** (§3.2 closed_positions notes): all
+  delta computations use **most-contributing calc** (largest
+  `contributed_qty` in junction); tie-break first-entry. Applies to
+  both live deviation badge and close-time `*_delta_pct` columns —
+  single rule, no per-site divergence.
+- **R5 — State-machine enforcement helpers ADDED** (§3.6):
+  `core/calc_state.py` and `core/link_state.py` modules with
+  `transition()` choke-point. Direct UPDATE statements on `status` /
+  `link_status` linter-flagged. Mirrors existing
+  `core/order_state.py` pattern.
+
+## 16. Still-open / pending review (deferred)
+
 - **Multi-TP `exit_reason=MIXED` payload shape**: needs sub-breakdown
   of which legs hit which exit (TP1=planned, TP2=amended, remainder=SL).
-- **`entry_tolerance_pct` default**: 0.25% suggested in §4.2; needs
-  calibration against historical operator paste behavior.
+  Defer to Phase 2 implementation.
+- **`entry_tolerance_pct` default**: 0.25% set in §3.3; needs
+  calibration against historical operator paste behavior post-launch.
 - **Bracket-detection clustering window**: default 2s in §4.5; may
-  need per-venue tuning.
+  need per-venue tuning (Bybit vs Binance latency profiles differ).
 
 ---
 
