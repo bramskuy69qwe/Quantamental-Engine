@@ -99,6 +99,17 @@ SCREENING_FRAMING = {
         "would have eaten more book depth than the actual regime-sized "
         "trade). Marginal positive deltas should be read conservatively."
     ),
+    "hysteresis_bypass_caveat": (
+        "The replay uses raw classify_regime per trade — NO hysteresis. "
+        "Deployed v1 includes T165/T166 asymmetric multiplier-keyed "
+        "hysteresis (de-risk fast / re-risk slow, counted over distinct "
+        "signal readings). The screen therefore measures 'does the v1 "
+        "signal carry sizing value' — NOT 'what my live hysteresis-v1 "
+        "would have done'. Hysteresis only diverges from raw on "
+        "regime-transition days and averages out over many trades, so "
+        "this is the right proxy for screening; do NOT read the number "
+        "as deployed-model performance."
+    ),
 }
 
 

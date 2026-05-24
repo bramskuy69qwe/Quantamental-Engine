@@ -477,6 +477,23 @@ class TestScreeningFraming:
         assert "slippage" in f["linear_scaling_caveat"].lower()
         assert "under-credits" in f["linear_scaling_caveat"].lower()
 
+    @pytest.mark.asyncio
+    async def test_framing_carries_hysteresis_bypass_caveat(self, test_db_swapped):
+        """T169 follow-up: replay uses raw classify_regime per trade —
+        no hysteresis. Deployed v1 has T165/T166 asymmetric hysteresis.
+        Caveat must call this out so the screen isn't read as
+        deployed-model performance."""
+        from core.regime_counterfactual import replay_v1_counterfactual
+
+        out = await replay_v1_counterfactual(account_id=1)
+        f = out["framing"]
+        assert "hysteresis_bypass_caveat" in f
+        c = f["hysteresis_bypass_caveat"].lower()
+        assert "hysteresis" in c
+        assert "raw" in c or "classify_regime" in c
+        # Load-bearing language — operator must not read this as deployed-model perf
+        assert "deployed" in c or "live" in c
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 5. Signal-date join correctness (no future leak)
