@@ -30,9 +30,11 @@ from core.risk_engine import (
 # to test it without triggering the cycle. If the source changes, BT-1
 # (duplication finding) applies — the safety net catches divergence via
 # the known-answer tests below.
-def calc_mfe_mae(trade_high, trade_low, entry_price, direction, quantity):
+def calc_mfe_mae(trade_high, trade_low, entry_price, direction, quantity, exit_price=None):
     """Mirror of core.exchange_market.calc_mfe_mae — pure math, no I/O.
-    T173: includes the sign-clamp (MFE ≥ 0, MAE ≤ 0)."""
+    T173: includes the sign-clamp (MFE ≥ 0, MAE ≤ 0).
+    T175: includes the realized-PnL floor (MFE ≥ gross_pnl for winners;
+    MAE ≤ gross_pnl for losers) when exit_price is supplied."""
     if trade_high is None or trade_low is None or not entry_price or not quantity:
         return 0.0, 0.0
     if direction == "LONG":
@@ -41,7 +43,16 @@ def calc_mfe_mae(trade_high, trade_low, entry_price, direction, quantity):
     else:
         mfe = round((entry_price - trade_low) * quantity, 2)
         mae = round((entry_price - trade_high) * quantity, 2)
-    return max(0.0, mfe), min(0.0, mae)
+    mfe = max(0.0, mfe)
+    mae = min(0.0, mae)
+    if exit_price and exit_price > 0:
+        if direction == "LONG":
+            gross_realized = round((exit_price - entry_price) * quantity, 2)
+        else:
+            gross_realized = round((entry_price - exit_price) * quantity, 2)
+        mfe = max(mfe, max(0.0, gross_realized))
+        mae = min(mae, min(0.0, gross_realized))
+    return mfe, mae
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -569,3 +580,111 @@ class TestExchangeBulkReconcileClamp:
         )
         assert "pos.session_mfe = max(0.0, raw_mfe)" in executing
         assert "pos.session_mae = min(0.0, raw_mae)" in executing
+
+
+class TestRealizedPnlFloor:
+    """T175: MFE/MAE must respect the realized-PnL floor when
+    exit_price is known. Catches the "MFE < gross_pnl" anomaly where
+    the price-extremes lookup missed the actual close moment."""
+
+    def test_long_winner_mfe_floored_to_gross_pnl(self):
+        """LONG, entry=100, exit=110, qty=2 → gross = +20.
+        Price-extremes lookup buggy: returns high=105 (under-reports).
+        Without floor: MFE = (105-100)*2 = 10. Anomaly: MFE < gross.
+        With floor: MFE = max(10, 20) = 20."""
+        mfe, mae = calc_mfe_mae(
+            trade_high=105, trade_low=99, entry_price=100,
+            direction="LONG", quantity=2, exit_price=110,
+        )
+        assert mfe == 20.0, (
+            "T175 regression: MFE should be floored to gross realized "
+            "PnL when the price-extremes lookup under-reports"
+        )
+        assert mae == -2.0  # (99 - 100) * 2 (unchanged — no loser-side floor)
+
+    def test_short_winner_mfe_floored_to_gross_pnl(self):
+        """SHORT, entry=1.123527, exit=1.069180, qty=150 → gross=8.15.
+        Price-extremes lookup buggy: trade_low=1.08866 (under-reports).
+        Without floor: MFE = (1.123527 - 1.08866) * 150 = 5.23. Anomaly.
+        With floor: MFE = max(5.23, 8.15) = 8.15.
+        This is the EXACT user-reported anomaly from T175."""
+        mfe, mae = calc_mfe_mae(
+            trade_high=1.13, trade_low=1.08866,
+            entry_price=1.123527, direction="SHORT", quantity=150,
+            exit_price=1.069180,
+        )
+        # Gross = (1.123527 - 1.069180) * 150 = 8.15205 → round → 8.15
+        assert mfe == pytest.approx(8.15, abs=0.02)
+
+    def test_long_loser_mae_floored_to_gross_pnl(self):
+        """LONG, entry=100, exit=90, qty=2 → gross = -20.
+        Price-extremes lookup buggy: low=95 (under-reports adverse).
+        Without floor: MAE = (95-100)*2 = -10. Anomaly: MAE > gross.
+        With floor: MAE = min(-10, -20) = -20."""
+        mfe, mae = calc_mfe_mae(
+            trade_high=101, trade_low=95, entry_price=100,
+            direction="LONG", quantity=2, exit_price=90,
+        )
+        assert mae == -20.0
+        assert mfe == 2.0  # (101 - 100) * 2 (unchanged — no winner-side floor)
+
+    def test_short_loser_mae_floored_to_gross_pnl(self):
+        """SHORT, entry=100, exit=110, qty=2 → gross = -20.
+        Price-extremes lookup buggy: trade_high=105 under-reports.
+        Without floor: MAE = (100-105)*2 = -10. With floor: -20."""
+        mfe, mae = calc_mfe_mae(
+            trade_high=105, trade_low=99, entry_price=100,
+            direction="SHORT", quantity=2, exit_price=110,
+        )
+        assert mae == -20.0
+        assert mfe == 2.0  # (100 - 99) * 2
+
+    def test_floor_does_not_lower_correctly_reported_mfe(self):
+        """When the price-extremes lookup correctly captures a HIGHER
+        high than the exit price, the floor must not LOWER it."""
+        # LONG, entry=100, exit=110, but price spiked to 120 mid-trade
+        mfe, mae = calc_mfe_mae(
+            trade_high=120, trade_low=99, entry_price=100,
+            direction="LONG", quantity=2, exit_price=110,
+        )
+        # Without floor: MFE = 40. With floor: max(40, 20) = 40.
+        assert mfe == 40.0
+
+    def test_no_exit_price_means_no_floor(self):
+        """Back-compat: omitting exit_price means no floor — same
+        behavior as T173 sign-clamp only."""
+        mfe, mae = calc_mfe_mae(
+            trade_high=105, trade_low=95, entry_price=100,
+            direction="LONG", quantity=2,
+            # no exit_price
+        )
+        assert mfe == 10.0  # (105 - 100) * 2
+        assert mae == -10.0  # (95 - 100) * 2
+
+    def test_zero_exit_price_means_no_floor(self):
+        """exit_price=0 (default for legacy rows) doesn't activate
+        floor — protects against accidental zero-floor application."""
+        mfe, mae = calc_mfe_mae(
+            trade_high=105, trade_low=95, entry_price=100,
+            direction="LONG", quantity=2, exit_price=0,
+        )
+        assert mfe == 10.0
+        assert mae == -10.0
+
+
+class TestReconcilerPassesExitPrice:
+    """Source pin: reconciler.py must thread exit_price into calc_mfe_mae
+    so the T175 floor activates on the live reconciliation path."""
+
+    def test_closed_positions_reconciler_passes_exit_price(self):
+        from pathlib import Path
+        src = (
+            Path(__file__).parent.parent / "core" / "reconciler.py"
+        ).read_text(encoding="utf-8")
+        executing = "\n".join(
+            ln for ln in src.splitlines() if not ln.strip().startswith("#")
+        )
+        # Both reconciler paths (exchange_history + closed_positions)
+        # must pass exit_price as a kwarg.
+        assert "exit_price=exit_p," in executing or \
+               "exit_price=exit_price," in executing

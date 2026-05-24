@@ -74,6 +74,7 @@ def calc_mfe_mae(
     entry_price: float,
     direction: str,
     quantity: float,
+    exit_price: Optional[float] = None,
 ) -> tuple:
     """
     Calculate MFE and MAE as GROSS USDT PnL from pre-computed price extremes.
@@ -87,6 +88,26 @@ def calc_mfe_mae(
     POSITIVE mae — wrong direction. Symmetric for SHORT, and for trades
     that never moved favorably. The clamp enforces the convention that
     callers + analytics (sharpe_mfe, sortino_mae) rely on.
+
+    T175 realized-PnL floor: when `exit_price` is supplied, the GROSS
+    realized PnL of the trade (= (exit-entry)*qty for LONG; (entry-exit)
+    *qty for SHORT) is a mathematical FLOOR for the excursion magnitude:
+      • For a winning trade: MFE ≥ gross_realized_pnl. The exit price was
+        an actual transaction during the trade lifetime, so trade_high
+        (LONG) / trade_low (SHORT) MUST equal or exceed the favorable
+        direction's exit excursion.
+      • For a losing trade: MAE ≤ gross_realized_pnl (both negative).
+    The price-extremes lookup can MISS the actual close moment when:
+      - Partial-fill REPLACE races wipe reconciler results (db_orders.py
+        INSERT OR REPLACE omits backfill_completed → defaults to 0).
+      - aggTrades / OHLCV window alignment misses the exact close tick.
+      - exit_price is a VWAP that doesn't correspond to a single market
+        tick visible in aggTrades.
+    The floor catches the under-reporting class: even if the lookup
+    missed the actual extreme, the displayed MFE/MAE never go below
+    realized PnL. (The floor does NOT bound the over-reporting case
+    where the lookup picks up a spike outside the actual trade range —
+    that needs separate investigation.)
     """
     if trade_high is None or trade_low is None or not entry_price or not quantity:
         return 0.0, 0.0
@@ -96,8 +117,20 @@ def calc_mfe_mae(
     else:  # SHORT
         mfe = round((entry_price - trade_low)  * quantity, 2)
         mae = round((entry_price - trade_high) * quantity, 2)
-    # T173: clamp to convention. MFE ≥ 0, MAE ≤ 0.
-    return max(0.0, mfe), min(0.0, mae)
+    # T173 clamp: MFE ≥ 0, MAE ≤ 0.
+    mfe = max(0.0, mfe)
+    mae = min(0.0, mae)
+    # T175 floor: bound to realized-PnL when caller supplies exit_price.
+    if exit_price and exit_price > 0:
+        if direction == "LONG":
+            gross_realized = round((exit_price - entry_price) * quantity, 2)
+        else:  # SHORT
+            gross_realized = round((entry_price - exit_price) * quantity, 2)
+        # gross_realized > 0 → winner → favorable floor on MFE
+        # gross_realized < 0 → loser → adverse floor on MAE
+        mfe = max(mfe, max(0.0, gross_realized))
+        mae = min(mae, min(0.0, gross_realized))
+    return mfe, mae
 
 
 # ── Orderbook ────────────────────────────────────────────────────────────────

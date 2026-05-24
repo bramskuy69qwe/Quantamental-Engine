@@ -49,6 +49,7 @@ class ReconcilerWorker:
             open_ms     = row["open_time"]
             close_ms    = row["time"]
             entry_price = row["entry_price"]
+            exit_price  = row.get("exit_price", 0)
             quantity    = row["qty"]
             row_dir     = row["direction"] or direction
 
@@ -63,7 +64,11 @@ class ReconcilerWorker:
                 log.warning(f"Reconciler: no price data for {trade_key}")
                 continue
 
-            mfe, mae = calc_mfe_mae(trade_high, trade_low, entry_price, row_dir, quantity)
+            # T175 realized-PnL floor (see calc_mfe_mae docstring).
+            mfe, mae = calc_mfe_mae(
+                trade_high, trade_low, entry_price, row_dir, quantity,
+                exit_price=exit_price,
+            )
             await db.update_exchange_mfe_mae(trade_key, mfe, mae)
             log.info(
                 f"Reconciler: {trade_key} hold={duration_s:.0f}s "
@@ -183,6 +188,7 @@ class ReconcilerWorker:
             open_ms  = row["entry_time_ms"]
             close_ms = row["exit_time_ms"]
             entry_p  = row["entry_price"]
+            exit_p   = row.get("exit_price", 0)
             qty      = row["quantity"]
             direction = row["direction"]
             if not all((open_ms, close_ms, entry_p, qty)):
@@ -195,8 +201,15 @@ class ReconcilerWorker:
                         )
                 if trade_high is None:
                     continue
+                # T175 realized-PnL floor: pass exit_price so calc_mfe_mae
+                # can floor MFE/MAE at the realized excursion. Catches the
+                # "MFE < |gross_pnl|" anomaly that occurs when the price-
+                # extremes lookup misses the actual close (partial-fill
+                # REPLACE race, aggTrades window edge, VWAP exit not in
+                # aggTrades, etc.).
                 mfe, mae = calc_mfe_mae(
                     trade_high, trade_low, entry_p, direction, qty,
+                    exit_price=exit_p,
                 )
                 await db.update_closed_position_mfe_mae(row["id"], mfe, mae)
                 log.info(
