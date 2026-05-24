@@ -223,12 +223,52 @@ class OrdersMixin:
             except Exception:
                 pass  # non-critical — columns stay NULL
 
+        # T176: preserve reconciler-owned columns across INSERT OR REPLACE.
+        # SQLite's REPLACE = DELETE-THEN-INSERT — any column omitted from
+        # the INSERT-VALUES list resets to its schema default. Previously
+        # `backfill_completed` was omitted entirely → every REPLACE wiped
+        # the reconciler's flag back to 0, and any caller (like real-time
+        # close-row builder) that passed mfe=0/mae=0 also wiped the
+        # reconciler's computed values. Result: multi-fill closes that
+        # triggered the close-row builder twice could race the reconciler
+        # — first run computed MFE over a partial window, REPLACE then
+        # wiped it, second run computed over the full window... but only
+        # if the reconciler's get_uncalculated_closed_positions caught
+        # the wiped row before the next REPLACE. Net effect on operator's
+        # screen: MFE values below the math-required floor of |gross_pnl|.
+        # Fix: read existing row's reconciler columns; preserve them
+        # explicitly in the new INSERT if backfill was already done.
+        # Caller-supplied mfe/mae still win when reconciler hasn't run
+        # (exchange_history backfill path passes computed values for
+        # rows it owns; those get preserved if a later REPLACE has
+        # mfe=0/mae=0/backfill=0 defaults).
+        preserved_mfe = row.get("mfe", 0)
+        preserved_mae = row.get("mae", 0)
+        preserved_backfill = 0
+        try:
+            async with self._conn.execute(
+                "SELECT mfe, mae, backfill_completed FROM closed_positions "
+                "WHERE account_id = ? AND terminal_position_id = ? "
+                "AND exit_time_ms = ? LIMIT 1",
+                (row.get("account_id", 1),
+                 row.get("terminal_position_id", ""),
+                 row.get("exit_time_ms", 0)),
+            ) as cur:
+                existing = await cur.fetchone()
+                if existing and existing["backfill_completed"]:
+                    # Reconciler ran — its values are authoritative.
+                    preserved_mfe = existing["mfe"]
+                    preserved_mae = existing["mae"]
+                    preserved_backfill = existing["backfill_completed"]
+        except Exception:
+            pass  # if the read fails, fall through to caller-supplied values
+
         sql = """
             INSERT OR REPLACE INTO closed_positions (
                 account_id, exchange_position_id, terminal_position_id,
                 symbol, direction, quantity, entry_price, exit_price,
                 entry_time_ms, exit_time_ms, realized_pnl, total_fees,
-                net_pnl, funding_fees, mfe, mae, hold_time_ms,
+                net_pnl, funding_fees, mfe, mae, backfill_completed, hold_time_ms,
                 exit_reason, model_name, notes,
                 shortfall_entry, shortfall_exit, source, calc_id,
                 tp_price, sl_price
@@ -236,7 +276,7 @@ class OrdersMixin:
                 :account_id, :exchange_position_id, :terminal_position_id,
                 :symbol, :direction, :quantity, :entry_price, :exit_price,
                 :entry_time_ms, :exit_time_ms, :realized_pnl, :total_fees,
-                :net_pnl, :funding_fees, :mfe, :mae, :hold_time_ms,
+                :net_pnl, :funding_fees, :mfe, :mae, :backfill_completed, :hold_time_ms,
                 :exit_reason, :model_name, :notes,
                 :shortfall_entry, :shortfall_exit, :source, :calc_id,
                 :tp_price, :sl_price
@@ -258,8 +298,9 @@ class OrdersMixin:
                 "total_fees":           row.get("total_fees", 0),
                 "net_pnl":              row.get("net_pnl", 0),
                 "funding_fees":         row.get("funding_fees", 0),
-                "mfe":                  row.get("mfe", 0),
-                "mae":                  row.get("mae", 0),
+                "mfe":                  preserved_mfe,
+                "mae":                  preserved_mae,
+                "backfill_completed":   preserved_backfill,
                 "hold_time_ms":         row.get("hold_time_ms", 0),
                 "exit_reason":          row.get("exit_reason", ""),
                 "model_name":           row.get("model_name", ""),

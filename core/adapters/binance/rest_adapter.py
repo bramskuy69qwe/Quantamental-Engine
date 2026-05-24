@@ -447,7 +447,15 @@ class BinanceUSDMAdapter(BaseExchangeAdapter):
         _12_HR = 12 * 3_600_000
         _1_HR = 3_600_000
         _60_S = 60_000
-        _BUF = 1_000  # 1s buffer for Binance exclusive endTime
+        # T176: 5s buffer (was 1s). Quantower-recorded fill timestamps
+        # vs Binance's market clock can drift by hundreds of ms; the
+        # close-row's exit_time_ms may be slightly EARLIER than the
+        # actual market tick that caused the fill. A 1s buffer wasn't
+        # always wide enough — the aggTrades window could end before
+        # the actual close tick, missing the favorable extreme. 5s
+        # absorbs typical clock skew without materially increasing the
+        # aggTrades fetch cost (still 1-2 batches for typical windows).
+        _BUF = 5_000
 
         duration = end_ms - start_ms
 
