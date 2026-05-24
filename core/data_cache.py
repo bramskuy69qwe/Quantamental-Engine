@@ -763,7 +763,15 @@ class DataCache:
                 unreal = pos.individual_unrealized
                 if unreal > pos.session_mfe:
                     pos.session_mfe = round(unreal, 2)
-                if pos.session_mae == 0.0 or unreal < pos.session_mae:
+                # T173: session_mae starts at 0.0. Update ONLY when unreal
+                # drops more adverse than current MAE — i.e. when unreal
+                # < session_mae. Previous logic had `session_mae == 0.0`
+                # as a seeding branch which on the first favorable tick
+                # set MAE to a POSITIVE value (wrong direction; MAE must
+                # be ≤ 0). Stays at 0.0 until a genuinely adverse tick
+                # arrives, then tracks the min. Convention matches
+                # calc_mfe_mae's T173 sign-clamp.
+                if unreal < pos.session_mae:
                     pos.session_mae = round(unreal, 2)
 
         acc = app_state.account_state

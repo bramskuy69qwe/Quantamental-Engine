@@ -260,11 +260,17 @@ async def populate_open_position_metadata() -> None:
                 continue
 
             if pos.direction == "LONG":
-                pos.session_mfe = round((max_price - pos.average) * pos.contract_amount, 2)
-                pos.session_mae = round((min_price - pos.average) * pos.contract_amount, 2)
+                raw_mfe = round((max_price - pos.average) * pos.contract_amount, 2)
+                raw_mae = round((min_price - pos.average) * pos.contract_amount, 2)
             else:
-                pos.session_mfe = round((pos.average - min_price) * pos.contract_amount, 2)
-                pos.session_mae = round((pos.average - max_price) * pos.contract_amount, 2)
+                raw_mfe = round((pos.average - min_price) * pos.contract_amount, 2)
+                raw_mae = round((pos.average - max_price) * pos.contract_amount, 2)
+            # T173 sign-clamp: MFE ≥ 0 (best favorable), MAE ≤ 0 (worst
+            # adverse). Same convention as calc_mfe_mae. Without the clamp,
+            # a position that never went adverse produces a positive MAE
+            # (semantically wrong direction).
+            pos.session_mfe = max(0.0, raw_mfe)
+            pos.session_mae = min(0.0, raw_mae)
 
             log.info(
                 "Position metadata: %s open=%s mfe=%.2f mae=%.2f",

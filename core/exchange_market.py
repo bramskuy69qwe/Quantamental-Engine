@@ -80,6 +80,13 @@ def calc_mfe_mae(
 
     LONG:  MFE = (trade_high - entry) * qty   MAE = (trade_low - entry) * qty
     SHORT: MFE = (entry - trade_low)  * qty   MAE = (entry - trade_high) * qty
+
+    T173 sign-clamp: MFE is the best FAVORABLE excursion (≥ 0). MAE is the
+    worst ADVERSE excursion (≤ 0). Without the clamp, a LONG trade that
+    never dropped below entry (trade_low > entry_price) produces a
+    POSITIVE mae — wrong direction. Symmetric for SHORT, and for trades
+    that never moved favorably. The clamp enforces the convention that
+    callers + analytics (sharpe_mfe, sortino_mae) rely on.
     """
     if trade_high is None or trade_low is None or not entry_price or not quantity:
         return 0.0, 0.0
@@ -89,7 +96,8 @@ def calc_mfe_mae(
     else:  # SHORT
         mfe = round((entry_price - trade_low)  * quantity, 2)
         mae = round((entry_price - trade_high) * quantity, 2)
-    return mfe, mae
+    # T173: clamp to convention. MFE ≥ 0, MAE ≤ 0.
+    return max(0.0, mfe), min(0.0, mae)
 
 
 # ── Orderbook ────────────────────────────────────────────────────────────────

@@ -31,7 +31,8 @@ from core.risk_engine import (
 # (duplication finding) applies — the safety net catches divergence via
 # the known-answer tests below.
 def calc_mfe_mae(trade_high, trade_low, entry_price, direction, quantity):
-    """Mirror of core.exchange_market.calc_mfe_mae — pure math, no I/O."""
+    """Mirror of core.exchange_market.calc_mfe_mae — pure math, no I/O.
+    T173: includes the sign-clamp (MFE ≥ 0, MAE ≤ 0)."""
     if trade_high is None or trade_low is None or not entry_price or not quantity:
         return 0.0, 0.0
     if direction == "LONG":
@@ -40,7 +41,7 @@ def calc_mfe_mae(trade_high, trade_low, entry_price, direction, quantity):
     else:
         mfe = round((entry_price - trade_low) * quantity, 2)
         mae = round((entry_price - trade_high) * quantity, 2)
-    return mfe, mae
+    return max(0.0, mfe), min(0.0, mae)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -470,3 +471,101 @@ class TestMFEMAE:
         mfe, mae = calc_mfe_mae(105.555, 97.333, 100, "LONG", 1.0)
         assert mfe == 5.56
         assert mae == -2.67
+
+    # ── T173 sign-clamp regression pins ────────────────────────────────
+
+    def test_long_never_went_adverse_mae_is_zero(self):
+        """LONG trade where trade_low ≥ entry (price never dropped below
+        entry) → mae must be 0, NOT a positive number. Convention: MAE
+        is the worst ADVERSE excursion; if there was no adverse movement,
+        the value is 0, not the smallest favorable excursion."""
+        # entry=100, high=110, low=105 — never dropped below entry
+        mfe, mae = calc_mfe_mae(110, 105, 100, "LONG", 1.0)
+        assert mfe == 10.0
+        assert mae == 0.0, (
+            "T173 regression: LONG with trade_low > entry produced "
+            "positive MAE (semantically wrong direction)"
+        )
+
+    def test_long_never_went_favorable_mfe_is_zero(self):
+        """LONG trade where trade_high ≤ entry (price never rose above
+        entry) → mfe must be 0, NOT a negative number."""
+        # entry=100, high=98, low=90 — never rose above entry
+        mfe, mae = calc_mfe_mae(98, 90, 100, "LONG", 1.0)
+        assert mfe == 0.0, (
+            "T173 regression: LONG with trade_high < entry produced "
+            "negative MFE (semantically wrong direction)"
+        )
+        assert mae == -10.0
+
+    def test_short_never_went_adverse_mae_is_zero(self):
+        """SHORT trade where trade_high ≤ entry (price never rose above
+        entry — that's the adverse direction for a short) → mae must
+        be 0, not positive."""
+        # entry=100, high=95, low=90 — for a SHORT, both are favorable
+        mfe, mae = calc_mfe_mae(95, 90, 100, "SHORT", 1.0)
+        assert mfe == 10.0
+        assert mae == 0.0, (
+            "T173 regression: SHORT with trade_high < entry produced "
+            "positive MAE (semantically wrong direction)"
+        )
+
+    def test_short_never_went_favorable_mfe_is_zero(self):
+        """SHORT trade where trade_low ≥ entry (price never dropped
+        below entry — that's the favorable direction for a short) →
+        mfe must be 0, not negative."""
+        # entry=100, high=110, low=105 — for a SHORT, both are adverse
+        mfe, mae = calc_mfe_mae(110, 105, 100, "SHORT", 1.0)
+        assert mfe == 0.0, (
+            "T173 regression: SHORT with trade_low > entry produced "
+            "negative MFE (semantically wrong direction)"
+        )
+        assert mae == -10.0
+
+    def test_flat_trade_returns_zeros(self):
+        """trade_high == trade_low == entry — price never moved. Both
+        MFE and MAE are 0. Tests that the clamp doesn't accidentally
+        flip something."""
+        mfe, mae = calc_mfe_mae(100, 100, 100, "LONG", 1.0)
+        assert mfe == 0.0
+        assert mae == 0.0
+
+
+class TestSessionMaeSeedingRegression:
+    """T173: session_mae must NOT be polluted with positive values on
+    the first favorable WS tick. Previously the `session_mae == 0.0`
+    branch in apply_mark_price seeded MAE to a positive number when
+    the first observed unreal was favorable."""
+
+    def test_session_mae_stays_zero_until_genuinely_adverse(self):
+        from pathlib import Path
+        src = (
+            Path(__file__).parent.parent / "core" / "data_cache.py"
+        ).read_text(encoding="utf-8")
+        executing = "\n".join(
+            ln for ln in src.splitlines() if not ln.strip().startswith("#")
+        )
+        # The buggy branch is gone
+        assert "session_mae == 0.0 or" not in executing, (
+            "T173 regression: the `session_mae == 0.0` seeding branch "
+            "is back. That branch sets MAE to a positive value on the "
+            "first favorable tick — wrong direction."
+        )
+        # The correct comparison remains
+        assert "if unreal < pos.session_mae:" in executing
+
+
+class TestExchangeBulkReconcileClamp:
+    """T173: the bulk reconciliation path in core/exchange.py also
+    needs the sign-clamp."""
+
+    def test_bulk_recompute_clamps_signs(self):
+        from pathlib import Path
+        src = (
+            Path(__file__).parent.parent / "core" / "exchange.py"
+        ).read_text(encoding="utf-8")
+        executing = "\n".join(
+            ln for ln in src.splitlines() if not ln.strip().startswith("#")
+        )
+        assert "pos.session_mfe = max(0.0, raw_mfe)" in executing
+        assert "pos.session_mae = min(0.0, raw_mae)" in executing
