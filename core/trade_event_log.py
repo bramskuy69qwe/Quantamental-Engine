@@ -84,13 +84,35 @@ def log_trade_event(
 ) -> int:
     """Insert one trade_events row.
 
-    Returns the row id. Raises ValueError for unknown event_type.
+    Returns the row id, or -1 if the write was rejected by the T168
+    pollution guard. Raises ValueError for unknown event_type.
     """
     if event_type not in _VALID_TRADE_EVENT_TYPES:
         raise ValueError(
             f"Unknown trade event_type {event_type!r}. "
             f"Valid: {sorted(_VALID_TRADE_EVENT_TYPES)}"
         )
+
+    # Task 168 (FE-MED-017 defense-in-depth): pollution guard mirroring
+    # the closed_positions write-path guard in db_orders. Real
+    # position_closed events emitted by order_manager (line ~736) carry
+    # entry_price from the canonical close-row computation and are
+    # always positive. The 278 BTCUSDT pre-prod test fixtures had
+    # entry_price=0.0 while exit_price > 0 — a shape that can't arise
+    # from any real fill path. Reject + log.warning so future pollution
+    # sources surface immediately rather than silently accumulating.
+    if event_type == "position_closed":
+        p = payload or {}
+        entry = float(p.get("entry_price", 0) or 0)
+        exit_p = float(p.get("exit_price", 0) or 0)
+        if entry <= 0 and exit_p > 0:
+            log.warning(
+                "T168 FE-MED-017 reject: trade_event 'position_closed' "
+                "has pollution shape (entry_price=%r, exit_price=%r, "
+                "symbol=%r, calc_id=%r) — refusing write",
+                entry, exit_p, p.get("symbol", ""), calc_id,
+            )
+            return -1
 
     ts = timestamp or datetime.now(timezone.utc).isoformat()
     payload_json = json.dumps(payload, default=str)

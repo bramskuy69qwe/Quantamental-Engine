@@ -181,6 +181,31 @@ class OrdersMixin:
         If tp_price/sl_price are not provided but calc_id is, resolves them
         from pre_trade_log automatically (v2.4 Task 69).
         """
+        # Task 168 (FE-MED-017 defense-in-depth): reject pollution-shaped
+        # writes — entry_price <= 0 while quantity > 0 AND exit_price > 0
+        # is the exact shape of the 278 pre-prod BTCUSDT test-fixture
+        # rows the audit flagged. A real fill never produces this shape:
+        # entry_price comes from the position's average-fill computation
+        # upstream and is always positive for any executed quantity.
+        # The T167 dual-P&L replay set excludes pollution by construction
+        # (calc_id + regime_multiplier guards), but adding the write-time
+        # guard at the canonical insert path means future pollution
+        # paths can't reach EITHER surface even if they bypass calc_id.
+        # log.warning surfaces the rejected write so the operator sees
+        # the drop (vs silent).
+        entry = float(row.get("entry_price", 0) or 0)
+        qty = float(row.get("quantity", 0) or 0)
+        exit_p = float(row.get("exit_price", 0) or 0)
+        if entry <= 0 and qty > 0 and exit_p > 0:
+            log.warning(
+                "T168 FE-MED-017 reject: closed_position has pollution "
+                "shape (entry_price=%r, quantity=%r, exit_price=%r, "
+                "symbol=%r) — refusing write; a real fill never produces "
+                "this combination",
+                entry, qty, exit_p, row.get("symbol", ""),
+            )
+            return
+
         # Resolve tp_price/sl_price from pre_trade_log if not explicitly provided
         calc_id = row.get("calc_id")
         tp_price = row.get("tp_price")
