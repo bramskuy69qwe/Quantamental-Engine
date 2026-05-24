@@ -75,8 +75,18 @@
           </td>
           <td class="text-green">{{ fmt(r.tp_price, 4) if r.tp_price else "—" }}</td>
           <td class="text-red">{{ fmt(r.sl_price, 4) if r.sl_price else "—" }}</td>
-          <td class="text-green">{{ fmt(r.mfe, 2) if r.mfe or r.backfill_completed else "—" }}</td>
-          <td class="text-red">{{ fmt(r.mae, 2) if r.mae or r.backfill_completed else "—" }}</td>
+          {# T174 display consistency: MFE and MAE belong to the same
+             measurement event. Decide together: if EITHER cell has a
+             value OR the row is marked backfilled, render BOTH (even
+             if one happens to be 0). Previously each cell decided
+             independently, producing rows like MFE=0.04 / MAE=— when
+             mfe was populated from exchange_history backfill (which
+             doesn't set backfill_completed) but mae was legitimately
+             0. Visible to the operator as "MFE shows up but MAE
+             doesn't" — diagnosed as inaccuracy. #}
+          {% set _mfe_mae_known = r.mfe or r.mae or r.backfill_completed %}
+          <td class="text-green">{{ fmt(r.mfe, 2) if _mfe_mae_known else "—" }}</td>
+          <td class="text-red">{{ fmt(r.mae, 2) if _mfe_mae_known else "—" }}</td>
           {% set mer = (r.mfe / (r.mae | abs)) | round(2) if r.mae else 0 %}
           <td>{{ fmt(mer, 2) if mer else '—' }}</td>
         {{ tr_close() }}
