@@ -409,7 +409,12 @@
 // ── State ─────────────────────────────────────────────────────────────────
 var _orderType='market',_tpslMode='price',_side='long',_livePrice=0;
 var _priceInterval=null,_tickerDebounce=null,_calcRefreshTimer=null;
-var _refreshRate=1,_autoRefreshEnabled=true,_hasCalculated=false;
+// Auto-refresh defaults OFF (T171 anti-flicker): pressing Calculate is
+// now a one-shot operation. Re-submitting the calc form every 1-30s
+// re-rendered #calc-result, whose height changed, which pushed the
+// orderbook below it up/down — visible flicker. User can still opt in
+// to polling via the 1s/5s/10s/30s buttons in the result panel.
+var _refreshRate=5,_autoRefreshEnabled=false,_hasCalculated=false;
 var _autoRefreshInFlight=false,_calcTicker='',_obTicker='';
 var _sizeUnit='notional',_saveDebounce=null,_calcHistory=[],_pendingManualCalc=false;
 
@@ -510,9 +515,14 @@ function fmtPct(pct){if(pct===null||pct===undefined||isNaN(pct))return '—';ret
 function updateOrderbook(ticker){
   if(!ticker||ticker===_obTicker)return;_obTicker=ticker;
   var c=document.getElementById('orderbook-container');
+  // T171 anti-flicker: orderbook loads ONCE after calc, no polling.
+  // Previous `hx-trigger="load, every 2s"` repainted the orderbook
+  // panel every 2 seconds — depth-visualization height changes shifted
+  // surrounding layout. User now refreshes the orderbook by re-running
+  // the calc (which calls updateOrderbook again).
   c.innerHTML='<div id="orderbook-panel" class="card card-p8"'+
     ' hx-get="/calculator/refresh/'+encodeURIComponent(ticker)+'"'+
-    ' hx-trigger="load, every 2s" hx-swap="innerHTML">'+
+    ' hx-trigger="load" hx-swap="innerHTML">'+
     '<span class="sec-lbl">Live Orderbook — '+ticker+'</span>'+
     '<div style="color:var(--sub);font-size:.72rem;">loading...</div></div>';
   htmx.process(c);
