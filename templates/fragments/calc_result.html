@@ -14,12 +14,29 @@
 
 {# HIGH-027 (Task 104b) — link-window countdown. Initial render only fires
    after a calc has been persisted (eligible + has calc_id). Subsequent
-   updates come via the fragment's own hx-trigger="every 5s" polling. #}
+   updates come via the fragment's own hx-trigger="every 5s" polling.
+
+   T172 anti-flicker: the initial element is rendered WITH the full
+   card chrome (same .card .card-p8 + border-left + flex row + .7rem
+   font as every state fragment in link_window_countdown.html). When
+   the first poll lands a PENDING / LINKABLE / etc card via outerHTML
+   swap, the height stays constant (~32px), so nothing below shifts.
+   Previously the initial element was an empty <div> with 0 height —
+   the 0 → 32px jump on first swap pushed every panel below it down,
+   visible as the "Confirming calc... appears/disappears" flicker the
+   operator observed. State-transition swaps (PENDING → LINKABLE,
+   etc.) don't flicker because all state fragments render at the same
+   single-row height. #}
 {% if c.calc_id and c.eligible %}
-<div id="link-window-countdown"
+<div id="link-window-countdown" class="card card-p8"
+     style="margin-bottom:6px;border-left:3px solid var(--muted);"
      hx-get="/calculator/link-window-status/{{ c.calc_id }}"
      hx-trigger="load, every 5s"
-     hx-swap="outerHTML"></div>
+     hx-swap="outerHTML">
+  <div style="display:flex;align-items:center;gap:6px;font-size:.7rem;">
+    <span style="color:var(--muted);">&hellip;</span>
+  </div>
+</div>
 {% endif %}
 
 <!-- ── Hard stops ─────────────────────────────────────────────────────────── -->
