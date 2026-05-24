@@ -35,6 +35,27 @@ adding a "risk_off_severe" at 0.5× automatically gets the de-risk
 fast path without rule-set edits. Equal-multiplier label changes
 (e.g. risk_on_choppy ↔ neutral, both 1.0×) bypass hysteresis
 entirely since there's no sizing delta to suppress.
+
+Task 166 — reading-id mode. T165 counted confirmations per call to
+step(); compute_current_regime fires every 10 min but the underlying
+signals are daily (VIX/FRED) / 8h (funding), so within a day every
+tick saw identical values and re-risk's N=2 collapsed to ~20 min of
+holding before a single improved daily reading "earned its way back
+up". MED-029's day-to-day flap suppression also failed because each
+day produced many more than N ticks. T166 changes the COUNTING UNIT:
+
+  step(raw, reading_id=X) — pending advances only on calls where
+  reading_id changes from the last accepted call. Intra-reading
+  re-ticks return current unchanged without touching state.
+
+reading_id is whatever the caller can name the "this is one piece of
+input data" by — typically the latest signal date (compute_current_
+regime uses `recent_db["date"]` for the DB-backfilled path and the
+max series[-1]["date"] across all signals for the live path).
+
+Back-compat: step(raw) without reading_id falls through to the
+T165 behaviour (every call counts). classify(signals) — also
+T165-compat (single source-data → single call → one count).
 """
 from __future__ import annotations
 
@@ -82,6 +103,10 @@ class HysteresisWrapper:
         self._current: Optional[RegimeResult] = None
         self._pending_label: Optional[str] = None
         self._pending_count: int = 0
+        # Task 166: gate state-machine advancement on the caller-supplied
+        # reading_id changing. None until first reading-id call; once
+        # set, only calls with a DIFFERENT reading_id mutate state.
+        self._last_reading_id: Any = None
 
     @property
     def current(self) -> Optional[RegimeResult]:
@@ -93,6 +118,7 @@ class HysteresisWrapper:
         self._current = None
         self._pending_label = None
         self._pending_count = 0
+        self._last_reading_id = None
 
     def _required_confirmations(self, pending: RegimeResult, current: RegimeResult) -> int:
         """Pick N based on the multiplier-direction of the pending flip.
@@ -114,7 +140,7 @@ class HysteresisWrapper:
         raw = self._classifier.classify(signals)
         return self.step(raw)
 
-    def step(self, raw: RegimeResult) -> RegimeResult:
+    def step(self, raw: RegimeResult, reading_id: Any = None) -> RegimeResult:
         """Apply hysteresis to a pre-computed result.
 
         Task 165: separate entry point for callers that already have a
@@ -123,7 +149,31 @@ class HysteresisWrapper:
         classify_regime() call, then funnels both through hysteresis).
         Uses the same state machine as classify(); the only difference
         is no inner classifier invocation.
+
+        Task 166: optional `reading_id` switches the counting unit
+        from "every call" to "every distinct source reading". When
+        reading_id is supplied AND matches the last accepted call's
+        reading_id, the state machine no-ops and returns the held
+        current — intra-reading re-ticks must not advance confirmations.
+        When reading_id differs (or is None — back-compat), the state
+        machine runs as before. reading_id can be any hashable;
+        compute_current_regime uses the latest signal date.
         """
+        # T166 reading-id gate. None preserves T165 behaviour.
+        if reading_id is not None and reading_id == self._last_reading_id:
+            # Same source reading as last accepted call — no state
+            # change. Return held current (or raw if first call hasn't
+            # seeded current yet; the only way we hit that is if the
+            # caller passes a reading_id BEFORE the wrapper sees any
+            # data, which they shouldn't, but handle defensively).
+            return self._current if self._current is not None else raw
+        # Accept this reading as the new "last" — even if state machine
+        # below results in a hold (raw differs from current but pending
+        # count not yet at N), we've consumed this reading toward the
+        # pending-counter, so subsequent same-id calls must no-op.
+        if reading_id is not None:
+            self._last_reading_id = reading_id
+
         if self._current is None:
             # First reading — commit immediately.
             self._current = raw

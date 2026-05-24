@@ -330,10 +330,18 @@ async def compute_current_regime():
     recent_db = await db.get_latest_regime_label()
     cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
 
+    # Task 166: derive a reading_id naming "the source data this tick
+    # observed". The hysteresis wrapper uses this to count distinct
+    # readings instead of distinct ticks (compute_current_regime fires
+    # every 10 min; underlying signals are daily/8h — intra-day re-ticks
+    # must not advance the confirmation counter against the same data).
+    reading_id: Optional[str] = None
     if recent_db and recent_db["date"] >= cutoff:
         raw_label = recent_db["label"]
         signals = recent_db.get("signals", {})
         mode    = recent_db.get("mode", "full")
+        # DB path: the backfilled label's own date is the reading.
+        reading_id = f"db:{recent_db['date']}"
         log.info(
             "compute_current_regime: using DB label '%s' from %s",
             raw_label, recent_db["date"],
@@ -346,13 +354,25 @@ async def compute_current_regime():
         signal_data = await db.get_regime_signals(ALL_SIGNALS, lookback, today)
 
         signals: Dict[str, Optional[float]] = {}
+        latest_dates = []
         for sig_name, series in signal_data.items():
             if series:
                 signals[sig_name] = series[-1]["value"]
+                latest_dates.append(series[-1]["date"])
 
         has_crypto = "agg_oi_change" in signals or "avg_funding" in signals
         mode  = "full" if has_crypto else "macro_only"
         raw_label = classify_regime(signals, mode=mode)
+        # Live path: the max date across all signals' latest readings
+        # is the reading_id. Different signals refresh at different
+        # cadences (daily VIX/FRED, 8h funding) — max-date advances
+        # whenever ANY signal advances. A funding-only refresh that
+        # doesn't move the macro screen typically produces the same
+        # raw_label, which falls into the wrapper's "re-confirmation
+        # of current" branch and is no-op for pending — so faster
+        # advance-rate from intraday refreshes doesn't undermine the
+        # daily flap-suppression goal.
+        reading_id = f"live:{max(latest_dates)}" if latest_dates else None
 
         log.info(
             "compute_current_regime: live classification → '%s' (signals: %s)",
@@ -366,8 +386,13 @@ async def compute_current_regime():
     # — using step() (not classify()) lets the wrapper consume an
     # already-built RegimeResult uniformly, without a second
     # classifier invocation on the live-fallback path.
+    # Task 166: pass reading_id so the wrapper counts distinct readings,
+    # not distinct ticks.
     raw_multiplier = config.REGIME_MULTIPLIERS.get(raw_label, 1.0)
-    held = _LIVE_HYSTERESIS.step(RegimeResult(label=raw_label, multiplier=raw_multiplier))
+    held = _LIVE_HYSTERESIS.step(
+        RegimeResult(label=raw_label, multiplier=raw_multiplier),
+        reading_id=reading_id,
+    )
     label = held.label
     multiplier = held.multiplier
     if label != raw_label:
