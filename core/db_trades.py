@@ -113,16 +113,6 @@ class TradesMixin:
             apply_val = 0
         else:
             apply_val = None
-        # Task 165 (T157 follow-up): persist `regime_stale` so
-        # forward-analytics never has to re-derive staleness from a
-        # now-mutable config (REGIME_STALE_MINUTES). NULL = pre-T165 row.
-        stale_flag = row.get("regime_stale")
-        if stale_flag is True:
-            stale_val: int | None = 1
-        elif stale_flag is False:
-            stale_val = 0
-        else:
-            stale_val = None
         try:
             await self._conn.execute(
                 """INSERT INTO pre_trade_log (
@@ -132,8 +122,7 @@ class TradesMixin:
                     est_slippage, effective_entry, size, notional,
                     est_profit, est_loss, est_r, est_exposure, eligible, calc_id,
                     link_window_seconds_override,
-                    regime_label, regime_multiplier, regime_mode, apply_regime_multiplier,
-                    regime_stale
+                    regime_label, regime_multiplier, regime_mode, apply_regime_multiplier
                 ) VALUES (
                     :account_id, :timestamp, :ticker, :average, :side, :one_percent_depth, :individual_risk,
                     :tp_price, :tp_amount_pct, :tp_usdt, :sl_price, :sl_amount_pct, :sl_usdt,
@@ -141,8 +130,7 @@ class TradesMixin:
                     :est_slippage, :effective_entry, :size, :notional,
                     :est_profit, :est_loss, :est_r, :est_exposure, :eligible, :calc_id,
                     :link_window_seconds_override,
-                    :regime_label, :regime_multiplier, :regime_mode, :apply_regime_multiplier,
-                    :regime_stale
+                    :regime_label, :regime_multiplier, :regime_mode, :apply_regime_multiplier
                 )""",
                 {
                     "account_id":        row.get("account_id", 1),
@@ -185,9 +173,6 @@ class TradesMixin:
                     "regime_multiplier":         row.get("regime_multiplier"),
                     "regime_mode":               row.get("regime_mode"),
                     "apply_regime_multiplier":   apply_val,
-                    # Task 165: persist the engine's "was the macro
-                    # read fresh?" judgement at plan time.
-                    "regime_stale":              stale_val,
                 },
             )
             await self._conn.commit()

@@ -111,11 +111,7 @@ CREATE TABLE IF NOT EXISTS pre_trade_log (
     regime_label             TEXT,
     regime_multiplier        REAL,
     regime_mode              TEXT,
-    apply_regime_multiplier  INTEGER,
-    -- Task 165: persist the engine's freshness judgement at plan time
-    -- so forward analytics doesn't have to re-derive against the
-    -- now-mutable REGIME_STALE_MINUTES config. NULL = pre-T165 row.
-    regime_stale             INTEGER
+    apply_regime_multiplier  INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_pretrade_ts     ON pre_trade_log (timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_pretrade_ticker ON pre_trade_log (ticker);
@@ -627,10 +623,6 @@ class DatabaseManager(
             "ALTER TABLE pre_trade_log ADD COLUMN regime_multiplier REAL",
             "ALTER TABLE pre_trade_log ADD COLUMN regime_mode TEXT",
             "ALTER TABLE pre_trade_log ADD COLUMN apply_regime_multiplier INTEGER",
-            # Task 165: persist the engine's regime-freshness judgement
-            # at plan time. NULL on pre-T165 rows. Standalone migration
-            # 013_v2_5_pretrade_regime_stale.sql covers split-DB setups.
-            "ALTER TABLE pre_trade_log ADD COLUMN regime_stale INTEGER",
         ]:
             try:
                 await self._conn.execute(migration)

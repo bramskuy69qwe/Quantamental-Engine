@@ -16,62 +16,25 @@ Two modes:
 
 The classifier auto-detects mode when not specified.
 
-Task 163 (regime build 1a):
-  Cascade rules migrated to a JSON rule set (core/regime/v1_rules.json)
-  consumed by a JsonRuleClassifier (core/regime/json_interpreter.py).
-  classify_regime() now delegates to the interpreter for label
-  selection. compute_current_regime + classify_range share that
-  single source of truth — the T156-caveat-d divergence between the
-  fallback path and the persisted-label path is closed.
-  The original cascade is preserved here as `_legacy_classify_regime`
-  for parity testing only; do not call from production paths.
+Task 170 rewind:
+  Restored to the pre-T163 hand-rolled cascade. The T163 JSON-interpreter
+  + HysteresisWrapper infrastructure was rolled back (see
+  v2.5_regime-plan.md re-sync + T170 commit message). The regime
+  direction will be rebuilt AFTER calc_linkage closes the foundational
+  calc_id → closed_positions gap that left T167's forward two-track
+  accumulating nothing.
 """
 from __future__ import annotations
 
-import json
 import logging
-import math
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import config
 from core.database import db
-from core.regime import JsonRuleClassifier, HysteresisWrapper, RegimeResult
 from core.state import RegimeState
 
 log = logging.getLogger("regime_classifier")
-
-# Stage A v1 rule set, loaded once at module import.
-_V1_RULES_PATH = Path(__file__).parent / "regime" / "v1_rules.json"
-_V1_CLASSIFIER = JsonRuleClassifier.from_file(_V1_RULES_PATH)
-
-# Task 165 (regime 1b): the live path goes through asymmetric hysteresis
-# so single-tick flaps near regime borders don't whip the multiplier
-# applied to live sizing. Module-level singleton so state persists
-# across the periodic compute_current_regime ticks (typically once per
-# 10 min — without persistence each call would be the "first reading"
-# and hysteresis would never engage).
-#
-# classify_range deliberately does NOT use this — it replays history
-# tick-by-tick, and applying a stateful wrapper would corrupt the
-# rule-based golden-master used by backtests. classify_regime() also
-# stays raw for the same reason (tests + callers that want a pure
-# label-from-signals function).
-_LIVE_HYSTERESIS = HysteresisWrapper(
-    _V1_CLASSIFIER,
-    confirmations_derisk=config.REGIME_CONFIRMATIONS_DERISK,
-    confirmations_rerisk=config.REGIME_CONFIRMATIONS_RERISK,
-)
-
-
-def _reset_live_hysteresis_for_tests() -> None:
-    """Test-only: clear the module-singleton hysteresis state.
-
-    Production callers should never reset this — state persistence
-    across compute_current_regime ticks is the entire point.
-    """
-    _LIVE_HYSTERESIS.reset()
 
 REGIMES = [
     "risk_on_trending",
@@ -98,48 +61,14 @@ def classify_regime(
     mode: str = "auto",
     thresholds: Optional[Dict[str, float]] = None,
 ) -> str:
-    """
-    Classify the current macro regime from signal values.
+    """Classify the current macro regime from signal values.
 
     signals: {"vix_close": 15.2, "us10y_yield": 4.3, ...}
-    mode: "full", "macro_only", or "auto" (auto-detect based on available signals)
-    thresholds: ignored (kept for backward-compat; v1 rules embed values).
+    mode: "full", "macro_only", or "auto" (auto-detect based on
+          available signals).
+    thresholds: defaults to config.REGIME_THRESHOLDS.
 
     Returns one of the 5 regime labels.
-
-    Task 163: delegates to JsonRuleClassifier via the v1 rule set. The
-    `mode` is injected into the signal dict before classify() so the
-    JSON's mode-conditional rules can fire. `thresholds` arg is now a
-    no-op (parameterised thresholds were never used by callers; the v1
-    rule set hard-codes the same values config.REGIME_THRESHOLDS had).
-    """
-    if thresholds is not None:
-        log.debug(
-            "classify_regime: `thresholds` arg ignored post-T163 — "
-            "values are baked into core/regime/v1_rules.json. Update "
-            "the rule set if you need different thresholds."
-        )
-    # Mode auto-detect (preserved from legacy cascade)
-    if mode == "auto":
-        oi_change = signals.get("agg_oi_change")
-        funding = signals.get("avg_funding")
-        mode = "full" if (oi_change is not None or funding is not None) else "macro_only"
-    # Inject mode as a synthesised signal for the JSON `mode == ...` rules.
-    enriched = {**signals, "mode": mode}
-    return _V1_CLASSIFIER.classify(enriched).label
-
-
-def _legacy_classify_regime(
-    signals: Dict[str, Optional[float]],
-    mode: str = "auto",
-    thresholds: Optional[Dict[str, float]] = None,
-) -> str:
-    """LEGACY hand-rolled cascade — preserved post-T163 for parity
-    testing only. Do not call from production paths.
-
-    Returns one of the 5 regime labels using the pre-T163 if/else chain.
-    Behavior is identical to the original `classify_regime` so the
-    parity golden-master can compare label outputs grid-by-grid.
     """
     t = thresholds or config.REGIME_THRESHOLDS
 
@@ -147,7 +76,6 @@ def _legacy_classify_regime(
     hy = signals.get("hy_spread")
     rvol = signals.get("btc_rvol_ratio")
 
-    # Crypto-native signals (full mode)
     oi_change = signals.get("agg_oi_change")
     funding = signals.get("avg_funding")
 
@@ -209,12 +137,9 @@ async def classify_range(
     thresholds: Optional[Dict[str, float]] = None,
     progress_cb=None,
 ) -> int:
+    """Bulk-classify a date range using stored regime_signals data.
+    Writes results to regime_labels table. Returns count of labels written.
     """
-    Bulk-classify a date range using stored regime_signals data.
-    Writes results to regime_labels table.
-    Returns count of labels written.
-    """
-    # When no date range specified, classify all available data
     if not from_date:
         from_date = "1970-01-01"
     if not to_date:
@@ -226,19 +151,16 @@ async def classify_range(
         log.warning("No regime signals found for %s to %s", from_date, to_date)
         return 0
 
-    # Build a date → {signal: value} lookup
     all_dates = set()
     for series in signal_data.values():
         for entry in series:
             all_dates.add(entry["date"])
 
-    # Sort dates
     sorted_dates = sorted(d for d in all_dates if d >= from_date and d <= to_date)
 
     if not sorted_dates:
         return 0
 
-    # For each date, look up signal values (use most recent available value)
     labels: List[Dict[str, Any]] = []
     total = len(sorted_dates)
 
@@ -268,7 +190,6 @@ async def classify_range(
             except Exception:
                 pass
 
-    # Write to DB
     count = await db.upsert_regime_labels(labels)
     log.info("Classified %d dates (%s to %s)", count, from_date, to_date)
 
@@ -300,7 +221,7 @@ async def _compute_stability(label: str) -> Tuple[int, str]:
     """Count consecutive recent days with the same label in the DB."""
     recent = await db.get_recent_regime_labels(30)
     count = 0
-    for entry in recent:          # already sorted DESC
+    for entry in recent:
         if entry["label"] == label:
             count += 1
         else:
@@ -315,93 +236,45 @@ async def _compute_stability(label: str) -> Tuple[int, str]:
 
 
 async def compute_current_regime():
-    """
-    Return the current regime, preferring the most recent backfilled label.
+    """Return the current regime, preferring the most recent backfilled label.
 
     Priority:
       1. Most recent regime_labels entry (written by backfill with full signal data)
          — used when that entry is within the last 7 days.
       2. Live classification from regime_signals table (fallback when no recent label).
-
-    This ensures the calculator badge always agrees with the timeline chart, both
-    of which are ultimately sourced from regime_labels when a backfill has run.
     """
-    # ── 1. Try the backfilled regime_labels table first ──────────────────────
     recent_db = await db.get_latest_regime_label()
     cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
 
-    # Task 166: derive a reading_id naming "the source data this tick
-    # observed". The hysteresis wrapper uses this to count distinct
-    # readings instead of distinct ticks (compute_current_regime fires
-    # every 10 min; underlying signals are daily/8h — intra-day re-ticks
-    # must not advance the confirmation counter against the same data).
-    reading_id: Optional[str] = None
     if recent_db and recent_db["date"] >= cutoff:
-        raw_label = recent_db["label"]
+        label   = recent_db["label"]
         signals = recent_db.get("signals", {})
         mode    = recent_db.get("mode", "full")
-        # DB path: the backfilled label's own date is the reading.
-        reading_id = f"db:{recent_db['date']}"
         log.info(
             "compute_current_regime: using DB label '%s' from %s",
-            raw_label, recent_db["date"],
+            label, recent_db["date"],
         )
     else:
-        # ── 2. Fall back to live classification from regime_signals ──────────
         today    = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         lookback = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%d")
 
         signal_data = await db.get_regime_signals(ALL_SIGNALS, lookback, today)
 
         signals: Dict[str, Optional[float]] = {}
-        latest_dates = []
         for sig_name, series in signal_data.items():
             if series:
                 signals[sig_name] = series[-1]["value"]
-                latest_dates.append(series[-1]["date"])
 
         has_crypto = "agg_oi_change" in signals or "avg_funding" in signals
         mode  = "full" if has_crypto else "macro_only"
-        raw_label = classify_regime(signals, mode=mode)
-        # Live path: the max date across all signals' latest readings
-        # is the reading_id. Different signals refresh at different
-        # cadences (daily VIX/FRED, 8h funding) — max-date advances
-        # whenever ANY signal advances. A funding-only refresh that
-        # doesn't move the macro screen typically produces the same
-        # raw_label, which falls into the wrapper's "re-confirmation
-        # of current" branch and is no-op for pending — so faster
-        # advance-rate from intraday refreshes doesn't undermine the
-        # daily flap-suppression goal.
-        reading_id = f"live:{max(latest_dates)}" if latest_dates else None
+        label = classify_regime(signals, mode=mode)
 
         log.info(
             "compute_current_regime: live classification → '%s' (signals: %s)",
-            raw_label, list(signals.keys()),
+            label, list(signals.keys()),
         )
 
-    # Task 165 (regime 1b): route through the live-path hysteresis
-    # wrapper so single-tick flaps at regime borders don't whip the
-    # multiplier applied to live sizing. Both source paths above (DB
-    # backfill + live classifier) feed in via HysteresisWrapper.step()
-    # — using step() (not classify()) lets the wrapper consume an
-    # already-built RegimeResult uniformly, without a second
-    # classifier invocation on the live-fallback path.
-    # Task 166: pass reading_id so the wrapper counts distinct readings,
-    # not distinct ticks.
-    raw_multiplier = config.REGIME_MULTIPLIERS.get(raw_label, 1.0)
-    held = _LIVE_HYSTERESIS.step(
-        RegimeResult(label=raw_label, multiplier=raw_multiplier),
-        reading_id=reading_id,
-    )
-    label = held.label
-    multiplier = held.multiplier
-    if label != raw_label:
-        log.info(
-            "compute_current_regime T165 hysteresis: raw=%s x%.2f held=%s x%.2f "
-            "(awaiting confirmations toward flip)",
-            raw_label, raw_multiplier, label, multiplier,
-        )
-
+    multiplier = config.REGIME_MULTIPLIERS.get(label, 1.0)
     stability_bars, confidence = await _compute_stability(label)
 
     return RegimeState(
@@ -413,5 +286,3 @@ async def compute_current_regime():
         mode=mode,
         signals={k: float(v) for k, v in signals.items() if v is not None},
     )
-
-

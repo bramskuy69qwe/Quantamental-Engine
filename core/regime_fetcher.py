@@ -85,21 +85,6 @@ class RegimeFetcher:
                     v = float(val)
                     if math.isnan(v):
                         continue
-                    # Task 164: missing-not-zero discipline. Real-world
-                    # VIX is bounded above 0 (historical low ~9). A 0
-                    # or negative value indicates broken upstream data;
-                    # storing it would satisfy the JSON rules' risk-on
-                    # gate `vix_close < 20` → size-UP on garbage. Treat
-                    # as missing instead. Conservative-direction
-                    # filtering at the source.
-                    if v <= 0:
-                        log.warning(
-                            "VIX: skipping implausible value %r at %s "
-                            "(real-world VIX is always > 0; treating as "
-                            "missing per T164 missing-not-zero discipline)",
-                            v, date_idx,
-                        )
-                        continue
                     date_str = (
                         date_idx.strftime("%Y-%m-%d")
                         if hasattr(date_idx, "strftime")
@@ -198,15 +183,6 @@ class RegimeFetcher:
                 series_id, type(observations).__name__,
             )
             return 0
-        # Task 164: signal-name-conditional value floor. For hy_spread,
-        # any value <= 0 is implausible (it's a credit spread, always
-        # positive in real markets) AND dangerous-direction (the JSON
-        # rules' `hy_spread < 3.5` gate would treat 0 as "perfect
-        # credit" → unlock risk-on). Filter at source to honor the
-        # missing-not-zero discipline. us10y_yield isn't in v1 rules,
-        # and a 0-yield is theoretically possible in a zero-rate regime,
-        # so don't filter there.
-        require_positive = signal_name in ("hy_spread", "btc_rvol_ratio")
         rows = []
         for obs in observations:
             val_str = obs.get("value", ".")
@@ -214,14 +190,6 @@ class RegimeFetcher:
                 continue
             try:
                 v = round(float(val_str), 4)
-                if require_positive and v <= 0:
-                    log.warning(
-                        "FRED %s: skipping implausible value %r at %s "
-                        "(real-world %s is always > 0; treating as "
-                        "missing per T164 missing-not-zero discipline)",
-                        series_id, v, obs.get("date"), signal_name,
-                    )
-                    continue
                 rows.append({"date": obs["date"], "value": v})
             except (ValueError, KeyError):
                 continue
@@ -309,20 +277,7 @@ class RegimeFetcher:
 
             if vol_7d > 0:
                 ratio = round(vol_30d / vol_7d, 4)
-                # Task 164: missing-not-zero discipline. A 0 (or negative
-                # — impossible from `_std`) ratio would satisfy the JSON
-                # rules' `btc_rvol_ratio < 1.2` risk-on gate. Real-world
-                # ratio is always > 0; a 0 would mean 30d vol is 0,
-                # which is only achievable with 30 days of identical
-                # closes — implausible. Treat as missing.
-                if ratio > 0:
-                    rows.append({"date": date_str, "value": ratio})
-                else:
-                    log.warning(
-                        "btc_rvol_ratio: skipping implausible ratio %r "
-                        "at %s (30d/7d) — treating as missing per T164",
-                        ratio, date_str,
-                    )
+                rows.append({"date": date_str, "value": ratio})
 
         if not rows:
             await _progress(progress_cb, 100, "BTC rvol: no values computed")
