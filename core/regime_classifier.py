@@ -46,6 +46,33 @@ log = logging.getLogger("regime_classifier")
 _V1_RULES_PATH = Path(__file__).parent / "regime" / "v1_rules.json"
 _V1_CLASSIFIER = JsonRuleClassifier.from_file(_V1_RULES_PATH)
 
+# Task 165 (regime 1b): the live path goes through asymmetric hysteresis
+# so single-tick flaps near regime borders don't whip the multiplier
+# applied to live sizing. Module-level singleton so state persists
+# across the periodic compute_current_regime ticks (typically once per
+# 10 min — without persistence each call would be the "first reading"
+# and hysteresis would never engage).
+#
+# classify_range deliberately does NOT use this — it replays history
+# tick-by-tick, and applying a stateful wrapper would corrupt the
+# rule-based golden-master used by backtests. classify_regime() also
+# stays raw for the same reason (tests + callers that want a pure
+# label-from-signals function).
+_LIVE_HYSTERESIS = HysteresisWrapper(
+    _V1_CLASSIFIER,
+    confirmations_derisk=config.REGIME_CONFIRMATIONS_DERISK,
+    confirmations_rerisk=config.REGIME_CONFIRMATIONS_RERISK,
+)
+
+
+def _reset_live_hysteresis_for_tests() -> None:
+    """Test-only: clear the module-singleton hysteresis state.
+
+    Production callers should never reset this — state persistence
+    across compute_current_regime ticks is the entire point.
+    """
+    _LIVE_HYSTERESIS.reset()
+
 REGIMES = [
     "risk_on_trending",
     "risk_on_choppy",
@@ -304,12 +331,12 @@ async def compute_current_regime():
     cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
 
     if recent_db and recent_db["date"] >= cutoff:
-        label   = recent_db["label"]
+        raw_label = recent_db["label"]
         signals = recent_db.get("signals", {})
         mode    = recent_db.get("mode", "full")
         log.info(
             "compute_current_regime: using DB label '%s' from %s",
-            label, recent_db["date"],
+            raw_label, recent_db["date"],
         )
     else:
         # ── 2. Fall back to live classification from regime_signals ──────────
@@ -325,14 +352,31 @@ async def compute_current_regime():
 
         has_crypto = "agg_oi_change" in signals or "avg_funding" in signals
         mode  = "full" if has_crypto else "macro_only"
-        label = classify_regime(signals, mode=mode)
+        raw_label = classify_regime(signals, mode=mode)
 
         log.info(
             "compute_current_regime: live classification → '%s' (signals: %s)",
-            label, list(signals.keys()),
+            raw_label, list(signals.keys()),
         )
 
-    multiplier = config.REGIME_MULTIPLIERS.get(label, 1.0)
+    # Task 165 (regime 1b): route through the live-path hysteresis
+    # wrapper so single-tick flaps at regime borders don't whip the
+    # multiplier applied to live sizing. Both source paths above (DB
+    # backfill + live classifier) feed in via HysteresisWrapper.step()
+    # — using step() (not classify()) lets the wrapper consume an
+    # already-built RegimeResult uniformly, without a second
+    # classifier invocation on the live-fallback path.
+    raw_multiplier = config.REGIME_MULTIPLIERS.get(raw_label, 1.0)
+    held = _LIVE_HYSTERESIS.step(RegimeResult(label=raw_label, multiplier=raw_multiplier))
+    label = held.label
+    multiplier = held.multiplier
+    if label != raw_label:
+        log.info(
+            "compute_current_regime T165 hysteresis: raw=%s x%.2f held=%s x%.2f "
+            "(awaiting confirmations toward flip)",
+            raw_label, raw_multiplier, label, multiplier,
+        )
+
     stability_bars, confidence = await _compute_stability(label)
 
     return RegimeState(
@@ -344,3 +388,5 @@ async def compute_current_regime():
         mode=mode,
         signals={k: float(v) for k, v in signals.items() if v is not None},
     )
+
+

@@ -266,6 +266,12 @@ class AppState:
 
         # Mark price cache keyed by symbol
         self.mark_price_cache: Dict[str, float] = {}
+        # Task 165 (MED-017): parallel monotonic-time stamps for the
+        # mark-price reads above. Reader sites that care about freshness
+        # (risk_engine at calc time) consult this to surface a stale-mark
+        # flag without blocking sizing. Kept separate from the price
+        # dict so the high-frequency price readers stay simple/typed.
+        self.mark_price_timestamps: Dict[str, float] = {}
 
         # Loaded params (persisted to disk)
         self.params: Dict[str, Any] = DEFAULT_PARAMS.copy()
@@ -338,6 +344,7 @@ class AppState:
         self.ohlcv_cache          = {}
         self.orderbook_cache      = {}
         self.mark_price_cache     = {}
+        self.mark_price_timestamps = {}
         self.dd_episode_peaks     = {}
         self.dd_previous_states   = {}
         self.dd_would_have_blocked_logged = set()

@@ -174,6 +174,23 @@ PLATFORM_TOKEN = os.getenv("PLATFORM_TOKEN", "")
 
 REGIME_STALE_MINUTES = 90   # current_regime older than this is treated as stale
 
+# Task 165 (regime 1b): asymmetric, multiplier-keyed hysteresis.
+# De-risk fast (one confirmation flips a transition to a lower
+# multiplier — capital protection takes priority). Re-risk slow
+# (two confirmations required to lift exposure — don't chase a
+# single benign tick). Equal-multiplier label flips bypass
+# hysteresis entirely (no sizing delta to suppress).
+REGIME_CONFIRMATIONS_DERISK = 1
+REGIME_CONFIRMATIONS_RERISK = 2
+
+# Task 165 (MED-017): mark-price freshness. If the latest WS mark
+# price for a symbol is older than this at calc time, the
+# `mark_price_stale` flag fires on the calc result and the
+# operator sees a warning. NOT a hard block — equity may still
+# be sized off the stale mark — but the surface exists so the
+# operator can investigate or pause manually.
+MARK_PRICE_STALE_SECONDS = 30
+
 REGIME_MULTIPLIERS = {
     "risk_on_trending":   1.2,
     "risk_on_choppy":     1.0,

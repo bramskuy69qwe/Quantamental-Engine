@@ -740,8 +740,14 @@ class DataCache:
         """Update mark price, recalculate PnL for matching positions,
         update account aggregates, and recalculate portfolio."""
         from core.state import app_state
+        import time as _time
 
         app_state.mark_price_cache[symbol] = mark
+        # Task 165 (MED-017): timestamp the update so risk_engine can
+        # surface a stale-mark flag at calc time if the WS feed has
+        # gone quiet beyond MARK_PRICE_STALE_SECONDS. monotonic so
+        # wall-clock drift can't fake freshness.
+        app_state.mark_price_timestamps[symbol] = _time.monotonic()
 
         for pos in self._positions:
             if pos.ticker != symbol:
@@ -822,6 +828,7 @@ class DataCache:
         for sym in list(app_state.mark_price_cache.keys()):
             if sym not in active_tickers:
                 del app_state.mark_price_cache[sym]
+                app_state.mark_price_timestamps.pop(sym, None)
 
     # ── Utilities ────────────────────────────────────────────────────────────
 

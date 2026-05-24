@@ -407,6 +407,33 @@ def run_risk_calculator(
     elif not app_state.ws_status.is_stale:
         equity_stale = False  # no data_cache yet but WS is alive
 
+    # Task 165 (MED-017): surface mark-price staleness at calc time.
+    # The base size scales with total_equity, which in turn depends on
+    # per-position mark prices (data_cache.apply_mark_price recomputes
+    # acc.total_unrealized → equity). If the WS feed for `ticker` has
+    # gone quiet beyond MARK_PRICE_STALE_SECONDS, the equity number
+    # the calc is sizing off may be silently outdated. Not a hard
+    # block — the operator may still want to size a manually-priced
+    # entry — but the flag fires on the calc result so the surface
+    # exists. A missing timestamp (symbol never received a mark) is
+    # treated as stale: we have nothing to claim freshness from.
+    mark_ts = app_state.mark_price_timestamps.get(ticker)
+    if mark_ts is None:
+        mark_price_stale = True
+        mark_price_age = None
+    else:
+        mark_price_age = time.monotonic() - mark_ts
+        mark_price_stale = mark_price_age > config.MARK_PRICE_STALE_SECONDS
+    if mark_price_stale:
+        log.warning(
+            "risk_engine MED-017: mark-price stale for %s (age=%s s, "
+            "threshold=%s s) — base_size derived from possibly outdated "
+            "equity; calc proceeds with stale flag set",
+            ticker,
+            f"{mark_price_age:.1f}" if mark_price_age is not None else "never-received",
+            config.MARK_PRICE_STALE_SECONDS,
+        )
+
     side   = "short" if sl_price > average else "long"
     sizing = calculate_position_size(ticker, average, sl_price, total_equity, side)
 
@@ -656,6 +683,14 @@ def run_risk_calculator(
         # Task 157: persisted by insert_pre_trade_log so the forward
         # two-track's "actual" arm can replay decisions at full fidelity.
         "regime_mode":               regime_mode,
+        # Task 165 (MED-017): mark-price freshness at calc time.
+        # `mark_price_stale` is True if the WS-driven mark for `ticker`
+        # is older than MARK_PRICE_STALE_SECONDS (or has never been
+        # received). `mark_price_age` is the actual age in seconds, or
+        # None if no mark was ever received. Not a hard-block — just
+        # a flag the operator + downstream analytics can act on.
+        "mark_price_stale":          mark_price_stale,
+        "mark_price_age":            mark_price_age,
         "size_raw":                  size_raw,       # contracts, without regime multiplier
         # Sizing chain
         "base_size":           base_size,           # USDT notional, pre-slippage
