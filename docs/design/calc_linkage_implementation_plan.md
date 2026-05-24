@@ -587,7 +587,220 @@ deviation badges and configurable windows with minimal blast radius.
 
 ---
 
-## 14. Deferred (post-implementation)
+## 14. Task breakdown (Claude Code sizing)
+
+Each "task" in this section is sized to be one Claude Code session
+(1-4 hours focused work, <30 min review, ideally one commit). The
+project's existing `task N: description` commit convention applies.
+
+### 14.1 Sizing principles
+
+| Dimension | Ideal | Tolerable | Too big — split |
+|---|---|---|---|
+| LOC change | 100–500 | 500–1500 | >2000 |
+| Files touched | 2–5 | 5–10 | >15 |
+| Test files added/modified | 1–2 | 2–4 | >5 |
+| Goal coherence | 1 outcome | 1 outcome with 2-3 sub-bullets | unclear / multi-goal |
+| Review burden | <30 min | 30-60 min | >1 hour |
+| Maps to commits | 1 | 1-2 | >2 (split) |
+
+**Sweeps** (e.g., `operator_id` propagation across many files) are a
+special case — single goal but many touch points. Treat as one task
+but expect higher review cost. Pre-grep all sites before starting.
+
+**Tests live in the same task as the code** — don't defer to a "tests
+for task N" follow-up. Merge.
+
+### 14.2 Recommended task count per phase
+
+| Phase | Sub-items listed | Recommended tasks | Rationale |
+|---|---|---|---|
+| 0 Foundation | 12 | **5** | Group by table family; schema bundles read better than micro-PRs |
+| 1 Matcher | 10 | **7** | Each state-machine transition is its own task with event emission |
+| 2 Junction attribution | 12 | **10** | Hottest-path phase; keep small for review safety |
+| 3 Link status + UI | 8 | **4** | UI naturally bundles: backend (1), endpoints (1), tab (1), badges (1) |
+| 4 Amendments + deviation | 6 | **5** | Each detection/computation/event surface = own task |
+| 5 Funding + fees | 7 | **5** | Per-adapter WS split (Binance + Bybit = 2 tasks) |
+| 6 Event bus enrichment | 8 | **6** | Topic wrapper, payload, each event family, drift inversion (isolated for revertability) |
+| 7 Reverse query + export | 7 | **6** | Per-endpoint task; PDF isolated from JSON |
+| 8 Operator UX | 9 | **8** | Each major UI surface is its own task |
+| 9 Multi-operator | 4 | **4** | Lock+takeover, operator_id sweep, timeout, UI |
+| **Total** | — | **~60 tasks** | ~6 weeks @ 2 tasks/day; ~12 weeks @ 1/day with review |
+
+### 14.3 Concrete task lists
+
+#### Phase 0 — Foundation (5 tasks)
+
+| # | Task | Scope |
+|---|---|---|
+| P0.T1 | New tables + indexes + CRUD helpers | `positions_calcs`, `order_amendments`, `funding_events`, `calc_match_audit` |
+| P0.T2 | New table + scaffold | `operator_sessions` table + `core/auth_state.py` (logic deferred to Phase 9) |
+| P0.T3 | Column additions to existing tables (part 1) | `pre_trade_log` (15 fields) + `accounts.config_json` |
+| P0.T4 | Column additions to existing tables (part 2) | `orders` (5 fields) + `closed_positions` (15+ fields) |
+| P0.T5 | Migration backfill script | Junction backfill from historical fills + `exit_reason` re-map |
+
+**Sequence**: T1-T4 loosely parallel (different tables); T5 depends on
+all schema in place.
+
+#### Phase 1 — Matcher tightening (7 tasks)
+
+| # | Task | Scope |
+|---|---|---|
+| P1.T1 | Strict matcher rewrite | 5/5 limit + 6/6 market; tolerance config; `calc_match_audit` row writes |
+| P1.T2 | Per-account window from `config_json` | Read window_seconds + clock_skew_tolerance; freeze on calc creation |
+| P1.T3 | Calc revision detection | Supersede prior calc + `calc:superseded` event |
+| P1.T4 | Calc cancel by operator | Endpoint + status transition + `calc:cancelled` event |
+| P1.T5 | Calc release on order cancel | Status back to `released` + replacement-modal scaffold |
+| P1.T6 | Calc auto-complete on position close | Transition + `calc:completed` event (may shift to Phase 2) |
+| P1.T7 | Nullable TP/SL handling | Auto-route to manual-link if TP or SL null |
+
+**Sequence**: T1 is the bottleneck; T2-T7 depend on T1 and can run
+loosely parallel after.
+
+#### Phase 2 — Junction attribution (10 tasks)
+
+| # | Task | Scope |
+|---|---|---|
+| P2.T1 | Opening-fill junction upsert | Single row per order, cumulative qty as fills arrive |
+| P2.T2 | Closing-fill calc_id stamping | Inherit from position's primary |
+| P2.T3 | `PositionInfo.calc_id` field + restart rehydrate | From junction on first fill + on restart |
+| P2.T4 | Scale-in junction-append | New calc → new junction row; per-calc planned values |
+| P2.T5 | Delta computation at close | All 8 delta columns on `closed_positions` |
+| P2.T6 | Primary calc_id + `exit_reason` classification | Most-contributing calc; planned-vs-amended detection |
+| P2.T7 | Bracket detection — Bybit adapter | `orderLinkId` + time-window fallback |
+| P2.T8 | Bracket detection — Binance adapter | `positionSide` clustering + fallback |
+| P2.T9 | Multi-TP partial-close lifecycle | `position:partial_close` events + final TP_LADDER_COMPLETE/MIXED |
+| P2.T10 | Restart rehydrate + reconciliation pass | Full rehydrate + venue REST diff |
+
+**Sequence**: Strict chain T1 → T2 → T3 → T4 → T5; T7+T8 parallel-safe;
+T10 needs T1-T9 done.
+
+#### Phase 3 — Link status + manual-link UI (4 tasks)
+
+| # | Task | Scope |
+|---|---|---|
+| P3.T1 | `link_status` auto-classification | LINKED / NEEDS_REVIEW / UNLINKED / UNPLANNED on order arrival |
+| P3.T2 | Endpoints | `manual_link`, `mark_unplanned`, `needs_review` listing |
+| P3.T3 | Needs-link tab UI | Template + JS + per-criterion diff panel (template wiring tests per CLAUDE.md) |
+| P3.T4 | Status badges + nav counter | History tab badges + nav badge count |
+
+#### Phase 4 — Amendments + deviation (5 tasks)
+
+| # | Task | Scope |
+|---|---|---|
+| P4.T1 | Amendment detection from WS | Compare incoming order_update; write `order_amendments` row |
+| P4.T2 | Deviation pct + amendment count rollup | `deviation_pct` per row; `cumulative_amendment_count` at close |
+| P4.T3 | Live deviation badge logic + frontend | Per-position live computation; yellow/red thresholds from config |
+| P4.T4 | `position:amended` event emission | On each amendment row insert |
+| P4.T5 | TP/SL drift columns at close | `tp_drift_pct`, `sl_drift_pct` from amendments vs first calc |
+
+#### Phase 5 — Funding + fees (5 tasks)
+
+| # | Task | Scope |
+|---|---|---|
+| P5.T1 | Funding WS subscription — Binance | Income stream handler in Binance adapter |
+| P5.T2 | Funding WS subscription — Bybit | Income stream handler in Bybit adapter |
+| P5.T3 | `funding_events` writer + dedup | Per-event writes; idempotent on `venue_event_id` |
+| P5.T4 | Funding aggregation + net_pnl recompute | At close: `funding_fees` = SUM; `net_pnl` includes funding |
+| P5.T5 | Live unrealized funding helper + UI | Sum for open position; surface in position detail |
+
+#### Phase 6 — Event bus enrichment (6 tasks)
+
+| # | Task | Scope |
+|---|---|---|
+| P6.T1 | Topic naming wrapper + per-account scoping | `engine:account:{id}:{domain}:{event}` |
+| P6.T2 | `position:closed` full payload expansion | Spec §9 shape; compat shim for old subscribers (emit both for 1 release) |
+| P6.T3 | All `calc:*` event emissions (sweep) | Verify Phase 1 sites emit; backfill any missed |
+| P6.T4 | All `position:*` event emissions (sweep) | Verify Phase 2 sites; add `position:opened`, `scale_in`, `liquidated` |
+| P6.T5 | `order:duplicate_detected` | Near-dup detection + event + UI badge |
+| P6.T6 | `position:size_drift` + snapshot-wins inversion | Invert WS-fills-win-within-5s; isolated for easy revert |
+
+#### Phase 7 — Reverse query + export (6 tasks)
+
+| # | Task | Scope |
+|---|---|---|
+| P7.T1 | `GET /context/calc/{id}` | Full graph payload assembly |
+| P7.T2 | `GET /context/position/{id}` | Position-keyed equivalent |
+| P7.T3 | Webhook dispatcher + retry + dead-letter | Per-account webhook URL from `config_json`; exponential backoff |
+| P7.T4 | Audit export — JSON only | `POST /export/closed_position/{id}` |
+| P7.T5 | PDF generation + signed timestamp | Add to audit export; reportlab or similar |
+| P7.T6 | Batch export endpoint | Date-range zipped bundle |
+
+#### Phase 8 — Operator UX (8 tasks)
+
+| # | Task | Scope |
+|---|---|---|
+| P8.T1 | Multi-pane dashboard layout | 4-pane CSS grid; state passing scaffold |
+| P8.T2 | Open positions pane | Deviation badges + uPnL refresh + MFE/MAE |
+| P8.T3 | Active calcs pane | Countdown timers JS using frozen ts |
+| P8.T4 | Calculator tab refresh | Window dropdown + planned/overridden inputs + multi-TP UI |
+| P8.T5 | Replacement modal | Pre-submission near-match prompt + flow integration |
+| P8.T6 | Manual-close reason modal | Opposite-side detection trigger + dropdown + note |
+| P8.T7 | Notification system | Toast + badge counters from `config_json` subscriptions |
+| P8.T8 | Settings page for `accounts.config_json` | All knobs editable; validation |
+
+**Sequence**: Largely independent (different templates); T2-T8 can fan
+out after T1.
+
+#### Phase 9 — Multi-operator (4 tasks)
+
+| # | Task | Scope |
+|---|---|---|
+| P9.T1 | `operator_sessions` lock + takeover endpoint + UI prompt | Read-only mode + takeover flow + audit row |
+| P9.T2 | `operator_id` propagation sweep | All action-row writes (calcs, orders, amendments, manual_links, close_reasons) — biggest sweep, pre-grep first |
+| P9.T3 | Session timeout + idle cleanup | Background job; configurable timeout |
+| P9.T4 | UI: read-only mode for non-active operator | Visual indication + disabled controls |
+
+### 14.4 Sequencing inside a phase
+
+Most phases have one strict-sequential bottleneck task and several
+parallel-safe tasks following:
+
+| Phase | Bottleneck | Parallel-safe after | Final-dependency |
+|---|---|---|---|
+| 0 | (none — all loosely parallel) | T1-T4 | T5 (needs all schema) |
+| 1 | T1 (matcher rewrite) | T2-T7 | — |
+| 2 | T1 → T2 → T3 → T4 → T5 (chain) | T7+T8 parallel | T10 (needs T1-T9) |
+| 3 | T1 (link_status logic) | T2 + T3 + T4 | — |
+| 4 | T1 (amendment detection) | T2-T5 | — |
+| 5 | T3 (writer) | T1+T2 (adapter subs) parallel; T4+T5 after T3 | — |
+| 6 | T1 (topic wrapper) | T2-T6 all independent after T1 | — |
+| 7 | (none — endpoints independent) | T1-T6 | T5 depends on T4 |
+| 8 | T1 (dashboard layout) | T2-T8 fan out | — |
+| 9 | T1 (lock) | T2 (sweep) needs T1; T3+T4 independent | — |
+
+### 14.5 Practical recommendations
+
+1. **Don't combine schema with behavior tasks** — Phase 0 ships
+   atomically; behavior lands in Phase 1+ referencing schema as
+   already-existing.
+2. **One commit per task** — matches the `task N: description`
+   convention visible in recent commits (`task 162`, `task 161`,
+   `task 160`).
+3. **Phase boundaries = smoke-test checkpoints** — at end of each
+   phase, run the user-visible smoke test for that phase's value (see
+   §13 Effort summary). If smoke fails, pause and fix before next
+   phase.
+4. **Largest single task is P9.T2** (`operator_id` propagation sweep).
+   Pre-grep all action-row write sites before starting; treat as
+   ~6-hour session with explicit audit checklist in the task report.
+5. **Smallest tasks are Phase 0** (~1-2 hours each). Good warm-ups;
+   cleanly verifiable.
+6. **Phase 8 tasks have highest UI test surface** — apply CLAUDE.md
+   template wiring discipline (compile-and-render tests, not just
+   source grep).
+7. **Phase 6 T6 (snapshot-wins inversion) is the riskiest single
+   change** — isolate in its own commit, deploy behind feature flag
+   if possible, monitor `position:size_drift` event rate post-deploy.
+8. **Feature-flag candidates** for incremental rollout per account:
+   - P3.T1-T4 (link_status UI)
+   - P6.T2 (full close payload)
+   - P7.T3 (webhook)
+   - P6.T6 (snapshot-wins inversion)
+
+---
+
+## 15. Deferred (post-implementation)
 
 - Engine-generated tag for deterministic linkage (gap #10 — explicitly
   out of scope per spec §13)
