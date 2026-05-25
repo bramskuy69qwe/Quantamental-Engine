@@ -1258,3 +1258,302 @@ class OrdersMixin:
                 result[f"{table}_count"] = (await cur.fetchone())[0]
 
         return result
+
+    # ── Phase 0 (P0.T1): calc-linkage CRUD helpers ─────────────────────
+    #
+    # CRUD for the four new tables introduced in P0.T1
+    # (positions_calcs, order_amendments, funding_events,
+    # calc_match_audit). Schema in core/database.py _CREATE_STATEMENTS
+    # under the "Phase 0 (P0.T1)" comment block; column reference in
+    # docs/design/calc_linkage_spec.md §3.1.
+    #
+    # No callers in production yet — wired by Phase 1+ (matcher),
+    # Phase 2 (junction attribution), Phase 4 (amendments), Phase 5
+    # (funding), and Phase 7 (reverse-query). Helpers ship in P0.T1
+    # so downstream phases can land thin behavior changes against an
+    # already-established API.
+
+    # ── positions_calcs ────────────────────────────────────────────────
+
+    async def upsert_position_calc_link(self, row: Dict[str, Any]) -> None:
+        """UPSERT a junction row for (position_id, calc_id, order_id).
+
+        Phase 2.1 calls this on every opening fill. Per-fill cumulative
+        ``contributed_qty`` is summed via the UPSERT (UNIQUE constraint
+        on the triple + ON CONFLICT DO UPDATE adds the new fill's qty
+        and refreshes last_fill_ts). ``first_fill_ts`` is preserved on
+        update via COALESCE-of-existing.
+        """
+        sql = """
+            INSERT INTO positions_calcs (
+                position_id, calc_id, order_id, account_id,
+                contributed_qty, first_fill_ts, last_fill_ts,
+                planned_size, size_delta_pct, planned_tp, planned_sl,
+                lifecycle_id
+            ) VALUES (
+                :position_id, :calc_id, :order_id, :account_id,
+                :contributed_qty, :first_fill_ts, :last_fill_ts,
+                :planned_size, :size_delta_pct, :planned_tp, :planned_sl,
+                :lifecycle_id
+            )
+            ON CONFLICT(position_id, calc_id, order_id) DO UPDATE SET
+                contributed_qty = positions_calcs.contributed_qty + excluded.contributed_qty,
+                last_fill_ts    = MAX(positions_calcs.last_fill_ts, excluded.last_fill_ts),
+                size_delta_pct  = excluded.size_delta_pct,
+                lifecycle_id    = COALESCE(positions_calcs.lifecycle_id, excluded.lifecycle_id)
+        """
+        try:
+            await self._conn.execute(sql, {
+                "position_id":     row.get("position_id"),
+                "calc_id":         row.get("calc_id", ""),
+                "order_id":        row.get("order_id"),
+                "account_id":      row.get("account_id", 1),
+                "contributed_qty": row.get("contributed_qty", 0),
+                "first_fill_ts":   row.get("first_fill_ts", 0),
+                "last_fill_ts":    row.get("last_fill_ts", 0),
+                "planned_size":    row.get("planned_size"),
+                "size_delta_pct":  row.get("size_delta_pct"),
+                "planned_tp":      row.get("planned_tp"),
+                "planned_sl":      row.get("planned_sl"),
+                "lifecycle_id":    row.get("lifecycle_id"),
+            })
+            await self._conn.commit()
+        except Exception:
+            log.exception("upsert_position_calc_link failed")
+
+    async def get_position_calc_links(self, position_id: int) -> List[Dict]:
+        """Return all junction rows for one position, ordered by first_fill_ts.
+
+        Phase 2.5/2.6 uses this to compute the most-contributing calc
+        for delta basis (spec §3.2) and to surface the per-calc
+        breakdown of a scale-in position.
+        """
+        async with self._conn.execute(
+            "SELECT * FROM positions_calcs WHERE position_id = ? "
+            "ORDER BY first_fill_ts ASC, id ASC",
+            (position_id,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+    async def get_calc_position_links(self, calc_id: str) -> List[Dict]:
+        """Return all junction rows for one calc. Used by reverse-query
+        (Phase 7.1 ``GET /context/calc/{id}``) to assemble the calc's
+        contribution history across positions."""
+        async with self._conn.execute(
+            "SELECT * FROM positions_calcs WHERE calc_id = ? "
+            "ORDER BY first_fill_ts ASC, id ASC",
+            (calc_id,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+    async def get_lifecycle_links(self, lifecycle_id: str) -> List[Dict]:
+        """Return all junction rows for one lifecycle. Backs the
+        single-key audit query (Phase 7.1 ``GET /context/lifecycle/{id}``)."""
+        if not lifecycle_id:
+            return []
+        async with self._conn.execute(
+            "SELECT * FROM positions_calcs WHERE lifecycle_id = ? "
+            "ORDER BY first_fill_ts ASC, id ASC",
+            (lifecycle_id,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+    # ── order_amendments ───────────────────────────────────────────────
+
+    async def insert_order_amendment(self, row: Dict[str, Any]) -> None:
+        """INSERT an immutable amendment audit row.
+
+        Phase 4.1 calls this from the WS handler on every detected
+        change to ``entry_price`` / ``tp_price`` / ``sl_price`` /
+        ``size`` / ``leverage``. No upsert — each amendment event is
+        its own row. ``deviation_pct`` is signed:
+        ``(new - old) / old * 100``.
+        """
+        sql = """
+            INSERT INTO order_amendments (
+                order_id, calc_id, field, old_value, new_value,
+                ts_ms, operator_id, deviation_pct, lifecycle_id
+            ) VALUES (
+                :order_id, :calc_id, :field, :old_value, :new_value,
+                :ts_ms, :operator_id, :deviation_pct, :lifecycle_id
+            )
+        """
+        try:
+            await self._conn.execute(sql, {
+                "order_id":      row.get("order_id"),
+                "calc_id":       row.get("calc_id"),
+                "field":         row.get("field", ""),
+                "old_value":     row.get("old_value"),
+                "new_value":     row.get("new_value"),
+                "ts_ms":         row.get("ts_ms", 0),
+                "operator_id":   row.get("operator_id"),
+                "deviation_pct": row.get("deviation_pct"),
+                "lifecycle_id":  row.get("lifecycle_id"),
+            })
+            await self._conn.commit()
+        except Exception:
+            log.exception("insert_order_amendment failed")
+
+    async def get_order_amendments(self, order_id: int) -> List[Dict]:
+        """Return all amendments for one order, oldest first."""
+        async with self._conn.execute(
+            "SELECT * FROM order_amendments WHERE order_id = ? "
+            "ORDER BY ts_ms ASC, id ASC",
+            (order_id,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+    async def get_calc_amendments(
+        self, calc_id: str, since_ms: Optional[int] = None,
+    ) -> List[Dict]:
+        """Return all amendments for one calc, oldest first.
+
+        ``since_ms`` filters to amendments after a timestamp (used by
+        Phase 4.3's live deviation badge to compute incremental drift
+        since the last refresh).
+        """
+        if since_ms is not None:
+            sql = ("SELECT * FROM order_amendments WHERE calc_id = ? "
+                   "AND ts_ms >= ? ORDER BY ts_ms ASC, id ASC")
+            params: Tuple[Any, ...] = (calc_id, since_ms)
+        else:
+            sql = ("SELECT * FROM order_amendments WHERE calc_id = ? "
+                   "ORDER BY ts_ms ASC, id ASC")
+            params = (calc_id,)
+        async with self._conn.execute(sql, params) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+    # ── funding_events ─────────────────────────────────────────────────
+
+    async def insert_funding_event(self, row: Dict[str, Any]) -> bool:
+        """INSERT a funding event with dedup on ``venue_event_id``.
+
+        Phase 5.2/5.3 calls this on every funding WS event for an
+        open position. Returns ``True`` if a new row was inserted,
+        ``False`` if the venue_event_id was already present (WS
+        replay scenario). Uses INSERT OR IGNORE — idempotent.
+        """
+        sql = """
+            INSERT OR IGNORE INTO funding_events (
+                position_id, calc_id, account_id, symbol,
+                amount, mark_price, funding_rate, ts_ms,
+                venue_event_id, lifecycle_id
+            ) VALUES (
+                :position_id, :calc_id, :account_id, :symbol,
+                :amount, :mark_price, :funding_rate, :ts_ms,
+                :venue_event_id, :lifecycle_id
+            )
+        """
+        try:
+            cur = await self._conn.execute(sql, {
+                "position_id":    row.get("position_id"),
+                "calc_id":        row.get("calc_id"),
+                "account_id":     row.get("account_id", 1),
+                "symbol":         row.get("symbol", ""),
+                "amount":         row.get("amount", 0),
+                "mark_price":     row.get("mark_price"),
+                "funding_rate":   row.get("funding_rate"),
+                "ts_ms":          row.get("ts_ms", 0),
+                "venue_event_id": row.get("venue_event_id", ""),
+                "lifecycle_id":   row.get("lifecycle_id"),
+            })
+            await self._conn.commit()
+            return (cur.rowcount or 0) > 0
+        except Exception:
+            log.exception("insert_funding_event failed")
+            return False
+
+    async def get_position_funding_events(self, position_id: int) -> List[Dict]:
+        """Return all funding events for one position, oldest first."""
+        async with self._conn.execute(
+            "SELECT * FROM funding_events WHERE position_id = ? "
+            "ORDER BY ts_ms ASC, id ASC",
+            (position_id,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+    async def sum_position_funding(self, position_id: int) -> float:
+        """Return SUM(amount) of funding events for one position.
+
+        Phase 5.4 uses this at position close to populate
+        ``closed_positions.funding_fees``. Phase 5.7's live unrealized
+        funding helper uses this on open positions.
+        """
+        async with self._conn.execute(
+            "SELECT COALESCE(SUM(amount), 0) FROM funding_events "
+            "WHERE position_id = ?",
+            (position_id,),
+        ) as cur:
+            row = await cur.fetchone()
+        return float(row[0]) if row and row[0] is not None else 0.0
+
+    # ── calc_match_audit ───────────────────────────────────────────────
+
+    async def insert_calc_match_audit_batch(
+        self, rows: List[Dict[str, Any]],
+    ) -> int:
+        """INSERT a batch of per-criterion audit rows in one transaction.
+
+        Phase 1.4 calls this per matcher decision with N rows (one per
+        criterion per candidate calc — typically 5/5 for limit, 6/6
+        for market across each candidate). Batched to amortize the
+        commit cost on hot-path matcher decisions. Returns the count
+        of rows inserted.
+        """
+        if not rows:
+            return 0
+        sql = """
+            INSERT INTO calc_match_audit (
+                order_id, calc_id, criterion, calc_value, order_value,
+                tolerance_used, matched, ts_ms, winning
+            ) VALUES (
+                :order_id, :calc_id, :criterion, :calc_value, :order_value,
+                :tolerance_used, :matched, :ts_ms, :winning
+            )
+        """
+        params = [{
+            "order_id":       r.get("order_id"),
+            "calc_id":        r.get("calc_id", ""),
+            "criterion":      r.get("criterion", ""),
+            "calc_value":     r.get("calc_value"),
+            "order_value":    r.get("order_value"),
+            "tolerance_used": r.get("tolerance_used"),
+            "matched":        int(bool(r.get("matched", 0))),
+            "ts_ms":          r.get("ts_ms", 0),
+            "winning":        int(bool(r.get("winning", 0))),
+        } for r in rows]
+        try:
+            await self._conn.executemany(sql, params)
+            await self._conn.commit()
+            return len(rows)
+        except Exception:
+            log.exception("insert_calc_match_audit_batch failed")
+            return 0
+
+    async def get_order_match_audit(self, order_id: int) -> List[Dict]:
+        """Return all per-criterion audit rows for one order.
+
+        Phase 3.5's needs-link diff panel reads this to render the
+        side-by-side per-criterion match/miss visualization.
+        """
+        async with self._conn.execute(
+            "SELECT * FROM calc_match_audit WHERE order_id = ? "
+            "ORDER BY calc_id ASC, criterion ASC, id ASC",
+            (order_id,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+    async def get_calc_match_audit(
+        self, calc_id: str, order_id: Optional[int] = None,
+    ) -> List[Dict]:
+        """Return audit rows for one calc, optionally filtered to one order."""
+        if order_id is not None:
+            sql = ("SELECT * FROM calc_match_audit WHERE calc_id = ? "
+                   "AND order_id = ? ORDER BY criterion ASC, id ASC")
+            params: Tuple[Any, ...] = (calc_id, order_id)
+        else:
+            sql = ("SELECT * FROM calc_match_audit WHERE calc_id = ? "
+                   "ORDER BY order_id ASC, criterion ASC, id ASC")
+            params = (calc_id,)
+        async with self._conn.execute(sql, params) as cur:
+            return [dict(r) for r in await cur.fetchall()]

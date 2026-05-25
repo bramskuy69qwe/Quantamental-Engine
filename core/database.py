@@ -455,6 +455,86 @@ CREATE TABLE IF NOT EXISTS closed_positions (
 );
 CREATE INDEX IF NOT EXISTS idx_closed_pos_ts     ON closed_positions (account_id, exit_time_ms DESC);
 CREATE INDEX IF NOT EXISTS idx_closed_pos_symbol ON closed_positions (symbol, exit_time_ms DESC);
+
+-- ── Phase 0 (P0.T1): calc-linkage schema foundation ──────────────────────
+-- Per docs/design/calc_linkage_spec.md §3.1. Four new tables backing the
+-- matcher (Phase 1), junction attribution (Phase 2), amendment tracking
+-- (Phase 4), funding attribution (Phase 5), and reverse-query (Phase 7).
+-- All four carry ``lifecycle_id`` (UUID, see §3.5) generated at the
+-- first opening fill (Phase 2.1) and indexed for the single-key audit
+-- query (``GET /context/lifecycle/{id}``, Phase 7).
+
+CREATE TABLE IF NOT EXISTS positions_calcs (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    position_id     INTEGER NOT NULL,
+    calc_id         TEXT    NOT NULL,
+    order_id        INTEGER NOT NULL,
+    account_id      INTEGER NOT NULL,
+    contributed_qty REAL    NOT NULL DEFAULT 0,
+    first_fill_ts   INTEGER NOT NULL DEFAULT 0,
+    last_fill_ts    INTEGER NOT NULL DEFAULT 0,
+    planned_size    REAL    DEFAULT NULL,
+    size_delta_pct  REAL    DEFAULT NULL,
+    planned_tp      REAL    DEFAULT NULL,
+    planned_sl      REAL    DEFAULT NULL,
+    lifecycle_id    TEXT    DEFAULT NULL,
+    UNIQUE (position_id, calc_id, order_id)
+);
+CREATE INDEX IF NOT EXISTS idx_pc_position  ON positions_calcs (position_id);
+CREATE INDEX IF NOT EXISTS idx_pc_calc      ON positions_calcs (calc_id);
+CREATE INDEX IF NOT EXISTS idx_pc_order     ON positions_calcs (order_id);
+CREATE INDEX IF NOT EXISTS idx_pc_account   ON positions_calcs (account_id, calc_id);
+CREATE INDEX IF NOT EXISTS idx_pc_lifecycle ON positions_calcs (lifecycle_id);
+
+CREATE TABLE IF NOT EXISTS order_amendments (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id      INTEGER NOT NULL,
+    calc_id       TEXT    DEFAULT NULL,
+    field         TEXT    NOT NULL,
+    old_value     REAL    DEFAULT NULL,
+    new_value     REAL    DEFAULT NULL,
+    ts_ms         INTEGER NOT NULL,
+    operator_id   TEXT    DEFAULT NULL,
+    deviation_pct REAL    DEFAULT NULL,
+    lifecycle_id  TEXT    DEFAULT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_oa_order        ON order_amendments (order_id);
+CREATE INDEX IF NOT EXISTS idx_oa_calc         ON order_amendments (calc_id);
+CREATE INDEX IF NOT EXISTS idx_oa_calc_ts      ON order_amendments (calc_id, ts_ms);
+CREATE INDEX IF NOT EXISTS idx_oa_lifecycle    ON order_amendments (lifecycle_id);
+
+CREATE TABLE IF NOT EXISTS funding_events (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    position_id     INTEGER NOT NULL,
+    calc_id         TEXT    DEFAULT NULL,
+    account_id      INTEGER NOT NULL,
+    symbol          TEXT    NOT NULL,
+    amount          REAL    NOT NULL DEFAULT 0,
+    mark_price      REAL    DEFAULT NULL,
+    funding_rate    REAL    DEFAULT NULL,
+    ts_ms           INTEGER NOT NULL,
+    venue_event_id  TEXT    NOT NULL,
+    lifecycle_id    TEXT    DEFAULT NULL,
+    UNIQUE (venue_event_id)
+);
+CREATE INDEX IF NOT EXISTS idx_fe_position    ON funding_events (position_id);
+CREATE INDEX IF NOT EXISTS idx_fe_account_ts  ON funding_events (account_id, ts_ms);
+CREATE INDEX IF NOT EXISTS idx_fe_lifecycle   ON funding_events (lifecycle_id);
+
+CREATE TABLE IF NOT EXISTS calc_match_audit (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id        INTEGER NOT NULL,
+    calc_id         TEXT    NOT NULL,
+    criterion       TEXT    NOT NULL,
+    calc_value      TEXT    DEFAULT NULL,
+    order_value     TEXT    DEFAULT NULL,
+    tolerance_used  REAL    DEFAULT NULL,
+    matched         INTEGER NOT NULL DEFAULT 0,
+    ts_ms           INTEGER NOT NULL,
+    winning         INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_cma_order ON calc_match_audit (order_id);
+CREATE INDEX IF NOT EXISTS idx_cma_calc  ON calc_match_audit (calc_id);
 """
 
 
