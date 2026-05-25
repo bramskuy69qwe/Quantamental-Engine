@@ -408,7 +408,174 @@ class TestDryRunAndIdempotence:
         assert r2["junction_rows_planned"] == 0
 
 
-# ── 5. Scope filters ──────────────────────────────────────────────────
+# ── 5b. T207 audit follow-up: pre_trade_log + orders lifecycle stamps ──
+
+
+async def _seed_pretrade(
+    db_path: str, *,
+    calc_id: str, account_id: int = 1, ticker: str = "BTCUSDT",
+):
+    """Seed a pre_trade_log row that the backfill can chain via calc_id."""
+    from core.database import DatabaseManager
+    db = DatabaseManager(path=db_path)
+    await db.initialize()
+    try:
+        await db._conn.execute(
+            "INSERT INTO pre_trade_log "
+            "(timestamp, ticker, account_id, calc_id) VALUES (?, ?, ?, ?)",
+            ("2026-05-26T12:00:00Z", ticker, account_id, calc_id),
+        )
+        await db._conn.commit()
+        async with db._conn.execute(
+            "SELECT id FROM pre_trade_log WHERE calc_id = ?", (calc_id,),
+        ) as cur:
+            return int((await cur.fetchone())["id"])
+    finally:
+        await db.close()
+
+
+class TestPretradeLifecycleStamp:
+    @pytest.mark.asyncio
+    async def test_pretrade_stamped_with_cp_lifecycle(self, db_path):
+        # Setup: cp with fills carrying calc_id; pre_trade_log row
+        # with same calc_id should receive the cp's lifecycle_id.
+        cp_id = await _seed_cp(db_path, tpid="tpid-PT1")
+        ptl_id = await _seed_pretrade(db_path, calc_id="calc-pt-1")
+        await _seed_order(
+            db_path, exchange_order_id="ord-pt", calc_id="calc-pt-1",
+        )
+        await _seed_fill(
+            db_path, exchange_fill_id="f-pt", tpid="tpid-PT1",
+            calc_id="calc-pt-1", exchange_order_id="ord-pt", quantity=1.0,
+        )
+        result = await run_backfill(db_path=db_path, apply=True, verbose=False)
+        assert result["pretrade_stamps_planned"] == 1
+        assert result["pretrade_stamps_applied"] == 1
+
+        from core.database import DatabaseManager
+        db = DatabaseManager(path=db_path)
+        await db.initialize()
+        try:
+            async with db._conn.execute(
+                "SELECT lifecycle_id FROM pre_trade_log WHERE id = ?",
+                (ptl_id,),
+            ) as cur:
+                ptl_lifecycle = (await cur.fetchone())["lifecycle_id"]
+            cp = await _read_cp(db_path, cp_id)
+        finally:
+            await db.close()
+        assert ptl_lifecycle is not None
+        assert ptl_lifecycle == cp["lifecycle_id"]
+
+    @pytest.mark.asyncio
+    async def test_pretrade_without_fill_chain_unaffected(self, db_path):
+        # pre_trade_log row exists but no fill references its calc_id.
+        # Should NOT be stamped.
+        await _seed_pretrade(db_path, calc_id="calc-orphan")
+        result = await run_backfill(db_path=db_path, apply=True, verbose=False)
+        assert result["pretrade_stamps_planned"] == 0
+
+
+class TestOrderLifecycleStamp:
+    @pytest.mark.asyncio
+    async def test_order_stamped_with_cp_lifecycle(self, db_path):
+        # Setup: cp with fills carrying exchange_order_id; orders row
+        # with same exchange_order_id should receive the cp's lifecycle.
+        cp_id = await _seed_cp(db_path, tpid="tpid-O1")
+        order_id = await _seed_order(
+            db_path, exchange_order_id="ord-stamp",
+        )
+        await _seed_fill(
+            db_path, exchange_fill_id="f-stamp", tpid="tpid-O1",
+            exchange_order_id="ord-stamp", quantity=1.0,
+            # Note: NO calc_id on fill — order_stamp path works
+            # independently of the junction backfill path.
+        )
+        result = await run_backfill(db_path=db_path, apply=True, verbose=False)
+        assert result["order_stamps_planned"] == 1
+        assert result["order_stamps_applied"] == 1
+
+        from core.database import DatabaseManager
+        db = DatabaseManager(path=db_path)
+        await db.initialize()
+        try:
+            async with db._conn.execute(
+                "SELECT lifecycle_id FROM orders WHERE id = ?",
+                (order_id,),
+            ) as cur:
+                order_lifecycle = (await cur.fetchone())["lifecycle_id"]
+            cp = await _read_cp(db_path, cp_id)
+        finally:
+            await db.close()
+        assert order_lifecycle is not None
+        assert order_lifecycle == cp["lifecycle_id"]
+
+    @pytest.mark.asyncio
+    async def test_order_with_existing_lifecycle_not_overwritten(self, db_path):
+        cp_id = await _seed_cp(db_path, tpid="tpid-O2")
+        order_id = await _seed_order(
+            db_path, exchange_order_id="ord-existing",
+        )
+        await _seed_fill(
+            db_path, exchange_fill_id="f-x", tpid="tpid-O2",
+            exchange_order_id="ord-existing", quantity=1.0,
+        )
+        # Pre-stamp the order with a different lifecycle_id (simulates
+        # Phase 2.1 having already written it). Backfill should leave
+        # the existing value untouched.
+        from core.database import DatabaseManager
+        db = DatabaseManager(path=db_path)
+        await db.initialize()
+        try:
+            await db._conn.execute(
+                "UPDATE orders SET lifecycle_id = ? WHERE id = ?",
+                ("pre-existing-lifecycle", order_id),
+            )
+            await db._conn.commit()
+        finally:
+            await db.close()
+
+        result = await run_backfill(db_path=db_path, apply=True, verbose=False)
+        # Plan should exclude this order (WHERE lifecycle_id IS NULL
+        # in the SELECT).
+        assert result["order_stamps_planned"] == 0
+
+        db = DatabaseManager(path=db_path)
+        await db.initialize()
+        try:
+            async with db._conn.execute(
+                "SELECT lifecycle_id FROM orders WHERE id = ?",
+                (order_id,),
+            ) as cur:
+                still = (await cur.fetchone())["lifecycle_id"]
+        finally:
+            await db.close()
+        assert still == "pre-existing-lifecycle"
+
+
+class TestUnmappedExitReasonWarning:
+    @pytest.mark.asyncio
+    async def test_unmapped_value_surfaced_not_remapped(self, db_path):
+        # A legacy value that's NOT in EXIT_REASON_REMAP and NOT in
+        # the spec enum should be surfaced as "unmapped" and left
+        # untouched by --apply.
+        cp_id = await _seed_cp(db_path, tpid="tpid-UM", exit_reason="forced")
+        result = await run_backfill(db_path=db_path, apply=True, verbose=False)
+        assert result["unmapped_exit_reasons"] == 1
+        assert result["exit_remap_planned"] == 0
+        cp = await _read_cp(db_path, cp_id)
+        assert cp["exit_reason"] == "forced"   # unchanged
+
+    @pytest.mark.asyncio
+    async def test_known_new_enum_not_flagged_as_unmapped(self, db_path):
+        # Spec-enum values that already exist on the row should NOT
+        # surface as unmapped warnings.
+        await _seed_cp(db_path, tpid="tpid-UM2", exit_reason="LIQUIDATION")
+        result = await run_backfill(db_path=db_path, apply=True, verbose=False)
+        assert result["unmapped_exit_reasons"] == 0
+
+
+# ── 6. Scope filters ──────────────────────────────────────────────────
 
 
 class TestScopeFilters:

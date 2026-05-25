@@ -67,9 +67,10 @@ if ROOT not in sys.path:
 DEFAULT_DB_PATH = os.path.join(ROOT, "data", "risk_engine.db")
 
 
-# Legacy → spec §3.4 enum mapping. Anything not in this dict is left
-# untouched (treated as already-migrated). Empty-string and None both
-# default to MANUAL_OTHER per plan task 0.12.
+# Legacy → spec §3.4 enum mapping. Anything not in this dict that
+# IS in SPEC_EXIT_REASON_ENUM is treated as already-migrated and
+# left untouched. Anything not in EITHER set surfaces as a warning
+# in the dry-run output (task 207 audit follow-up).
 EXIT_REASON_REMAP: Dict[Optional[str], str] = {
     None:      "MANUAL_OTHER",
     "":        "MANUAL_OTHER",
@@ -77,6 +78,21 @@ EXIT_REASON_REMAP: Dict[Optional[str], str] = {
     "tp":      "TP_PLANNED",
     "sl":      "SL_PLANNED",
 }
+
+
+# Spec §3.4 enum — the canonical post-T206 exit_reason values.
+# Used by the warn-on-unmapped guard added in task 207 (audit
+# follow-up): values that are neither in the remap nor in this set
+# get surfaced as a warning so a future legacy DB with a
+# non-spec-enum value (e.g., 'forced', 'auto_close') doesn't get
+# silently left as-is.
+SPEC_EXIT_REASON_ENUM: frozenset = frozenset({
+    "TP_PLANNED", "TP_AMENDED", "SL_PLANNED", "SL_AMENDED",
+    "TP_LADDER_COMPLETE", "MIXED",
+    "MANUAL_INTERVENTION", "MANUAL_DISCIPLINE_BREAK",
+    "MANUAL_NEW_OPPORTUNITY", "MANUAL_OTHER",
+    "LIQUIDATION", "ADL", "EXPIRED",
+})
 
 
 # ── Read helpers ───────────────────────────────────────────────────────
@@ -148,6 +164,110 @@ async def _existing_junction_count(
     return int(row[0]) if row else 0
 
 
+async def _read_pretrade_lifecycle_stamps(
+    db: Any,
+    account_id: Optional[int],
+    symbol: Optional[str],
+    cp_lifecycle_map: Dict[int, str],
+) -> List[Tuple[int, str]]:
+    """Find pre_trade_log rows whose ``calc_id`` is referenced by a
+    fill of a closed_position carrying (or about-to-carry)
+    ``lifecycle_id``.
+
+    Per spec §3.5: ``pre_trade_log.lifecycle_id`` is "back-filled
+    when calc first contributes to a position; multi-calc scale-ins
+    share same lifecycle_id across all their pre_trade_log rows."
+
+    ``cp_lifecycle_map`` is the planning-time {cp_id → lifecycle_id}
+    union of (a) cps with existing lifecycle_id already in the DB,
+    plus (b) cps for which the current planning pass generated a
+    fresh UUID via ``lifecycle_gen``. The query intentionally does
+    NOT filter on ``cp.lifecycle_id IS NOT NULL`` because at dry-run
+    + within-transaction planning time the fresh UUIDs haven't been
+    written yet.
+
+    Live-DB legacy fills currently have no calc_id, so this query
+    will return 0 rows for the current state — but the helper exists
+    so a future DB with calc-attributed legacy fills migrates cleanly.
+
+    Returns ``[(pretrade_id, lifecycle_id_uuid), ...]``.
+    """
+    if not cp_lifecycle_map:
+        return []
+    sql = (
+        "SELECT DISTINCT p.id AS pretrade_id, cp.id AS cp_id "
+        "FROM pre_trade_log p "
+        "JOIN fills f ON f.calc_id = p.calc_id "
+        "JOIN closed_positions cp ON cp.terminal_position_id = f.terminal_position_id "
+        "WHERE p.lifecycle_id IS NULL "
+        "AND COALESCE(p.calc_id, '') != ''"
+    )
+    params: List = []
+    if account_id is not None:
+        sql += " AND p.account_id = ? AND cp.account_id = ?"
+        params.extend([account_id, account_id])
+    if symbol:
+        sql += " AND cp.symbol = ?"
+        params.append(symbol)
+    async with db._conn.execute(sql, params) as cur:
+        rows = await cur.fetchall()
+    out: List[Tuple[int, str]] = []
+    for r in rows:
+        cp_id = int(r["cp_id"])
+        if cp_id in cp_lifecycle_map:
+            out.append((int(r["pretrade_id"]), cp_lifecycle_map[cp_id]))
+    return out
+
+
+async def _read_order_lifecycle_stamps(
+    db: Any,
+    account_id: Optional[int],
+    symbol: Optional[str],
+    cp_lifecycle_map: Dict[int, str],
+) -> List[Tuple[int, str]]:
+    """Find orders rows whose ``exchange_order_id`` is referenced by
+    a fill of a closed_position carrying (or about-to-carry)
+    ``lifecycle_id``.
+
+    Per spec §3.5: ``orders.lifecycle_id`` is "denormalized; copied
+    from junction when order links to position." Legacy orders that
+    won't pass through Phase 2.1's forward path need this backfill
+    so the single-key audit query (GET /context/lifecycle/{id})
+    returns the historical order chain.
+
+    See :func:`_read_pretrade_lifecycle_stamps` docstring for why
+    the helper takes ``cp_lifecycle_map`` instead of joining on
+    ``cp.lifecycle_id IS NOT NULL``.
+
+    Returns ``[(order_id, lifecycle_id_uuid), ...]``.
+    """
+    if not cp_lifecycle_map:
+        return []
+    sql = (
+        "SELECT DISTINCT o.id AS order_id, cp.id AS cp_id "
+        "FROM orders o "
+        "JOIN fills f ON f.exchange_order_id = o.exchange_order_id "
+        "JOIN closed_positions cp ON cp.terminal_position_id = f.terminal_position_id "
+        "WHERE o.lifecycle_id IS NULL "
+        "AND COALESCE(o.exchange_order_id, '') != ''"
+    )
+    params: List = []
+    if account_id is not None:
+        sql += " AND o.account_id = ? AND cp.account_id = ?"
+        params.extend([account_id, account_id])
+    if symbol:
+        sql += " AND cp.symbol = ?"
+        params.append(symbol)
+    async with db._conn.execute(sql, params) as cur:
+        rows = await cur.fetchall()
+    out: List[Tuple[int, str]] = []
+    for r in rows:
+        cp_id = int(r["cp_id"])
+        if cp_id in cp_lifecycle_map:
+            out.append((int(r["order_id"]), cp_lifecycle_map[cp_id]))
+    return out
+
+
 # ── Planning (pure-async; no writes) ───────────────────────────────────
 
 
@@ -172,12 +292,18 @@ async def _build_plan(
     cps = await _read_closed_positions(db, account_id, symbol)
 
     exit_remap: List[Tuple[int, Optional[str], str]] = []
+    unmapped_exit_reasons: List[Tuple[int, Optional[str]]] = []
     for cp in cps:
         old = cp.get("exit_reason")
         if old in EXIT_REASON_REMAP:
             new = EXIT_REASON_REMAP[old]
             if new != old:
                 exit_remap.append((cp["id"], old, new))
+        elif old not in SPEC_EXIT_REASON_ENUM:
+            # Neither in remap nor already a spec-enum value — surface
+            # so the operator can decide whether to extend the remap
+            # dict + re-run, or accept the value as-is.
+            unmapped_exit_reasons.append((cp["id"], old))
 
     lifecycle_gen: List[Tuple[int, str, str]] = []
     fill_stamps: List[Tuple[int, str]] = []
@@ -249,11 +375,38 @@ async def _build_plan(
                 "lifecycle_id":    new_uuid,
             })
 
+    # Task 207 audit follow-up: spec §3.5 mandates lifecycle_id on
+    # pre_trade_log + orders (denormalized from the junction). Forward
+    # path (Phase 2.1) handles new positions; this backfill closes the
+    # gap for legacy rows.
+    #
+    # Build the planning-time {cp_id → lifecycle_id} map: existing
+    # values from the DB (already-stamped cps) PLUS the freshly-
+    # generated UUIDs from this pass. The stamp helpers can't query
+    # cp.lifecycle_id directly because the fresh UUIDs aren't written
+    # until _apply_plan runs.
+    cp_lifecycle_map: Dict[int, str] = {}
+    for cp in cps:
+        if cp.get("lifecycle_id"):
+            cp_lifecycle_map[int(cp["id"])] = str(cp["lifecycle_id"])
+    for cp_id, _tpid, new_uuid in lifecycle_gen:
+        cp_lifecycle_map[cp_id] = new_uuid
+
+    pretrade_lifecycle_stamps = await _read_pretrade_lifecycle_stamps(
+        db, account_id, symbol, cp_lifecycle_map,
+    )
+    order_lifecycle_stamps = await _read_order_lifecycle_stamps(
+        db, account_id, symbol, cp_lifecycle_map,
+    )
+
     return {
         "cps_in_scope":                  len(cps),
         "exit_remap":                    exit_remap,
+        "unmapped_exit_reasons":         unmapped_exit_reasons,
         "lifecycle_gen":                 lifecycle_gen,
         "fill_stamps":                   fill_stamps,
+        "pretrade_lifecycle_stamps":     pretrade_lifecycle_stamps,
+        "order_lifecycle_stamps":        order_lifecycle_stamps,
         "junction_rows":                 junction_rows,
         "junction_skip_no_calc":         skip_no_calc,
         "junction_skip_no_order":        skip_no_order,
@@ -277,11 +430,15 @@ async def _apply_plan(
     lifecycle_gen = plan["lifecycle_gen"]
     fill_stamps = plan["fill_stamps"]
     junction_rows = plan["junction_rows"]
+    pretrade_stamps = plan["pretrade_lifecycle_stamps"]
+    order_stamps = plan["order_lifecycle_stamps"]
 
     n_exit = 0
     n_lifecycle = 0
     n_fill_stamp = 0
     n_junction = 0
+    n_pretrade_stamp = 0
+    n_order_stamp = 0
     try:
         for cp_id, _, new_value in exit_remap:
             await db._conn.execute(
@@ -311,6 +468,26 @@ async def _apply_plan(
             await db.upsert_position_calc_link(jr)
             n_junction += 1
 
+        # Task 207: pre_trade_log + orders lifecycle_id back-stamp.
+        # Only UPDATE rows whose lifecycle_id is currently NULL — the
+        # WHERE guard makes this idempotent + safe against multi-cp
+        # contention (a pre_trade_log row that already won an earlier
+        # lifecycle stamp stays that way).
+        for pretrade_id, lifecycle in pretrade_stamps:
+            await db._conn.execute(
+                "UPDATE pre_trade_log SET lifecycle_id = ? "
+                "WHERE id = ? AND lifecycle_id IS NULL",
+                (lifecycle, pretrade_id),
+            )
+            n_pretrade_stamp += 1
+        for order_id, lifecycle in order_stamps:
+            await db._conn.execute(
+                "UPDATE orders SET lifecycle_id = ? "
+                "WHERE id = ? AND lifecycle_id IS NULL",
+                (lifecycle, order_id),
+            )
+            n_order_stamp += 1
+
         await db._conn.commit()
     except BaseException:
         try:
@@ -321,16 +498,20 @@ async def _apply_plan(
 
     if verbose:
         print()
-        print(f"Updated exit_reason: {n_exit} row(s)")
-        print(f"Generated lifecycle_id: {n_lifecycle} row(s)")
-        print(f"Stamped lifecycle_id onto fills: {n_fill_stamp} row(s)")
-        print(f"Inserted positions_calcs: {n_junction} row(s)")
+        print(f"Updated exit_reason:               {n_exit} row(s)")
+        print(f"Generated lifecycle_id:            {n_lifecycle} row(s)")
+        print(f"Stamped lifecycle_id onto fills:   {n_fill_stamp} row(s)")
+        print(f"Stamped lifecycle_id onto pretrade:{n_pretrade_stamp} row(s)")
+        print(f"Stamped lifecycle_id onto orders:  {n_order_stamp} row(s)")
+        print(f"Inserted positions_calcs:          {n_junction} row(s)")
 
     return {
-        "exit_remap_applied":     n_exit,
-        "lifecycle_gen_applied":  n_lifecycle,
-        "fill_stamps_applied":    n_fill_stamp,
-        "junction_rows_applied":  n_junction,
+        "exit_remap_applied":           n_exit,
+        "lifecycle_gen_applied":        n_lifecycle,
+        "fill_stamps_applied":          n_fill_stamp,
+        "pretrade_stamps_applied":      n_pretrade_stamp,
+        "order_stamps_applied":         n_order_stamp,
+        "junction_rows_applied":        n_junction,
     }
 
 
@@ -341,20 +522,44 @@ def _print_plan(plan: Dict[str, Any]) -> None:
     n_remap = len(plan["exit_remap"])
     n_life = len(plan["lifecycle_gen"])
     n_stamp = len(plan["fill_stamps"])
+    n_pretrade = len(plan["pretrade_lifecycle_stamps"])
+    n_orders = len(plan["order_lifecycle_stamps"])
     n_junction = len(plan["junction_rows"])
+    n_unmapped = len(plan.get("unmapped_exit_reasons", []))
+
+    # Task 207: surface unmapped exit_reason values up-front so the
+    # operator notices BEFORE running --apply.
+    if n_unmapped:
+        print()
+        print("=" * 70)
+        print("WARNING — unmapped exit_reason values detected")
+        print("=" * 70)
+        print(
+            "  These rows have an exit_reason that is neither in the "
+            "legacy remap (manual/tp/sl/empty) nor in the spec §3.4 "
+            "enum. They will be LEFT UNCHANGED on --apply. Extend "
+            "EXIT_REASON_REMAP and re-run if these should be mapped."
+        )
+        for cp_id, val in plan["unmapped_exit_reasons"][:10]:
+            print(f"  cp_id={cp_id}: exit_reason={val!r}")
+        if n_unmapped > 10:
+            print(f"  ... and {n_unmapped - 10} more")
 
     print()
     print("=" * 70)
     print("PLAN — calc-linkage backfill")
     print("=" * 70)
-    print(f"  closed_positions in scope:              {plan['cps_in_scope']}")
-    print(f"  exit_reason re-map (legacy → enum):     {n_remap}")
-    print(f"  lifecycle_id generated (cp rows):       {n_life}")
-    print(f"  fills stamped with lifecycle_id:        {n_stamp}")
-    print(f"  positions_calcs rows to insert:         {n_junction}")
-    print(f"  junction skipped (no calc_id on fill):  {plan['junction_skip_no_calc']}")
-    print(f"  junction skipped (order_id unresolved): {plan['junction_skip_no_order']}")
-    print(f"  junction skipped (cp already populated):{plan['junction_skip_already_populated']}")
+    print(f"  closed_positions in scope:                {plan['cps_in_scope']}")
+    print(f"  exit_reason re-map (legacy → enum):       {n_remap}")
+    print(f"  exit_reason unmapped (will be left as-is):{n_unmapped}")
+    print(f"  lifecycle_id generated (cp rows):         {n_life}")
+    print(f"  fills stamped with lifecycle_id:          {n_stamp}")
+    print(f"  pre_trade_log stamped with lifecycle_id:  {n_pretrade}")
+    print(f"  orders stamped with lifecycle_id:         {n_orders}")
+    print(f"  positions_calcs rows to insert:           {n_junction}")
+    print(f"  junction skipped (no calc_id on fill):    {plan['junction_skip_no_calc']}")
+    print(f"  junction skipped (order_id unresolved):   {plan['junction_skip_no_order']}")
+    print(f"  junction skipped (cp already populated):  {plan['junction_skip_already_populated']}")
 
     if n_remap:
         print()
@@ -374,6 +579,14 @@ def _print_plan(plan: Dict[str, Any]) -> None:
             )
         if n_junction > 5:
             print(f"  ... and {n_junction - 5} more")
+
+    if n_orders:
+        print()
+        print("Sample orders lifecycle stamps (first 5):")
+        for order_id, lifecycle in plan["order_lifecycle_stamps"][:5]:
+            print(f"  order_id={order_id} ← lifecycle={lifecycle}")
+        if n_orders > 5:
+            print(f"  ... and {n_orders - 5} more")
 
 
 # ── Programmable entrypoint ────────────────────────────────────────────
@@ -402,15 +615,18 @@ async def run_backfill(
             _print_plan(plan)
 
         result = {
-            "cps_in_scope":         plan["cps_in_scope"],
-            "exit_remap_planned":   len(plan["exit_remap"]),
-            "lifecycle_gen_planned": len(plan["lifecycle_gen"]),
-            "fill_stamps_planned":  len(plan["fill_stamps"]),
-            "junction_rows_planned": len(plan["junction_rows"]),
-            "junction_skip_no_calc": plan["junction_skip_no_calc"],
-            "junction_skip_no_order": plan["junction_skip_no_order"],
+            "cps_in_scope":             plan["cps_in_scope"],
+            "exit_remap_planned":       len(plan["exit_remap"]),
+            "unmapped_exit_reasons":    len(plan.get("unmapped_exit_reasons", [])),
+            "lifecycle_gen_planned":    len(plan["lifecycle_gen"]),
+            "fill_stamps_planned":      len(plan["fill_stamps"]),
+            "pretrade_stamps_planned":  len(plan["pretrade_lifecycle_stamps"]),
+            "order_stamps_planned":     len(plan["order_lifecycle_stamps"]),
+            "junction_rows_planned":    len(plan["junction_rows"]),
+            "junction_skip_no_calc":    plan["junction_skip_no_calc"],
+            "junction_skip_no_order":   plan["junction_skip_no_order"],
             "junction_skip_already_populated": plan["junction_skip_already_populated"],
-            "applied":              False,
+            "applied":                  False,
         }
 
         if not apply:
