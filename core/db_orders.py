@@ -907,9 +907,39 @@ class OrdersMixin:
         """One-time migration: copy exchange_history rows into fills + closed_positions.
 
         OPEN → is_close=0, REALIZED_PNL → is_close=1.
-        Skips rows that already exist via UNIQUE constraints.
-        Returns {"fills_inserted": N, "closed_inserted": M}.
+
+        Phase 0.0.2 (T183 / T178 Layers 1+3 fix):
+
+          - Dedup uses ``position_grouping.is_same_fill`` instead of the
+            old SQL-only ``(symbol, side, qty, ±1000ms ts)`` check. The
+            new rule widens timestamp tolerance to
+            ``FILL_DEDUP_TOLERANCE_MS = 2000`` (to absorb dual-write
+            clock skew between this synthetic source and the real
+            WS/REST recorders) and ALSO tightens by requiring exact
+            match on ``direction``, ``is_close``, and ``price``. Catches
+            the synthetic-dup case (Layer 1: backfill writes alongside
+            real WS/REST fills for the same trade) without collapsing
+            legitimate same-symbol same-time-bucket distinct fills.
+
+          - ``closed_positions`` construction routes through
+            ``position_grouping.group_fills_into_positions``, replacing
+            the ad-hoc ``(symbol, direction, open_time)`` grouping that
+            could collide cross-position when open_time was reused
+            (Layer 3 / 5). The helper's chronological-walk grouping
+            handles scale-in / partial close / hedge mode correctly.
+
+          - ``mfe``/``mae`` are no longer carried from exchange_history
+            row values; the reconciler recomputes them with T175's
+            gross-PnL floor applied (helper emits
+            ``backfill_completed=0`` to trigger this).
+
+        Returns ``{"fills_inserted": N, "closed_inserted": M}``.
         """
+        from core.position_grouping import (
+            FILL_DEDUP_TOLERANCE_MS,
+            group_fills_into_positions,
+            is_same_fill,
+        )
         cutoff_ms = int((time.time() - days * 86400) * 1000)
 
         async with self._conn.execute(
@@ -920,6 +950,7 @@ class OrdersMixin:
         ) as cur:
             rows = [dict(r) for r in await cur.fetchall()]
 
+        accepted_fills: List[Dict[str, Any]] = []
         fills_inserted = 0
         for r in rows:
             is_close = r.get("income_type") == "REALIZED_PNL"
@@ -946,78 +977,55 @@ class OrdersMixin:
                 "source":               "exchange_history_backfill",
                 "timestamp_ms":         r.get("time", 0),
             }
-            # PA-1a: skip if a matching WS fill already exists (dedup at write time).
-            # WS fills use tradeId as key; backfill uses trade_key — different keys
-            # for the same fill. Match on (symbol, side, quantity, timestamp ±1s).
+            # Phase 0.0.2 dedup: SQL narrows by (account, symbol, ts window)
+            # for performance; in-Python is_same_fill applies the full rule
+            # (symbol, side, direction, is_close, qty within _QTY_EPS,
+            # ts within FILL_DEDUP_TOLERANCE_MS, price exact).
+            is_dup = False
             try:
                 async with self._conn.execute(
-                    "SELECT 1 FROM fills WHERE account_id=? AND symbol=? AND side=? "
-                    "AND quantity=? AND ABS(timestamp_ms - ?) < 1000 LIMIT 1",
-                    (account_id, fill["symbol"], fill["side"],
-                     fill["quantity"], fill["timestamp_ms"]),
+                    "SELECT account_id, exchange_fill_id, symbol, side, direction, "
+                    "price, quantity, is_close, timestamp_ms "
+                    "FROM fills WHERE account_id=? AND symbol=? "
+                    "AND ABS(timestamp_ms - ?) <= ?",
+                    (account_id, fill["symbol"], fill["timestamp_ms"],
+                     FILL_DEDUP_TOLERANCE_MS),
                 ) as cur:
-                    if await cur.fetchone():
-                        continue  # WS fill exists — skip backfill duplicate
+                    async for candidate in cur:
+                        if is_same_fill(dict(candidate), fill):
+                            is_dup = True
+                            break
             except Exception:
                 pass  # If check fails, proceed with insert (safe: upsert is idempotent)
+            if is_dup:
+                continue
             try:
                 await self.upsert_fill(fill)
+                accepted_fills.append(fill)
                 fills_inserted += 1
             except Exception:
                 pass
 
-        # Build closed_positions from REALIZED_PNL rows.
-        # Group by (symbol, direction, open_time) so multi-fill closes produce
-        # one row instead of duplicates.  The synthetic position ID ensures the
-        # UNIQUE(account_id, terminal_position_id, exit_time_ms) deduplicates.
-        closes = [r for r in rows if r.get("income_type") == "REALIZED_PNL"]
-
-        from collections import defaultdict
-        groups: Dict[tuple, List[Dict]] = defaultdict(list)
-        for c in closes:
-            open_time = c.get("open_time", 0)
-            if not open_time or not c.get("time", 0):
-                continue
-            key = (c.get("symbol", ""), c.get("direction", ""), open_time)
-            groups[key].append(c)
+        # Phase 0.0.2: closed_positions built via canonical grouping helper.
+        # Pass the full accepted_fills list (opens + closes); helper walks
+        # chronologically per (account_id, symbol, direction) and emits a
+        # PositionRecord when qty returns to zero. The synthetic
+        # `rebuilt:` terminal_position_id format means rerunning the
+        # backfill against the same data is idempotent (same entry_time_ms
+        # → same ID → REPLACE preserves reconciler columns per T176).
+        accepted_fills.sort(key=lambda f: int(f.get("timestamp_ms", 0) or 0))
+        position_records = group_fills_into_positions(accepted_fills)
 
         closed_inserted = 0
-        for (symbol, direction, open_time), fills in groups.items():
-            total_qty = sum(f.get("qty", 0) for f in fills)
-            total_pnl = sum(f.get("income", 0) for f in fills)
-            total_fee = sum(f.get("fee", 0) for f in fills)
-            exit_time = max(f.get("time", 0) for f in fills)
-            # VWAP exit price
-            notional  = sum(f.get("exit_price", 0) * f.get("qty", 0) for f in fills)
-            exit_price = notional / total_qty if total_qty else 0
-            entry_price = fills[0].get("entry_price", 0)
-            # Synthetic position ID: deterministic, same across reruns
-            syn_pos_id = f"bf:{symbol}:{direction}:{open_time}"
-            # Carry best MFE/MAE from any fill in the group
-            best_mfe = max(f.get("mfe", 0) for f in fills)
-            best_mae = min(f.get("mae", 0) for f in fills)
-
+        for pr in position_records:
             try:
-                await self.insert_closed_position({
-                    "account_id":           account_id,
-                    "exchange_position_id": "",
-                    "terminal_position_id": syn_pos_id,
-                    "symbol":               symbol,
-                    "direction":            direction,
-                    "quantity":             total_qty,
-                    "entry_price":          entry_price,
-                    "exit_price":           exit_price,
-                    "entry_time_ms":        open_time,
-                    "exit_time_ms":         exit_time,
-                    "realized_pnl":         total_pnl,
-                    "total_fees":           total_fee,
-                    "net_pnl":              total_pnl - total_fee,
-                    "hold_time_ms":         exit_time - open_time,
-                    "exit_reason":          "manual",
-                    "mfe":                  best_mfe,
-                    "mae":                  best_mae,
-                    "source":               "exchange_history_backfill",
-                })
+                # Override source so operators can still filter by
+                # `source='exchange_history_backfill'`; helper's default
+                # `rebuilt_from_fills` marker is reserved for the
+                # Phase 0.0.6 rebuild script.
+                record = dict(pr)
+                record["source"] = "exchange_history_backfill"
+                await self.insert_closed_position(record)
                 closed_inserted += 1
             except Exception:
                 pass

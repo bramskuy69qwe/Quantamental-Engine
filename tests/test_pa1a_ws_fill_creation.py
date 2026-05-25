@@ -95,15 +95,31 @@ class TestFillFieldExtraction:
 
 
 class TestBackfillDedup:
-    def test_backfill_has_dedup_check(self):
-        """backfill_fills_from_exchange_history must check for existing fills."""
-        content = SRC_DB.read_text()
-        # Should have a query checking for existing fills before insert
-        assert "ABS(timestamp_ms" in content or "timestamp_ms -" in content, \
-            "Backfill must check for existing fills with timestamp tolerance"
+    """Phase 0.0.2 (T183) replaced the inline SQL-only dedup with
+    ``position_grouping.is_same_fill``. The new rule widens the
+    timestamp tolerance to 2000ms (FILL_DEDUP_TOLERANCE_MS) and tightens
+    the match by requiring direction + is_close + price equality.
 
-    def test_backfill_uses_tolerance(self):
-        """Dedup check must use 1-second tolerance (< 1000ms)."""
+    These grep tests pin the new wiring at the source level. Behavior
+    tests for the dedup live in tests/test_position_grouping.py and the
+    Phase 0.0.2 behavior tests below."""
+
+    def test_backfill_imports_is_same_fill(self):
+        """Backfill must use the canonical is_same_fill helper."""
         content = SRC_DB.read_text()
-        assert "1000" in content, \
-            "Dedup tolerance must be 1000ms (1 second)"
+        assert "is_same_fill" in content, \
+            "Backfill must import is_same_fill from core.position_grouping"
+
+    def test_backfill_uses_canonical_tolerance_constant(self):
+        """Dedup must use FILL_DEDUP_TOLERANCE_MS, not a magic number."""
+        content = SRC_DB.read_text()
+        assert "FILL_DEDUP_TOLERANCE_MS" in content, \
+            "Backfill must reference FILL_DEDUP_TOLERANCE_MS for window width"
+
+    def test_backfill_routes_grouping_through_helper(self):
+        """closed_positions construction must use group_fills_into_positions
+        instead of the old ad-hoc (symbol, direction, open_time) grouping
+        — T178 Layer 3 fix."""
+        content = SRC_DB.read_text()
+        assert "group_fills_into_positions" in content, \
+            "Backfill must call position_grouping.group_fills_into_positions"
