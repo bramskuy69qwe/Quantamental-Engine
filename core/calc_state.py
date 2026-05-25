@@ -53,8 +53,13 @@ class CalcStatus(str, Enum):
     RELEASED               = "released"
 
 
-# Spec §5 + Phase 1.7 (calc release on order cancel) + §1.3 (calc revision
-# detection allows the in-flight calc to transition to superseded).
+# Spec §5 covers all transitions except RELEASED, which is a forward
+# extension per Phase 1.7 (calc release on order cancel): when a
+# linked order is cancelled by the operator, the calc transitions
+# back to ``released`` and is eligible for re-match within its
+# original window. Transitions OUT of ``released`` mirror the
+# original outgoing edges of ``active`` (re-match, expire, supersede,
+# cancel) so the calc continues its lifecycle naturally.
 CALC_TRANSITIONS: Dict[CalcStatus, Set[CalcStatus]] = {
     CalcStatus.ACTIVE: {
         CalcStatus.MATCHED,                 # full match found

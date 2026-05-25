@@ -43,9 +43,15 @@ class LinkStatus(str, Enum):
     UNPLANNED           = "UNPLANNED"
 
 
-# Spec §6 + §3.4 operator-action transitions. Initial-arrival
-# transitions (None → any) are handled by the matcher at insert time,
-# not via this state machine.
+# Spec §6 diagram covers LINKED + NEEDS_MANUAL_REVIEW + UNPLANNED;
+# UNLINKED is listed in spec §3.4 enum but omitted from the §6 diagram.
+# Implementation includes UNLINKED + its operator-action transitions
+# (UNLINKED → UNPLANNED and the rarer UNLINKED → LINKED for late
+# manual-link discovery) per Phase 3.1 (link_status auto-classification)
+# + Phase 3.4 (POST /orders/{id}/mark_unplanned endpoint).
+#
+# Initial-arrival transitions (None → any) are handled by the matcher
+# at insert time (Phase 3.1), not via this state machine.
 LINK_TRANSITIONS: Dict[LinkStatus, Set[LinkStatus]] = {
     LinkStatus.LINKED: {
         # LINKED is treated as terminal forward — no transitions out.
