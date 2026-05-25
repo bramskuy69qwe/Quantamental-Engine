@@ -172,7 +172,9 @@ class OrdersMixin:
         except Exception:
             log.exception("upsert_fill failed")
 
-    async def insert_closed_position(self, row: Dict[str, Any]) -> None:
+    async def insert_closed_position(
+        self, row: Dict[str, Any], commit: bool = True,
+    ) -> None:
         """Insert a closed_positions row (deduped by position_id + exit_time).
 
         Uses REPLACE so a re-computed close row (e.g. after late fill) wins
@@ -180,6 +182,16 @@ class OrdersMixin:
 
         If tp_price/sl_price are not provided but calc_id is, resolves them
         from pre_trade_log automatically (v2.4 Task 69).
+
+        ``commit`` (T191 / Phase 0.0.6 audit B1): default True for
+        backward compat with all existing callers (real-time close-row
+        builder, exchange_history_backfill, etc.) — each insert commits
+        per-call. Set ``False`` when the caller is batching multiple
+        inserts inside a single explicit transaction (e.g.
+        ``scripts/rebuild_closed_positions.py`` wraps DELETE +
+        INSERT-loop in one transaction so a mid-script kill rolls
+        back to a consistent state instead of leaving the DB wiped).
+        The caller is then responsible for the final commit / rollback.
         """
         # Task 168 (FE-MED-017 defense-in-depth): reject pollution-shaped
         # writes — entry_price <= 0 while quantity > 0 AND exit_price > 0
@@ -312,9 +324,17 @@ class OrdersMixin:
                 "tp_price":             tp_price,
                 "sl_price":             sl_price,
             })
-            await self._conn.commit()
+            if commit:
+                await self._conn.commit()
         except Exception:
             log.exception("insert_closed_position failed")
+            # T191 audit B1: batched-transaction callers (commit=False)
+            # need failures to PROPAGATE so the outer transaction can
+            # roll back. Default-commit callers retain the historical
+            # fail-silent behavior — a real-time close-row write that
+            # fails doesn't crash the WS event loop.
+            if not commit:
+                raise
 
     async def update_order_from_fill(
         self, exchange_order_id: str, fill: Dict[str, Any]

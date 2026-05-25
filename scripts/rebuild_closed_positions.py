@@ -148,6 +148,11 @@ async def _delete_existing_in_scope(
     account_id: Optional[int],
     symbol: Optional[str],
 ) -> int:
+    """DELETE existing closed_positions in scope. Does NOT commit — the
+    caller (run_rebuild's --apply path) wraps DELETE + INSERTs in a
+    single transaction and commits once at the end so a mid-script
+    kill rolls back to consistent state (T191 audit B1 fix).
+    """
     sql = "DELETE FROM closed_positions WHERE 1=1"
     params: List = []
     if account_id is not None:
@@ -157,9 +162,7 @@ async def _delete_existing_in_scope(
         sql += " AND symbol = ?"
         params.append(symbol)
     cur = await db._conn.execute(sql, params)
-    affected = cur.rowcount
-    await db._conn.commit()
-    return affected
+    return cur.rowcount
 
 
 def _iso(ms: int) -> str:
@@ -301,19 +304,40 @@ async def run_rebuild(
 
         if verbose:
             print()
-            print("Applying rebuild...")
-        deleted = await _delete_existing_in_scope(db, account_id, symbol)
-        if verbose:
-            print(f"Deleted {deleted} existing rows.")
-
+            print("Applying rebuild (atomic — single transaction)...")
+        # T191 audit B1 fix: wrap DELETE + INSERT-loop in a SINGLE
+        # transaction so a mid-script kill (Ctrl+C, OOM, machine crash)
+        # rolls back to the pre-script state instead of leaving the DB
+        # with closed_positions wiped but rebuilt rows incomplete. The
+        # pre-script operator backup remains the safety net of last
+        # resort but is no longer the FIRST line of defense.
+        deleted = 0
         inserted = 0
-        for r in rebuilt:
-            try:
-                await db.insert_closed_position(r)
+        try:
+            deleted = await _delete_existing_in_scope(db, account_id, symbol)
+            for r in rebuilt:
+                # commit=False defers commit to the outer try-block.
+                # insert_closed_position(commit=False) re-raises on
+                # failure (T191 audit B1) so the outer try-except
+                # rolls back the entire DELETE + partial INSERTs
+                # instead of leaving the DB in inconsistent state.
+                # T176 REPLACE preservation + T168 pollution guard
+                # still apply per-row.
+                await db.insert_closed_position(r, commit=False)
                 inserted += 1
+            await db._conn.commit()
+        except BaseException:
+            # KeyboardInterrupt + Exception both roll back. Reraise
+            # so the caller / shell sees the original error and the
+            # exit code propagates.
+            try:
+                await db._conn.rollback()
             except Exception:
                 pass
+            raise
+
         if verbose:
+            print(f"Deleted {deleted} existing rows.")
             print(f"Inserted {inserted} rebuilt rows.")
             print(
                 "Reconciler will pick up the new rows (backfill_completed=0) "

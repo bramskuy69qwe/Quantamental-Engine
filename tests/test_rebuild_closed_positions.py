@@ -389,6 +389,196 @@ class TestScopeFilters:
 # ── 5. Cross-position contamination guard ──────────────────────────────
 
 
+class TestReversalSplitFlowsThroughRebuild:
+    """T191 audit M1: Phase 0.0.4 reversal-split emits 2 fills (a
+    close-of-old with the original tradeId + an open-of-new with
+    ``synth:{tradeId}:open``). The rebuild script feeds ALL fills to
+    ``group_fills_into_positions``; verify that the helper attributes
+    the synth-open correctly so the new direction's position is
+    rebuilt with the right entry data."""
+
+    @pytest.mark.asyncio
+    async def test_reversal_split_produces_two_rebuilt_rows(self, db_path):
+        # Original LONG position open.
+        long_open_ts = BASE_MS
+        reversal_ts = BASE_MS + 60_000
+        short_close_ts = BASE_MS + 120_000
+
+        await _seed_fill(
+            db_path, exchange_fill_id="long-open",
+            symbol="BTCUSDT", side="BUY", direction="LONG",
+            quantity=5.0, price=79000.0, is_close=False,
+            timestamp_ms=long_open_ts,
+        )
+        # Reversal: a single SELL 12 crosses zero. Phase 0.0.4 splits it
+        # into close-of-LONG and open-of-SHORT.
+        await _seed_fill(
+            db_path, exchange_fill_id="tid-100",
+            symbol="BTCUSDT", side="SELL", direction="LONG",
+            quantity=5.0, price=80000.0, is_close=True,
+            timestamp_ms=reversal_ts, realized_pnl=5000.0,
+        )
+        await _seed_fill(
+            db_path, exchange_fill_id="synth:tid-100:open",
+            symbol="BTCUSDT", side="SELL", direction="SHORT",
+            quantity=7.0, price=80000.0, is_close=False,
+            timestamp_ms=reversal_ts,
+        )
+        # Later, the SHORT closes for a profit.
+        await _seed_fill(
+            db_path, exchange_fill_id="tid-200",
+            symbol="BTCUSDT", side="BUY", direction="SHORT",
+            quantity=7.0, price=78000.0, is_close=True,
+            timestamp_ms=short_close_ts, realized_pnl=14000.0,
+        )
+
+        await run_rebuild(db_path=db_path, apply=True, verbose=False)
+        rows = await _all_closed(db_path)
+        rows_by_dir = {r["direction"]: r for r in rows}
+        assert set(rows_by_dir) == {"LONG", "SHORT"}
+
+        long_row = rows_by_dir["LONG"]
+        assert long_row["entry_price"] == pytest.approx(79000.0)
+        assert long_row["exit_price"] == pytest.approx(80000.0)
+        assert long_row["quantity"] == pytest.approx(5.0)
+        assert long_row["entry_time_ms"] == long_open_ts
+        assert long_row["exit_time_ms"] == reversal_ts
+
+        short_row = rows_by_dir["SHORT"]
+        # Entry from the synth open at the reversal.
+        assert short_row["entry_price"] == pytest.approx(80000.0)
+        assert short_row["entry_time_ms"] == reversal_ts
+        # Exit from the follow-up close.
+        assert short_row["exit_price"] == pytest.approx(78000.0)
+        assert short_row["exit_time_ms"] == short_close_ts
+        assert short_row["quantity"] == pytest.approx(7.0)
+
+
+class TestTpSlResolutionViaCalcId:
+    """T191 audit M2: ``insert_closed_position`` auto-resolves
+    ``tp_price``/``sl_price`` from ``pre_trade_log`` when ``calc_id``
+    is supplied (v2.4 Task 69). Verify that rebuilt rows whose opens
+    carry calc_id pick up the corresponding tp/sl_price."""
+
+    @pytest.mark.asyncio
+    async def test_calc_id_propagates_tp_sl_prices(self, db_path):
+        from core.database import DatabaseManager
+        from datetime import datetime, timezone
+
+        # Seed a pre_trade_log row with tp/sl_price.
+        db = DatabaseManager(path=db_path)
+        await db.initialize()
+        try:
+            await db.insert_pre_trade_log({
+                "account_id":   1,
+                "timestamp":    datetime.now(timezone.utc).isoformat(),
+                "ticker":       "BTCUSDT",
+                "side":         "BUY",
+                "average":      80000.0,
+                "calc_id":      "calc-rebuild-1",
+                "tp_price":     85000.0,
+                "sl_price":     75000.0,
+            })
+        finally:
+            await db.close()
+
+        # Seed fills with the matching calc_id on the open.
+        await _seed_fill(
+            db_path, exchange_fill_id="open-1",
+            symbol="BTCUSDT", side="BUY", direction="LONG",
+            quantity=1.0, price=80000.0, is_close=False,
+            timestamp_ms=BASE_MS,
+        )
+        await _seed_fill(
+            db_path, exchange_fill_id="close-1",
+            symbol="BTCUSDT", side="SELL", direction="LONG",
+            quantity=1.0, price=81000.0, is_close=True,
+            timestamp_ms=BASE_MS + 60_000, realized_pnl=1000.0,
+        )
+        # Set calc_id directly on the open fill (upsert_fill doesn't
+        # populate calc_id — it's normally written via enrich_fill).
+        db = DatabaseManager(path=db_path)
+        await db.initialize()
+        try:
+            await db._conn.execute(
+                "UPDATE fills SET calc_id = ? WHERE exchange_fill_id = ?",
+                ("calc-rebuild-1", "open-1"),
+            )
+            await db._conn.commit()
+        finally:
+            await db.close()
+
+        await run_rebuild(db_path=db_path, apply=True, verbose=False)
+        rows = await _all_closed(db_path)
+        assert len(rows) == 1
+        r = rows[0]
+        # tp_price/sl_price auto-resolved from pre_trade_log via calc_id.
+        assert r["calc_id"] == "calc-rebuild-1"
+        assert r["tp_price"] == pytest.approx(85000.0)
+        assert r["sl_price"] == pytest.approx(75000.0)
+
+
+class TestAtomicityOnFailure:
+    """T191 audit B1 fix: DELETE + INSERTs run in a single transaction.
+    If any step fails mid-way, the transaction rolls back to pre-script
+    state instead of leaving the DB with closed_positions wiped but
+    rebuilt rows incomplete."""
+
+    @pytest.mark.asyncio
+    async def test_rollback_on_insert_failure_preserves_pre_script_state(
+        self, db_path,
+    ):
+        from unittest.mock import patch
+        from core.database import DatabaseManager
+
+        # Seed an existing row + the underlying fills.
+        await _seed_existing_closed(
+            db_path,
+            terminal_position_id="bf:original",
+            symbol="BTCUSDT", direction="LONG",
+            quantity=1.0, entry_price=99999.0, exit_price=99999.0,
+            entry_time_ms=BASE_MS, exit_time_ms=BASE_MS + 60_000,
+        )
+        await _seed_fill(
+            db_path, exchange_fill_id="open-1",
+            symbol="BTCUSDT", side="BUY", direction="LONG",
+            quantity=1.0, price=80000.0, is_close=False,
+            timestamp_ms=BASE_MS,
+        )
+        await _seed_fill(
+            db_path, exchange_fill_id="close-1",
+            symbol="BTCUSDT", side="SELL", direction="LONG",
+            quantity=1.0, price=81000.0, is_close=True,
+            timestamp_ms=BASE_MS + 60_000,
+        )
+
+        # Force a mid-transaction failure by patching
+        # insert_closed_position to raise on the rebuild call.
+        original_insert = DatabaseManager.insert_closed_position
+
+        async def boom(self, row, commit=True):
+            raise RuntimeError("simulated insert failure")
+
+        with patch.object(DatabaseManager, "insert_closed_position", boom):
+            with pytest.raises(RuntimeError, match="simulated insert failure"):
+                await run_rebuild(
+                    db_path=db_path, apply=True, verbose=False,
+                )
+
+        # Restore the original method (the patch context manager already
+        # does this, but be explicit).
+        DatabaseManager.insert_closed_position = original_insert
+
+        # The DELETE rolled back — pre-script row should still be there.
+        rows = await _all_closed(db_path)
+        assert len(rows) == 1
+        assert rows[0]["terminal_position_id"] == "bf:original", (
+            "Transaction failed to roll back — DELETE persisted "
+            "while INSERT failed, leaving DB in inconsistent state. "
+            "T191 audit B1 fix regressed."
+        )
+
+
 class TestCrossPositionRebuild:
     """T178 Layer 3 closed at the rebuild boundary: multiple sequential
     positions in the same (symbol, direction) must produce multiple
