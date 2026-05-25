@@ -186,6 +186,47 @@ class TestGroupFillsForDedup:
         ]
         assert group_fills_for_dedup(fills) == []
 
+    def test_same_source_pair_preserved_as_matching_engine_split(self):
+        """T193 fix: when both fills in a candidate group share the same
+        ``source`` (e.g., both ``binance_ws``), they are Binance
+        matching-engine splits where one client order matches against
+        multiple counterparties at the same microsecond. The exchange
+        records both as real fills with sequential tradeIds and
+        identical price/qty/side/direction/is_close/timestamp.
+        ``is_same_fill`` returns True by construction, but the dedup
+        script MUST preserve them — they are not duplicates."""
+        fills = [
+            _fill_row(id=1, ts=BASE_MS, source="binance_ws",
+                      exchange_fill_id="178459194"),
+            _fill_row(id=2, ts=BASE_MS, source="binance_ws",
+                      exchange_fill_id="178459195"),
+        ]
+        # No dedup group emitted — both fills survive.
+        assert group_fills_for_dedup(fills) == []
+
+    def test_same_source_triple_also_preserved(self):
+        # Three-way matching-engine split (rarer but possible).
+        fills = [
+            _fill_row(id=1, ts=BASE_MS, source="binance_ws",
+                      exchange_fill_id="100"),
+            _fill_row(id=2, ts=BASE_MS, source="binance_ws",
+                      exchange_fill_id="101"),
+            _fill_row(id=3, ts=BASE_MS, source="binance_ws",
+                      exchange_fill_id="102"),
+        ]
+        assert group_fills_for_dedup(fills) == []
+
+    def test_cross_source_pair_still_deduped(self):
+        # Synthetic-dup case: different sources, same physical trade.
+        # Must STILL be deduped.
+        fills = [
+            _fill_row(id=1, ts=BASE_MS,        source="binance_ws"),
+            _fill_row(id=2, ts=BASE_MS + 500,  source="exchange_history_backfill"),
+        ]
+        groups = group_fills_for_dedup(fills)
+        assert len(groups) == 1
+        assert {f["id"] for f in groups[0]} == {1, 2}
+
     def test_singletons_are_not_returned(self):
         # 2 distinct pairs + 1 singleton. Only the pairs return.
         fills = [

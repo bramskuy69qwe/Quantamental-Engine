@@ -111,7 +111,20 @@ def group_fills_for_dedup(fills: List[Dict]) -> List[List[Dict]]:
     timestamp gap exceeds ``FILL_DEDUP_TOLERANCE_MS`` and gather any
     matches into a new group.
 
-    Returns only groups of size >= 2 (singletons aren't duplicates).
+    Returns only groups of size >= 2 (singletons aren't duplicates),
+    AND excludes groups where every fill shares the same ``source``
+    (T193 fix): T178 audit observed Binance matching-engine splits
+    where a single client order matches against multiple counterparties
+    at the SAME microsecond -- the exchange records each as a distinct
+    fill with sequential tradeIds (e.g., 178459194 + 178459195), same
+    price/qty/side/direction/is_close/timestamp. ``is_same_fill``
+    returns True for these by construction, but they are NOT
+    duplicates: both are real exchange-recorded fills that must be
+    preserved. The same-source filter catches this -- synthetic-dup
+    cases always cross sources (e.g., ``exchange_history_backfill``
+    vs ``binance_ws``), while matching-engine splits share the source
+    that recorded both halves.
+
     The ``id`` field on each input dict is preserved so the caller
     can issue ``DELETE`` by id.
     """
@@ -142,8 +155,17 @@ def group_fills_for_dedup(fills: List[Dict]) -> List[List[Dict]]:
             if is_same_fill(candidate, fill):
                 group.append(candidate)
                 assigned.add(cid)
-        if len(group) > 1:
-            groups.append(group)
+        if len(group) < 2:
+            continue
+        # T193: same-source groups are Binance matching-engine splits,
+        # not synthetic duplicates. Preserve them by NOT returning the
+        # group from the dedup grouper. Synthetic dups always cross
+        # sources (synth row from exchange_history_backfill paired
+        # against a real binance_ws/_rest row).
+        sources = {f.get("source", "") for f in group}
+        if len(sources) == 1:
+            continue
+        groups.append(group)
     return groups
 
 
