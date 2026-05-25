@@ -350,3 +350,55 @@ update this section + re-elevate the deferred items.
 The threat model is now: corrupt local state, faulty exchange
 adapter, miscalibrated math, silent data drift. Auth is not the
 operative concern; **correctness + observability + recovery** are.
+
+### Live-DB dry-run before any destructive --apply (Tasks 193, 194)
+
+Development-time tests + audit passes catch a lot of bugs, but they
+can't catch every real-data-shape class. Phase 0.0's six development
+audits found three BLOCKER-class issues (T184, T187, T191) — all
+ultimately structural and reachable in tests. Then running the
+cleanup tools against the live DB surfaced TWO MORE production bugs
+that only manifest with real data:
+
+- **T193** (`dedup_fills.py`): the dedup rule wrongly collapsed
+  Binance matching-engine splits (sequential tradeIds, same source,
+  identical data). Development tests used synthetic fixtures that
+  didn't include the matching-engine-split shape. Caught only because
+  the live-DB dry-run output showed `binance_ws` rows being marked
+  for deletion.
+- **T194** (`rebuild_closed_positions.py`): the rebuild would wipe
+  closed_positions rows for "orphan symbols" (symbols with rows but
+  no usable fills — pre-Phase-0.0.2 backfill artifacts). Development
+  tests didn't include this asymmetric shape. Caught only because
+  the live-DB dry-run output showed `rebuild=0 vs existing=N` for
+  ~19 symbols.
+
+Both would have shipped silent data loss if the operator had run
+`--apply` without inspecting the dry-run first.
+
+**Discipline**: for any destructive operator script that mutates the
+live DB on `--apply`:
+
+1. **Default to `--dry-run`**. Make `--apply` an explicit opt-in.
+2. **Print the planned changes verbatim in dry-run**. Counts alone
+   are insufficient — the operator + the auditing assistant need to
+   see WHICH rows / WHICH fills / WHICH symbols to spot
+   misclassifications.
+3. **ALWAYS run dry-run against the live DB before `--apply`**, even
+   if the dev-time test suite is green. The dry-run is the last
+   real-data check; treat it as a mandatory step in the operator
+   workflow.
+4. **Read the dry-run output critically.** Look for shapes the
+   dev-time tests didn't cover: same-source pairs, asymmetric
+   patterns (rows on one side without counterparts on the other),
+   N-fold inflations or deflations vs expectations. Anything
+   surprising = stop and investigate.
+5. **When a live-DB-only bug surfaces, fix the script + add a
+   regression test** for the shape that surfaced it. Then re-run
+   dry-run. Then `--apply`.
+
+This is the discipline that turned Path A from "shipped data loss"
+into "shipped clean cleanup". Apply it to any future destructive
+operator script (`scripts/dedup_fills.py`,
+`scripts/rebuild_closed_positions.py`, future migration scripts,
+etc.).

@@ -34,20 +34,29 @@ USAGE:
 
 WHAT --apply DOES:
 
-  - DELETEs every ``closed_positions`` row in the operator-supplied
-    scope (account_id, optional symbol).
+  - DELETEs existing ``closed_positions`` rows whose symbol HAS a
+    rebuilt equivalent in the current run (i.e., the symbol's fills
+    produce at least one closed-position record via
+    ``group_fills_into_positions``). Rows for "orphan symbols" --
+    symbols that have existing closed_positions but no usable fills
+    to rebuild from (pre-Phase-0.0.2 backfill artifacts) -- are
+    PRESERVED untouched.
   - INSERTs fresh rows from ``group_fills_into_positions(fills)``.
     Each new row has ``source='rebuilt_from_fills'``,
     ``terminal_position_id='rebuilt:{symbol}:{direction}:{entry_ms}'``
     (deterministic), and ``backfill_completed=0`` so the reconciler
     re-runs MFE/MAE.
 
+  Pass ``--wipe-orphans`` to also DELETE orphan-symbol rows on
+  --apply (the T190 default, retained for explicit override).
+
 WHAT DRY-RUN DOES:
 
   - Reads fills, runs grouping, reads existing rows, prints a
-    per-symbol diff (rebuilt count vs existing count) and a
-    detail block for the most-affected symbol (or ``--symbol`` if
-    set).
+    per-symbol diff (rebuilt count vs existing count), a detail
+    block for the most-affected symbol (or ``--symbol`` if set),
+    AND an "orphan symbols" summary listing symbols whose rows
+    will be preserved on --apply.
   - NO DB writes.
 
 IMPORTANT:
@@ -58,9 +67,13 @@ IMPORTANT:
     rolls back. A pre-script backup is the safety net of last
     resort.
   - This script is **destructive** on existing closed_positions
-    rows in scope (including any manually-edited rows). If you
-    have manual notes that must survive, narrow the scope with
-    ``--symbol`` or restore from backup after.
+    rows whose symbol has a rebuilt equivalent (including any
+    manually-edited rows for those symbols). If you have manual
+    notes that must survive, narrow the scope with ``--symbol``
+    or restore from backup after.
+  - Orphan-symbol rows are PRESERVED by default (see WHAT --apply
+    DOES above). The ``--wipe-orphans`` flag is the explicit
+    override.
   - Idempotent — rerunning with the same scope produces the same
     final state (``group_fills_into_positions`` is deterministic).
 
