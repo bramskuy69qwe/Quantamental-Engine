@@ -1,0 +1,134 @@
+"""
+operator_sessions CRUD — Phase 0 (P0.T2) scaffold.
+
+Mixed into :class:`core.database.DatabaseManager`. Backs the
+multi-operator handoff audit per spec §3.1 + §12.1. P0.T2 ships only
+the table CRUD; the lock-enforcement + takeover-prompt flow + the
+``operator_id`` propagation across action rows are deferred to
+Phase 9 per implementation_plan.md §14.3 P0.T2.
+
+The business-layer scaffold (data type + event topic constants) lives
+in :mod:`core.auth_state`; this module is the SQL surface only.
+"""
+from __future__ import annotations
+
+import logging
+import time
+from typing import Any, Dict, List, Optional
+
+log = logging.getLogger("db_auth")
+
+
+class AuthMixin:
+    """``operator_sessions`` CRUD on :class:`DatabaseManager`."""
+
+    async def start_operator_session(
+        self,
+        account_id: int,
+        operator_id: str,
+        *,
+        takeover_from_session_id: Optional[int] = None,
+        start_ts_ms: Optional[int] = None,
+    ) -> int:
+        """INSERT a new ``operator_sessions`` row. Returns the row id.
+
+        ``start_ts_ms`` defaults to ``time.time() * 1000`` if omitted.
+        ``takeover_from_session_id`` is set when this session displaces
+        a prior active session for the same account (Phase 9 takeover
+        flow). Caller is responsible for ending the prior session via
+        :meth:`end_operator_session` — this helper does NOT auto-end
+        the displaced session (Phase 9 will wrap both writes in one
+        transaction with the lock-acquire check).
+        """
+        if start_ts_ms is None:
+            start_ts_ms = int(time.time() * 1000)
+        sql = (
+            "INSERT INTO operator_sessions "
+            "(account_id, operator_id, session_start_ts, "
+            " takeover_from_session_id) "
+            "VALUES (?, ?, ?, ?)"
+        )
+        try:
+            cur = await self._conn.execute(
+                sql,
+                (account_id, operator_id, start_ts_ms,
+                 takeover_from_session_id),
+            )
+            await self._conn.commit()
+            return int(cur.lastrowid or 0)
+        except Exception:
+            log.exception("start_operator_session failed")
+            return 0
+
+    async def end_operator_session(
+        self,
+        session_id: int,
+        *,
+        end_ts_ms: Optional[int] = None,
+    ) -> bool:
+        """Set ``session_end_ts`` on the row. Returns True on success.
+
+        Idempotent — if the row is already ended, UPDATE still succeeds
+        and overwrites the end_ts. (Phase 9 may add a "don't overwrite
+        if already ended" guard; for scaffold purposes, overwrite is
+        acceptable since the audit table preserves the start_ts.)
+        """
+        if end_ts_ms is None:
+            end_ts_ms = int(time.time() * 1000)
+        try:
+            cur = await self._conn.execute(
+                "UPDATE operator_sessions SET session_end_ts = ? "
+                "WHERE id = ?",
+                (end_ts_ms, session_id),
+            )
+            await self._conn.commit()
+            return (cur.rowcount or 0) > 0
+        except Exception:
+            log.exception("end_operator_session failed")
+            return False
+
+    async def get_active_operator_session(
+        self,
+        account_id: int,
+    ) -> Optional[Dict[str, Any]]:
+        """Return the most recent un-ended session for an account, or None.
+
+        Phase 9's single-operator lock will enforce that at most one
+        active session exists per account; for scaffold purposes,
+        multiple actives can coexist (the most recent wins this query).
+        """
+        async with self._conn.execute(
+            "SELECT * FROM operator_sessions "
+            "WHERE account_id = ? AND session_end_ts IS NULL "
+            "ORDER BY session_start_ts DESC, id DESC LIMIT 1",
+            (account_id,),
+        ) as cur:
+            row = await cur.fetchone()
+        return dict(row) if row else None
+
+    async def get_operator_session(
+        self,
+        session_id: int,
+    ) -> Optional[Dict[str, Any]]:
+        """Return one session row by id, or None if not found."""
+        async with self._conn.execute(
+            "SELECT * FROM operator_sessions WHERE id = ?",
+            (session_id,),
+        ) as cur:
+            row = await cur.fetchone()
+        return dict(row) if row else None
+
+    async def get_operator_session_history(
+        self,
+        account_id: int,
+        *,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """Return recent sessions for an account, newest first."""
+        async with self._conn.execute(
+            "SELECT * FROM operator_sessions "
+            "WHERE account_id = ? "
+            "ORDER BY session_start_ts DESC, id DESC LIMIT ?",
+            (account_id, max(1, int(limit))),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]

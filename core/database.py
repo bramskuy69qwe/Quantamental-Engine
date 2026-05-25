@@ -37,6 +37,7 @@ from core.db_models    import ModelsMixin
 from core.db_regime    import RegimeMixin
 from core.db_news      import NewsMixin
 from core.db_orders    import OrdersMixin
+from core.db_auth      import AuthMixin
 
 log = logging.getLogger("database")
 
@@ -535,6 +536,23 @@ CREATE TABLE IF NOT EXISTS calc_match_audit (
 );
 CREATE INDEX IF NOT EXISTS idx_cma_order ON calc_match_audit (order_id);
 CREATE INDEX IF NOT EXISTS idx_cma_calc  ON calc_match_audit (calc_id);
+
+-- ── Phase 0 (P0.T2): operator session scaffold ───────────────────────────
+-- Per spec §3.1 + §12.1. Multi-operator-per-account lock + takeover
+-- audit. P0.T2 ships the table + minimal CRUD; the lock-enforcement
+-- + takeover-prompt + operator_id propagation across action rows is
+-- deferred to Phase 9 per implementation_plan.md §14.3 P0.T2 row.
+
+CREATE TABLE IF NOT EXISTS operator_sessions (
+    id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id               INTEGER NOT NULL,
+    operator_id              TEXT    NOT NULL,
+    session_start_ts         INTEGER NOT NULL,
+    session_end_ts           INTEGER DEFAULT NULL,
+    takeover_from_session_id INTEGER DEFAULT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_op_sess_account_start ON operator_sessions (account_id, session_start_ts DESC);
+CREATE INDEX IF NOT EXISTS idx_op_sess_active       ON operator_sessions (account_id, session_end_ts);
 """
 
 
@@ -551,6 +569,7 @@ class DatabaseManager(
     RegimeMixin,
     NewsMixin,
     OrdersMixin,
+    AuthMixin,
 ):
     """Async SQLite manager. Keep open for app lifetime; use WAL for concurrency.
 
