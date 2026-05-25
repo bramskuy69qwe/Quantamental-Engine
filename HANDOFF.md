@@ -1,219 +1,224 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-05-26
-**Current branch**: `v2.5/post-rewind-drop-regime-infra`
-**Tests**: 2382 passed, 7 skipped, 1 unrelated pre-existing failure
-**Pre-existing failure**: `tests/test_data_cache_dd.py::TestRollingWindowPeak::test_old_high_excluded_from_window` — 30-day rolling-window boundary bug; unrelated to Phase 0.0.x work. File separately if not already.
+**Date**: 2026-05-26 (continued)
+**Current branch**: `v2.5/post-rewind-drop-regime-infra` @ `7a6ea60`
+**Tests**: 2526 passed, 7 skipped, 1 unrelated pre-existing failure
+**Pre-existing failure**: `tests/test_data_cache_dd.py::TestRollingWindowPeak::test_old_high_excluded_from_window` — 30-day rolling-window boundary bug; unrelated. Worth filing as its own task.
 
-## What this session did (T197-T199)
+## What this session did — Phase 0 COMPLETE (T200-T207)
 
-Closed Phase 0.0's optional Step 2 (legacy-orphan recovery) AND fixed
-the pre-existing Position History fills-drawer gap that affected every
-`rebuilt_from_fills` row.
+Tasks 197-199 closed Phase 0.0 optional work. Tasks **200-207 closed
+all of Phase 0** (foundation — schema additions, state-machine
+helpers, calc-linkage backfill). Per implementation plan §14.3,
+Phase 0 was 6 bundled tasks (P0.T1-T6); we shipped all 6 plus one
+audit-followup. Phase 1 is now unblocked.
 
-### Commit chain (this session)
+### Commit chain
 
 ```
-<TBD on commit>  T199: synth script — simulation-based dry-run validation + true idempotence
-<TBD on commit>  T198: backfill terminal_position_id onto fills for rebuilt closed_positions
-<TBD on commit>  T197: Phase 0.0.7 — synth_legacy_open_fills.py + Path C execution + plan update
+7a6ea60  task 207: P0.T5 audit follow-up — pre_trade_log + orders lifecycle backfill + unmapped-exit-reason warning
+f86c93f  task 206: Phase 0 T5 — calc-linkage backfill (exit_reason + lifecycle_id + junction)
+99e67cc  task 205: Phase 0 T4 — orders + closed_positions column additions
+3a13a34  task 204: Phase 0 T3 — pre_trade_log + accounts column additions
+ce5c33a  task 203: Phase 0 T2 — operator_sessions scaffold (table + CRUD + dataclass)
+6fb89cc  task 202: P0.T6 audit follow-up — clarify state-machine spec citations
+9324b3e  task 201: Phase 0 T6 — state-machine enforcement helpers (calc + link)
+1e51d1a  task 200: Phase 0 T1 — calc-linkage schema foundation (4 new tables + CRUD)
+e3ffae6  task 199: HANDOFF — Phase 0.0.7 + tpid backfill + per-position events drilldown deferred
+2ba874c  task 198: backfill terminal_position_id onto fills for rebuilt closed_positions
+5e918f1  task 197: Phase 0.0.7 — scripts/synth_legacy_open_fills.py for legacy orphan recovery
 ```
 
-### Step 1 + 2 status (was open in prior HANDOFF)
+### Phase 0 task-by-task
 
-**Step 1** (engine reconciler picks up rebuilt rows): COMPLETED. After
-Phase 0.0 the queue was 59 rebuilt rows; engine reconciler swept them
-on subsequent runs. Verified MFE/MAE populated with sensible ranges
-across all 59 rows; BSBUSDT spot-check clean.
+| Plan ref | Task | Commit | Files |
+|---|---|---|---|
+| P0.T1 | 4 new tables + CRUD helpers | 200 | core/database.py, core/db_orders.py, tests/test_phase0_t1_schema.py |
+| P0.T2 | operator_sessions table + scaffold | 203 | core/database.py, core/db_auth.py, core/auth_state.py, tests/test_phase0_t2_operator_sessions.py |
+| P0.T3 | pre_trade_log (15 cols) + accounts.config_json | 204 | core/database.py, tests/test_phase0_t3_schema_additions.py |
+| P0.T4 | orders (6 cols) + closed_positions (16 cols) | 205 | core/database.py, tests/test_phase0_t4_schema_additions.py |
+| P0.T5 | Calc-linkage backfill script | 206, 207 | core/database.py (fills.lifecycle_id), scripts/backfill_calc_linkage.py, tests/test_backfill_calc_linkage.py |
+| P0.T6 | State-machine helpers (calc + link) | 201, 202 | core/calc_state.py, core/link_state.py, tests/test_state_machines.py |
 
-**Step 2** (optional re-backfill of 92 orphan-symbol rows): COMPLETED
-via a new operator script (`scripts/synth_legacy_open_fills.py`).
-HANDOFF's original Step 2 framing had a mechanism flaw — proposed
-re-running `backfill_fills_from_exchange_history`, but that function
-synthesizes OPEN fills IN-MEMORY ONLY (db_orders.py:1138). Without
-persisting OPEN fills to the fills table, `rebuild_closed_positions.py`
-(which reads from fills) would still find nothing for the orphan
-symbols. Path C was needed: a dedicated script that persists synth
-OPEN fills AND re-derives `closed_positions` via `position_grouping`.
+### Schema landed (spec §3.1 + §3.2)
 
-### Live-DB cleanup state (Step 2 executed)
+**5 new tables** (all with lifecycle_id where applicable, indexed per spec §3.5):
+- `positions_calcs` — junction for scale-in attribution (UNIQUE on (position_id, calc_id, order_id))
+- `order_amendments` — polymorphic field-level audit (entry/tp/sl/size/leverage)
+- `funding_events` — per-event funding (UNIQUE on venue_event_id for dedup)
+- `calc_match_audit` — per-criterion match evidence (batch-inserted by Phase 1 matcher)
+- `operator_sessions` — multi-operator handoff audit (logic deferred to Phase 9)
 
-**Pre-Step-2 backups**:
-- `data/risk_engine.db.pre_synth_legacy_opens.bak` (~18.9 MB,
-  2026-05-26 00:24) — taken before T197 --apply
-- `data/risk_engine.db.pre_tpid_backfill.bak` (~18.9 MB,
-  2026-05-26 01:03) — taken before T198 --apply
+**Modified tables**:
+- `pre_trade_log`: 36 → 51 cols (status, window_seconds, operator_id, superseded_by_calc_id, cancelled_reason, planned/overridden size+tp+sl, tp_levels JSON, filled_pct, tags JSON, lifecycle_id)
+- `orders`: 26 → 32 cols (link_status, operator_id, cancel_reason_category, cancel_reason_raw, cancel_ts_ms, lifecycle_id)
+- `closed_positions`: 28 → 44 cols (close_note, 8 delta/drift/r REAL columns, hold_time pairs, cumulative_amendment_count, liquidation fields, adl_indicator, lifecycle_id)
+- `accounts`: 14 → 15 (config_json TEXT per spec §3.3)
+- `fills`: lifecycle_id added (spec-gap closure — §3.5 lists it but plan §0.6/0.7/0.8 omitted)
 
-Restore from either if needed.
+**Indexes** (spec §3.5: every lifecycle_id-carrying table indexed):
+- idx_pretrade_lifecycle, idx_orders_lifecycle, idx_closed_pos_lifecycle, idx_fills_lifecycle
+- idx_pc_lifecycle, idx_oa_lifecycle, idx_fe_lifecycle (in P0.T1 table DDL)
 
-**Step 2 deltas**:
+### State machines (P0.T6 + audit follow-up)
 
-| Metric | Pre-T197 | Post-T197 | Post-T198 | Delta |
-|---|---|---|---|---|
-| Total `closed_positions` | 151 | 150 | 150 | — |
-| `rebuilt_from_fills` rows | 59 | 121 | 121 | +62 |
-| `exchange_history_backfill` orphans | 92 | 29 | 29 | −63 |
-| `synth_legacy_open` fills | 0 | 63 | 63 | +63 |
-| Fills with rebuilt: tpid | 0 | ~283 | **346** | +346 |
-| Rebuilt rows with linked fills | 0 / 59 | 0 / 121 | **121 / 121** | full coverage |
+`core/calc_state.py` and `core/link_state.py` mirror the existing
+`core/order_state.py` pattern. Both expose:
+- Status enum (CalcStatus 8 values per spec §3.4; LinkStatus 4 values)
+- Transitions dict (CALC_TRANSITIONS / LINK_TRANSITIONS) per spec §5/§6
+- validate_transition / assert_transition pure helpers
+- IllegalStateTransition exception carrying calc_id/order_id + current + target
+- async transition() choke-point: validate → caller-supplied apply_fn → emit event
+  - Invariants: invalid raises without side effect; apply failure skips event;
+    event-bus failure does NOT roll back the DB UPDATE (logged + swallowed)
 
-**T197 (synth_legacy_open_fills.py)**:
-- 92 orphans → 63 recoverable + 26 preserved (no upstream) + 3 fill-stream conflicts
-- 65 synth OPEN fills inserted; 2 garbage synths (BILLUSDT, FOLKSUSDT)
-  manually cleaned afterward (real OPEN already existed at same
-  ts+price; synth duplicated it). T199's simulation-based dry-run
-  now catches this class without operator intervention.
+CalcStatus extensions vs spec §5:
+- RELEASED state added per Phase 1.7 (calc release on order cancel) — documented
+  in code header. Transitions in/out mirror ACTIVE's outgoing edges so a released
+  calc can re-match within its original window.
 
-**T198 (rebuild_closed_positions.py --tpid-backfill-only)**:
-- Fixed a pre-existing gap from Phase 0.0.6 (T190): rebuild emitted
-  closed_positions with synthetic `terminal_position_id` but never
-  wrote those tpids onto the underlying fills. Result: Position
-  History fills drawer rendered empty for all 121 rebuilt rows.
-- New flag `--tpid-backfill-only` UPDATEs fills.tpid without
-  touching closed_positions (preserves reconciler state).
-- Both `rebuild --apply` and `synth_legacy_open_fills --apply` now
-  do tpid backfill inside their own transactions going forward.
+LinkStatus vs spec §6:
+- §6 diagram omits UNLINKED but §3.4 enum lists it. Code includes UNLINKED +
+  its operator-action transitions (UNLINKED → UNPLANNED + UNLINKED → LINKED for
+  late manual-link discovery), per Phase 3.1 + 3.4 scope.
 
-**T199 (audit fix)**:
-- Synth script's dry-run was previously blind to fill-stream
-  conflicts (real-OPEN overlap, lifecycle absorption) — 3 such
-  cases were discovered only at apply time on the live DB.
-- Added simulation-based validation: builds planned synths,
-  simulates `group_fills_into_positions` with existing fills +
-  synths, reclassifies any planned synth that wouldn't produce a
-  rebuilt record as `preserved (conflict)`.
-- Re-running `--apply` against the post-T197 state now plans
-  ZERO new synths — truly idempotent.
+### Calc-linkage backfill (P0.T5 + audit follow-up)
 
-### Final orphan state (29 preserved)
+Operator script `scripts/backfill_calc_linkage.py` with `--dry-run`/`--apply`
++ `--account-id`/`--symbol` scoping. Five operations, all idempotent +
+wrapped in a single transaction:
 
-| Preservation reason | Count | Symbols |
+1. Re-map closed_positions.exit_reason legacy → spec §3.4 enum
+   (`'manual'`→`MANUAL_OTHER`, `'tp'`→`TP_PLANNED`, `'sl'`→`SL_PLANNED`,
+   `''`/NULL→`MANUAL_OTHER`).
+2. Generate UUID-v4 lifecycle_id for each closed_positions row missing
+   one. Stamp onto matching fills (by terminal_position_id).
+3. Stamp lifecycle_id onto pre_trade_log via the chain
+   `pre_trade_log.calc_id → fills.calc_id → fills.terminal_position_id
+   → closed_positions.terminal_position_id` (P0.T5 + T207 audit fix).
+4. Stamp lifecycle_id onto orders via the chain
+   `orders.exchange_order_id → fills.exchange_order_id → ...
+   closed_positions` (T207 audit fix).
+5. Backfill positions_calcs junction from fills WHERE calc_id IS NOT
+   NULL, grouped per (closed_position.id, calc_id, orders.id) with
+   summed contributed_qty. Skip fills whose order_id doesn't resolve.
+
+Plus: warning surfaced when unmapped exit_reason encountered (T207
+audit follow-up). Live DB: 0 unmapped values.
+
+### Live-DB state after Phase 0
+
+| Metric | Value |
+|---|---|
+| closed_positions: total | 150 |
+| closed_positions: with lifecycle_id | **150** (all unique UUIDs) |
+| closed_positions: exit_reason | 150 × `MANUAL_OTHER` (all post-T206 re-map) |
+| fills: total | 380 |
+| fills: with lifecycle_id | 346 (the 34 missing are bf:-source legacy orphan-symbol fills) |
+| orders: total | 144 |
+| orders: with lifecycle_id | **75** (T207 backfill via fills chain) |
+| pre_trade_log: total | 118 (24 carry calc_id but no chain to fill — none stamped) |
+| positions_calcs | 0 (no legacy fills carry calc_id; Phase 1+ matcher populates forward) |
+| operator_sessions / order_amendments / funding_events / calc_match_audit | 0 (Phase 1/4/5/9 wire writes) |
+
+**Backups taken this session** (in `data/`):
+- `risk_engine.db.pre_p0t1_schema.bak`
+- `risk_engine.db.pre_p0t2_schema.bak`
+- `risk_engine.db.pre_p0t3_schema.bak`
+- `risk_engine.db.pre_p0t4_schema.bak`
+- `risk_engine.db.pre_p0t5_backfill.bak`
+- `risk_engine.db.pre_t207_audit_followup.bak`
+- Plus Phase-0.0-era: `pre_phase0_0.bak`, `pre_synth_legacy_opens.bak`, `pre_tpid_backfill.bak`
+
+Keep until next major release confirms no regression. Safe to delete
+older `.bak` files (pre_phase0_0 onward) at operator's discretion.
+
+## Next session's job — Phase 1 (matcher tightening)
+
+Spec ref: docs/design/calc_linkage_spec.md §4 + §5 + §6
+Plan ref: docs/design/calc_linkage_implementation_plan.md §277-326
++ §14.3 lines 846-859
+
+Phase 1 = 7 tasks per §14.3:
+
+| # | Task | Notes |
 |---|---|---|
-| No upstream RPNL (Binance income API window) | 26 | AIOTUSDT(2), AXLUSDT(1), CUSDT(1), DUSKUSDT(2), ETCUSDT(1), JCTUSDT(4), MUSDT(1), ONUSDT(5), PUFFERUSDT(1), SIRENUSDT(3), STOUSDT(1), TRUMPUSDT(2), TSTUSDT(1), XAUUSDT(1) |
-| Real-OPEN conflict (partial close of larger position) | 2 | BILLUSDT, FOLKSUSDT |
-| Lifecycle-absorption (residual qty consumed lifecycle into one record) | 1 | ONUSDT SHORT @ 1774634668929 |
+| **P1.T1** | Strict matcher rewrite | The bottleneck. 5/5 limit + 6/6 market criteria; tolerance config from `accounts.config_json.entry_tolerance_pct` (P0.T3 column ready). `calc_match_audit` row writes per criterion (P0.T1 table + CRUD ready). All calc.status transitions go through `core/calc_state.transition()` (P0.T6 ready). |
+| P1.T2 | Per-account window from config_json | New `core/account_config.py` helper; reads accounts.config_json with spec §3.3 defaults. |
+| P1.T3 | Calc revision detection | If existing `active` calc for (account, ticker, direction), set `status='superseded'`, write `superseded_by_calc_id`, emit `calc:superseded` event (via calc_state.transition). |
+| P1.T4 | Calc cancel by operator endpoint | New endpoint + transition. |
+| P1.T5 | Calc release on order cancel | `matched → released` transition when order cancel_reason_category='OPERATOR'; replacement-modal scaffold. |
+| P1.T6 | Calc auto-complete on position close | Transition + event (may slide to Phase 2). |
+| P1.T7 | Nullable TP/SL handling | Auto-route to manual-link if TP or SL null. |
 
-These 29 are **structurally unrecoverable**. Their `closed_positions`
-rows remain correct (T178 Layer 3) but cannot be cross-verified via
-fills. Re-running the synth script confirms 0 planned work.
+Sequencing per §14.4: T1 is the bottleneck; T2-T7 parallel-safe after.
 
-## Next session's job
+### Recommended start
 
-### Required (small)
+Begin with **P1.T1** (matcher rewrite) — biggest single deliverable
+in Phase 1, blocks T3-T7. Existing matcher lives in
+`core/calc_correlation.py::correlate_order_to_calc` (per plan §1.1).
+Replace with strict 5/5 (limit) / 6/6 (market) all-or-fall-through;
+write `calc_match_audit` rows per criterion (winning + losing
+candidates).
 
-- **Reconciler queue verification**: 62 rebuilt rows from T197
-  apply have `backfill_completed=0`. After enough engine sweeps,
-  all should drain. Verify with:
-  ```python
-  import sqlite3
-  conn = sqlite3.connect('data/risk_engine.db')
-  q = conn.execute("SELECT COUNT(*) FROM closed_positions "
-                   "WHERE source='rebuilt_from_fills' "
-                   "AND NOT backfill_completed").fetchone()[0]
-  print(f'Queue: {q}')  # target 0
-  ```
+### Phase 0 deliverables Phase 1 will consume
 
-### Phase 0.1 ready to start
+- `core.calc_state.transition` — every status change goes through it
+- `core.link_state.transition` — same for orders.link_status
+- `accounts.config_json` column — Phase 1.T2 helper reads it
+- `pre_trade_log.window_seconds` + `operator_id` + 13 other cols — matcher writes them
+- `calc_match_audit` table + `insert_calc_match_audit_batch` helper — matcher batch-writes
+- `positions_calcs` schema + `upsert_position_calc_link` — Phase 2 wires
+- `orders.link_status` + `orders.lifecycle_id` — matcher writes link_status; lifecycle stays NULL until Phase 2's first opening fill
 
-Read `docs/design/calc_linkage_implementation_plan.md` starting at
-line 229. Phase 0.0 is hard-complete; Phase 0.1 (schema additions)
-can proceed against the cleaned data.
-
-Plan was extended this session: added P8.T9 / 8.10 for a
-per-position trade events drilldown in Position History drawer
-(see line ~599+). Phase total bumped to ~62 tasks.
-
-## Known issues / follow-ups
+## Known issues / follow-ups (carried forward)
 
 ### Pre-existing test failure (unrelated)
 
 `tests/test_data_cache_dd.py::TestRollingWindowPeak::test_old_high_excluded_from_window`
-fails on clean HEAD. 30-day rolling window boundary appears to
+still fails on clean HEAD. 30-day rolling window boundary appears to
 exclude the 40-day-old peak when it should include it (or test's
-window math is off). Worth investigating separately; not blocking.
+window math is off). Investigate separately; not blocking Phase 1.
 
-### Data quality finding (pre-existing)
+### Data quality finding (pre-existing, carried from prior HANDOFF)
 
-11+ fills in the live DB have `direction=''`:
+11+ fills in the live DB have `direction=''` across ATAUSDT, BNBUSDT,
+COSUSDT, IRYSUSDT, LABUSDT, NAORISUSDT. `position_grouping` silently
+skips fills with empty direction. They don't affect any rebuilt
+closed_position (121/121 linked correctly) but the upstream cause —
+why some exchange_history_backfill fills land with empty direction —
+warrants investigation. File as its own task.
 
-- ATAUSDT (2), BNBUSDT (1), COSUSDT (1), IRYSUSDT (2), LABUSDT (1),
-  NAORISUSDT (1) — empty direction
-- `position_grouping` silently skips fills with empty direction
-- These don't affect any rebuilt closed_position (which is why
-  121/121 rebuilt rows have linked fills despite the 34 empty-tpid
-  fills remaining)
-- Likely needs an upstream investigation into why some
-  exchange_history_backfill fills land with empty direction. Filing
-  as a separate task is recommended.
+### Per-position trade events drilldown (deferred to P8.T9)
 
-### Per-position trade events drilldown (deferred to Phase 8)
-
-Q2 from this session: the `trade_events` table + admin/history-tab
-views already exist; what's missing is a per-position drilldown in
-the Position History drawer. Scoped as P8.T9 in the implementation
-plan. Works for any calc-attributed position; empty-state for
-legacy / rebuilt rows (which have no calc_id).
-
-## Important context
-
-### Operator-side artifacts after T197+T198 cleanup
-
-- **Position History UI** now shows fills correctly for all 121
-  rebuilt rows (was empty before T198).
-- **MFE/MAE values** for the 62 new T197 rebuilds populate after the
-  reconciler sweep (the engine should have done this since session).
-- **Source-distribution analytics** show two buckets cleanly:
-  `rebuilt_from_fills` (121, clean provenance, fills-backed) and
-  `exchange_history_backfill` (29, legacy island — preserved
-  intentionally per categorization above).
-- **Backups**: keep `pre_synth_legacy_opens.bak` and
-  `pre_tpid_backfill.bak` until next major release confirms no
-  regression.
-
-### Cross-broker / platform-agnostic note (unchanged)
-
-Phase 0.0.x stayed broker-agnostic. The synth + tpid-backfill scripts
-operate on the canonical fills + closed_positions schema and don't
-hard-code any adapter knowledge.
-
-### Audit discipline that paid off (extended)
-
-- T184, T187, T191 (Phase 0.0 audit-find BLOCKERs): development-time
-  tests + audits
-- T193, T194 (Phase 0.0 live-DB-only finds): operator-trigger dry-run
-  discipline
-- **T199 (Phase 0.0.7 audit follow-up)**: discovered the synth
-  script's dry-run was blind to fill-stream conflicts — added
-  simulation-based validation so the dry-run accurately predicts
-  apply-time outcomes. Two cases (real-OPEN conflict + lifecycle
-  absorption) now categorized correctly without operator
-  intervention.
-
-**Lesson reinforcement**: dry-run output discipline isn't just
-"print what we would write"; it's "print what would actually
-happen after the write." For scripts that depend on downstream
-deterministic computations (like helper output), simulating that
-computation in dry-run prevents post-apply surprises.
+Plan §8.10 / §14.3 P8.T9 added in task 199 — per-position trade events
+drilldown in Position History drawer. Lazy-loaded timeline reusing
+`core.trade_event_log.query_trade_events`. Empty-state for legacy /
+rebuilt rows with no calc_id. Picks up in Phase 8 after Phase 1+
+event-emission sweeps land.
 
 ## Files for context
 
-- `docs/audits/2026-05-25-t178-fills-data-quality.md` — original
-  T178 corruption investigation
-- `docs/design/calc_linkage_implementation_plan.md` — phased rollout;
-  Phase 0.0 ✓ done, Phase 0.1+ ready. P8.T9 added this session.
-- `core/position_grouping.py` — canonical helper; T198 added
-  `attribution_out` parameter for fill-id back-tracking
-- `scripts/dedup_fills.py` — Phase 0.0.3 operator tool
-- `scripts/rebuild_closed_positions.py` — Phase 0.0.6 + T198 tpid
-  backfill + `--tpid-backfill-only` mode
-- `scripts/synth_legacy_open_fills.py` — Phase 0.0.7 (T197 + T199)
-- `tests/test_position_grouping.py` — added TestAttributionOut (5 tests)
-- `tests/test_rebuild_closed_positions.py` — added 4 tpid-backfill tests
-- `tests/test_synth_legacy_open_fills.py` — 12 tests covering all
-  recovery + conflict shapes
+- `docs/design/calc_linkage_spec.md` — spec; key sections §3.1-§3.5
+  (data model), §4 (matcher), §5/§6 (state machines), §9 (event catalog),
+  §12.3 (restart)
+- `docs/design/calc_linkage_implementation_plan.md` — phased rollout.
+  Phase 0 ✓ done (lines 229-275). Phase 1 starts line 277.
+- `core/database.py` — schema + migrations (all P0 tables + columns
+  landed here)
+- `core/db_orders.py` — OrdersMixin with 12 new CRUD helpers
+  (positions_calcs, order_amendments, funding_events, calc_match_audit)
+- `core/db_auth.py` — AuthMixin with operator_sessions CRUD
+- `core/auth_state.py` — OperatorSession dataclass + event topic constants
+- `core/calc_state.py` / `core/link_state.py` — state machines
+- `scripts/backfill_calc_linkage.py` — P0.T5 backfill (operator-controlled)
+- `tests/test_phase0_t{1,2,3,4}_*.py` — 69 tests for P0.T1-T4
+- `tests/test_state_machines.py` — 51 tests for P0.T6
+- `tests/test_backfill_calc_linkage.py` — 24 tests for P0.T5 + audit follow-up
 - `CLAUDE.md` — project discipline (test/audit/Jinja/deployment)
 
-## What's surviving the rewind (unchanged)
+## Surviving the rewind (unchanged)
 
 Independently load-bearing fixes preserved across the regime rewind:
 - T148 MED-004 PBKDF2-SHA256 KDF upgrade (security)
@@ -231,14 +236,16 @@ Independently load-bearing fixes preserved across the regime rewind:
   LIVE-DB cleanup APPLIED
 - **T197-T199 Phase 0.0.7 + audit-fix** — legacy-orphan recovery +
   fills tpid back-link + simulation-based dry-run validation
+- **T200-T207 Phase 0 foundation** — schema additions, state machines,
+  calc-linkage backfill (all 6 sub-tasks shipped)
 
 ## Memory (auto-loaded — but worth knowing)
 
 Three feedback memories in `~/.claude/projects/.../memory/`:
 - **untracked-files-discipline**: call out `??` files explicitly
-  when staging; don't silently filter
+  when staging
 - **branch-off-cherry-pick**: new task branches must fork off the
-  actual tip including cherry-picks, not the named-task commit alone
+  actual tip including cherry-picks
 - **verify-first-default-mode**: cheap state-check before scoping
   regime/data-readiness work
 
@@ -255,7 +262,7 @@ v2.5/fix-t164-fred-error-conservative
 v2.5/audit-t162-broad-except-sweep    (last pre-regime state)
 ```
 
-The branch is clean for Phase 0.1 to start. Live DB cleaned through
-Phase 0.0.7 (T197) + tpid-backfill (T198). Synth script is truly
-idempotent post-T199. Position History fills drawer populates for
-all 121 rebuilt rows.
+The branch is clean and ready for Phase 1. All Phase 0 schema is in
+the live DB. State-machine choke-points are in place. Backfill script
+is idempotent (verified). Phase 1.T1 (matcher rewrite) is the next
+move.
