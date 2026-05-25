@@ -1,23 +1,30 @@
 """
-Group fills into logical positions via chronological-walk (T177).
+Canonical "fills → position records" helper (Phase 0.0.1, T182).
 
-Root cause this addresses: `get_position_fills` previously fell back
-to (symbol, direction) matching when `terminal_position_id` was empty
-(the common case — pos_id comes from Quantower's plugin, not Binance
-WS, so any session without the plugin connected leaves the column
-unpopulated). The fallback returned fills from MULTIPLE distinct
-positions over time, causing the close-row builder to compute
-nonsense entry_price (VWAP of cross-position opens) and entry_time
-(min across all historical opens).
+Establishes a single source of truth for grouping fills into closed
+position rows. Replaces three duplicated grouping paths that diverged:
+
+1. ``order_manager._build_close_row_for_fill`` (live close-row builder,
+   uses the broken ``get_position_fills`` ``(symbol, direction)``
+   fallback when ``terminal_position_id`` is empty)
+2. ``db_orders.exchange_history_backfill`` (ad-hoc
+   ``(symbol, direction, open_time)`` grouping + synthetic fill
+   duplication — T178 Layers 1 & 3)
+3. One-off rebuild scripts (the T177 dryrun draft and the future
+   ``scripts/rebuild_closed_positions.py``)
+
+T178 audit reference:
+``docs/audits/2026-05-25-t178-fills-data-quality.md`` — five corruption
+layers identified in the existing fills + closed_positions data.
 
 Grouping rule (no pos_id required):
-  Walk fills chronologically, per-(symbol, direction). Track net
-  open quantity. A logical position OPENS on the first non-close
-  fill when net qty was 0. Subsequent fills ADD (is_close=0) or
-  REDUCE (is_close=1) the qty. When qty returns to 0 (with a small
-  epsilon for floating-point slop), the position is CLOSED and a
-  closed_positions row is emitted. A new position can then open on
-  the next non-close fill.
+  Walk fills chronologically, per-``(account_id, symbol, direction)``.
+  Track net open quantity. A logical position OPENS on the first
+  non-close fill when net qty was 0. Subsequent fills ADD
+  (``is_close=0``) or REDUCE (``is_close=1``) the qty. When qty
+  returns to 0 (within ``_QTY_EPS``), the position is CLOSED and a
+  ``PositionRecord`` is emitted. A new position can then open on the
+  next non-close fill.
 
 Why this is correct: fills represent actual order executions in
 chronological order. A position's lifecycle is fully defined by its
@@ -27,22 +34,27 @@ contiguous in the qty-tracked stream (a new position can't open
 while qty > 0 for the same symbol/direction in one-way mode).
 
 Caveats:
-  • Hedge mode (LONG + SHORT positions simultaneously on the same
-    symbol) is handled because we key on (symbol, direction). The
-    LONG and SHORT positions have independent qty tracks.
-  • If qty goes NEGATIVE (overfill — close qty > open qty), we
-    flush the current position at qty=0 and treat the residual as
-    opening a new position of the OPPOSITE direction. Defensive;
-    real Binance fills shouldn't overfill but partial-fill edge
-    cases sometimes round.
-  • Fills MUST be sorted chronologically AND deduplicated by
-    exchange_fill_id before being fed in. Duplicate fills (e.g.,
-    WS + REST reporting the same fill) would double-count qty.
+  - Hedge mode (LONG + SHORT positions simultaneously on the same
+    symbol) is handled because we key on (account_id, symbol,
+    direction). The LONG and SHORT positions have independent qty
+    tracks.
+  - If qty goes NEGATIVE (overfill — close qty > open qty), we
+    flush the current position at qty=0 and log a warning. The
+    reversal-split fix (Phase 0.0.4) will pre-process such events
+    into two separate fill rows before they reach this helper, so
+    this branch is a defensive fallback for pre-0.0.4 historical
+    data.
+  - Fills MUST be sorted chronologically AND deduplicated by the
+    ``is_same_fill`` rule before being fed in. Duplicate fills
+    (e.g., WS + REST or backfill-synthetic reporting the same trade)
+    would double-count qty. Phase 0.0.2 stops new dups at the write
+    path; Phase 0.0.3's ``scripts/dedup_fills.py`` cleans historical
+    dups.
 """
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Tuple, TypedDict
 
 log = logging.getLogger("position_grouping")
 
@@ -50,25 +62,149 @@ log = logging.getLogger("position_grouping")
 # typically use 3-8 decimal qty precision; 1e-6 is safely below.
 _QTY_EPS = 1e-6
 
+# ── Fill-dedup tolerance constants ──────────────────────────────────────
+#
+# Used by ``is_same_fill`` (and downstream Phase 0.0.2 dedup guard +
+# Phase 0.0.3 dedup script) to decide whether two fill rows describe the
+# same physical trade execution.
+#
+# Why 2 seconds: synthetic fills produced by ``exchange_history_backfill``
+# carry a slightly different timestamp than the real WS/REST fill for the
+# same trade (the synthetic is reconstructed from REALIZED_PNL accounting,
+# which may use the order's close timestamp rather than the fill's). T178
+# observed real Binance matching-engine splits (single client order →
+# multiple matching-engine fills) using IDENTICAL timestamps, so 2s is
+# wide enough to catch dual-write skew without collapsing legitimate
+# multi-fill orders.
+#
+# Why price tolerance is exact (0.0): both sources should report
+# identical prices since they come from the same trade execution. Any
+# divergence indicates the fills are genuinely different.
+FILL_DEDUP_TOLERANCE_MS = 2000
+FILL_DEDUP_PRICE_TOLERANCE_PCT = 0.0
+
+
+class PositionRecord(TypedDict, total=False):
+    """Closed-position row shape emitted by ``group_fills_into_positions``.
+
+    Matches the keys read by ``db_orders.insert_closed_position`` via
+    its ``row.get(...)`` calls. ``total=False`` so callers can pass a
+    subset and let ``insert_closed_position``'s ``.get`` defaults fill
+    the rest — but in practice this helper populates every field with
+    a deterministic value.
+
+    Keep in sync with the ``closed_positions`` schema in
+    ``core/database.py`` and the INSERT column list in
+    ``core/db_orders.py:insert_closed_position``.
+
+    MFE/MAE are intentionally left at 0.0 here — the reconciler runs
+    after rebuild (``backfill_completed=0`` triggers it) and computes
+    those with T175's gross-PnL floor applied. Don't try to re-derive
+    MFE/MAE inside this helper; the reconciler is the canonical owner.
+    """
+    account_id: int
+    exchange_position_id: str
+    terminal_position_id: str
+    symbol: str
+    direction: str
+    quantity: float
+    entry_price: float
+    exit_price: float
+    entry_time_ms: int
+    exit_time_ms: int
+    realized_pnl: float
+    total_fees: float
+    net_pnl: float
+    funding_fees: float
+    hold_time_ms: int
+    exit_reason: str
+    model_name: str
+    source: str
+    calc_id: str
+    mfe: float
+    mae: float
+    backfill_completed: int
+
+
+def is_same_fill(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
+    """Return True if two fill rows describe the same physical trade execution.
+
+    Matches by:
+      - ``symbol``, ``side``, ``is_close``, ``quantity``, ``direction``: exact
+      - ``timestamp_ms``: within ``FILL_DEDUP_TOLERANCE_MS``
+      - ``price``: within ``FILL_DEDUP_PRICE_TOLERANCE_PCT`` (currently exact)
+
+    Note: ``side`` (BUY/SELL) and ``direction`` (LONG/SHORT) are both
+    compared because the close of a SHORT position is a BUY-side fill;
+    matching on side alone would let a SHORT close collide with a LONG
+    open at the same price/time/qty. Belt-and-braces.
+
+    Quantity comparison uses ``_QTY_EPS`` to absorb floating-point
+    representation drift from the dual-write JSON round-trip — Binance's
+    REST and WS payloads encode quantities as decimal strings, and the
+    json parser's float conversion can produce values that differ by
+    one ULP.
+    """
+    if a.get("symbol", "") != b.get("symbol", ""):
+        return False
+    if (a.get("side", "") or "").upper() != (b.get("side", "") or "").upper():
+        return False
+    if (a.get("direction", "") or "").upper() != (b.get("direction", "") or "").upper():
+        return False
+    if bool(a.get("is_close", 0)) != bool(b.get("is_close", 0)):
+        return False
+
+    qty_a = float(a.get("quantity", 0) or 0)
+    qty_b = float(b.get("quantity", 0) or 0)
+    if abs(qty_a - qty_b) > _QTY_EPS:
+        return False
+
+    ts_a = int(a.get("timestamp_ms", 0) or 0)
+    ts_b = int(b.get("timestamp_ms", 0) or 0)
+    if abs(ts_a - ts_b) > FILL_DEDUP_TOLERANCE_MS:
+        return False
+
+    price_a = float(a.get("price", 0) or 0)
+    price_b = float(b.get("price", 0) or 0)
+    if FILL_DEDUP_PRICE_TOLERANCE_PCT <= 0.0:
+        if price_a != price_b:
+            return False
+    else:
+        denom = price_b if price_b else (price_a if price_a else 1.0)
+        if abs(price_a - price_b) / abs(denom) > FILL_DEDUP_PRICE_TOLERANCE_PCT:
+            return False
+
+    return True
+
 
 def group_fills_into_positions(
     fills: Iterable[Dict[str, Any]],
     fee_rate_fallback: float = 0.0,
-) -> List[Dict[str, Any]]:
-    """Group chronologically-sorted fills into closed_positions rows.
-
-    Each returned row has the shape expected by
-    `db_orders.insert_closed_position`:
-      account_id, symbol, direction, quantity, entry_price, exit_price,
-      entry_time_ms, exit_time_ms, realized_pnl, total_fees, net_pnl,
-      hold_time_ms, source, calc_id, exchange_position_id,
-      terminal_position_id
+) -> List[PositionRecord]:
+    """Group chronologically-sorted, deduplicated fills into ``PositionRecord``s.
 
     Open-but-not-closed positions at the end of the input stream are
-    NOT emitted (they're still live; closed_positions tracks closed
+    NOT emitted (they're still live; ``closed_positions`` tracks closed
     positions only).
+
+    Caller is responsible for:
+      - sorting ``fills`` chronologically (``timestamp_ms ASC, id ASC``)
+      - deduplicating via ``is_same_fill`` BEFORE passing in (this helper
+        does not dedup — it walks the stream as authoritative)
+
+    Args:
+        fills: iterable of fill row dicts (column-name keys, matching
+            the ``fills`` table schema in ``core/database.py``).
+        fee_rate_fallback: if a position's fills all have ``fee=0``,
+            estimate ``total_fees`` as ``fee_rate_fallback * notional *
+            2`` (both sides). Set to 0.0 to disable. Used by the rebuild
+            script when historical fills predate fee-recording.
+
+    Returns:
+        List of ``PositionRecord``s, one per closed logical position,
+        in close-time order.
     """
-    rows: List[Dict[str, Any]] = []
+    rows: List[PositionRecord] = []
     # state per (account_id, symbol, direction): accumulating opens + closes
     state: Dict[Tuple[int, str, str], Dict[str, Any]] = {}
 
@@ -117,9 +253,13 @@ def group_fills_into_positions(
                 # Position closed (or over-closed). Emit row.
                 rows.append(_build_row(key, st, fee_rate_fallback))
                 if st["open_qty"] < -_QTY_EPS:
-                    # Over-closed: residual qty opens opposite-direction position?
-                    # In one-way mode this shouldn't happen. In hedge mode the
-                    # opposite direction has its own state key. Log + reset.
+                    # Over-closed: residual qty would conceptually open an
+                    # opposite-direction position. In one-way mode this
+                    # shouldn't happen; in hedge mode the opposite
+                    # direction has its own state key. The reversal-split
+                    # fix (Phase 0.0.4) will pre-process such events into
+                    # two fill rows. Log + reset here as a defensive
+                    # fallback for pre-0.0.4 historical data.
                     log.warning(
                         "position_grouping: over-close on %s %s — "
                         "residual qty %.6f after close; resetting state. "
@@ -141,8 +281,8 @@ def _build_row(
     key: Tuple[int, str, str],
     st: Dict[str, Any],
     fee_rate_fallback: float,
-) -> Dict[str, Any]:
-    """Build a closed_positions row dict from accumulated opens + closes."""
+) -> PositionRecord:
+    """Build a ``PositionRecord`` from accumulated opens + closes."""
     account_id, symbol, direction = key
     opens: List[Dict[str, Any]] = st["opens"]
     closes: List[Dict[str, Any]] = st["closes"]
@@ -211,15 +351,17 @@ def _build_row(
         "model_name":           "",
         "source":               "rebuilt_from_fills",
         "calc_id":              calc_id,
-        # MFE/MAE left to reconciler
+        # MFE/MAE left to reconciler (T175 floor applies there).
+        # backfill_completed=0 so the reconciler picks up rebuilt rows.
         "mfe":                  0.0,
         "mae":                  0.0,
+        "backfill_completed":   0,
     }
 
 
 def _synthetic_pos_id(symbol: str, direction: str, entry_time_ms: int) -> str:
     """Deterministic synthetic position ID — same logical position
     always gets the same ID across reruns. Format mirrors the
-    db_orders.py:954 exchange-history backfill convention (`bf:...`).
-    Distinguishable as `rebuilt:` for traceability."""
+    db_orders.py:954 exchange-history backfill convention (``bf:...``).
+    Distinguishable as ``rebuilt:`` for traceability."""
     return f"rebuilt:{symbol}:{direction}:{entry_time_ms}"
