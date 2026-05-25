@@ -1,130 +1,213 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-05-25
-**Current branch**: `v2.5/post-rewind-drop-regime-infra` @ commit `fbeaf45`
-**Tests**: 2233 passed, 7 skipped
+**Date**: 2026-05-25 (continued)
+**Current branch**: `v2.5/post-rewind-drop-regime-infra` @ commit `ab4e985`
+**Tests**: 2356 passed, 7 skipped (+123 net new across Phase 0.0)
 
-## What this session did (T173-T180)
+## What this session did (T182-T191)
 
-Started as "fix the MFE/MAE inaccuracy" (T173-T176), discovered the
-underlying corruption goes way deeper (T177-T178), and locked in a
-plan for the cleanup (T179-T180).
+**Closed Phase 0.0 (Data Quality Pre-Work) end-to-end.** All six
+sub-tasks landed, each with an audit pass that found real issues
+(2 BLOCKERs, several HIGH/MEDIUM) and was followed by a fixup commit.
 
-**T173-T176 — MFE/MAE display fixes (shipped)**:
-- T173: sign-clamp on `calc_mfe_mae` — MFE ≥ 0, MAE ≤ 0; fixed
-  session_mae seeding bug in `apply_mark_price`
-- T174: position history template renders MFE+MAE together (was
-  inconsistently splitting "0" rendering with "—")
-- T175: realized-PnL floor on `calc_mfe_mae` — MFE for winners can't
-  display below `gross_pnl`; MAE for losers can't display above
-- T176: `INSERT OR REPLACE` on `closed_positions` preserves reconciler
-  columns (`mfe`, `mae`, `backfill_completed`) — closes the partial-fill
-  REPLACE race; aggTrades trailing buffer widened from 1s → 5s for
-  clock-skew tolerance
+### Phase 0.0 commit chain
 
-**T177-T178 — paused → investigation pivot**:
-- T177 started building a rebuild for the corrupted closed_positions
-  data. Got `core/position_grouping.py` (chronological-walk grouping)
-  + `scripts/rebuild_closed_positions_dryrun.py` (write-free diff)
-  as drafts.
-- During dry-run, discovered fills table has ~1.7-2x close-vs-open
-  inflation — corruption is deeper than MFE/MAE. Paused T177;
-  pivoted to T178 investigation (read-only).
-- T178 findings doc: `docs/audits/2026-05-25-t178-fills-data-quality.md`
-  — five corruption layers identified:
-  1. **Synthetic-fill duplication** from
-     `exchange_history_backfill` (db_orders.py:935+) creating fills
-     alongside real WS/REST fills
-  2. **`terminal_position_id` never populated** — Quantower's
-     plugin is the only source; without plugin → empty (verified
-     back to May 14 backups, not migration regression)
-  3. **`get_position_fills` fallback contamination** — empty pos_id
-     triggers `(symbol, direction)` match that pulls fills from
-     distinct historical positions
-  4. **Position-reversal lossiness** — LONG→SHORT in single fill
-     records ONE row with `is_close=True`; new direction's open
-     never persists
-  5. 5 strict-duplicate pairs (Binance matching-engine splits — NOT
-     bugs, leave as-is)
+```
+ab4e985 task 191: Phase 0.0.6 audit follow-up — atomic rebuild + M1/M2 tests
+2b29e45 task 190: Phase 0.0.6 — scripts/rebuild_closed_positions.py
+e34df52 task 189: Phase 0.0.5 audit follow-up — integration tests + index note
+0a79675 task 188: Phase 0.0.5 — close-row builder via grouping + strict get_position_fills
+775a50f task 187: Phase 0.0.4 audit follow-up — empty-fill-id guard + WS integration test
+6965486 task 186: Phase 0.0.4 — reversal-split (close+open on zero-cross fill)
+6d7df83 task 185: Phase 0.0.3 — scripts/dedup_fills.py
+d3cc693 task 184: Phase 0.0.2 audit follow-up — preserve closes-only reconstruction
+9c38691 task 183: Phase 0.0.2 — wire backfill through canonical position_grouping
+3df7814 task 182: Phase 0.0.1 — promote core/position_grouping.py to production
+```
 
-**T179-T180 — plan + drafts committed**:
-- T179: inserted **Phase 0.0 (Data Quality Pre-Work)** into
-  `docs/design/calc_linkage_implementation_plan.md`. Six sub-tasks
-  (0.0.1 through 0.0.6) covering the three fixable layers + the
-  centralization of `position_grouping.py` as the canonical
-  "fills → position records" helper.
-- T180: committed the T177 drafts as Phase 0.0 starting points so
-  they don't get lost. NOT production-ready — clearly marked in
-  docstrings; need TypedDict, dedup constants, tests before any
-  caller uses them.
+### What each phase did
 
-## Next session's job: implement Phase 0.0 starting from 0.0.1
+- **0.0.1 (T182)**: `core/position_grouping.py` promoted to production.
+  `PositionRecord` TypedDict, `FILL_DEDUP_TOLERANCE_MS=2000`,
+  `FILL_DEDUP_PRICE_TOLERANCE_PCT=0.0`, `is_same_fill(a,b)` helper.
+  No production callers yet — pure foundation.
 
-Read `docs/design/calc_linkage_implementation_plan.md` Phase 0.0 section
-end-to-end before touching anything. It captures:
-- Why Phase 0.0 exists (links to T178 findings)
-- Architectural decisions (position_grouping centralization, synthetic
-  `synth:{tradeId}:open` exchange_fill_id convention, fill-dedup
-  tolerance rule)
-- Six sub-tasks with file-level scope, rewiring notes, test fallout
-  flags, rollback plans
-- Why it's a hard prerequisite for Phase 0.11's positions_calcs backfill
+- **0.0.2 (T183 + T184)**: `core/db_orders.py::backfill_fills_from_exchange_history`
+  refactored. Inline SQL dedup → `is_same_fill`. Ad-hoc `(symbol,
+  direction, open_time)` grouping → `group_fills_into_positions`.
+  T184 audit fix added in-memory synthetic OPENs for closes-only
+  Binance-only path (the audit caught a real BLOCKER regression).
 
-**Order of work (per plan)**:
+- **0.0.3 (T185)**: `scripts/dedup_fills.py` operator tool. Source
+  priority `binance_ws > binance_rest > exchange_history_backfill`.
+  Live DB smoke: 12 dup groups detected on BSBUSDT alone (exactly the
+  T178 Layer 1 reproduction). Default `--dry-run`, `--apply` opt-in.
 
-| Task | What | Risk | Test fallout |
-|---|---|---|---|
-| 0.0.1 | Refactor `core/position_grouping.py` draft → production: add `PositionRecord` TypedDict, `FILL_DEDUP_TOLERANCE_MS = 2000`, `FILL_DEDUP_PRICE_TOLERANCE_PCT = 0.0`, `is_same_fill(a, b)` helper. Write `tests/test_position_grouping.py` covering single position, scale-in, partial close, hedge mode, qty-epsilon. **No production callers yet.** | Low (additive) | None |
-| 0.0.2 | Fix 1: dedup guard in `exchange_history_backfill` (db_orders.py:935+) using `is_same_fill`. Refactor its closed_positions construction to call `position_grouping`. | Medium | Existing tests on `exchange_history_backfill` will need updates for the new dedup behavior |
-| 0.0.3 | Fix 2: `scripts/dedup_fills.py` (dry-run + apply). Operator-controlled; backup required. | Medium (destructive on apply) | Add new test fixtures |
-| 0.0.4 | Fix 3: reversal-split. `position_snapshot.py` returns 2-portion snapshot when crossing zero; `order_manager.py:process_fill` writes 2 fill rows. Synthetic ID = `"synth:{tradeId}:open"`. | **High** (contract change) | **Expect substantial fallout**: any test asserting "1 fill per WS event" breaks for reversal scenarios |
-| 0.0.5 | Refactor `_build_close_row_for_fill` to use `position_grouping` instead of `get_position_fills` fallback. Remove the bad fallback arm from `get_position_fills`. | Medium | Tests asserting `get_position_fills` returns rows when pos_id is empty (they're testing a bug) — invert or remove |
-| 0.0.6 | `scripts/rebuild_closed_positions.py` (extends the T180 dryrun draft). Operator-controlled; rebuilds closed_positions from clean fills using `position_grouping`. Resets `backfill_completed=0` so reconciler re-runs MFE/MAE with T175's floor. | Medium (destructive on apply) | None — script is additive |
+- **0.0.4 (T186 + T187)**: reversal-split. Single fill crossing zero
+  now produces TWO fill rows: close-of-old (`{tradeId}`) + open-of-new
+  (`synth:{tradeId}:open`). T187 audit fix added empty-fill-id guard +
+  WS-pipeline integration test (verifies the full Binance one-way path
+  `ps="BOTH"` → `direction="BOTH"` → one_way mode → reversal-split fires).
 
-## Starting hint
+- **0.0.5 (T188 + T189)**: `_build_close_row_for_fill` refactored to
+  use `find_opens_for_position_close_at` (new helper) when pos_id is
+  empty. `get_position_fills` is now STRICT — empty pos_id returns [].
+  T189 audit fix added integration tests (including a T178 Layer 3
+  regression guard at the live close-row builder boundary) + a
+  performance note about missing covering index.
 
-**Step 1**: Read Phase 0.0 in the plan. Don't skim — every sub-task's
-notes column matters.
+- **0.0.6 (T190 + T191)**: `scripts/rebuild_closed_positions.py`
+  operator tool. DELETE existing in scope + INSERT rebuilt rows via
+  `group_fills_into_positions`. T191 audit fix made the operation
+  ATOMIC (single transaction with rollback on failure) by adding
+  `commit: bool` to `insert_closed_position` — kill or insert-failure
+  mid-script now rolls back instead of leaving the DB wiped but
+  rebuilt rows incomplete.
 
-**Step 2**: Check the T180 drafts (`core/position_grouping.py`,
-`scripts/rebuild_closed_positions_dryrun.py`) — they're the starting
-material for 0.0.1 and 0.0.6 but need the work described in those
-sub-tasks before they're production-ready.
+### What this means for the live DB
 
-**Step 3**: Start with 0.0.1 (lowest risk, no production callers).
-Work through to 0.0.6 in order — each depends on prior. Verify-first
-discipline (cheap state-check) per the memory between sub-tasks.
+The Phase 0.0 work introduced FIXES + TOOLS, but **didn't yet apply
+them to the live DB**. The live DB at
+`data/risk_engine.db` still has the T178 corruption documented in
+`docs/audits/2026-05-25-t178-fills-data-quality.md`.
 
-**Step 4**: Each sub-task = one commit. Use the `task NNN: ...`
-naming convention. Reference the Phase 0.0 sub-task number in the
-commit body so future readers can trace.
+The dry-run smoke against BSBUSDT showed the impact:
+- **dedup_fills**: 12 duplicate groups (synthetic-backfill vs real
+  WS/REST pairs).
+- **rebuild_closed_positions**: 21 corrupted closed_positions rows
+  collapse to 12 clean rebuilt positions.
 
-**Step 5**: After 0.0.6, you can then proceed to Phase 0.1 (the
-original schema additions) — at that point Phase 0.11's
-positions_calcs backfill will have a clean source to work against.
+Multiply across all symbols in the live DB → significant cleanup
+available when the operator chooses to run it.
 
-## Important context from this session
+## Next session's job — pick a path
 
-**MFE/MAE math invariant** (T175): for a winning trade, MFE ≥ gross_pnl.
-For a losing trade, MAE ≤ gross_pnl. Floor is enforced in `calc_mfe_mae`
-when `exit_price` is supplied. T177's `position_grouping.py` draft
-doesn't currently invoke this — when 0.0.6 rebuilds closed_positions,
-the reconciler will run MFE/MAE separately (using T175's floor).
-Don't try to re-derive MFE/MAE inside `position_grouping` — leave that
-to the reconciler.
+### Path A (recommended): operator runs Phase 0.0 cleanup, then Phase 0.1 starts
 
-**T176 REPLACE race fix is still active** — `insert_closed_position`
-preserves `mfe`/`mae`/`backfill_completed` across REPLACEs. This is
-important for 0.0.6: when the rebuild script wipes and recreates
-closed_positions rows, `backfill_completed` should be set to 0
-explicitly so the reconciler re-runs.
+**Step 1 — Operator runs the Phase 0.0 cleanup tools.**
 
-**`scripts/rebuild_closed_positions_dryrun.py` is read-only.** Safe to
-run against live DB for diagnostics. The Phase 0.0.6 production script
-will be a separate file (`scripts/rebuild_closed_positions.py`)
-with `--dry-run` default + `--apply` flag.
+```bash
+# 1. Back up the DB.
+cp data/risk_engine.db data/risk_engine.db.pre_phase0_0.bak
 
-## What's surviving the rewind (from T170 — still relevant)
+# 2. Clean fills (Phase 0.0.3).
+python scripts/dedup_fills.py                # DRY-RUN first
+python scripts/dedup_fills.py --apply        # then apply
+
+# 3. Rebuild closed_positions (Phase 0.0.6).
+python scripts/rebuild_closed_positions.py            # DRY-RUN first
+python scripts/rebuild_closed_positions.py --apply    # then apply
+
+# 4. Reconciler auto-runs on next engine sweep, applies T175's
+#    MFE/MAE floor to the rebuilt rows.
+```
+
+**Step 2 — Verify the cleanup landed correctly.** Spot-check
+closed_positions for a known symbol; compare to the pre-cleanup
+backup. Check that MFE/MAE values appear correct after reconciler
+sweep.
+
+**Step 3 — Start Phase 0.1.** Read
+`docs/design/calc_linkage_implementation_plan.md` lines 229+
+(Phase 0: Foundation — schema additions). That's the original phase
+0 — additive schema work. The plan was reorganized so 0.0 is the
+pre-work; 0.1 onwards is the original linkage rollout.
+
+### Path B: Skip the cleanup, go directly to Phase 0.1
+
+Phase 0.1 is purely schema additions (additive, non-breaking). It
+doesn't depend on the Phase 0.0 cleanup having run — that's a
+prerequisite for **Phase 0.11's positions_calcs backfill**, not for
+Phase 0.1's schema work.
+
+If the operator wants to defer the cleanup, Phase 0.1 can proceed
+immediately. The cleanup can happen any time before Phase 0.11.
+
+### Recommendation
+
+Path A. The cleanup is operator-visible — it'll fix the BSBUSDT-style
+anomalies the operator already flagged. Running it now means the next
+sessions can develop against clean data, not against the corrupted
+fixture.
+
+## Important context
+
+### Operator workflow surface
+
+Two new operator scripts. Both default to dry-run, require explicit
+`--apply` for destructive operations, print a 3-second countdown
+warning, and chunk DELETEs / wrap in transactions for safety.
+
+- `scripts/dedup_fills.py`: source-priority dedup. Cleans
+  Layer 1 (synthetic duplication).
+- `scripts/rebuild_closed_positions.py`: atomic rebuild. Cleans
+  Layer 3 (cross-position contamination) + Layer 5 in the historical
+  data.
+
+Layer 4 (reversal-split) is already fixed in the LIVE write path
+(Phase 0.0.4); historical reversals will be reconstructed by the
+rebuild script.
+
+### What still needs operator action
+
+- The `bf:%`-prefixed closed_positions rows from prior backfill runs
+  will be REPLACED by `rebuilt:%`-prefixed rows when
+  `rebuild_closed_positions.py --apply` runs. Old rows are wiped via
+  the script's DELETE step.
+- After rebuild, `backfill_completed=0` triggers the reconciler to
+  re-run MFE/MAE with T175's gross-PnL floor in place. Wait for the
+  next reconciler sweep before assessing UI correctness.
+
+### Cross-broker / platform-agnostic note
+
+Phase 0.0 stayed broker-agnostic. The mode-detection heuristic in
+`_snapshot_and_fix_isclose` correctly handles:
+- Binance one-way (`ps="BOTH"` → one_way mode → reversal-split fires)
+- Binance hedge (`ps="LONG"`/`"SHORT"` → hedge mode → suppressed,
+  correct because each side tracks independently)
+- Quantower plugin (`direction="LONG"`/`"SHORT"` → hedge mode →
+  suppressed, correct because plugin pre-splits via OPEN +
+  REALIZED_PNL events)
+- MEXC (no `direction` set by adapter → empty → one_way mode →
+  reversal-split fires if zero-crossing observed)
+
+The one Binance-flavored token (`"BOTH"`) only ever appears in
+Binance one-way events. Other broker paths benignly skip splits via
+either hedge classification or pre-splitting at the adapter layer.
+
+### Audit discipline that paid off
+
+Every Phase 0.0.X commit was followed by an independent audit pass.
+Three of those audits surfaced real issues that would have shipped
+broken:
+- **T184 (B1)**: closes-only Binance-only backfill produced zero
+  closed_positions. Real regression for the no-plugin path.
+- **T187 (M1)**: `synth::open` collision on empty fill_id.
+- **T191 (B1)**: rebuild DELETE+INSERTs not atomic — kill mid-script
+  left the DB wiped.
+
+Three were verified clean (audits found only LOW/MEDIUM gaps —
+documentation, perf, opportunistic test coverage). Pattern is
+recommended for future destructive / cross-cutting work.
+
+## Files for context
+
+- `docs/audits/2026-05-25-t178-fills-data-quality.md` — full T178
+  investigation (the corruption Phase 0.0 closes)
+- `docs/design/calc_linkage_implementation_plan.md` — phased rollout.
+  Phase 0.0 is lines 54-227 (✓ done). Phase 0.1 onwards starts at
+  line 229.
+- `core/position_grouping.py` — canonical "fills → position records"
+  helper (Phase 0.0.1, with reverse-lookup helpers added in 0.0.5)
+- `scripts/dedup_fills.py` — Phase 0.0.3 operator tool
+- `scripts/rebuild_closed_positions.py` — Phase 0.0.6 operator tool
+- `tests/test_position_grouping.py`, `test_phase0_0_2_*`,
+  `test_dedup_fills.py`, `test_phase0_0_4_*`, `test_phase0_0_5_*`,
+  `test_rebuild_closed_positions.py` — Phase 0.0 test suites
+  (~120 new tests across the phase)
+- `CLAUDE.md` — project test/audit/Jinja/deployment discipline
+
+## What's surviving the rewind (from T170, still relevant)
 
 Independently load-bearing fixes preserved across the regime rewind:
 - T148 MED-004 PBKDF2-SHA256 KDF upgrade (security)
@@ -137,8 +220,10 @@ Independently load-bearing fixes preserved across the regime rewind:
 - T162 broad-except narrowing sweep (regression guardrail)
 - T165 MED-017 mark-price freshness half (timestamps + stale-flag)
 - T168 pollution guards (`insert_closed_position` + `log_trade_event`)
-- **T173-T176** MFE/MAE fixes (sign-clamp + render-together + floor +
+- T173-T176 MFE/MAE fixes (sign-clamp + render-together + floor +
   REPLACE-race fix)
+- **T182-T191** Phase 0.0 — data quality cleanup primitives + tools
+  (this session)
 
 ## Memory (auto-loaded — but worth knowing)
 
@@ -148,37 +233,7 @@ Three feedback memories in `~/.claude/projects/.../memory/`:
 - **branch-off-cherry-pick**: new task branches must fork off the
   actual tip including cherry-picks, not the named-task commit alone
 - **verify-first-default-mode**: cheap state-check before scoping
-  regime/data-readiness work (opportunistic post-T169; full re-sync
-  only if divergence found)
-
-## Live-DB diagnostic snapshot
-
-- DB: `data/risk_engine.db` (pre-split layout — has `closed_positions`)
-- 175 closed trades, 2026-03-13 to 2026-05-20
-- **ALL have NULL/empty calc_id** (calc path wasn't exercised in
-  test sessions)
-- 350 fills total; ALL have empty `terminal_position_id`
-- Fills source distribution: `binance_rest` 152, `binance_ws` 65,
-  `exchange_history_backfill` 133 (the last is the synthetic-dup
-  source)
-- BSBUSDT specifically: 79 fills (51 REST + 11 WS + 17 synthetic),
-  21 closed_positions rows for what's likely 12 real logical
-  positions
-- `regime_signals`: vix/us10y/hy/btc_rvol cover the trade window;
-  `avg_funding` has 20 days only; `agg_oi_change` is missing entirely
-
-## Files for context
-
-- `docs/audits/2026-05-25-t178-fills-data-quality.md` — full
-  investigation, all 5 layers, repair-difficulty matrix
-- `docs/audits/2026-05-17-v2.4-backend-audit.md` — Stat Summary
-  section at top has the T170 rollback notes
-- `docs/design/calc_linkage_spec.md` — 68-decision linkage spec
-- `docs/design/calc_linkage_implementation_plan.md` — phased rollout
-  including the **new Phase 0.0** section
-- `v2.5_regime-plan.md` — regime architecture plan (preserved
-  across rewind; regime rebuild comes AFTER calc_linkage)
-- `CLAUDE.md` — project test/audit/Jinja/deployment discipline
+  regime/data-readiness work
 
 ## Recoverable branches (in case you need to peek)
 
@@ -193,18 +248,5 @@ v2.5/fix-t164-fred-error-conservative
 v2.5/audit-t162-broad-except-sweep    (last pre-regime state)
 ```
 
-## Recent commit chain on the current branch
-
-```
-fbeaf45 task 180: land Phase 0.0 starting drafts
-bbc88e6 task 179: insert Phase 0.0 into calc_linkage_implementation_plan
-275e0dc task 178: investigate fills data quality
-6afde98 task 176: insert_closed_position preserves reconciler columns
-41ae544 task 175: MFE/MAE realized-PnL floor
-b4f5c53 task 174: position history MFE/MAE — render together
-7265375 task 173: clamp MFE/MAE signs
-07cd733 Revert "task 171: calculator anti-flicker" (T171 was wrong-mechanism)
-86b19fe task 170: rewind — drop regime infrastructure T163-T169
-```
-
-The branch is in a clean state for Phase 0.0.1 to start.
+The branch is in a clean state for Phase 0.1 to start (with or without
+the operator running the Phase 0.0 cleanup tools first).
