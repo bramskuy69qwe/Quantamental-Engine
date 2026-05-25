@@ -752,6 +752,41 @@ class DatabaseManager(
             # config.py); the column ships here so existing accounts
             # immediately have the slot.
             "ALTER TABLE accounts ADD COLUMN config_json TEXT DEFAULT NULL",
+            # ── Phase 0 (P0.T4): orders + closed_positions column adds ─
+            # Per spec §3.2. All NULL-default so legacy rows aren't
+            # surprised — Phase 1+/2+/4+ writes explicit values on new
+            # orders/positions. calc_id, tp_trigger_price,
+            # sl_trigger_price already on orders (v2.4 migrations);
+            # exit_reason, funding_fees, calc_id, tp_price, sl_price
+            # already on closed_positions (existing). 6 new orders cols
+            # + 16 new closed_positions cols.
+            "ALTER TABLE orders ADD COLUMN link_status TEXT DEFAULT NULL",
+            "ALTER TABLE orders ADD COLUMN operator_id TEXT DEFAULT NULL",
+            "ALTER TABLE orders ADD COLUMN cancel_reason_category TEXT DEFAULT NULL",
+            "ALTER TABLE orders ADD COLUMN cancel_reason_raw TEXT DEFAULT NULL",
+            "ALTER TABLE orders ADD COLUMN cancel_ts_ms INTEGER DEFAULT NULL",
+            "ALTER TABLE orders ADD COLUMN lifecycle_id TEXT DEFAULT NULL",
+            # closed_positions: 16 net-new columns. exit_reason is the
+            # one re-mapped column (existing TEXT col now holds the
+            # spec §3.4 enum — re-map of legacy values is P0.T5).
+            # funding_fees already exists and is being repurposed
+            # (Phase 5.4 will populate from SUM(funding_events.amount)).
+            "ALTER TABLE closed_positions ADD COLUMN close_note TEXT DEFAULT NULL",
+            "ALTER TABLE closed_positions ADD COLUMN entry_px_delta_pct REAL DEFAULT NULL",
+            "ALTER TABLE closed_positions ADD COLUMN size_delta_pct REAL DEFAULT NULL",
+            "ALTER TABLE closed_positions ADD COLUMN tp_drift_pct REAL DEFAULT NULL",
+            "ALTER TABLE closed_positions ADD COLUMN sl_drift_pct REAL DEFAULT NULL",
+            "ALTER TABLE closed_positions ADD COLUMN exit_vs_target_pct REAL DEFAULT NULL",
+            "ALTER TABLE closed_positions ADD COLUMN realized_r REAL DEFAULT NULL",
+            "ALTER TABLE closed_positions ADD COLUMN planned_r REAL DEFAULT NULL",
+            "ALTER TABLE closed_positions ADD COLUMN hold_time_actual_ms INTEGER DEFAULT NULL",
+            "ALTER TABLE closed_positions ADD COLUMN hold_time_planned_ms INTEGER DEFAULT NULL",
+            "ALTER TABLE closed_positions ADD COLUMN cumulative_amendment_count INTEGER DEFAULT NULL",
+            "ALTER TABLE closed_positions ADD COLUMN liquidation_px REAL DEFAULT NULL",
+            "ALTER TABLE closed_positions ADD COLUMN bankruptcy_px REAL DEFAULT NULL",
+            "ALTER TABLE closed_positions ADD COLUMN insurance_fund_fee REAL DEFAULT NULL",
+            "ALTER TABLE closed_positions ADD COLUMN adl_indicator INTEGER DEFAULT NULL",
+            "ALTER TABLE closed_positions ADD COLUMN lifecycle_id TEXT DEFAULT NULL",
         ]:
             try:
                 await self._conn.execute(migration)
@@ -773,10 +808,20 @@ class DatabaseManager(
         await self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_orders_calc_id ON orders (calc_id)"
         )
-        # P0.T3 spec §3.5: every table carrying lifecycle_id has an index.
+        # P0.T3 + P0.T4 spec §3.5: every table carrying lifecycle_id
+        # has an index. orders + closed_positions get their indexes in
+        # P0.T4 alongside the column additions above.
         await self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_pretrade_lifecycle "
             "ON pre_trade_log (lifecycle_id)"
+        )
+        await self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_orders_lifecycle "
+            "ON orders (lifecycle_id)"
+        )
+        await self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_closed_pos_lifecycle "
+            "ON closed_positions (lifecycle_id)"
         )
 
         # Task 160 (MED-024): UNIQUE index install is now done by
