@@ -385,6 +385,148 @@ class TestBackfillUsesGroupingHelper:
         assert dirs == {"LONG", "SHORT"}
 
 
+# ── 2b. T184 audit follow-up: closes-only Binance-only path ─────────────
+
+
+class TestBackfillReconstructsFromClosesOnly:
+    """T184 audit fix for B1: ``core/exchange_income.py`` writes only
+    REALIZED_PNL events to ``exchange_history`` for Binance-only users
+    (no Quantower plugin). The new ``group_fills_into_positions`` needs
+    both opens and closes in the stream; the old code reconstructed
+    closed_positions from REALIZED_PNL row metadata alone.
+
+    Fix: synthesize in-memory OPEN fills (NOT inserted into fills table)
+    for REALIZED_PNL rows whose corresponding OPEN isn't already in the
+    accepted batch. Preserves old behavior under the new grouping path."""
+
+    @pytest.mark.asyncio
+    async def test_closes_only_input_still_emits_closed_position(self, test_db):
+        # Binance-only path: exchange_history has REALIZED_PNL only.
+        open_ts = BASE_MS
+        close_ts = BASE_MS + 60_000
+        await _insert_exchange_history(
+            test_db,
+            trade_key="binance-close-only",
+            time_ms=close_ts,
+            symbol="DOGEUSDT",
+            income_type="REALIZED_PNL",
+            direction="LONG",
+            entry_price=0.10,
+            exit_price=0.11,
+            qty=1000.0,
+            open_time=open_ts,
+            income=10.0,
+        )
+        result = await test_db.backfill_fills_from_exchange_history(
+            account_id=1, days=365,
+        )
+        # Only 1 fill (the close) is inserted into the fills table —
+        # the synthetic OPEN is in-memory only.
+        assert result["fills_inserted"] == 1
+        fills = await _all_fills(test_db)
+        assert len(fills) == 1
+        assert int(fills[0]["is_close"]) == 1
+        # But a closed_position row IS produced via the synthetic OPEN.
+        assert result["closed_inserted"] == 1
+        closed = await _all_closed(test_db)
+        assert len(closed) == 1
+        c = closed[0]
+        assert c["symbol"] == "DOGEUSDT"
+        assert c["direction"] == "LONG"
+        assert c["quantity"] == pytest.approx(1000.0)
+        assert c["entry_price"] == pytest.approx(0.10)
+        assert c["exit_price"] == pytest.approx(0.11)
+        assert c["entry_time_ms"] == open_ts
+        assert c["exit_time_ms"] == close_ts
+
+    @pytest.mark.asyncio
+    async def test_synthetic_open_skipped_when_real_open_present(self, test_db):
+        # Quantower path: exchange_history has both OPEN + REALIZED_PNL.
+        # The synthetic-OPEN logic must NOT add a duplicate.
+        open_ts = BASE_MS
+        close_ts = BASE_MS + 60_000
+        await _insert_exchange_history(
+            test_db,
+            trade_key="qt-open",
+            time_ms=open_ts,
+            symbol="MATICUSDT",
+            income_type="",          # OPEN (platform_bridge writes "OPEN", non-REALIZED_PNL → is_close=0 in backfill)
+            direction="LONG",
+            entry_price=1.0,
+            qty=500.0,
+        )
+        await _insert_exchange_history(
+            test_db,
+            trade_key="qt-close",
+            time_ms=close_ts,
+            symbol="MATICUSDT",
+            income_type="REALIZED_PNL",
+            direction="LONG",
+            entry_price=1.0,
+            exit_price=1.05,
+            qty=500.0,
+            open_time=open_ts,
+            income=25.0,
+        )
+        result = await test_db.backfill_fills_from_exchange_history(
+            account_id=1, days=365,
+        )
+        assert result["fills_inserted"] == 2   # both real fills
+        # Real OPEN matched via opens_present → synthetic OPEN skipped.
+        # Helper sees [real OPEN, close] and emits 1 record (NOT doubled).
+        assert result["closed_inserted"] == 1
+        closed = await _all_closed(test_db)
+        assert len(closed) == 1
+        # Quantity equals one open's qty, not doubled.
+        assert closed[0]["quantity"] == pytest.approx(500.0)
+
+    @pytest.mark.asyncio
+    async def test_open_time_zero_close_is_dropped_and_counted(self, test_db):
+        # PA-1b couldn't match an OPEN for this close → open_time=0.
+        # Synthetic-OPEN logic skips and counts; no closed_position emitted.
+        await _insert_exchange_history(
+            test_db,
+            trade_key="orphan-close",
+            time_ms=BASE_MS + 60_000,
+            symbol="LINKUSDT",
+            income_type="REALIZED_PNL",
+            direction="LONG",
+            entry_price=15.0,
+            exit_price=16.0,
+            qty=10.0,
+            open_time=0,             # orphan — PA-1b found no matching open
+            income=10.0,
+        )
+        result = await test_db.backfill_fills_from_exchange_history(
+            account_id=1, days=365,
+        )
+        assert result["fills_inserted"] == 1   # close fill still inserted
+        assert result["closed_inserted"] == 0  # but no closed_position
+        assert result["closes_dropped_no_open_time"] == 1
+
+    @pytest.mark.asyncio
+    async def test_orphan_close_count_returned_when_zero(self, test_db):
+        # Return dict always includes the count, even when zero.
+        await _insert_exchange_history(
+            test_db,
+            trade_key="ok-close",
+            time_ms=BASE_MS + 60_000,
+            symbol="LINKUSDT",
+            income_type="REALIZED_PNL",
+            direction="LONG",
+            entry_price=15.0,
+            exit_price=16.0,
+            qty=10.0,
+            open_time=BASE_MS,
+            income=10.0,
+        )
+        result = await test_db.backfill_fills_from_exchange_history(
+            account_id=1, days=365,
+        )
+        assert "closes_dropped_no_open_time" in result
+        assert result["closes_dropped_no_open_time"] == 0
+
+
 # ── 3. MFE/MAE deferred to reconciler ──────────────────────────────────
 
 

@@ -981,13 +981,18 @@ class OrdersMixin:
             # for performance; in-Python is_same_fill applies the full rule
             # (symbol, side, direction, is_close, qty within _QTY_EPS,
             # ts within FILL_DEDUP_TOLERANCE_MS, price exact).
+            # T184 (audit M3): LIMIT 100 caps worst-case scan when an
+            # account has many fills clustered in the same 2s window
+            # (e.g., multi-fill partial-close storms). 100 is far above
+            # any realistic legitimate cluster.
             is_dup = False
             try:
                 async with self._conn.execute(
                     "SELECT account_id, exchange_fill_id, symbol, side, direction, "
                     "price, quantity, is_close, timestamp_ms "
                     "FROM fills WHERE account_id=? AND symbol=? "
-                    "AND ABS(timestamp_ms - ?) <= ?",
+                    "AND ABS(timestamp_ms - ?) <= ? "
+                    "LIMIT 100",
                     (account_id, fill["symbol"], fill["timestamp_ms"],
                      FILL_DEDUP_TOLERANCE_MS),
                 ) as cur:
@@ -1006,15 +1011,67 @@ class OrdersMixin:
             except Exception:
                 pass
 
-        # Phase 0.0.2: closed_positions built via canonical grouping helper.
-        # Pass the full accepted_fills list (opens + closes); helper walks
-        # chronologically per (account_id, symbol, direction) and emits a
-        # PositionRecord when qty returns to zero. The synthetic
-        # `rebuilt:` terminal_position_id format means rerunning the
-        # backfill against the same data is idempotent (same entry_time_ms
-        # → same ID → REPLACE preserves reconciler columns per T176).
-        accepted_fills.sort(key=lambda f: int(f.get("timestamp_ms", 0) or 0))
-        position_records = group_fills_into_positions(accepted_fills)
+        # Phase 0.0.2 + T184 audit fix (B1): closed_positions reconstruction.
+        #
+        # The helper requires both opens and closes in the fill stream. In
+        # the Binance-only path (Quantower plugin NOT connected),
+        # `exchange_history` only contains REALIZED_PNL events — no OPEN
+        # rows (those come from platform_bridge / Quantower). The OLD
+        # backfill reconstructed closed_positions from REALIZED_PNL rows'
+        # embedded `entry_price` + `open_time` metadata directly. To
+        # preserve that behavior under the new chronological-walk grouping,
+        # we synthesize an in-memory OPEN fill for each REALIZED_PNL row
+        # whose corresponding OPEN is NOT already in the accepted batch.
+        # The synthetic OPENs are PURELY for grouping — NOT inserted into
+        # the fills table — so they don't pollute the fills universe or
+        # become a new Layer-1 dup source.
+        grouping_input = list(accepted_fills)
+        opens_present = {
+            (f["symbol"], f["direction"], int(f.get("timestamp_ms", 0) or 0))
+            for f in accepted_fills
+            if not int(f.get("is_close", 0))
+        }
+        closes_dropped_no_open_time = 0
+        for r in rows:
+            if r.get("income_type") != "REALIZED_PNL":
+                continue
+            open_time = int(r.get("open_time", 0) or 0)
+            if open_time == 0:
+                # PA-1b couldn't match an open — orphan close. Skip
+                # rather than fabricate an entry timestamp. Counted in
+                # the return dict for operator visibility.
+                closes_dropped_no_open_time += 1
+                continue
+            symbol = r.get("symbol", "")
+            direction = r.get("direction", "")
+            if not symbol or not direction:
+                continue
+            key = (symbol, direction, open_time)
+            if key in opens_present:
+                continue   # real OPEN already in grouping stream
+            entry_price = float(r.get("entry_price", 0) or 0)
+            qty = float(r.get("qty", 0) or 0)
+            if entry_price <= 0 or qty <= 0:
+                continue
+            grouping_input.append({
+                "account_id":           account_id,
+                # in-memory synthetic ID — NOT written to fills, marker
+                # only for in-process traceability if someone logs the
+                # grouping input
+                "exchange_fill_id":     f"bf:open:{r.get('trade_key', '')}",
+                "symbol":               symbol,
+                "side":                 "BUY" if direction == "LONG" else "SELL",
+                "direction":            direction,
+                "price":                entry_price,
+                "quantity":             qty,
+                "is_close":             0,
+                "timestamp_ms":         open_time,
+                "source":               "exchange_history_backfill_inmemory_open",
+            })
+            opens_present.add(key)
+
+        grouping_input.sort(key=lambda f: int(f.get("timestamp_ms", 0) or 0))
+        position_records = group_fills_into_positions(grouping_input)
 
         closed_inserted = 0
         for pr in position_records:
@@ -1030,11 +1087,22 @@ class OrdersMixin:
             except Exception:
                 pass
 
+        if closes_dropped_no_open_time:
+            log.info(
+                "Backfill: %d REALIZED_PNL rows had open_time=0 (orphan "
+                "closes — PA-1b couldn't match a prior open). Skipped "
+                "during closed_positions reconstruction.",
+                closes_dropped_no_open_time,
+            )
         log.info(
             "Backfill complete: %d fills, %d closed_positions from exchange_history",
             fills_inserted, closed_inserted,
         )
-        return {"fills_inserted": fills_inserted, "closed_inserted": closed_inserted}
+        return {
+            "fills_inserted":              fills_inserted,
+            "closed_inserted":             closed_inserted,
+            "closes_dropped_no_open_time": closes_dropped_no_open_time,
+        }
 
     # ── MFE/MAE for closed_positions ───────────────────────────────────────
 
