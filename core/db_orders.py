@@ -704,6 +704,17 @@ class OrdersMixin:
         ``since_ms`` is an optional lower bound to cap the scan window
         (callers that know the position is recent can pass e.g.
         ``close_ts_ms - 90*86400*1000``).
+
+        Performance note (T189 audit M1): no covering index exists for
+        ``(account_id, symbol, direction, timestamp_ms)``. SQLite uses
+        ``idx_fills_ts (account_id, timestamp_ms)`` to narrow by
+        account + time, then filters symbol+direction in-memory. For
+        an account with thousands of fills per (symbol, direction)
+        this becomes O(N) per call. Fine for current scale (live DB
+        has ~350 fills total). Migrate to a covering index when an
+        account approaches 10k+ fills per symbol — e.g.
+        ``CREATE INDEX idx_fills_acct_sym_dir
+            ON fills(account_id, symbol, direction, timestamp_ms)``.
         """
         sql = (
             "SELECT * FROM fills WHERE account_id=? AND symbol=? AND direction=?"

@@ -387,3 +387,282 @@ class TestGetFillsForSymbolDirection:
         assert [r["timestamp_ms"] for r in rows] == [
             BASE_MS + 60_000, BASE_MS + 120_000,
         ]
+
+
+# ── 4. End-to-end _build_close_row_for_fill (T189 audit L2 + L3) ────────
+
+
+async def _all_closed(db, account_id=1):
+    async with db._conn.execute(
+        "SELECT * FROM closed_positions WHERE account_id=? ORDER BY id ASC",
+        (account_id,),
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
+class TestBuildCloseRowEmptyPosIdEndToEnd:
+    """L2 audit fix: end-to-end verification that _build_close_row_for_fill
+    correctly routes through find_opens_for_position_close_at for the
+    empty-pos_id path and produces a closed_positions row with the right
+    entry/exit attribution.
+
+    Closes the equivalent of Phase 0.0.4's H1 gap — the dispatcher-level
+    helper tests don't exercise the integration between the close-row
+    builder and the helper. A regression in the wiring (e.g., a future
+    refactor swapping the helper call) would slip past the 16
+    isolation-mode tests above."""
+
+    @pytest.mark.asyncio
+    async def test_scale_in_then_close_with_empty_pos_id_builds_correct_row(
+        self, test_db,
+    ):
+        from unittest.mock import patch
+        from core.order_manager import OrderManager
+
+        om = OrderManager(test_db)
+
+        open_ts_1 = BASE_MS
+        open_ts_2 = BASE_MS + 10_000
+        close_ts = BASE_MS + 60_000
+
+        # Scale-in opens (2 separate fills, different prices).
+        await _seed_fill_via_db(
+            test_db,
+            exchange_fill_id="open-1",
+            symbol="BTCUSDT", side="BUY", direction="LONG",
+            quantity=1.0, price=100.0, is_close=False,
+            timestamp_ms=open_ts_1,
+            terminal_position_id="",
+        )
+        await _seed_fill_via_db(
+            test_db,
+            exchange_fill_id="open-2",
+            symbol="BTCUSDT", side="BUY", direction="LONG",
+            quantity=3.0, price=110.0, is_close=False,
+            timestamp_ms=open_ts_2,
+            terminal_position_id="",
+        )
+        # Close fill — already in the table when builder runs.
+        await _seed_fill_via_db(
+            test_db,
+            exchange_fill_id="close-1",
+            symbol="BTCUSDT", side="SELL", direction="LONG",
+            quantity=4.0, price=120.0, is_close=True,
+            timestamp_ms=close_ts,
+            terminal_position_id="",
+        )
+
+        # The close fill dict as it would arrive at _build_close_row_for_fill.
+        close_fill = {
+            "account_id":           1,
+            "exchange_fill_id":     "close-1",
+            "exchange_order_id":    "",
+            "symbol":               "BTCUSDT",
+            "side":                 "SELL",
+            "direction":            "LONG",
+            "price":                120.0,
+            "quantity":             4.0,
+            "fee":                  0.1,
+            "is_close":             1,
+            "realized_pnl":         40.0,    # (120-VWAP_entry) * 4 = math fallback
+            "timestamp_ms":         close_ts,
+            "terminal_position_id": "",      # the Phase 0.0.5 path
+            "source":               "binance_ws",
+        }
+
+        # app_state.positions is empty (no plugin tracking)
+        with patch("core.order_manager.app_state") as mock_state:
+            mock_state.positions = []
+            mock_state.active_account_id = 1
+            await om._build_close_row_for_fill(1, close_fill)
+
+        closed = await _all_closed(test_db)
+        assert len(closed) == 1, (
+            "Empty-pos_id close-row builder must produce exactly 1 row "
+            "via the Phase 0.0.5 grouping path. If 0 rows: the helper "
+            "returned []. If 2+ rows: cross-position contamination "
+            "regressed."
+        )
+        c = closed[0]
+        assert c["symbol"] == "BTCUSDT"
+        assert c["direction"] == "LONG"
+        assert c["quantity"] == pytest.approx(4.0)
+        # VWAP entry: (100*1 + 110*3) / 4 = 107.5
+        assert c["entry_price"] == pytest.approx(107.5)
+        # exit_price from VWAP of close_fills (single close at 120)
+        assert c["exit_price"] == pytest.approx(120.0)
+        # entry_time_ms = min of opens
+        assert c["entry_time_ms"] == open_ts_1
+        # exit_time_ms = max of closes
+        assert c["exit_time_ms"] == close_ts
+        # terminal_position_id from input fill (empty)
+        assert c["terminal_position_id"] == ""
+
+    @pytest.mark.asyncio
+    async def test_empty_pos_id_prior_position_does_not_contaminate(
+        self, test_db,
+    ):
+        """T178 Layer 3 regression guard at the integration level: a
+        prior closed position's opens must NOT leak into the current
+        close-row build."""
+        from unittest.mock import patch
+        from core.order_manager import OrderManager
+
+        om = OrderManager(test_db)
+
+        # Position A: open at T+0, close at T+60_000. Already retired.
+        await _seed_fill_via_db(
+            test_db, exchange_fill_id="A-open",
+            symbol="BTCUSDT", side="BUY", direction="LONG",
+            quantity=2.0, price=80000.0, is_close=False,
+            timestamp_ms=BASE_MS, terminal_position_id="",
+        )
+        await _seed_fill_via_db(
+            test_db, exchange_fill_id="A-close",
+            symbol="BTCUSDT", side="SELL", direction="LONG",
+            quantity=2.0, price=82000.0, is_close=True,
+            timestamp_ms=BASE_MS + 60_000, terminal_position_id="",
+        )
+        # Position B: open at T+120_000, close at T+180_000. Current.
+        b_open_ts = BASE_MS + 120_000
+        b_close_ts = BASE_MS + 180_000
+        await _seed_fill_via_db(
+            test_db, exchange_fill_id="B-open",
+            symbol="BTCUSDT", side="BUY", direction="LONG",
+            quantity=1.0, price=85000.0, is_close=False,
+            timestamp_ms=b_open_ts, terminal_position_id="",
+        )
+        await _seed_fill_via_db(
+            test_db, exchange_fill_id="B-close",
+            symbol="BTCUSDT", side="SELL", direction="LONG",
+            quantity=1.0, price=86000.0, is_close=True,
+            timestamp_ms=b_close_ts, terminal_position_id="",
+        )
+
+        b_close_fill = {
+            "account_id":           1,
+            "exchange_fill_id":     "B-close",
+            "exchange_order_id":    "",
+            "symbol":               "BTCUSDT",
+            "side":                 "SELL",
+            "direction":            "LONG",
+            "price":                86000.0,
+            "quantity":             1.0,
+            "fee":                  0.05,
+            "is_close":             1,
+            "realized_pnl":         1000.0,
+            "timestamp_ms":         b_close_ts,
+            "terminal_position_id": "",
+            "source":               "binance_ws",
+        }
+
+        with patch("core.order_manager.app_state") as mock_state:
+            mock_state.positions = []
+            mock_state.active_account_id = 1
+            await om._build_close_row_for_fill(1, b_close_fill)
+
+        closed = await _all_closed(test_db)
+        # Only B's close — A's close-row was never built in this test.
+        # The critical check: B's entry_price reflects B's open (85000),
+        # NOT a VWAP across A+B opens. Pre-Phase-0.0.5 fallback would
+        # have produced (80000*2 + 85000*1) / 3 = 81666.67 — clearly wrong.
+        assert len(closed) == 1
+        c = closed[0]
+        assert c["entry_price"] == pytest.approx(85000.0), (
+            "T178 Layer 3: prior position A's open at 80000 must NOT "
+            "contaminate position B's entry_price. Got {} — expected "
+            "85000.0 (B's open alone).".format(c["entry_price"])
+        )
+        assert c["entry_time_ms"] == b_open_ts, (
+            "entry_time_ms must reflect B's open, not A's earlier open"
+        )
+        assert c["quantity"] == pytest.approx(1.0)
+
+
+class TestReversalSplitCloseRowFollowUp:
+    """L3 audit fix: the Phase 0.0.4 reversal split produces a synth
+    open with terminal_position_id="". When THAT open later closes,
+    the close-row builder's empty-pos_id branch must correctly walk
+    the fills and pin the synth open as the entry.
+
+    Pins the Phase 0.0.4 + 0.0.5 cross-call invariant: reversal-split
+    + chronological-walk grouping compose correctly."""
+
+    @pytest.mark.asyncio
+    async def test_synth_open_close_uses_synth_open_as_entry(
+        self, test_db,
+    ):
+        from unittest.mock import patch
+        from core.order_manager import OrderManager
+
+        om = OrderManager(test_db)
+
+        # Pre-state: a Phase 0.0.4 reversal already wrote 2 rows.
+        # Close-of-old (LONG): qty=5 at $80k. (not exercised here — it
+        # would have its own closed_positions row from the original
+        # reversal trigger.)
+        # Open-of-new (SHORT, synth): qty=7 at $80k, ts = T_reversal.
+        t_reversal = BASE_MS
+        t_followup_close = BASE_MS + 60_000
+
+        await _seed_fill_via_db(
+            test_db, exchange_fill_id="tid-100",
+            symbol="BTCUSDT", side="SELL", direction="LONG",
+            quantity=5.0, price=80000.0, is_close=True,
+            timestamp_ms=t_reversal, terminal_position_id="pos-old",
+        )
+        await _seed_fill_via_db(
+            test_db, exchange_fill_id="synth:tid-100:open",
+            symbol="BTCUSDT", side="SELL", direction="SHORT",
+            quantity=7.0, price=80000.0, is_close=False,
+            timestamp_ms=t_reversal, terminal_position_id="",
+        )
+        # Follow-up close of the SHORT position. Different tradeId.
+        await _seed_fill_via_db(
+            test_db, exchange_fill_id="tid-200",
+            symbol="BTCUSDT", side="BUY", direction="SHORT",
+            quantity=7.0, price=78000.0, is_close=True,
+            timestamp_ms=t_followup_close, terminal_position_id="",
+        )
+
+        followup_fill = {
+            "account_id":           1,
+            "exchange_fill_id":     "tid-200",
+            "exchange_order_id":    "",
+            "symbol":               "BTCUSDT",
+            "side":                 "BUY",
+            "direction":            "SHORT",
+            "price":                78000.0,
+            "quantity":             7.0,
+            "fee":                  0.2,
+            "is_close":             1,
+            "realized_pnl":         14000.0,    # (80000 - 78000) * 7
+            "timestamp_ms":         t_followup_close,
+            "terminal_position_id": "",          # inherited from synth open
+            "source":               "binance_ws",
+        }
+
+        with patch("core.order_manager.app_state") as mock_state:
+            mock_state.positions = []
+            mock_state.active_account_id = 1
+            await om._build_close_row_for_fill(1, followup_fill)
+
+        closed = await _all_closed(test_db)
+        assert len(closed) == 1, (
+            "Follow-up close of a synth-open SHORT must produce a "
+            "closed_positions row — the empty-pos_id grouping path "
+            "must find the synth open as the entry."
+        )
+        c = closed[0]
+        assert c["direction"] == "SHORT"
+        # entry from the synth open
+        assert c["entry_price"] == pytest.approx(80000.0)
+        assert c["entry_time_ms"] == t_reversal
+        # exit from the follow-up close
+        assert c["exit_price"] == pytest.approx(78000.0)
+        assert c["exit_time_ms"] == t_followup_close
+        assert c["quantity"] == pytest.approx(7.0)
+        # The reversal-split's LONG close (tid-100) is on the LONG
+        # direction track and must NOT participate in this SHORT
+        # close-row build. Verified implicitly via direction filter
+        # in find_opens_for_position_close_at.
