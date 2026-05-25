@@ -155,8 +155,25 @@ def compute_fill_snapshot(
     # chronologically and needs both records to track the lifecycle of
     # each logical position correctly. Pre-0.0.4 single-row recording
     # was T178 Layer 4.
+    #
+    # Scope: one-way mode only. Reversal-split is gated by the
+    # mode-detection heuristic in
+    # order_manager._snapshot_and_fix_isclose — only one_way mode
+    # reaches this code path. Hedge mode tracks each side independently
+    # so a single fill never crosses zero per side. Plugin adapters
+    # (Quantower) emit OPEN + REALIZED_PNL as separate events and so
+    # also don't see single-fill zero-crossings. T184 audit confirmed
+    # this is broker-agnostic-by-construction.
+    #
+    # Empty-fill_id guard (T187 audit fix): if the upstream adapter
+    # didn't supply an exchange_fill_id (shouldn't happen for real WS
+    # events but defended for safety), skip the split. The synthetic
+    # ID falls back to "synth::open" which would collide on the
+    # UNIQUE(account_id, exchange_fill_id) constraint across multiple
+    # such fills — degrading to the single-write path is the safer
+    # default than producing rows that silently lose to the constraint.
     splits: List[FillSplit] = []
-    if qty_before * qty_after < 0:
+    if qty_before * qty_after < 0 and fill_id:
         close_qty = abs(qty_before)
         open_qty = fill_qty - close_qty
         # Defensive: if floating-point arithmetic produces a tiny
@@ -176,7 +193,7 @@ def compute_fill_snapshot(
                     quantity=close_qty,
                 ),
                 FillSplit(
-                    exchange_fill_id=f"synth:{fill_id}:open" if fill_id else "synth::open",
+                    exchange_fill_id=f"synth:{fill_id}:open",
                     is_close=False,
                     direction=open_direction,
                     quantity=open_qty,

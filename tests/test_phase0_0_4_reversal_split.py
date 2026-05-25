@@ -118,22 +118,30 @@ class TestSnapshotSplitsOnReversal:
         assert open_split.quantity == pytest.approx(5.0)
         assert open_split.exchange_fill_id == "synth:tid-200:open"
 
-    def test_synthetic_fill_id_format_when_original_is_empty(self):
-        # Defensive: if the fill arrives without an exchange_fill_id
-        # (shouldn't happen for real WS events, but covered for safety),
-        # the synthetic id still has the synth: prefix marker.
+    def test_empty_fill_id_skips_split_to_avoid_synth_id_collision(self):
+        # T187 audit fix: if the upstream adapter doesn't supply a fill_id
+        # (shouldn't happen for real WS events, but defended for safety),
+        # skip the split. Otherwise the synthetic open id would fall back
+        # to "synth::open" and collide on the UNIQUE constraint across any
+        # later empty-id reversal — silently losing the second fill.
+        # Degrading to the single-write path is safer than producing
+        # rows that lose to the UNIQUE constraint.
         pos = MockPosition(ticker="DOGEUSDT", direction="LONG", contract_amount=100.0)
         fill = {
-            "exchange_fill_id": "",   # missing
+            "exchange_fill_id": "",   # missing — adapter bug
             "symbol": "DOGEUSDT",
             "side": "SELL",
             "quantity": 150.0,
             "timestamp_ms": 3000,
         }
         snap = compute_fill_snapshot(fill, [pos])
-        assert len(snap.splits) == 2
-        # Open portion still gets a synth: prefix even with empty input.
-        assert snap.splits[1].exchange_fill_id.startswith("synth:")
+        # Aggregate flags still reflect the reversal — only the per-split
+        # routing is suppressed.
+        assert snap.is_close is True
+        assert snap.is_open is True
+        assert snap.qty_after == pytest.approx(-50.0)
+        # No splits → upstream takes the single-write path.
+        assert snap.splits == []
 
 
 class TestSnapshotSplitsEmptyOnNonReversal:
@@ -395,6 +403,89 @@ class TestProcessFillSingleWriteWhenNoReversal:
         assert f["quantity"] == pytest.approx(2.0)
         # Fee NOT split — full fill stays as one row.
         assert f["fee"] == pytest.approx(0.1)
+
+
+class TestWsPipelineIntegration:
+    """T187 audit fix for H1: verify the FULL pipeline from raw Binance
+    WS message → ws_manager._create_fill_from_ws → order_manager.process_fill
+    → 2 DB rows. A regression in ws_manager.py:371's direction-inference
+    logic (e.g., a Binance API contract change) would silently disable
+    reversal-split, and the dispatcher-level Phase 0.0.4 tests would not
+    catch it. This test pins the integration."""
+
+    @pytest.mark.asyncio
+    async def test_ws_one_way_reversal_writes_two_fills_end_to_end(
+        self, test_db,
+    ):
+        from unittest.mock import MagicMock, patch
+        from core import ws_manager
+        from core.order_manager import OrderManager
+
+        om = OrderManager(test_db)
+
+        fake_pb = MagicMock()
+        fake_pb.order_manager = om
+        fake_pb.is_connected = False
+
+        fake_pos = MockPosition(
+            ticker="BTCUSDT", direction="LONG",
+            contract_amount=5.0, position_id="pos-old",
+        )
+
+        # Real Binance one-way mode WS raw event. ps="BOTH" is the
+        # critical token — anything else would route to hedge mode and
+        # silently bypass reversal-split.
+        raw_msg = {
+            "o": {
+                "t":  "binance-trade-99",   # tradeId
+                "i":  "binance-order-1",    # orderId
+                "s":  "BTCUSDT",            # symbol
+                "S":  "SELL",               # side
+                "ps": "BOTH",               # positionSide (one-way)
+                "L":  80000.0,              # lastFilledPrice
+                "l":  12.0,                 # lastFilledQty (crosses zero)
+                "n":  0.4,                  # commission
+                "N":  "USDT",
+                "rp": 50.0,                 # realizedProfit
+                "m":  False,
+                "T":  1716000000000,
+            }
+        }
+
+        with patch.object(ws_manager, "app_state") as mock_ws_state, \
+             patch("core.order_manager.app_state") as mock_om_state, \
+             patch.dict(
+                 "sys.modules",
+                 {"core.platform_bridge":
+                  MagicMock(platform_bridge=fake_pb)},
+             ):
+            mock_ws_state.active_account_id = 1
+            mock_ws_state.positions = [fake_pos]
+            mock_om_state.active_account_id = 1
+            mock_om_state.positions = [fake_pos]
+            await ws_manager._create_fill_from_ws(order=None, raw_msg=raw_msg)
+
+        fills = await _all_fills(test_db)
+        assert len(fills) == 2, (
+            "WS one-way mode reversal must produce 2 fill rows end-to-end. "
+            "If this fails, check core/ws_manager.py:371 for changes to the "
+            "direction-inference logic that may have re-routed one-way "
+            "events into hedge mode."
+        )
+
+        close, opn = fills[0], fills[1]
+
+        # Close portion
+        assert close["exchange_fill_id"] == "binance-trade-99"
+        assert int(close["is_close"]) == 1
+        assert close["direction"] == "LONG"   # OLD direction
+        assert close["quantity"] == pytest.approx(5.0)
+
+        # Open portion — synthetic id, opposite direction.
+        assert opn["exchange_fill_id"] == "synth:binance-trade-99:open"
+        assert int(opn["is_close"]) == 0
+        assert opn["direction"] == "SHORT"   # NEW direction
+        assert opn["quantity"] == pytest.approx(7.0)
 
 
 class TestSyntheticIdUniqueness:
