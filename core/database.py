@@ -722,6 +722,36 @@ class DatabaseManager(
             "ALTER TABLE pre_trade_log ADD COLUMN regime_multiplier REAL",
             "ALTER TABLE pre_trade_log ADD COLUMN regime_mode TEXT",
             "ALTER TABLE pre_trade_log ADD COLUMN apply_regime_multiplier INTEGER",
+            # ── Phase 0 (P0.T3): calc-linkage column additions ───────────
+            # Per spec §3.2 "pre_trade_log (additions)" + §3.5
+            # (lifecycle_id). All NULL-default so legacy rows aren't
+            # surprised — Phase 1+ matcher writes explicit values on
+            # new calcs. account_id already added above (v1.3 migration);
+            # 15 net-new columns here.
+            "ALTER TABLE pre_trade_log ADD COLUMN status TEXT DEFAULT NULL",
+            "ALTER TABLE pre_trade_log ADD COLUMN window_seconds INTEGER DEFAULT NULL",
+            "ALTER TABLE pre_trade_log ADD COLUMN operator_id TEXT DEFAULT NULL",
+            "ALTER TABLE pre_trade_log ADD COLUMN superseded_by_calc_id TEXT DEFAULT NULL",
+            "ALTER TABLE pre_trade_log ADD COLUMN cancelled_reason TEXT DEFAULT NULL",
+            "ALTER TABLE pre_trade_log ADD COLUMN planned_size REAL DEFAULT NULL",
+            "ALTER TABLE pre_trade_log ADD COLUMN overridden_size REAL DEFAULT NULL",
+            "ALTER TABLE pre_trade_log ADD COLUMN planned_tp REAL DEFAULT NULL",
+            "ALTER TABLE pre_trade_log ADD COLUMN overridden_tp REAL DEFAULT NULL",
+            "ALTER TABLE pre_trade_log ADD COLUMN planned_sl REAL DEFAULT NULL",
+            "ALTER TABLE pre_trade_log ADD COLUMN overridden_sl REAL DEFAULT NULL",
+            "ALTER TABLE pre_trade_log ADD COLUMN tp_levels TEXT DEFAULT NULL",
+            "ALTER TABLE pre_trade_log ADD COLUMN filled_pct REAL DEFAULT NULL",
+            "ALTER TABLE pre_trade_log ADD COLUMN tags TEXT DEFAULT NULL",
+            "ALTER TABLE pre_trade_log ADD COLUMN lifecycle_id TEXT DEFAULT NULL",
+            # Per spec §3.2 "accounts (additions)" + §3.3 config_json
+            # schema. NULL default; reader applies per-field defaults
+            # per spec §3.3 (window_seconds=300, entry_tolerance_pct=
+            # 0.25, snapshot_drift_tolerance_pct=0.5, etc.) when the
+            # account's config_json is missing or has unset fields.
+            # The reader helper is Phase 1 work (P1.T2 core/account_
+            # config.py); the column ships here so existing accounts
+            # immediately have the slot.
+            "ALTER TABLE accounts ADD COLUMN config_json TEXT DEFAULT NULL",
         ]:
             try:
                 await self._conn.execute(migration)
@@ -742,6 +772,11 @@ class DatabaseManager(
         )
         await self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_orders_calc_id ON orders (calc_id)"
+        )
+        # P0.T3 spec §3.5: every table carrying lifecycle_id has an index.
+        await self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pretrade_lifecycle "
+            "ON pre_trade_log (lifecycle_id)"
         )
 
         # Task 160 (MED-024): UNIQUE index install is now done by
