@@ -595,6 +595,7 @@ window config.
 | 8.7 | Manual-close reason modal (Q33): triggered on opposite-side order detection without calc match; dropdown + optional note | `static/js/manual_close_modal.js` |
 | 8.8 | Notification system: toast banners + persistent badge counters; subscriptions from `config_json.notification_subscriptions` | `static/js/notifications.js`, `templates/partials/toast.html` |
 | 8.9 | Settings page for `accounts.config_json` (window, clock-skew, deviation thresholds, notification subscriptions) | `templates/settings.html` |
+| 8.10 | Per-position trade events drilldown in Position History drawer: lazy-loaded timeline fragment that lists this position's events (calc_created, order_placed, order_canceled, order_filled, position_opened, partial_close, tp_modified, sl_modified, position_closed, etc.) in chronological order with timestamp, event type chip, and one-line payload summary. Backend reuses `core.trade_event_log.query_trade_events(account_id, calc_id, ...)`. Drawer's existing fills sub-table (`templates/fragments/history/position_fills.html`) stays; the new timeline lives alongside it as a second collapsible section. **For positions with no `calc_id` (legacy + Phase-0.0.6/0.0.7 rebuilt rows that pre-date the calculator workflow), render an empty-state explaining the position pre-dates the events log — NOT an error.** | new `api/routes_orders.py::frag_position_events`, new `templates/fragments/history/position_events.html`, drawer wiring in `templates/fragments/history/closed_positions_table.html` |
 
 ### Tests
 
@@ -606,6 +607,12 @@ window config.
   - Manual close modal triggers on opposite-side without calc
   - Notification badge increments on event arrival
   - Settings page persists config_json changes
+  - Position events drilldown: renders timeline in chronological
+    order for a synthetic position with multiple event types
+  - Position events drilldown: renders empty-state (NOT error) when
+    the position has no calc_id (legacy / rebuilt rows)
+  - Position events drilldown: query is scoped to the position's
+    own calc_id(s) — does not leak events from sibling positions
 
 ### Acceptance criteria
 
@@ -613,6 +620,9 @@ window config.
   visible end-to-end in dashboard
 - Deviation badges update live when amendment events fire
 - Replacement and manual-close modals not bypassed by edge cases
+- Per-position events drilldown renders for at least one live and
+  one historical (calc-attributable) position; empty-state renders
+  for at least one legacy (no-calc) position
 
 ---
 
@@ -812,9 +822,9 @@ for task N" follow-up. Merge.
 | 5 Funding + fees | 7 | **5** | Per-adapter WS split (Binance + Bybit = 2 tasks) |
 | 6 Event bus enrichment | 8 | **6** | Topic wrapper, payload, each event family, drift inversion (isolated for revertability) |
 | 7 Reverse query + export | 7 | **6** | Per-endpoint task; PDF isolated from JSON |
-| 8 Operator UX | 9 | **8** | Each major UI surface is its own task |
+| 8 Operator UX | 10 | **9** | Each major UI surface is its own task |
 | 9 Multi-operator | 4 | **4** | Lock+takeover, operator_id sweep, timeout, UI |
-| **Total** | — | **~61 tasks** | ~6 weeks @ 2 tasks/day; ~12 weeks @ 1/day with review |
+| **Total** | — | **~62 tasks** | ~6 weeks @ 2 tasks/day; ~12 weeks @ 1/day with review |
 
 ### 14.3 Concrete task lists
 
@@ -929,9 +939,12 @@ T10 needs T1-T9 done.
 | P8.T6 | Manual-close reason modal | Opposite-side detection trigger + dropdown + note |
 | P8.T7 | Notification system | Toast + badge counters from `config_json` subscriptions |
 | P8.T8 | Settings page for `accounts.config_json` | All knobs editable; validation |
+| P8.T9 | Per-position trade events drilldown in Position History drawer | Lazy-loaded timeline fragment beside the existing fills sub-table; reuses `core.trade_event_log.query_trade_events`. Empty-state (not error) for legacy / rebuilt positions with no `calc_id`. Depends on P6.T3/T4 (event-emission sweeps) for live positions; works against pre-existing `trade_events` rows for any calc-attributed historical position. |
 
-**Sequence**: Largely independent (different templates); T2-T8 can fan
-out after T1.
+**Sequence**: Largely independent (different templates); T2-T9 can fan
+out after T1. P8.T9 is loosely coupled — its empty-state path lets it
+ship before Phase 6 if needed, with the live-event path lighting up
+once the upstream emit sweeps land.
 
 #### Phase 9 — Multi-operator (4 tasks)
 
@@ -957,7 +970,7 @@ parallel-safe tasks following:
 | 5 | T3 (writer) | T1+T2 (adapter subs) parallel; T4+T5 after T3 | — |
 | 6 | T1 (topic wrapper) | T2-T6 all independent after T1 | — |
 | 7 | (none — endpoints independent) | T1-T6 | T5 depends on T4 |
-| 8 | T1 (dashboard layout) | T2-T8 fan out | — |
+| 8 | T1 (dashboard layout) | T2-T9 fan out | — |
 | 9 | T1 (lock) | T2 (sweep) needs T1; T3+T4 independent | — |
 
 ### 14.5 Practical recommendations

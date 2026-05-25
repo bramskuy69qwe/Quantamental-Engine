@@ -1,182 +1,219 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-05-25 (continued, Path A executed)
-**Current branch**: `v2.5/post-rewind-drop-regime-infra` @ commit `ca9725c`
-**Tests**: 2362 passed, 7 skipped (+129 net new across Phase 0.0)
+**Date**: 2026-05-26
+**Current branch**: `v2.5/post-rewind-drop-regime-infra`
+**Tests**: 2382 passed, 7 skipped, 1 unrelated pre-existing failure
+**Pre-existing failure**: `tests/test_data_cache_dd.py::TestRollingWindowPeak::test_old_high_excluded_from_window` — 30-day rolling-window boundary bug; unrelated to Phase 0.0.x work. File separately if not already.
 
-## What this session did (T182-T194)
+## What this session did (T197-T199)
 
-**Closed Phase 0.0 (Data Quality Pre-Work) end-to-end AND ran the
-cleanup tools against the live DB.** Six development sub-tasks
-(0.0.1-0.0.6) each followed by an audit-fix commit, plus two
-live-DB-discovered bug fixes (T193 + T194) before --apply, plus the
-actual cleanup execution.
+Closed Phase 0.0's optional Step 2 (legacy-orphan recovery) AND fixed
+the pre-existing Position History fills-drawer gap that affected every
+`rebuilt_from_fills` row.
 
-### Phase 0.0 commit chain
+### Commit chain (this session)
 
 ```
-ca9725c task 194: rebuild_closed_positions.py — preserve orphan-symbol rows by default
-a61d1ef task 193: dedup_fills.py — preserve Binance matching-engine splits (same-source pairs)
-01c4183 task 192: rewrite HANDOFF.md for Phase 0.0 completion
-ab4e985 task 191: Phase 0.0.6 audit follow-up — atomic rebuild + M1/M2 tests
-2b29e45 task 190: Phase 0.0.6 — scripts/rebuild_closed_positions.py
-e34df52 task 189: Phase 0.0.5 audit follow-up — integration tests + index note
-0a79675 task 188: Phase 0.0.5 — close-row builder via grouping + strict get_position_fills
-775a50f task 187: Phase 0.0.4 audit follow-up — empty-fill-id guard + WS integration test
-6965486 task 186: Phase 0.0.4 — reversal-split (close+open on zero-cross fill)
-6d7df83 task 185: Phase 0.0.3 — scripts/dedup_fills.py
-d3cc693 task 184: Phase 0.0.2 audit follow-up — preserve closes-only reconstruction
-9c38691 task 183: Phase 0.0.2 — wire backfill through canonical position_grouping
-3df7814 task 182: Phase 0.0.1 — promote core/position_grouping.py to production
+<TBD on commit>  T199: synth script — simulation-based dry-run validation + true idempotence
+<TBD on commit>  T198: backfill terminal_position_id onto fills for rebuilt closed_positions
+<TBD on commit>  T197: Phase 0.0.7 — synth_legacy_open_fills.py + Path C execution + plan update
 ```
 
-### Live-DB cleanup state (Path A executed)
+### Step 1 + 2 status (was open in prior HANDOFF)
 
-**Pre-cleanup backup**: `data/risk_engine.db.pre_phase0_0.bak` (19.8 MB,
-2026-05-25 16:26). Restore from this if any UX regression surfaces.
+**Step 1** (engine reconciler picks up rebuilt rows): COMPLETED. After
+Phase 0.0 the queue was 59 rebuilt rows; engine reconciler swept them
+on subsequent runs. Verified MFE/MAE populated with sensible ranges
+across all 59 rows; BSBUSDT spot-check clean.
 
-**Cleanup deltas**:
+**Step 2** (optional re-backfill of 92 orphan-symbol rows): COMPLETED
+via a new operator script (`scripts/synth_legacy_open_fills.py`).
+HANDOFF's original Step 2 framing had a mechanism flaw — proposed
+re-running `backfill_fills_from_exchange_history`, but that function
+synthesizes OPEN fills IN-MEMORY ONLY (db_orders.py:1138). Without
+persisting OPEN fills to the fills table, `rebuild_closed_positions.py`
+(which reads from fills) would still find nothing for the orphan
+symbols. Path C was needed: a dedicated script that persists synth
+OPEN fills AND re-derives `closed_positions` via `position_grouping`.
 
-| Metric | Pre | Post | Delta |
-|---|---|---|---|
-| Fills total | 350 | 317 | −33 (synthetic dups removed) |
-| Closed positions | 184 | 151 | −33 net |
-| Rebuilt rows (`source='rebuilt_from_fills'`) | 0 | 59 | clean rebuilds |
-| Orphan rows preserved (`source='exchange_history_backfill'`) | 184 | 92 | untouched legacy |
-| Reconciler queue (`backfill_completed=0`) | n/a | 59 | will recompute MFE/MAE |
+### Live-DB cleanup state (Step 2 executed)
 
-**T193 live-DB find**: `dedup_fills.py` was wrongly collapsing Binance
-matching-engine splits (sequential tradeIds, same source, identical
-data). Caught before `--apply`. Fixed: preserve same-source groups.
-Live DB had exactly 5 such pairs (matches T178 audit's count). Net
-delete count: 38 → 33 dup groups.
+**Pre-Step-2 backups**:
+- `data/risk_engine.db.pre_synth_legacy_opens.bak` (~18.9 MB,
+  2026-05-26 00:24) — taken before T197 --apply
+- `data/risk_engine.db.pre_tpid_backfill.bak` (~18.9 MB,
+  2026-05-26 01:03) — taken before T198 --apply
 
-**T194 live-DB find**: `rebuild_closed_positions.py` would have wiped
-92 closed_positions rows for 19 symbols whose fills are missing or
-broken (legacy pre-Phase-0.0.2 backfill artifacts). Caught before
-`--apply`. Fixed: preserve orphan-symbol rows by default; added
-`--wipe-orphans` flag for explicit override.
+Restore from either if needed.
 
-**BSBUSDT spot-check** (T178 reference symbol): 21 corrupted rows →
-12 clean `rebuilt_from_fills` rows. No more cross-position-VWAP'd
-entries or time-overlapping fragments.
+**Step 2 deltas**:
+
+| Metric | Pre-T197 | Post-T197 | Post-T198 | Delta |
+|---|---|---|---|---|
+| Total `closed_positions` | 151 | 150 | 150 | — |
+| `rebuilt_from_fills` rows | 59 | 121 | 121 | +62 |
+| `exchange_history_backfill` orphans | 92 | 29 | 29 | −63 |
+| `synth_legacy_open` fills | 0 | 63 | 63 | +63 |
+| Fills with rebuilt: tpid | 0 | ~283 | **346** | +346 |
+| Rebuilt rows with linked fills | 0 / 59 | 0 / 121 | **121 / 121** | full coverage |
+
+**T197 (synth_legacy_open_fills.py)**:
+- 92 orphans → 63 recoverable + 26 preserved (no upstream) + 3 fill-stream conflicts
+- 65 synth OPEN fills inserted; 2 garbage synths (BILLUSDT, FOLKSUSDT)
+  manually cleaned afterward (real OPEN already existed at same
+  ts+price; synth duplicated it). T199's simulation-based dry-run
+  now catches this class without operator intervention.
+
+**T198 (rebuild_closed_positions.py --tpid-backfill-only)**:
+- Fixed a pre-existing gap from Phase 0.0.6 (T190): rebuild emitted
+  closed_positions with synthetic `terminal_position_id` but never
+  wrote those tpids onto the underlying fills. Result: Position
+  History fills drawer rendered empty for all 121 rebuilt rows.
+- New flag `--tpid-backfill-only` UPDATEs fills.tpid without
+  touching closed_positions (preserves reconciler state).
+- Both `rebuild --apply` and `synth_legacy_open_fills --apply` now
+  do tpid backfill inside their own transactions going forward.
+
+**T199 (audit fix)**:
+- Synth script's dry-run was previously blind to fill-stream
+  conflicts (real-OPEN overlap, lifecycle absorption) — 3 such
+  cases were discovered only at apply time on the live DB.
+- Added simulation-based validation: builds planned synths,
+  simulates `group_fills_into_positions` with existing fills +
+  synths, reclassifies any planned synth that wouldn't produce a
+  rebuilt record as `preserved (conflict)`.
+- Re-running `--apply` against the post-T197 state now plans
+  ZERO new synths — truly idempotent.
+
+### Final orphan state (29 preserved)
+
+| Preservation reason | Count | Symbols |
+|---|---|---|
+| No upstream RPNL (Binance income API window) | 26 | AIOTUSDT(2), AXLUSDT(1), CUSDT(1), DUSKUSDT(2), ETCUSDT(1), JCTUSDT(4), MUSDT(1), ONUSDT(5), PUFFERUSDT(1), SIRENUSDT(3), STOUSDT(1), TRUMPUSDT(2), TSTUSDT(1), XAUUSDT(1) |
+| Real-OPEN conflict (partial close of larger position) | 2 | BILLUSDT, FOLKSUSDT |
+| Lifecycle-absorption (residual qty consumed lifecycle into one record) | 1 | ONUSDT SHORT @ 1774634668929 |
+
+These 29 are **structurally unrecoverable**. Their `closed_positions`
+rows remain correct (T178 Layer 3) but cannot be cross-verified via
+fills. Re-running the synth script confirms 0 planned work.
 
 ## Next session's job
 
-### Step 1: trigger the reconciler
+### Required (small)
 
-The 59 rebuilt rows have `backfill_completed=0`, which queues them
-for the reconciler to compute MFE/MAE with T175's gross-PnL floor.
-This happens on the engine's next reconciler sweep — typically every
-few minutes when the engine is running.
+- **Reconciler queue verification**: 62 rebuilt rows from T197
+  apply have `backfill_completed=0`. After enough engine sweeps,
+  all should drain. Verify with:
+  ```python
+  import sqlite3
+  conn = sqlite3.connect('data/risk_engine.db')
+  q = conn.execute("SELECT COUNT(*) FROM closed_positions "
+                   "WHERE source='rebuilt_from_fills' "
+                   "AND NOT backfill_completed").fetchone()[0]
+  print(f'Queue: {q}')  # target 0
+  ```
 
-If the engine is not currently running, start it and wait for the
-reconciler to catch up (logs will show `get_uncalculated_closed_positions`
-returning the queue). After a sweep, all 59 rows should have
-`backfill_completed=1` with computed MFE/MAE.
+### Phase 0.1 ready to start
 
-Verification query:
+Read `docs/design/calc_linkage_implementation_plan.md` starting at
+line 229. Phase 0.0 is hard-complete; Phase 0.1 (schema additions)
+can proceed against the cleaned data.
 
-```python
-import sqlite3
-conn = sqlite3.connect('data/risk_engine.db')
-rows = conn.execute(
-    "SELECT COUNT(*) FROM closed_positions "
-    "WHERE source='rebuilt_from_fills' AND NOT backfill_completed"
-).fetchone()
-print(f'Reconciler queue depth: {rows[0]}')  # should drop to 0
-```
+Plan was extended this session: added P8.T9 / 8.10 for a
+per-position trade events drilldown in Position History drawer
+(see line ~599+). Phase total bumped to ~62 tasks.
 
-### Step 2 (optional): re-backfill orphan symbols
+## Known issues / follow-ups
 
-92 orphan-symbol rows from 19 symbols (`AIOTUSDT`, `AXLUSDT`,
-`BASEDUSDT`, `BILLUSDT`, `CUSDT`, `DOGSUSDT`, `DUSKUSDT`, `ETCUSDT`,
-`FOLKSUSDT`, `JCTUSDT`, `MUSDT`, `ONUSDT`, `PUFFERUSDT`, `SIRENUSDT`,
-`STOUSDT`, `TRUMPUSDT`, `TRXUSDT`, `TSTUSDT`, `XAUUSDT`) remain in
-their pre-cleanup state. The fills table doesn't have the OPEN rows
-needed to reconstruct them via `position_grouping`.
+### Pre-existing test failure (unrelated)
 
-Options for those rows:
-- **Leave as-is**: the rows are visible in Position History with
-  pre-Phase-0.0.2 reconstructed values. Not corrupted per T178 Layer 3
-  (no cross-position VWAP, since each was a single-position
-  reconstruction from the REALIZED_PNL row's embedded fields). Just
-  legacy, can't be cross-verified.
-- **Trigger `backfill_fills_from_exchange_history`** for those
-  accounts — Phase 0.0.2's T184 fix synthesizes in-memory OPEN fills
-  from the REALIZED_PNL row's `entry_price` + `open_time`, then
-  reconstructs `closed_positions` via the canonical helper. After
-  that, re-running `rebuild_closed_positions.py --apply` would
-  produce rebuilt rows for those symbols too (no longer orphan).
-  Operator-triggered via the API or scheduler.
+`tests/test_data_cache_dd.py::TestRollingWindowPeak::test_old_high_excluded_from_window`
+fails on clean HEAD. 30-day rolling window boundary appears to
+exclude the 40-day-old peak when it should include it (or test's
+window math is off). Worth investigating separately; not blocking.
 
-### Step 3: start Phase 0.1
+### Data quality finding (pre-existing)
 
-Phase 0.1 is the original Phase 0 from the linkage plan — additive
-schema additions. Read `docs/design/calc_linkage_implementation_plan.md`
-starting around line 229. Phase 0.0 is now a hard-completed
-prerequisite; Phase 0.1 onwards can proceed against clean data.
+11+ fills in the live DB have `direction=''`:
+
+- ATAUSDT (2), BNBUSDT (1), COSUSDT (1), IRYSUSDT (2), LABUSDT (1),
+  NAORISUSDT (1) — empty direction
+- `position_grouping` silently skips fills with empty direction
+- These don't affect any rebuilt closed_position (which is why
+  121/121 rebuilt rows have linked fills despite the 34 empty-tpid
+  fills remaining)
+- Likely needs an upstream investigation into why some
+  exchange_history_backfill fills land with empty direction. Filing
+  as a separate task is recommended.
+
+### Per-position trade events drilldown (deferred to Phase 8)
+
+Q2 from this session: the `trade_events` table + admin/history-tab
+views already exist; what's missing is a per-position drilldown in
+the Position History drawer. Scoped as P8.T9 in the implementation
+plan. Works for any calc-attributed position; empty-state for
+legacy / rebuilt rows (which have no calc_id).
 
 ## Important context
 
-### Operator-side artifacts after cleanup
+### Operator-side artifacts after T197+T198 cleanup
 
-- **Position History UI** will reflect the cleaned data on next
-  page-load. BSBUSDT goes from 21 rows to 12.
-- **MFE/MAE values** for the 59 rebuilt rows will display 0/0 until
-  the reconciler sweep completes (Step 1 above).
-- **Analytics dashboards** that aggregate by `source` will show a
-  new bucket `rebuilt_from_fills` alongside `exchange_history_backfill`.
-- **Backup file**: `data/risk_engine.db.pre_phase0_0.bak` — keep for
-  rollback if anything surprises.
+- **Position History UI** now shows fills correctly for all 121
+  rebuilt rows (was empty before T198).
+- **MFE/MAE values** for the 62 new T197 rebuilds populate after the
+  reconciler sweep (the engine should have done this since session).
+- **Source-distribution analytics** show two buckets cleanly:
+  `rebuilt_from_fills` (121, clean provenance, fills-backed) and
+  `exchange_history_backfill` (29, legacy island — preserved
+  intentionally per categorization above).
+- **Backups**: keep `pre_synth_legacy_opens.bak` and
+  `pre_tpid_backfill.bak` until next major release confirms no
+  regression.
 
-### Cross-broker / platform-agnostic note
+### Cross-broker / platform-agnostic note (unchanged)
 
-Phase 0.0 stayed broker-agnostic across all observed paths (Binance
-one-way, Binance hedge, Quantower plugin, MEXC). The cleanup tools
-also handle multi-broker sources via the SOURCE_PRIORITY map in
-`scripts/dedup_fills.py`. Verified by source-distribution checks
-during the live-DB cleanup.
+Phase 0.0.x stayed broker-agnostic. The synth + tpid-backfill scripts
+operate on the canonical fills + closed_positions schema and don't
+hard-code any adapter knowledge.
 
-### Audit discipline that paid off
+### Audit discipline that paid off (extended)
 
-Every Phase 0.0.X commit was followed by an audit pass. THREE audits
-surfaced real BLOCKER-class issues that would have shipped broken:
-- T184: closes-only Binance-only backfill produced zero
-  closed_positions.
-- T187: `synth::open` collision on empty fill_id.
-- T191: rebuild DELETE+INSERTs not atomic — kill mid-script left DB wiped.
+- T184, T187, T191 (Phase 0.0 audit-find BLOCKERs): development-time
+  tests + audits
+- T193, T194 (Phase 0.0 live-DB-only finds): operator-trigger dry-run
+  discipline
+- **T199 (Phase 0.0.7 audit follow-up)**: discovered the synth
+  script's dry-run was blind to fill-stream conflicts — added
+  simulation-based validation so the dry-run accurately predicts
+  apply-time outcomes. Two cases (real-OPEN conflict + lifecycle
+  absorption) now categorized correctly without operator
+  intervention.
 
-PLUS two LIVE-DB-discovered bugs ONLY surfaced from running the tools
-against real data:
-- T193: same-source matching-engine splits wrongly collapsed.
-- T194: orphan-symbol rows wiped without replacement.
-
-**Lesson**: development-time tests + audits catch a lot but can't
-catch every data-shape class. Always dry-run against the live DB
-before destructive operations, and have the operator-confirm pattern
-(default `--dry-run`, explicit `--apply`) in place so mistakes are
-catchable.
+**Lesson reinforcement**: dry-run output discipline isn't just
+"print what we would write"; it's "print what would actually
+happen after the write." For scripts that depend on downstream
+deterministic computations (like helper output), simulating that
+computation in dry-run prevents post-apply surprises.
 
 ## Files for context
 
-- `docs/audits/2026-05-25-t178-fills-data-quality.md` — full T178
-  investigation (the corruption Phase 0.0 closes)
-- `docs/design/calc_linkage_implementation_plan.md` — phased rollout.
-  Phase 0.0 is lines 54-227 (✓ done, ✓ cleanup applied). Phase 0.1
-  onwards starts at line 229.
-- `core/position_grouping.py` — canonical "fills → position records"
-  helper (Phase 0.0.1, with reverse-lookup helpers added in 0.0.5)
-- `scripts/dedup_fills.py` — Phase 0.0.3 operator tool (T193 fix applied)
-- `scripts/rebuild_closed_positions.py` — Phase 0.0.6 operator tool
-  (T191 atomicity + T194 orphan-preservation fixes applied)
-- `tests/test_position_grouping.py`, `test_phase0_0_2_*`,
-  `test_dedup_fills.py`, `test_phase0_0_4_*`, `test_phase0_0_5_*`,
-  `test_rebuild_closed_positions.py` — Phase 0.0 test suites
-  (~129 new tests across the phase)
-- `CLAUDE.md` — project test/audit/Jinja/deployment discipline
+- `docs/audits/2026-05-25-t178-fills-data-quality.md` — original
+  T178 corruption investigation
+- `docs/design/calc_linkage_implementation_plan.md` — phased rollout;
+  Phase 0.0 ✓ done, Phase 0.1+ ready. P8.T9 added this session.
+- `core/position_grouping.py` — canonical helper; T198 added
+  `attribution_out` parameter for fill-id back-tracking
+- `scripts/dedup_fills.py` — Phase 0.0.3 operator tool
+- `scripts/rebuild_closed_positions.py` — Phase 0.0.6 + T198 tpid
+  backfill + `--tpid-backfill-only` mode
+- `scripts/synth_legacy_open_fills.py` — Phase 0.0.7 (T197 + T199)
+- `tests/test_position_grouping.py` — added TestAttributionOut (5 tests)
+- `tests/test_rebuild_closed_positions.py` — added 4 tpid-backfill tests
+- `tests/test_synth_legacy_open_fills.py` — 12 tests covering all
+  recovery + conflict shapes
+- `CLAUDE.md` — project discipline (test/audit/Jinja/deployment)
 
-## What's surviving the rewind (from T170, still relevant)
+## What's surviving the rewind (unchanged)
 
 Independently load-bearing fixes preserved across the regime rewind:
 - T148 MED-004 PBKDF2-SHA256 KDF upgrade (security)
@@ -190,8 +227,10 @@ Independently load-bearing fixes preserved across the regime rewind:
 - T165 MED-017 mark-price freshness half (timestamps + stale-flag)
 - T168 pollution guards (`insert_closed_position` + `log_trade_event`)
 - T173-T176 MFE/MAE fixes
-- **T182-T194** Phase 0.0 — data quality cleanup primitives + tools
-  + LIVE-DB cleanup APPLIED
+- T182-T194 Phase 0.0 — data quality cleanup primitives + tools +
+  LIVE-DB cleanup APPLIED
+- **T197-T199 Phase 0.0.7 + audit-fix** — legacy-orphan recovery +
+  fills tpid back-link + simulation-based dry-run validation
 
 ## Memory (auto-loaded — but worth knowing)
 
@@ -216,6 +255,7 @@ v2.5/fix-t164-fred-error-conservative
 v2.5/audit-t162-broad-except-sweep    (last pre-regime state)
 ```
 
-The branch is in a clean state for Phase 0.1 to start. The live DB
-is cleaned per Path A; reconciler will catch up on MFE/MAE for the
-59 rebuilt rows on its next sweep.
+The branch is clean for Phase 0.1 to start. Live DB cleaned through
+Phase 0.0.7 (T197) + tpid-backfill (T198). Synth script is truly
+idempotent post-T199. Position History fills drawer populates for
+all 121 rebuilt rows.
