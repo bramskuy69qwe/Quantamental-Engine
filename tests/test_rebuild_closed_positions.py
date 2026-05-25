@@ -239,6 +239,174 @@ class TestApplyDeletesAndInserts:
         assert r["backfill_completed"] == 0
 
     @pytest.mark.asyncio
+    async def test_apply_backfills_fill_tpids(self, db_path):
+        # T198: --apply should UPDATE fills.terminal_position_id to
+        # match the rebuilt closed_positions row's tpid (so the strict
+        # get_position_fills lookup returns the fills on the Position
+        # History drawer).
+        await _seed_fill(
+            db_path, exchange_fill_id="open-tpid",
+            symbol="BTCUSDT", side="BUY", direction="LONG",
+            quantity=1.0, price=80000.0, is_close=False,
+            timestamp_ms=BASE_MS,
+        )
+        await _seed_fill(
+            db_path, exchange_fill_id="close-tpid",
+            symbol="BTCUSDT", side="SELL", direction="LONG",
+            quantity=1.0, price=81000.0, is_close=True,
+            timestamp_ms=BASE_MS + 60_000, realized_pnl=1000.0,
+        )
+
+        result = await run_rebuild(
+            db_path=db_path, apply=True, verbose=False,
+        )
+        assert result["fill_tpids_updated"] == 2
+
+        # Both fills should now carry the rebuilt tpid.
+        from core.database import DatabaseManager
+        db = DatabaseManager(path=db_path)
+        await db.initialize()
+        try:
+            async with db._conn.execute(
+                "SELECT exchange_fill_id, terminal_position_id "
+                "FROM fills WHERE symbol='BTCUSDT' ORDER BY timestamp_ms"
+            ) as cur:
+                rows = [dict(r) for r in await cur.fetchall()]
+        finally:
+            await db.close()
+        assert len(rows) == 2
+        expected_tpid = f"rebuilt:BTCUSDT:LONG:{BASE_MS}"
+        assert rows[0]["terminal_position_id"] == expected_tpid
+        assert rows[1]["terminal_position_id"] == expected_tpid
+
+    @pytest.mark.asyncio
+    async def test_apply_preserves_existing_non_empty_tpid_on_fills(self, db_path):
+        # Quantower-plugin fills arrive with terminal_position_id
+        # populated by the plugin. The tpid backfill must NOT overwrite
+        # those — it only fills in empty tpids.
+        await _seed_fill(
+            db_path, exchange_fill_id="open-qt",
+            symbol="ETHUSDT", side="BUY", direction="LONG",
+            quantity=1.0, price=3000.0, is_close=False,
+            timestamp_ms=BASE_MS,
+            terminal_position_id="qt-pos-12345",
+        )
+        await _seed_fill(
+            db_path, exchange_fill_id="close-qt",
+            symbol="ETHUSDT", side="SELL", direction="LONG",
+            quantity=1.0, price=3100.0, is_close=True,
+            timestamp_ms=BASE_MS + 60_000,
+            terminal_position_id="qt-pos-12345",
+        )
+
+        await run_rebuild(db_path=db_path, apply=True, verbose=False)
+
+        from core.database import DatabaseManager
+        db = DatabaseManager(path=db_path)
+        await db.initialize()
+        try:
+            async with db._conn.execute(
+                "SELECT terminal_position_id FROM fills WHERE symbol='ETHUSDT'"
+            ) as cur:
+                rows = [dict(r) for r in await cur.fetchall()]
+        finally:
+            await db.close()
+        for r in rows:
+            assert r["terminal_position_id"] == "qt-pos-12345"
+
+    @pytest.mark.asyncio
+    async def test_tpid_backfill_only_skips_delete_and_insert(self, db_path):
+        # T198: --tpid-backfill-only should update fills' tpids without
+        # touching closed_positions.
+        await _seed_fill(
+            db_path, exchange_fill_id="open-only",
+            symbol="SOLUSDT", side="BUY", direction="LONG",
+            quantity=1.0, price=140.0, is_close=False,
+            timestamp_ms=BASE_MS,
+        )
+        await _seed_fill(
+            db_path, exchange_fill_id="close-only",
+            symbol="SOLUSDT", side="SELL", direction="LONG",
+            quantity=1.0, price=141.0, is_close=True,
+            timestamp_ms=BASE_MS + 60_000, realized_pnl=1.0,
+        )
+        # Seed an existing rebuilt closed_position (as if a prior
+        # --apply ran before tpid-backfill was wired). Its source +
+        # tpid match what the helper would produce.
+        await _seed_existing_closed(
+            db_path,
+            terminal_position_id=f"rebuilt:SOLUSDT:LONG:{BASE_MS}",
+            symbol="SOLUSDT", direction="LONG",
+            quantity=1.0, entry_price=140.0, exit_price=141.0,
+            entry_time_ms=BASE_MS, exit_time_ms=BASE_MS + 60_000,
+            source="rebuilt_from_fills",
+        )
+
+        before_closed = await _all_closed(db_path)
+        result = await run_rebuild(
+            db_path=db_path, apply=True, tpid_backfill_only=True,
+            verbose=False,
+        )
+        after_closed = await _all_closed(db_path)
+
+        assert result["fill_tpids_updated"] == 2
+        # closed_positions untouched.
+        assert result["deleted_count"] == 0
+        assert result["inserted_count"] == 0
+        assert before_closed == after_closed
+
+        # Fills now carry the tpid.
+        from core.database import DatabaseManager
+        db = DatabaseManager(path=db_path)
+        await db.initialize()
+        try:
+            async with db._conn.execute(
+                "SELECT terminal_position_id FROM fills WHERE symbol='SOLUSDT'"
+            ) as cur:
+                rows = [dict(r) for r in await cur.fetchall()]
+        finally:
+            await db.close()
+        expected_tpid = f"rebuilt:SOLUSDT:LONG:{BASE_MS}"
+        for r in rows:
+            assert r["terminal_position_id"] == expected_tpid
+
+    @pytest.mark.asyncio
+    async def test_tpid_backfill_only_idempotent(self, db_path):
+        # Re-running --tpid-backfill-only should be a no-op (all fills
+        # already have non-empty tpid).
+        await _seed_fill(
+            db_path, exchange_fill_id="op1",
+            symbol="ADAUSDT", side="BUY", direction="LONG",
+            quantity=10.0, price=1.0, is_close=False,
+            timestamp_ms=BASE_MS,
+        )
+        await _seed_fill(
+            db_path, exchange_fill_id="cl1",
+            symbol="ADAUSDT", side="SELL", direction="LONG",
+            quantity=10.0, price=1.05, is_close=True,
+            timestamp_ms=BASE_MS + 60_000,
+        )
+        await _seed_existing_closed(
+            db_path,
+            terminal_position_id=f"rebuilt:ADAUSDT:LONG:{BASE_MS}",
+            symbol="ADAUSDT", direction="LONG",
+            quantity=10.0, entry_price=1.0, exit_price=1.05,
+            entry_time_ms=BASE_MS, exit_time_ms=BASE_MS + 60_000,
+            source="rebuilt_from_fills",
+        )
+
+        r1 = await run_rebuild(
+            db_path=db_path, apply=True, tpid_backfill_only=True,
+            verbose=False,
+        )
+        r2 = await run_rebuild(
+            db_path=db_path, apply=True, tpid_backfill_only=True,
+            verbose=False,
+        )
+        assert r1["fill_tpids_updated"] == 2
+        assert r2["fill_tpids_updated"] == 0   # idempotent
+
+    @pytest.mark.asyncio
     async def test_apply_with_no_existing_just_inserts(self, db_path):
         # No prior closed_positions, only fills.
         await _seed_fill(

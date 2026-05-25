@@ -274,6 +274,35 @@ def _print_diff(
 # ── Programmable entrypoint ────────────────────────────────────────────
 
 
+async def _backfill_fill_tpids(
+    db: Any,
+    attribution: Dict[str, List[int]],
+) -> int:
+    """For each (tpid, [fill_ids]) entry, UPDATE matching fills'
+    ``terminal_position_id`` to ``tpid``.
+
+    Only UPDATEs fills whose ``terminal_position_id`` is currently
+    empty — idempotent and non-destructive of non-empty tpids (e.g.,
+    Quantower-plugin fills that arrive with pos_id populated).
+
+    Caller is responsible for the outer transaction commit.
+    Returns total rows updated.
+    """
+    total = 0
+    for tpid, fill_ids in attribution.items():
+        if not fill_ids:
+            continue
+        placeholders = ",".join("?" * len(fill_ids))
+        cur = await db._conn.execute(
+            f"UPDATE fills SET terminal_position_id = ? "
+            f"WHERE id IN ({placeholders}) "
+            f"AND COALESCE(terminal_position_id, '') = ''",
+            (tpid, *fill_ids),
+        )
+        total += cur.rowcount
+    return total
+
+
 async def run_rebuild(
     db_path: str = DEFAULT_DB_PATH,
     *,
@@ -281,19 +310,31 @@ async def run_rebuild(
     account_id: Optional[int] = None,
     symbol: Optional[str] = None,
     wipe_orphans: bool = False,
+    tpid_backfill_only: bool = False,
     verbose: bool = True,
 ) -> Dict[str, Any]:
     """Programmable entrypoint (used by main + tests).
 
     Returns a summary dict with ``fills_read``, ``rebuilt_count``,
     ``existing_count``, ``deleted_count``, ``inserted_count``,
-    ``orphan_symbols``, ``orphan_rows_preserved``, ``applied``.
+    ``orphan_symbols``, ``orphan_rows_preserved``, ``applied``,
+    ``fill_tpids_updated``.
 
     ``wipe_orphans`` (T194 fix): default ``False`` preserves existing
     closed_positions rows for "orphan symbols" — symbols that have
     closed_positions data but no usable fills to rebuild from (legacy
     pre-Phase-0.0.2 backfill artifacts). Set ``True`` to also wipe
     those rows.
+
+    ``tpid_backfill_only`` (T198): when ``True``, SKIP the DELETE +
+    INSERT phase entirely and ONLY run the fills-tpid back-link UPDATE
+    against the helper's attribution output. Used to retroactively
+    fix existing rebuilt closed_positions whose fills still have an
+    empty ``terminal_position_id`` (a pre-existing gap from T190 —
+    the Phase 0.0.6 rebuild emitted closed_positions with synthetic
+    tpids but never wrote those tpids back onto the underlying
+    fills, so ``get_position_fills`` returned [] on the Position
+    History drawer).
     """
     from core.database import DatabaseManager
 
@@ -309,7 +350,8 @@ async def run_rebuild(
             if symbol:
                 print(f"  Filter: symbol={symbol}")
 
-        rebuilt = group_fills_into_positions(fills)
+        attribution: Dict[str, List[int]] = {}
+        rebuilt = group_fills_into_positions(fills, attribution_out=attribution)
         if verbose:
             print(f"Grouped into {len(rebuilt)} closed positions")
 
@@ -347,23 +389,53 @@ async def run_rebuild(
                         "to also delete these on --apply)"
                     )
 
+        # Count fills currently lacking a tpid AMONG those the helper
+        # attributed — that's the population --tpid-backfill-only fixes
+        # and the count we need to report in dry-run.
+        fill_id_to_tpid: Dict[int, str] = {}
+        for tpid, fids in attribution.items():
+            for fid in fids:
+                fill_id_to_tpid[fid] = tpid
+        fill_id_to_current_tpid = {
+            int(f["id"]): str(f.get("terminal_position_id") or "")
+            for f in fills if f.get("id") is not None
+        }
+        fills_needing_tpid = sum(
+            1 for fid in fill_id_to_tpid
+            if fill_id_to_current_tpid.get(fid, "") == ""
+        )
+        if verbose:
+            print(
+                f"Fills attributed to rebuilt positions: {len(fill_id_to_tpid)} "
+                f"(of which {fills_needing_tpid} have empty terminal_position_id "
+                f"and would be back-linked on --apply)"
+            )
+
         if not apply:
             if verbose:
                 print()
                 print("[DRY-RUN] No changes made.")
-                msg = (
-                    "Re-run with --apply after backing up the DB to "
-                    "DELETE existing rows in scope and INSERT rebuilt "
-                    "rows. T178 Layer 3 corruption in the existing "
-                    "data will be replaced by clean chronological-walk "
-                    "attribution."
-                )
-                if orphan_symbols and not wipe_orphans:
-                    msg += (
-                        f" Orphan-symbol rows ({len(orphan_rows)} "
-                        f"across {len(orphan_symbols)} symbols) will be "
-                        f"PRESERVED."
+                if tpid_backfill_only:
+                    msg = (
+                        f"Re-run with --tpid-backfill-only --apply to "
+                        f"UPDATE {fills_needing_tpid} fill(s)' "
+                        f"terminal_position_id without touching "
+                        f"closed_positions rows."
                     )
+                else:
+                    msg = (
+                        "Re-run with --apply after backing up the DB to "
+                        "DELETE existing rows in scope and INSERT rebuilt "
+                        "rows. T178 Layer 3 corruption in the existing "
+                        "data will be replaced by clean chronological-walk "
+                        "attribution."
+                    )
+                    if orphan_symbols and not wipe_orphans:
+                        msg += (
+                            f" Orphan-symbol rows ({len(orphan_rows)} "
+                            f"across {len(orphan_symbols)} symbols) will be "
+                            f"PRESERVED."
+                        )
                 print(msg)
             return {
                 "fills_read":            len(fills),
@@ -373,7 +445,46 @@ async def run_rebuild(
                 "inserted_count":        0,
                 "orphan_symbols":        orphan_symbols,
                 "orphan_rows_preserved": 0,
+                "fill_tpids_updated":    0,
+                "fill_tpids_planned":    fills_needing_tpid,
                 "applied":               False,
+            }
+
+        if tpid_backfill_only:
+            # T198 retroactive mode: only run the fills-tpid back-link
+            # UPDATE; do NOT touch closed_positions. Used for legacy
+            # rebuilt rows whose fills never got the back-link.
+            if verbose:
+                print()
+                print(
+                    "Applying tpid-only-backfill (no closed_positions changes)..."
+                )
+            try:
+                fills_updated = await _backfill_fill_tpids(db, attribution)
+                await db._conn.commit()
+            except BaseException:
+                try:
+                    await db._conn.rollback()
+                except Exception:
+                    pass
+                raise
+            if verbose:
+                print(f"Updated {fills_updated} fill(s) with rebuilt tpids.")
+                print(
+                    "Position History fills drawer will now populate for "
+                    "the rebuilt rows on next page-load."
+                )
+            return {
+                "fills_read":            len(fills),
+                "rebuilt_count":         len(rebuilt),
+                "existing_count":        len(existing),
+                "deleted_count":         0,
+                "inserted_count":        0,
+                "orphan_symbols":        orphan_symbols,
+                "orphan_rows_preserved": 0,
+                "fill_tpids_updated":    fills_updated,
+                "fill_tpids_planned":    fills_needing_tpid,
+                "applied":               True,
             }
 
         if verbose:
@@ -388,6 +499,7 @@ async def run_rebuild(
         deleted = 0
         inserted = 0
         orphan_rows_preserved = 0
+        fills_updated = 0
         try:
             # T194: default --apply preserves orphan-symbol rows by
             # restricting the DELETE to symbols that have rebuilt
@@ -413,6 +525,9 @@ async def run_rebuild(
                 # still apply per-row.
                 await db.insert_closed_position(r, commit=False)
                 inserted += 1
+            # T198: backfill fill tpids inside the same transaction so
+            # closed_positions + fills tpid linkage land atomically.
+            fills_updated = await _backfill_fill_tpids(db, attribution)
             await db._conn.commit()
         except BaseException:
             # KeyboardInterrupt + Exception both roll back. Reraise
@@ -427,6 +542,7 @@ async def run_rebuild(
         if verbose:
             print(f"Deleted {deleted} existing rows.")
             print(f"Inserted {inserted} rebuilt rows.")
+            print(f"Back-linked {fills_updated} fill(s) to rebuilt tpids.")
             if orphan_rows_preserved:
                 print(
                     f"Preserved {orphan_rows_preserved} orphan-symbol rows "
@@ -447,6 +563,8 @@ async def run_rebuild(
             "inserted_count":        inserted,
             "orphan_symbols":        orphan_symbols,
             "orphan_rows_preserved": orphan_rows_preserved,
+            "fill_tpids_updated":    fills_updated,
+            "fill_tpids_planned":    fills_needing_tpid,
             "applied":               True,
         }
     finally:
@@ -485,6 +603,16 @@ def main(argv: Optional[List[str]] = None) -> int:
              "Default: preserve orphan-symbol rows (legacy backfill "
              "artifacts that can't be reconstructed from fills).",
     )
+    parser.add_argument(
+        "--tpid-backfill-only", action="store_true",
+        help="SKIP the DELETE + INSERT phase and ONLY back-link fills' "
+             "terminal_position_id to the helper's emitted tpids. "
+             "Retroactive fix for legacy rebuilt closed_positions whose "
+             "fills still have empty terminal_position_id (causes the "
+             "Position History fills drawer to render empty). "
+             "Non-destructive — only UPDATEs fills with currently-empty "
+             "tpid; idempotent.",
+    )
     args = parser.parse_args(argv)
 
     if not os.path.exists(args.db):
@@ -493,10 +621,16 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.apply:
         print("=" * 70)
-        print("WARNING: --apply WILL DELETE + REBUILD closed_positions rows in")
-        print(f"  {args.db}")
-        print()
-        print("  This is destructive. Back up the DB first.")
+        if args.tpid_backfill_only:
+            print("--apply --tpid-backfill-only: UPDATEs fills.terminal_position_id in")
+            print(f"  {args.db}")
+            print()
+            print("  Non-destructive — only fills with currently-empty tpid are touched.")
+        else:
+            print("WARNING: --apply WILL DELETE + REBUILD closed_positions rows in")
+            print(f"  {args.db}")
+            print()
+            print("  This is destructive. Back up the DB first.")
         print("  Press Ctrl+C in the next 3 seconds to abort.")
         print("=" * 70)
         print()
@@ -513,6 +647,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         account_id=args.account_id,
         symbol=args.symbol,
         wipe_orphans=args.wipe_orphans,
+        tpid_backfill_only=args.tpid_backfill_only,
     ))
     print()
     print("Summary:")
