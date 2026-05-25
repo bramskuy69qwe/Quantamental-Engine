@@ -12,32 +12,217 @@ event surface, and operator UX described in the spec.
 
 Phases are ordered by **dependency** and **leverage** — each phase
 delivers user-visible value while only depending on prior phases.
-Critical path is **Phase 0 → 1 → 2** (schema + matcher + junction);
-everything else builds on those.
+Critical path is **Phase 0.0 → 0 → 1 → 2** (data quality + schema +
+matcher + junction); everything else builds on those.
 
 ```
-Phase 0: Foundation (schema-only, no behavior change)
+Phase 0.0: Data Quality Pre-Work (T178 fixes, position_grouping centralization)
   │
-  ├─> Phase 1: Matcher tightening (strict 5/5 + 6/6, audit table)
-  │     │
-  │     └─> Phase 3: Link status + manual-link tab
-  │           │
-  │           └─> Phase 8: Operator UX (dashboard, modals, notifications)
-  │
-  ├─> Phase 2: Position-level attribution (junction-aware lifecycle)
-  │     │
-  │     ├─> Phase 4: Amendment tracking + deviation
-  │     │
-  │     ├─> Phase 5: Funding + fees attribution
-  │     │
-  │     └─> Phase 6: Event bus enrichment + close payload
-  │           │
-  │           └─> Phase 7: Reverse-query + audit export
-  │
-  └─> Phase 9: Multi-operator + advanced (independent)
+  └─> Phase 0: Foundation (schema-only, no behavior change)
+        │
+        ├─> Phase 1: Matcher tightening (strict 5/5 + 6/6, audit table)
+        │     │
+        │     └─> Phase 3: Link status + manual-link tab
+        │           │
+        │           └─> Phase 8: Operator UX (dashboard, modals, notifications)
+        │
+        ├─> Phase 2: Position-level attribution (junction-aware lifecycle)
+        │     │
+        │     ├─> Phase 4: Amendment tracking + deviation
+        │     │
+        │     ├─> Phase 5: Funding + fees attribution
+        │     │
+        │     └─> Phase 6: Event bus enrichment + close payload
+        │           │
+        │           └─> Phase 7: Reverse-query + audit export
+        │
+        └─> Phase 9: Multi-operator + advanced (independent)
 ```
 
 Effort tiers: S (≤2 days), M (3-7 days), L (>7 days).
+
+**Phase 0.0 added 2026-05-25** following the T178 findings doc
+([docs/audits/2026-05-25-t178-fills-data-quality.md](../audits/2026-05-25-t178-fills-data-quality.md)).
+T178 surfaced three layers of corruption in the existing fills /
+closed_positions data that would otherwise propagate into Phase 0.11's
+`positions_calcs` backfill. Phase 0.0 cleans the source first +
+centralizes the "fills → positions" grouping rule in one canonical
+helper. Hard prerequisite for Phase 0.11 and Phase 0.12.
+
+---
+
+## Phase 0.0: Data Quality Pre-Work (NEW — added 2026-05-25)
+
+**Goal**: Establish `core/position_grouping.py` as the single source of
+truth for "given fills → produce position records". Close the three
+data corruption layers identified in T178 BEFORE the junction backfill
+(Phase 0.11) or any downstream phase depends on the existing fills /
+closed_positions data.
+
+**Dependencies**: none (runs before Phase 0.1).
+
+**Effort**: M-L (5-10 days).
+
+### Why this phase exists
+
+T178 ([docs/audits/2026-05-25-t178-fills-data-quality.md](../audits/2026-05-25-t178-fills-data-quality.md))
+found three corruption layers in the existing data:
+
+1. **Synthetic-fill duplication** — `exchange_history_backfill` at
+   [db_orders.py:935](../../core/db_orders.py#L935) inserts synthetic
+   fills derived from REALIZED_PNL accounting alongside real WS/REST
+   fills. ~1.7-2x close-vs-open qty inflation account-wide.
+2. **`terminal_position_id` never populated** — the WS path copies it
+   from `app_state.positions[*].position_id`, which is only set by
+   Quantower's plugin. Without the plugin, all 350 fills carry empty
+   pos_id. Cross-checked back to May 14 — never populated, not a
+   migration regression.
+3. **`get_position_fills` fallback contamination** — when pos_id is
+   empty (always, per #2), the SQL falls back to `(symbol, direction)`
+   matching, returning ALL historical opens across distinct positions.
+   The close-row builder then computes cross-position VWAP entry_price
+   + `min(timestamp)` entry_time. Direct cause of operator-visible
+   anomalies like BSBUSDT row 22037 showing entry_price 0.771 at
+   entry_time 2026-05-19 18:11 when the position actually opened at
+   06:10 the next day.
+4. **Position-reversal lossiness** — a single fill that crosses zero
+   (LONG → SHORT in one event) is recorded as ONE record with
+   `is_close=True`. The implicit "open of new direction" is lost.
+
+If the original Phase 0 runs against this data, Phase 0.11's backfill
+of `positions_calcs` inherits all four defects into the new junction
+table. Phase 0.0 cleans the source first.
+
+### Architectural decision: centralize position grouping
+
+Currently the "fills → position records" logic is duplicated across:
+- `order_manager.py:_build_close_row_for_fill` (live close-row builder,
+  uses the broken `get_position_fills` fallback)
+- `db_orders.py:935+` `exchange_history_backfill` (uses ad-hoc
+  `(symbol, direction, open_time)` grouping — Layer 3 in T178)
+- (proposed) a one-off rebuild script
+- (future) Phase 0.11's positions_calcs backfill
+
+Phase 0.0.1 collapses all of these to a single canonical helper. After
+Phase 0.0:
+- `core/position_grouping.py` defines `PositionRecord` TypedDict and
+  `group_fills_into_positions(fills) -> list[PositionRecord]` as the
+  authoritative grouping function.
+- All four call sites above call into it.
+- Tests for the grouping rule live in one place.
+- The chronological-walk algorithm replaces the broken pos_id-based
+  fallback and the ad-hoc (symbol, direction, open_time) grouping.
+
+### Synthetic exchange_fill_id convention (reversal-split)
+
+Per operator decision (2026-05-25), reversal-split synthetic fill
+records use the prefix convention:
+
+```
+Close portion: exchange_fill_id = "{tradeId}"          (original Binance ID)
+Open portion:  exchange_fill_id = "synth:{tradeId}:open"  (synthetic)
+```
+
+This is:
+- **Deterministic** (re-import produces same IDs → idempotent)
+- **Visually flagged** (`synth:` prefix unambiguous)
+- **Filterable** (`WHERE exchange_fill_id NOT LIKE 'synth:%'` for
+  real-Binance-only queries)
+- **Aligned** with the existing `bf:` prefix precedent at
+  [db_orders.py:954](../../core/db_orders.py#L954)
+
+No schema change required. The existing `UNIQUE(account_id,
+exchange_fill_id)` constraint continues to enforce uniqueness across
+real + synthetic IDs since the synthetic prefix guarantees no
+collision with Binance's numeric tradeIds.
+
+### Fill-dedup tolerance rule
+
+`is_same_fill(a, b)` in `core/position_grouping.py` matches fills by:
+
+```
+a.symbol == b.symbol
+AND a.side == b.side
+AND a.is_close == b.is_close
+AND abs(a.timestamp_ms - b.timestamp_ms) <= FILL_DEDUP_TOLERANCE_MS
+AND abs(a.price - b.price) / b.price <= FILL_DEDUP_PRICE_TOLERANCE_PCT
+AND a.quantity == b.quantity
+```
+
+Constants:
+- `FILL_DEDUP_TOLERANCE_MS = 2000` (2 seconds — wide enough to catch
+  synthetic-vs-real timestamp skew from the dual-write paths;
+  T178 found Binance matching-engine splits use IDENTICAL timestamps,
+  so 2s won't collapse them)
+- `FILL_DEDUP_PRICE_TOLERANCE_PCT = 0.0` (exact — both sources should
+  report identical prices since they come from the same trade)
+
+Tunable in code, validated by the dedup script's dry-run output before
+operator runs `--apply`.
+
+### Tasks
+
+| # | Task | File(s) | Notes |
+|---|---|---|---|
+| 0.0.1 | Land `core/position_grouping.py` as canonical helper. `PositionRecord` TypedDict matching `insert_closed_position`'s expected shape. `group_fills_into_positions(fills, fee_rate_fallback=0.0) -> list[PositionRecord]` chronological-walk grouping. `FILL_DEDUP_TOLERANCE_MS` + `FILL_DEDUP_PRICE_TOLERANCE_PCT` constants. `is_same_fill(a, b) -> bool` helper. Tests cover: single position open→close, scale-in (multi-fill open), partial close, full close, hedge mode (LONG+SHORT simultaneously), float-precision qty epsilon. **No production callers yet** — just available + verified. (T177's uncommitted draft is the starting point.) | `core/position_grouping.py` (new), `tests/test_position_grouping.py` (new) | Foundation for all subsequent tasks. |
+| 0.0.2 | **Fix 1**: dedup guard in `exchange_history_backfill`. Before each fill insert, query for existing fill matching via `is_same_fill`. Skip insert if found. Refactor the function's closed_positions construction to call `position_grouping.group_fills_into_positions()` (replaces inline `(symbol, direction, open_time)` grouping — T178 Layer 3). | `core/db_orders.py:935-988`, uses `core/position_grouping.py` | Stops new synthetic dups going forward. Existing dups still in table; Fix 2 cleans those. |
+| 0.0.3 | **Fix 2**: dedup historical fills script. `scripts/dedup_fills.py` with `--dry-run` (default) and `--apply` modes. Iterates fills chronologically, groups by `is_same_fill` rule, keeps one per group with source priority: `binance_ws` > `binance_rest` > `exchange_history_backfill`. Prints diff in dry-run; deletes in apply. Operator runs against a fresh backup first, reviews, runs against live DB when satisfied. **NOT auto-run on engine startup.** | `scripts/dedup_fills.py` (new), `tests/test_dedup_fills.py` (new) | Destructive on live DB. Operator-controlled. Backup required. |
+| 0.0.4 | **Fix 3**: reversal-split. In `position_snapshot.py`, when `qty_before * qty_after < 0` (reversal), return a `FillSnapshot` with `splits` list containing both portions. In `order_manager.py:process_fill`, when snapshot indicates reversal, write TWO fill rows: close-of-old (`exchange_fill_id = "{tradeId}"`, qty = `\|qty_before\|`, direction = old, is_close=True) + open-of-new (`exchange_fill_id = "synth:{tradeId}:open"`, qty = `fill_qty - \|qty_before\|`, direction = new, is_close=False). | `core/position_snapshot.py:108-124` (extend `FillSnapshot` schema), `core/order_manager.py:process_fill` (multi-write path), `core/db_orders.py:upsert_fill_and_update_order` (handle synthetic ID gracefully) | Test fallout expected: existing tests asserting "1 fill per WS event" need updates for reversal scenarios. Document as known impact. UNIQUE constraint unchanged — synthetic ID prefix prevents collision. |
+| 0.0.5 | Refactor `_build_close_row_for_fill` in `core/order_manager.py` to call `position_grouping.group_fills_into_positions()` instead of the broken `get_position_fills(symbol, direction)` fallback. Remove the `(COALESCE(terminal_position_id, '') = '' AND symbol=? AND direction=?)` arm from `get_position_fills`'s SQL — make it strict: empty pos_id → returns empty list. | `core/order_manager.py:605-749`, `core/db_orders.py:646-667` | Closes Layer 3 of T178. Even before `lifecycle_id` from Phase 2.1 replaces terminal_position_id, the close-row builder uses grouping rather than the broken fallback. |
+| 0.0.6 | One-shot rebuild closed_positions from cleaned fills. `scripts/rebuild_closed_positions.py` with `--dry-run` (default) and `--apply` modes. Uses `position_grouping.group_fills_into_positions()` against the dedup'd fills. Operator-confirmed; backup first; `backfill_completed` reset to 0 on rebuilt rows so reconciler re-runs MFE/MAE with T175's floor in place. | `scripts/rebuild_closed_positions.py` (new — extends T177's draft) | Run AFTER 0.0.3 dedup completes. Destructive. |
+
+### Tests
+
+- `tests/test_position_grouping.py` — `PositionRecord` shape, all
+  grouping scenarios (single position, scale-in, partial close, hedge
+  mode, qty-epsilon, dedup match rule)
+- `tests/test_dedup_fills.py` — dedup match rule, source priority,
+  dry-run vs apply, idempotency
+- `tests/test_phase0_0_reversal_split.py` — Fix 3 contract: 1 reversal
+  event → 2 fill records with correct qty split, directions, synthetic
+  ID format
+- `tests/test_phase0_0_close_row_grouping.py` — `_build_close_row_for_fill`
+  uses `position_grouping`, not the fallback. `get_position_fills`
+  returns `[]` when pos_id is empty.
+
+### Acceptance criteria
+
+- `core/position_grouping.py` is the only place that defines "given
+  fills → produce position records" (grep verification)
+- `exchange_history_backfill` no longer creates synthetic duplicate
+  fills (test against synthetic fixture covering the dual-write
+  scenario)
+- `scripts/dedup_fills.py` produces a usable dry-run output for the
+  live DB; operator-confirmed before `--apply` runs
+- `scripts/rebuild_closed_positions.py` produces a usable dry-run
+  output
+- Position reversals produce 2 fill records (close + `synth:...:open`)
+  going forward
+- `get_position_fills` returns empty when pos_id is empty (no fallback
+  contamination)
+- Full test suite passes (with documented test updates for reversal
+  scenarios — count of changed tests reported)
+- Reconciler re-runs against rebuilt closed_positions and produces
+  MFE/MAE values consistent with T175's floor invariant
+
+### Rollback plan
+
+If any sub-task introduces unexpected regressions:
+- 0.0.1 (helper) — pure additive, no rollback needed; just delete files
+- 0.0.2 (dedup guard) — revert the single function change in
+  `db_orders.py:935+`
+- 0.0.3 (dedup script) — operator restores from backup
+- 0.0.4 (reversal-split) — revert `position_snapshot.py` +
+  `order_manager.py` changes; synthetic fills already in DB can stay
+  (they don't break anything, just sit there)
+- 0.0.5 (close-row refactor) — revert; `get_position_fills` fallback
+  arm restored; close-row builder back to the broken-but-known-shape
+  fallback
+- 0.0.6 (rebuild) — operator restores closed_positions from backup
+
+### Then Phase 0.1-0.10 proceed as originally written (schema additions)
+### Then Phase 0.11 backfills positions_calcs — NOW against clean fills via `position_grouping`
+### Then Phase 0.12 re-maps exit_reason — optionally also re-runs `position_grouping` to fully rebuild closed_positions from clean fills (operator opt-in via flag)
 
 ---
 
@@ -46,7 +231,7 @@ Effort tiers: S (≤2 days), M (3-7 days), L (>7 days).
 **Goal**: All new tables and columns exist in DB; no behavior change.
 Safe to deploy independently.
 
-**Dependencies**: none.
+**Dependencies**: Phase 0.0 (data quality pre-work).
 
 **Effort**: M.
 
@@ -64,7 +249,7 @@ Safe to deploy independently.
 | 0.8 | Add columns to `closed_positions`: exit_reason (re-mapped), close_note, entry_px_delta_pct, size_delta_pct, tp_drift_pct, sl_drift_pct, exit_vs_target_pct, realized_r, planned_r, hold_time_actual_ms, hold_time_planned_ms, cumulative_amendment_count, funding_fees (already exists, repurpose), liquidation_px, bankruptcy_px, insurance_fund_fee, adl_indicator, **lifecycle_id** | `core/database.py` |
 | 0.9 | Add `accounts.config_json` column (incl. `entry_tolerance_pct` and `snapshot_drift_tolerance_pct` defaults) | `core/database.py` |
 | 0.10 | Create all indexes per spec §3.1 (incl. `lifecycle_id` indexes on every carrying table) | `core/database.py` |
-| 0.11 | Migration script: backfill `positions_calcs` from existing `fills WHERE calc_id IS NOT NULL`, grouped by (position lifecycle, calc_id), `contributed_qty = SUM(fill_qty)`; back-fill `lifecycle_id` per historical position lifecycle | `migrations/` (new dir or extend existing) |
+| 0.11 | Migration script: backfill `positions_calcs` from existing `fills WHERE calc_id IS NOT NULL` — uses `core/position_grouping.py::group_fills_into_positions()` from Phase 0.0.1 for the position-lifecycle grouping (chronological-walk, NOT the pre-T178 broken pos_id fallback). `contributed_qty = SUM(fill_qty)` per (position, calc_id) tuple. Back-fill `lifecycle_id` per historical position lifecycle via UUID-v4 at this migration's run-time (forward fills will generate lifecycle_id at first opening fill per Phase 2.1). | `migrations/` (new dir or extend existing) |
 | 0.12 | Re-map existing `closed_positions.exit_reason`: `'manual'`→`MANUAL_OTHER`; `'tp'`→`TP_PLANNED`; `'sl'`→`SL_PLANNED`; default to `MANUAL_OTHER` if NULL | same migration script |
 | 0.13 | State-machine enforcement helpers: `core/calc_state.py` + `core/link_state.py` with valid-transition dicts + `transition()` choke-point + `IllegalStateTransition` exception (per spec §3.6) | `core/calc_state.py` (new), `core/link_state.py` (new) |
 
@@ -564,6 +749,7 @@ Phase 0 is the only phase that touches the DB schema. Strategy:
 
 | Phase | Effort | User-visible value at end of phase |
 |---|---|---|
+| 0.0 — Data quality pre-work | M-L | None directly visible; but historical MFE/MAE re-becomes trustworthy once 0.0.6 rebuild runs |
 | 0 — Foundation | M | None (schema only) |
 | 1 — Matcher | M | Strict matching live; per-criterion audit visible |
 | 2 — Junction attribution | L | Open positions show calc_id; deltas at close |
@@ -575,16 +761,18 @@ Phase 0 is the only phase that touches the DB schema. Strategy:
 | 8 — Operator UX | L | Multi-pane dashboard; modals; settings |
 | 9 — Multi-operator | M | Concurrent operator safety |
 
-**Total estimated effort**: ~8-12 weeks single-developer; parallelizable
-to ~4-6 weeks with phases 4/5/6 and 7/8/9 split across two developers
-post-Phase 2.
+**Total estimated effort**: ~9-14 weeks single-developer (Phase 0.0
+adds 5-10 days); parallelizable to ~5-7 weeks with phases 4/5/6 and
+7/8/9 split across two developers post-Phase 2.
 
-**Critical path**: Phase 0 → 1 → 2 → 6 → 7. Without these, no
+**Critical path**: Phase 0.0 → 0 → 1 → 2 → 6 → 7. Without these, no
 end-to-end model-feedback loop exists.
 
-**Lowest-risk early win**: Phase 0 + Phase 4 (amendment tracking) +
+**Lowest-risk early win**: Phase 0.0 (data quality — fixes already-
+broken historical analysis) + Phase 0 + Phase 4 (amendment tracking) +
 Phase 8.4-8.5 (calculator window config). Delivers operator-visible
-deviation badges and configurable windows with minimal blast radius.
+deviation badges and configurable windows with minimal blast radius,
+on top of clean historical data.
 
 ---
 
