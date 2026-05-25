@@ -697,9 +697,29 @@ class OrderManager:
             direction = fill.get("direction", "")
 
             # ── Opening fills → VWAP entry price ────────────────────────
-            opens = await self._db.get_position_fills(
-                account_id, pos_id, symbol, direction, is_close=False,
-            )
+            # Phase 0.0.5 (T188 / T178 Layer 3 fix): get_position_fills is
+            # now STRICT — empty pos_id returns []. For the Binance
+            # one-way path (engine's own WS never populates
+            # terminal_position_id), resolve opens via the canonical
+            # chronological-walk in position_grouping rather than the
+            # cross-position-contaminating SQL fallback that was removed.
+            if pos_id:
+                opens = await self._db.get_position_fills(
+                    account_id, pos_id, symbol, direction, is_close=False,
+                )
+            else:
+                from core.position_grouping import find_opens_for_position_close_at
+                close_ts = int(fill.get("timestamp_ms", 0) or 0)
+                all_fills = await self._db.get_fills_for_symbol_direction(
+                    account_id, symbol, direction,
+                )
+                opens = find_opens_for_position_close_at(
+                    all_fills,
+                    account_id=account_id,
+                    symbol=symbol,
+                    direction=direction,
+                    close_ts_ms=close_ts,
+                )
             if opens:
                 total_open_qty = sum(f["quantity"] for f in opens)
                 entry_price = (

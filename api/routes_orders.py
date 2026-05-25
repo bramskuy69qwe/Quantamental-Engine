@@ -193,6 +193,14 @@ async def frag_position_fills(request: Request, position_id: int = 0):
         # HIGH-002 (Task 142): db._conn direct access replaced by helper.
         pos = await db.get_closed_position_terminal_key(position_id)
         if pos:
+            # Phase 0.0.5 (T188) note: get_position_fills is now STRICT —
+            # if pos["terminal_position_id"] is empty (Binance one-way
+            # path where the engine WS never populates pos_id), this
+            # returns []. The position-fills drawer will show no fills
+            # for such rows until Phase 0.0.6's rebuild script
+            # backfills terminal_position_id on existing closed_positions.
+            # For Quantower-plugin users (pos_id always populated by the
+            # plugin), this path is unchanged.
             fills = await db.get_position_fills(
                 aid, pos["terminal_position_id"], pos["symbol"], pos["direction"],
             )

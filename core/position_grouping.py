@@ -359,6 +359,95 @@ def _build_row(
     }
 
 
+def find_opens_for_position_close_at(
+    fills: Iterable[Dict[str, Any]],
+    *,
+    account_id: int,
+    symbol: str,
+    direction: str,
+    close_ts_ms: int,
+) -> List[Dict[str, Any]]:
+    """Walk fills chronologically and return the opens for the position
+    that is open AT (or closes AT) ``close_ts_ms`` for the given
+    ``(account_id, symbol, direction)``.
+
+    Used by ``order_manager._build_close_row_for_fill`` (Phase 0.0.5) when
+    ``terminal_position_id`` is empty — replaces the broken
+    ``get_position_fills`` ``(COALESCE='' AND symbol=? AND direction=?)``
+    fallback that returned opens from MULTIPLE distinct positions over
+    time (T178 Layer 3 cross-position contamination).
+
+    Algorithm: per-(account, symbol, direction) chronological walk.
+    Track net open qty. Snapshot opens whenever the position closes
+    (qty returns to zero). Return:
+      - the CURRENT opens if the position is still partially open at
+        ``close_ts_ms`` (partial-close scenario where qty hasn't yet
+        reached zero); OR
+      - the LAST snapshot's opens if the position just closed (qty
+        reached zero) at or before ``close_ts_ms``.
+
+    The caller's close fill should be in ``fills``. Walks all fills with
+    ``timestamp_ms <= close_ts_ms`` so partial-close intermediate
+    closes are accounted for.
+
+    Args:
+        fills: all fills (need not be sorted; helper sorts internally).
+        account_id, symbol, direction: position scope.
+        close_ts_ms: the target close fill's timestamp.
+
+    Returns:
+        List of opening-fill dicts (``is_close == 0``) belonging to the
+        position whose close is at ``close_ts_ms``. Returns ``[]`` when
+        no opens match (e.g., open fills are outside the input window).
+    """
+    sorted_fills = sorted(
+        fills,
+        key=lambda f: (
+            int(f.get("timestamp_ms", 0) or 0),
+            int(f.get("id", 0) or 0),
+        ),
+    )
+
+    current_opens: List[Dict[str, Any]] = []
+    last_closed_opens: List[Dict[str, Any]] = []
+    qty = 0.0
+
+    for f in sorted_fills:
+        if (
+            f.get("account_id") != account_id
+            or f.get("symbol") != symbol
+            or f.get("direction") != direction
+        ):
+            continue
+        ts = int(f.get("timestamp_ms", 0) or 0)
+        if ts > close_ts_ms:
+            break
+        q = float(f.get("quantity", 0) or 0)
+        if q <= 0:
+            continue
+        if not bool(f.get("is_close", 0)):
+            if qty <= _QTY_EPS:
+                current_opens = [f]
+            else:
+                current_opens.append(f)
+            qty += q
+        else:
+            qty -= q
+            if qty <= _QTY_EPS:
+                # Position closed — snapshot opens and reset.
+                last_closed_opens = list(current_opens)
+                current_opens = []
+                qty = 0.0
+
+    # If qty > 0 at end, the position is still open at close_ts_ms (a
+    # partial close has fired but the position isn't fully closed yet).
+    # Return the current accumulating opens — they're the right answer
+    # for fee-allocation in the multi-fill partial-close scenario.
+    if qty > _QTY_EPS:
+        return current_opens
+    return last_closed_opens
+
+
 def _synthetic_pos_id(symbol: str, direction: str, entry_time_ms: int) -> str:
     """Deterministic synthetic position ID — same logical position
     always gets the same ID across reruns. Format mirrors the

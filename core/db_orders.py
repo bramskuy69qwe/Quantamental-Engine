@@ -656,21 +656,63 @@ class OrdersMixin:
         self, account_id: int, pos_id: str, symbol: str,
         direction: str, is_close: Optional[bool] = None,
     ) -> List[Dict]:
-        """Get fills for a position, optionally filtered by is_close.
+        """Get fills for a position by strict ``terminal_position_id`` match.
 
-        Falls back to (symbol, direction) only when terminal_position_id
-        is empty/NULL, preventing cross-position contamination.
+        Phase 0.0.5 (T188 / T178 Layer 3): the previous
+        ``(COALESCE(terminal_position_id, '') = '' AND symbol=? AND
+        direction=?)`` fallback arm returned fills from MULTIPLE
+        distinct positions over time when pos_id was empty (the
+        Binance-only case where the engine's own WS path never
+        populates terminal_position_id). That cross-position
+        contamination produced nonsense entry_price + entry_time on
+        live-built closed_positions rows.
+
+        Empty ``pos_id`` now returns ``[]``. Callers that need to
+        resolve opens without a pos_id should use
+        ``core.position_grouping.find_opens_for_position_close_at``,
+        which walks fills chronologically per (account, symbol,
+        direction) and tracks the actual lifecycle of each logical
+        position.
+
+        ``symbol`` and ``direction`` parameters are retained in the
+        signature for backward compatibility with existing callers
+        but are no longer used by the SQL.
         """
-        sql = (
-            "SELECT * FROM fills WHERE account_id=? "
-            "AND (terminal_position_id=? OR "
-            "(COALESCE(terminal_position_id, '') = '' AND symbol=? AND direction=?))"
-        )
-        params: list = [account_id, pos_id, symbol, direction]
+        if not pos_id:
+            return []
+        sql = "SELECT * FROM fills WHERE account_id=? AND terminal_position_id=?"
+        params: list = [account_id, pos_id]
         if is_close is not None:
             sql += " AND is_close=?"
             params.append(int(is_close))
         sql += " ORDER BY timestamp_ms ASC"
+        async with self._conn.execute(sql, params) as cur:
+            rows = await cur.fetchall()
+            return [dict(r) for r in rows]
+
+    async def get_fills_for_symbol_direction(
+        self, account_id: int, symbol: str, direction: str,
+        since_ms: Optional[int] = None,
+    ) -> List[Dict]:
+        """Get all fills for ``(account_id, symbol, direction)`` chronologically.
+
+        Phase 0.0.5 helper: feeds
+        ``core.position_grouping.find_opens_for_position_close_at``
+        when the caller needs to resolve opens without a
+        ``terminal_position_id`` (Binance one-way path).
+
+        ``since_ms`` is an optional lower bound to cap the scan window
+        (callers that know the position is recent can pass e.g.
+        ``close_ts_ms - 90*86400*1000``).
+        """
+        sql = (
+            "SELECT * FROM fills WHERE account_id=? AND symbol=? AND direction=?"
+        )
+        params: list = [account_id, symbol, direction]
+        if since_ms is not None:
+            sql += " AND timestamp_ms >= ?"
+            params.append(since_ms)
+        sql += " ORDER BY timestamp_ms ASC, id ASC"
         async with self._conn.execute(sql, params) as cur:
             rows = await cur.fetchall()
             return [dict(r) for r in rows]

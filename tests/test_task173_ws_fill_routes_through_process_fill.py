@@ -187,8 +187,10 @@ async def test_populates_terminal_position_id_from_app_state():
 async def test_terminal_position_id_empty_when_no_matching_position():
     """When no app_state.positions entry matches (e.g., closing fill arrived
     after the position was already cleared from state), terminal_position_id
-    falls back to empty string (matches legacy behavior + get_position_fills
-    has a (symbol, direction) fallback clause)."""
+    falls back to empty string. Phase 0.0.5 (T188) made get_position_fills
+    strict — empty pos_id returns []; the close-row builder then resolves
+    opens via core.position_grouping.find_opens_for_position_close_at
+    (chronological walk per (account, symbol, direction))."""
     from core import ws_manager
 
     raw = _make_raw_msg(sym="ALTUSDT", ps="LONG", trade_id="t-3003")
@@ -208,8 +210,10 @@ async def test_terminal_position_id_empty_when_no_matching_position():
     args, _ = fake_om.process_fill.call_args
     _, fill = args
     assert fill["terminal_position_id"] == "", (
-        "No matching position → terminal_position_id is empty (the "
-        "get_position_fills fallback handles cross-position aggregation)"
+        "No matching position → terminal_position_id is empty. Phase 0.0.5 "
+        "removed the get_position_fills (symbol, direction) fallback; "
+        "the close-row builder now uses position_grouping's chronological "
+        "walk to resolve opens for this case."
     )
 
 
