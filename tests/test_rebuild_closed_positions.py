@@ -389,6 +389,122 @@ class TestScopeFilters:
 # ── 5. Cross-position contamination guard ──────────────────────────────
 
 
+class TestOrphanSymbolPreservation:
+    """T194 fix: existing closed_positions rows for symbols that have
+    no usable fills (pre-Phase-0.0.2 backfill artifacts) MUST be
+    preserved by default. Only when --wipe-orphans is set do they get
+    deleted."""
+
+    @pytest.mark.asyncio
+    async def test_orphan_symbol_rows_preserved_by_default(self, db_path):
+        # Symbol BTCUSDT: has clean fills + a rebuilt position.
+        await _seed_fill(
+            db_path, exchange_fill_id="btc-open",
+            symbol="BTCUSDT", side="BUY", direction="LONG",
+            quantity=1.0, price=80000.0, is_close=False,
+            timestamp_ms=BASE_MS,
+        )
+        await _seed_fill(
+            db_path, exchange_fill_id="btc-close",
+            symbol="BTCUSDT", side="SELL", direction="LONG",
+            quantity=1.0, price=81000.0, is_close=True,
+            timestamp_ms=BASE_MS + 60_000,
+        )
+        await _seed_existing_closed(
+            db_path,
+            terminal_position_id="bf:BTCUSDT:LONG:1",
+            symbol="BTCUSDT", direction="LONG",
+            quantity=1.0, entry_price=99999.0, exit_price=99999.0,
+            entry_time_ms=BASE_MS, exit_time_ms=BASE_MS + 60_000,
+        )
+        # Symbol ORPHANUSDT: closed_positions row but NO fills.
+        await _seed_existing_closed(
+            db_path,
+            terminal_position_id="bf:ORPHANUSDT:LONG:1",
+            symbol="ORPHANUSDT", direction="LONG",
+            quantity=10.0, entry_price=1.0, exit_price=1.1,
+            entry_time_ms=BASE_MS, exit_time_ms=BASE_MS + 60_000,
+        )
+
+        result = await run_rebuild(
+            db_path=db_path, apply=True, verbose=False,
+        )
+
+        # BTCUSDT was rebuilt; ORPHANUSDT was preserved.
+        assert result["rebuilt_count"] == 1
+        assert result["inserted_count"] == 1
+        assert result["orphan_symbols"] == ["ORPHANUSDT"]
+        assert result["orphan_rows_preserved"] == 1
+
+        rows = await _all_closed(db_path)
+        symbols = {r["symbol"] for r in rows}
+        assert symbols == {"BTCUSDT", "ORPHANUSDT"}, (
+            "ORPHANUSDT must be preserved by default — no rebuilt "
+            "equivalent doesn't mean wipe."
+        )
+        # BTCUSDT was actually rebuilt (entry_price changed).
+        btc_row = next(r for r in rows if r["symbol"] == "BTCUSDT")
+        assert btc_row["entry_price"] == pytest.approx(80000.0)
+        # ORPHANUSDT untouched (corrupted entry preserved as-is).
+        orphan_row = next(r for r in rows if r["symbol"] == "ORPHANUSDT")
+        assert orphan_row["entry_price"] == pytest.approx(1.0)
+        assert orphan_row["terminal_position_id"] == "bf:ORPHANUSDT:LONG:1"
+
+    @pytest.mark.asyncio
+    async def test_wipe_orphans_flag_deletes_orphan_rows(self, db_path):
+        # Same setup as the preservation test, but --wipe-orphans.
+        await _seed_fill(
+            db_path, exchange_fill_id="btc-open",
+            symbol="BTCUSDT", side="BUY", direction="LONG",
+            quantity=1.0, price=80000.0, is_close=False,
+            timestamp_ms=BASE_MS,
+        )
+        await _seed_fill(
+            db_path, exchange_fill_id="btc-close",
+            symbol="BTCUSDT", side="SELL", direction="LONG",
+            quantity=1.0, price=81000.0, is_close=True,
+            timestamp_ms=BASE_MS + 60_000,
+        )
+        await _seed_existing_closed(
+            db_path,
+            terminal_position_id="bf:ORPHANUSDT:LONG:1",
+            symbol="ORPHANUSDT", direction="LONG",
+            quantity=10.0, entry_price=1.0, exit_price=1.1,
+            entry_time_ms=BASE_MS, exit_time_ms=BASE_MS + 60_000,
+        )
+
+        result = await run_rebuild(
+            db_path=db_path, apply=True, wipe_orphans=True, verbose=False,
+        )
+        # orphan_rows_preserved == 0 — they were wiped.
+        assert result["orphan_rows_preserved"] == 0
+        rows = await _all_closed(db_path)
+        symbols = {r["symbol"] for r in rows}
+        assert symbols == {"BTCUSDT"}, (
+            "--wipe-orphans must delete the orphan rows."
+        )
+
+    @pytest.mark.asyncio
+    async def test_dry_run_reports_orphans_without_writing(self, db_path):
+        await _seed_existing_closed(
+            db_path,
+            terminal_position_id="bf:ORPHAN:LONG:1",
+            symbol="ORPHAN", direction="LONG",
+            quantity=10.0, entry_price=1.0, exit_price=1.1,
+            entry_time_ms=BASE_MS, exit_time_ms=BASE_MS + 60_000,
+        )
+        result = await run_rebuild(
+            db_path=db_path, apply=False, verbose=False,
+        )
+        assert result["applied"] is False
+        assert result["orphan_symbols"] == ["ORPHAN"]
+        # Dry-run preserves count is 0 (no actual preservation yet).
+        assert result["orphan_rows_preserved"] == 0
+        # Existing row untouched.
+        rows = await _all_closed(db_path)
+        assert len(rows) == 1
+
+
 class TestReversalSplitFlowsThroughRebuild:
     """T191 audit M1: Phase 0.0.4 reversal-split emits 2 fills (a
     close-of-old with the original tradeId + an open-of-new with

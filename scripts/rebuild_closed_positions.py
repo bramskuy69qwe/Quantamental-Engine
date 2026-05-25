@@ -147,11 +147,22 @@ async def _delete_existing_in_scope(
     db: Any,
     account_id: Optional[int],
     symbol: Optional[str],
+    restrict_to_symbols: Optional[set] = None,
 ) -> int:
-    """DELETE existing closed_positions in scope. Does NOT commit — the
+    """DELETE existing closed_positions in scope. Does NOT commit -- the
     caller (run_rebuild's --apply path) wraps DELETE + INSERTs in a
     single transaction and commits once at the end so a mid-script
     kill rolls back to consistent state (T191 audit B1 fix).
+
+    ``restrict_to_symbols`` (T194 fix): when provided, only DELETE rows
+    whose symbol is in the set. Used by the default --apply path to
+    PRESERVE existing closed_positions for "orphan symbols" — symbols
+    that have closed_positions rows but no usable fills to rebuild
+    from. The orphan rows are reconstructions from the pre-Phase-0.0.2
+    backfill (which built closed_positions directly from exchange_history
+    REALIZED_PNL rows). Wiping them without a rebuilt replacement would
+    silently lose data; preserving them lets the operator investigate
+    or re-backfill those symbols later.
     """
     sql = "DELETE FROM closed_positions WHERE 1=1"
     params: List = []
@@ -161,6 +172,13 @@ async def _delete_existing_in_scope(
     if symbol:
         sql += " AND symbol = ?"
         params.append(symbol)
+    if restrict_to_symbols is not None:
+        if not restrict_to_symbols:
+            # Empty set -> nothing to delete. Skip the query entirely.
+            return 0
+        placeholders = ",".join("?" * len(restrict_to_symbols))
+        sql += f" AND symbol IN ({placeholders})"
+        params.extend(sorted(restrict_to_symbols))
     cur = await db._conn.execute(sql, params)
     return cur.rowcount
 
@@ -249,13 +267,20 @@ async def run_rebuild(
     apply: bool = False,
     account_id: Optional[int] = None,
     symbol: Optional[str] = None,
+    wipe_orphans: bool = False,
     verbose: bool = True,
 ) -> Dict[str, Any]:
     """Programmable entrypoint (used by main + tests).
 
     Returns a summary dict with ``fills_read``, ``rebuilt_count``,
     ``existing_count``, ``deleted_count``, ``inserted_count``,
-    ``applied``.
+    ``orphan_symbols``, ``orphan_rows_preserved``, ``applied``.
+
+    ``wipe_orphans`` (T194 fix): default ``False`` preserves existing
+    closed_positions rows for "orphan symbols" — symbols that have
+    closed_positions data but no usable fills to rebuild from (legacy
+    pre-Phase-0.0.2 backfill artifacts). Set ``True`` to also wipe
+    those rows.
     """
     from core.database import DatabaseManager
 
@@ -279,27 +304,63 @@ async def run_rebuild(
         if verbose:
             print(f"Existing closed_positions in scope: {len(existing)}")
 
+        # T194: identify orphan symbols (existing rows with no rebuilt
+        # equivalent — usually pre-Phase-0.0.2 backfill artifacts where
+        # closed_positions was reconstructed from exchange_history
+        # REALIZED_PNL rows without writing OPEN fills, leaving the
+        # rebuild script with no input to reconstruct from).
+        rebuilt_symbols = {r["symbol"] for r in rebuilt}
+        existing_symbols = {r["symbol"] for r in existing}
+        orphan_symbols = sorted(existing_symbols - rebuilt_symbols)
+        orphan_rows = [r for r in existing if r["symbol"] in orphan_symbols]
+
         if verbose:
             _print_diff(rebuilt, existing, detail_symbol=symbol)
+            if orphan_symbols:
+                print()
+                print(
+                    f"Orphan symbols (existing closed_positions but NO "
+                    f"rebuilt equivalent): {len(orphan_symbols)} symbols, "
+                    f"{len(orphan_rows)} rows"
+                )
+                for s in orphan_symbols[:20]:
+                    n = sum(1 for r in orphan_rows if r["symbol"] == s)
+                    print(f"  {s}: {n} row(s)")
+                if len(orphan_symbols) > 20:
+                    print(f"  ... and {len(orphan_symbols) - 20} more")
+                if not wipe_orphans:
+                    print(
+                        "  (preserved by default — pass --wipe-orphans "
+                        "to also delete these on --apply)"
+                    )
 
         if not apply:
             if verbose:
                 print()
                 print("[DRY-RUN] No changes made.")
-                print(
+                msg = (
                     "Re-run with --apply after backing up the DB to "
                     "DELETE existing rows in scope and INSERT rebuilt "
                     "rows. T178 Layer 3 corruption in the existing "
                     "data will be replaced by clean chronological-walk "
                     "attribution."
                 )
+                if orphan_symbols and not wipe_orphans:
+                    msg += (
+                        f" Orphan-symbol rows ({len(orphan_rows)} "
+                        f"across {len(orphan_symbols)} symbols) will be "
+                        f"PRESERVED."
+                    )
+                print(msg)
             return {
-                "fills_read":      len(fills),
-                "rebuilt_count":   len(rebuilt),
-                "existing_count":  len(existing),
-                "deleted_count":   0,
-                "inserted_count":  0,
-                "applied":         False,
+                "fills_read":            len(fills),
+                "rebuilt_count":         len(rebuilt),
+                "existing_count":        len(existing),
+                "deleted_count":         0,
+                "inserted_count":        0,
+                "orphan_symbols":        orphan_symbols,
+                "orphan_rows_preserved": 0,
+                "applied":               False,
             }
 
         if verbose:
@@ -313,8 +374,22 @@ async def run_rebuild(
         # resort but is no longer the FIRST line of defense.
         deleted = 0
         inserted = 0
+        orphan_rows_preserved = 0
         try:
-            deleted = await _delete_existing_in_scope(db, account_id, symbol)
+            # T194: default --apply preserves orphan-symbol rows by
+            # restricting the DELETE to symbols that have rebuilt
+            # replacements. Pass --wipe-orphans to wipe everything in
+            # scope (the original T190 behavior).
+            if wipe_orphans:
+                restrict_set = None
+                orphan_rows_preserved = 0
+            else:
+                restrict_set = rebuilt_symbols
+                orphan_rows_preserved = len(orphan_rows)
+            deleted = await _delete_existing_in_scope(
+                db, account_id, symbol,
+                restrict_to_symbols=restrict_set,
+            )
             for r in rebuilt:
                 # commit=False defers commit to the outer try-block.
                 # insert_closed_position(commit=False) re-raises on
@@ -339,18 +414,27 @@ async def run_rebuild(
         if verbose:
             print(f"Deleted {deleted} existing rows.")
             print(f"Inserted {inserted} rebuilt rows.")
+            if orphan_rows_preserved:
+                print(
+                    f"Preserved {orphan_rows_preserved} orphan-symbol rows "
+                    f"({len(orphan_symbols)} symbols) — no rebuilt "
+                    f"equivalent. Pass --wipe-orphans to delete these "
+                    f"too on next --apply."
+                )
             print(
                 "Reconciler will pick up the new rows (backfill_completed=0) "
                 "and re-run MFE/MAE with T175's gross-PnL floor on next sweep."
             )
 
         return {
-            "fills_read":      len(fills),
-            "rebuilt_count":   len(rebuilt),
-            "existing_count":  len(existing),
-            "deleted_count":   deleted,
-            "inserted_count":  inserted,
-            "applied":         True,
+            "fills_read":            len(fills),
+            "rebuilt_count":         len(rebuilt),
+            "existing_count":        len(existing),
+            "deleted_count":         deleted,
+            "inserted_count":        inserted,
+            "orphan_symbols":        orphan_symbols,
+            "orphan_rows_preserved": orphan_rows_preserved,
+            "applied":               True,
         }
     finally:
         await db.close()
@@ -381,6 +465,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--db", default=DEFAULT_DB_PATH,
         help=f"Path to DB (default: {DEFAULT_DB_PATH}).",
     )
+    parser.add_argument(
+        "--wipe-orphans", action="store_true",
+        help="Also DELETE existing closed_positions rows for orphan "
+             "symbols (existing rows with no rebuilt equivalent). "
+             "Default: preserve orphan-symbol rows (legacy backfill "
+             "artifacts that can't be reconstructed from fills).",
+    )
     args = parser.parse_args(argv)
 
     if not os.path.exists(args.db):
@@ -408,6 +499,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         apply=args.apply,
         account_id=args.account_id,
         symbol=args.symbol,
+        wipe_orphans=args.wipe_orphans,
     ))
     print()
     print("Summary:")
