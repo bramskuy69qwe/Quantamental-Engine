@@ -787,6 +787,16 @@ class DatabaseManager(
             "ALTER TABLE closed_positions ADD COLUMN insurance_fund_fee REAL DEFAULT NULL",
             "ALTER TABLE closed_positions ADD COLUMN adl_indicator INTEGER DEFAULT NULL",
             "ALTER TABLE closed_positions ADD COLUMN lifecycle_id TEXT DEFAULT NULL",
+            # ── P0.T5 spec-gap fix: fills.lifecycle_id ──────────────────
+            # spec §3.5 lists fills among the lifecycle_id-carrying
+            # tables ("Stamped onto: ... fills.lifecycle_id ..."), and
+            # Phase 2.2 explicitly stamps it on every closing fill. The
+            # P0 plan rows (§0.6/0.7/0.8) enumerate columns for
+            # pre_trade_log/orders/closed_positions but omit fills.
+            # Adding here so the column exists before Phase 2.2 ships;
+            # the P0.T5 backfill script stamps legacy fills based on
+            # their parent closed_position's freshly-generated UUID.
+            "ALTER TABLE fills ADD COLUMN lifecycle_id TEXT DEFAULT NULL",
         ]:
             try:
                 await self._conn.execute(migration)
@@ -822,6 +832,10 @@ class DatabaseManager(
         await self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_closed_pos_lifecycle "
             "ON closed_positions (lifecycle_id)"
+        )
+        await self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_fills_lifecycle "
+            "ON fills (lifecycle_id)"
         )
 
         # Task 160 (MED-024): UNIQUE index install is now done by
