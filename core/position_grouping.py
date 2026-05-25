@@ -54,7 +54,7 @@ Caveats:
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Iterable, List, Tuple, TypedDict
+from typing import Any, Dict, Iterable, List, Optional, Tuple, TypedDict
 
 log = logging.getLogger("position_grouping")
 
@@ -180,6 +180,7 @@ def is_same_fill(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
 def group_fills_into_positions(
     fills: Iterable[Dict[str, Any]],
     fee_rate_fallback: float = 0.0,
+    attribution_out: Optional[Dict[str, List[int]]] = None,
 ) -> List[PositionRecord]:
     """Group chronologically-sorted, deduplicated fills into ``PositionRecord``s.
 
@@ -199,6 +200,17 @@ def group_fills_into_positions(
             estimate ``total_fees`` as ``fee_rate_fallback * notional *
             2`` (both sides). Set to 0.0 to disable. Used by the rebuild
             script when historical fills predate fee-recording.
+        attribution_out (Phase 0.0.6 follow-up): if a mutable dict is
+            provided, the helper writes a mapping of each emitted
+            PositionRecord's ``terminal_position_id`` → list of
+            contributing fill ``id`` values (sqlite row ids from the
+            input fill dicts). Used by ``rebuild_closed_positions.py``
+            and ``synth_legacy_open_fills.py`` to UPDATE fills'
+            ``terminal_position_id`` so the strict ``get_position_fills``
+            lookup (api/routes_orders.py:204) returns the fills on the
+            Position History drawer. Fills missing an ``id`` key are
+            skipped silently (synth in-memory fills that aren't yet in
+            the DB have no id — they get a real id once persisted).
 
     Returns:
         List of ``PositionRecord``s, one per closed logical position,
@@ -251,7 +263,17 @@ def group_fills_into_positions(
             st["open_qty"] -= qty
             if st["open_qty"] <= _QTY_EPS:
                 # Position closed (or over-closed). Emit row.
-                rows.append(_build_row(key, st, fee_rate_fallback))
+                record = _build_row(key, st, fee_rate_fallback)
+                rows.append(record)
+                if attribution_out is not None:
+                    fill_ids = [
+                        int(of["id"]) for of in st["opens"]
+                        if of.get("id") is not None
+                    ] + [
+                        int(cf["id"]) for cf in st["closes"]
+                        if cf.get("id") is not None
+                    ]
+                    attribution_out[record["terminal_position_id"]] = fill_ids
                 if st["open_qty"] < -_QTY_EPS:
                     # Over-closed: residual qty would conceptually open an
                     # opposite-direction position. In one-way mode this

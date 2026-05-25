@@ -571,3 +571,100 @@ class TestFeesAndPnl:
         rows = group_fills_into_positions(fills)
         # gross = (100 - 90) * 2 = 20
         assert rows[0]["realized_pnl"] == pytest.approx(20.0)
+
+
+# ── T198: attribution_out ──────────────────────────────────────────────
+
+
+def _fill_id(fid: int, **kwargs):
+    """Build a fill dict with an explicit ``id`` field (the sqlite row
+    id that attribution emits as the contributing-fill identifier)."""
+    f = _fill(**kwargs)
+    f["id"] = fid
+    return f
+
+
+class TestAttributionOut:
+    def test_basic_single_position_returns_open_and_close_ids(self):
+        # One LONG opened+closed. Attribution should list both fill ids.
+        fills = [
+            _fill_id(101, ts=1000, side="BUY", direction="LONG",
+                     price=80000.0, quantity=1.0, is_close=0),
+            _fill_id(102, ts=2000, side="SELL", direction="LONG",
+                     price=81000.0, quantity=1.0, is_close=1,
+                     realized_pnl=1000.0),
+        ]
+        attribution = {}
+        rows = group_fills_into_positions(fills, attribution_out=attribution)
+        assert len(rows) == 1
+        tpid = rows[0]["terminal_position_id"]
+        assert tpid in attribution
+        assert sorted(attribution[tpid]) == [101, 102]
+
+    def test_multi_open_close_position_returns_all_contributing_ids(self):
+        # Scale-in + multi-close LONG: 2 opens + 2 closes.
+        fills = [
+            _fill_id(201, ts=1000, side="BUY", direction="LONG",
+                     price=100.0, quantity=2.0, is_close=0),
+            _fill_id(202, ts=1500, side="BUY", direction="LONG",
+                     price=102.0, quantity=3.0, is_close=0),
+            _fill_id(203, ts=2000, side="SELL", direction="LONG",
+                     price=105.0, quantity=2.0, is_close=1),
+            _fill_id(204, ts=2500, side="SELL", direction="LONG",
+                     price=106.0, quantity=3.0, is_close=1),
+        ]
+        attribution = {}
+        rows = group_fills_into_positions(fills, attribution_out=attribution)
+        assert len(rows) == 1
+        tpid = rows[0]["terminal_position_id"]
+        assert sorted(attribution[tpid]) == [201, 202, 203, 204]
+
+    def test_separate_lifecycles_get_separate_attribution_entries(self):
+        # Two LONG positions back-to-back (same symbol).
+        fills = [
+            _fill_id(301, ts=1000, side="BUY", direction="LONG",
+                     price=100.0, quantity=1.0, is_close=0),
+            _fill_id(302, ts=1500, side="SELL", direction="LONG",
+                     price=101.0, quantity=1.0, is_close=1),
+            _fill_id(303, ts=2000, side="BUY", direction="LONG",
+                     price=102.0, quantity=1.0, is_close=0),
+            _fill_id(304, ts=2500, side="SELL", direction="LONG",
+                     price=103.0, quantity=1.0, is_close=1),
+        ]
+        attribution = {}
+        rows = group_fills_into_positions(fills, attribution_out=attribution)
+        assert len(rows) == 2
+        tpids = [r["terminal_position_id"] for r in rows]
+        assert len(attribution) == 2
+        assert sorted(attribution[tpids[0]]) == [301, 302]
+        assert sorted(attribution[tpids[1]]) == [303, 304]
+
+    def test_fills_without_id_are_skipped_silently(self):
+        # Mix: 1 fill with id, 1 without (e.g., synth in-memory fill
+        # not yet persisted). Attribution lists only the one with id.
+        fills = [
+            _fill_id(401, ts=1000, side="BUY", direction="LONG",
+                     price=100.0, quantity=1.0, is_close=0),
+            # No id — simulates synth in-memory close (not in DB yet).
+            _fill(ts=2000, side="SELL", direction="LONG",
+                  price=101.0, quantity=1.0, is_close=1),
+        ]
+        attribution = {}
+        rows = group_fills_into_positions(fills, attribution_out=attribution)
+        assert len(rows) == 1
+        tpid = rows[0]["terminal_position_id"]
+        assert attribution[tpid] == [401]
+
+    def test_attribution_out_default_none_unchanged_behavior(self):
+        # No attribution_out passed: helper behaves as before; no side
+        # effects.
+        fills = [
+            _fill_id(501, ts=1000, side="BUY", direction="LONG",
+                     price=100.0, quantity=1.0, is_close=0),
+            _fill_id(502, ts=2000, side="SELL", direction="LONG",
+                     price=101.0, quantity=1.0, is_close=1),
+        ]
+        rows = group_fills_into_positions(fills)
+        # Returns list of records unchanged.
+        assert len(rows) == 1
+        assert rows[0]["terminal_position_id"].startswith("rebuilt:")
