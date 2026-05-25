@@ -355,6 +355,15 @@ class OrdersMixin:
 
         Replaces the old pattern of upsert_fill() + update_order_from_fill()
         which did 2 separate commits per fill event.
+
+        Phase 0.0.4 callers may pass a synthetic ``exchange_fill_id`` of
+        the form ``synth:{tradeId}:open`` for the open portion of a
+        reversal-split. The UNIQUE constraint on
+        ``(account_id, exchange_fill_id)`` treats these as distinct
+        rows (the ``synth:`` prefix can never collide with Binance's
+        numeric tradeIds), and the parent-order qty/avg-price update
+        sums correctly across the two portions since both share the
+        same ``exchange_order_id``.
         """
         fill_sql = """
             INSERT INTO fills (

@@ -241,10 +241,15 @@ class OrderManager:
         except Exception:
             log.debug("order enrichment skipped", exc_info=True)
 
-    def _snapshot_and_fix_isclose(self, account_id: int, fill: Dict[str, Any]) -> None:
-        """Compute position fill snapshot and override adapter-supplied is_close.
+    def _snapshot_and_fix_isclose(self, account_id: int, fill: Dict[str, Any]):
+        """Compute position fill snapshot, override adapter-supplied is_close.
 
-        Best-effort: on failure, retains adapter-supplied value.
+        Returns the ``FillSnapshot`` so callers can inspect ``splits`` for
+        the reversal-split path (Phase 0.0.4). Returns ``None`` on failure;
+        callers should fall back to the single-fill path.
+
+        Best-effort: on failure, the fill dict's adapter-supplied
+        ``is_close`` is retained unchanged.
         """
         try:
             from core.position_snapshot import compute_fill_snapshot, persist_snapshot
@@ -268,8 +273,11 @@ class OrderManager:
             except Exception:
                 log.debug("snapshot persistence to per-account DB failed", exc_info=True)
 
+            return snapshot
+
         except Exception:
             log.debug("is_close snapshot failed — using adapter value", exc_info=True)
+            return None
 
     def _enrich_fill_best_effort(self, fill: Dict[str, Any]) -> None:
         try:
@@ -565,15 +573,40 @@ class OrderManager:
     async def process_fill(
         self, account_id: int, fill: Dict[str, Any]
     ) -> None:
-        """Record fill, update parent order, refresh position fees from DB."""
+        """Record fill, update parent order, refresh position fees from DB.
+
+        Phase 0.0.4 — reversal dispatch: when the snapshot reports that
+        this single fill crosses net qty from positive to negative or
+        vice-versa, two fill rows are written instead of one (the close
+        portion of the OLD direction + the open portion of the NEW
+        direction). The close keeps the original tradeId; the open gets
+        a ``synth:{tradeId}:open`` synthetic id. Downstream callers
+        (close-row builder, position_grouping, reconciler) walk the two
+        rows as a normal close+open sequence — no further special-case
+        handling required.
+        """
         fill.setdefault("account_id", account_id)
-        exchange_order_id = fill.get("exchange_order_id", "")
 
         # v2.4 Priority 5a: derive is_close from position state snapshot.
-        # Must run BEFORE fill is persisted so qty_before reflects pre-fill state.
-        # app_state.positions is updated by a separate WS event (ACCOUNT_UPDATE),
-        # so at fill-processing time it reflects the state before this fill.
-        self._snapshot_and_fix_isclose(account_id, fill)
+        # Must run BEFORE fill is persisted so qty_before reflects pre-fill
+        # state. app_state.positions is updated by a separate WS event
+        # (ACCOUNT_UPDATE), so at fill-processing time it reflects the
+        # state before this fill.
+        snapshot = self._snapshot_and_fix_isclose(account_id, fill)
+
+        if snapshot is not None and snapshot.splits:
+            await self._process_reversal_split(account_id, fill, snapshot)
+            return
+
+        await self._process_single_fill(account_id, fill)
+
+    async def _process_single_fill(
+        self, account_id: int, fill: Dict[str, Any]
+    ) -> None:
+        """Standard single-fill write path. Used directly for non-reversal
+        fills and called twice (once per portion) by the reversal-split
+        dispatcher."""
+        exchange_order_id = fill.get("exchange_order_id", "")
 
         # 1+2. Upsert fill + update parent order in ONE commit
         await self._db.upsert_fill_and_update_order(fill, exchange_order_id)
@@ -599,6 +632,53 @@ class OrderManager:
                     self._build_close_row_for_fill(account_id, f)
                 ),
             )
+
+    async def _process_reversal_split(
+        self,
+        account_id: int,
+        fill: Dict[str, Any],
+        snapshot: Any,
+    ) -> None:
+        """Multi-write path for reversal fills (Phase 0.0.4).
+
+        Allocates the fill's fee and realized_pnl proportionally:
+          - close portion (qty = |qty_before|) gets the full
+            realized_pnl (it's the PnL from the close)
+          - open portion (qty = fill_qty - |qty_before|) gets 0 pnl
+          - fee is allocated by qty ratio so the sum equals the
+            original fill's fee
+
+        terminal_position_id semantics:
+          - close portion KEEPS the original ``terminal_position_id``
+            (the old position being closed)
+          - open portion clears it — a new position is opening; its
+            terminal_position_id will be assigned by the next
+            ACCOUNT_UPDATE event from the platform / plugin
+        """
+        fill_qty_total = abs(float(fill.get("quantity", 0) or 0))
+        fill_fee_total = float(fill.get("fee", 0) or 0)
+        fill_realized_pnl_total = float(fill.get("realized_pnl", 0) or 0)
+
+        for split in snapshot.splits:
+            portion_qty = float(split.quantity)
+            portion_ratio = portion_qty / fill_qty_total if fill_qty_total else 0.0
+            portion_fee = fill_fee_total * portion_ratio
+            portion_pnl = fill_realized_pnl_total if split.is_close else 0.0
+
+            portion_fill = dict(fill)
+            portion_fill["exchange_fill_id"] = split.exchange_fill_id
+            portion_fill["is_close"] = int(split.is_close)
+            portion_fill["direction"] = split.direction
+            portion_fill["quantity"] = portion_qty
+            portion_fill["fee"] = portion_fee
+            portion_fill["realized_pnl"] = portion_pnl
+            if not split.is_close:
+                # The open portion creates a new position; clear the
+                # OLD position's terminal_position_id so a stale pos_id
+                # doesn't propagate to the new direction's records.
+                portion_fill["terminal_position_id"] = ""
+
+            await self._process_single_fill(account_id, portion_fill)
 
     # ── Position Close ─────────────────────────────────────────────────────
 

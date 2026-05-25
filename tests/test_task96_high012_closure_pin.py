@@ -48,20 +48,28 @@ import textwrap
 
 
 def test_process_fill_deferred_close_lambda_captures_function_param():
-    """HIGH-012 VERIFIED FALSE pin: the lambda in process_fill must reference
+    """HIGH-012 VERIFIED FALSE pin: the deferred-close lambda must reference
     account_id as a bare Name (the function parameter), not as an Attribute
-    access (which would be a mutable-state capture exposing the audit's race)."""
+    access (which would be a mutable-state capture exposing the audit's race).
+
+    Phase 0.0.4 (T186) moved the deferred-close lambda from
+    ``process_fill`` to ``_process_single_fill`` when ``process_fill``
+    became a reversal-split dispatcher. The capture semantics are
+    identical — ``_process_single_fill(self, account_id, fill)`` takes
+    account_id as a parameter, so the lambda's free-variable capture
+    still pins to a private frame variable. This test now inspects the
+    new location."""
     from core.order_manager import OrderManager
 
-    src = textwrap.dedent(inspect.getsource(OrderManager.process_fill))
+    src = textwrap.dedent(inspect.getsource(OrderManager._process_single_fill))
     tree = ast.parse(src)
 
-    # Find every lambda inside process_fill
+    # Find every lambda inside _process_single_fill
     lambdas = [n for n in ast.walk(tree) if isinstance(n, ast.Lambda)]
     assert len(lambdas) >= 1, (
-        "Expected at least one lambda in OrderManager.process_fill (the "
-        "deferred-close-row scheduler). If the lambda disappeared, the "
-        "deferred-close pathway may have been refactored — re-evaluate "
+        "Expected at least one lambda in OrderManager._process_single_fill "
+        "(the deferred-close-row scheduler). If the lambda disappeared, "
+        "the deferred-close pathway may have been refactored — re-evaluate "
         "HIGH-012 reachability against the new structure."
     )
 
@@ -73,33 +81,20 @@ def test_process_fill_deferred_close_lambda_captures_function_param():
         for node in ast.walk(lam):
             if isinstance(node, ast.Attribute) and node.attr in forbidden_attrs:
                 raise AssertionError(
-                    f"HIGH-012 closure pattern changed in process_fill: lambda #{lam_idx} "
-                    f"now references attribute `.{node.attr}` instead of the function "
-                    f"parameter `account_id`. The audit's closure-race becomes reachable: "
-                    f"the captured value can now be mutated by external code between "
-                    f"lambda creation and the 2.0s call_later firing. Apply the audit's "
-                    f"recommended fix: snapshot account_id to a local before the lambda, "
-                    f"and verify-active-account-before-insert inside the deferred action."
+                    f"HIGH-012 closure pattern changed in _process_single_fill: "
+                    f"lambda #{lam_idx} now references attribute `.{node.attr}` "
+                    f"instead of the function parameter `account_id`. The "
+                    f"audit's closure-race becomes reachable: the captured "
+                    f"value can now be mutated by external code between "
+                    f"lambda creation and the 2.0s call_later firing. Apply "
+                    f"the audit's recommended fix: snapshot account_id to a "
+                    f"local before the lambda, and verify-active-account-"
+                    f"before-insert inside the deferred action."
                 )
 
-        # Additionally verify that at least one Name node referring to account_id
-        # is present (the function-parameter reference). If account_id isn't
-        # referenced AT ALL inside the lambda, the lambda's purpose changed —
-        # surface for re-evaluation.
-        account_id_refs = [
-            n for n in ast.walk(lam)
-            if isinstance(n, ast.Name) and n.id == "account_id"
-        ]
-        if not account_id_refs:
-            # Not a hard failure — some lambdas in process_fill may not use
-            # account_id at all. But if NO lambda references it, the
-            # deferred-close path may have been removed.
-            continue
-
-    # Final sanity: at least one lambda in process_fill should reference
-    # account_id as a Name (the function parameter). If none do, the
-    # deferred-close path's account-scoping invariant is broken in a
-    # different way.
+    # Final sanity: at least one lambda must reference account_id as a Name
+    # (the function parameter). If none do, the deferred-close path's
+    # account-scoping invariant is broken in a different way.
     any_param_capture = any(
         any(
             isinstance(n, ast.Name) and n.id == "account_id"
@@ -108,8 +103,8 @@ def test_process_fill_deferred_close_lambda_captures_function_param():
         for lam in lambdas
     )
     assert any_param_capture, (
-        "No lambda in process_fill references account_id as a bare Name. "
-        "Either the deferred-close path was removed or account scoping is "
-        "now threaded differently. Re-evaluate HIGH-012 against the new "
+        "No lambda in _process_single_fill references account_id as a bare "
+        "Name. Either the deferred-close path was removed or account scoping "
+        "is now threaded differently. Re-evaluate HIGH-012 against the new "
         "structure."
     )

@@ -10,15 +10,47 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 log = logging.getLogger("position_snapshot")
 
 
 @dataclass
+class FillSplit:
+    """One portion of a reversal-split fill.
+
+    A reversal — a single fill that crosses net qty from positive to
+    negative or vice-versa — is conceptually two fill events stitched
+    together by the exchange:
+
+      1. The CLOSE of the old position (qty = ``|qty_before|``,
+         direction = old).
+      2. The OPEN of the new opposite-direction position (qty =
+         ``fill_qty - |qty_before|``, direction = new).
+
+    Phase 0.0.4 records these as two separate ``fills`` rows so the
+    position-grouping helper (Phase 0.0.1) and reconciler walk the
+    history correctly. The close portion keeps the original Binance
+    tradeId; the open portion gets a synthetic
+    ``"synth:{tradeId}:open"`` id. The synthetic prefix is filterable
+    and idempotent across re-import.
+    """
+    exchange_fill_id: str
+    is_close: bool
+    direction: str   # "LONG" | "SHORT"
+    quantity: float
+
+
+@dataclass
 class FillSnapshot:
-    """Position state at fill time."""
+    """Position state at fill time.
+
+    ``splits`` is populated only on a reversal (one fill crossing
+    zero); for ordinary opens / closes / scale-in / partial-close it
+    stays as the empty list, and downstream callers take the
+    single-fill path.
+    """
     fill_id: str
     symbol: str
     mode: str  # "one_way" | "hedge"
@@ -29,6 +61,7 @@ class FillSnapshot:
     is_close: bool
     is_partial_close: bool
     timestamp_ms: int
+    splits: List[FillSplit] = field(default_factory=list)
 
 
 def compute_fill_snapshot(
@@ -115,12 +148,48 @@ def compute_fill_snapshot(
         is_close = False
         is_partial = False
 
+    # Phase 0.0.4: reversal-split. When a single fill crosses zero
+    # (LONG -> SHORT or SHORT -> LONG in one event), split into a close
+    # portion and an open portion so the fills table records both as
+    # separate rows. position_grouping (Phase 0.0.1) walks fills
+    # chronologically and needs both records to track the lifecycle of
+    # each logical position correctly. Pre-0.0.4 single-row recording
+    # was T178 Layer 4.
+    splits: List[FillSplit] = []
+    if qty_before * qty_after < 0:
+        close_qty = abs(qty_before)
+        open_qty = fill_qty - close_qty
+        # Defensive: if floating-point arithmetic produces a tiny
+        # negative open_qty (open == close exactly, which is the
+        # full-close case, not reversal — but qty_before*qty_after
+        # would be 0, not negative — so this branch shouldn't fire),
+        # skip the split. The condition above already excludes
+        # qty_after == 0.
+        if open_qty > 0:
+            close_direction = "LONG" if qty_before > 0 else "SHORT"
+            open_direction = "LONG" if qty_after > 0 else "SHORT"
+            splits = [
+                FillSplit(
+                    exchange_fill_id=fill_id,
+                    is_close=True,
+                    direction=close_direction,
+                    quantity=close_qty,
+                ),
+                FillSplit(
+                    exchange_fill_id=f"synth:{fill_id}:open" if fill_id else "synth::open",
+                    is_close=False,
+                    direction=open_direction,
+                    quantity=open_qty,
+                ),
+            ]
+
     return FillSnapshot(
         fill_id=fill_id, symbol=symbol, mode="one_way",
         position_side=None,
         qty_before=qty_before, qty_after=qty_after,
         is_open=is_open, is_close=is_close, is_partial_close=is_partial,
         timestamp_ms=ts,
+        splits=splits,
     )
 
 
