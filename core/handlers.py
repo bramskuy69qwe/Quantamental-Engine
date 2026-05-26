@@ -179,14 +179,116 @@ async def handle_positions_refreshed(payload: Dict[str, Any]) -> None:
     )
 
 
+async def _supersede_prior_active_calcs(
+    account_id: int,
+    ticker: str,
+    side: str,
+    new_calc_id: str,
+) -> None:
+    """T214 (P1.T3): supersede any prior ``active`` calc for the same
+    ``(account_id, ticker, side)`` before a new calc lands.
+
+    Spec §2 / §5 calc-revision flow: when the operator clicks Calculate
+    again for the same symbol+direction, the prior calc transitions
+    ``active → superseded`` and the new one takes its place. The link
+    between them is preserved via ``pre_trade_log.superseded_by_calc_id``.
+
+    Side normalization uses :func:`core.calc_correlation._norm_side` so
+    a prior calc with ``side='long'`` is still found when the new calc
+    arrives with ``side='LONG'``/``'BUY'`` (defensive — the calculator
+    currently always writes lowercase, but the consistency saves us if
+    that changes).
+
+    The UPDATE is scoped ``WHERE ... AND status='active'`` (T211 M3
+    pattern): if a concurrent caller already flipped the prior calc
+    out of ``active`` (operator cancel, expire-sweeper) the UPDATE
+    affects 0 rows and the transition skips event emission silently —
+    we don't want to publish ``calc:superseded`` for a calc that's
+    actually ``cancelled_by_operator``.
+
+    Best-effort: per-calc failures log but don't abort the new calc's
+    insert. The caller (``handle_risk_calculated``) wraps this in its
+    own try/except.
+    """
+    if not new_calc_id or not ticker or not side:
+        return
+
+    from core.calc_correlation import _norm_side
+    from core.calc_state import CalcStatus, transition
+
+    side_canonical = _norm_side(side)
+
+    # Find candidate prior calcs by (account, ticker, status='active').
+    # Side normalization happens in Python because the column stores
+    # raw values (matching the matcher's same-shape filter from T211 H1).
+    async with db._conn.execute(
+        "SELECT calc_id, side FROM pre_trade_log "
+        "WHERE account_id = ? "
+        "  AND ticker = ? "
+        "  AND status = 'active' "
+        "  AND calc_id IS NOT NULL "
+        "  AND calc_id != ?",
+        (account_id, ticker, new_calc_id),
+    ) as cur:
+        rows = await cur.fetchall()
+
+    for old_calc_id, old_side in rows:
+        if _norm_side(old_side) != side_canonical:
+            continue  # different direction — not a supersede target
+
+        async def _apply_supersede(target_calc_id: str = old_calc_id) -> None:
+            cur2 = await db._conn.execute(
+                "UPDATE pre_trade_log "
+                "SET status = ?, superseded_by_calc_id = ? "
+                "WHERE calc_id = ? AND status = 'active'",
+                (CalcStatus.SUPERSEDED.value, new_calc_id, target_calc_id),
+            )
+            await db._conn.commit()
+            if cur2.rowcount == 0:
+                # Race: prior caller moved this calc out of 'active'
+                # between SELECT and UPDATE. Skip the event by raising
+                # a sentinel — caught by the outer try.
+                raise _SupersedeLostRace(
+                    f"calc {target_calc_id} moved out of 'active' "
+                    f"before supersede UPDATE; event skipped"
+                )
+
+        try:
+            await transition(
+                calc_id=old_calc_id,
+                current_status=CalcStatus.ACTIVE.value,
+                target_status=CalcStatus.SUPERSEDED.value,
+                apply_fn=_apply_supersede,
+                event_payload={"new_calc_id": new_calc_id},
+                reason="operator_recalc",
+            )
+        except _SupersedeLostRace as exc:
+            log.info("%s", exc)
+        except Exception:
+            log.warning(
+                "supersede transition failed for calc_id=%s (new=%s)",
+                old_calc_id, new_calc_id, exc_info=True,
+            )
+
+
+class _SupersedeLostRace(Exception):
+    """Raised inside ``_apply_supersede`` when the UPDATE affects 0
+    rows (the prior calc was moved out of 'active' between the SELECT
+    and the UPDATE). Caught locally to skip event emission for a calc
+    that's no longer in the expected state. Never raised outside this
+    module.
+    """
+
+
 async def handle_risk_calculated(payload: Dict[str, Any]) -> None:
     """
     Triggered by: risk:risk_calculated
     Source: api/routes.calculate_risk (after run_risk_calculator())
 
     1. Read per-account config (window_seconds is frozen onto the calc)
-    2. Write calc result to pre_trade_log DB table
-    3. Update in-memory cache (app_state.pre_trade_log, last 200 rows) —
+    2. Supersede any prior ``active`` calc for (account, ticker, side)
+    3. Write calc result to pre_trade_log DB table
+    4. Update in-memory cache (app_state.pre_trade_log, last 200 rows) —
        preserves the contract that /fragments/history and UI depend on
     """
     account_id = app_state.active_account_id
@@ -207,6 +309,26 @@ async def handle_risk_calculated(payload: Dict[str, Any]) -> None:
         )
         from core.account_config import AccountConfig
         account_config = AccountConfig()
+
+    # T214 (P1.T3 / plan §1 task 1.5): supersede prior active calc(s)
+    # for the same (account, ticker, side). Runs BEFORE the new insert
+    # so the new calc is the only active one for that key. Best-effort
+    # — a failure here doesn't block the new calc; the matcher's
+    # "most-recent wins" tie-break still picks the new calc on full
+    # matches (spec §4.3), so a missed supersede degrades cleanly.
+    try:
+        await _supersede_prior_active_calcs(
+            account_id=account_id,
+            ticker=payload.get("ticker", ""),
+            side=payload.get("side", ""),
+            new_calc_id=payload.get("calc_id", ""),
+        )
+    except Exception:
+        log.warning(
+            "handle_risk_calculated: supersede pass failed for "
+            "ticker=%s side=%s; new calc will still be inserted",
+            payload.get("ticker"), payload.get("side"), exc_info=True,
+        )
 
     try:
         await db.insert_pre_trade_log({
