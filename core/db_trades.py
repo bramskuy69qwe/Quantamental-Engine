@@ -122,7 +122,8 @@ class TradesMixin:
                     est_slippage, effective_entry, size, notional,
                     est_profit, est_loss, est_r, est_exposure, eligible, calc_id,
                     link_window_seconds_override,
-                    regime_label, regime_multiplier, regime_mode, apply_regime_multiplier
+                    regime_label, regime_multiplier, regime_mode, apply_regime_multiplier,
+                    status
                 ) VALUES (
                     :account_id, :timestamp, :ticker, :average, :side, :one_percent_depth, :individual_risk,
                     :tp_price, :tp_amount_pct, :tp_usdt, :sl_price, :sl_amount_pct, :sl_usdt,
@@ -130,7 +131,8 @@ class TradesMixin:
                     :est_slippage, :effective_entry, :size, :notional,
                     :est_profit, :est_loss, :est_r, :est_exposure, :eligible, :calc_id,
                     :link_window_seconds_override,
-                    :regime_label, :regime_multiplier, :regime_mode, :apply_regime_multiplier
+                    :regime_label, :regime_multiplier, :regime_mode, :apply_regime_multiplier,
+                    :status
                 )""",
                 {
                     "account_id":        row.get("account_id", 1),
@@ -173,6 +175,15 @@ class TradesMixin:
                     "regime_multiplier":         row.get("regime_multiplier"),
                     "regime_mode":               row.get("regime_mode"),
                     "apply_regime_multiplier":   apply_val,
+                    # T211 H2: write status='active' at calc creation so
+                    # the new strict matcher (spec §4.3 filter) sees the
+                    # row as a candidate. The P0.T3 column DEFAULTed to
+                    # NULL — without this write, every new calc lands
+                    # NULL-status and the next-startup backfill flips it
+                    # to 'expired' (terminal, unrecoverable). Caller may
+                    # override (e.g., supersede flow writes 'superseded'
+                    # directly), but default to 'active'.
+                    "status":                    row.get("status", "active"),
                 },
             )
             await self._conn.commit()

@@ -825,6 +825,17 @@ class DatabaseManager(
             "CREATE INDEX IF NOT EXISTS idx_pretrade_lifecycle "
             "ON pre_trade_log (lifecycle_id)"
         )
+        # T211 M4: composite index covering the strict matcher's hot
+        # pre-filter (account_id + status + ticker + timestamp DESC).
+        # Side is filtered in Python (vocabulary normalization, T211
+        # H1) so the index doesn't include it. The partial index on
+        # calc_id IS NOT NULL excludes rows that never got a calc_id
+        # (pre-Phase-0 manual entries, regime-only logs).
+        await self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pretrade_matcher "
+            "ON pre_trade_log (account_id, status, ticker, timestamp DESC) "
+            "WHERE calc_id IS NOT NULL"
+        )
         await self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_orders_lifecycle "
             "ON orders (lifecycle_id)"

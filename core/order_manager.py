@@ -279,6 +279,45 @@ class OrderManager:
             log.debug("is_close snapshot failed — using adapter value", exc_info=True)
             return None
 
+    async def _reenrich_parent_after_fill(
+        self, account_id: int, exchange_order_id: str,
+    ) -> None:
+        """Re-fire enrich_order on the parent order after a fill upsert.
+
+        Called by ``_process_single_fill`` so the matcher gets a chance
+        to evaluate avg_fill_price (now populated by
+        ``upsert_fill_and_update_order``). For LIMIT orders the matcher
+        already ran on the initial order_persisted event and either
+        linked or set link_status (re-run is guarded by H3 in
+        ``_try_correlate``). For MARKET orders this is the first call
+        where avg_fill_price > 0 — without this hook, market correlation
+        relies on the exchange firing a follow-up orders-WS update,
+        which is adapter-dependent.
+
+        Best-effort: failures logged, never raised.
+        """
+        if not exchange_order_id:
+            return
+        try:
+            import sqlite3, config
+            conn = sqlite3.connect(config.DB_PATH)
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM orders "
+                "WHERE account_id = ? AND exchange_order_id = ? "
+                "  AND reduce_only = 0",
+                (account_id, exchange_order_id),
+            ).fetchone()
+            conn.close()
+            if row:
+                from core.order_enrichment import enrich_order
+                await enrich_order(dict(row), config.DB_PATH)
+        except Exception:
+            log.debug(
+                "post-fill parent re-enrichment skipped for %s",
+                exchange_order_id, exc_info=True,
+            )
+
     def _enrich_fill_best_effort(self, fill: Dict[str, Any]) -> None:
         try:
             import config
@@ -610,6 +649,16 @@ class OrderManager:
 
         # 1+2. Upsert fill + update parent order in ONE commit
         await self._db.upsert_fill_and_update_order(fill, exchange_order_id)
+        # T211 H4: re-fire enrich_order on the parent so the matcher
+        # gets a chance to run against the now-populated avg_fill_price.
+        # The new strict matcher (spec §4.1 MARKET 6/6) needs
+        # avg_fill_price > 0 to evaluate the entry criterion; the
+        # initial enrich_order on order_persisted runs before any fill,
+        # so it defers. Without this re-fire, market orders whose
+        # exchange happens NOT to send a follow-up orders-WS update
+        # after the fill would never auto-correlate. Best-effort —
+        # exceptions are swallowed by _enrich_order_best_effort.
+        await self._reenrich_parent_after_fill(account_id, exchange_order_id)
         self._enrich_fill_best_effort(fill)
         self._emit_fill_events(account_id, fill)
         self._publish_fill(account_id, fill)

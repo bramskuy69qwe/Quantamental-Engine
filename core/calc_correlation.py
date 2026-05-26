@@ -40,6 +40,35 @@ LINK_STATUS_NEEDS_MANUAL_REVIEW = "NEEDS_MANUAL_REVIEW"
 LINK_STATUS_UNPLANNED           = "UNPLANNED"
 
 
+# Side-vocabulary normalization. The calculator writes "long"/"short"
+# into pre_trade_log.side (core/risk_engine.py); WS adapters write
+# "BUY"/"SELL" into orders.side (core/adapters/{binance,bybit}/ws_adapter.py).
+# Without normalization, the matcher's SQL `WHERE side = ?` never matches.
+# T211 fix: collapse both vocabularies to canonical 'long'/'short' at
+# comparison time. Returns the input unchanged when the value isn't
+# recognized — defensive against future adapters introducing new
+# strings; mismatch then fails the criterion explicitly rather than
+# silently aliasing.
+_BUY_TOKENS:  frozenset = frozenset({"long", "buy", "LONG", "BUY", "Long", "Buy"})
+_SELL_TOKENS: frozenset = frozenset({"short", "sell", "SHORT", "SELL", "Short", "Sell"})
+
+
+def _norm_side(value: Optional[str]) -> str:
+    """Normalize a side string to canonical 'long' / 'short'.
+
+    Unknown values are returned lowercased (so two unrecognized
+    strings of the same shape still match each other, but a
+    'BUY' would not match a 'sneeze').
+    """
+    if not value:
+        return ""
+    if value in _BUY_TOKENS:
+        return "long"
+    if value in _SELL_TOKENS:
+        return "short"
+    return value.lower()
+
+
 @dataclass
 class MatchResult:
     """Outcome of one matcher invocation.
@@ -120,9 +149,10 @@ def correlate_order_to_calc(
     transition through :func:`core.calc_state.transition`.
     """
     ticker = order.get("symbol", "")
-    side = order.get("side", "")
-    if not ticker or not side:
+    side_raw = order.get("side", "")
+    if not ticker or not side_raw:
         return MatchResult(None, LINK_STATUS_UNPLANNED)
+    side_canonical = _norm_side(side_raw)
 
     order_type = (order.get("order_type") or "").lower()
     is_market = order_type == "market"
@@ -163,24 +193,28 @@ def correlate_order_to_calc(
         now_ts_ms = int(time.time() * 1000)
     order_ts_ms = int(order.get("created_at_ms") or now_ts_ms)
 
-    # Pre-filter candidates by account / symbol / side / status (spec
-    # §4.3 SQL). In-window check happens in Python because each calc
-    # can carry its own ``window_seconds`` override (NULL → account
-    # default).
+    # Pre-filter candidates by account / status / ticker (spec §4.3).
+    # The side and in-window checks happen in Python because:
+    #   - side requires vocabulary normalization (BUY/SELL ↔ long/short),
+    #     pushing that into SQL would require a verbose IN-list or a
+    #     denormalized side column. Python is simpler and the per-symbol
+    #     candidate set is small in practice.
+    #   - each calc can carry its own ``window_seconds`` override
+    #     (NULL → account default).
+    # Index `idx_pretrade_matcher` covers (account_id, status, ticker).
     try:
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
-            "SELECT calc_id, timestamp, effective_entry, tp_price, "
+            "SELECT calc_id, timestamp, side, effective_entry, tp_price, "
             "       sl_price, status, window_seconds "
             "FROM pre_trade_log "
             "WHERE account_id = ? "
             "  AND status IN ('active', 'released') "
             "  AND ticker = ? "
-            "  AND side = ? "
             "  AND calc_id IS NOT NULL "
             "ORDER BY timestamp DESC",
-            (account_id, ticker, side),
+            (account_id, ticker),
         ).fetchall()
         conn.close()
     except Exception:
@@ -197,6 +231,9 @@ def correlate_order_to_calc(
 
     for row in rows:
         calc_id = row["calc_id"]
+        calc_side_canonical = _norm_side(row["side"])
+        if calc_side_canonical != side_canonical:
+            continue  # side mismatch — not a candidate (T211 H1 fix)
         calc_window = row["window_seconds"] or window_seconds
 
         # In-window check (spec §4.2): age compared to per-calc window
@@ -216,6 +253,20 @@ def correlate_order_to_calc(
         if age_sec > window_bound:
             continue  # out of window — not a candidate per spec §4.3
 
+        # Malformed-calc skip (T211 M5): a calc with no effective_entry
+        # / TP / SL price can't be evaluated — treat as non-candidate
+        # rather than silently failing the criterion with drift=1.0
+        # (which the audit row would report as a misleading "real" miss).
+        calc_entry = row["effective_entry"] or 0.0
+        calc_tp = row["tp_price"] or 0.0
+        calc_sl = row["sl_price"] or 0.0
+        if not calc_entry or not calc_tp or not calc_sl:
+            log.debug(
+                "skipping malformed calc %s (entry=%s, tp=%s, sl=%s)",
+                calc_id, calc_entry, calc_tp, calc_sl,
+            )
+            continue
+
         # Per-criterion checks
         criteria: List[Dict[str, Any]] = []
 
@@ -224,9 +275,11 @@ def correlate_order_to_calc(
             order_id, calc_id, "ticker", ticker, ticker, 0.0,
             matched=True, ts_ms=now_ts_ms,
         ))
-        # direction / side (exact — already pre-filtered)
+        # direction / side — pre-filtered by _norm_side equivalence above.
+        # Audit records the RAW values (not canonicalized) so the operator
+        # can see the actual vocabulary divergence in the manual-link diff.
         criteria.append(_audit_row(
-            order_id, calc_id, "direction", side, side, 0.0,
+            order_id, calc_id, "direction", row["side"], side_raw, 0.0,
             matched=True, ts_ms=now_ts_ms,
         ))
         # in-window (already pre-filtered to True at this point)
@@ -237,10 +290,7 @@ def correlate_order_to_calc(
             matched=True, ts_ms=now_ts_ms,
         ))
         # entry-loose (spec §4.2: |order - calc| / calc ≤ entry_tolerance_pct)
-        calc_entry = row["effective_entry"] or 0.0
-        entry_drift = (
-            abs(entry_source - calc_entry) / calc_entry if calc_entry else 1.0
-        )
+        entry_drift = abs(entry_source - calc_entry) / calc_entry
         entry_ok = entry_drift <= entry_tol_ratio
         criteria.append(_audit_row(
             order_id, calc_id, "entry",
@@ -248,7 +298,6 @@ def correlate_order_to_calc(
             matched=entry_ok, ts_ms=now_ts_ms,
         ))
         # TP (spec §4.2: |order_tp - calc_tp| ≤ N * tick_size, N=1)
-        calc_tp = row["tp_price"] or 0.0
         tp_ok = abs(tp_price - calc_tp) <= tick_size
         criteria.append(_audit_row(
             order_id, calc_id, "tp",
@@ -256,7 +305,6 @@ def correlate_order_to_calc(
             matched=tp_ok, ts_ms=now_ts_ms,
         ))
         # SL
-        calc_sl = row["sl_price"] or 0.0
         sl_ok = abs(sl_price - calc_sl) <= tick_size
         criteria.append(_audit_row(
             order_id, calc_id, "sl",

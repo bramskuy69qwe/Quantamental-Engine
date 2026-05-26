@@ -22,6 +22,16 @@ from typing import Any, Dict, List, Optional, Tuple
 
 log = logging.getLogger("order_enrichment")
 
+
+class _StatusFlipLostRace(Exception):
+    """Raised by ``_apply_status_flip`` when the UPDATE WHERE-clause
+    (scoped to the matcher-time status) affects 0 rows — another caller
+    moved the calc out of the expected state between the matcher's
+    SELECT and our UPDATE. Caught by ``_try_correlate`` to suppress
+    event-bus emission for the lost race; never raised outside this
+    module.
+    """
+
 _SL_TYPES = frozenset({"stop_loss", "stop_market", "stop_loss_limit"})
 _TP_TYPES = frozenset({"take_profit", "take_profit_market", "take_profit_limit"})
 _CLOSE_TYPES = _SL_TYPES | _TP_TYPES | frozenset({"trailing_stop"})
@@ -145,6 +155,16 @@ async def _try_correlate(order: Dict[str, Any], db_path: str) -> None:
         return
     if row["calc_id"]:
         return  # already correlated — matcher is idempotent at this gate
+    # T211 H3: if a prior matcher invocation already decided
+    # NEEDS_MANUAL_REVIEW, don't re-run on subsequent WS updates. The
+    # decision sticks until the operator manually links (Phase 3) or
+    # the order's calc/order state changes via an explicit unlock.
+    # Re-running would write 6 audit rows per candidate per WS update,
+    # exploding calc_match_audit. UNPLANNED (no candidates) is allowed
+    # to re-run — newly-arriving calcs might bring it into LINKED, and
+    # UNPLANNED carries no audit rows so re-runs are cheap.
+    if row["link_status"] == "NEEDS_MANUAL_REVIEW":
+        return
     if not row["tp_trigger_price"] or not row["sl_trigger_price"]:
         return  # need both trigger prices
 
@@ -208,17 +228,49 @@ async def _try_correlate(order: Dict[str, Any], db_path: str) -> None:
     # Route calc-status flip through calc_state.transition (the
     # choke-point P0.T6 installed). apply_fn does the actual UPDATE;
     # transition() handles validation + event emission.
+    if result.calc_id and not result.matched_from_status:
+        # T211 L4: a calc_id without matched_from_status means the
+        # matcher returned a winner whose `status` column read NULL —
+        # shouldn't happen post-T211-H2 (status is now written at calc
+        # creation) but pre-T211 rows or out-of-band INSERTs could
+        # still produce this. Log so we notice the drift instead of
+        # silently skipping the state-machine flip.
+        log.warning(
+            "matcher winner calc_id=%s has no matched_from_status; "
+            "skipping calc_state.transition (calc row was missing "
+            "'status' or pre-backfill NULL)", result.calc_id,
+        )
     if result.calc_id and result.matched_from_status:
         from core.calc_state import transition, CalcStatus
+
+        # T211 M3: scope the UPDATE with AND status = ? against the
+        # status we read at matcher time. If another caller (operator
+        # cancel, supersede, expire-sweeper) flipped status between the
+        # matcher SELECT and this UPDATE, rowcount is 0 — we DIDN'T
+        # win the race. Raise a sentinel so transition() skips the
+        # event-bus emission; otherwise we'd publish calc:linked for a
+        # calc that's now (e.g.) cancelled_by_operator.
+        applied = {"rowcount": 0}
 
         async def _apply_status_flip() -> None:
             inner = sqlite3.connect(db_path)
             try:
-                inner.execute(
-                    "UPDATE pre_trade_log SET status = ? WHERE calc_id = ?",
-                    (CalcStatus.MATCHED.value, result.calc_id),
+                cur = inner.execute(
+                    "UPDATE pre_trade_log SET status = ? "
+                    "WHERE calc_id = ? AND status = ?",
+                    (CalcStatus.MATCHED.value, result.calc_id,
+                     result.matched_from_status),
                 )
                 inner.commit()
+                applied["rowcount"] = cur.rowcount
+                if cur.rowcount == 0:
+                    # Lost the race — caller of transition() will see
+                    # the raise and skip event emission.
+                    raise _StatusFlipLostRace(
+                        f"calc {result.calc_id} status changed between "
+                        f"matcher read (was {result.matched_from_status!r}) "
+                        f"and UPDATE; transition skipped"
+                    )
             finally:
                 inner.close()
 
@@ -230,6 +282,10 @@ async def _try_correlate(order: Dict[str, Any], db_path: str) -> None:
                 apply_fn=_apply_status_flip,
                 event_payload={"order_id": row["id"]},
             )
+        except _StatusFlipLostRace as exc:
+            # Race lost — calc moved out from under us. Log at info
+            # (not warning) — this is expected concurrency, not a bug.
+            log.info("%s", exc)
         except Exception:
             log.warning(
                 "calc_state.transition active→matched failed for "
