@@ -16,7 +16,6 @@ upsert completes.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import sqlite3
 from typing import Any, Dict, List, Optional, Tuple
@@ -332,35 +331,15 @@ async def _try_correlate(order: Dict[str, Any], db_path: str) -> None:
 def _read_account_config(db_path: str, account_id: int) -> Tuple[float, int, int]:
     """Resolve (entry_tolerance_pct, window_seconds, clock_skew_tolerance_sec)
     from ``accounts.config_json`` with spec §3.3 defaults.
+
+    T213 (P1.T2): delegates to ``core.account_config.read_account_config_sync``
+    — the single source of truth for config reads. Kept as a tuple
+    return for compatibility with the existing matcher call site;
+    new callers should use the dataclass form directly.
     """
-    from core.calc_correlation import (
-        SPEC_DEFAULT_ENTRY_TOLERANCE_PCT,
-        SPEC_DEFAULT_WINDOW_SECONDS,
-        SPEC_DEFAULT_CLOCK_SKEW_TOLERANCE,
-    )
-
-    cfg: Dict[str, Any] = {}
-    try:
-        conn = sqlite3.connect(db_path, timeout=10.0)
-        try:
-            row = conn.execute(
-                "SELECT config_json FROM accounts WHERE id = ?",
-                (account_id,),
-            ).fetchone()
-        finally:
-            conn.close()
-        if row and row[0]:
-            parsed = json.loads(row[0])
-            if isinstance(parsed, dict):
-                cfg = parsed
-    except Exception:
-        pass  # missing column / malformed JSON / missing account row — use defaults
-
-    return (
-        float(cfg.get("entry_tolerance_pct", SPEC_DEFAULT_ENTRY_TOLERANCE_PCT)),
-        int(cfg.get("window_seconds", SPEC_DEFAULT_WINDOW_SECONDS)),
-        int(cfg.get("clock_skew_tolerance_sec", SPEC_DEFAULT_CLOCK_SKEW_TOLERANCE)),
-    )
+    from core.account_config import read_account_config_sync
+    cfg = read_account_config_sync(db_path, account_id)
+    return (cfg.entry_tolerance_pct, cfg.window_seconds, cfg.clock_skew_tolerance_sec)
 
 
 def _insert_audit_rows(db_path: str, rows: List[Dict[str, Any]]) -> None:

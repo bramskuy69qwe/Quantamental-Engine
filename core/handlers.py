@@ -184,12 +184,36 @@ async def handle_risk_calculated(payload: Dict[str, Any]) -> None:
     Triggered by: risk:risk_calculated
     Source: api/routes.calculate_risk (after run_risk_calculator())
 
-    1. Write calc result to pre_trade_log DB table
-    2. Update in-memory cache (app_state.pre_trade_log, last 200 rows) —
+    1. Read per-account config (window_seconds is frozen onto the calc)
+    2. Write calc result to pre_trade_log DB table
+    3. Update in-memory cache (app_state.pre_trade_log, last 200 rows) —
        preserves the contract that /fragments/history and UI depend on
     """
+    account_id = app_state.active_account_id
+    # T213 (P1.T2 / plan §1 task 1.3): freeze per-account window onto
+    # the calc at creation time. Spec §3.2: "window_seconds | INTEGER
+    # | frozen from accounts.config_json at creation" — so an operator
+    # changing accounts.config_json.window_seconds mid-flight doesn't
+    # affect in-flight calcs. The matcher reads this column per-calc
+    # (spec §4.3) and falls back to the account default only when NULL.
     try:
-        await db.insert_pre_trade_log({**payload, "account_id": app_state.active_account_id})
+        from core.account_config import read_account_config_async
+        account_config = await read_account_config_async(db, account_id)
+    except Exception:
+        log.warning(
+            "handle_risk_calculated: account config read failed; "
+            "calc will land with window_seconds=NULL and matcher will "
+            "fall back to spec default", exc_info=True,
+        )
+        from core.account_config import AccountConfig
+        account_config = AccountConfig()
+
+    try:
+        await db.insert_pre_trade_log({
+            **payload,
+            "account_id": account_id,
+            "window_seconds": account_config.window_seconds,
+        })
     except Exception as exc:
         log.error("handle_risk_calculated DB write failed: %s", exc)
 

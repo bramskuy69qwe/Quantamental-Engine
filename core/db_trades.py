@@ -123,7 +123,7 @@ class TradesMixin:
                     est_profit, est_loss, est_r, est_exposure, eligible, calc_id,
                     link_window_seconds_override,
                     regime_label, regime_multiplier, regime_mode, apply_regime_multiplier,
-                    status
+                    status, window_seconds
                 ) VALUES (
                     :account_id, :timestamp, :ticker, :average, :side, :one_percent_depth, :individual_risk,
                     :tp_price, :tp_amount_pct, :tp_usdt, :sl_price, :sl_amount_pct, :sl_usdt,
@@ -132,7 +132,7 @@ class TradesMixin:
                     :est_profit, :est_loss, :est_r, :est_exposure, :eligible, :calc_id,
                     :link_window_seconds_override,
                     :regime_label, :regime_multiplier, :regime_mode, :apply_regime_multiplier,
-                    :status
+                    :status, :window_seconds
                 )""",
                 {
                     "account_id":        row.get("account_id", 1),
@@ -184,6 +184,16 @@ class TradesMixin:
                     # override (e.g., supersede flow writes 'superseded'
                     # directly), but default to 'active'.
                     "status":                    row.get("status", "active"),
+                    # T213 (P1.T2 / plan §1 task 1.3): freeze the
+                    # per-calc window at creation time. The matcher
+                    # reads pre_trade_log.window_seconds for the
+                    # in-window check (spec §4.3); a non-NULL value
+                    # here means "this calc carries its OWN window,
+                    # immune to mid-flight changes to accounts.config_json".
+                    # Caller (core/handlers.py::handle_risk_calculated)
+                    # resolves this from account config; NULL fallback
+                    # is fine — matcher uses spec default 300s.
+                    "window_seconds":            row.get("window_seconds"),
                 },
             )
             await self._conn.commit()
