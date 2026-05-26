@@ -34,10 +34,30 @@ SPEC_DEFAULT_CLOCK_SKEW_TOLERANCE   = 10
 SPEC_DEFAULT_ENTRY_TOLERANCE_PCT    = 0.25  # percent, not ratio (0.25 == 0.25%)
 
 
-# link_status values per spec §3.4 (orders.link_status enum)
+# link_status values per spec §3.4 (orders.link_status enum).
+#
+# Spec ambiguity (T212 L6): spec §3.4 lists four states — LINKED,
+# NEEDS_MANUAL_REVIEW, UNLINKED, UNPLANNED — but the matcher pseudocode
+# in §4.3 + the state diagram in §6 only have the matcher emit three:
+# LINKED, NEEDS_MANUAL_REVIEW, UNPLANNED.
+#
+# UNLINKED appears in §3.4 (enum) and §6 (operator-action transitions:
+# UNLINKED → UNPLANNED, UNLINKED → LINKED via manual link) but is NEVER
+# produced by the matcher itself. The state exists for OPERATOR action
+# only — Phase 3 endpoints (POST /orders/{id}/mark_unplanned,
+# /manual_link, etc.) will set/clear it. Our matcher therefore emits
+# NEEDS_MANUAL_REVIEW in the "candidates exist, none full-match" case
+# (per §4.3 pseudocode, matching §6 diagram), and never UNLINKED.
+#
+# Resolution per Rule 6: pin NEEDS_MANUAL_REVIEW as the matcher's
+# output for partial-match candidates; UNLINKED remains a valid enum
+# value reserved for operator-driven state transitions (covered by
+# core/link_state.py's transition tables). Worth confirming with the
+# operator if a use case for UNLINKED-as-matcher-output emerges later.
 LINK_STATUS_LINKED              = "LINKED"
 LINK_STATUS_NEEDS_MANUAL_REVIEW = "NEEDS_MANUAL_REVIEW"
 LINK_STATUS_UNPLANNED           = "UNPLANNED"
+LINK_STATUS_UNLINKED            = "UNLINKED"  # operator-set only, never matcher-emitted
 
 
 # Side-vocabulary normalization. The calculator writes "long"/"short"
@@ -191,7 +211,21 @@ def correlate_order_to_calc(
 
     if now_ts_ms is None:
         now_ts_ms = int(time.time() * 1000)
-    order_ts_ms = int(order.get("created_at_ms") or now_ts_ms)
+    raw_created_ms = order.get("created_at_ms")
+    if not raw_created_ms:
+        # T212 L5: silent fallback to "now" makes the in-window check
+        # pass when it shouldn't (a stale order with created_at_ms=0
+        # would always be evaluated as "just placed"). Real adapters
+        # populate this; warn so we notice when production hits it.
+        log.warning(
+            "matcher saw order_id=%s with no created_at_ms; falling back "
+            "to now() for the in-window check — adapter ingest may have "
+            "missed the timestamp",
+            order_id,
+        )
+        order_ts_ms = now_ts_ms
+    else:
+        order_ts_ms = int(raw_created_ms)
 
     # Pre-filter candidates by account / status / ticker (spec §4.3).
     # The side and in-window checks happen in Python because:
@@ -439,16 +473,25 @@ def find_candidate_calcs(
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=within_hours)).isoformat()
     now = datetime.now(timezone.utc)
 
+    # T212 L2: apply side normalization (same fix as the strict matcher
+    # — see _norm_side comment). Pre-T212 this was case-sensitive and
+    # didn't bridge BUY/long vocabularies, so the Phase 3 manual-link UI
+    # would silently return [] for the production cross-vocabulary case.
+    # The query selects by ticker only and filters side in Python.
+    # Loose-tolerance behavior (5% drift / 168h window) is unchanged —
+    # manual-link UI intentionally shows near-misses.
+    side_canonical = _norm_side(side)
+
     try:
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
-            "SELECT calc_id, effective_entry, tp_price, sl_price, timestamp "
+            "SELECT calc_id, side, effective_entry, tp_price, sl_price, timestamp "
             "FROM pre_trade_log "
-            "WHERE ticker = ? AND side = ? AND timestamp >= ? "
+            "WHERE ticker = ? AND timestamp >= ? "
             "AND calc_id IS NOT NULL "
             "ORDER BY timestamp DESC",
-            (ticker, side, cutoff),
+            (ticker, cutoff),
         ).fetchall()
         conn.close()
     except Exception:
@@ -471,6 +514,8 @@ def find_candidate_calcs(
         cid = row["calc_id"]
         if not cid or cid in linked:
             continue
+        if _norm_side(row["side"]) != side_canonical:
+            continue  # side mismatch — not a candidate
 
         eff = row["effective_entry"] or 0
         tp = row["tp_price"] or 0

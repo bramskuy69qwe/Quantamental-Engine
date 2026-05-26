@@ -15,6 +15,7 @@ upsert completes.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import sqlite3
@@ -45,12 +46,26 @@ async def enrich_order(order: Dict[str, Any], db_path: str) -> None:
        strict matcher (spec §4) and route any successful calc-status
        flip through ``calc_state.transition()``.
     3. Best-effort: exceptions logged, never raised.
+
+    T212 L1: the two steps are wrapped in SEPARATE try/except blocks
+    so a populator failure doesn't silently skip the matcher (and
+    vice versa). Pre-T212 they shared one except: a transient lock
+    on the populator's UPDATE would cause the matcher to be skipped
+    on this WS update, then re-enrichment on the next update would
+    run the matcher again — masking the populator error from the
+    operator. Now each step's failure logs distinctly.
     """
+    eid = order.get("exchange_order_id")
     try:
         _populate_tp_sl_trigger_prices(order, db_path)
+    except Exception:
+        log.warning(
+            "populate tp/sl trigger prices failed for %s", eid, exc_info=True,
+        )
+    try:
         await _try_correlate(order, db_path)
     except Exception:
-        log.warning("order enrichment failed for %s", order.get("exchange_order_id"), exc_info=True)
+        log.warning("correlate failed for %s", eid, exc_info=True)
 
 
 def enrich_fill(fill: Dict[str, Any], db_path: str) -> None:
@@ -138,7 +153,7 @@ async def _try_correlate(order: Dict[str, Any], db_path: str) -> None:
     # Read current order state — trigger prices may have just been
     # populated, and the matcher needs the orders.id PK + created_at_ms
     # timestamp.
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=10.0)
     conn.row_factory = sqlite3.Row
     try:
         row = conn.execute(
@@ -203,27 +218,33 @@ async def _try_correlate(order: Dict[str, Any], db_path: str) -> None:
     )
 
     if result.audit_rows:
-        _insert_audit_rows(db_path, result.audit_rows)
+        await asyncio.to_thread(_insert_audit_rows, db_path, result.audit_rows)
 
     # Always write link_status. Write calc_id only on a full match.
-    conn = sqlite3.connect(db_path)
-    try:
-        if result.calc_id:
-            conn.execute(
-                "UPDATE orders SET calc_id = ?, link_status = ? "
-                "WHERE account_id = ? AND exchange_order_id = ? "
-                "  AND calc_id IS NULL",
-                (result.calc_id, result.link_status, aid, eid),
-            )
-        else:
-            conn.execute(
-                "UPDATE orders SET link_status = ? "
-                "WHERE account_id = ? AND exchange_order_id = ?",
-                (result.link_status, aid, eid),
-            )
-        conn.commit()
-    finally:
-        conn.close()
+    # T212 M2: wrap in to_thread + timeout=10 so SQLite busy-wait
+    # handles contention with the aiosqlite-managed Database connection
+    # on the same file (see _apply_status_flip comment for context).
+    def _update_orders_sync() -> None:
+        conn = sqlite3.connect(db_path, timeout=10.0)
+        try:
+            if result.calc_id:
+                conn.execute(
+                    "UPDATE orders SET calc_id = ?, link_status = ? "
+                    "WHERE account_id = ? AND exchange_order_id = ? "
+                    "  AND calc_id IS NULL",
+                    (result.calc_id, result.link_status, aid, eid),
+                )
+            else:
+                conn.execute(
+                    "UPDATE orders SET link_status = ? "
+                    "WHERE account_id = ? AND exchange_order_id = ?",
+                    (result.link_status, aid, eid),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+    await asyncio.to_thread(_update_orders_sync)
 
     # Route calc-status flip through calc_state.transition (the
     # choke-point P0.T6 installed). apply_fn does the actual UPDATE;
@@ -250,10 +271,17 @@ async def _try_correlate(order: Dict[str, Any], db_path: str) -> None:
         # win the race. Raise a sentinel so transition() skips the
         # event-bus emission; otherwise we'd publish calc:linked for a
         # calc that's now (e.g.) cancelled_by_operator.
-        applied = {"rowcount": 0}
-
-        async def _apply_status_flip() -> None:
-            inner = sqlite3.connect(db_path)
+        #
+        # T212 M2: wrap the sync sqlite3 work in asyncio.to_thread so
+        # the event loop doesn't block while SQLite serializes through
+        # the file lock (the global Database mixin keeps an aiosqlite
+        # connection open on the same per-account DB file). The to_thread
+        # dispatch overhead is ~0.1ms — negligible vs the locking
+        # exposure on the hot path. Full async migration (route through
+        # Database._conn) would be cleaner but requires plumbing the
+        # Database instance into order_enrichment; out of T212 scope.
+        def _flip_status_sync() -> int:
+            inner = sqlite3.connect(db_path, timeout=10.0)
             try:
                 cur = inner.execute(
                     "UPDATE pre_trade_log SET status = ? "
@@ -262,17 +290,20 @@ async def _try_correlate(order: Dict[str, Any], db_path: str) -> None:
                      result.matched_from_status),
                 )
                 inner.commit()
-                applied["rowcount"] = cur.rowcount
-                if cur.rowcount == 0:
-                    # Lost the race — caller of transition() will see
-                    # the raise and skip event emission.
-                    raise _StatusFlipLostRace(
-                        f"calc {result.calc_id} status changed between "
-                        f"matcher read (was {result.matched_from_status!r}) "
-                        f"and UPDATE; transition skipped"
-                    )
+                return cur.rowcount
             finally:
                 inner.close()
+
+        async def _apply_status_flip() -> None:
+            rowcount = await asyncio.to_thread(_flip_status_sync)
+            if rowcount == 0:
+                # Lost the race — caller of transition() will see
+                # the raise and skip event emission.
+                raise _StatusFlipLostRace(
+                    f"calc {result.calc_id} status changed between "
+                    f"matcher read (was {result.matched_from_status!r}) "
+                    f"and UPDATE; transition skipped"
+                )
 
         try:
             await transition(
@@ -310,7 +341,7 @@ def _read_account_config(db_path: str, account_id: int) -> Tuple[float, int, int
 
     cfg: Dict[str, Any] = {}
     try:
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(db_path, timeout=10.0)
         try:
             row = conn.execute(
                 "SELECT config_json FROM accounts WHERE id = ?",
@@ -360,7 +391,7 @@ def _insert_audit_rows(db_path: str, rows: List[Dict[str, Any]]) -> None:
         int(bool(r.get("winning", 0))),
     ) for r in rows]
     try:
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(db_path, timeout=10.0)
         try:
             conn.executemany(sql, params)
             conn.commit()
@@ -373,7 +404,16 @@ def _insert_audit_rows(db_path: str, rows: List[Dict[str, Any]]) -> None:
 
 
 def _get_tick_size(symbol: str, price: float) -> float:
-    """Read tick size from exchange_info cache; fallback to price * 0.0001."""
+    """Read tick size from exchange_info cache; fallback to a price-derived
+    heuristic when the adapter precision is unavailable.
+
+    T212 L3: the fallback (``max(price * 0.0001, 0.01)``) is *much*
+    looser than spec §4.2's "N=1 tick_size" intent — for BTC at 50k
+    it returns 5.0 USD, treating any TP/SL within 5 USD as a match.
+    Log a warning so we notice when production hits the fallback
+    (suggests adapter cache miss, exchange_info hadn't loaded yet,
+    or a symbol the adapter doesn't know).
+    """
     try:
         from core.state import app_state
         if hasattr(app_state, "exchange_info") and app_state.exchange_info:
@@ -385,7 +425,13 @@ def _get_tick_size(symbol: str, price: float) -> float:
                 return 10 ** (-prec["price"])
     except Exception:
         pass
-    return max(price * 0.0001, 0.01) if price > 0 else 0.01
+    fallback = max(price * 0.0001, 0.01) if price > 0 else 0.01
+    log.warning(
+        "_get_tick_size fallback for %s @ %s: using heuristic %s "
+        "(adapter precision unavailable; matcher tolerance will be loose)",
+        symbol, price, fallback,
+    )
+    return fallback
 
 
 # ── Internal: fill calc_id propagation ───────────────────────────────────────
