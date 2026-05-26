@@ -1,4 +1,11 @@
-"""Market entry with TP+SL attached. 2-leg correlation (entry wildcard)."""
+"""Market entry with TP+SL attached. 6/6 correlation (spec §4.1).
+
+Pre-P1.T1 this scenario was "entry wildcard" for market orders. Under
+the new strict matcher entry IS evaluated for MARKET via fill price
+against calc.effective_entry with the loose entry_tolerance_pct band
+(default 0.25%). Fill price was loosened from 0.5060 (1.2% drift,
+fails new criterion) to 0.5010 (0.2% drift, within tolerance).
+"""
 from datetime import datetime, timedelta, timezone
 from tests.integration.scenario import *
 
@@ -7,7 +14,7 @@ _ts = lambda m: (_now - timedelta(minutes=m)).isoformat()
 
 scenario = Scenario(
     name="market_entry_with_tpsl",
-    description="Market entry correlates on TP+SL only (entry price is wildcard for market orders).",
+    description="Market entry strict 6/6 correlation per spec §4.1.",
     events=[
         ScenarioEvent(t_ms=1000, type="calc_created", payload={
             "timestamp": _ts(5), "ticker": "XRPUSDT", "side": "BUY",
@@ -33,21 +40,21 @@ scenario = Scenario(
         }),
         ScenarioEvent(t_ms=3000, type="fill_received", payload={
             "exchange_fill_id": "F-MKT-E", "exchange_order_id": "MKT-1",
-            "symbol": "XRPUSDT", "side": "BUY", "price": 0.5060,
+            "symbol": "XRPUSDT", "side": "BUY", "price": 0.5010,
             "quantity": 100, "timestamp_ms": 3000,
             "exchange_position_id": "POS-MKT",
         }),
     ],
     expected=ExpectedState(
         orders=[
-            # Market order correlated via TP+SL legs (entry wildcard)
+            # Market order correlated via strict 6/6 (entry-vs-fill in tolerance)
             ExpectedOrder("MKT-1", calc_id="calc-mkt-tpsl",
                           tp_trigger_price=0.5500, sl_trigger_price=0.4800),
         ],
         fills=[
             # Entry slippage computed against pre_trade_log effective_entry
             ExpectedFill("F-MKT-E", calc_id="calc-mkt-tpsl", fill_type="entry",
-                         slippage_actual=(0.5060 - 0.5000) / 0.5000,
+                         slippage_actual=(0.5010 - 0.5000) / 0.5000,
                          slippage_tolerance=0.0001),
         ],
     ),

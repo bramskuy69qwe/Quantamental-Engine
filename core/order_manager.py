@@ -151,12 +151,12 @@ class OrderManager:
                     return False
 
         await self._db.upsert_order_batch([order])
-        self._enrich_order_best_effort(order)
+        await self._enrich_order_best_effort(order)
         # When a TP/SL child arrives, re-enrich the parent entry so its
         # tp/sl_trigger_price gets populated and correlation can run.
         # Without this, market orders that fill before children arrive
         # never get correlated (the parent has no further updates).
-        self._re_enrich_parent_on_child_arrival(account_id, order)
+        await self._re_enrich_parent_on_child_arrival(account_id, order)
         self._emit_order_events(account_id, order)
         self._detect_modification_events(account_id, order, prev_order)
         self._publish_order_update(account_id, order)
@@ -201,7 +201,7 @@ class OrderManager:
         "take_profit", "take_profit_market", "take_profit_limit",
     })
 
-    def _re_enrich_parent_on_child_arrival(
+    async def _re_enrich_parent_on_child_arrival(
         self, account_id: int, order: Dict[str, Any]
     ) -> None:
         """When a TP/SL child order is persisted, re-enrich the parent entry.
@@ -229,15 +229,15 @@ class OrderManager:
 
             if parent:
                 from core.order_enrichment import enrich_order
-                enrich_order(dict(parent), config.DB_PATH)
+                await enrich_order(dict(parent), config.DB_PATH)
         except Exception:
             log.debug("parent re-enrichment on child arrival skipped", exc_info=True)
 
-    def _enrich_order_best_effort(self, order: Dict[str, Any]) -> None:
+    async def _enrich_order_best_effort(self, order: Dict[str, Any]) -> None:
         try:
             import config
             from core.order_enrichment import enrich_order
-            enrich_order(order, config.DB_PATH)
+            await enrich_order(order, config.DB_PATH)
         except Exception:
             log.debug("order enrichment skipped", exc_info=True)
 

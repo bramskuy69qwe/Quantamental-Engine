@@ -901,6 +901,25 @@ class DatabaseManager(
         )
         await self._conn.commit()
 
+        # ── P1.T1: backfill pre_trade_log.status for legacy NULL rows ────
+        # The P0.T3 migration added ``status`` as NULL-default. Legacy
+        # pre_trade_log rows (created before Phase 1 wiring) carry
+        # NULL — these are dev-phase test calcs where the link was
+        # never built. Per spec §3.4 the matcher only considers rows
+        # with status IN ('active', 'released'); NULL would be a third
+        # implicit state. Backfill them as 'expired' (terminal) so the
+        # new strict matcher (P1.T1) refuses to bind to stale calcs.
+        # Idempotent — only touches NULL rows; subsequent startups
+        # find 0 rows to update.
+        try:
+            await self._conn.execute(
+                "UPDATE pre_trade_log SET status = 'expired' "
+                "WHERE status IS NULL"
+            )
+            await self._conn.commit()
+        except _sqlite3.OperationalError:
+            pass  # status column not yet present (pre-P0.T3 DB) — skip
+
         # ── account_id indexes (idempotent) ───────────────────────────────────
         for idx_sql in [
             "CREATE INDEX IF NOT EXISTS idx_snapshots_account ON account_snapshots (account_id, snapshot_ts DESC)",

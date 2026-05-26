@@ -1,4 +1,10 @@
-"""Tests for parent re-enrichment on child arrival (production parity)."""
+"""Tests for parent re-enrichment on child arrival (production parity).
+
+Note: ``enrich_order`` is async since P1.T1; tests wrap with
+``asyncio.run``. Fixture schema extended with the columns the new
+matcher reads (``status``, ``link_status``, ``calc_match_audit`` table).
+"""
+import asyncio
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
@@ -7,15 +13,16 @@ import pytest
 from core.order_enrichment import enrich_order
 
 
-RECENT = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+# Within new strict matcher's default 300s window (was 24h pre-P1.T1).
+RECENT = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
 
 
 def _make_db(tmp_path, ptl_rows=None):
     db_path = str(tmp_path / "test.db")
     conn = sqlite3.connect(db_path)
     conn.executescript("""
-        CREATE TABLE accounts (id INTEGER PRIMARY KEY);
-        INSERT INTO accounts VALUES (1);
+        CREATE TABLE accounts (id INTEGER PRIMARY KEY, config_json TEXT DEFAULT NULL);
+        INSERT INTO accounts (id) VALUES (1);
 
         CREATE TABLE orders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -26,6 +33,8 @@ def _make_db(tmp_path, ptl_rows=None):
             quantity REAL DEFAULT 0, reduce_only INTEGER DEFAULT 0,
             exchange_position_id TEXT DEFAULT '',
             calc_id TEXT, tp_trigger_price REAL, sl_trigger_price REAL,
+            link_status TEXT DEFAULT NULL,
+            avg_fill_price REAL DEFAULT 0,
             created_at_ms INTEGER DEFAULT 0, updated_at_ms INTEGER DEFAULT 0,
             last_seen_ms INTEGER DEFAULT 0,
             UNIQUE(account_id, exchange_order_id)
@@ -42,18 +51,29 @@ def _make_db(tmp_path, ptl_rows=None):
             id INTEGER PRIMARY KEY, account_id INTEGER DEFAULT 1,
             timestamp TEXT, ticker TEXT, side TEXT DEFAULT '',
             effective_entry REAL DEFAULT 0, tp_price REAL DEFAULT 0,
-            sl_price REAL DEFAULT 0, average REAL DEFAULT 0, calc_id TEXT
+            sl_price REAL DEFAULT 0, average REAL DEFAULT 0, calc_id TEXT,
+            status TEXT DEFAULT NULL,
+            window_seconds INTEGER DEFAULT NULL
+        );
+
+        CREATE TABLE calc_match_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id INTEGER, calc_id TEXT, criterion TEXT,
+            calc_value TEXT, order_value TEXT, tolerance_used REAL,
+            matched INTEGER, ts_ms INTEGER, winning INTEGER
         );
     """)
     if ptl_rows:
         for r in ptl_rows:
             conn.execute(
                 "INSERT INTO pre_trade_log "
-                "(account_id, timestamp, ticker, side, effective_entry, tp_price, sl_price, average, calc_id) "
-                "VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "(account_id, timestamp, ticker, side, effective_entry, "
+                " tp_price, sl_price, average, calc_id, status) "
+                "VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (r["timestamp"], r["ticker"], r["side"],
                  r["effective_entry"], r["tp_price"], r["sl_price"],
-                 r.get("average", r["effective_entry"]), r["calc_id"]),
+                 r.get("average", r["effective_entry"]), r["calc_id"],
+                 r.get("status", "active")),
             )
     conn.commit()
     conn.close()
@@ -73,9 +93,9 @@ class TestParentReEnrichment:
         conn.commit()
         conn.close()
 
-        enrich_order({"account_id": 1, "exchange_order_id": "ENTRY",
+        asyncio.run(enrich_order({"account_id": 1, "exchange_order_id": "ENTRY",
                        "symbol": "BTCUSDT", "side": "BUY", "order_type": "limit",
-                       "exchange_position_id": "POS1"}, db_path)
+                       "exchange_position_id": "POS1"}, db_path))
 
         conn = sqlite3.connect(db_path)
         row = conn.execute("SELECT tp_trigger_price, sl_trigger_price, calc_id FROM orders WHERE exchange_order_id='ENTRY'").fetchone()
@@ -106,7 +126,7 @@ class TestParentReEnrichment:
         conn.row_factory = sqlite3.Row
         parent = conn.execute("SELECT * FROM orders WHERE exchange_order_id='ENTRY'").fetchone()
         conn.close()
-        enrich_order(dict(parent), db_path)
+        asyncio.run(enrich_order(dict(parent), db_path))
 
         conn = sqlite3.connect(db_path)
         row = conn.execute("SELECT tp_trigger_price FROM orders WHERE exchange_order_id='ENTRY'").fetchone()
@@ -144,7 +164,7 @@ class TestParentReEnrichment:
         conn.row_factory = sqlite3.Row
         parent = conn.execute("SELECT * FROM orders WHERE exchange_order_id='ENTRY'").fetchone()
         conn.close()
-        enrich_order(dict(parent), db_path)
+        asyncio.run(enrich_order(dict(parent), db_path))
 
         conn = sqlite3.connect(db_path)
         row = conn.execute("SELECT calc_id, tp_trigger_price, sl_trigger_price FROM orders WHERE exchange_order_id='ENTRY'").fetchone()
@@ -175,7 +195,7 @@ class TestParentReEnrichment:
         conn.row_factory = sqlite3.Row
         parent = conn.execute("SELECT * FROM orders WHERE exchange_order_id='ENTRY'").fetchone()
         conn.close()
-        enrich_order(dict(parent), db_path)
+        asyncio.run(enrich_order(dict(parent), db_path))
 
         conn = sqlite3.connect(db_path)
         row = conn.execute("SELECT calc_id FROM orders WHERE exchange_order_id='ENTRY'").fetchone()

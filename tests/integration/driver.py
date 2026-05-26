@@ -21,9 +21,12 @@ def _create_test_db(db_path: str) -> None:
     conn = sqlite3.connect(db_path)
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS accounts (
-            id INTEGER PRIMARY KEY, name TEXT
+            id INTEGER PRIMARY KEY, name TEXT,
+            config_json TEXT DEFAULT NULL
         );
-        INSERT OR IGNORE INTO accounts VALUES (1, 'Test');
+        INSERT OR IGNORE INTO accounts (id, name, config_json)
+        VALUES (1, 'Test',
+                '{"window_seconds": 86400, "clock_skew_tolerance_sec": 60}');
 
         CREATE TABLE IF NOT EXISTS orders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,7 +55,16 @@ def _create_test_db(db_path: str) -> None:
             calc_id TEXT,
             tp_trigger_price REAL,
             sl_trigger_price REAL,
+            link_status TEXT DEFAULT NULL,
+            lifecycle_id TEXT DEFAULT NULL,
             UNIQUE(account_id, exchange_order_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS calc_match_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id INTEGER, calc_id TEXT, criterion TEXT,
+            calc_value TEXT, order_value TEXT, tolerance_used REAL,
+            matched INTEGER, ts_ms INTEGER, winning INTEGER
         );
 
         CREATE TABLE IF NOT EXISTS fills (
@@ -97,7 +109,10 @@ def _create_test_db(db_path: str) -> None:
             est_profit REAL DEFAULT 0, est_loss REAL DEFAULT 0,
             est_r REAL DEFAULT 0, est_exposure REAL DEFAULT 0,
             eligible INTEGER DEFAULT 0, notes TEXT DEFAULT '',
-            calc_id TEXT
+            calc_id TEXT,
+            status TEXT DEFAULT NULL,
+            window_seconds INTEGER DEFAULT NULL,
+            lifecycle_id TEXT DEFAULT NULL
         );
 
         CREATE TABLE IF NOT EXISTS closed_positions (
@@ -176,11 +191,14 @@ def run_scenario_sync(
 
         if event.type == "calc_created":
             conn = sqlite3.connect(db_path)
+            # status='active' so the new strict matcher (spec §4.3) treats
+            # the row as a candidate. Pre-P1.T1 the matcher didn't filter
+            # on status, so this column wasn't seeded.
             conn.execute(
                 "INSERT INTO pre_trade_log "
                 "(account_id, timestamp, ticker, side, effective_entry, "
-                "tp_price, sl_price, average, calc_id, eligible) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+                "tp_price, sl_price, average, calc_id, eligible, status) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'active')",
                 (account_id, p.get("timestamp", ""), p["ticker"], p["side"],
                  p["effective_entry"], p["tp_price"], p["sl_price"],
                  p.get("average", p["effective_entry"]), p["calc_id"]),
@@ -198,6 +216,15 @@ def run_scenario_sync(
 
         elif event.type == "fill_received":
             _upsert_fill_sync(db_path, account_id, p)
+            # In production the exchange sends an order WS update after
+            # the fill carrying the new avg_fill_price; that update
+            # triggers re-enrichment and lets the matcher's strict 6/6
+            # MARKET check (spec §4.1) finally evaluate the entry-vs-fill
+            # criterion. Simulate it here: stamp avg_fill_price onto the
+            # parent order, re-enrich (matcher now succeeds + writes
+            # parent.calc_id), THEN propagate parent.calc_id into the
+            # fill. Reverse order would leave fill.calc_id NULL.
+            _stamp_avg_fill_and_reenrich(db_path, account_id, p)
             _enrich_fill_sync(db_path, p, account_id)
 
         elif event.type == "order_modified":
@@ -244,9 +271,10 @@ def _upsert_order_sync(db_path: str, aid: int, p: dict) -> None:
 
 def _enrich_order_sync(db_path: str, p: dict, aid: int) -> None:
     try:
+        import asyncio
         from core.order_enrichment import enrich_order
         order = {**p, "account_id": aid}
-        enrich_order(order, db_path)
+        asyncio.run(enrich_order(order, db_path))
     except Exception:
         pass
 
@@ -274,6 +302,38 @@ def _upsert_fill_sync(db_path: str, aid: int, p: dict) -> None:
     conn.close()
 
 
+def _stamp_avg_fill_and_reenrich(db_path: str, aid: int, fill_payload: dict) -> None:
+    """Mirror prod's post-fill order update: stamp avg_fill_price on the
+    parent order, then re-enrich. The new strict matcher's 6/6 MARKET
+    check requires avg_fill_price > 0; production gets it via the next
+    exchange-sent order update after the fill.
+
+    Skips reduce-only fills (TP/SL closes) — those don't correlate.
+    """
+    if fill_payload.get("is_close"):
+        return  # closing fill — no parent re-enrichment needed
+    parent_order_id = fill_payload.get("exchange_order_id", "")
+    fill_price = fill_payload.get("price", 0) or 0
+    if not parent_order_id or not fill_price:
+        return
+    conn = sqlite3.connect(db_path)
+    try:
+        # Only stamp when parent is a market order and avg_fill_price
+        # isn't already populated (idempotent).
+        conn.execute(
+            "UPDATE orders SET avg_fill_price = ? "
+            "WHERE account_id = ? AND exchange_order_id = ? "
+            "  AND order_type = 'market' "
+            "  AND (avg_fill_price IS NULL OR avg_fill_price = 0)",
+            (fill_price, aid, parent_order_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    # Re-enrich the parent — matcher now sees avg_fill_price > 0
+    _re_enrich_parent_entry(db_path, aid, fill_payload.get("exchange_position_id", ""))
+
+
 def _re_enrich_parent_entry(db_path: str, aid: int, pos_id: str) -> None:
     """Re-enrich the entry order for a position after a child arrives."""
     if not pos_id:
@@ -288,8 +348,9 @@ def _re_enrich_parent_entry(db_path: str, aid: int, pos_id: str) -> None:
         ).fetchone()
         conn.close()
         if row:
+            import asyncio
             from core.order_enrichment import enrich_order
-            enrich_order(dict(row), db_path)
+            asyncio.run(enrich_order(dict(row), db_path))
     except Exception:
         pass
 

@@ -1,11 +1,17 @@
-"""Tests for slippage_actual computation + fill_type classification + market correlation."""
+"""Tests for slippage_actual computation + fill_type classification.
+
+Note: ``TestMarketOrderCorrelation`` was removed in P1.T1 because the
+old market-order matcher behavior ("entry is wildcard") no longer holds
+under the new strict 6/6 contract (entry-vs-fill-px-loose required).
+Market matcher coverage now lives in ``tests/test_phase1_matcher.py``
+::``TestStrictMarket``.
+"""
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from core.order_enrichment import classify_fill_type, compute_slippage_actual
-from core.calc_correlation import correlate_order_to_calc
 
 
 RECENT = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
@@ -111,31 +117,5 @@ class TestSlippageActual:
         assert compute_slippage_actual(fill, None, "entry", db_path) is None
 
 
-class TestMarketOrderCorrelation:
-    def test_market_matches_on_tp_sl_only(self, tmp_path):
-        db_path = _make_db(tmp_path, ptl_rows=[{
-            "timestamp": RECENT, "ticker": "BTCUSDT", "side": "BUY",
-            "effective_entry": 50000, "tp_price": 55000, "sl_price": 48000,
-            "calc_id": "c-mkt",
-        }])
-        order = {
-            "account_id": 1, "symbol": "BTCUSDT", "side": "BUY",
-            "order_type": "market", "price": 50500,  # entry is wildcard
-            "tp_trigger_price": 55000, "sl_trigger_price": 48000,
-        }
-        result = correlate_order_to_calc(order, tick_size=0.1, db_path=db_path)
-        assert result == "c-mkt"
-
-    def test_market_missing_tp_returns_none(self, tmp_path):
-        db_path = _make_db(tmp_path, ptl_rows=[{
-            "timestamp": RECENT, "ticker": "BTCUSDT", "side": "BUY",
-            "effective_entry": 50000, "tp_price": 55000, "sl_price": 48000,
-            "calc_id": "c-mkt2",
-        }])
-        order = {
-            "account_id": 1, "symbol": "BTCUSDT", "side": "BUY",
-            "order_type": "market", "price": 50500,
-            "sl_trigger_price": 48000,  # tp missing
-        }
-        result = correlate_order_to_calc(order, tick_size=0.1, db_path=db_path)
-        assert result is None
+# TestMarketOrderCorrelation removed — see module docstring. New
+# coverage lives in tests/test_phase1_matcher.py::TestStrictMarket.

@@ -1,15 +1,24 @@
 """
 Post-persist order enrichment: populate tp/sl trigger prices from child
-orders, run calc_id correlation, propagate calc_id to fills.
+orders, run calc_id correlation (strict matcher per spec §4), propagate
+calc_id to fills.
 
-All functions are sync (sqlite3) and best-effort: failures log warnings,
-never break the ingest hot path. Called after async upsert completes.
+``enrich_order`` is async because the matcher integration
+(``_try_correlate``) routes the calc-status flip through
+``core/calc_state.transition()`` — the choke-point installed in P0.T6,
+which is async (it awaits ``event_bus.publish``).
+
+``enrich_fill`` and its helpers stay sync — they do not touch the
+matcher or the state machine. Both wrappers are best-effort: failures
+log warnings, never break the ingest hot path. Called after async
+upsert completes.
 """
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 log = logging.getLogger("order_enrichment")
 
@@ -18,16 +27,18 @@ _TP_TYPES = frozenset({"take_profit", "take_profit_market", "take_profit_limit"}
 _CLOSE_TYPES = _SL_TYPES | _TP_TYPES | frozenset({"trailing_stop"})
 
 
-def enrich_order(order: Dict[str, Any], db_path: str) -> None:
+async def enrich_order(order: Dict[str, Any], db_path: str) -> None:
     """Run all enrichment steps on an entry order after persistence.
 
     1. Populate tp_trigger_price / sl_trigger_price from child orders.
-    2. If both trigger prices are set and calc_id is NULL, run correlation.
+    2. If both trigger prices are set and calc_id is NULL, run the
+       strict matcher (spec §4) and route any successful calc-status
+       flip through ``calc_state.transition()``.
     3. Best-effort: exceptions logged, never raised.
     """
     try:
         _populate_tp_sl_trigger_prices(order, db_path)
-        _try_correlate(order, db_path)
+        await _try_correlate(order, db_path)
     except Exception:
         log.warning("order enrichment failed for %s", order.get("exchange_order_id"), exc_info=True)
 
@@ -92,11 +103,18 @@ def _populate_tp_sl_trigger_prices(order: Dict[str, Any], db_path: str) -> None:
 # ── Internal: calc_id correlation ────────────────────────────────────────────
 
 
-def _try_correlate(order: Dict[str, Any], db_path: str) -> None:
-    """If entry order has trigger prices but no calc_id, try correlation.
+async def _try_correlate(order: Dict[str, Any], db_path: str) -> None:
+    """Strict 5/5 (LIMIT) / 6/6 (MARKET) matcher per spec §4.
 
-    Market orders: correlate on tp+sl only (entry wildcard — Task 24).
-    Limit orders: triple-match on all three legs.
+    Reads ``accounts.config_json`` for tolerance + window config; spec
+    §3.3 defaults applied when fields are missing. Calls the pure sync
+    matcher (``core/calc_correlation.correlate_order_to_calc``).
+    Persists per-criterion audit rows into ``calc_match_audit``. Writes
+    ``orders.link_status`` (always) and ``orders.calc_id`` (on full
+    match). For a full match, routes the calc-status flip
+    ``active|released → matched`` through
+    :func:`core.calc_state.transition` so the event-bus fires through
+    the choke-point installed in P0.T6.
     """
     order_type = (order.get("order_type") or "").lower()
     if order_type in _CLOSE_TYPES or order.get("reduce_only"):
@@ -104,13 +122,19 @@ def _try_correlate(order: Dict[str, Any], db_path: str) -> None:
 
     eid = order.get("exchange_order_id")
     aid = order.get("account_id", 1)
+    if not eid:
+        return
 
-    # Read current state from DB (trigger prices may have just been populated)
+    # Read current order state — trigger prices may have just been
+    # populated, and the matcher needs the orders.id PK + created_at_ms
+    # timestamp.
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
         row = conn.execute(
-            "SELECT calc_id, tp_trigger_price, sl_trigger_price, price "
+            "SELECT id, calc_id, link_status, "
+            "       tp_trigger_price, sl_trigger_price, "
+            "       price, avg_fill_price, created_at_ms "
             "FROM orders WHERE account_id = ? AND exchange_order_id = ?",
             (aid, eid),
         ).fetchone()
@@ -120,38 +144,176 @@ def _try_correlate(order: Dict[str, Any], db_path: str) -> None:
     if not row:
         return
     if row["calc_id"]:
-        return  # already correlated
+        return  # already correlated — matcher is idempotent at this gate
     if not row["tp_trigger_price"] or not row["sl_trigger_price"]:
-        return  # need both trigger prices for correlation
+        return  # need both trigger prices
 
-    # Build order dict with current DB values for the correlator
+    is_market = order_type == "market"
+    if is_market and not (row["avg_fill_price"] or 0):
+        # Spec §4.1: MARKET 6/6 includes entry-vs-fill comparison.
+        # Without a fill price yet, the matcher can't evaluate entry —
+        # defer until the fill arrives and re-enrichment runs.
+        return
+
+    entry_tol, window_sec, skew = _read_account_config(db_path, aid)
+
     corr_order = {
-        "account_id": aid,
-        "symbol": order.get("symbol", ""),
-        "side": order.get("side", ""),
-        "order_type": order_type,
-        "price": row["price"],
-        "tp_trigger_price": row["tp_trigger_price"],
-        "sl_trigger_price": row["sl_trigger_price"],
+        "account_id":        aid,
+        "symbol":            order.get("symbol", ""),
+        "side":              order.get("side", ""),
+        "order_type":        order_type,
+        "price":             row["price"],
+        "avg_fill_price":    row["avg_fill_price"],
+        "tp_trigger_price":  row["tp_trigger_price"],
+        "sl_trigger_price":  row["sl_trigger_price"],
+        "created_at_ms":     row["created_at_ms"],
     }
 
     tick_size = _get_tick_size(order.get("symbol", ""), row["price"])
 
     from core.calc_correlation import correlate_order_to_calc
-    calc_id = correlate_order_to_calc(corr_order, tick_size=tick_size, db_path=db_path)
+    result = correlate_order_to_calc(
+        corr_order,
+        order_id=row["id"],
+        tick_size=tick_size,
+        entry_tolerance_pct=entry_tol,
+        window_seconds=window_sec,
+        clock_skew_tolerance_sec=skew,
+        db_path=db_path,
+    )
 
-    if calc_id:
+    if result.audit_rows:
+        _insert_audit_rows(db_path, result.audit_rows)
+
+    # Always write link_status. Write calc_id only on a full match.
+    conn = sqlite3.connect(db_path)
+    try:
+        if result.calc_id:
+            conn.execute(
+                "UPDATE orders SET calc_id = ?, link_status = ? "
+                "WHERE account_id = ? AND exchange_order_id = ? "
+                "  AND calc_id IS NULL",
+                (result.calc_id, result.link_status, aid, eid),
+            )
+        else:
+            conn.execute(
+                "UPDATE orders SET link_status = ? "
+                "WHERE account_id = ? AND exchange_order_id = ?",
+                (result.link_status, aid, eid),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    # Route calc-status flip through calc_state.transition (the
+    # choke-point P0.T6 installed). apply_fn does the actual UPDATE;
+    # transition() handles validation + event emission.
+    if result.calc_id and result.matched_from_status:
+        from core.calc_state import transition, CalcStatus
+
+        async def _apply_status_flip() -> None:
+            inner = sqlite3.connect(db_path)
+            try:
+                inner.execute(
+                    "UPDATE pre_trade_log SET status = ? WHERE calc_id = ?",
+                    (CalcStatus.MATCHED.value, result.calc_id),
+                )
+                inner.commit()
+            finally:
+                inner.close()
+
+        try:
+            await transition(
+                calc_id=result.calc_id,
+                current_status=result.matched_from_status,
+                target_status=CalcStatus.MATCHED.value,
+                apply_fn=_apply_status_flip,
+                event_payload={"order_id": row["id"]},
+            )
+        except Exception:
+            log.warning(
+                "calc_state.transition active→matched failed for "
+                "calc_id=%s order_id=%s",
+                result.calc_id, row["id"], exc_info=True,
+            )
+
+    if result.calc_id:
+        log.info("Correlated order %s to calc_id %s (link_status=%s)",
+                 eid, result.calc_id, result.link_status)
+
+
+def _read_account_config(db_path: str, account_id: int) -> Tuple[float, int, int]:
+    """Resolve (entry_tolerance_pct, window_seconds, clock_skew_tolerance_sec)
+    from ``accounts.config_json`` with spec §3.3 defaults.
+    """
+    from core.calc_correlation import (
+        SPEC_DEFAULT_ENTRY_TOLERANCE_PCT,
+        SPEC_DEFAULT_WINDOW_SECONDS,
+        SPEC_DEFAULT_CLOCK_SKEW_TOLERANCE,
+    )
+
+    cfg: Dict[str, Any] = {}
+    try:
         conn = sqlite3.connect(db_path)
         try:
-            conn.execute(
-                "UPDATE orders SET calc_id = ? "
-                "WHERE account_id = ? AND exchange_order_id = ? AND calc_id IS NULL",
-                (calc_id, aid, eid),
-            )
+            row = conn.execute(
+                "SELECT config_json FROM accounts WHERE id = ?",
+                (account_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+        if row and row[0]:
+            parsed = json.loads(row[0])
+            if isinstance(parsed, dict):
+                cfg = parsed
+    except Exception:
+        pass  # missing column / malformed JSON / missing account row — use defaults
+
+    return (
+        float(cfg.get("entry_tolerance_pct", SPEC_DEFAULT_ENTRY_TOLERANCE_PCT)),
+        int(cfg.get("window_seconds", SPEC_DEFAULT_WINDOW_SECONDS)),
+        int(cfg.get("clock_skew_tolerance_sec", SPEC_DEFAULT_CLOCK_SKEW_TOLERANCE)),
+    )
+
+
+def _insert_audit_rows(db_path: str, rows: List[Dict[str, Any]]) -> None:
+    """Bulk INSERT calc_match_audit rows via raw sqlite3.
+
+    Mirrors the SQL in ``Database.insert_calc_match_audit_batch`` but
+    stays sync to keep the enrichment-best-effort path simple. The
+    async batch helper exists for hot-path callers; matcher invocation
+    is off-hot-path enrichment.
+    """
+    if not rows:
+        return
+    sql = (
+        "INSERT INTO calc_match_audit ("
+        "  order_id, calc_id, criterion, calc_value, order_value, "
+        "  tolerance_used, matched, ts_ms, winning"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    )
+    params = [(
+        r.get("order_id"),
+        r.get("calc_id", ""),
+        r.get("criterion", ""),
+        r.get("calc_value"),
+        r.get("order_value"),
+        r.get("tolerance_used"),
+        int(bool(r.get("matched", 0))),
+        r.get("ts_ms", 0),
+        int(bool(r.get("winning", 0))),
+    ) for r in rows]
+    try:
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.executemany(sql, params)
             conn.commit()
         finally:
             conn.close()
-        log.info("Correlated order %s to calc_id %s", eid, calc_id)
+    except Exception:
+        log.warning(
+            "calc_match_audit insert failed (%d rows)", len(rows), exc_info=True,
+        )
 
 
 def _get_tick_size(symbol: str, price: float) -> float:
