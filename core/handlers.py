@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from core.state import app_state
 from core.tz import now_in_account_tz
@@ -285,6 +285,125 @@ async def _supersede_prior_active_calcs(
                 "supersede transition failed for calc_id=%s (new=%s)",
                 old_calc_id, new_calc_id, exc_info=True,
             )
+
+
+async def sweep_expired_calcs(
+    account_id: int, now_ms: Optional[int] = None,
+) -> int:
+    """T224 (Phase 1.8 — audit follow-up): expire window-lapsed calcs.
+
+    Transitions ``active | released → expired`` via
+    :func:`core.calc_state.transition` (emits ``calc:expired``) for every
+    calc whose window has elapsed. Before this, the only producer of
+    ``expired`` was the one-shot NULL backfill (which bypasses the
+    choke-point), so ``calc:expired`` never fired live and unmatched
+    calcs lingered as matcher / supersede / manual-link candidates
+    indefinitely. The Phase-1 holistic audit (H1/H2/L2) flagged this.
+
+    Expiry threshold matches the matcher's in-window gate (spec §4.2):
+    a calc expires when ``age > window_seconds + clock_skew_tolerance_sec``
+    — i.e. exactly when it's no longer matchable. Per-calc frozen
+    ``window_seconds`` (T2) is honored; NULL falls back to the account
+    default.
+
+    Spec §9 ``calc:expired`` payload carries ``age_seconds`` + ticker /
+    direction / model_name (fetched here). TOCTOU-guarded (T211 M3):
+    UPDATE scoped ``WHERE status = <read>`` → CalcTransitionRaceLost →
+    event skipped if a concurrent transition won the race.
+
+    Returns the count expired. Best-effort per calc; called from the
+    periodic ``_calc_expiry_loop`` in ``core/schedulers.py`` (sweeps the
+    active account — multi-account sweep is a future refinement).
+    """
+    import time as _time
+    from datetime import datetime, timezone
+
+    from core.account_config import read_account_config_async
+    from core.calc_state import (
+        CalcStatus,
+        CalcTransitionRaceLost,
+        transition,
+    )
+
+    if now_ms is None:
+        now_ms = int(_time.time() * 1000)
+
+    cfg = await read_account_config_async(db, account_id)
+
+    try:
+        async with db._conn.execute(
+            "SELECT calc_id, status, timestamp, window_seconds, "
+            "       ticker, side, model_name "
+            "FROM pre_trade_log "
+            "WHERE account_id = ? "
+            "  AND status IN ('active', 'released') "
+            "  AND calc_id IS NOT NULL",
+            (account_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+    except Exception:
+        log.warning(
+            "sweep_expired_calcs: candidate query failed for account=%s",
+            account_id, exc_info=True,
+        )
+        return 0
+
+    expired = 0
+    for calc_id, status, timestamp, window_seconds, ticker, side, model_name in rows:
+        calc_window = window_seconds or cfg.window_seconds
+        bound_ms = (calc_window + cfg.clock_skew_tolerance_sec) * 1000
+        try:
+            dt = datetime.fromisoformat((timestamp or "").replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            calc_ts_ms = int(dt.timestamp() * 1000)
+        except Exception:
+            continue  # malformed timestamp — skip (can't age it)
+        age_ms = now_ms - calc_ts_ms
+        if age_ms <= bound_ms:
+            continue  # still in window — not expired
+
+        # T215 M3: no default-arg capture — transition() awaits apply_fn
+        # before the loop advances, so calc_id/status can't rebind under
+        # a pending closure.
+        async def _apply_expire() -> None:
+            cur2 = await db._conn.execute(
+                "UPDATE pre_trade_log SET status = ? "
+                "WHERE calc_id = ? AND status = ?",
+                (CalcStatus.EXPIRED.value, calc_id, status),
+            )
+            await db._conn.commit()
+            if cur2.rowcount == 0:
+                raise CalcTransitionRaceLost(
+                    calc_id, status, CalcStatus.EXPIRED.value,
+                )
+
+        try:
+            await transition(
+                calc_id=calc_id,
+                current_status=status,
+                target_status=CalcStatus.EXPIRED.value,
+                apply_fn=_apply_expire,
+                event_payload={
+                    "age_seconds": age_ms // 1000,
+                    "ticker": ticker,
+                    "direction": side,
+                    "model_name": model_name,
+                },
+            )
+            expired += 1
+        except CalcTransitionRaceLost as exc:
+            log.info("%s", exc)
+        except Exception:
+            log.warning(
+                "sweep_expired_calcs: expire failed for calc_id=%s",
+                calc_id, exc_info=True,
+            )
+
+    if expired:
+        log.info("Expired %d window-lapsed calc(s) for account %s",
+                 expired, account_id)
+    return expired
 
 
 async def cancel_calc_by_operator(

@@ -710,6 +710,27 @@ async def _algo_order_sync_loop():
 
 # ── Public API ───────────────────────────────────────────────────────────────
 
+async def _calc_expiry_loop(interval_s: int = 60) -> None:
+    """T224 (Phase 1.8): periodically expire window-lapsed calcs.
+
+    Transitions active|released → expired via the calc_state choke-point
+    (so calc:expired fires live and the matcher/supersede/manual-link
+    candidate sets stay bounded). Before this loop, expiry only happened
+    via the one-shot NULL backfill — see core/handlers.sweep_expired_calcs.
+
+    Sweeps the active account; 60s cadence is responsive enough for
+    event emission without being chatty (the matcher's own in-window
+    gate already prevents stale matches between sweeps).
+    """
+    from core.handlers import sweep_expired_calcs
+    while True:
+        await asyncio.sleep(interval_s)
+        try:
+            await sweep_expired_calcs(app_state.active_account_id)
+        except Exception:
+            log.warning("calc expiry sweep failed", exc_info=True)
+
+
 def start_background_tasks() -> None:
     """Spawn all background schedulers. Call from lifespan startup."""
     _spawn(_startup_fetch(),        name="startup_fetch")
@@ -724,3 +745,4 @@ def start_background_tasks() -> None:
     _spawn(MonitoringService().run(), name="monitoring")
     _spawn(_order_staleness_loop(),  name="order_staleness")
     _spawn(_algo_order_sync_loop(),  name="algo_order_sync")
+    _spawn(_calc_expiry_loop(),      name="calc_expiry")
