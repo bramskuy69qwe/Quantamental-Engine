@@ -287,6 +287,99 @@ async def _supersede_prior_active_calcs(
             )
 
 
+async def cancel_calc_by_operator(
+    account_id: int, calc_id: str, reason: str = "",
+) -> str:
+    """T219 (P1.T4 / plan §1 task 1.6): operator cancels a live calc.
+
+    Spec §2 [A] / §5 / §9: the operator clicks "Cancel calc"; the calc
+    transitions ``→ cancelled_by_operator`` with an optional reason note,
+    and a ``calc:cancelled`` event fires (carrying ``reason``/``reason_note``).
+
+    Only LIVE calcs are cancellable — status IN ('active', 'released')
+    (both have CANCELLED_BY_OPERATOR as a valid outgoing edge in
+    ``core/calc_state.CALC_TRANSITIONS``). A ``matched`` calc is linked
+    to a working order; cancel the ORDER (which releases the calc, T216)
+    rather than the calc directly. Terminal states (expired, superseded,
+    completed_via_position, already-cancelled) are not cancellable.
+
+    The UPDATE is TOCTOU-guarded ``WHERE ... AND status = <read status>``
+    (T211 M3): if a concurrent transition flipped the calc out from
+    under us between the read and the UPDATE, rowcount=0 → the shared
+    sentinel skips event emission.
+
+    Returns a status string for the caller to map to an HTTP response:
+      'cancelled' | 'not_found' | 'not_cancellable' | 'race_lost' | 'error'
+    """
+    if not calc_id:
+        return "not_found"
+
+    from core.calc_state import (
+        CalcStatus,
+        CalcTransitionRaceLost,
+        transition,
+    )
+
+    try:
+        async with db._conn.execute(
+            "SELECT status FROM pre_trade_log "
+            "WHERE account_id = ? AND calc_id = ?",
+            (account_id, calc_id),
+        ) as cur:
+            row = await cur.fetchone()
+    except Exception:
+        log.warning(
+            "cancel_calc_by_operator: status read failed for calc_id=%s",
+            calc_id, exc_info=True,
+        )
+        return "error"
+
+    if not row:
+        return "not_found"
+    current_status = row[0]
+
+    if current_status not in (CalcStatus.ACTIVE.value, CalcStatus.RELEASED.value):
+        # matched / superseded / expired / completed_via_position /
+        # already cancelled — not a valid cancel source.
+        return "not_cancellable"
+
+    reason_value = reason.strip() or None
+
+    async def _apply_cancel() -> None:
+        cur2 = await db._conn.execute(
+            "UPDATE pre_trade_log "
+            "SET status = ?, cancelled_reason = ? "
+            "WHERE calc_id = ? AND status = ?",
+            (CalcStatus.CANCELLED_BY_OPERATOR.value, reason_value,
+             calc_id, current_status),
+        )
+        await db._conn.commit()
+        if cur2.rowcount == 0:
+            raise CalcTransitionRaceLost(
+                calc_id, current_status,
+                CalcStatus.CANCELLED_BY_OPERATOR.value,
+            )
+
+    try:
+        await transition(
+            calc_id=calc_id,
+            current_status=current_status,
+            target_status=CalcStatus.CANCELLED_BY_OPERATOR.value,
+            apply_fn=_apply_cancel,
+            reason=reason_value,
+        )
+        return "cancelled"
+    except CalcTransitionRaceLost as exc:
+        log.info("%s", exc)
+        return "race_lost"
+    except Exception:
+        log.warning(
+            "cancel_calc_by_operator: transition failed for calc_id=%s",
+            calc_id, exc_info=True,
+        )
+        return "error"
+
+
 async def handle_risk_calculated(payload: Dict[str, Any]) -> None:
     """
     Triggered by: risk:risk_calculated

@@ -226,6 +226,48 @@ async def calculator_link_window_status(
     )
 
 
+@router.post("/calculator/cancel/{calc_id}", response_class=HTMLResponse)
+async def cancel_calc(request: Request, calc_id: str, reason: str = Form("")):
+    """T219 (P1.T4 / plan §1 task 1.6): operator cancels a live calc.
+
+    Transitions the calc active|released → cancelled_by_operator (with an
+    optional reason note) and emits ``calc:cancelled`` — all via the
+    ``core.calc_state.transition`` choke-point inside
+    ``core.handlers.cancel_calc_by_operator``. Returns a small htmx
+    fragment + a meaningful HTTP status the operator UI can branch on.
+    """
+    from core.handlers import cancel_calc_by_operator
+
+    aid = app_state.active_account_id
+    result = await cancel_calc_by_operator(aid, calc_id, reason)
+
+    if result == "cancelled":
+        return HTMLResponse(
+            '<div class="alert alert-success">Calc cancelled.</div>'
+        )
+    if result == "not_found":
+        return HTMLResponse(
+            '<div class="alert alert-error">Calc not found.</div>',
+            status_code=404,
+        )
+    if result == "not_cancellable":
+        return HTMLResponse(
+            '<div class="alert alert-warning">Calc is no longer cancellable '
+            '(already matched, expired, superseded, or cancelled).</div>',
+            status_code=409,
+        )
+    if result == "race_lost":
+        return HTMLResponse(
+            '<div class="alert alert-warning">Calc state changed during '
+            'cancel — please refresh.</div>',
+            status_code=409,
+        )
+    return HTMLResponse(
+        '<div class="alert alert-error">Cancel failed — see engine logs.</div>',
+        status_code=500,
+    )
+
+
 @router.get("/calculator/refresh/{ticker}", response_class=HTMLResponse)
 async def calculator_refresh(request: Request, ticker: str):
     ticker = ticker.upper()
