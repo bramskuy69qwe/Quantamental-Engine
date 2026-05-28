@@ -824,6 +824,46 @@ On engine startup:
 - On drift > tolerance: `position:size_drift` event; reconciler pulls
   venue trade history to investigate
 
+### 12.7 Database routing (transactional path is single-DB)
+
+**Settled 2026-05-28 (T217 audit).** The calc-linkage transactional
+path is single-DB on `config.DB_PATH` (= `data/risk_engine.db`). All of
+it — `pre_trade_log`, `orders`, `fills`, `closed_positions`,
+`positions_calcs`, `order_amendments`, `funding_events`,
+`calc_match_audit` — lives there, and every matcher/handler callsite
+reads/writes it via the module-level `db` singleton (whose `self.path`
+is never repointed) or by passing `config.DB_PATH` explicitly:
+
+- `core/order_enrichment.enrich_order(order, config.DB_PATH)` (3 call
+  sites in `core/order_manager.py`)
+- `core/calc_correlation.find_candidate_calcs(order, db_path=config.DB_PATH)`
+  (manual-link UI, `api/routes_admin.py`)
+- `core/handlers.handle_risk_calculated` + `_supersede_*` and
+  `core/order_manager._release_calc_on_operator_cancel` via `db._conn`
+
+The matcher's `_resolve_db_path` fallback (only reached when
+`db_path=None`) is therefore **never triggered in production**.
+
+**Consequence to be aware of**: the Phase-0/Phase-1 column-adds ran as
+Python `ALTER TABLE` against `config.DB_PATH` only — NOT as per-account
+`.sql` migrations via the migration runner. The per-account DBs
+(`data/per_account/*.db`, from the v1.3 multi-account split) carry a
+**vestigial** `pre_trade_log` (pre-Phase-0 schema, last written
+2026-04-28) and no `orders`/calc-linkage tables. It is orphaned — not
+read or written by the calc-linkage path. If the transactional path is
+ever migrated to per-account routing, the Phase-0/1 column-adds MUST
+first be re-expressed as per-account `.sql` migrations (run dry-run vs
+the live per-account DB per the destructive-script discipline).
+
+**Cross-DB caveat for §11 reverse-query + §8.10 events drilldown**:
+`trade_events` lives in the **per-account** DB (via
+`core/trade_event_log._resolve_db_path`), while `pre_trade_log` /
+`orders` / `closed_positions` live in `risk_engine.db`. They are linked
+by `calc_id` (and forward by `lifecycle_id`) but **cannot be SQL-joined
+across files**. Any feature grouping trade-events to a calc/position
+(reverse-query `/context/calc`, per-position events drilldown) must
+read both DBs and join in application code, not SQL.
+
 ---
 
 ## 13. Out of scope / deferred

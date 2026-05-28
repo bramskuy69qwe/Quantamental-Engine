@@ -272,6 +272,23 @@ Safe to deploy independently.
   orders re-categorized
 - DB size growth measured and documented
 
+### DB-routing note (settled 2026-05-28, T217 audit)
+
+The Phase-0 (and Phase-1) schema additions were applied as Python
+`ALTER TABLE` migrations against `config.DB_PATH` (= `risk_engine.db`)
+inside `core/database.py::initialize`, NOT as per-account `.sql`
+migrations via the migration runner. This is correct for the current
+deployment because the entire calc-linkage transactional path is
+single-DB on `config.DB_PATH` (see spec §12.7). The per-account DBs
+from the v1.3 split carry a vestigial, pre-Phase-0 `pre_trade_log`
+that the calc-linkage path never touches.
+
+**If a future phase migrates the transactional path to per-account
+routing**, the Phase-0/1 column-adds must first be re-expressed as
+per-account `.sql` migrations and dry-run against the live per-account
+DB (per the live-DB-dry-run discipline in CLAUDE.md). Until then,
+treat `risk_engine.db` as the single source of truth for calc-linkage.
+
 ---
 
 ## Phase 1: Matcher tightening

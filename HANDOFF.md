@@ -222,6 +222,36 @@ candidates).
 
 ## Known issues / follow-ups (carried forward)
 
+### DB-routing / split-brain (surfaced + settled 2026-05-28, T217 audit)
+
+The calc-linkage transactional path is **single-DB on `config.DB_PATH`
+(= `data/risk_engine.db`)** — `pre_trade_log`, `orders`, `fills`,
+`closed_positions`, and all Phase-0/1 tables live there, and every
+matcher/handler callsite uses it (verified: 3× `enrich_order(...,
+config.DB_PATH)` in order_manager + `find_candidate_calcs(db_path=
+config.DB_PATH)` in routes_admin + `db._conn` in handlers/order_manager).
+The matcher's `_resolve_db_path` fallback is never triggered in prod.
+
+Two facts to keep in mind (NOT bugs, documented in spec §12.7 + plan
+Phase-0 DB-routing note):
+- The per-account DB (`data/per_account/quantower__binancefutures__binance.db`)
+  carries a **vestigial** `pre_trade_log` (35-col pre-Phase-0 schema,
+  47 rows, last write 2026-04-28) and **no** `orders`/calc-linkage
+  tables. Orphaned — calc-linkage never reads/writes it. Phase-0/1
+  column-adds ran as Python `ALTER TABLE` vs `config.DB_PATH` only,
+  not as per-account `.sql` migrations. If the transactional path ever
+  moves to per-account routing, those column-adds must be re-expressed
+  as per-account migrations (dry-run first).
+- **Cross-DB**: `trade_events` lives in the per-account DB (1272 rows,
+  active) while `pre_trade_log` lives in `risk_engine.db` — linked by
+  `calc_id` only, **no SQL JOIN possible across files**. This is the
+  obstacle for P8.T9 (per-position events drilldown) + §11 reverse-query:
+  grouping events to a calc/position must read both DBs and join in
+  Python. Flagged here so P8.T9 scoping accounts for it.
+
+Decision: **surface-only** — no code change; engine stays single-DB on
+`risk_engine.db` for the transactional path.
+
 ### Pre-existing test failure (unrelated)
 
 `tests/test_data_cache_dd.py::TestRollingWindowPeak::test_old_high_excluded_from_window`
