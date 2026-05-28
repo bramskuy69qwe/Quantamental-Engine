@@ -159,6 +159,9 @@ class OrderManager:
         await self._re_enrich_parent_on_child_arrival(account_id, order)
         self._emit_order_events(account_id, order)
         self._detect_modification_events(account_id, order, prev_order)
+        # T216 (P1.T5): release the calc back to the re-match pool when
+        # the operator cancels a working (unfilled) entry order.
+        await self._release_calc_on_operator_cancel(account_id, order)
         self._publish_order_update(account_id, order)
         await self.refresh_cache(account_id)
         return True
@@ -405,6 +408,127 @@ class OrderManager:
 
         except Exception:
             log.debug("order event emission failed", exc_info=True)
+
+    async def _release_calc_on_operator_cancel(
+        self, account_id: int, order: Dict[str, Any]
+    ) -> None:
+        """T216 (P1.T5 / plan §1 task 1.7): release a calc back to the
+        re-match pool when its working entry order is cancelled.
+
+        Spec §2 [C] / §4.4: when an order cancels before fill, its calc
+        transitions ``matched → released`` and becomes eligible for
+        re-match within its original window (the matcher already
+        includes ``'released'`` in its candidate filter, T210).
+
+        Cancel-reason classification (T216 decision): the engine is
+        observe-only — it never initiates cancels, so it can't know
+        from a "did we send a cancel" signal. For a working (unfilled,
+        non-reduce-only) entry order, we DEFAULT to OPERATOR (the
+        dominant case in the operator-mediated copy-paste workflow —
+        the operator changed their mind in Quantower). Venue-initiated
+        categories (GTC_EXPIRED / IOC_NO_FILL / VENUE_REJECTED / etc.,
+        spec §3.4) need venue-specific reason-string mapping and are
+        deferred to a follow-up task.
+
+        Guards (all must hold to release):
+          - status transitioned to 'canceled' (not 'expired' — that's
+            venue-initiated GTC expiry, a different category)
+          - not reduce_only (TP/SL close cancels aren't entry cancels)
+          - filled_qty == 0 (a partial/full fill opened a position; the
+            calc is matched + contributing and must NOT be released)
+          - a linked calc_id exists and is currently 'matched'
+
+        Idempotent: the transition UPDATE is scoped ``WHERE status='matched'``
+        (T211 M3 pattern), so a repeat WS cancel for the same order is a
+        no-op. Best-effort: failures log, never raise.
+
+        NOTE: the snapshot-reconciliation cancel path
+        (``mark_stale_orders_canceled``) is a bulk UPDATE that doesn't
+        flow through here; releasing calcs for stale-canceled orders is
+        a deferred follow-up.
+        """
+        status = (order.get("status") or "").lower()
+        if status != "canceled":
+            return
+        if order.get("reduce_only"):
+            return
+        eid = order.get("exchange_order_id", "")
+        if not eid:
+            return
+
+        try:
+            async with self._db._conn.execute(
+                "SELECT calc_id, filled_qty FROM orders "
+                "WHERE account_id = ? AND exchange_order_id = ?",
+                (account_id, eid),
+            ) as cur:
+                row = await cur.fetchone()
+        except Exception:
+            log.debug("release-on-cancel: order read failed for %s", eid, exc_info=True)
+            return
+
+        if not row:
+            return
+        calc_id = row[0]
+        filled_qty = row[1] or 0.0
+        if not calc_id:
+            return  # UNPLANNED / unlinked order — nothing to release
+        if filled_qty > 0:
+            return  # position opened — calc stays matched + contributing
+
+        # Capture the cancel reason on the order (T216: default OPERATOR).
+        now_ms = int(time.time() * 1000)
+        try:
+            await self._db._conn.execute(
+                "UPDATE orders SET cancel_reason_category = 'OPERATOR', "
+                "cancel_reason_raw = ?, cancel_ts_ms = ? "
+                "WHERE account_id = ? AND exchange_order_id = ?",
+                (order.get("status", ""), now_ms, account_id, eid),
+            )
+            await self._db._conn.commit()
+        except Exception:
+            log.warning(
+                "release-on-cancel: cancel-reason capture failed for %s",
+                eid, exc_info=True,
+            )
+
+        # Release the calc: matched → released (TOCTOU-guarded).
+        from core.calc_state import (
+            CalcStatus,
+            CalcTransitionRaceLost,
+            transition,
+        )
+
+        async def _apply_release() -> None:
+            cur2 = await self._db._conn.execute(
+                "UPDATE pre_trade_log SET status = ? "
+                "WHERE calc_id = ? AND status = ?",
+                (CalcStatus.RELEASED.value, calc_id, CalcStatus.MATCHED.value),
+            )
+            await self._db._conn.commit()
+            if cur2.rowcount == 0:
+                # Calc wasn't 'matched' (already released, completed via
+                # position, superseded, etc.) — nothing to release.
+                raise CalcTransitionRaceLost(
+                    calc_id, CalcStatus.MATCHED.value, CalcStatus.RELEASED.value,
+                )
+
+        try:
+            await transition(
+                calc_id=calc_id,
+                current_status=CalcStatus.MATCHED.value,
+                target_status=CalcStatus.RELEASED.value,
+                apply_fn=_apply_release,
+                event_payload={"order_id": eid},
+            )
+            log.info("Released calc %s on operator cancel of order %s", calc_id, eid)
+        except CalcTransitionRaceLost as exc:
+            log.info("%s", exc)
+        except Exception:
+            log.warning(
+                "calc release on cancel failed for calc_id=%s order=%s",
+                calc_id, eid, exc_info=True,
+            )
 
     def _detect_modification_events(
         self, account_id: int, order: Dict[str, Any], prev_order: Optional[Dict]
