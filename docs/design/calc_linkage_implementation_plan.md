@@ -334,11 +334,43 @@ strict 5/5 / 6/6. Add per-criterion audit. Per-account window from
 
 ### Acceptance criteria
 
-- All Phase 0 tests still pass
-- No silent regression in existing match success rate (compare audit-log
-  link rate before/after on a golden dataset)
-- Per-criterion audit rows present for 100% of order arrivals
-- Calc state machine transitions verified end-to-end
+- All Phase 0 tests still pass ✓ (2639 pass, 7 skip, 1 unrelated
+  pre-existing rolling-window failure).
+- ~~No silent regression in match success rate (golden-dataset
+  before/after link-rate comparison)~~ — **NOT performed** (T225
+  reframe). A golden-dataset comparison was not feasible retroactively:
+  the old 3/3-limit / 2/2-market matcher was fully replaced in T210
+  (no "before" to diff against on the same dataset), and the new strict
+  contract is *intentionally* stricter (fewer auto-links, more
+  manual-review), so a raw link-rate drop is expected, not a regression.
+  Verification instead rests on the per-criterion matcher tests
+  (test_phase1_matcher.py) + the lifecycle e2e (below). Revisit with a
+  forward link-rate dashboard once live data accumulates under the new
+  matcher.
+- Per-criterion audit rows present for **every order arrival that has
+  ≥1 in-window candidate** (T225 reframe — was "100% of order
+  arrivals"). Two paths legitimately produce zero audit rows by design:
+  (a) zero in-window candidates → UNPLANNED (nothing to audit); (b) an
+  order lacking both TP/SL trigger prices is gated out of the matcher
+  (order_enrichment `_try_correlate`) before any candidate scan. The
+  audit model is per-candidate (spec §4.3), not per-order.
+- Calc state machine transitions verified end-to-end (T225): a calc is
+  driven through each live transition via the REAL handlers — created
+  (handle_risk_calculated), matched (matcher), released
+  (_release_calc_on_operator_cancel), cancelled (cancel_calc_by_operator),
+  completed (_build_close_row_for_fill), superseded (recalc), expired
+  (sweep_expired_calcs) — with pre_trade_log.status asserted at each
+  step (tests/test_phase1_lifecycle_e2e.py). Per-transition unit tests
+  cover the edge cases.
+
+### Acceptance-criteria addendum (T224 / T225)
+
+- **Live expiry**: window-lapsed active|released calcs are transitioned
+  to `expired` by a periodic sweeper (core/handlers.sweep_expired_calcs
+  + schedulers._calc_expiry_loop) so calc:expired fires live and the
+  candidate set stays bounded. (Was a holistic-audit gap H1/H2/L2;
+  closed in T224.) The full §12.3 restart-rehydrate expiry + multi-
+  account sweep remain later-phase refinements.
 
 ---
 
