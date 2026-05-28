@@ -1227,9 +1227,8 @@ class OrderManager:
             ) as cur:
                 rows = await cur.fetchall()
         except Exception:
+            # Read failed — leave calc_id untouched (don't clear on error).
             log.debug("calc_id enrichment: junction read failed", exc_info=True)
-            return
-        if not rows:
             return
         # Primary calc per position: largest contributed_qty, tie-break
         # earliest first_fill_ts (spec §3.2). Rows are ordered by
@@ -1241,10 +1240,17 @@ class OrderManager:
             best = primary.get(pid)
             if best is None or qty > best[1]:
                 primary[pid] = (cid, qty)
+        # Authoritative: calc_id mirrors the junction on each refresh.
+        # A position with no junction row is CLEARED — UNPLANNED, a
+        # pre-first-fill position, or a same-(symbol,direction) reopen
+        # that inherited a stale calc_id via _PRESERVE_FIELDS (T226
+        # holistic-audit R2). Self-heals to the right calc once the new
+        # position's first opening fill writes its junction.
         for pos in positions:
+            if not pos.position_id:
+                continue  # binance one-way / pre-snapshot — no junction key
             best = primary.get(pos.position_id)
-            if best and best[0]:
-                pos.calc_id = best[0]
+            pos.calc_id = best[0] if (best and best[0]) else ""
 
     # ── Position Close ─────────────────────────────────────────────────────
 

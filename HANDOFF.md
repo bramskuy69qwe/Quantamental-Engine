@@ -290,6 +290,25 @@ one; the fix is seal-at-close, deferred because it must distinguish full
 vs partial close (couples with Phase 2.11 multi-TP). Not a live blocker;
 documented as an anchor comment in `order_manager.py`.
 
+### closed_positions attribution lags the junction primary (until P2.T5/T6)
+
+Surfaced by the holistic Phase-2 audit (after T229). Within ONE position
+three attribution surfaces can disagree until P2.T5/T6 land:
+- `fills.calc_id` (closing) + `PositionInfo.calc_id` = the junction
+  PRIMARY / most-contributing calc (set by P2.T2 + P2.T3).
+- `closed_positions.calc_id` = the EARLIEST opening fill's calc_id —
+  still the Phase-1 `_build_close_row_for_fill` behavior
+  (`order_manager.py`, the "calc_id from earliest entry fill" block).
+
+For a scale-in where the larger order is NOT first they point at
+different calcs. Verified e2e: open calc-A qty3, scale-in calc-B qty7,
+close → `closed_positions.calc_id=calc-A` while everything else = calc-B.
+**P2.T6 explicitly sets `closed_positions.calc_id = most-contributing`,
+which resolves this.** Also: `closed_positions.lifecycle_id` is NULL on
+close-built rows today — spec §3.5 says it's "sealed at close", so the
+P2.T5/T6 close-row enrichment must stamp it from the junction. No data
+loss; an attribution-consistency gap the remaining close-row tasks close.
+
 ### Calc-cancel UI wiring (deferred from T219 / P1.T4)
 
 Cancel endpoint + transition shipped; the "Cancel calc" button (spec

@@ -247,6 +247,25 @@ class TestScaleIn:
         assert await _order_lifecycle(db, oid1) == lc
         assert await _order_lifecycle(db, oid2) == lc
 
+    @pytest.mark.asyncio
+    async def test_distinct_positions_get_distinct_lifecycles(self, db, om):
+        # Two DIFFERENT positions must NOT share a lifecycle_id (the reuse
+        # lookup is scoped WHERE position_id=?; dropping that scope would
+        # collapse all positions onto one lifecycle).
+        await _seed_order(db, "O-1", calc_id="calc-a")
+        await _seed_order(db, "O-2", calc_id="calc-b")
+        await _seed_calc(db, "calc-a")
+        await _seed_calc(db, "calc-b")
+        await om._link_position_calc_on_open(
+            ACCOUNT_ID, _fill("O-1", "POS-1", 5.0, fid="F1"),
+        )
+        await om._link_position_calc_on_open(
+            ACCOUNT_ID, _fill("O-2", "POS-2", 5.0, fid="F2"),
+        )
+        rows = await _junction(db)
+        assert {r["position_id"] for r in rows} == {"POS-1", "POS-2"}
+        assert len({r["lifecycle_id"] for r in rows}) == 2
+
 
 # ── 4. skip conditions (no attribution possible) ───────────────────────
 
@@ -460,6 +479,20 @@ class TestClosingFillAttribution:
         assert lc == "uuid-1"
 
     @pytest.mark.asyncio
+    async def test_most_contributing_when_bigger_came_first(self, db, om):
+        # Discrimination: the bigger contributor is the EARLIER entry, so
+        # "max qty" and "latest ts" point at DIFFERENT rows. Proves the
+        # primary is chosen by contributed_qty, not by recency.
+        await _seed_junction(db, "POS-1", "calc-big", 100, 8.0, 1000, "uuid-1")
+        await _seed_junction(db, "POS-1", "calc-small", 101, 2.0, 2000, "uuid-1")
+        await _seed_fill_row(db, "FC-1", tpid="POS-1")
+        await om._stamp_closing_fill_attribution(
+            ACCOUNT_ID, _fill("O-C", "POS-1", 10.0, is_close=1, fid="FC-1"),
+        )
+        calc_id, _ = await _fill_attribution(db, "FC-1")
+        assert calc_id == "calc-big"
+
+    @pytest.mark.asyncio
     async def test_tie_break_prefers_first_entry(self, db, om):
         # Equal contributed_qty → earliest first_fill_ts wins (spec §3.2).
         await _seed_junction(db, "POS-1", "calc-early", 100, 5.0, 1000, "uuid-1")
@@ -601,6 +634,45 @@ class TestPositionInfoCalcId:
         positions = [_pos("POS-1")]
         await om._enrich_positions_calc_id(ACCOUNT_ID, positions)
         assert positions[0].calc_id == "calc-early"
+
+    @pytest.mark.asyncio
+    async def test_enrich_most_contributing_when_bigger_came_first(self, db, om):
+        # qty and ts disagree: bigger contributor entered first.
+        await _seed_junction(db, "POS-1", "calc-big", 100, 8.0, 1000, "uuid-1")
+        await _seed_junction(db, "POS-1", "calc-small", 101, 2.0, 2000, "uuid-1")
+        positions = [_pos("POS-1")]
+        await om._enrich_positions_calc_id(ACCOUNT_ID, positions)
+        assert positions[0].calc_id == "calc-big"
+
+    @pytest.mark.asyncio
+    async def test_enrich_multiple_positions_each_gets_own_primary(self, db, om):
+        # Batched grouping must assign each position ITS OWN primary —
+        # no cross-position bleed in the grouping dict.
+        await _seed_junction(db, "POS-1", "calc-a", 100, 5.0, 1000, "uuid-1")
+        await _seed_junction(db, "POS-2", "calc-b", 200, 9.0, 1500, "uuid-2")
+        positions = [_pos("POS-1"), _pos("POS-2")]
+        await om._enrich_positions_calc_id(ACCOUNT_ID, positions)
+        assert positions[0].calc_id == "calc-a"
+        assert positions[1].calc_id == "calc-b"
+
+    @pytest.mark.asyncio
+    async def test_enrich_rehydrate_without_fill(self, db, om):
+        # Restart rehydrate: junction persists; a bare PositionInfo
+        # (rebuilt with calc_id="") is repopulated from the DB alone, no
+        # fill processed in this session.
+        await _seed_junction(db, "POS-1", "calc-a", 100, 5.0, 1000, "uuid-1")
+        positions = [_pos("POS-1")]
+        await om._enrich_positions_calc_id(ACCOUNT_ID, positions)
+        assert positions[0].calc_id == "calc-a"
+
+    @pytest.mark.asyncio
+    async def test_enrich_clears_stale_calc_id_when_no_junction(self, db, om):
+        # R2 (T226 holistic audit): a same-(symbol,direction) reopen can
+        # inherit a stale calc_id via _PRESERVE_FIELDS. With no junction
+        # for its tpid, enrichment CLEARS it (no stale-attribution bleed).
+        positions = [_pos("POS-REOPEN", calc_id="stale-calc")]
+        await om._enrich_positions_calc_id(ACCOUNT_ID, positions)
+        assert positions[0].calc_id == ""
 
     @pytest.mark.asyncio
     async def test_no_junction_leaves_empty(self, db, om):

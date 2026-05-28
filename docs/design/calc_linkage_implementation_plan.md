@@ -393,7 +393,7 @@ Deltas computed at close.
 | 2.3 | Add `calc_id` field to `PositionInfo`; populate from junction on first fill + on rehydrate | [core/state.py:115-160](core/state.py#L115-L160), `core/exchange.py:350` |
 | 2.4 | Scale-in path: if new calc fires while position open and resulting fill arrives, append to junction with new calc_id; per-calc planned_tp/sl/size copied from calc at contribution time | `core/order_manager.py` |
 | 2.5 | At position close, compute all deltas: `entry_px_delta_pct`, `size_delta_pct`, `tp_drift_pct`, `sl_drift_pct`, `exit_vs_target_pct`, `realized_r`, `cumulative_amendment_count`, `hold_time_actual_ms`. **Use delta basis rule (spec §3.2)**: all deltas computed against most-contributing calc (largest `contributed_qty` in junction); tie-break first-entry. Same basis as live deviation badge. | `core/order_manager.py:_build_close_row_for_fill()` |
-| 2.6 | At close, set `closed_positions.calc_id` = most-contributing calc (largest contributed_qty); tie-break first-entry | `core/order_manager.py` |
+| 2.6 | At close, set `closed_positions.calc_id` = most-contributing calc (largest contributed_qty); tie-break first-entry. **Also seal `closed_positions.lifecycle_id` from the junction** (spec §3.5 — "sealed at close"). **R1 (holistic audit after T229):** until this lands, `closed_positions.calc_id` still uses the Phase-1 `_build_close_row_for_fill` "earliest opening fill with a calc_id" rule and `closed_positions.lifecycle_id` is NULL — so for a scale-in where the larger order isn't first, the closed row's calc disagrees with `fills.calc_id`/`PositionInfo.calc_id` (both set to the most-contributing by P2.T2/T3). This task aligns all three. | `core/order_manager.py:_build_close_row_for_fill()` |
 | 2.7 | At close, set `exit_reason` based on plan-vs-realized + close-detection: PLANNED if final TP/SL prices match plan within tolerance, AMENDED if `cumulative_amendment_count > 0` and prices differ | `core/order_manager.py` |
 | 2.8 | TP/SL bracket detection: implement per-adapter `detect_bracket()` using venue-native fields (Bybit `orderLinkId`, Binance `positionSide` clustering, OKX `algoOrdId`) with 2s time-window fallback | [core/adapters/bybit/rest_adapter.py](core/adapters/bybit/rest_adapter.py), [core/adapters/binance/rest_adapter.py](core/adapters/binance/rest_adapter.py) |
 | 2.9 | TP/SL inheritance from entry: when bracket detected, propagate entry's `calc_id` to TP and SL orders | `core/order_manager.py` order-arrival handler |
@@ -419,6 +419,9 @@ Deltas computed at close.
 
 - Junction populated for 100% of new fills post-deployment
 - Closed_positions deltas non-null for all positions opened after Phase 2 deploy
+- `closed_positions.calc_id` (most-contributing) + `closed_positions.lifecycle_id`
+  set on all positions closed after P2.T6, and CONSISTENT with the
+  position's `fills.calc_id`/`PositionInfo.calc_id` (R1 closed)
 - All existing position-close tests still pass
 - Restart with 5+ open positions correctly rehydrates calc attribution
 
