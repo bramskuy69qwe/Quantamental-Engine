@@ -96,9 +96,10 @@ async def _seed_calc(db, calc_id, lifecycle_id=None,
     await db._conn.commit()
 
 
-def _fill(eoid, tpid, qty, ts=1000, is_close=0, symbol="BTCUSDT"):
+def _fill(eoid, tpid, qty, ts=1000, is_close=0, symbol="BTCUSDT", fid="F-1"):
     return {
         "account_id": ACCOUNT_ID,
+        "exchange_fill_id": fid,
         "exchange_order_id": eoid,
         "terminal_position_id": tpid,
         "symbol": symbol,
@@ -397,3 +398,148 @@ class TestRealFillPathWiring:
             "SELECT COUNT(*) FROM positions_calcs",
         ) as cur:
             assert (await cur.fetchone())[0] == 0
+
+
+# ── 7. T2.2 — closing-fill attribution from position primary ───────────
+
+
+async def _seed_junction(db, position_id, calc_id, order_id, qty, ts,
+                         lifecycle_id):
+    await db.upsert_position_calc_link({
+        "position_id": position_id, "calc_id": calc_id, "order_id": order_id,
+        "account_id": ACCOUNT_ID, "contributed_qty": qty,
+        "first_fill_ts": ts, "last_fill_ts": ts, "lifecycle_id": lifecycle_id,
+    })
+
+
+async def _seed_fill_row(db, fid, tpid="POS-1", is_close=1,
+                         calc_id=None, lifecycle_id=None):
+    await db._conn.execute(
+        "INSERT INTO fills (account_id, exchange_fill_id, symbol, side, "
+        " terminal_position_id, is_close, calc_id, lifecycle_id) "
+        "VALUES (1, ?, 'BTCUSDT', 'SELL', ?, ?, ?, ?)",
+        (fid, tpid, is_close, calc_id, lifecycle_id),
+    )
+    await db._conn.commit()
+
+
+async def _fill_attribution(db, fid):
+    async with db._conn.execute(
+        "SELECT calc_id, lifecycle_id FROM fills WHERE exchange_fill_id = ?",
+        (fid,),
+    ) as cur:
+        row = await cur.fetchone()
+    return (row[0], row[1]) if row else (None, None)
+
+
+class TestClosingFillAttribution:
+    @pytest.mark.asyncio
+    async def test_single_calc_close_stamped(self, db, om):
+        await _seed_junction(db, "POS-1", "calc-a", 100, 5.0, 1000, "uuid-1")
+        await _seed_fill_row(db, "FC-1", tpid="POS-1")
+
+        await om._stamp_closing_fill_attribution(
+            ACCOUNT_ID, _fill("O-C", "POS-1", 5.0, is_close=1, fid="FC-1"),
+        )
+
+        assert await _fill_attribution(db, "FC-1") == ("calc-a", "uuid-1")
+
+    @pytest.mark.asyncio
+    async def test_scale_in_close_uses_most_contributing(self, db, om):
+        # calc-b contributed more → it is the primary.
+        await _seed_junction(db, "POS-1", "calc-a", 100, 2.0, 1000, "uuid-1")
+        await _seed_junction(db, "POS-1", "calc-b", 101, 8.0, 2000, "uuid-1")
+        await _seed_fill_row(db, "FC-1", tpid="POS-1")
+
+        await om._stamp_closing_fill_attribution(
+            ACCOUNT_ID, _fill("O-C", "POS-1", 10.0, is_close=1, fid="FC-1"),
+        )
+
+        calc_id, lc = await _fill_attribution(db, "FC-1")
+        assert calc_id == "calc-b"   # most-contributing
+        assert lc == "uuid-1"
+
+    @pytest.mark.asyncio
+    async def test_tie_break_prefers_first_entry(self, db, om):
+        # Equal contributed_qty → earliest first_fill_ts wins (spec §3.2).
+        await _seed_junction(db, "POS-1", "calc-early", 100, 5.0, 1000, "uuid-1")
+        await _seed_junction(db, "POS-1", "calc-late", 101, 5.0, 2000, "uuid-1")
+        await _seed_fill_row(db, "FC-1", tpid="POS-1")
+
+        await om._stamp_closing_fill_attribution(
+            ACCOUNT_ID, _fill("O-C", "POS-1", 5.0, is_close=1, fid="FC-1"),
+        )
+
+        calc_id, _ = await _fill_attribution(db, "FC-1")
+        assert calc_id == "calc-early"
+
+    @pytest.mark.asyncio
+    async def test_primary_overrides_close_orders_own_calc(self, db, om):
+        # A close fill that already carries its own calc_id (e.g. a
+        # standalone TP that matched calc-tp) is OVERRIDDEN with the
+        # position's primary — position attribution is authoritative.
+        await _seed_junction(db, "POS-1", "calc-entry", 100, 5.0, 1000, "uuid-1")
+        await _seed_fill_row(db, "FC-1", tpid="POS-1",
+                             calc_id="calc-tp", lifecycle_id=None)
+
+        await om._stamp_closing_fill_attribution(
+            ACCOUNT_ID, _fill("O-C", "POS-1", 5.0, is_close=1, fid="FC-1"),
+        )
+
+        assert await _fill_attribution(db, "FC-1") == ("calc-entry", "uuid-1")
+
+    @pytest.mark.asyncio
+    async def test_no_junction_leaves_fill_untouched(self, db, om):
+        # No junction for this position → existing fill attribution kept.
+        await _seed_fill_row(db, "FC-1", tpid="POS-NONE",
+                             calc_id="preexisting", lifecycle_id="lc-x")
+        await om._stamp_closing_fill_attribution(
+            ACCOUNT_ID, _fill("O-C", "POS-NONE", 5.0, is_close=1, fid="FC-1"),
+        )
+        assert await _fill_attribution(db, "FC-1") == ("preexisting", "lc-x")
+
+    @pytest.mark.asyncio
+    async def test_opening_fill_is_noop(self, db, om):
+        await _seed_junction(db, "POS-1", "calc-a", 100, 5.0, 1000, "uuid-1")
+        await _seed_fill_row(db, "FO-1", tpid="POS-1", is_close=0)
+        # is_close=0 → method returns early, no stamp.
+        await om._stamp_closing_fill_attribution(
+            ACCOUNT_ID, _fill("O-1", "POS-1", 5.0, is_close=0, fid="FO-1"),
+        )
+        assert await _fill_attribution(db, "FO-1") == (None, None)
+
+    @pytest.mark.asyncio
+    async def test_empty_tpid_close_is_noop(self, db, om):
+        await _seed_fill_row(db, "FC-1", tpid="", is_close=1)
+        await om._stamp_closing_fill_attribution(
+            ACCOUNT_ID, _fill("O-C", "", 5.0, is_close=1, fid="FC-1"),
+        )
+        assert await _fill_attribution(db, "FC-1") == (None, None)
+
+    @pytest.mark.asyncio
+    async def test_close_fill_stamped_via_real_path(self, real):
+        # End-to-end: open (junction created), then close through the real
+        # _process_single_fill → closing fill stamped from the primary.
+        om, db = real
+        await _seed_linked_order_and_calc(db, eoid="O-1", calc_id="calc-a")
+        await om._process_single_fill(
+            ACCOUNT_ID, _fill("O-1", "POS-1", 0.01, fid="F-OPEN"),
+        )
+        # Seed a reduce-only close order (no calc_id of its own).
+        await db._conn.execute(
+            "INSERT INTO orders (account_id, exchange_order_id, symbol, side, "
+            " order_type, status, price, reduce_only) "
+            "VALUES (1, 'O-CLOSE', 'BTCUSDT', 'SELL', 'take_profit', 'new', 55000, 1)",
+        )
+        await db._conn.commit()
+
+        await om._process_single_fill(
+            ACCOUNT_ID, _fill("O-CLOSE", "POS-1", 0.01, is_close=1, fid="F-CLOSE"),
+        )
+
+        # The opening fill's lifecycle is what the close should inherit.
+        async with db._conn.execute(
+            "SELECT lifecycle_id FROM positions_calcs WHERE position_id='POS-1'",
+        ) as cur:
+            pos_lc = (await cur.fetchone())[0]
+        assert await _fill_attribution(db, "F-CLOSE") == ("calc-a", pos_lc)

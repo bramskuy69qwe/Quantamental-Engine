@@ -892,6 +892,11 @@ class OrderManager:
         # enrichment so the parent order's calc_id is populated (matcher
         # + propagation already ran above). No-op for closing fills.
         await self._link_position_calc_on_open(account_id, fill)
+        # T2.2: on a closing fill, stamp the fill's calc_id + lifecycle_id
+        # from the position's primary (most-contributing) calc. No-op for
+        # opening fills. Runs before close-row scheduling so the fills row
+        # carries position attribution.
+        await self._stamp_closing_fill_attribution(account_id, fill)
         self._emit_fill_events(account_id, fill)
         self._publish_fill(account_id, fill)
 
@@ -1097,6 +1102,84 @@ class OrderManager:
             "Linked position %s ↔ calc %s (order_id=%s, lifecycle=%s, qty=%.6f)",
             pos_id, calc_id, order_id, lifecycle_id, qty,
         )
+
+    async def _stamp_closing_fill_attribution(
+        self, account_id: int, fill: Dict[str, Any]
+    ) -> None:
+        """T2.2 (plan §2 task 2.2): stamp ``calc_id`` + ``lifecycle_id``
+        on a closing fill, inherited from the position's PRIMARY calc.
+
+        The primary is the most-contributing calc in the position's
+        ``positions_calcs`` junction — largest ``contributed_qty``,
+        tie-break earliest ``first_fill_ts`` (spec §3.2, the same basis
+        as the close-row delta computation in T2.5/T2.6). All junction
+        rows for one position share the same ``lifecycle_id``.
+
+        Closing fills usually carry no calc_id of their own (reduce-only
+        TP/SL/manual closes never pass through the matcher); this
+        attributes them to the position they close. Overrides any value
+        ``enrich_fill`` set from the close order — the position's primary
+        is authoritative for position attribution.
+
+        No-op (nothing to inherit) for opening fills, empty
+        ``terminal_position_id``, or positions with no junction
+        (UNPLANNED, or the binance_ws empty-tpid path). Best-effort; all
+        I/O via ``self._db._conn``.
+        """
+        if not fill.get("is_close"):
+            return
+        pos_id = fill.get("terminal_position_id", "") or ""
+        if not pos_id:
+            return
+        fill_id = fill.get("exchange_fill_id", "") or ""
+        if not fill_id:
+            return
+
+        try:
+            async with self._db._conn.execute(
+                "SELECT calc_id, lifecycle_id, contributed_qty "
+                "FROM positions_calcs "
+                "WHERE position_id = ? AND account_id = ? "
+                "ORDER BY first_fill_ts ASC, id ASC",
+                (pos_id, account_id),
+            ) as cur:
+                links = await cur.fetchall()
+        except Exception:
+            log.debug(
+                "close-fill stamp: junction read failed for %s", pos_id,
+                exc_info=True,
+            )
+            return
+        if not links:
+            return  # no junction → nothing to inherit
+
+        # Primary = largest contributed_qty. Rows are ordered by
+        # first_fill_ts ASC, and max() returns the FIRST maximal element,
+        # so ties resolve to the earliest entry (spec §3.2 first-entry
+        # tie-break).
+        primary = max(links, key=lambda r: r[2] or 0.0)
+        primary_calc_id = primary[0]
+        lifecycle_id = primary[1] or next((r[1] for r in links if r[1]), None)
+        if not primary_calc_id and not lifecycle_id:
+            return
+
+        try:
+            await self._db._conn.execute(
+                "UPDATE fills SET calc_id = ?, lifecycle_id = ? "
+                "WHERE account_id = ? AND exchange_fill_id = ?",
+                (primary_calc_id, lifecycle_id, account_id, fill_id),
+            )
+            await self._db._conn.commit()
+            log.info(
+                "Stamped closing fill %s ← position %s primary calc %s "
+                "(lifecycle %s)",
+                fill_id, pos_id, primary_calc_id, lifecycle_id,
+            )
+        except Exception:
+            log.warning(
+                "close-fill stamp: update failed for fill=%s pos=%s",
+                fill_id, pos_id, exc_info=True,
+            )
 
     # ── Position Close ─────────────────────────────────────────────────────
 
