@@ -1000,6 +1000,21 @@ resolutions applied to spec:
   calibration against historical operator paste behavior post-launch.
 - **Bracket-detection clustering window**: default 2s in §4.5; may
   need per-venue tuning (Bybit vs Binance latency profiles differ).
+- **`partially_actioned` state has no producer in Phase 1** (noted
+  T221 audit, 2026-05-28): the state is fully defined — enum (§3.2,
+  §3.4), state-machine edges `active → partially_actioned →
+  {completed_via_position | expired}` (§5), and the
+  `calc:partially_filled` event (§9). Consumers are wired forward-compat
+  (e.g., the Phase-1 close-handler `_complete_calcs_on_close` accepts
+  `partially_actioned` as a completable source state). BUT nothing
+  TRANSITIONS a calc INTO `partially_actioned` yet — the Phase-1
+  matcher only emits `matched`. The producer (detect "partial fill +
+  no further action within window" and transition the calc) belongs to
+  Phase 2 (position-level fill tracking), alongside the multi-TP
+  partial-close lifecycle (§8). Until then the `partially_actioned`
+  branch in any handler is reachable only by a direct DB write — it is
+  not exercised by live event flow. Don't mistake the forward-compat
+  handling for wired behavior.
 
 ---
 
