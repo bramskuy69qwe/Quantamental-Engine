@@ -268,6 +268,24 @@ closed_position (121/121 linked correctly) but the upstream cause —
 why some exchange_history_backfill fills land with empty direction —
 warrants investigation. File as its own task.
 
+### Calc-cancel UI wiring (deferred from T219 / P1.T4)
+
+T219 shipped the cancel endpoint + transition (POST
+`/calculator/cancel/{calc_id}` → `core.handlers.cancel_calc_by_operator`)
+but NOT the "Cancel calc" button (spec §10.1 calculator-tab UI is later
+scope). Two things the UI-wiring task must handle:
+1. Add the per-active-calc "Cancel calc" button (+ optional reason
+   input) targeting the endpoint.
+2. **htmx error-display** (T219 audit): htmx swallows non-2xx bodies —
+   the global `htmx:responseError` handler (base.html:996-1008) shows a
+   generic "Couldn't load this section." instead of the route's
+   specific 404/409/500 message. To surface distinct cancel outcomes
+   (not-found / not-cancellable / race-lost), the UI task must either
+   return 200 + status-discriminated body, or add per-element
+   `hx-target-4*` / `htmx:beforeSwap` handling. This is a codebase-wide
+   htmx pattern (calculate_risk's 400 bodies hit the same swallow), not
+   T219-specific — worth a broader fix.
+
 ### Per-position trade events drilldown (deferred to P8.T9)
 
 Plan §8.10 / §14.3 P8.T9 added in task 199 — per-position trade events

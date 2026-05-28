@@ -234,7 +234,24 @@ async def cancel_calc(request: Request, calc_id: str, reason: str = Form("")):
     optional reason note) and emits ``calc:cancelled`` — all via the
     ``core.calc_state.transition`` choke-point inside
     ``core.handlers.cancel_calc_by_operator``. Returns a small htmx
-    fragment + a meaningful HTTP status the operator UI can branch on.
+    fragment + a meaningful HTTP status.
+
+    T4 scope is endpoint + transition only — there is NO "Cancel calc"
+    button wired yet (spec §10.1 calculator-tab UI is a later task).
+
+    htmx-display caveat (T219 audit, base.html:996-1008): htmx does NOT
+    swap non-2xx response bodies into the target — the global
+    ``htmx:responseError`` handler shows a GENERIC toast +
+    "Couldn't load this section." EmptyState instead. So the specific
+    404/409/500 bodies below will NOT reach the operator as-is. The
+    status codes are kept because they're semantically honest for any
+    non-htmx caller (tests, scripts). When the cancel button is wired,
+    that task must either (a) return 200 with a status-discriminated
+    body so htmx swaps it, or (b) add per-element
+    ``hx-target-4*`` / ``htmx:beforeSwap`` handling to surface the
+    specific outcome. Same swallow already affects calculate_risk's
+    400 validation bodies — it's a codebase-wide htmx-error pattern,
+    not T219-specific.
     """
     from core.handlers import cancel_calc_by_operator
 
