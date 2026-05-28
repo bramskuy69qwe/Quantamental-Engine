@@ -76,29 +76,41 @@ async def om(db):
 
 
 async def _seed_order(db, eoid, calc_id=None, lifecycle_id=None,
-                      symbol="BTCUSDT", side="BUY") -> int:
+                      symbol="BTCUSDT", side="BUY", account_id=ACCOUNT_ID) -> int:
     cur = await db._conn.execute(
         "INSERT INTO orders (account_id, exchange_order_id, symbol, side, "
         " calc_id, lifecycle_id) VALUES (?, ?, ?, ?, ?, ?)",
-        (ACCOUNT_ID, eoid, symbol, side, calc_id, lifecycle_id),
+        (account_id, eoid, symbol, side, calc_id, lifecycle_id),
     )
     await db._conn.commit()
     return cur.lastrowid
 
 
-async def _seed_calc(db, calc_id, lifecycle_id=None,
-                     ticker="BTCUSDT") -> None:
+async def _seed_calc(db, calc_id, lifecycle_id=None, ticker="BTCUSDT",
+                     *, account_id=ACCOUNT_ID, size=0.0, tp_price=0.0,
+                     sl_price=0.0, overridden_size=None, planned_size=None,
+                     overridden_tp=None, planned_tp=None,
+                     overridden_sl=None, planned_sl=None) -> None:
+    # Legacy size/tp_price/sl_price (NOT NULL DEFAULT 0) are what the
+    # calculator writes today; overridden_*/planned_* (P0.T3, NULL on
+    # every live calc) are the spec-named source the T2.4 snapshot
+    # prefers if a future calculator ever populates them.
     await db._conn.execute(
-        "INSERT INTO pre_trade_log (timestamp, ticker, calc_id, lifecycle_id) "
-        "VALUES (?, ?, ?, ?)",
-        ("2026-05-29T00:00:00Z", ticker, calc_id, lifecycle_id),
+        "INSERT INTO pre_trade_log (account_id, timestamp, ticker, calc_id, "
+        " lifecycle_id, size, tp_price, sl_price, overridden_size, planned_size, "
+        " overridden_tp, planned_tp, overridden_sl, planned_sl) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (account_id, "2026-05-29T00:00:00Z", ticker, calc_id, lifecycle_id,
+         size, tp_price, sl_price, overridden_size, planned_size,
+         overridden_tp, planned_tp, overridden_sl, planned_sl),
     )
     await db._conn.commit()
 
 
-def _fill(eoid, tpid, qty, ts=1000, is_close=0, symbol="BTCUSDT", fid="F-1"):
+def _fill(eoid, tpid, qty, ts=1000, is_close=0, symbol="BTCUSDT", fid="F-1",
+          account_id=ACCOUNT_ID):
     return {
-        "account_id": ACCOUNT_ID,
+        "account_id": account_id,
         "exchange_fill_id": fid,
         "exchange_order_id": eoid,
         "terminal_position_id": tpid,
@@ -265,6 +277,169 @@ class TestScaleIn:
         rows = await _junction(db)
         assert {r["position_id"] for r in rows} == {"POS-1", "POS-2"}
         assert len({r["lifecycle_id"] for r in rows}) == 2
+
+
+# ── 3b. T2.4 — planned_* snapshot at contribution time ─────────────────
+
+
+class TestPlannedSnapshot:
+    @pytest.mark.asyncio
+    async def test_snapshot_from_legacy_columns(self, db, om):
+        # Live reality: only legacy size/tp_price/sl_price are populated.
+        await _seed_order(db, "O-1", calc_id="calc-a")
+        await _seed_calc(db, "calc-a", size=3.0, tp_price=55000.0, sl_price=48000.0)
+        await om._link_position_calc_on_open(ACCOUNT_ID, _fill("O-1", "POS-1", 3.0))
+        row = (await _junction(db, "POS-1"))[0]
+        assert row["planned_size"] == pytest.approx(3.0)
+        assert row["planned_tp"] == pytest.approx(55000.0)
+        assert row["planned_sl"] == pytest.approx(48000.0)
+
+    @pytest.mark.asyncio
+    async def test_prefers_overridden_spec_columns(self, db, om):
+        # Forward-compat: if a future calculator populates overridden_*,
+        # the snapshot prefers them over the legacy columns.
+        await _seed_order(db, "O-1", calc_id="calc-a")
+        await _seed_calc(db, "calc-a", size=3.0, tp_price=55000.0, sl_price=48000.0,
+                         overridden_size=9.0, overridden_tp=60000.0,
+                         overridden_sl=47000.0)
+        await om._link_position_calc_on_open(ACCOUNT_ID, _fill("O-1", "POS-1", 9.0))
+        row = (await _junction(db, "POS-1"))[0]
+        assert row["planned_size"] == pytest.approx(9.0)
+        assert row["planned_tp"] == pytest.approx(60000.0)
+        assert row["planned_sl"] == pytest.approx(47000.0)
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_planned_col_when_no_override(self, db, om):
+        # Middle tier: planned_* used when overridden_* is NULL; falls to
+        # legacy only when both spec columns are NULL.
+        await _seed_order(db, "O-1", calc_id="calc-a")
+        await _seed_calc(db, "calc-a", size=3.0, tp_price=55000.0, sl_price=48000.0,
+                         planned_tp=58000.0)   # overridden_tp NULL
+        await om._link_position_calc_on_open(ACCOUNT_ID, _fill("O-1", "POS-1", 3.0))
+        row = (await _junction(db, "POS-1"))[0]
+        assert row["planned_tp"] == pytest.approx(58000.0)  # planned_tp beats legacy
+        assert row["planned_sl"] == pytest.approx(48000.0)  # falls to legacy sl_price
+
+    @pytest.mark.asyncio
+    async def test_absent_tpsl_snapshots_null(self, db, om):
+        # tp_price/sl_price == 0.0 means "no level" → snapshot NULL,
+        # not a literal 0 (HANDOFF lesson 7 / T1.7).
+        await _seed_order(db, "O-1", calc_id="calc-a")
+        await _seed_calc(db, "calc-a", size=3.0, tp_price=0.0, sl_price=0.0)
+        await om._link_position_calc_on_open(ACCOUNT_ID, _fill("O-1", "POS-1", 3.0))
+        row = (await _junction(db, "POS-1"))[0]
+        assert row["planned_size"] == pytest.approx(3.0)
+        assert row["planned_tp"] is None
+        assert row["planned_sl"] is None
+
+    @pytest.mark.asyncio
+    async def test_scale_in_per_calc_independent_snapshots(self, db, om):
+        # Each (position, calc, order) row snapshots ITS OWN calc's plan —
+        # the core T2.4 scale-in deliverable.
+        await _seed_order(db, "O-A", calc_id="calc-a")
+        await _seed_order(db, "O-B", calc_id="calc-b")
+        await _seed_calc(db, "calc-a", size=3.0, tp_price=55000.0, sl_price=48000.0)
+        await _seed_calc(db, "calc-b", size=7.0, tp_price=60000.0, sl_price=47000.0)
+        await om._link_position_calc_on_open(
+            ACCOUNT_ID, _fill("O-A", "POS-1", 3.0, fid="F1"))
+        await om._link_position_calc_on_open(
+            ACCOUNT_ID, _fill("O-B", "POS-1", 7.0, fid="F2"))
+        rows = {r["calc_id"]: r for r in await _junction(db, "POS-1")}
+        assert rows["calc-a"]["planned_size"] == pytest.approx(3.0)
+        assert rows["calc-a"]["planned_tp"] == pytest.approx(55000.0)
+        assert rows["calc-b"]["planned_size"] == pytest.approx(7.0)
+        assert rows["calc-b"]["planned_tp"] == pytest.approx(60000.0)
+
+    @pytest.mark.asyncio
+    async def test_snapshot_stable_across_multi_fill(self, db, om):
+        # Snapshot is taken at FIRST contribution; later fills of the same
+        # triple preserve it (UPSERT omits planned_* from DO UPDATE SET)
+        # even if the calc row mutates. size_delta_pct stays NULL (T2.5).
+        await _seed_order(db, "O-1", calc_id="calc-a")
+        await _seed_calc(db, "calc-a", size=3.0, tp_price=55000.0, sl_price=48000.0)
+        await om._link_position_calc_on_open(
+            ACCOUNT_ID, _fill("O-1", "POS-1", 3.0, ts=1000, fid="F1"))
+        await db._conn.execute(
+            "UPDATE pre_trade_log SET tp_price = 99999.0 WHERE calc_id = 'calc-a'")
+        await db._conn.commit()
+        await om._link_position_calc_on_open(
+            ACCOUNT_ID, _fill("O-1", "POS-1", 2.0, ts=2000, fid="F2"))
+        row = (await _junction(db, "POS-1"))[0]
+        assert row["contributed_qty"] == pytest.approx(5.0)   # accumulated
+        assert row["planned_tp"] == pytest.approx(55000.0)    # snapshot preserved
+        assert row["size_delta_pct"] is None                  # deferred to T2.5
+
+    @pytest.mark.asyncio
+    async def test_planned_snapshot_via_real_path(self, real):
+        # Rule 8: the snapshot must wire through the real
+        # _process_single_fill, not just the helper.
+        om, db = real
+        await _seed_linked_order_and_calc(db, eoid="O-1", calc_id="calc-a")
+        await db._conn.execute(
+            "UPDATE pre_trade_log SET size=4.0, tp_price=55000.0, sl_price=48000.0 "
+            "WHERE calc_id='calc-a'")
+        await db._conn.commit()
+        await om._process_single_fill(
+            ACCOUNT_ID, _fill("O-1", "POS-1", 4.0, fid="F-OPEN"))
+        row = (await _junction(db, "POS-1"))[0]
+        assert row["planned_size"] == pytest.approx(4.0)
+        assert row["planned_tp"] == pytest.approx(55000.0)
+        assert row["planned_sl"] == pytest.approx(48000.0)
+
+    @pytest.mark.asyncio
+    async def test_account_id_predicate_discrimination(self, db, om):
+        # The snapshot SELECT is scoped WHERE calc_id=? AND account_id=?.
+        # Seed the SAME calc_id under account 2 FIRST (lower id) with a
+        # decoy, then account 1 with the real values. With ORDER BY id
+        # LIMIT 1, dropping the account_id predicate would pick account 2's
+        # decoy — so this fails if the predicate regresses. (T231 audit:
+        # calc_id is non-unique in pre_trade_log; the predicate is the
+        # only thing scoping the read to the right account.)
+        await _seed_calc(db, "calc-a", account_id=2, size=99.0, tp_price=11.0)
+        await _seed_calc(db, "calc-a", account_id=1, size=3.0, tp_price=55000.0)
+        await _seed_order(db, "O-1", calc_id="calc-a", account_id=1)
+        await om._link_position_calc_on_open(
+            1, _fill("O-1", "POS-1", 3.0, account_id=1))
+        row = (await _junction(db, "POS-1"))[0]
+        assert row["planned_size"] == pytest.approx(3.0)     # acct 1, not decoy 99
+        assert row["planned_tp"] == pytest.approx(55000.0)
+
+    @pytest.mark.asyncio
+    async def test_intra_triple_overridden_beats_planned(self, db, om):
+        # Within one field's triple the priority is overridden_* > planned_*
+        # > legacy. Distinct sentinel magnitudes per tier lock the ordering
+        # (T231 audit: the only intra-triple priority not otherwise pinned).
+        await _seed_order(db, "O-1", calc_id="calc-a")
+        await _seed_calc(db, "calc-a",
+                         size=1.0, overridden_size=9.0, planned_size=5.0,
+                         tp_price=55000.0, planned_tp=58000.0,  # overridden_tp NULL
+                         sl_price=48000.0)                       # both spec cols NULL
+        await om._link_position_calc_on_open(ACCOUNT_ID, _fill("O-1", "POS-1", 9.0))
+        row = (await _junction(db, "POS-1"))[0]
+        assert row["planned_size"] == pytest.approx(9.0)    # overridden > planned(5) > legacy(1)
+        assert row["planned_tp"] == pytest.approx(58000.0)  # planned > legacy(55000)
+        assert row["planned_sl"] == pytest.approx(48000.0)  # legacy (both spec NULL)
+
+    @pytest.mark.asyncio
+    async def test_scale_in_per_calc_snapshots_via_real_path(self, real):
+        # Rule 8: per-calc independence through the REAL
+        # _process_single_fill scale-in path (two orders/calcs on one
+        # position), not just the helper.
+        om, db = real
+        await _seed_linked_order_and_calc(db, eoid="O-A", calc_id="calc-a")
+        await _seed_linked_order_and_calc(db, eoid="O-B", calc_id="calc-b")
+        await db._conn.execute(
+            "UPDATE pre_trade_log SET size=3.0, tp_price=55000.0 WHERE calc_id='calc-a'")
+        await db._conn.execute(
+            "UPDATE pre_trade_log SET size=7.0, tp_price=60000.0 WHERE calc_id='calc-b'")
+        await db._conn.commit()
+        await om._process_single_fill(ACCOUNT_ID, _fill("O-A", "POS-1", 3.0, fid="F-A"))
+        await om._process_single_fill(ACCOUNT_ID, _fill("O-B", "POS-1", 7.0, fid="F-B"))
+        rows = {r["calc_id"]: r for r in await _junction(db, "POS-1")}
+        assert rows["calc-a"]["planned_size"] == pytest.approx(3.0)
+        assert rows["calc-a"]["planned_tp"] == pytest.approx(55000.0)
+        assert rows["calc-b"]["planned_size"] == pytest.approx(7.0)
+        assert rows["calc-b"]["planned_tp"] == pytest.approx(60000.0)
 
 
 # ── 4. skip conditions (no attribution possible) ───────────────────────

@@ -22,6 +22,24 @@ from core.state import app_state, PositionInfo
 log = logging.getLogger("order_manager")
 
 
+def _first_truthy(*vals: Any) -> Optional[float]:
+    """Return the first non-null, non-zero value among ``vals``, else None.
+
+    Backs the T2.4 junction ``planned_*`` snapshot source-priority: the
+    spec's ``overridden_*`` / ``planned_*`` calc columns are preferred
+    (if a future calculator ever populates them) over the legacy
+    ``size`` / ``tp_price`` / ``sl_price`` the calculator writes today.
+    The non-zero test also coerces an "absent" TP/SL — stored as ``0.0``
+    in ``pre_trade_log`` (NOT NULL DEFAULT 0; HANDOFF lesson 7 / T1.7) —
+    to ``None`` so the nullable junction column reflects "no planned
+    level" rather than a literal 0.
+    """
+    for v in vals:
+        if v:
+            return v
+    return None
+
+
 class OrderManager:
     """Domain logic for order lifecycle. No WS/HTTP knowledge."""
 
@@ -1026,6 +1044,11 @@ class OrderManager:
         Back-filled onto the contributing ``pre_trade_log`` + ``orders``
         rows (idempotent ``WHERE lifecycle_id IS NULL``).
 
+        T2.4: also snapshots the calc's planned ``size`` / ``TP`` / ``SL``
+        onto the junction row at contribution time (per-calc — a scale-in
+        gets its own row with its own calc's plan). See the snapshot
+        block below for source-column priority.
+
         Skips (no attribution possible) when:
           - the fill is a close (only opening fills seed the junction);
           - ``terminal_position_id`` is empty (reversal-open portion,
@@ -1096,12 +1119,49 @@ class OrderManager:
             return
         lifecycle_id = lrow[0] if lrow and lrow[0] else str(uuid.uuid4())
 
+        # T2.4 (plan §2 task 2.4): snapshot the calc's planned size / TP /
+        # SL onto the junction row at contribution time (spec §3.1).
+        # Source priority (spec deviation, forced by reality): spec §3.1
+        # says planned_size ← calc.overridden_size or planned_size, but
+        # those P0.T3 columns are NULL on EVERY live calc — the calculator
+        # only ever writes the legacy size/tp_price/sl_price (verified
+        # T231: 0/118 rows populate overridden_*/planned_*). So source the
+        # spec columns first (forward-compat if a future calculator wires
+        # them) and fall back to the legacy columns the calculator writes
+        # today. Per-calc: each (position, calc, order) row snapshots ITS
+        # OWN calc, so a scale-in's new junction row carries the new
+        # calc's plan. size_delta_pct stays NULL — deferred to T2.5/close
+        # (plan + spec §3.2; it needs the cumulative contributed_qty that
+        # the UPSERT only knows SQL-side).
+        planned_size = planned_tp = planned_sl = None
+        try:
+            async with self._db._conn.execute(
+                "SELECT overridden_size, planned_size, size, "
+                "       overridden_tp, planned_tp, tp_price, "
+                "       overridden_sl, planned_sl, sl_price "
+                "FROM pre_trade_log WHERE calc_id = ? AND account_id = ? "
+                "ORDER BY id ASC LIMIT 1",
+                (calc_id, account_id),
+            ) as cur:
+                prow = await cur.fetchone()
+            if prow:
+                planned_size = _first_truthy(prow[0], prow[1], prow[2])
+                planned_tp = _first_truthy(prow[3], prow[4], prow[5])
+                planned_sl = _first_truthy(prow[6], prow[7], prow[8])
+        except Exception:
+            log.debug(
+                "junction link: planned_* snapshot read failed for calc %s",
+                calc_id, exc_info=True,
+            )
+
         qty = abs(float(fill.get("quantity", 0) or 0))
         ts = int(fill.get("timestamp_ms", 0) or 0)
 
-        # Upsert the junction row (cumulative contributed_qty). planned_*
-        # / size_delta_pct are left NULL here — copied from the calc at
-        # contribution time in T2.4 and computed at close in T2.5.
+        # Upsert the junction row (cumulative contributed_qty). The UPSERT
+        # omits planned_* from DO UPDATE SET, so this first-contribution
+        # snapshot is PRESERVED across later fills of the same triple
+        # (snapshot-at-contribution-time). size_delta_pct left NULL —
+        # computed at close in T2.5.
         await self._db.upsert_position_calc_link({
             "position_id":     pos_id,
             "calc_id":         calc_id,
@@ -1110,6 +1170,9 @@ class OrderManager:
             "contributed_qty": qty,
             "first_fill_ts":   ts,
             "last_fill_ts":    ts,
+            "planned_size":    planned_size,
+            "planned_tp":      planned_tp,
+            "planned_sl":      planned_sl,
             "lifecycle_id":    lifecycle_id,
         })
 

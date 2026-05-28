@@ -136,13 +136,34 @@ within a configurable window.
 | contributed_qty | REAL | total filled qty for this (calc, order, position) tuple |
 | first_fill_ts | INTEGER | ms |
 | last_fill_ts | INTEGER | ms |
-| planned_size | REAL | from calc.overridden_size (or planned_size if no override) |
-| size_delta_pct | REAL | (contributed_qty - planned_size) / planned_size * 100 |
-| planned_tp | REAL | snapshot from calc at contribution time |
-| planned_sl | REAL | snapshot from calc at contribution time |
+| planned_size | REAL | snapshot at contribution time (see source note); populated P2.T4 |
+| size_delta_pct | REAL | (contributed_qty - planned_size) / planned_size * 100; computed at close, P2.T5 (NULL until then) |
+| planned_tp | REAL | snapshot from calc at contribution time; populated P2.T4 |
+| planned_sl | REAL | snapshot from calc at contribution time; populated P2.T4 |
 | lifecycle_id | TEXT | UUID; see §3.5; same value across all rows for one position |
 
 Indexes: `(position_id)`, `(calc_id)`, `(order_id)`, `(account_id, calc_id)`, `(lifecycle_id)`.
+
+> **`planned_*` snapshot source — legacy-column fallback (settled P2.T4,
+> 2026-05-29).** This spec originally defined `planned_size` as "from
+> calc.overridden_size (or planned_size if no override)" and
+> `planned_tp`/`planned_sl` as "snapshot from calc". But the
+> `pre_trade_log.overridden_*` / `planned_*` columns (P0.T3 additions)
+> are **NULL on every live calc** — `insert_pre_trade_log` (the only
+> calc-creation writer) never populates them; the calculator writes only
+> the legacy `size` / `tp_price` / `sl_price`. So sourcing solely from
+> the spec-named columns would snapshot NULL on every real calc and the
+> feature would be inert. P2.T4 therefore uses a priority fallback:
+> `planned_size = first-truthy(overridden_size, planned_size, size)`,
+> `planned_tp = first-truthy(overridden_tp, planned_tp, tp_price)`,
+> `planned_sl = first-truthy(overridden_sl, planned_sl, sl_price)` — the
+> spec columns are preferred (forward-compat if a future calculator wires
+> plan-vs-override capture), with the legacy columns as the working
+> source today. "First-truthy" coerces an absent TP/SL (stored as `0.0`,
+> NOT NULL DEFAULT 0; §3.5/T1.7) to NULL, so the nullable junction column
+> reflects "no planned level" rather than a literal 0. The snapshot is
+> taken at first contribution and preserved across later fills (the
+> UPSERT omits `planned_*` from `DO UPDATE SET`).
 
 > **`position_id` type — TEXT, not INTEGER (settled P2.T1, 2026-05-29).**
 > This spec originally declared `position_id` an INTEGER FK "references
