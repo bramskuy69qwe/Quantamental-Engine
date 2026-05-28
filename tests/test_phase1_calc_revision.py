@@ -336,6 +336,46 @@ class TestMultiplePriorActive:
 # ── 5. Side-vocabulary normalization (T211 H1 + T214) ─────────────────
 
 
+class TestCrossAccountIsolation:
+    """T215 M1: supersede is scoped per-account. A Calculate on
+    account 2 must NOT supersede an active calc on account 1, even for
+    the identical (ticker, side).
+
+    Why this matters: calcs are per-account (spec §2.4 / Q22). Without
+    the account_id filter in the supersede SELECT, a multi-account
+    operator computing the same setup on two accounts would silently
+    kill the first account's calc.
+    """
+
+    @pytest.mark.asyncio
+    async def test_account2_calc_does_not_supersede_account1(self, wired_handlers):
+        handlers, d, db_path = wired_handlers
+        # Seed account 2 in the same DB (the fixture seeds account 1)
+        await d._conn.execute(
+            "INSERT OR IGNORE INTO accounts (id, name) VALUES (?, ?)",
+            (2, "Test2"),
+        )
+        await d._conn.commit()
+
+        # Active calc on account 1
+        await _insert_calc(d, account_id=1, calc_id="acct1-calc",
+                           ticker="BTCUSDT", side="long")
+
+        # The supersede helper is account-scoped; invoke directly with
+        # account_id=2 to simulate a Calculate on the other account.
+        await handlers._supersede_prior_active_calcs(
+            account_id=2,
+            ticker="BTCUSDT",
+            side="long",
+            new_calc_id="acct2-calc",
+        )
+
+        # Account 1's calc must be untouched.
+        old = await _read_calc(d, "acct1-calc")
+        assert old["status"] == "active"
+        assert old["superseded_by_calc_id"] is None
+
+
 class TestSidesAreNormalized:
     """If a future calculator writes uppercase side, supersede should
     still match against the lowercase prior. T211 H1 already canonicalizes

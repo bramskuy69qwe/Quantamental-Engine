@@ -73,8 +73,13 @@ _BUY_TOKENS:  frozenset = frozenset({"long", "buy", "LONG", "BUY", "Long", "Buy"
 _SELL_TOKENS: frozenset = frozenset({"short", "sell", "SHORT", "SELL", "Short", "Sell"})
 
 
-def _norm_side(value: Optional[str]) -> str:
+def norm_side(value: Optional[str]) -> str:
     """Normalize a side string to canonical 'long' / 'short'.
+
+    Public — used across the matcher (this module), supersede pass
+    (``core/handlers.py``), and manual-link candidate finder (this
+    module). Promoted from ``_norm_side`` in T215 (audit M2) so
+    external callers no longer reach into a private helper.
 
     Unknown values are returned lowercased (so two unrecognized
     strings of the same shape still match each other, but a
@@ -87,6 +92,12 @@ def _norm_side(value: Optional[str]) -> str:
     if value in _SELL_TOKENS:
         return "short"
     return value.lower()
+
+
+# T215 M2a: keep the underscore alias for the matcher's in-module
+# callsites (no functional change). Future cleanup can drop the alias
+# once all internal references migrate to the public name.
+_norm_side = norm_side
 
 
 @dataclass

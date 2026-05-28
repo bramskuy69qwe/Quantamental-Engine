@@ -193,7 +193,7 @@ async def _supersede_prior_active_calcs(
     ``active → superseded`` and the new one takes its place. The link
     between them is preserved via ``pre_trade_log.superseded_by_calc_id``.
 
-    Side normalization uses :func:`core.calc_correlation._norm_side` so
+    Side normalization uses :func:`core.calc_correlation.norm_side` so
     a prior calc with ``side='long'`` is still found when the new calc
     arrives with ``side='LONG'``/``'BUY'`` (defensive — the calculator
     currently always writes lowercase, but the consistency saves us if
@@ -213,10 +213,10 @@ async def _supersede_prior_active_calcs(
     if not new_calc_id or not ticker or not side:
         return
 
-    from core.calc_correlation import _norm_side
-    from core.calc_state import CalcStatus, transition
+    from core.calc_correlation import norm_side
+    from core.calc_state import CalcStatus, CalcTransitionRaceLost, transition
 
-    side_canonical = _norm_side(side)
+    side_canonical = norm_side(side)
 
     # Find candidate prior calcs by (account, ticker, status='active').
     # Side normalization happens in Python because the column stores
@@ -233,24 +233,28 @@ async def _supersede_prior_active_calcs(
         rows = await cur.fetchall()
 
     for old_calc_id, old_side in rows:
-        if _norm_side(old_side) != side_canonical:
+        if norm_side(old_side) != side_canonical:
             continue  # different direction — not a supersede target
 
-        async def _apply_supersede(target_calc_id: str = old_calc_id) -> None:
+        # T215 M3: no default-arg capture needed — transition() awaits
+        # apply_fn fully before the loop advances, so old_calc_id can't
+        # change under a still-pending closure.
+        async def _apply_supersede() -> None:
             cur2 = await db._conn.execute(
                 "UPDATE pre_trade_log "
                 "SET status = ?, superseded_by_calc_id = ? "
                 "WHERE calc_id = ? AND status = 'active'",
-                (CalcStatus.SUPERSEDED.value, new_calc_id, target_calc_id),
+                (CalcStatus.SUPERSEDED.value, new_calc_id, old_calc_id),
             )
             await db._conn.commit()
             if cur2.rowcount == 0:
                 # Race: prior caller moved this calc out of 'active'
-                # between SELECT and UPDATE. Skip the event by raising
-                # a sentinel — caught by the outer try.
-                raise _SupersedeLostRace(
-                    f"calc {target_calc_id} moved out of 'active' "
-                    f"before supersede UPDATE; event skipped"
+                # between SELECT and UPDATE. Raise the shared sentinel
+                # (T215 M2b) so transition() skips the event; caught below.
+                raise CalcTransitionRaceLost(
+                    old_calc_id,
+                    CalcStatus.ACTIVE.value,
+                    CalcStatus.SUPERSEDED.value,
                 )
 
         try:
@@ -262,22 +266,13 @@ async def _supersede_prior_active_calcs(
                 event_payload={"new_calc_id": new_calc_id},
                 reason="operator_recalc",
             )
-        except _SupersedeLostRace as exc:
+        except CalcTransitionRaceLost as exc:
             log.info("%s", exc)
         except Exception:
             log.warning(
                 "supersede transition failed for calc_id=%s (new=%s)",
                 old_calc_id, new_calc_id, exc_info=True,
             )
-
-
-class _SupersedeLostRace(Exception):
-    """Raised inside ``_apply_supersede`` when the UPDATE affects 0
-    rows (the prior calc was moved out of 'active' between the SELECT
-    and the UPDATE). Caught locally to skip event emission for a calc
-    that's no longer in the expected state. Never raised outside this
-    module.
-    """
 
 
 async def handle_risk_calculated(payload: Dict[str, Any]) -> None:
@@ -310,34 +305,45 @@ async def handle_risk_calculated(payload: Dict[str, Any]) -> None:
         from core.account_config import AccountConfig
         account_config = AccountConfig()
 
-    # T214 (P1.T3 / plan §1 task 1.5): supersede prior active calc(s)
-    # for the same (account, ticker, side). Runs BEFORE the new insert
-    # so the new calc is the only active one for that key. Best-effort
-    # — a failure here doesn't block the new calc; the matcher's
-    # "most-recent wins" tie-break still picks the new calc on full
-    # matches (spec §4.3), so a missed supersede degrades cleanly.
-    try:
-        await _supersede_prior_active_calcs(
-            account_id=account_id,
-            ticker=payload.get("ticker", ""),
-            side=payload.get("side", ""),
-            new_calc_id=payload.get("calc_id", ""),
-        )
-    except Exception:
-        log.warning(
-            "handle_risk_calculated: supersede pass failed for "
-            "ticker=%s side=%s; new calc will still be inserted",
-            payload.get("ticker"), payload.get("side"), exc_info=True,
-        )
-
+    # T215 H2: insert new calc FIRST, then supersede priors. Reverse
+    # of the T214 order — closes the orphan-risk window where supersede
+    # succeeded but insert failed, leaving the old calc 'superseded'
+    # with superseded_by_calc_id pointing at a non-existent new calc.
+    # The brief overlap (two active calcs for the same key) between
+    # insert and supersede is safe: the matcher's most-recent tie-break
+    # (spec §4.3) picks the new calc on any concurrent order arrival.
+    insert_ok = False
     try:
         await db.insert_pre_trade_log({
             **payload,
             "account_id": account_id,
             "window_seconds": account_config.window_seconds,
         })
+        insert_ok = True
     except Exception as exc:
         log.error("handle_risk_calculated DB write failed: %s", exc)
+
+    # T214 (P1.T3 / plan §1 task 1.5): supersede prior active calc(s)
+    # for the same (account, ticker, side). Spec §2 / §5 calc-revision
+    # flow. Best-effort: a failure here leaves prior calc(s) active and
+    # the new calc also active; matcher's most-recent tie-break covers
+    # the gap. Only runs when the insert succeeded — otherwise the
+    # new_calc_id we'd cite in superseded_by_calc_id wouldn't exist.
+    if insert_ok:
+        try:
+            await _supersede_prior_active_calcs(
+                account_id=account_id,
+                ticker=payload.get("ticker", ""),
+                side=payload.get("side", ""),
+                new_calc_id=payload.get("calc_id", ""),
+            )
+        except Exception:
+            log.warning(
+                "handle_risk_calculated: supersede pass failed for "
+                "ticker=%s side=%s; new calc is in DB but priors may "
+                "remain active (matcher tie-break still picks newest)",
+                payload.get("ticker"), payload.get("side"), exc_info=True,
+            )
 
     # v2.4: emit calc_created trade event
     # Task 162: narrow + upgrade from log.debug → log.warning. The

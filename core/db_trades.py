@@ -165,6 +165,23 @@ class TradesMixin:
                     "calc_id":           row.get("calc_id"),
                     # HIGH-027 (Task 104b): per-calc override of the account
                     # link window. None → use account default at match time.
+                    #
+                    # T215 L2 — COLUMN DUALITY WARNING: two columns now
+                    # carry "this calc's effective match window":
+                    #   - link_window_seconds_override (here, Task 104b,
+                    #     24h account default) — READ by core/exec_link.py
+                    #   - window_seconds (below, T213/P1.T2, spec §3.2/§3.3,
+                    #     300s default) — READ by the new strict matcher
+                    #     (core/calc_correlation.py)
+                    # Both are written on every calc. If an operator sets
+                    # only one via the calculator form, the matcher and
+                    # exec_link can disagree on the window for the SAME
+                    # calc. This is intentional-for-now (the new matcher
+                    # supersedes exec_link's linking; exec_link is legacy).
+                    # Deferred cleanup: migrate exec_link.py to read
+                    # window_seconds, then drop link_window_seconds_override.
+                    # Tracked as a Phase-1 follow-up, not done here (would
+                    # touch the legacy exec-link path beyond T215 scope).
                     "link_window_seconds_override":
                         row.get("link_window_seconds_override"),
                     # Task 157: regime decision at plan time. NULL on any

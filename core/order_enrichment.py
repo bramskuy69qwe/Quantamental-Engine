@@ -22,16 +22,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 log = logging.getLogger("order_enrichment")
 
-
-class _StatusFlipLostRace(Exception):
-    """Raised by ``_apply_status_flip`` when the UPDATE WHERE-clause
-    (scoped to the matcher-time status) affects 0 rows — another caller
-    moved the calc out of the expected state between the matcher's
-    SELECT and our UPDATE. Caught by ``_try_correlate`` to suppress
-    event-bus emission for the lost race; never raised outside this
-    module.
-    """
-
 _SL_TYPES = frozenset({"stop_loss", "stop_market", "stop_loss_limit"})
 _TP_TYPES = frozenset({"take_profit", "take_profit_market", "take_profit_limit"})
 _CLOSE_TYPES = _SL_TYPES | _TP_TYPES | frozenset({"trailing_stop"})
@@ -261,7 +251,11 @@ async def _try_correlate(order: Dict[str, Any], db_path: str) -> None:
             "'status' or pre-backfill NULL)", result.calc_id,
         )
     if result.calc_id and result.matched_from_status:
-        from core.calc_state import transition, CalcStatus
+        from core.calc_state import (
+            CalcStatus,
+            CalcTransitionRaceLost,
+            transition,
+        )
 
         # T211 M3: scope the UPDATE with AND status = ? against the
         # status we read at matcher time. If another caller (operator
@@ -298,10 +292,10 @@ async def _try_correlate(order: Dict[str, Any], db_path: str) -> None:
             if rowcount == 0:
                 # Lost the race — caller of transition() will see
                 # the raise and skip event emission.
-                raise _StatusFlipLostRace(
-                    f"calc {result.calc_id} status changed between "
-                    f"matcher read (was {result.matched_from_status!r}) "
-                    f"and UPDATE; transition skipped"
+                raise CalcTransitionRaceLost(
+                    result.calc_id,
+                    result.matched_from_status,
+                    CalcStatus.MATCHED.value,
                 )
 
         try:
@@ -312,7 +306,7 @@ async def _try_correlate(order: Dict[str, Any], db_path: str) -> None:
                 apply_fn=_apply_status_flip,
                 event_payload={"order_id": row["id"]},
             )
-        except _StatusFlipLostRace as exc:
+        except CalcTransitionRaceLost as exc:
             # Race lost — calc moved out from under us. Log at info
             # (not warning) — this is expected concurrency, not a bug.
             log.info("%s", exc)

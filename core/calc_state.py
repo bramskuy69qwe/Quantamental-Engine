@@ -141,6 +141,37 @@ class IllegalStateTransition(Exception):
         super().__init__(msg)
 
 
+class CalcTransitionRaceLost(Exception):
+    """Raised by a caller-supplied ``apply_fn`` when its UPDATE affects
+    0 rows — another writer flipped ``pre_trade_log.status`` out of the
+    expected ``current_status`` between the caller's SELECT and the
+    apply_fn UPDATE.
+
+    Consolidates T211 ``_StatusFlipLostRace`` (order_enrichment matcher
+    path) and T214 ``_SupersedeLostRace`` (handlers supersede path) —
+    same shape, both raised when a TOCTOU-guarded UPDATE loses the race.
+    Catching this in :func:`transition`'s caller is the signal to skip
+    event-bus emission for a calc that no longer holds the expected
+    state.
+
+    Carries the calc_id, expected (matcher-time) status, and the target
+    status the apply_fn was attempting — useful for logs.
+    """
+
+    def __init__(
+        self, calc_id: str, expected: str, target: str,
+        message: Optional[str] = None,
+    ) -> None:
+        self.calc_id = calc_id
+        self.expected = expected
+        self.target = target
+        msg = message or (
+            f"calc {calc_id!r} moved out of {expected!r} before "
+            f"UPDATE to {target!r}; transition skipped"
+        )
+        super().__init__(msg)
+
+
 def validate_transition(current: str, target: str) -> bool:
     """Return ``True`` if ``current → target`` is a valid transition.
 
@@ -222,7 +253,23 @@ async def transition(
             "to_status": target_status,
         }
         if reason is not None:
+            # T215 H1: spec §9 lists ``reason`` for calc:superseded and
+            # ``reason_note`` for calc:cancelled — internally inconsistent.
+            # Emit BOTH keys (same value) so spec-conformant consumers
+            # can key off either; back-compat with the existing
+            # ``reason_note`` convention is preserved.
+            payload["reason"] = reason
             payload["reason_note"] = reason
+        if target_enum is CalcStatus.SUPERSEDED:
+            # T215 H1: spec §9 names the field ``old_calc_id`` for the
+            # calc:superseded event (the calc that was superseded), with
+            # ``new_calc_id`` carried via event_payload. We already emit
+            # ``calc_id`` (=old) for transition-payload uniformity across
+            # all calc:* events; add the spec alias so downstream
+            # consumers (Phase 1.7 replacement modal, audit-export
+            # bundle) read the spec name without breaking the existing
+            # uniformity.
+            payload["old_calc_id"] = calc_id
         if event_payload:
             payload.update(event_payload)
         try:

@@ -166,6 +166,21 @@ class TestParseConfigJson:
         assert cfg.window_seconds == DEFAULT_WINDOW_SECONDS  # fallback
         assert cfg.clock_skew_tolerance_sec == 7  # parsed normally
 
+    def test_explicit_null_field_falls_back_to_default(self):
+        """T215 L1: an explicit JSON null (not a missing key) must fall
+        back to the spec default, not crash.
+
+        Why this matters: an operator clearing a field in a config
+        editor might emit {"window_seconds": null} rather than omitting
+        the key. parsed.get(key, default) returns None (not the
+        default) for an explicit null, so int(None) would raise — the
+        except-fallback must catch it.
+        """
+        blob = json.dumps({"window_seconds": None, "entry_tolerance_pct": None})
+        cfg = _parse_config_json(blob)
+        assert cfg.window_seconds == DEFAULT_WINDOW_SECONDS
+        assert cfg.entry_tolerance_pct == DEFAULT_ENTRY_TOLERANCE_PCT
+
 
 # ── 2. Sync + async readers agree ────────────────────────────────────
 
