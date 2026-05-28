@@ -298,18 +298,22 @@ def correlate_order_to_calc(
         if age_sec > window_bound:
             continue  # out of window — not a candidate per spec §4.3
 
-        # Malformed-calc skip (T211 M5): a calc with no effective_entry
-        # / TP / SL price can't be evaluated — treat as non-candidate
-        # rather than silently failing the criterion with drift=1.0
-        # (which the audit row would report as a misleading "real" miss).
+        # Malformed-calc skip (T211 M5, narrowed in T7 P1.T7): a calc
+        # with no effective_entry can't be evaluated — entry is the
+        # price anchor for the loose-entry criterion AND its drift
+        # denominator. Skip such a calc as a non-candidate.
+        #
+        # NOTE (T7): null/0 TP or SL is NOT skipped here. Per spec Q27
+        # ("Allow nullable TP/SL but auto-route to manual-link") + §13,
+        # a calc may legitimately carry a null TP or SL (operator chose
+        # not to set one). Such a calc MUST surface to manual review —
+        # not be silently excluded. The TP/SL criterion below evaluates
+        # null → matched=False (bool() guard), so the candidate can't
+        # auto-link and the order routes to NEEDS_MANUAL_REVIEW. T211
+        # originally over-skipped TP/SL too; T7 narrows it to entry-only.
         calc_entry = row["effective_entry"] or 0.0
-        calc_tp = row["tp_price"] or 0.0
-        calc_sl = row["sl_price"] or 0.0
-        if not calc_entry or not calc_tp or not calc_sl:
-            log.debug(
-                "skipping malformed calc %s (entry=%s, tp=%s, sl=%s)",
-                calc_id, calc_entry, calc_tp, calc_sl,
-            )
+        if not calc_entry:
+            log.debug("skipping calc %s — no effective_entry (anchor)", calc_id)
             continue
 
         # Per-criterion checks
@@ -342,18 +346,30 @@ def correlate_order_to_calc(
             calc_entry, entry_source, entry_tol_ratio,
             matched=entry_ok, ts_ms=now_ts_ms,
         ))
-        # TP (spec §4.2: |order_tp - calc_tp| ≤ N * tick_size, N=1)
-        tp_ok = abs(tp_price - calc_tp) <= tick_size
+        # TP (spec §4.2: |order_tp - calc_tp| ≤ N * tick_size, N=1).
+        # T7: an absent calc TP can't be confirmed → matched=False (the
+        # bool() short-circuit also avoids a None-subtraction). The
+        # candidate then can't be a full match → order → manual-link.
+        #
+        # "Absent" = falsy: the pre_trade_log.tp_price/sl_price columns
+        # are NOT NULL DEFAULT 0, so an operator who omits a TP/SL
+        # stores 0.0 (not SQL NULL). Both 0.0 and a hypothetical NULL
+        # are treated as "no TP/SL". The audit records calc_value=None
+        # for an absent value (clearer "calc had no TP" signal in the
+        # manual-review diff than "0.0").
+        calc_tp = row["tp_price"]
+        tp_ok = bool(calc_tp) and abs(tp_price - calc_tp) <= tick_size
         criteria.append(_audit_row(
             order_id, calc_id, "tp",
-            calc_tp, tp_price, tick_size,
+            calc_tp if calc_tp else None, tp_price, tick_size,
             matched=tp_ok, ts_ms=now_ts_ms,
         ))
-        # SL
-        sl_ok = abs(sl_price - calc_sl) <= tick_size
+        # SL — same absent-value handling (T7)
+        calc_sl = row["sl_price"]
+        sl_ok = bool(calc_sl) and abs(sl_price - calc_sl) <= tick_size
         criteria.append(_audit_row(
             order_id, calc_id, "sl",
-            calc_sl, sl_price, tick_size,
+            calc_sl if calc_sl else None, sl_price, tick_size,
             matched=sl_ok, ts_ms=now_ts_ms,
         ))
 

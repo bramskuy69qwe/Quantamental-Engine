@@ -538,7 +538,15 @@ class TestM5MalformedCalcSkip:
             )
 
     @pytest.mark.asyncio
-    async def test_zero_tp_calc_excluded(self, db):
+    async def test_zero_tp_calc_routes_to_manual_review(self, db):
+        """T7 (P1.T7) CHANGED this behavior: a zero/null-TP calc is no
+        longer M5-skipped (that was a T211 over-reach). Per spec Q27,
+        nullable TP/SL is legitimate and must auto-route to manual-link.
+        So a zero-TP calc is now a CANDIDATE whose TP criterion fails →
+        order → NEEDS_MANUAL_REVIEW (not UNPLANNED). Only null/0 ENTRY
+        is still skipped (the anchor).
+        """
+        from core.calc_correlation import LINK_STATUS_NEEDS_MANUAL_REVIEW
         _, db_path = db
         _insert_calc(db_path, calc_id="m5-zerotp",
                      effective_entry=50000.0, tp_price=0.0, sl_price=48000.0)
@@ -551,10 +559,13 @@ class TestM5MalformedCalcSkip:
             tick_size=0.1,
             db_path=db_path,
         )
-        # No candidate → UNPLANNED (with no audit rows)
+        # Candidate exists (zero-TP), TP criterion fails → manual review.
         assert result.calc_id is None
-        assert result.link_status == LINK_STATUS_UNPLANNED
-        assert result.audit_rows == []
+        assert result.link_status == LINK_STATUS_NEEDS_MANUAL_REVIEW
+        # Audit rows ARE present now (the candidate was evaluated); the
+        # TP criterion shows matched=False.
+        by_criterion = {r["criterion"]: r for r in result.audit_rows}
+        assert by_criterion["tp"]["matched"] is False
 
 
 # ── H4 + M4 — covered implicitly by integration tests + matcher tests ──
