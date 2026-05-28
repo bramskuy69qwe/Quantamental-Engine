@@ -219,24 +219,26 @@ class TestNoSupersedeOnKeyMismatch:
         assert old["superseded_by_calc_id"] is None
 
 
-# ── 3. Only ACTIVE calcs are superseded ───────────────────────────────
+# ── 3. Which statuses are eligible for supersede ─────────────────────
 
 
-class TestOnlyActiveSuperseded:
-    """Released, matched, expired, cancelled, completed_via_position —
-    none of these are eligible for supersede. The state machine is
-    explicit: only ``active → superseded`` is a valid transition (per
-    core/calc_state.py CALC_TRANSITIONS).
+class TestSupersedeEligibility:
+    """A recalc supersedes prior LIVE calcs (active OR released) for the
+    key. Terminal-ish states (matched, expired, completed_via_position)
+    are NOT superseded.
 
-    Why this matters: a 'released' calc (Phase 1.7 — order cancelled,
-    calc back in pool for re-match) is INTENTIONALLY available again.
-    A new Calculate click shouldn't kill it; it should sit alongside
-    the new active calc. Spec §5 allows both `released` and `active`
-    to be matcher candidates.
+    T217 (audit follow-up): released calcs ARE now superseded by a
+    recalc (was: survived). A recalc is a fresh intent that supersedes
+    all prior live calcs for the key — including a released calc whose
+    order was cancelled (spec §5 RELEASED → SUPERSEDED edge). The T216
+    re-match workflow (re-place the SAME order without recomputing) is
+    unaffected: that path has no recalc, so the released calc survives
+    until a replacement order re-matches it.
     """
 
     @pytest.mark.asyncio
-    async def test_released_calc_not_superseded(self, wired_handlers):
+    async def test_released_calc_IS_superseded(self, wired_handlers):
+        """T217: a recalc supersedes a prior released calc (was: survived)."""
         handlers, d, db_path = wired_handlers
         await _insert_calc(d, calc_id="rel-1", ticker="BTCUSDT", side="long",
                             status="released")
@@ -250,11 +252,45 @@ class TestOnlyActiveSuperseded:
         })
 
         old = await _read_calc(d, "rel-1")
-        assert old["status"] == "released"  # untouched
+        assert old["status"] == "superseded"
+        assert old["superseded_by_calc_id"] == "new-rel"
 
-        # No supersede event fired for the released calc
+        # Supersede event fired, carrying the released→superseded transition
         events = _drain_events("calc:superseded")
-        assert events == []
+        assert len(events) == 1
+        _, payload = events[0]
+        assert payload["calc_id"] == "rel-1"
+        assert payload["from_status"] == "released"
+        assert payload["to_status"] == "superseded"
+        assert payload["new_calc_id"] == "new-rel"
+
+    @pytest.mark.asyncio
+    async def test_active_and_released_both_superseded(self, wired_handlers):
+        """Mixed pool: an active AND a released calc for the same key are
+        BOTH superseded by a single recalc.
+        """
+        handlers, d, db_path = wired_handlers
+        await _insert_calc(d, calc_id="mix-active", ticker="BTCUSDT", side="long",
+                            status="active")
+        await _insert_calc(d, calc_id="mix-released", ticker="BTCUSDT", side="long",
+                            status="released")
+        _drain_events()
+
+        await handlers.handle_risk_calculated({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "ticker": "BTCUSDT", "side": "long",
+            "effective_entry": 50000.0, "tp_price": 55000.0, "sl_price": 48000.0,
+            "calc_id": "mix-new",
+        })
+
+        a = await _read_calc(d, "mix-active")
+        r = await _read_calc(d, "mix-released")
+        assert a["status"] == "superseded"
+        assert a["superseded_by_calc_id"] == "mix-new"
+        assert r["status"] == "superseded"
+        assert r["superseded_by_calc_id"] == "mix-new"
+        events = _drain_events("calc:superseded")
+        assert len(events) == 2
 
     @pytest.mark.asyncio
     async def test_matched_calc_not_superseded(self, wired_handlers):

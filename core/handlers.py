@@ -185,13 +185,23 @@ async def _supersede_prior_active_calcs(
     side: str,
     new_calc_id: str,
 ) -> None:
-    """T214 (P1.T3): supersede any prior ``active`` calc for the same
+    """T214 (P1.T3): supersede any prior live calc for the same
     ``(account_id, ticker, side)`` before a new calc lands.
 
     Spec §2 / §5 calc-revision flow: when the operator clicks Calculate
     again for the same symbol+direction, the prior calc transitions
-    ``active → superseded`` and the new one takes its place. The link
-    between them is preserved via ``pre_trade_log.superseded_by_calc_id``.
+    ``→ superseded`` and the new one takes its place. The link between
+    them is preserved via ``pre_trade_log.superseded_by_calc_id``.
+
+    T217 (audit follow-up): "prior live calc" = status IN
+    ('active', 'released'), not just 'active'. A recalc is a fresh
+    intent that supersedes ALL prior live calcs for the key — including
+    a ``released`` calc whose order was cancelled (spec §5 has the
+    RELEASED → SUPERSEDED edge). This prevents a stale released calc
+    coexisting with the new active calc as a second matcher candidate.
+    The T216 re-match workflow (re-place the SAME order without
+    recomputing) is unaffected — that path has no recalc, so the
+    released calc survives until a replacement order re-matches it.
 
     Side normalization uses :func:`core.calc_correlation.norm_side` so
     a prior calc with ``side='long'`` is still found when the new calc
@@ -199,12 +209,10 @@ async def _supersede_prior_active_calcs(
     currently always writes lowercase, but the consistency saves us if
     that changes).
 
-    The UPDATE is scoped ``WHERE ... AND status='active'`` (T211 M3
-    pattern): if a concurrent caller already flipped the prior calc
-    out of ``active`` (operator cancel, expire-sweeper) the UPDATE
-    affects 0 rows and the transition skips event emission silently —
-    we don't want to publish ``calc:superseded`` for a calc that's
-    actually ``cancelled_by_operator``.
+    The UPDATE is scoped ``WHERE ... AND status = <the row's status>``
+    (T211 M3 pattern): if a concurrent caller already flipped the prior
+    calc out of that status (matcher link, expire-sweeper) the UPDATE
+    affects 0 rows and the transition skips event emission silently.
 
     Best-effort: per-calc failures log but don't abort the new calc's
     insert. The caller (``handle_risk_calculated``) wraps this in its
@@ -218,49 +226,53 @@ async def _supersede_prior_active_calcs(
 
     side_canonical = norm_side(side)
 
-    # Find candidate prior calcs by (account, ticker, status='active').
-    # Side normalization happens in Python because the column stores
-    # raw values (matching the matcher's same-shape filter from T211 H1).
+    # Find candidate prior calcs by (account, ticker, status IN
+    # ('active','released')). Side normalization happens in Python
+    # because the column stores raw values (matching the matcher's
+    # same-shape filter from T211 H1). We carry each row's actual
+    # status so the transition + TOCTOU-guarded UPDATE use the right
+    # source state (active→superseded OR released→superseded).
     async with db._conn.execute(
-        "SELECT calc_id, side FROM pre_trade_log "
+        "SELECT calc_id, side, status FROM pre_trade_log "
         "WHERE account_id = ? "
         "  AND ticker = ? "
-        "  AND status = 'active' "
+        "  AND status IN ('active', 'released') "
         "  AND calc_id IS NOT NULL "
         "  AND calc_id != ?",
         (account_id, ticker, new_calc_id),
     ) as cur:
         rows = await cur.fetchall()
 
-    for old_calc_id, old_side in rows:
+    for old_calc_id, old_side, old_status in rows:
         if norm_side(old_side) != side_canonical:
             continue  # different direction — not a supersede target
 
         # T215 M3: no default-arg capture needed — transition() awaits
-        # apply_fn fully before the loop advances, so old_calc_id can't
-        # change under a still-pending closure.
+        # apply_fn fully before the loop advances, so old_calc_id /
+        # old_status can't change under a still-pending closure.
         async def _apply_supersede() -> None:
             cur2 = await db._conn.execute(
                 "UPDATE pre_trade_log "
                 "SET status = ?, superseded_by_calc_id = ? "
-                "WHERE calc_id = ? AND status = 'active'",
-                (CalcStatus.SUPERSEDED.value, new_calc_id, old_calc_id),
+                "WHERE calc_id = ? AND status = ?",
+                (CalcStatus.SUPERSEDED.value, new_calc_id,
+                 old_calc_id, old_status),
             )
             await db._conn.commit()
             if cur2.rowcount == 0:
-                # Race: prior caller moved this calc out of 'active'
+                # Race: prior caller moved this calc out of old_status
                 # between SELECT and UPDATE. Raise the shared sentinel
                 # (T215 M2b) so transition() skips the event; caught below.
                 raise CalcTransitionRaceLost(
                     old_calc_id,
-                    CalcStatus.ACTIVE.value,
+                    old_status,
                     CalcStatus.SUPERSEDED.value,
                 )
 
         try:
             await transition(
                 calc_id=old_calc_id,
-                current_status=CalcStatus.ACTIVE.value,
+                current_status=old_status,
                 target_status=CalcStatus.SUPERSEDED.value,
                 apply_fn=_apply_supersede,
                 event_payload={"new_calc_id": new_calc_id},

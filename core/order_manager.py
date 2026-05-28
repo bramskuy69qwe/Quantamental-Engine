@@ -514,12 +514,16 @@ class OrderManager:
                 )
 
         try:
+            # T217: no event_payload — RELEASED has no entry in
+            # TRANSITION_EVENT_MAP (calc_state.py), so transition()
+            # emits no event for this edge and any payload would be
+            # dead. (Spec §9's calc:order_cancelled event is a separate,
+            # deferred concern — see T216 notes.)
             await transition(
                 calc_id=calc_id,
                 current_status=CalcStatus.MATCHED.value,
                 target_status=CalcStatus.RELEASED.value,
                 apply_fn=_apply_release,
-                event_payload={"order_id": eid},
             )
             log.info("Released calc %s on operator cancel of order %s", calc_id, eid)
         except CalcTransitionRaceLost as exc:
