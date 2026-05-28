@@ -66,6 +66,10 @@ _PRESERVE_FIELDS = (
     "individual_tp_amount", "individual_sl_amount",
     "order_timestamp", "entry_timestamp",
     "session_mfe", "session_mae", "individual_fees",
+    # P2.T3: junction-derived primary calc; re-set each refresh_cache
+    # but preserved here so a snapshot rebuild between refreshes doesn't
+    # blank the live display.
+    "calc_id",
 )
 
 # How long (ms) a WS/Platform update protects state from being overwritten by REST

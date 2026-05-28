@@ -142,6 +142,7 @@ class PositionInfo:
     individual_sl_usdt:      float = 0.0
     model_name:              str   = ""
     sector:                  str   = ""
+    calc_id:                 str   = ""   # primary (most-contributing) calc, from positions_calcs junction (P2.T3)
 
 
 @dataclass

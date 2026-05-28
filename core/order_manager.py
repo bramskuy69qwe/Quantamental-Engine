@@ -787,6 +787,8 @@ class OrderManager:
         """
         self._open_orders = await self._db.query_open_orders_all(account_id)
         self.enrich_positions_tpsl(app_state.positions)
+        # T2.3: stamp each live position's primary calc from the junction.
+        await self._enrich_positions_calc_id(account_id, app_state.positions)
 
     # ── TP/SL Enrichment ────────────────────────────────────────────────────
 
@@ -968,6 +970,42 @@ class OrderManager:
 
     # ── Position ↔ calc junction (Phase 2.1) ────────────────────────────────
 
+    async def _position_primary_calc(
+        self, account_id: int, position_id: str,
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """Return ``(calc_id, lifecycle_id)`` of a position's PRIMARY calc.
+
+        Primary = the most-contributing junction row (largest
+        ``contributed_qty``; tie-break earliest ``first_fill_ts`` —
+        spec §3.2). ``(None, None)`` if the position has no junction.
+        One source of truth for the §3.2 rule, shared by the closing-fill
+        stamp (T2.2) and the live PositionInfo enrichment (T2.3).
+        """
+        if not position_id:
+            return None, None
+        try:
+            async with self._db._conn.execute(
+                "SELECT calc_id, lifecycle_id, contributed_qty "
+                "FROM positions_calcs "
+                "WHERE position_id = ? AND account_id = ? "
+                "ORDER BY first_fill_ts ASC, id ASC",
+                (position_id, account_id),
+            ) as cur:
+                links = await cur.fetchall()
+        except Exception:
+            log.debug(
+                "primary-calc read failed for position %s", position_id,
+                exc_info=True,
+            )
+            return None, None
+        if not links:
+            return None, None
+        # Rows ordered by first_fill_ts ASC; max() returns the FIRST
+        # maximal element, so ties resolve to the earliest entry.
+        primary = max(links, key=lambda r: r[2] or 0.0)
+        lifecycle_id = primary[1] or next((r[1] for r in links if r[1]), None)
+        return primary[0], lifecycle_id
+
     async def _link_position_calc_on_open(
         self, account_id: int, fill: Dict[str, Any]
     ) -> None:
@@ -1135,33 +1173,11 @@ class OrderManager:
         if not fill_id:
             return
 
-        try:
-            async with self._db._conn.execute(
-                "SELECT calc_id, lifecycle_id, contributed_qty "
-                "FROM positions_calcs "
-                "WHERE position_id = ? AND account_id = ? "
-                "ORDER BY first_fill_ts ASC, id ASC",
-                (pos_id, account_id),
-            ) as cur:
-                links = await cur.fetchall()
-        except Exception:
-            log.debug(
-                "close-fill stamp: junction read failed for %s", pos_id,
-                exc_info=True,
-            )
-            return
-        if not links:
-            return  # no junction → nothing to inherit
-
-        # Primary = largest contributed_qty. Rows are ordered by
-        # first_fill_ts ASC, and max() returns the FIRST maximal element,
-        # so ties resolve to the earliest entry (spec §3.2 first-entry
-        # tie-break).
-        primary = max(links, key=lambda r: r[2] or 0.0)
-        primary_calc_id = primary[0]
-        lifecycle_id = primary[1] or next((r[1] for r in links if r[1]), None)
+        primary_calc_id, lifecycle_id = await self._position_primary_calc(
+            account_id, pos_id,
+        )
         if not primary_calc_id and not lifecycle_id:
-            return
+            return  # no junction → nothing to inherit
 
         try:
             await self._db._conn.execute(
@@ -1180,6 +1196,55 @@ class OrderManager:
                 "close-fill stamp: update failed for fill=%s pos=%s",
                 fill_id, pos_id, exc_info=True,
             )
+
+    async def _enrich_positions_calc_id(
+        self, account_id: int, positions: List[PositionInfo]
+    ) -> None:
+        """T2.3 (plan §2 task 2.3): set ``PositionInfo.calc_id`` to each
+        live position's primary (most-contributing) junction calc.
+
+        Called from ``refresh_cache`` (the controlled position-enrichment
+        entry point), so it covers both stated triggers: the live
+        first-fill case (a fill's order update drives a refresh) and
+        restart rehydrate (the next order snapshot or the periodic
+        refresh loop drives one). Re-evaluated each refresh so the
+        primary stays current as the junction grows (scale-in);
+        ``calc_id`` is also in ``_PRESERVE_FIELDS`` so a snapshot rebuild
+        between refreshes doesn't blank the live value.
+
+        ONE batched junction read per refresh (not per position) — this
+        runs on every WS order update, so the fan-out is kept off the
+        hot path. Best-effort; only ever SETS calc_id (never clears).
+        """
+        if not any(p.position_id for p in positions):
+            return
+        try:
+            async with self._db._conn.execute(
+                "SELECT position_id, calc_id, contributed_qty "
+                "FROM positions_calcs WHERE account_id = ? "
+                "ORDER BY first_fill_ts ASC, id ASC",
+                (account_id,),
+            ) as cur:
+                rows = await cur.fetchall()
+        except Exception:
+            log.debug("calc_id enrichment: junction read failed", exc_info=True)
+            return
+        if not rows:
+            return
+        # Primary calc per position: largest contributed_qty, tie-break
+        # earliest first_fill_ts (spec §3.2). Rows are ordered by
+        # first_fill_ts ASC and we only replace on a strict '>', so the
+        # earliest row wins a tie — same rule as _position_primary_calc.
+        primary: Dict[str, Tuple[str, float]] = {}
+        for pid, cid, qty in rows:
+            qty = qty or 0.0
+            best = primary.get(pid)
+            if best is None or qty > best[1]:
+                primary[pid] = (cid, qty)
+        for pos in positions:
+            best = primary.get(pos.position_id)
+            if best and best[0]:
+                pos.calc_id = best[0]
 
     # ── Position Close ─────────────────────────────────────────────────────
 

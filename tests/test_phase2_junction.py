@@ -543,3 +543,88 @@ class TestClosingFillAttribution:
         ) as cur:
             pos_lc = (await cur.fetchone())[0]
         assert await _fill_attribution(db, "F-CLOSE") == ("calc-a", pos_lc)
+
+
+# ── 8. T2.3 — PositionInfo.calc_id enrichment from junction primary ─────
+
+
+def _pos(position_id, calc_id=""):
+    from core.state import PositionInfo
+    return PositionInfo(position_id=position_id, ticker="BTCUSDT",
+                        direction="LONG", calc_id=calc_id)
+
+
+class TestPositionInfoCalcId:
+    @pytest.mark.asyncio
+    async def test_field_defaults_empty(self):
+        from core.state import PositionInfo
+        assert PositionInfo().calc_id == ""
+
+    @pytest.mark.asyncio
+    async def test_calc_id_in_preserve_fields(self):
+        from core.data_cache import _PRESERVE_FIELDS
+        assert "calc_id" in _PRESERVE_FIELDS
+
+    @pytest.mark.asyncio
+    async def test_calc_id_survives_snapshot_rebuild(self):
+        # Behavioral: _preserve_metadata must carry calc_id from the old
+        # position object onto the rebuilt one, so a snapshot rebuild
+        # between refreshes doesn't blank the live display.
+        from core.data_cache import DataCache
+        from core.state import PositionInfo
+        old = PositionInfo(position_id="POS-1", ticker="BTCUSDT",
+                           direction="LONG", calc_id="calc-a")
+        new = PositionInfo(position_id="POS-1", ticker="BTCUSDT",
+                           direction="LONG")
+        DataCache._preserve_metadata(new, old)
+        assert new.calc_id == "calc-a"
+
+    @pytest.mark.asyncio
+    async def test_enrich_sets_primary(self, db, om):
+        await _seed_junction(db, "POS-1", "calc-a", 100, 5.0, 1000, "uuid-1")
+        positions = [_pos("POS-1")]
+        await om._enrich_positions_calc_id(ACCOUNT_ID, positions)
+        assert positions[0].calc_id == "calc-a"
+
+    @pytest.mark.asyncio
+    async def test_enrich_uses_most_contributing(self, db, om):
+        await _seed_junction(db, "POS-1", "calc-a", 100, 2.0, 1000, "uuid-1")
+        await _seed_junction(db, "POS-1", "calc-b", 101, 8.0, 2000, "uuid-1")
+        positions = [_pos("POS-1")]
+        await om._enrich_positions_calc_id(ACCOUNT_ID, positions)
+        assert positions[0].calc_id == "calc-b"
+
+    @pytest.mark.asyncio
+    async def test_enrich_tie_break_first_entry(self, db, om):
+        await _seed_junction(db, "POS-1", "calc-early", 100, 5.0, 1000, "uuid-1")
+        await _seed_junction(db, "POS-1", "calc-late", 101, 5.0, 2000, "uuid-1")
+        positions = [_pos("POS-1")]
+        await om._enrich_positions_calc_id(ACCOUNT_ID, positions)
+        assert positions[0].calc_id == "calc-early"
+
+    @pytest.mark.asyncio
+    async def test_no_junction_leaves_empty(self, db, om):
+        positions = [_pos("POS-NONE")]
+        await om._enrich_positions_calc_id(ACCOUNT_ID, positions)
+        assert positions[0].calc_id == ""
+
+    @pytest.mark.asyncio
+    async def test_empty_position_id_skipped(self, db, om):
+        positions = [_pos("")]
+        await om._enrich_positions_calc_id(ACCOUNT_ID, positions)
+        assert positions[0].calc_id == ""
+
+    @pytest.mark.asyncio
+    async def test_refresh_cache_populates_calc_id(self, real, monkeypatch):
+        # End-to-end: opening fill creates the junction via the real path;
+        # refresh_cache then enriches the live PositionInfo.calc_id.
+        om, db = real
+        from core.state import app_state
+        await _seed_linked_order_and_calc(db, eoid="O-1", calc_id="calc-a")
+        await om._process_single_fill(
+            ACCOUNT_ID, _fill("O-1", "POS-1", 0.01, fid="F-OPEN"),
+        )
+        pos = _pos("POS-1")
+        monkeypatch.setattr(app_state, "positions", [pos])
+        await om.refresh_cache(ACCOUNT_ID)
+        assert pos.calc_id == "calc-a"
