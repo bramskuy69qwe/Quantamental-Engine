@@ -159,14 +159,16 @@ async def _read_cp(db_path, cp_id):
         await db.close()
 
 
-async def _read_junction(db_path, cp_id):
+async def _read_junction(db_path, position_id):
+    # P2.T1: junction is keyed by terminal_position_id (TEXT), not
+    # closed_positions.id — callers pass the tpid.
     from core.database import DatabaseManager
     db = DatabaseManager(path=db_path)
     await db.initialize()
     try:
         async with db._conn.execute(
             "SELECT * FROM positions_calcs WHERE position_id = ? "
-            "ORDER BY id ASC", (cp_id,),
+            "ORDER BY id ASC", (position_id,),
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
     finally:
@@ -296,8 +298,9 @@ class TestJunctionBackfill:
         assert result["junction_rows_planned"] == 1
         assert result["junction_rows_applied"] == 1
 
-        rows = await _read_junction(db_path, cp_id)
+        rows = await _read_junction(db_path, "tpid-J1")
         assert len(rows) == 1
+        assert rows[0]["position_id"] == "tpid-J1"
         assert rows[0]["calc_id"] == "calc-a"
         assert rows[0]["order_id"] == order_id
         assert rows[0]["contributed_qty"] == pytest.approx(1.0)
@@ -318,8 +321,9 @@ class TestJunctionBackfill:
         result = await run_backfill(db_path=db_path, apply=True, verbose=False)
         assert result["junction_rows_applied"] == 2
 
-        rows = await _read_junction(db_path, cp_id)
+        rows = await _read_junction(db_path, "tpid-J2")
         assert len(rows) == 2
+        assert all(r["position_id"] == "tpid-J2" for r in rows)
         by_calc = {r["calc_id"]: r for r in rows}
         assert by_calc["calc-a"]["order_id"] == o1
         assert by_calc["calc-a"]["contributed_qty"] == pytest.approx(0.3)
@@ -388,7 +392,7 @@ class TestDryRunAndIdempotence:
         # Unchanged because dry-run.
         assert cp["exit_reason"] == "manual"
         assert cp["lifecycle_id"] is None
-        rows = await _read_junction(db_path, cp_id)
+        rows = await _read_junction(db_path, "tpid-DR")
         assert rows == []
 
     @pytest.mark.asyncio

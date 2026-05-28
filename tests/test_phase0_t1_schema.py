@@ -97,7 +97,7 @@ class TestSchemaPositionsCalcs:
             "(position_id, calc_id, order_id, account_id, "
             " contributed_qty, first_fill_ts, last_fill_ts) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (1, "calc-a", 100, 1, 5.0, 1000, 1000),
+            ("pos-1", "calc-a", 100, 1, 5.0, 1000, 1000),
         )
         await db._conn.commit()
         with pytest.raises(Exception):
@@ -106,7 +106,7 @@ class TestSchemaPositionsCalcs:
                 "(position_id, calc_id, order_id, account_id, "
                 " contributed_qty, first_fill_ts, last_fill_ts) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (1, "calc-a", 100, 1, 99.0, 9999, 9999),
+                ("pos-1", "calc-a", 100, 1, 99.0, 9999, 9999),
             )
             await db._conn.commit()
 
@@ -195,14 +195,14 @@ class TestPositionsCalcsUpsert:
     @pytest.mark.asyncio
     async def test_first_insert_creates_row(self, db):
         await db.upsert_position_calc_link({
-            "position_id": 1, "calc_id": "calc-a", "order_id": 100,
+            "position_id": "pos-1", "calc_id": "calc-a", "order_id": 100,
             "account_id": 1, "contributed_qty": 5.0,
             "first_fill_ts": 1000, "last_fill_ts": 1000,
             "planned_size": 10.0, "size_delta_pct": -50.0,
             "planned_tp": 105.0, "planned_sl": 95.0,
             "lifecycle_id": "uuid-1",
         })
-        rows = await db.get_position_calc_links(1)
+        rows = await db.get_position_calc_links("pos-1")
         assert len(rows) == 1
         assert rows[0]["contributed_qty"] == pytest.approx(5.0)
         assert rows[0]["lifecycle_id"] == "uuid-1"
@@ -212,7 +212,7 @@ class TestPositionsCalcsUpsert:
         # Same triple twice — qty should sum, last_fill_ts should
         # advance, first_fill_ts should stay.
         base = {
-            "position_id": 1, "calc_id": "calc-a", "order_id": 100,
+            "position_id": "pos-1", "calc_id": "calc-a", "order_id": 100,
             "account_id": 1, "planned_size": 10.0,
             "size_delta_pct": -50.0, "planned_tp": None,
             "planned_sl": None, "lifecycle_id": "uuid-1",
@@ -225,7 +225,7 @@ class TestPositionsCalcsUpsert:
             **base, "contributed_qty": 4.0,
             "first_fill_ts": 2000, "last_fill_ts": 2000,
         })
-        rows = await db.get_position_calc_links(1)
+        rows = await db.get_position_calc_links("pos-1")
         assert len(rows) == 1
         assert rows[0]["contributed_qty"] == pytest.approx(7.0)
         assert rows[0]["first_fill_ts"] == 1000   # preserved
@@ -236,7 +236,7 @@ class TestPositionsCalcsUpsert:
         # Scale-in: second calc on same position should be a NEW
         # junction row.
         await db.upsert_position_calc_link({
-            "position_id": 1, "calc_id": "calc-a", "order_id": 100,
+            "position_id": "pos-1", "calc_id": "calc-a", "order_id": 100,
             "account_id": 1, "contributed_qty": 5.0,
             "first_fill_ts": 1000, "last_fill_ts": 1000,
             "planned_size": None, "size_delta_pct": None,
@@ -244,14 +244,14 @@ class TestPositionsCalcsUpsert:
             "lifecycle_id": "uuid-1",
         })
         await db.upsert_position_calc_link({
-            "position_id": 1, "calc_id": "calc-b", "order_id": 101,
+            "position_id": "pos-1", "calc_id": "calc-b", "order_id": 101,
             "account_id": 1, "contributed_qty": 3.0,
             "first_fill_ts": 2000, "last_fill_ts": 2000,
             "planned_size": None, "size_delta_pct": None,
             "planned_tp": None, "planned_sl": None,
             "lifecycle_id": "uuid-1",
         })
-        rows = await db.get_position_calc_links(1)
+        rows = await db.get_position_calc_links("pos-1")
         assert len(rows) == 2
         calc_ids = {r["calc_id"] for r in rows}
         assert calc_ids == {"calc-a", "calc-b"}
@@ -261,25 +261,25 @@ class TestPositionsCalcsReads:
     @pytest.mark.asyncio
     async def test_get_calc_position_links(self, db):
         # Same calc contributing to TWO positions (sequential trades).
-        for pid in (1, 2):
+        for i, pid in enumerate(("pos-1", "pos-2"), start=1):
             await db.upsert_position_calc_link({
-                "position_id": pid, "calc_id": "calc-x", "order_id": 100 + pid,
+                "position_id": pid, "calc_id": "calc-x", "order_id": 100 + i,
                 "account_id": 1, "contributed_qty": 5.0,
-                "first_fill_ts": 1000 * pid, "last_fill_ts": 1000 * pid,
+                "first_fill_ts": 1000 * i, "last_fill_ts": 1000 * i,
                 "planned_size": None, "size_delta_pct": None,
                 "planned_tp": None, "planned_sl": None,
-                "lifecycle_id": f"uuid-{pid}",
+                "lifecycle_id": f"uuid-{i}",
             })
         rows = await db.get_calc_position_links("calc-x")
         assert len(rows) == 2
-        assert {r["position_id"] for r in rows} == {1, 2}
+        assert {r["position_id"] for r in rows} == {"pos-1", "pos-2"}
 
     @pytest.mark.asyncio
     async def test_get_lifecycle_links(self, db):
         # Scale-in: two calcs, same lifecycle_id, same position.
         for calc_id in ("calc-a", "calc-b"):
             await db.upsert_position_calc_link({
-                "position_id": 1, "calc_id": calc_id,
+                "position_id": "pos-1", "calc_id": calc_id,
                 "order_id": 100 if calc_id == "calc-a" else 101,
                 "account_id": 1, "contributed_qty": 5.0,
                 "first_fill_ts": 1000, "last_fill_ts": 1000,

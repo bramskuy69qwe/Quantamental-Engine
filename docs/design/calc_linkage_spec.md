@@ -129,7 +129,7 @@ within a configurable window.
 | Column | Type | Notes |
 |---|---|---|
 | id | INTEGER PK | |
-| position_id | INTEGER FK | references position lifecycle |
+| position_id | TEXT | `terminal_position_id` — the engine's universal position key (see note); P2.T1 |
 | calc_id | TEXT FK | references pre_trade_log.calc_id |
 | order_id | INTEGER FK | references orders.id |
 | account_id | INTEGER | denormalized for fast account-scoped queries |
@@ -143,6 +143,21 @@ within a configurable window.
 | lifecycle_id | TEXT | UUID; see §3.5; same value across all rows for one position |
 
 Indexes: `(position_id)`, `(calc_id)`, `(order_id)`, `(account_id, calc_id)`, `(lifecycle_id)`.
+
+> **`position_id` type — TEXT, not INTEGER (settled P2.T1, 2026-05-29).**
+> This spec originally declared `position_id` an INTEGER FK "references
+> position lifecycle", but the engine has **no integer position-lifecycle
+> table** — open positions live only in memory and are identified by the
+> string `terminal_position_id` (the same key on `orders` / `fills` /
+> `closed_positions`). `closed_positions.id` (integer) exists only
+> *after* close, so it can't key a junction row written at the **first
+> opening fill** (P2.T1). The junction is therefore keyed by the
+> `terminal_position_id` TEXT string. The cross-table single-key audit
+> handle the integer was imagined for is delivered by `lifecycle_id`
+> (§3.5), already a column here. The Phase-0 backfill (which had used
+> `closed_positions.id`) was updated to use `terminal_position_id`. The
+> `position_id: 12345` integer in §9's `position:closed` payload is
+> illustrative only.
 
 **order_amendments** (polymorphic field-level audit)
 

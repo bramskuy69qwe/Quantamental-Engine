@@ -467,7 +467,12 @@ CREATE INDEX IF NOT EXISTS idx_closed_pos_symbol ON closed_positions (symbol, ex
 
 CREATE TABLE IF NOT EXISTS positions_calcs (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    position_id     INTEGER NOT NULL,
+    -- P2.T1: keyed by terminal_position_id (TEXT) — the engine's
+    -- universal position identity (same key as orders/fills/
+    -- closed_positions), generated/available at the first opening
+    -- fill. NOT an integer surrogate: open positions have no integer
+    -- id (closed_positions.id exists only post-close). Spec §3.1.
+    position_id     TEXT    NOT NULL,
     calc_id         TEXT    NOT NULL,
     order_id        INTEGER NOT NULL,
     account_id      INTEGER NOT NULL,
@@ -930,6 +935,74 @@ class DatabaseManager(
             await self._conn.commit()
         except _sqlite3.OperationalError:
             pass  # status column not yet present (pre-P0.T3 DB) — skip
+
+        # ── P2.T1: positions_calcs.position_id INTEGER → TEXT ────────────
+        # The junction is keyed by terminal_position_id (TEXT) — the
+        # engine's universal position identity, the same key used by
+        # orders/fills/closed_positions — NOT an integer surrogate. The
+        # P0.T1 schema declared position_id INTEGER (the backfill used
+        # closed_positions.id, available only post-close); the live
+        # forward path (order_manager.process_fill) writes the junction
+        # at the FIRST opening fill, when only terminal_position_id
+        # exists. See docs/design/calc_linkage_spec.md §3.1.
+        #
+        # Safe recreate: fires ONLY when position_id is still INTEGER AND
+        # the table is empty (true on every DB pre-P2.T1 — the junction
+        # had no live producer). A non-empty INTEGER table is left
+        # untouched with a loud error so live data is never destroyed.
+        # Idempotent: post-recreate position_id is TEXT → guard skips.
+        try:
+            async with self._conn.execute(
+                "PRAGMA table_info(positions_calcs)"
+            ) as cur:
+                _pc_cols = await cur.fetchall()
+            _pid = next((c for c in _pc_cols if c[1] == "position_id"), None)
+            if _pid is not None and (_pid[2] or "").upper() == "INTEGER":
+                async with self._conn.execute(
+                    "SELECT COUNT(*) FROM positions_calcs"
+                ) as cur:
+                    _pc_n = (await cur.fetchone())[0]
+                if _pc_n == 0:
+                    await self._conn.execute("DROP TABLE positions_calcs")
+                    await self._conn.execute(
+                        "CREATE TABLE positions_calcs ("
+                        " id              INTEGER PRIMARY KEY AUTOINCREMENT,"
+                        " position_id     TEXT    NOT NULL,"
+                        " calc_id         TEXT    NOT NULL,"
+                        " order_id        INTEGER NOT NULL,"
+                        " account_id      INTEGER NOT NULL,"
+                        " contributed_qty REAL    NOT NULL DEFAULT 0,"
+                        " first_fill_ts   INTEGER NOT NULL DEFAULT 0,"
+                        " last_fill_ts    INTEGER NOT NULL DEFAULT 0,"
+                        " planned_size    REAL    DEFAULT NULL,"
+                        " size_delta_pct  REAL    DEFAULT NULL,"
+                        " planned_tp      REAL    DEFAULT NULL,"
+                        " planned_sl      REAL    DEFAULT NULL,"
+                        " lifecycle_id    TEXT    DEFAULT NULL,"
+                        " UNIQUE (position_id, calc_id, order_id))"
+                    )
+                    for _idx in (
+                        "CREATE INDEX IF NOT EXISTS idx_pc_position  ON positions_calcs (position_id)",
+                        "CREATE INDEX IF NOT EXISTS idx_pc_calc      ON positions_calcs (calc_id)",
+                        "CREATE INDEX IF NOT EXISTS idx_pc_order     ON positions_calcs (order_id)",
+                        "CREATE INDEX IF NOT EXISTS idx_pc_account   ON positions_calcs (account_id, calc_id)",
+                        "CREATE INDEX IF NOT EXISTS idx_pc_lifecycle ON positions_calcs (lifecycle_id)",
+                    ):
+                        await self._conn.execute(_idx)
+                    await self._conn.commit()
+                    log.info(
+                        "Migrated positions_calcs.position_id INTEGER→TEXT "
+                        "(empty-table recreate, P2.T1)"
+                    )
+                else:
+                    log.error(
+                        "positions_calcs has %d row(s) with INTEGER position_id; "
+                        "P2.T1 TEXT migration SKIPPED to avoid data loss — a "
+                        "type-preserving migration is required (junction was "
+                        "expected empty pre-P2.T1).", _pc_n,
+                    )
+        except _sqlite3.OperationalError:
+            pass  # table absent (pre-P0.T1 DB) — executescript CREATE handles it
 
         # ── account_id indexes (idempotent) ───────────────────────────────────
         for idx_sql in [

@@ -273,6 +273,23 @@ change unless the transactional path migrates to per-account routing
   matcher). Both written per-calc. Deprecate the legacy column when
   exec_link migrates. Anchor-comment in `db_trades.py`.
 
+### lifecycle_id vs tpid-reuse (P2.T1 assumption, surfaced by T226-audit)
+
+`_link_position_calc_on_open` reuses a position's `lifecycle_id` by
+looking up existing `positions_calcs` rows for the same
+`terminal_position_id`. This assumes **tpid identifies one position
+instance** (never reused across close→reopen on the same symbol/dir
+slot). The whole position subsystem already depends on this invariant
+(`get_position_fills` strict-tpid match; `_build_close_row_for_fill`
+VWAPs opens by tpid) — a recurring tpid would corrupt close-rows/fees
+long before it reached the junction. Live paths hold it: binance_ws
+leaves `PositionInfo.position_id=""` (→ empty tpid → junction skipped),
+Quantower emits a per-position-object id. **If a future adapter emits a
+recurring slot-id**, a closed trade's lifecycle would bleed into a new
+one; the fix is seal-at-close, deferred because it must distinguish full
+vs partial close (couples with Phase 2.11 multi-TP). Not a live blocker;
+documented as an anchor comment in `order_manager.py`.
+
 ### Calc-cancel UI wiring (deferred from T219 / P1.T4)
 
 Cancel endpoint + transition shipped; the "Cancel calc" button (spec

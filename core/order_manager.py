@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.event_bus import event_bus
@@ -886,6 +887,11 @@ class OrderManager:
         # exceptions are swallowed by _enrich_order_best_effort.
         await self._reenrich_parent_after_fill(account_id, exchange_order_id)
         self._enrich_fill_best_effort(fill)
+        # T2.1: on an opening fill, attach the position↔calc junction row
+        # and generate/propagate the position's lifecycle_id. Runs after
+        # enrichment so the parent order's calc_id is populated (matcher
+        # + propagation already ran above). No-op for closing fills.
+        await self._link_position_calc_on_open(account_id, fill)
         self._emit_fill_events(account_id, fill)
         self._publish_fill(account_id, fill)
 
@@ -954,6 +960,143 @@ class OrderManager:
                 portion_fill["terminal_position_id"] = ""
 
             await self._process_single_fill(account_id, portion_fill)
+
+    # ── Position ↔ calc junction (Phase 2.1) ────────────────────────────────
+
+    async def _link_position_calc_on_open(
+        self, account_id: int, fill: Dict[str, Any]
+    ) -> None:
+        """T2.1 (plan §2 task 2.1): on each opening fill, upsert the
+        ``positions_calcs`` junction row and generate / propagate the
+        position's ``lifecycle_id``.
+
+        Spec §3.1 / §3.5 / §7. The junction is keyed by
+        ``terminal_position_id`` (the engine's universal position
+        identity — see the P2.T1 schema note in ``database.py``), one
+        row per (position, calc, order). ``contributed_qty`` accumulates
+        across fills of the same triple via the UPSERT.
+
+        ``lifecycle_id`` (UUID v4) is the operator-facing trade
+        reference: generated at the FIRST opening fill of a position and
+        reused by every later fill / scale-in calc on that position
+        (spec §3.5 — "multi-calc scale-ins share same lifecycle_id").
+        Back-filled onto the contributing ``pre_trade_log`` + ``orders``
+        rows (idempotent ``WHERE lifecycle_id IS NULL``).
+
+        Skips (no attribution possible) when:
+          - the fill is a close (only opening fills seed the junction);
+          - ``terminal_position_id`` is empty (reversal-open portion,
+            or the Binance one-way pre-ACCOUNT_UPDATE window — the
+            position key isn't known yet);
+          - the parent order has no ``calc_id`` (UNPLANNED / unlinked —
+            nothing to attribute).
+
+        Best-effort: failures log + return; never break the fill hot
+        path. All reads/writes go through ``self._db._conn`` (the
+        single calc-linkage DB, ``config.DB_PATH``), matching the
+        sibling Phase-1 transition sites.
+        """
+        if fill.get("is_close"):
+            return
+        pos_id = fill.get("terminal_position_id", "") or ""
+        if not pos_id:
+            return
+        eoid = fill.get("exchange_order_id", "") or ""
+        if not eoid:
+            return
+
+        try:
+            async with self._db._conn.execute(
+                "SELECT id, calc_id FROM orders "
+                "WHERE account_id = ? AND exchange_order_id = ?",
+                (account_id, eoid),
+            ) as cur:
+                orow = await cur.fetchone()
+        except Exception:
+            log.debug("junction link: order read failed for %s", eoid, exc_info=True)
+            return
+        if not orow:
+            return
+        order_id = orow[0]
+        calc_id = orow[1]
+        if not calc_id:
+            return  # UNPLANNED / unlinked entry — nothing to attribute
+
+        # Reuse the position's existing lifecycle_id if a prior fill on
+        # this position already established one (multi-fill / scale-in);
+        # otherwise this is the first opening fill → mint a UUID v4.
+        #
+        # ASSUMPTION (engine-wide invariant): terminal_position_id
+        # identifies ONE position instance, never reused across a
+        # close→reopen on the same symbol/direction slot. The whole
+        # position subsystem already depends on this — get_position_fills
+        # does a strict tpid match and _build_close_row_for_fill VWAPs
+        # opens by tpid; a recurring tpid would corrupt those long before
+        # it reached here. The live paths hold it: binance_ws leaves
+        # PositionInfo.position_id="" (→ empty tpid → skipped above), and
+        # Quantower emits a per-position-object id. IF a future adapter
+        # emits a recurring slot-id, this lookup would bleed a closed
+        # trade's lifecycle into a new one — fix is seal-at-close, but
+        # that must distinguish full vs partial (Phase 2.11 multi-TP)
+        # close, so it's deferred until an adapter actually violates the
+        # invariant. See HANDOFF "lifecycle_id vs tpid-reuse".
+        try:
+            async with self._db._conn.execute(
+                "SELECT lifecycle_id FROM positions_calcs "
+                "WHERE position_id = ? AND account_id = ? "
+                "  AND lifecycle_id IS NOT NULL LIMIT 1",
+                (pos_id, account_id),
+            ) as cur:
+                lrow = await cur.fetchone()
+        except Exception:
+            log.debug("junction link: lifecycle lookup failed for %s", pos_id, exc_info=True)
+            return
+        lifecycle_id = lrow[0] if lrow and lrow[0] else str(uuid.uuid4())
+
+        qty = abs(float(fill.get("quantity", 0) or 0))
+        ts = int(fill.get("timestamp_ms", 0) or 0)
+
+        # Upsert the junction row (cumulative contributed_qty). planned_*
+        # / size_delta_pct are left NULL here — copied from the calc at
+        # contribution time in T2.4 and computed at close in T2.5.
+        await self._db.upsert_position_calc_link({
+            "position_id":     pos_id,
+            "calc_id":         calc_id,
+            "order_id":        order_id,
+            "account_id":      account_id,
+            "contributed_qty": qty,
+            "first_fill_ts":   ts,
+            "last_fill_ts":    ts,
+            "lifecycle_id":    lifecycle_id,
+        })
+
+        # Back-fill lifecycle_id onto the contributing calc + order
+        # (spec §3.5). Idempotent via WHERE lifecycle_id IS NULL: the
+        # first opening fill stamps; repeat fills no-op. A calc
+        # contributes to one position lifecycle and an order belongs to
+        # one position, so the stamped value is always the right one.
+        try:
+            await self._db._conn.execute(
+                "UPDATE pre_trade_log SET lifecycle_id = ? "
+                "WHERE calc_id = ? AND lifecycle_id IS NULL",
+                (lifecycle_id, calc_id),
+            )
+            await self._db._conn.execute(
+                "UPDATE orders SET lifecycle_id = ? "
+                "WHERE id = ? AND lifecycle_id IS NULL",
+                (lifecycle_id, order_id),
+            )
+            await self._db._conn.commit()
+        except Exception:
+            log.warning(
+                "junction link: lifecycle back-fill failed for calc=%s order=%s",
+                calc_id, order_id, exc_info=True,
+            )
+
+        log.info(
+            "Linked position %s ↔ calc %s (order_id=%s, lifecycle=%s, qty=%.6f)",
+            pos_id, calc_id, order_id, lifecycle_id, qty,
+        )
 
     # ── Position Close ─────────────────────────────────────────────────────
 

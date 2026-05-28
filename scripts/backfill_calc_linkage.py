@@ -154,7 +154,7 @@ async def _resolve_order_id(
 
 async def _existing_junction_count(
     db: Any,
-    position_id: int,
+    position_id: str,
 ) -> int:
     async with db._conn.execute(
         "SELECT COUNT(*) FROM positions_calcs WHERE position_id = ?",
@@ -332,12 +332,17 @@ async def _build_plan(
             new_uuid = str(cp["lifecycle_id"])
 
         # 3. Junction backfill — only if no junction rows yet for this
-        # closed_position.
-        existing_junction = await _existing_junction_count(db, cp_id)
+        # position. Keyed by terminal_position_id (TEXT) per P2.T1 — the
+        # same key the forward path (order_manager) writes (spec §3.1),
+        # NOT closed_positions.id. A cp without a tpid can't be mapped to
+        # a position key, so it can't seed the junction → skip. When
+        # several closed_positions share a tpid (partial-close history),
+        # the first seeds the junction; the rest skip as already-populated.
+        if not tpid:
+            continue
+        existing_junction = await _existing_junction_count(db, tpid)
         if existing_junction > 0:
             skip_already_populated += 1
-            continue
-        if not tpid:
             continue
 
         fills = await _read_fills_for_position(
@@ -365,7 +370,7 @@ async def _build_plan(
             first_ts = min(int(f.get("timestamp_ms", 0) or 0) for f in fs)
             last_ts = max(int(f.get("timestamp_ms", 0) or 0) for f in fs)
             junction_rows.append({
-                "position_id":     cp_id,
+                "position_id":     tpid,
                 "calc_id":         cid,
                 "order_id":        order_id,
                 "account_id":      int(cp["account_id"]),

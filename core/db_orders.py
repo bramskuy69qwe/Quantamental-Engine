@@ -1278,11 +1278,16 @@ class OrdersMixin:
     async def upsert_position_calc_link(self, row: Dict[str, Any]) -> None:
         """UPSERT a junction row for (position_id, calc_id, order_id).
 
+        ``position_id`` is the engine's ``terminal_position_id`` string
+        (TEXT) — the universal position identity used across orders/
+        fills/closed_positions — NOT an integer (see spec §3.1, P2.T1).
+
         Phase 2.1 calls this on every opening fill. Per-fill cumulative
         ``contributed_qty`` is summed via the UPSERT (UNIQUE constraint
         on the triple + ON CONFLICT DO UPDATE adds the new fill's qty
         and refreshes last_fill_ts). ``first_fill_ts`` is preserved on
-        update via COALESCE-of-existing.
+        update by being omitted from the DO UPDATE SET (it keeps the
+        value written on first insert).
         """
         sql = """
             INSERT INTO positions_calcs (
@@ -1321,8 +1326,10 @@ class OrdersMixin:
         except Exception:
             log.exception("upsert_position_calc_link failed")
 
-    async def get_position_calc_links(self, position_id: int) -> List[Dict]:
+    async def get_position_calc_links(self, position_id: str) -> List[Dict]:
         """Return all junction rows for one position, ordered by first_fill_ts.
+
+        ``position_id`` is the ``terminal_position_id`` string (P2.T1).
 
         Phase 2.5/2.6 uses this to compute the most-contributing calc
         for delta basis (spec §3.2) and to surface the per-calc
