@@ -534,6 +534,104 @@ class OrderManager:
                 calc_id, eid, exc_info=True,
             )
 
+    async def _complete_calcs_on_close(
+        self, account_id: int, calc_ids, position_id: str,
+    ) -> None:
+        """T221 (P1.T6 / plan §1 task 1.8): auto-complete contributing
+        calcs when a position closes.
+
+        Spec §2 [D/E] / §5 / §9: on position close, each contributing
+        calc transitions ``→ completed_via_position`` and emits
+        ``calc:completed`` (carrying ``position_id``). Valid source
+        states are ``matched`` and ``partially_actioned`` (per
+        ``CALC_TRANSITIONS``); calcs in any other state are skipped
+        (released/superseded/cancelled/already-completed).
+
+        TOCTOU-guarded (T211 M3): the UPDATE is scoped ``WHERE status =
+        <read status>``; rowcount=0 → CalcTransitionRaceLost → event
+        skipped. Best-effort per calc — one failure doesn't block the
+        others or the close-row build (caller is already inside the
+        close-row try/except).
+
+        PHASE-1 SIMPLIFICATION (multi-TP): in Phase 1 this runs on every
+        close-row build. For a single-close position (the common case)
+        that's exactly-once + correct. For a multi-TP ladder (Phase
+        2.11), the calc completes on the FIRST partial close (premature)
+        and subsequent partial closes no-op via the guard. Phase 2.11
+        (position-lifecycle tracking) will refine this to complete only
+        on the FINAL close (size→0). Acceptable for Phase 1 — multi-TP
+        lifecycle isn't wired yet, and the calc is genuinely being
+        actioned via the position either way.
+        """
+        from core.calc_state import (
+            CalcStatus,
+            CalcTransitionRaceLost,
+            transition,
+        )
+
+        completable = {
+            CalcStatus.MATCHED.value,
+            CalcStatus.PARTIALLY_ACTIONED.value,
+        }
+
+        for calc_id in calc_ids:
+            if not calc_id:
+                continue
+            try:
+                async with self._db._conn.execute(
+                    "SELECT status FROM pre_trade_log "
+                    "WHERE account_id = ? AND calc_id = ?",
+                    (account_id, calc_id),
+                ) as cur:
+                    row = await cur.fetchone()
+            except Exception:
+                log.debug(
+                    "complete-on-close: status read failed for calc_id=%s",
+                    calc_id, exc_info=True,
+                )
+                continue
+            if not row:
+                continue
+            current_status = row[0]
+            if current_status not in completable:
+                continue  # released/superseded/cancelled/already-completed
+
+            # T215 M3: no default-arg capture — transition() awaits
+            # apply_fn fully before the loop advances.
+            async def _apply_complete() -> None:
+                cur2 = await self._db._conn.execute(
+                    "UPDATE pre_trade_log SET status = ? "
+                    "WHERE calc_id = ? AND status = ?",
+                    (CalcStatus.COMPLETED_VIA_POSITION.value,
+                     calc_id, current_status),
+                )
+                await self._db._conn.commit()
+                if cur2.rowcount == 0:
+                    raise CalcTransitionRaceLost(
+                        calc_id, current_status,
+                        CalcStatus.COMPLETED_VIA_POSITION.value,
+                    )
+
+            try:
+                await transition(
+                    calc_id=calc_id,
+                    current_status=current_status,
+                    target_status=CalcStatus.COMPLETED_VIA_POSITION.value,
+                    apply_fn=_apply_complete,
+                    event_payload={"position_id": position_id},
+                )
+                log.info(
+                    "Completed calc %s on close of position %s",
+                    calc_id, position_id,
+                )
+            except CalcTransitionRaceLost as exc:
+                log.info("%s", exc)
+            except Exception:
+                log.warning(
+                    "calc complete-on-close failed for calc_id=%s pos=%s",
+                    calc_id, position_id, exc_info=True,
+                )
+
     def _detect_modification_events(
         self, account_id: int, order: Dict[str, Any], prev_order: Optional[Dict]
     ) -> None:
@@ -1020,6 +1118,22 @@ class OrderManager:
                 }, source="order_manager")
             except Exception:
                 log.debug("position_closed trade event failed", exc_info=True)
+
+            # T221 (P1.T6): auto-complete contributing calcs. Phase 1
+            # contributing-calc set = distinct calc_ids across the
+            # opening fills (the positions_calcs junction is Phase 2).
+            # Runs AFTER the close row + events are persisted so a
+            # completion failure can't undo the close. Best-effort.
+            contributing_calc_ids = {
+                f["calc_id"] for f in opens if f.get("calc_id")
+            }
+            if not contributing_calc_ids and close_calc_id:
+                contributing_calc_ids = {close_calc_id}
+            if contributing_calc_ids:
+                await self._complete_calcs_on_close(
+                    account_id, contributing_calc_ids, pos_id,
+                )
+
             log.info(
                 "Closed position row: %s %s qty=%.4f pnl=%.2f exit=%s",
                 symbol, direction, total_close_qty, realized_pnl, exit_reason,
