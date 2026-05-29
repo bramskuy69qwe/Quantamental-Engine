@@ -1,9 +1,50 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-05-28
-**Current branch**: `v2.5/post-rewind-drop-regime-infra` @ `81ff8ef`
-**Tests**: 2645 passed, 7 skipped, 1 unrelated pre-existing failure
+**Date**: 2026-05-29
+**Current branch**: `v2.5/post-rewind-drop-regime-infra` @ `task 240 (P2.T12)` — pushed to origin
+**Tests**: 2802 passed, 7 skipped, 1 unrelated pre-existing failure
 **Pre-existing failure**: `tests/test_data_cache_dd.py::TestRollingWindowPeak::test_old_high_excluded_from_window` — 30-day rolling-window boundary bug; unrelated to calc-linkage. Worth filing as its own task.
+
+## ★ STATUS (2026-05-29) — PHASE 2 COMPLETE; next = Phase 3
+
+**Phase 2 (position-level attribution, plan §2) is fully shipped + independently
+audited, T2.1–T2.12** (T2.10 was removed per spec §15 R2). Commit trail on this
+branch: T2.1–T2.7 (tasks 226–235), T2.8 bracket detection (236), T2.9 TP/SL
+calc_id inheritance (237), T2.11 multi-TP lifecycle (239), T2.12 restart
+rehydrate (240). Each task: implemented surgically → independent adversarial
+review (Workflow when ultracode on) → findings fixed → full suite green. Detailed
+per-task notes are in the sections below + `docs/design/calc_linkage_implementation_plan.md` §2.
+
+**What Phase 2 established (the invariants a Phase-3 task must not break):**
+- `positions_calcs` junction (TEXT `position_id` = `terminal_position_id`) is the
+  source of truth for position↔calc attribution; `lifecycle_id` UUID minted at
+  first opening fill, denormalized across pre_trade_log/orders/fills/closed_positions.
+- **R1 convergence**: the position's PRIMARY calc (spec §3.2: largest *summed*
+  `contributed_qty` per calc, tie-break earliest `first_fill_ts`) is computed by
+  the SINGLE shared selector `core/order_manager._most_contributing_calc_id` and is
+  identical across all surfaces — `fills.calc_id` (T2.2), live `PositionInfo.calc_id`
+  (T2.3/T2.12), `closed_positions.calc_id` (T2.6), and the T2.5 delta basis. Do not
+  reintroduce a second primary-selection rule (T240 fixed exactly that divergence).
+- TP/SL order rows get `calc_id` ONLY via bracket inheritance (T2.9
+  `_propagate_bracket_calc_id`); the matcher skips reduce-only/close types.
+- Multi-TP: per-partial `closed_positions` rows preserved; calc completion +
+  ladder `exit_reason` (TP_LADDER_COMPLETE/MIXED) fire on the FINAL close (T2.11).
+
+**NEXT — Phase 3 (manual-link UI + link_status state machine, plan §3):**
+- **P3.T1** — route EVERY `orders.link_status` write through the
+  `core/link_state.transition()` choke-point (shipped in P0.T6, currently unused).
+  Two known raw-UPDATE sites to sweep onto it: `core/order_enrichment._try_correlate`
+  (the matcher's NULL→LINKED/NEEDS_MANUAL_REVIEW/UNPLANNED initial set) and
+  `core/order_manager._propagate_bracket_calc_id` (T2.9's raw `link_status='LINKED'`,
+  anchor-commented for this sweep). Note: `link_state.transition` only validates
+  `current→target` between existing enum values — initial-arrival (NULL→X) sets need
+  a dedicated path (see link_state.py:53).
+- **P3.T2** — auto-UNPLANNED when the matcher finds zero candidates in-window.
+- Manual-link tab / endpoint (spec §6.2): NEEDS_MANUAL_REVIEW + UNLINKED queue,
+  operator link/mark-unplanned actions (POST /orders/{id}/...), routed through the
+  choke-point. `core/exec_link.py` already computes per-fill display link status.
+- Deployment context is single-tenant localhost (CLAUDE.md, Task 163): no auth/CSRF
+  work; threat model is correctness + observability + recovery.
 
 ## Session rules (apply to every session unless explicitly overridden)
 
@@ -527,6 +568,66 @@ realistic-deferred-timing, disappearance backstop).
   reads `app_state` which reflects pre-fill size (per `_process_single_fill`'s
   own contract) → may overstate by one rung. Best-effort event (formal §9
   topic is Phase 6); `qty_reduced` + `realized_pnl_partial` are authoritative.
+
+### Restart rehydrate — contributing_calc_ids + live size deviation (T240 / P2.T12)
+
+The LAST Phase-2 task. `PositionInfo` gained two fields (state.py):
+`contributing_calc_ids: List[str]` (all junction calcs for the position,
+primary-first then contributed_qty desc) and `size_delta_pct: float` (live
+size deviation). Both populated by EXTENDING T2.3's
+`_enrich_positions_calc_id` — the key insight is that method **already runs
+at startup** (`_startup_fetch` → `process_order_snapshot` → `refresh_cache`)
+and authoritatively re-derives from the persisted `positions_calcs` junction,
+so "restart rehydrate" needed no new exchange.py/startup hook (a separate one
+would duplicate the authoritative re-derivation and risk divergence —
+deliberate deviation from the plan's stated files).
+
+All three junction-derived fields (calc_id, contributing_calc_ids,
+size_delta_pct) are AUTHORITATIVE (mirror the junction each refresh; CLEARED
+to ""/[]/0.0 when no junction) and added to `DataCache._PRESERVE_FIELDS` so a
+snapshot rebuild between refreshes doesn't blank them.
+
+`size_delta_pct = (Σ contributed_qty − primary calc's planned_size) /
+planned_size × 100` (signed; spec §3.2 most-contributing basis; mirrors the
+T2.5 close-time size_delta). 0.0 when no junction or no planned_size snapshot.
+Per-(position,calc) contributed_qty is summed (a calc may place >1 order on a
+position → multiple junction rows); ties on contributed_qty resolve to the
+earliest first_fill_ts (same rule as `_position_primary_calc`).
+
+**Deferred (Phase 4.4, documented)**: the yellow/red deviation BADGE
+thresholding + TP/SL live deviation — they need the order-amendment tracking
+(Phase 4.1/4.3) + live TP/SL that isn't wired yet. T2.12 stores the size
+DELTA (the badge input); the badge/threshold logic is the Phase-4.4 consumer.
+The `calc:size_deviated` event is Phase 6.2.
+
+Tests: `tests/test_phase2_rehydrate.py` (14) — single/scale-in/tie-break/
+multi-order-same-calc/no-junction-clear/underfill/no-planned/empty-tpid/
+multi-position + _PRESERVE_FIELDS membership + dataclass defaults + the
+convergence pair below.
+
+**T240 review (4 dimensions → adversarial verify; 24 candidates, 1 confirmed)
+— HIGH primary-selection divergence FOUND + FIXED:** the review confirmed
+(and I'd independently flagged) that the new live `_enrich_positions_calc_id`
+selected the primary by **summed-per-calc** contributed_qty, while
+`_position_primary_calc` (the canonical helper behind the close path —
+T2.2 closing-fill stamp, T2.5 deltas, T2.6 closed_positions.calc_id) selected
+the max **single ROW**. For a calc placing >1 opening order on one position
+(multiple `(pos,calc,order)` junction rows) these diverge → the live
+PositionInfo.calc_id could disagree with the sealed closed_positions.calc_id
++ wrong close-delta basis — violating the R1 convergence guarantee T2.6
+asserted closed. **Root cause was `_position_primary_calc`, not the new code**:
+spec §3.2 ("largest contributed_qty") + §12.4 (junction
+`contributed_qty = SUM(fill_qty)` grouped by `(position, calc_id)`) intend
+the per-CALC SUM, so the aggregated side was spec-correct. **Fix**: extracted
+a shared pure selector `_most_contributing_calc_id(ordered_rows)` (sums per
+calc, earliest-first_fill tie-break) and routed BOTH `_position_primary_calc`
+and `_enrich_positions_calc_id` through it — all four surfaces now converge on
+the spec-correct aggregated rule by construction. Existing close-path tests
+(one-order-per-calc → summed == max-row) are unaffected; added a convergence
+test seeding a multi-order calc that out-sums a larger-single-row rival. The
+other 23 review candidates were adversarially refuted (size_delta basis is
+spec-compliant, _PRESERVE_FIELDS list-aliasing is safe since enrich reassigns,
+no positional-construction/serialization breakage).
 
 ### Junction contributed_qty redelivery double-count (T232 audit — confirmed, deferred)
 

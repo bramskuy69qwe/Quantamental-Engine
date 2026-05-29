@@ -40,6 +40,44 @@ def _first_truthy(*vals: Any) -> Optional[float]:
     return None
 
 
+def _most_contributing_calc_id(
+    ordered_rows: List[Tuple[str, float]],
+) -> Optional[str]:
+    """Spec §3.2 / §12.4 "most-contributing calc": the ``calc_id`` with the
+    largest **summed** ``contributed_qty`` across its junction rows.
+
+    A calc may place >1 opening order on a position, and the junction is
+    keyed ``UNIQUE(position_id, calc_id, order_id)`` — so one calc can own
+    multiple rows for the same position. The spec defines contribution at
+    the CALC level (§12.4: junction ``contributed_qty = SUM(fill_qty)``
+    grouped by ``(position lifecycle, calc_id)``), so the primary must be
+    chosen by the per-calc SUM, not the largest single row.
+
+    ``ordered_rows`` is an iterable of ``(calc_id, contributed_qty)`` that
+    MUST already be sorted by ``first_fill_ts ASC`` — dict insertion order
+    then encodes the earliest-first_fill tie-break, and ``max`` returns the
+    first maximal element, so ties resolve to the earliest calc (§3.2).
+    Returns ``None`` when there are no calc-bearing rows.
+
+    T240 (P2.T12 review): the single source of truth for the §3.2 selection
+    rule, shared by :meth:`OrderManager._position_primary_calc` (close-path
+    T2.2/T2.5/T2.6) and :meth:`OrderManager._enrich_positions_calc_id`
+    (live + rehydrate T2.3/T2.12) so ALL surfaces converge (R1). Before
+    T240 the two implemented the rule separately — ``_position_primary_calc``
+    took the max single ROW (not per-calc summed), so a multi-order calc
+    could be mis-ranked, diverging the live PositionInfo.calc_id from the
+    sealed closed_positions.calc_id for the same position.
+    """
+    per_calc: Dict[str, float] = {}
+    for cid, qty in ordered_rows:
+        if not cid:
+            continue
+        per_calc[cid] = per_calc.get(cid, 0.0) + (qty or 0.0)
+    if not per_calc:
+        return None
+    return max(per_calc.items(), key=lambda kv: kv[1])[0]
+
+
 class OrderManager:
     """Domain logic for order lifecycle. No WS/HTTP knowledge."""
 
@@ -1247,16 +1285,21 @@ class OrderManager:
                 exc_info=True,
             )
             return None, None
-        # Rows ordered by first_fill_ts ASC; max() returns the FIRST
-        # maximal element, so ties resolve to the earliest entry.
-        # default=None guards an empty result (no junction) without a
-        # separate truthiness check that an empty-but-truthy iterable
-        # could slip past.
-        primary = max(links, key=lambda r: r[2] or 0.0, default=None)
-        if primary is None:
+        # Rows ordered by first_fill_ts ASC. Primary = the calc with the
+        # largest SUMMED contributed_qty (spec §3.2/§12.4 per-CALC, not the
+        # largest single row), tie-break earliest first_fill — via the shared
+        # _most_contributing_calc_id helper so this (close-path) and
+        # _enrich_positions_calc_id (live/rehydrate) cannot diverge (T240/R1).
+        primary_cid = _most_contributing_calc_id([(r[0], r[2]) for r in links])
+        if primary_cid is None:
             return None, None
-        lifecycle_id = primary[1] or next((r[1] for r in links if r[1]), None)
-        return primary[0], lifecycle_id
+        # lifecycle_id is shared across a position's junction rows; prefer the
+        # primary calc's, fall back to any non-null.
+        lifecycle_id = (
+            next((r[1] for r in links if r[0] == primary_cid and r[1]), None)
+            or next((r[1] for r in links if r[1]), None)
+        )
+        return primary_cid, lifecycle_id
 
     async def _link_position_calc_on_open(
         self, account_id: int, fill: Dict[str, Any]
@@ -1511,61 +1554,112 @@ class OrderManager:
     async def _enrich_positions_calc_id(
         self, account_id: int, positions: List[PositionInfo]
     ) -> None:
-        """T2.3 (plan §2 task 2.3): set ``PositionInfo.calc_id`` to each
-        live position's primary (most-contributing) junction calc.
+        """T2.3 + T2.12 (plan §2 tasks 2.3 / 2.12): stamp each live
+        position's junction-derived calc linkage onto its ``PositionInfo`` —
+        the primary (most-contributing) ``calc_id`` (T2.3), the full
+        ``contributing_calc_ids`` list, and the live ``size_delta_pct``
+        (T2.12).
 
         Called from ``refresh_cache`` (the controlled position-enrichment
         entry point), so it covers both stated triggers: the live
         first-fill case (a fill's order update drives a refresh) and
-        restart rehydrate (the next order snapshot or the periodic
-        refresh loop drives one). Re-evaluated each refresh so the
-        primary stays current as the junction grows (scale-in);
-        ``calc_id`` is also in ``_PRESERVE_FIELDS`` so a snapshot rebuild
-        between refreshes doesn't blank the live value.
+        **restart rehydrate** — at startup ``_startup_fetch`` →
+        ``process_order_snapshot`` → ``refresh_cache`` runs this, re-deriving
+        all three fields from the persisted junction. (T2.12 needs NO
+        separate exchange.py / startup hook: this authoritative re-derivation
+        already runs at startup; a second hook would duplicate it and risk
+        divergence — deviation from the plan's stated files, chosen for
+        single-source correctness.) Re-evaluated each refresh so the values
+        track the junction as it grows (scale-in); all three fields are in
+        ``_PRESERVE_FIELDS`` so a snapshot rebuild between refreshes doesn't
+        blank the live display.
 
         ONE batched junction read per refresh (not per position) — this
         runs on every WS order update, so the fan-out is kept off the
-        hot path. Best-effort and AUTHORITATIVE (T230 R2): calc_id mirrors
-        the junction each refresh — set to the primary when a junction row
-        exists, and CLEARED to "" when none does (UNPLANNED, pre-first-
-        fill, or a same-(symbol,direction) reopen that inherited a stale
-        calc_id via _PRESERVE_FIELDS). See the per-position loop below.
+        hot path. Best-effort and AUTHORITATIVE (T230 R2): the fields mirror
+        the junction each refresh — set from it when rows exist, and CLEARED
+        (calc_id="", contributing_calc_ids=[], size_delta_pct=0.0) when none
+        does (UNPLANNED, pre-first-fill, or a same-(symbol,direction) reopen
+        that inherited stale values via _PRESERVE_FIELDS). See the loop below.
+
+        ``size_delta_pct`` (T2.12 deviation): the live size deviation vs the
+        primary calc's planned size — ``(Σ contributed_qty − primary
+        planned_size) / planned_size × 100`` (signed, spec §3.2
+        most-contributing basis; mirrors the T2.5 close-time size_delta).
+        0.0 when there is no junction or no planned_size snapshot. The
+        yellow/red badge thresholding and TP/SL live deviation are Phase 4.4
+        (they need the order-amendment tracking that isn't wired yet).
         """
         if not any(p.position_id for p in positions):
             return
         try:
             async with self._db._conn.execute(
-                "SELECT position_id, calc_id, contributed_qty "
+                "SELECT position_id, calc_id, contributed_qty, planned_size "
                 "FROM positions_calcs WHERE account_id = ? "
                 "ORDER BY first_fill_ts ASC, id ASC",
                 (account_id,),
             ) as cur:
                 rows = await cur.fetchall()
         except Exception:
-            # Read failed — leave calc_id untouched (don't clear on error).
+            # Read failed — leave fields untouched (don't clear on error).
             log.debug("calc_id enrichment: junction read failed", exc_info=True)
             return
-        # Primary calc per position: largest contributed_qty, tie-break
-        # earliest first_fill_ts (spec §3.2). Rows are ordered by
-        # first_fill_ts ASC and we only replace on a strict '>', so the
-        # earliest row wins a tie — same rule as _position_primary_calc.
-        primary: Dict[str, Tuple[str, float]] = {}
-        for pid, cid, qty in rows:
-            qty = qty or 0.0
-            best = primary.get(pid)
-            if best is None or qty > best[1]:
-                primary[pid] = (cid, qty)
-        # Authoritative: calc_id mirrors the junction on each refresh.
+        # Aggregate per (position, calc): sum contributed_qty (a calc may
+        # place >1 order on a position → multiple junction rows) and carry
+        # the calc's planned_size snapshot. Rows arrive ordered by
+        # first_fill_ts ASC, and dict preserves insertion order, so a calc's
+        # first appearance fixes its tie-break rank (earliest first_fill).
+        per_pos: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        for pid, cid, qty, planned in rows:
+            if not pid or not cid:
+                continue
+            calcs = per_pos.setdefault(pid, {})
+            agg = calcs.get(cid)
+            if agg is None:
+                agg = {"qty": 0.0, "planned": None}
+                calcs[cid] = agg
+            agg["qty"] += (qty or 0.0)
+            if agg["planned"] is None and planned:
+                agg["planned"] = planned
+        # Authoritative: the three fields mirror the junction on each refresh.
         # A position with no junction row is CLEARED — UNPLANNED, a
-        # pre-first-fill position, or a same-(symbol,direction) reopen
-        # that inherited a stale calc_id via _PRESERVE_FIELDS (T226
-        # holistic-audit R2). Self-heals to the right calc once the new
-        # position's first opening fill writes its junction.
+        # pre-first-fill position, or a same-(symbol,direction) reopen that
+        # inherited stale values via _PRESERVE_FIELDS (T226 holistic-audit
+        # R2). Self-heals once the new position's first opening fill writes
+        # its junction.
         for pos in positions:
             if not pos.position_id:
                 continue  # binance one-way / pre-snapshot — no junction key
-            best = primary.get(pos.position_id)
-            pos.calc_id = best[0] if (best and best[0]) else ""
+            calcs = per_pos.get(pos.position_id)
+            if not calcs:
+                pos.calc_id = ""
+                pos.contributing_calc_ids = []
+                pos.size_delta_pct = 0.0
+                continue
+            items = list(calcs.items())  # insertion order = first_fill ASC
+            # Primary via the SHARED selector (largest summed contributed_qty
+            # per calc, earliest-first_fill tie-break) → identical rule to
+            # _position_primary_calc (close path), so the live/rehydrated
+            # PositionInfo.calc_id converges with the sealed closed_positions
+            # calc_id (T240/R1). items are first_fill-ordered for the tie-break.
+            primary_cid = _most_contributing_calc_id(
+                [(cid, a["qty"]) for cid, a in items]
+            )
+            primary_agg = calcs[primary_cid]
+            pos.calc_id = primary_cid
+            # All contributing calcs, primary-first then by qty desc (stable
+            # sort keeps first_fill order among equal-qty calcs).
+            pos.contributing_calc_ids = [
+                cid for cid, _ in sorted(
+                    items, key=lambda kv: kv[1]["qty"], reverse=True,
+                )
+            ]
+            # Live size deviation vs the primary calc's planned snapshot.
+            planned = primary_agg["planned"]
+            actual = sum(a["qty"] for _, a in items)
+            pos.size_delta_pct = (
+                (actual - planned) / planned * 100.0 if planned else 0.0
+            )
 
     # ── Position Close ─────────────────────────────────────────────────────
 

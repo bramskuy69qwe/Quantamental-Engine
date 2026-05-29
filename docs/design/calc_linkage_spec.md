@@ -112,6 +112,11 @@ within a configurable window.
   Engine restart
     → full rehydrate: positions_calcs, manual-link queue, in-flight calc
       windows (using frozen window_seconds + created_ts), deviation flags
+      [T2.12 SHIPPED for positions_calcs: on restart, _enrich_positions_calc_id
+       (already run at startup via refresh_cache) re-derives each open
+       position's calc_id (primary) + contributing_calc_ids + size_delta_pct
+       (live size deviation) from the persisted junction. TP/SL deviation
+       badges are Phase 4.4 (need amendment tracking).]
     → reconciliation pass against venue REST to detect drift
   Multi-operator on same account
     → single-operator-per-account lock; second op sees read-only +

@@ -143,6 +143,16 @@ class PositionInfo:
     model_name:              str   = ""
     sector:                  str   = ""
     calc_id:                 str   = ""   # primary (most-contributing) calc, from positions_calcs junction (P2.T3)
+    # P2.T12: all calcs contributing to this position, primary-first then by
+    # contributed_qty desc (from the positions_calcs junction). Empty when
+    # UNPLANNED / no junction. Re-derived each refresh_cache (incl. restart
+    # rehydrate); preserved across snapshot rebuilds via _PRESERVE_FIELDS.
+    contributing_calc_ids:   List[str] = field(default_factory=list)
+    # P2.T12: live size deviation = (Σ contributed_qty − primary calc's
+    # planned_size) / planned_size × 100 (signed; spec §3.2 most-contributing
+    # basis). 0.0 when no junction / no planned_size. The yellow/red BADGE
+    # thresholding + TP/SL live deviation are Phase 4.4 (need amendments).
+    size_delta_pct:          float = 0.0
 
 
 @dataclass

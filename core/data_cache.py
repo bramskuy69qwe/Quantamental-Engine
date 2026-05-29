@@ -70,6 +70,10 @@ _PRESERVE_FIELDS = (
     # but preserved here so a snapshot rebuild between refreshes doesn't
     # blank the live display.
     "calc_id",
+    # P2.T12: junction-derived all-contributing calcs + live size deviation;
+    # same treatment as calc_id (authoritatively re-derived each refresh_cache,
+    # preserved between to avoid a blank-then-repopulate flicker on rebuild).
+    "contributing_calc_ids", "size_delta_pct",
 )
 
 # How long (ms) a WS/Platform update protects state from being overwritten by REST
