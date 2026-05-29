@@ -671,6 +671,25 @@ Calc has `tp_levels = [{price: 64500, size_pct: 50}, {price: 65000, size_pct: 30
 If a SL hits before all TPs complete, or operator manual-closes a
 remaining piece, `exit_reason=MIXED` with breakdown in event payload.
 
+**Implemented (T2.11 / T238)** — note the implementation model:
+- **Per-partial `closed_positions` rows are PRESERVED** (one row per
+  closing order, as the engine already did). The lifecycle refinements
+  layer on top rather than consolidating to one row/position.
+- **calc completion fires on the FINAL close only** (size→0), not the
+  first partial. Final-close is data-derived from fills (Σ closing qty ≥
+  Σ opening qty — deterministic, not the racy snapshot), with a
+  `force_final` override on the position-disappearance safety net.
+- **exit_reason** on the final row: `TP_LADDER_COMPLETE` requires ≥2
+  distinct TP closing orders and no SL/manual; `MIXED` requires ≥1 TP and
+  ≥1 non-TP (SL/manual) closing order; a single closing order (or all-SL)
+  keeps its per-order classification. Non-final partial rows keep their
+  per-order reason.
+- The `position:partial_close` payload is emitted today as the engine's
+  `partial_close` trade event (position_id, qty_reduced, remaining_qty,
+  realized_pnl_partial); `tp_level_idx` is deferred (needs `tp_levels`
+  parse + price match). The formal §9 per-account event-bus topic is
+  Phase 6.
+
 ---
 
 ## 9. Event catalog (in-process `event_bus`)

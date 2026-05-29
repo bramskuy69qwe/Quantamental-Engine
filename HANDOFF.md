@@ -455,6 +455,79 @@ sharing the window with an UNPLANNED entry stays NULL → standard matcher).
   pattern T2.1 already relies on. 2 indexed reads per order event accepted at
   this localhost single-tenant scale.
 
+### Multi-TP partial-close lifecycle (T238 / P2.T11) — completion timing + ladder exit_reason
+
+Operator-confirmed model (Option A): **per-partial `closed_positions` rows
+are PRESERVED** (one row per closing order). The fork (consolidate to one
+row/position per spec §8 literal) was declined to keep history/PnL
+semantics + the close path surgical. T2.11 layers three things on top:
+
+1. **calc completion deferred to the FINAL close** (size→0). Pre-T2.11
+   `_complete_calcs_on_close` ran on EVERY close-row build → for a multi-TP
+   ladder the calc completed prematurely on the first partial (later
+   partials no-op'd via the status guard). Now gated on `is_final` in
+   `_build_close_row_for_fill`. Single full close → `is_final` immediately
+   → unchanged for the common case.
+2. **Final-close detection is data-derived from fills** — Σ(closing qty) ≥
+   Σ(opening qty) for the position — NOT the ACCOUNT_UPDATE snapshot (which
+   races fill ingest, reflecting pre- OR post-fill size). `force_final=True`
+   on `build_final_close_row` (the position-disappearance safety net knows
+   the position is gone). Empty-tpid (binance one-way) / missing-opens →
+   `is_final=True` fallback (can't sum per position → preserve pre-T2.11
+   complete-on-this-close rather than risk never completing).
+3. **Ladder-aware FINAL exit_reason** (`_classify_final_exit_reason`):
+   `TP_LADDER_COMPLETE` (≥2 distinct TP closing orders, no SL/manual);
+   `MIXED` (≥1 TP + ≥1 SL/manual closing order); else fall back to the
+   per-order `_determine_exit_reason` (single TP → TP_PLANNED, all-SL →
+   SL_PLANNED, etc.). Non-final partial rows keep their per-order reason.
+   Keys on DISTINCT closing ORDERS (a single TP filling in multiple partial
+   fills is 1 order → not a ladder). Empty-tpid → fallback.
+
+`partial_close` trade event enriched with position_id + qty_reduced +
+remaining_qty + realized_pnl_partial (spec §8/§9 payload). `tp_level_idx`
+omitted — needs `calc.tp_levels` parse + TP-price matching (deferred, not
+load-bearing for the lifecycle). The formal §9 per-account event-bus topic
+(`position:partial_close`) is Phase 6.
+
+Tests: `tests/test_phase2_multi_tp.py` (14) — `_classify_final_exit_reason`
+unit cases + full close-row path (partial→final completion deferral, ladder
+vs MIXED, single-close-immediate, force_final-on-disappearance,
+realistic-deferred-timing, disappearance backstop).
+
+**T238 review (2 independent reviewers) — fixes applied:**
+- **F1 (HIGH, FIXED)**: each closing fill schedules its OWN `+2s` close-row
+  build, so in a real ladder the later rungs are already on disk when an
+  earlier rung's build runs → the all-fills `is_final` sum saw the full qty
+  → the EARLIER partial row got mis-stamped TP_LADDER_COMPLETE + the calc
+  completed early. Fix: scope the sum to closing fills with `timestamp_ms ≤
+  this build's exit_time` (cumulative AS OF this close). The shipped test
+  had masked it by seeding the 2nd fill only AFTER building the 1st row —
+  rewritten to the realistic both-fills-first ordering.
+- **F1 backstop (HIGH, FIXED)**: a MISSED closing fill (WS gap) leaves the
+  is_final sum permanently short → calc strands in `matched`; the
+  disappearance safety net only rebuilt UNRECORDED fills, so a
+  recorded-but-never-final position never completed. Fix:
+  `build_final_close_row` now calls `_complete_position_calcs` unconditionally
+  (disappearance = authoritative close), gathering contributing calc_ids
+  from the junction (fallback: opening fills). Idempotent / status-guarded.
+- **F4 (MED, FIXED)**: `is_final` epsilon was a flat `1e-9` (too tight for
+  fractional crypto qty) → a full close short by float rounding could miss
+  final. Now a 1ppm relative tolerance with an absolute floor.
+- **F3 (MED, KNOWN/pre-existing)**: `closed_positions` natural key
+  `(account_id, terminal_position_id, exit_time_ms)` → two DISTINCT closing
+  orders filling at the IDENTICAL ms collide on INSERT OR REPLACE → a rung
+  row is lost. Pre-existing (per-partial rows predate T2.11); fixing needs
+  the key to include `exchange_order_id` + a migration → deferred. Rare
+  (distinct TP orders triggering same-ms).
+- **F5 (LOW, KNOWN)**: `_classify_final_exit_reason` INNER-JOINs fills→orders;
+  a closing fill whose order row is missing is dropped, which can downgrade a
+  real ladder to the single-TP fallback. Orders rows are normally present
+  (upserted on arrival) → graceful-degradation edge, documented.
+- **F6 (LOW, pre-existing)**: the `partial_close` event's `remaining_qty`
+  reads `app_state` which reflects pre-fill size (per `_process_single_fill`'s
+  own contract) → may overstate by one rung. Best-effort event (formal §9
+  topic is Phase 6); `qty_reduced` + `realized_pnl_partial` are authoritative.
+
 ### Junction contributed_qty redelivery double-count (T232 audit — confirmed, deferred)
 
 Holistic Phase-2 audit (after T231) + my own runtime probe confirmed:

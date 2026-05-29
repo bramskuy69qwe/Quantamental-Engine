@@ -795,15 +795,13 @@ class OrderManager:
         others or the close-row build (caller is already inside the
         close-row try/except).
 
-        PHASE-1 SIMPLIFICATION (multi-TP): in Phase 1 this runs on every
-        close-row build. For a single-close position (the common case)
-        that's exactly-once + correct. For a multi-TP ladder (Phase
-        2.11), the calc completes on the FIRST partial close (premature)
-        and subsequent partial closes no-op via the guard. Phase 2.11
-        (position-lifecycle tracking) will refine this to complete only
-        on the FINAL close (size→0). Acceptable for Phase 1 — multi-TP
-        lifecycle isn't wired yet, and the calc is genuinely being
-        actioned via the position either way.
+        T2.11 (RESOLVED): the caller (``_build_close_row_for_fill``) now
+        gates this on ``is_final`` (the FINAL close, size→0), so a multi-TP
+        ladder completes the calc ONCE at full close rather than prematurely
+        on the first partial. For a single-close position is_final is true
+        immediately, so it stays exactly-once + correct. (Pre-T2.11 this ran
+        on every close-row build and completed on the first partial; the
+        status guard made the later partials no-op.)
         """
         from core.calc_state import (
             CalcStatus,
@@ -1006,11 +1004,21 @@ class OrderManager:
                             (p for p in app_state.positions if p.position_id == pos_id), None
                         )
                         if pos and pos.contract_amount > 0:
+                            # T2.11 (spec §8/§9 position:partial_close payload):
+                            # carry qty_reduced + realized_pnl_partial so the
+                            # multi-TP ladder is reconstructable from the event
+                            # stream. tp_level_idx is omitted — mapping a TP
+                            # fill to its tp_levels rung needs calc.tp_levels
+                            # parsing + price matching (deferred; not load-
+                            # bearing for the ladder lifecycle).
                             log_trade_event(account_id, calc_id, "partial_close", {
                                 "symbol": fill.get("symbol", ""),
+                                "position_id": pos_id,
                                 "fill_price": fill.get("price", 0),
                                 "fill_qty": fill.get("quantity", 0),
+                                "qty_reduced": fill.get("quantity", 0),
                                 "remaining_qty": pos.contract_amount,
+                                "realized_pnl_partial": fill.get("realized_pnl", 0),
                             }, source="order_manager")
                 except Exception:
                     pass
@@ -1562,13 +1570,23 @@ class OrderManager:
     # ── Position Close ─────────────────────────────────────────────────────
 
     async def _build_close_row_for_fill(
-        self, account_id: int, fill: Dict[str, Any]
+        self, account_id: int, fill: Dict[str, Any], *, force_final: bool = False,
     ) -> None:
         """Build a closed_positions row for a partial or full close.
 
         Groups closing fills from the same parent order into a single row.
         Computes VWAP entry/exit, proportional fees, exit reason, and
         implementation shortfall from pre_trade_log.
+
+        T2.11 (multi-TP partial-close lifecycle): one row per closing ORDER
+        is preserved (operator-confirmed model — each TP rung keeps its own
+        partial row). What T2.11 adds on top: (1) calc completion is deferred
+        to the FINAL close (size→0) instead of firing on the first partial
+        (see ``_complete_calcs_on_close``); (2) the FINAL row's exit_reason
+        is ladder-aware — TP_LADDER_COMPLETE or MIXED (see
+        ``_classify_final_exit_reason``). ``force_final`` is set by the
+        position-disappearance safety net (``build_final_close_row``), which
+        knows the position is gone, so its row is unconditionally final.
         """
         try:
             pos_id    = fill.get("terminal_position_id", "")
@@ -1660,10 +1678,52 @@ class OrderManager:
             )
             total_fees  = close_fees + prop_entry
 
-            # ── Exit reason from parent order type ──────────────────────
+            # ── T2.11: is this the FINAL close (position size→0)? ───────
+            # Data-derived from fills (Σ closing qty ≥ Σ opening qty),
+            # deterministic and NOT racy with the ACCOUNT_UPDATE snapshot
+            # (which may reflect pre- or post-fill state). force_final: the
+            # position-disappearance safety net knows the position is gone.
+            # Empty tpid (binance one-way) or missing opens → can't sum per
+            # position, so preserve the pre-T2.11 "complete on this close"
+            # behavior (is_final=True) rather than risk never completing.
+            if force_final or not pos_id or total_open_qty <= 0:
+                is_final = True
+            else:
+                pos_closes = await self._db.get_position_fills(
+                    account_id, pos_id, symbol, direction, is_close=True,
+                )
+                # Scope the sum to closing fills AT OR BEFORE this close's
+                # exit_time (T238 review F1, HIGH): each closing fill schedules
+                # its OWN build +2s, so by the time an EARLIER rung's build runs
+                # the LATER rungs may already be on disk. Summing all of them
+                # would make the earlier rung's build see is_final=True and
+                # mis-stamp its partial row with the ladder exit_reason (and
+                # complete the calc early). Counting only fills ≤ this build's
+                # exit_time gives the cumulative closed qty AS OF this close —
+                # the correct per-row view, deterministic regardless of build
+                # interleaving.
+                total_closed_all = sum(
+                    f["quantity"] for f in pos_closes
+                    if int(f.get("timestamp_ms", 0) or 0) <= exit_time
+                )
+                # Relative epsilon (T238 review F4, MED): a flat 1e-9 absolute
+                # is too tight for fractional crypto qty — a genuine full close
+                # short by float/rounding (e.g. 1e-8) would miss is_final. Use
+                # a 1ppm relative tolerance with an absolute floor.
+                tol = max(1e-9, total_open_qty * 1e-6)
+                is_final = total_closed_all >= total_open_qty - tol
+
+            # ── Exit reason: per-order type, then (T2.11) ladder-aware on
+            # the FINAL close — TP_LADDER_COMPLETE (≥2 TP closing orders, no
+            # SL/manual) or MIXED (TP ladder finished off by SL/manual).
+            # Non-final partial rows keep their per-order reason.
             exit_reason = await self._determine_exit_reason(
                 account_id, exchange_order_id,
             )
+            if is_final:
+                exit_reason = await self._classify_final_exit_reason(
+                    account_id, pos_id, fallback=exit_reason,
+                )
 
             # ── Implementation shortfall vs pre_trade_log ───────────────
             shortfall = await self._compute_shortfall(
@@ -1748,20 +1808,27 @@ class OrderManager:
             except Exception:
                 log.debug("position_closed trade event failed", exc_info=True)
 
-            # T221 (P1.T6): auto-complete contributing calcs. Phase 1
-            # contributing-calc set = distinct calc_ids across the
-            # opening fills (the positions_calcs junction is Phase 2).
-            # Runs AFTER the close row + events are persisted so a
-            # completion failure can't undo the close. Best-effort.
-            contributing_calc_ids = {
-                f["calc_id"] for f in opens if f.get("calc_id")
-            }
-            if not contributing_calc_ids and close_calc_id:
-                contributing_calc_ids = {close_calc_id}
-            if contributing_calc_ids:
-                await self._complete_calcs_on_close(
-                    account_id, contributing_calc_ids, pos_id,
-                )
+            # T221 (P1.T6) + T2.11: auto-complete contributing calcs ONLY on
+            # the FINAL close (size→0). Pre-T2.11 this ran on every close-row
+            # build, so a multi-TP ladder completed the calc prematurely on
+            # the first partial (subsequent partials no-op'd via the status
+            # guard). Now partial closes leave the calc matched /
+            # partially_actioned and completion fires once, at full close.
+            # Single-close positions are final immediately → behavior
+            # unchanged for the common case. Contributing-calc set = distinct
+            # calc_ids across the opening fills. Runs AFTER the close row +
+            # events are persisted so a completion failure can't undo the
+            # close. Best-effort.
+            if is_final:
+                contributing_calc_ids = {
+                    f["calc_id"] for f in opens if f.get("calc_id")
+                }
+                if not contributing_calc_ids and close_calc_id:
+                    contributing_calc_ids = {close_calc_id}
+                if contributing_calc_ids:
+                    await self._complete_calcs_on_close(
+                        account_id, contributing_calc_ids, pos_id,
+                    )
 
             log.info(
                 "Closed position row: %s %s qty=%.4f pnl=%.2f exit=%s",
@@ -1810,31 +1877,91 @@ class OrderManager:
             unrecorded = await self._db.get_unrecorded_closing_fills(
                 account_id, prev.position_id, prev.ticker, prev.direction,
             )
-            if not unrecorded:
+            if unrecorded:
+                # Group by exchange_order_id → one closed_positions row per order
+                groups: Dict[str, List[Dict]] = {}
+                for f in unrecorded:
+                    key = f.get("exchange_order_id", "") or f"_fill_{f.get('id', '')}"
+                    groups.setdefault(key, []).append(f)
+
+                for _order_id, fills in groups.items():
+                    # Position has fully disappeared from the snapshot → these
+                    # closing fills are the FINAL close (T2.11 force_final).
+                    await self._build_close_row_for_fill(
+                        account_id, fills[0], force_final=True,
+                    )
+
+                log.info(
+                    "Final close safety net: %d group(s) for %s %s",
+                    len(groups), prev.ticker, prev.direction,
+                )
+            else:
                 log.debug(
                     "No unrecorded closing fills for %s %s",
                     prev.ticker, prev.direction,
                 )
-                return
 
-            # Group by exchange_order_id → one closed_positions row per order
-            groups: Dict[str, List[Dict]] = {}
-            for f in unrecorded:
-                key = f.get("exchange_order_id", "") or f"_fill_{f.get('id', '')}"
-                groups.setdefault(key, []).append(f)
-
-            for _order_id, fills in groups.items():
-                await self._build_close_row_for_fill(account_id, fills[0])
-
-            log.info(
-                "Final close safety net: %d group(s) for %s %s",
-                len(groups), prev.ticker, prev.direction,
-            )
+            # T2.11 (T238 review F1, HIGH): the position has DISAPPEARED from
+            # the snapshot — authoritatively closed. The per-fill deferred
+            # close builds gate calc completion on is_final (Σclose ≥ Σopen);
+            # a missed / under-counted closing fill (WS gap) could leave that
+            # sum permanently short, stranding contributing calcs in
+            # `matched`. The unrecorded-rebuild above only covers UNRECORDED
+            # fills — a recorded-but-never-final position would never
+            # complete. Force-complete contributing calcs here regardless;
+            # disappearance is the authoritative close signal. Idempotent
+            # (status-guarded in _complete_calcs_on_close).
+            await self._complete_position_calcs(account_id, prev.position_id)
         except Exception:
             log.exception(
                 "build_final_close_row failed for %s %s",
                 prev.ticker, prev.direction,
             )
+
+    async def _complete_position_calcs(
+        self, account_id: int, position_id: str,
+    ) -> None:
+        """T2.11 backstop (T238 review F1): force-complete a fully-closed
+        position's contributing calcs.
+
+        Called from :meth:`build_final_close_row` when the position has
+        disappeared from the snapshot. Gathers contributing calc_ids from
+        the ``positions_calcs`` junction (Phase-2 source of truth), falling
+        back to the distinct ``calc_id`` across the position's OPENING fills
+        when there is no junction (UNPLANNED / pre-Phase-2). Delegates to
+        :meth:`_complete_calcs_on_close`, which is status-guarded
+        (matched / partially_actioned → completed_via_position) and
+        idempotent, so re-running after the per-fill builds already completed
+        is a safe no-op. Empty ``position_id`` (binance one-way) → no-op:
+        that path completes via the per-fill is_final=True fallback instead.
+        """
+        if not position_id:
+            return
+        calc_ids: set = set()
+        try:
+            async with self._db._conn.execute(
+                "SELECT DISTINCT calc_id FROM positions_calcs "
+                "WHERE position_id = ? AND account_id = ? "
+                "  AND calc_id IS NOT NULL",
+                (position_id, account_id),
+            ) as cur:
+                calc_ids = {r[0] for r in await cur.fetchall() if r[0]}
+            if not calc_ids:
+                async with self._db._conn.execute(
+                    "SELECT DISTINCT calc_id FROM fills "
+                    "WHERE terminal_position_id = ? AND account_id = ? "
+                    "  AND is_close = 0 AND calc_id IS NOT NULL",
+                    (position_id, account_id),
+                ) as cur:
+                    calc_ids = {r[0] for r in await cur.fetchall() if r[0]}
+        except Exception:
+            log.debug(
+                "force-complete: calc_id gather failed for %s", position_id,
+                exc_info=True,
+            )
+            return
+        if calc_ids:
+            await self._complete_calcs_on_close(account_id, calc_ids, position_id)
 
     # ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -1888,6 +2015,65 @@ class OrderManager:
             return "SL_PLANNED"
         # market / limit / manual / anything else → operator-initiated close
         return "MANUAL_OTHER"
+
+    async def _classify_final_exit_reason(
+        self, account_id: int, pos_id: str, *, fallback: str,
+    ) -> str:
+        """T2.11 (spec §3.4 / §8): ladder-aware exit_reason for a FINAL close.
+
+        Inspects the parent order types of ALL closing fills for the
+        position (distinct closing orders), and returns:
+          - ``TP_LADDER_COMPLETE`` — ≥2 distinct take_profit closing orders
+            and NO stop/manual closing order (a multi-TP ladder that ran to
+            completion via TPs, spec §8);
+          - ``MIXED`` — at least one take_profit AND at least one non-TP
+            (SL / trailing / manual) closing order (a TP ladder finished off
+            by an SL hit or an operator manual close, spec §8);
+          - ``fallback`` otherwise — a single closing order (or all-SL /
+            all-manual), which keeps the per-order classification from
+            :meth:`_determine_exit_reason` (TP_PLANNED / SL_PLANNED /
+            MANUAL_OTHER).
+
+        Empty ``pos_id`` (binance one-way / no terminal_position_id) → the
+        join finds nothing → ``fallback`` (the per-order reason), so that
+        path is unchanged. Best-effort: any read failure → ``fallback``.
+
+        Known limitation (T238 review F5, LOW): the INNER JOIN drops a
+        closing fill whose ``orders`` row is missing (close fill arrived,
+        order record absent), which can downgrade a real ladder to the
+        single-TP fallback. Orders rows are normally upserted on arrival, so
+        this is a rare graceful-degradation edge, not data loss.
+        """
+        if not pos_id:
+            return fallback
+        try:
+            async with self._db._conn.execute(
+                "SELECT DISTINCT f.exchange_order_id, o.order_type "
+                "FROM fills f "
+                "JOIN orders o ON o.account_id = f.account_id "
+                "  AND o.exchange_order_id = f.exchange_order_id "
+                "WHERE f.account_id = ? AND f.terminal_position_id = ? "
+                "  AND f.is_close = 1",
+                (account_id, pos_id),
+            ) as cur:
+                rows = await cur.fetchall()
+        except Exception:
+            log.debug(
+                "final exit_reason classify read failed for pos %s", pos_id,
+                exc_info=True,
+            )
+            return fallback
+        if not rows:
+            return fallback
+        tp_orders, non_tp_orders = [], []
+        for eoid, otype in rows:
+            (tp_orders if "take_profit" in (otype or "").lower()
+             else non_tp_orders).append(eoid)
+        if tp_orders and non_tp_orders:
+            return "MIXED"
+        if len(tp_orders) >= 2:
+            return "TP_LADDER_COMPLETE"
+        return fallback
 
     async def _compute_shortfall(
         self,
