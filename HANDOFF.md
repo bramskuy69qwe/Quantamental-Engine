@@ -382,6 +382,79 @@ the (symbol, positionSide)+window heuristic; the false-positive risk
 (two entries within the window) is bounded by P2.T9 only propagating from
 an entry that carries a calc_id.
 
+### TP/SL bracket calc_id inheritance (T237 / P2.T9) — consumes T2.8
+
+`OrderManager._propagate_bracket_calc_id` (+ `_detect_brackets` adapter
+resolver, + `_propagate_bracket_calc_id_for_orders` batch wrapper) wires
+the T2.8 primitive into the order-arrival path (spec §4.5). For each
+detected bracket whose ENTRY leg carries a `calc_id` (matcher-linked,
+§4.1), it stamps that `calc_id` + `link_status='LINKED'` onto every
+protective leg whose `calc_id` is still NULL. **This is the only path a
+TP/SL order ROW gets a `calc_id`** — the strict matcher
+(`order_enrichment._try_correlate`) returns early for reduce-only /
+close-type orders.
+
+Wired into all three arrival handlers: `process_order_update` (WS, per
+arriving symbol, AFTER enrichment so the entry's calc_id is committed) +
+`process_order_snapshot` / `process_algo_snapshot` (REST reconciliation,
+per distinct batch symbol). The candidate query reads orders by
+`(account_id, symbol)` with a data-derived lookback (MAX(created_at_ms) −
+5min, LIMIT 200) so it includes FILLED entries (the entry often fills
+before the protective leg arrives) and works for both real epoch-ms live
+timestamps and the small synthetic ones tests use. Idempotent
+(`WHERE calc_id IS NULL`); best-effort; cheap pre-checks short-circuit.
+
+`upsert_order_batch` uses `ON CONFLICT DO UPDATE` with a column set that
+EXCLUDES `calc_id`/`link_status`, so an inherited calc_id survives later
+WS order updates (no REPLACE-wipe, no self-heal needed).
+
+**Deviations (deviation-discipline):**
+- Propagates `calc_id` + `link_status` only, **NOT `lifecycle_id`** —
+  the entry's lifecycle is minted at its first opening FILL (T2.1), which
+  commonly hasn't happened when the protective leg arrives; a COALESCE
+  would write NULL in the common case and the idempotency guard would
+  never revisit it (half-correct partial). Protective-order
+  `lifecycle_id` stamping stays a known gap, same as T2.1 (stamps only
+  the entry order). Revisit if the Phase-7 lifecycle join needs
+  protective-order rows.
+- RAW `UPDATE orders SET link_status` matching the matcher's NULL→LINKED
+  initial-arrival set — explicitly NOT routed through
+  `link_state.transition` (link_state.py:53 — the choke-point validates
+  current→target between existing enum values; a NULL current would raise
+  `IllegalStateTransition`). P3.T1 sweeps both sites onto the choke-point
+  together. Maintains "calc_id present ⟺ link_status=LINKED".
+
+Bounded (same as T2.8): only a calc-bearing entry propagates, so a
+mis-grouped window cluster cannot fabricate a link (worst case: a TP/SL
+sharing the window with an UNPLANNED entry stays NULL → standard matcher).
+
+**T237 review notes (independent audit, no BLOCKER/HIGH):**
+- **Scale-in tie-break (MED→documented)**: the protective leg inherits the
+  EARLIEST calc-bearing entry in its cluster — placement-time ORDER-level
+  attribution, intentionally distinct from the close-time POSITION-level
+  most-contributing primary (§3.2, T2.2/T2.3/T2.5/T2.6). The primary is
+  uncomputable at order arrival (no fills / no junction yet). Diverges only
+  when two entries with DIFFERENT calcs share one protective leg in the 2s
+  window; bounded — closing fill + closed row re-derive from the junction
+  primary, no consumer reads a protective leg's `orders.calc_id`. Anchor-
+  commented at the `entry = next(...)` pick.
+- **Junction-less Binance close-fill (LOW, benign/improvement)**: for a
+  position with no junction (Binance observe-only empty-tpid path), the
+  TP/SL order now carries the entry's calc_id, so `_propagate_calc_id_to_fill`
+  populates the CLOSING fill's calc_id (previously NULL). NOT overridden by
+  T2.2 (no junction → early return), but it AGREES with the T2.6
+  earliest-entry fallback for `closed_positions.calc_id`, and the close row
+  reads OPENING fills + the junction primary, never the closing fill — so no
+  divergence, just better `fills.calc_id` coverage where there was none.
+- **Adapter-fault visibility (MED, FIXED)**: `_detect_brackets` now separates
+  the expected no-active-account fallback (silent → window-only) from a real
+  `detect_bracket` exception (log.warning + window-only), so a future Bybit
+  orderLinkId-grouping regression is visible instead of a silent downgrade.
+- Cross-connection calc_id visibility (matcher writes via a separate sqlite3
+  conn, propagation reads via `_conn`) verified CLEAN — same read-after-commit
+  pattern T2.1 already relies on. 2 indexed reads per order event accepted at
+  this localhost single-tenant scale.
+
 ### Junction contributed_qty redelivery double-count (T232 audit — confirmed, deferred)
 
 Holistic Phase-2 audit (after T231) + my own runtime probe confirmed:

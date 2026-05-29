@@ -526,6 +526,35 @@ leg placed together; a cluster of only-entries or only-protective orders
 (a standalone TP/SL — see below) is not a bracket. T2.8 detects only; the
 calc_id inheritance is T2.9.
 
+**Inheritance (T2.9 — `OrderManager._propagate_bracket_calc_id`, shipped):**
+on every order arrival (WS `process_order_update` + REST
+`process_order_snapshot`/`process_algo_snapshot` reconciliation), for each
+detected bracket whose ENTRY leg carries a `calc_id` (matcher-linked,
+§4.1), the entry's `calc_id` + `link_status=LINKED` are stamped onto every
+protective leg whose `calc_id` is still NULL (idempotent, best-effort).
+This is the only path a TP/SL order ROW gets a `calc_id` — the strict
+matcher returns early for reduce-only/close-type orders. **Bounded by
+design**: only a calc-bearing entry propagates, so a mis-grouped
+time-window cluster cannot fabricate a link (worst case: a TP/SL sharing
+the window with an UNPLANNED entry stays NULL → standard matcher, below).
+`lifecycle_id` is NOT inherited here (it is minted at the entry's first
+opening FILL — §3.5 / T2.1 — commonly after the protective leg arrives;
+protective-order lifecycle stamping is a known gap).
+
+**Order-level vs position-level attribution (scale-in)**: the protective
+leg inherits the calc_id of the EARLIEST calc-bearing entry in its detected
+cluster — placement-time, *order-level* attribution ("placed in a bracket
+under calc X"). This is intentionally distinct from the close-time,
+*position-level* most-contributing primary (§3.2) that the closing-fill
+stamp (T2.2), `PositionInfo.calc_id` (T2.3), and the close row (T2.5/T2.6)
+use — the primary needs fill quantities + a junction, neither of which
+exists when the protective leg arrives. The two diverge only in the rare
+case of two entries with DIFFERENT calcs sharing one protective leg inside
+the 2s window (a near-simultaneous scale-in); there the earliest-entry pick
+is a deterministic best-effort and does NOT corrupt position attribution —
+the closing fill + closed row re-derive from the junction primary, and no
+consumer reads a protective leg's `orders.calc_id`.
+
 If detection fails (e.g., operator places TP/SL separately after entry,
 OR operator places a protective stop on an already-open position),
 the standalone stop goes through the **standard matcher** (§4.1) — no

@@ -103,6 +103,11 @@ class OrderManager:
         if canceled:
             log.info("Marked %d missing basic orders as canceled", canceled)
 
+        # 4b. T2.9 (spec §4.5): bracket calc_id inheritance for the REST
+        # reconciliation path (WS-drop fallback / catch-up). Per distinct
+        # symbol in the batch; idempotent + best-effort.
+        await self._propagate_bracket_calc_id_for_orders(account_id, orders)
+
         # 5. Rebuild cache from DB + enrich positions (via refresh_cache)
         await self.refresh_cache(account_id)
 
@@ -135,6 +140,12 @@ class OrderManager:
         )
         if canceled:
             log.info("Marked %d stale algo orders as canceled", canceled)
+
+        # 2b. T2.9 (spec §4.5): bracket calc_id inheritance. Binance TP/SL
+        # conditional orders arrive on THIS algo path while the entry came
+        # via the basic-order path — both already persisted, so detection
+        # reads them together regardless of which handler ingested each leg.
+        await self._propagate_bracket_calc_id_for_orders(account_id, orders)
 
         # 3. Rebuild cache + enrich
         await self.refresh_cache(account_id)
@@ -176,6 +187,10 @@ class OrderManager:
         # Without this, market orders that fill before children arrive
         # never get correlated (the parent has no further updates).
         await self._re_enrich_parent_on_child_arrival(account_id, order)
+        # T2.9 (spec §4.5): propagate a matched entry's calc_id onto its
+        # bracket TP/SL siblings. Runs AFTER enrichment so the entry's
+        # calc_id is committed when this reads it; idempotent + best-effort.
+        await self._propagate_bracket_calc_id(account_id, order.get("symbol") or "")
         self._emit_order_events(account_id, order)
         self._detect_modification_events(account_id, order, prev_order)
         # T216 (P1.T5): release the calc back to the re-match pool when
@@ -262,6 +277,214 @@ class OrderManager:
             await enrich_order(order, config.DB_PATH)
         except Exception:
             log.debug("order enrichment skipped", exc_info=True)
+
+    # ── TP/SL bracket calc_id inheritance (Phase 2.9, spec §4.5) ─────────────
+
+    # Lookback (ms) for the bracket candidate query, measured back from the
+    # symbol's most-recent order timestamp (data-derived, NOT wall-clock —
+    # keeps it deterministic / replay-safe AND lets the synthetic small
+    # timestamps in tests resolve like real epoch-ms ones). Generous: the
+    # time-window detection tier needs only ~2s + clock skew, but the Bybit
+    # shared-link tier (orderLinkId) can group legs placed further apart.
+    # Purely a query-size bound; the precise "placed together" gate lives in
+    # detect_brackets (2s window) or the shared-link key. LIMIT bounds the
+    # row count on busy symbols.
+    #
+    # created_at_ms=0 note (T237 review 1a): a leg with created_at_ms=0 (the
+    # MEXC-WS ingest gap — parse_order_update leaves it 0) is excluded by the
+    # `>= lo` lower bound whenever the symbol has any real-epoch-ms order
+    # (lo >> 0). This does NOT regress detection: detect_brackets cannot
+    # time-cluster a 0-ts leg with a real-ts entry anyway (they'd read as
+    # ~1.7e12 ms apart → split), so mixed-source MEXC brackets are the
+    # already-documented MEXC-WS limitation, not introduced here. Pure-MEXC
+    # (all legs 0) still works: ref_ts=0 → lo=0 → 0>=0 includes them.
+    _BRACKET_LOOKBACK_MS = 300_000
+    _BRACKET_CANDIDATE_LIMIT = 200
+
+    def _detect_brackets(self, candidates: List[Dict[str, Any]]):
+        """Resolve the active adapter's ``detect_bracket``; fall back to the
+        venue-agnostic engine with no shared-link key (the Binance/MEXC
+        shape). The fallback means propagation still works in tests + on the
+        canonical (Binance) live venue; the only thing lost without the real
+        adapter is Bybit's ``orderLinkId`` tier-1 grouping (Beta).
+
+        Two distinct fallback causes, kept separate (T237 review 6a) so a
+        REAL adapter fault doesn't masquerade as a silent grouping downgrade:
+          - no resolvable adapter (no active account / uninitialised — the
+            expected unit-test path) → silent fallback;
+          - ``detect_bracket`` itself raised (a genuine adapter regression)
+            → log.warning so a Bybit orderLinkId-grouping break is visible,
+            THEN degrade to window-only rather than dropping detection.
+        """
+        from core.bracket_detection import detect_brackets
+        try:
+            from core.exchange import _get_adapter
+            adapter = _get_adapter()
+        except Exception:
+            return detect_brackets(candidates, link_field=None)
+        try:
+            return adapter.detect_bracket(candidates)
+        except Exception:
+            log.warning(
+                "adapter.detect_bracket failed; degrading to window-only "
+                "detection (venue shared-link grouping lost)", exc_info=True,
+            )
+            return detect_brackets(candidates, link_field=None)
+
+    async def _propagate_bracket_calc_id(
+        self, account_id: int, symbol: str,
+    ) -> None:
+        """T2.9 (plan §2 task 2.9, spec §4.5): when an entry + its TP/SL are
+        placed together as a bracket, propagate the entry's ``calc_id`` onto
+        the protective (TP/SL) legs that don't already carry one.
+
+        Consumes the T2.8 detection primitive (:meth:`_detect_brackets` →
+        ``adapter.detect_bracket``). For each detected bracket whose ENTRY
+        leg carries a ``calc_id`` (i.e. the matcher already linked it — spec
+        §4.1), stamp that ``calc_id`` + ``link_status='LINKED'`` onto every
+        protective leg in the bracket whose ``calc_id`` is still NULL.
+
+        Why this is the ONLY way a TP/SL order ROW gets a ``calc_id``: the
+        strict matcher (``order_enrichment._try_correlate``) returns early
+        for reduce-only / close-type orders, so protective legs never pass
+        through it. The matcher links the ENTRY; this inherits that link
+        down to the siblings the operator placed with it (spec §4.5).
+
+        Bounded by design (the T2.8 "best-effort heuristic"): only an entry
+        that ALREADY carries a ``calc_id`` propagates, so a mis-grouped
+        time-window cluster cannot fabricate a link — worst case a TP/SL
+        sharing the window with an UNPLANNED entry stays NULL and routes
+        through the standard matcher (spec §4.5).
+
+        Runs on every order arrival for ``symbol`` (idempotent via
+        ``WHERE calc_id IS NULL``); cheap pre-checks short-circuit when
+        there is nothing to inherit. Best-effort — failures log + return,
+        never break the ingest hot path. All I/O via ``self._db._conn``.
+
+        Scope deviation (calc_id + link_status, NOT lifecycle_id): spec
+        §4.5's deliverable is calc_id inheritance. The entry's
+        ``lifecycle_id`` is minted at its first opening FILL (T2.1), which
+        commonly has NOT happened when the protective leg arrives (TP/SL
+        placed with, but filling after, the entry) — a COALESCE here would
+        write NULL in the common case and the calc_id-IS-NULL idempotency
+        guard would never revisit it (a half-correct partial). Protective-
+        order ``lifecycle_id`` stamping stays a known gap, same as T2.1
+        which stamps only the entry order; revisit if the Phase-7 lifecycle
+        join needs protective-order rows.
+
+        link_status NOTE: writes ``orders.link_status`` via a RAW UPDATE,
+        matching the matcher's initial-arrival set in
+        ``order_enrichment._try_correlate``. A NULL→LINKED initial-arrival
+        set is explicitly the matcher's job, NOT routed through
+        ``core.link_state.transition`` (link_state.py:53 — that choke-point
+        only validates current→target between existing enum values; a NULL
+        current would raise ``IllegalStateTransition``). P3.T1 will sweep
+        BOTH sites onto the choke-point together. Maintains the invariant
+        "calc_id present ⟺ link_status=LINKED" (plan §1 acceptance).
+        """
+        if not symbol:
+            return
+        try:
+            from core.bracket_detection import is_entry_leg, is_protective_leg
+
+            # ref_ts from the symbol's newest order → data-derived lookback
+            # (see _BRACKET_LOOKBACK_MS). In tests MAX is a small synthetic
+            # value so lo clamps to 0 (all rows); in prod lo ≈ now − 5min.
+            async with self._db._conn.execute(
+                "SELECT MAX(created_at_ms) FROM orders "
+                "WHERE account_id = ? AND symbol = ?",
+                (account_id, symbol),
+            ) as cur:
+                mrow = await cur.fetchone()
+            ref_ts = int((mrow[0] if mrow else 0) or 0)
+            lo = max(0, ref_ts - self._BRACKET_LOOKBACK_MS)
+
+            cols = ("id", "exchange_order_id", "symbol", "position_side",
+                    "order_type", "reduce_only", "client_order_id",
+                    "created_at_ms", "calc_id")
+            async with self._db._conn.execute(
+                f"SELECT {', '.join(cols)} FROM orders "
+                "WHERE account_id = ? AND symbol = ? AND created_at_ms >= ? "
+                "ORDER BY created_at_ms DESC LIMIT ?",
+                (account_id, symbol, lo, self._BRACKET_CANDIDATE_LIMIT),
+            ) as cur:
+                rows = await cur.fetchall()
+            candidates = [dict(zip(cols, r)) for r in rows]
+            if not candidates:
+                return
+
+            # Cheap pre-checks: need ≥1 entry-with-calc_id AND ≥1
+            # protective-without-calc_id, else there is nothing to inherit.
+            if not any(is_entry_leg(o) and o.get("calc_id") for o in candidates):
+                return
+            if not any(is_protective_leg(o) and not o.get("calc_id")
+                       for o in candidates):
+                return
+
+            updates: List[Tuple[str, int]] = []
+            for grp in self._detect_brackets(candidates):
+                # detect_brackets sorts each group by created_at_ms ASC, so
+                # next() = the EARLIEST calc-bearing entry in the cluster.
+                # T237 review 2: this is placement-time, ORDER-level
+                # attribution — "this protective order was placed in a
+                # bracket under calc X" — which is intentionally DISTINCT
+                # from the close-time, POSITION-level most-contributing
+                # primary (spec §3.2) that T2.2/T2.3/T2.5/T2.6 use. The
+                # primary needs fill quantities and a junction, neither of
+                # which exists when a bracket's protective leg arrives (often
+                # pre-fill), so it is uncomputable here. The two only diverge
+                # in the rare case of two entries with DIFFERENT calcs sharing
+                # one protective leg within the 2s window (a scale-in placed
+                # near-simultaneously); there the earliest-entry pick is a
+                # deterministic best-effort and does NOT corrupt position
+                # attribution — the closing fill + closed_positions row
+                # re-derive from the junction primary (T2.2/T2.6), and no
+                # live consumer reads a protective leg's orders.calc_id.
+                entry = next(
+                    (o for o in grp if is_entry_leg(o) and o.get("calc_id")),
+                    None,
+                )
+                if not entry:
+                    continue
+                src_calc = entry["calc_id"]
+                for leg in grp:
+                    if leg.get("calc_id") or not is_protective_leg(leg):
+                        continue
+                    updates.append((src_calc, leg["id"]))
+
+            if not updates:
+                return
+
+            for src_calc, oid in updates:
+                await self._db._conn.execute(
+                    "UPDATE orders SET calc_id = ?, link_status = 'LINKED' "
+                    "WHERE id = ? AND calc_id IS NULL",
+                    (src_calc, oid),
+                )
+            await self._db._conn.commit()
+            log.info(
+                "T2.9 bracket inheritance: stamped calc_id on %d TP/SL leg(s) "
+                "for %s", len(updates), symbol,
+            )
+        except Exception:
+            log.debug(
+                "bracket calc_id propagation skipped for %s", symbol,
+                exc_info=True,
+            )
+
+    async def _propagate_bracket_calc_id_for_orders(
+        self, account_id: int, orders: List[Dict[str, Any]],
+    ) -> None:
+        """Run :meth:`_propagate_bracket_calc_id` once per distinct symbol in
+        a snapshot batch (REST reconciliation paths). Best-effort; the
+        per-symbol helper short-circuits cheaply when there is nothing to
+        inherit."""
+        seen: set = set()
+        for o in orders:
+            sym = o.get("symbol") or ""
+            if sym and sym not in seen:
+                seen.add(sym)
+                await self._propagate_bracket_calc_id(account_id, sym)
 
     def _snapshot_and_fix_isclose(self, account_id: int, fill: Dict[str, Any]):
         """Compute position fill snapshot, override adapter-supplied is_close.
