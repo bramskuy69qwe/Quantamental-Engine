@@ -345,7 +345,17 @@ def _build_row(
 
     net_pnl = realized_pnl - total_fees
 
-    # calc_id from the earliest opening fill (matches order_manager logic)
+    # calc_id from the earliest opening fill. NOTE (T234): this is an
+    # intentional RECONSTRUCTION APPROXIMATION, NOT a match to the live
+    # path. The live close-row builder (order_manager._build_close_row_for_fill,
+    # T2.6) attributes closed_positions.calc_id to the junction PRIMARY
+    # (most-contributing calc); this offline fills-only grouper has no
+    # positions_calcs access, so it approximates with the earliest opening
+    # fill that carries a calc_id. Consequence: rebuilding a scale-in
+    # position whose larger calc wasn't first will flip calc_id back to
+    # earliest + leave lifecycle_id NULL (attribution-only drift; PnL/qty/
+    # prices are recomputed correctly from fills). See HANDOFF "rebuild
+    # reverts T2.6 attribution".
     calc_id = ""
     for f in opens:
         cid = f.get("calc_id")

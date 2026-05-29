@@ -1117,3 +1117,153 @@ class TestCloseDeltas:
         assert cp["sl_drift_pct"] is None              # P4.6
         assert cp["cumulative_amendment_count"] is None  # P4.3
         assert cp["hold_time_planned_ms"] is None       # no source column
+
+
+# ── 10. T2.6 — closed_positions.calc_id + lifecycle_id = junction primary ─
+
+
+async def _seed_open_fill_no_junction(db, fid, eoid, calc_id, tpid, price, qty, ts):
+    # Persist an OPENING fill directly (with calc_id), WITHOUT seeding a
+    # junction row — simulates the no-junction path (UNPLANNED / binance
+    # empty-tpid) so the close-row builder must fall back to earliest-fill.
+    await db._conn.execute(
+        "INSERT INTO fills (account_id, exchange_fill_id, exchange_order_id, "
+        " symbol, side, direction, price, quantity, terminal_position_id, "
+        " is_close, calc_id, timestamp_ms) "
+        "VALUES (1, ?, ?, 'BTCUSDT', 'BUY', 'long', ?, ?, ?, 0, ?, ?)",
+        (fid, eoid, price, qty, tpid, calc_id, ts),
+    )
+    await db._conn.commit()
+
+
+class TestClosedPositionPrimaryCalc:
+    """T2.6: closed_positions.calc_id + lifecycle_id sealed from the
+    most-contributing junction calc, closing the R1 divergence."""
+
+    @pytest.mark.asyncio
+    async def test_closed_calc_and_lifecycle_from_primary_and_converge(self, real):
+        # Scale-in where the BIGGER calc (calc-B, qty 7) is NOT first
+        # (calc-A, qty 3, opened first). Pre-T2.6 the closed row would carry
+        # calc-A (earliest) + NULL lifecycle; now it must carry calc-B
+        # (most-contributing) + the sealed lifecycle, AND agree with
+        # fills(close).calc_id (T2.2) and the junction lifecycle.
+        om, db = real
+        await _seed_linked_order_and_calc(db, eoid="O-A", calc_id="calc-A")
+        await _seed_linked_order_and_calc(db, eoid="O-B", calc_id="calc-B")
+        # Distinct tp/sl per calc so the tp_price/sl_price auto-resolve
+        # (insert_closed_position resolves by calc_id) is pinned to the
+        # PRIMARY (calc-B), not the earliest (calc-A) — a real T2.6 side effect.
+        await db._conn.execute(
+            "UPDATE pre_trade_log SET size=3.0, effective_entry=50000.0, "
+            "tp_price=55000.0, sl_price=48000.0 WHERE calc_id='calc-A'")
+        await db._conn.execute(
+            "UPDATE pre_trade_log SET size=7.0, effective_entry=51000.0, "
+            "tp_price=60000.0, sl_price=47000.0 WHERE calc_id='calc-B'")
+        await db._conn.commit()
+        await om._process_single_fill(
+            ACCOUNT_ID, _fill("O-A", "POS-1", 3.0, fid="FA", price=50000.0, ts=1000))
+        await om._process_single_fill(
+            ACCOUNT_ID, _fill("O-B", "POS-1", 7.0, fid="FB", price=51000.0, ts=2000))
+        await db._conn.execute(
+            "INSERT INTO orders (account_id, exchange_order_id, symbol, side, "
+            " order_type, status, price, reduce_only) "
+            "VALUES (1, 'O-C', 'BTCUSDT', 'SELL', 'take_profit', 'new', 54000, 1)")
+        await db._conn.commit()
+        close = _fill("O-C", "POS-1", 10.0, is_close=1, fid="FC", price=54000.0, ts=4000)
+        await om._process_single_fill(ACCOUNT_ID, close)
+        await om._build_close_row_for_fill(ACCOUNT_ID, close)
+
+        cp = await _closed_pos(db, "POS-1")
+        assert cp["calc_id"] == "calc-B"        # most-contributing, NOT earliest calc-A
+        assert cp["lifecycle_id"] is not None   # sealed (was NULL pre-T2.6)
+        # R1 convergence: all attribution surfaces agree.
+        async with db._conn.execute(
+            "SELECT calc_id, lifecycle_id FROM fills WHERE exchange_fill_id='FC'") as cur:
+            fc = await cur.fetchone()
+        async with db._conn.execute(
+            "SELECT lifecycle_id FROM positions_calcs WHERE position_id='POS-1' LIMIT 1") as cur:
+            jlc = (await cur.fetchone())[0]
+        assert fc["calc_id"] == "calc-B"
+        assert cp["lifecycle_id"] == fc["lifecycle_id"] == jlc
+        # tp/sl auto-resolved from the PRIMARY (calc-B), not earliest calc-A.
+        assert cp["tp_price"] == pytest.approx(60000.0)
+        assert cp["sl_price"] == pytest.approx(47000.0)
+
+    @pytest.mark.asyncio
+    async def test_no_junction_falls_back_to_earliest_calc(self, real):
+        # No junction (UNPLANNED / binance empty-tpid shape): the close row
+        # keeps the Phase-1 earliest-opening-fill calc_id, lifecycle NULL.
+        om, db = real
+        await _seed_linked_order_and_calc(db, eoid="O-A", calc_id="calc-early")
+        # Opening fill persisted directly, NO junction seeded.
+        await _seed_open_fill_no_junction(
+            db, "FA", "O-A", "calc-early", "POS-NJ", 50000.0, 5.0, 1000)
+        await db._conn.execute(
+            "INSERT INTO orders (account_id, exchange_order_id, symbol, side, "
+            " order_type, status, price, reduce_only) "
+            "VALUES (1, 'O-C', 'BTCUSDT', 'SELL', 'take_profit', 'new', 54000, 1)")
+        await db._conn.commit()
+        close = _fill("O-C", "POS-NJ", 5.0, is_close=1, fid="FC", price=54000.0, ts=4000)
+        # Persist the closing fill so get_fills_by_order resolves it.
+        await om._process_single_fill(ACCOUNT_ID, close)
+        await om._build_close_row_for_fill(ACCOUNT_ID, close)
+
+        cp = await _closed_pos(db, "POS-NJ")
+        assert cp is not None
+        assert cp["calc_id"] == "calc-early"   # earliest-fill fallback
+        assert cp["lifecycle_id"] is None      # no junction → no lifecycle
+
+    @pytest.mark.asyncio
+    async def test_empty_tpid_has_no_primary(self, db, om):
+        # binance one-way empty-tpid: _position_primary_calc short-circuits
+        # on the empty position_id guard → (None, None), so the close-row
+        # builder takes the earliest-fill fallback (no junction to consult).
+        assert await om._position_primary_calc(ACCOUNT_ID, "") == (None, None)
+
+    @pytest.mark.asyncio
+    async def test_single_calc_seal(self, real):
+        # Common case: one calc → closed row carries that calc + its lifecycle.
+        om, db = real
+        await _seed_linked_order_and_calc(db, eoid="O-1", calc_id="calc-solo")
+        await db._conn.execute(
+            "UPDATE pre_trade_log SET size=5.0, effective_entry=50000.0 WHERE calc_id='calc-solo'")
+        await db._conn.commit()
+        await om._process_single_fill(
+            ACCOUNT_ID, _fill("O-1", "POS-1", 5.0, fid="FO", price=50000.0, ts=1000))
+        await db._conn.execute(
+            "INSERT INTO orders (account_id, exchange_order_id, symbol, side, "
+            " order_type, status, price, reduce_only) "
+            "VALUES (1, 'O-C', 'BTCUSDT', 'SELL', 'take_profit', 'new', 53000, 1)")
+        await db._conn.commit()
+        close = _fill("O-C", "POS-1", 5.0, is_close=1, fid="FC", price=53000.0, ts=3000)
+        await om._process_single_fill(ACCOUNT_ID, close)
+        await om._build_close_row_for_fill(ACCOUNT_ID, close)
+        cp = await _closed_pos(db, "POS-1")
+        assert cp["calc_id"] == "calc-solo"
+        assert cp["lifecycle_id"] is not None
+
+    @pytest.mark.asyncio
+    async def test_tie_break_first_entry_at_close(self, real):
+        # Equal contributed_qty across two calcs → §3.2 tie-break picks the
+        # EARLIER first_fill_ts (calc-early) for closed_positions.calc_id.
+        om, db = real
+        await _seed_linked_order_and_calc(db, eoid="O-E", calc_id="calc-early")
+        await _seed_linked_order_and_calc(db, eoid="O-L", calc_id="calc-late")
+        await db._conn.execute(
+            "UPDATE pre_trade_log SET size=5.0, effective_entry=50000.0 "
+            "WHERE calc_id IN ('calc-early','calc-late')")
+        await db._conn.commit()
+        await om._process_single_fill(
+            ACCOUNT_ID, _fill("O-E", "POS-1", 5.0, fid="FE", price=50000.0, ts=1000))
+        await om._process_single_fill(
+            ACCOUNT_ID, _fill("O-L", "POS-1", 5.0, fid="FL", price=50000.0, ts=2000))
+        await db._conn.execute(
+            "INSERT INTO orders (account_id, exchange_order_id, symbol, side, "
+            " order_type, status, price, reduce_only) "
+            "VALUES (1, 'O-C', 'BTCUSDT', 'SELL', 'take_profit', 'new', 53000, 1)")
+        await db._conn.commit()
+        close = _fill("O-C", "POS-1", 10.0, is_close=1, fid="FC", price=53000.0, ts=4000)
+        await om._process_single_fill(ACCOUNT_ID, close)
+        await om._build_close_row_for_fill(ACCOUNT_ID, close)
+        cp = await _closed_pos(db, "POS-1")
+        assert cp["calc_id"] == "calc-early"   # tie → earliest first_fill_ts

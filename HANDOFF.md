@@ -290,35 +290,47 @@ one; the fix is seal-at-close, deferred because it must distinguish full
 vs partial close (couples with Phase 2.11 multi-TP). Not a live blocker;
 documented as an anchor comment in `order_manager.py`.
 
-### closed_positions attribution lags the junction primary (until P2.T6)
+### closed_positions attribution — R1 CLOSED (T234 / P2.T6)
 
-Surfaced by the holistic Phase-2 audit (after T229). Within ONE position
-`closed_positions.calc_id` can disagree with the junction primary:
-- `fills.calc_id` (closing) + `PositionInfo.calc_id` + the T2.5 close-time
-  deltas = the junction PRIMARY / most-contributing calc.
-- `closed_positions.calc_id` = the EARLIEST opening fill's calc_id —
-  still the Phase-1 `_build_close_row_for_fill` behavior
-  (`order_manager.py`, the "calc_id from earliest entry fill" block).
+Surfaced by the holistic Phase-2 audit (after T229): `closed_positions.calc_id`
+used the Phase-1 "earliest opening fill" rule + NULL `lifecycle_id`, while
+`fills.calc_id` (T2.2), `PositionInfo.calc_id` (T2.3), and the T2.5 deltas
+used the most-contributing (junction-primary) calc — so for a scale-in
+where the larger order wasn't first, the closed row disagreed.
 
-For a scale-in where the larger order is NOT first they point at
-different calcs. Verified e2e: open calc-A qty3, scale-in calc-B qty7,
-close → `closed_positions.calc_id=calc-A` while everything else = calc-B.
-**P2.T6 explicitly sets `closed_positions.calc_id = most-contributing`,
-which resolves this.** Also: `closed_positions.lifecycle_id` is NULL on
-close-built rows today — spec §3.5 says it's "sealed at close", so the
-P2.T6 close-row enrichment must stamp it from the junction. No data
-loss; an attribution-consistency gap P2.T6 closes.
+**Resolved in T234 (P2.T6)**: `_build_close_row_for_fill` now sets both
+`closed_positions.calc_id` and `closed_positions.lifecycle_id` from
+`_position_primary_calc` (most-contributing; tie-break first-entry),
+falling back to the earliest-fill rule (calc_id only, lifecycle NULL)
+only when the position has no junction (UNPLANNED / binance empty-tpid).
+All four surfaces now converge — verified e2e (calc-A qty3 first +
+calc-B qty7 → all = calc-B, lifecycle sealed) + a mutation-proven
+convergence test. `insert_closed_position` REPLACE-preserves both (T232).
 
-**T2.5 (T233) close-time deltas landed**: `entry_px_delta_pct`,
-`size_delta_pct`, `exit_vs_target_pct`, `realized_r`, `planned_r`,
-`hold_time_actual_ms` are now computed against the most-contributing calc
-at close and persisted (REPLACE-preserved). Note T2.5 computes deltas
-against the junction primary even though `closed_positions.calc_id` itself
-is still the earliest-entry value until T2.6 — so a scale-in's deltas and
-its stored `calc_id` can transiently reference different calcs until T2.6.
-**Deferred from T2.5** (operator-approved): `tp_drift_pct`/`sl_drift_pct`
-→ P4.6 (need final amended TP/SL); `cumulative_amendment_count` → P4.3
-(`order_amendments` unwired); `hold_time_planned_ms` → no source column.
+**T2.5 (T233) close-time deltas** (`entry_px_delta_pct`, `size_delta_pct`,
+`exit_vs_target_pct`, `realized_r`, `planned_r`, `hold_time_actual_ms`)
+remain as shipped. **Still deferred** (operator-approved): `tp_drift_pct`/
+`sl_drift_pct` → P4.6 (need final amended TP/SL); `cumulative_amendment_count`
+→ P4.3 (`order_amendments` unwired); `hold_time_planned_ms` → no source.
+
+**T2.6 known limitations (T234 review):**
+- **Rebuild reverts T2.6 attribution.** `scripts/rebuild_closed_positions.py`
+  (the fills-only offline recovery tool) routes through
+  `core/position_grouping.py::group_fills_into_positions`, which has NO
+  `positions_calcs` access and so attributes `calc_id` by earliest-opening
+  -fill (+ NULL `lifecycle_id`, + tp/sl from the earliest calc). Running
+  `--apply` over a scale-in whose larger calc wasn't first will flip those
+  attribution columns back to earliest (PnL/qty/prices recompute correctly
+  — attribution-only drift, gated behind a manual operator action). Full
+  convergence would re-couple the recovery tool to live junction state
+  (out of scope for a fills-only reconstruction). Anchor-commented at
+  `position_grouping.py`.
+- **`closed_positions.model_name` is NOT keyed off the primary calc.** It's
+  still sourced by symbol+entry-time window via `_compute_shortfall` /
+  `get_pre_trade_for_shortfall` — the one closed-row attribution field not
+  converged on the junction primary. Pre-existing; for single-calc or
+  same-model scale-ins it agrees anyway. Converge opportunistically (read
+  `model_name` from the primary calc) if it ever matters.
 
 ### Junction contributed_qty redelivery double-count (T232 audit — confirmed, deferred)
 

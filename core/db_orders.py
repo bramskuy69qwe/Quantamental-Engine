@@ -230,7 +230,16 @@ class OrdersMixin:
             )
             return
 
-        # Resolve tp_price/sl_price from pre_trade_log if not explicitly provided
+        # Resolve tp_price/sl_price from pre_trade_log if not explicitly provided.
+        # T234 note: calc_id is bound UNCONDITIONALLY below (not carried
+        # forward across REPLACE like lifecycle_id / mfe / mae / the delta
+        # columns). That asymmetry is intentional — every close path derives
+        # calc_id deterministically and always supplies it (the live builder
+        # → junction primary or earliest-fill fallback; backfill/rebuild →
+        # earliest-fill), so there is no "caller omitted it" case to carry
+        # forward, and cross-path REPLACEs use non-colliding 'rebuilt:' tpids.
+        # tp_price/sl_price auto-resolve keys off this same calc_id (so they
+        # follow the primary post-T2.6, by design).
         calc_id = row.get("calc_id")
         tp_price = row.get("tp_price")
         sl_price = row.get("sl_price")

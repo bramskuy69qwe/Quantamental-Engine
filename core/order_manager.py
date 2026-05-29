@@ -1016,11 +1016,14 @@ class OrderManager:
                 exc_info=True,
             )
             return None, None
-        if not links:
-            return None, None
         # Rows ordered by first_fill_ts ASC; max() returns the FIRST
         # maximal element, so ties resolve to the earliest entry.
-        primary = max(links, key=lambda r: r[2] or 0.0)
+        # default=None guards an empty result (no junction) without a
+        # separate truthiness check that an empty-but-truthy iterable
+        # could slip past.
+        primary = max(links, key=lambda r: r[2] or 0.0, default=None)
+        if primary is None:
+            return None, None
         lifecycle_id = primary[1] or next((r[1] for r in links if r[1]), None)
         return primary[0], lifecycle_id
 
@@ -1446,9 +1449,22 @@ class OrderManager:
             )
             model_name = shortfall.pop("model_name", "")
 
-            # ── calc_id from earliest entry fill ───────────────────────
-            close_calc_id = None
-            if opens:
+            # ── T2.6: closed_positions.calc_id + lifecycle_id = the
+            # position's MOST-CONTRIBUTING calc (junction primary; spec
+            # §3.2/§3.5), aligning the closed row with fills.calc_id (T2.2),
+            # PositionInfo.calc_id (T2.3), and the T2.5 delta basis — closing
+            # the R1 divergence where this row used the "earliest opening
+            # fill with a calc_id" rule while everything else used the
+            # most-contributing one. Fall back to that Phase-1 rule (calc_id
+            # only; lifecycle stays NULL) when the position has no junction
+            # — UNPLANNED, or the binance empty-tpid one-way path — so those
+            # positions keep their earliest-fill attribution.
+            primary_calc_id, primary_lifecycle = await self._position_primary_calc(
+                account_id, pos_id,
+            )
+            close_calc_id = primary_calc_id
+            close_lifecycle_id = primary_lifecycle
+            if not close_calc_id and opens:
                 for f in opens:
                     if f.get("calc_id"):
                         close_calc_id = f["calc_id"]
@@ -1485,6 +1501,7 @@ class OrderManager:
                 "model_name":           model_name,
                 "source":               fill.get("source", ""),
                 "calc_id":              close_calc_id,
+                "lifecycle_id":         close_lifecycle_id,
                 **shortfall,
                 **deltas,
             })
