@@ -379,7 +379,11 @@ def _build_row(
         "net_pnl":              net_pnl,
         "funding_fees":         0.0,
         "hold_time_ms":         max(0, exit_time_ms - entry_time_ms),
-        "exit_reason":          "manual",  # heuristic — no order-type metadata in fills alone
+        # T2.7: spec §3.4 enum. Fills-only rebuild has no order-type metadata
+        # to distinguish TP/SL, so it defaults to MANUAL_OTHER (was legacy
+        # "manual") — consistent with the live close path's enum + the P0.T5
+        # backfill (manual→MANUAL_OTHER).
+        "exit_reason":          "MANUAL_OTHER",
         "model_name":           "",
         "source":               "rebuilt_from_fills",
         "calc_id":              calc_id,

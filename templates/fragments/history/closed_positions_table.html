@@ -65,12 +65,22 @@
           <td class="td-sub">{{ fmt(r.total_fees, 4) }}</td>
           <td class="td-sub" style="text-align:right;">{{ fmt_duration(r.hold_time_ms) }}</td>
           <td>
-            {% if r.exit_reason == 'tp_hit' %}<span class="badge badge-green">TP</span>
-            {% elif r.exit_reason == 'sl_hit' %}<span class="badge badge-red">SL</span>
-            {% elif r.exit_reason == 'trailing_stop' %}<span class="badge badge-yellow">Trail</span>
-            {% elif r.exit_reason == 'manual' %}<span class="badge badge-gray">Manual</span>
-            {% elif r.exit_reason == 'liquidation' %}<span class="badge badge-red">Liq</span>
-            {% else %}<span class="badge">{{ r.exit_reason or "—" }}</span>
+            {# T2.7: map the spec §3.4 exit_reason enum (TP_PLANNED,
+               SL_AMENDED, MANUAL_*, LIQUIDATION, ...) to family badge
+               labels (TP/SL/Manual/Liq/Exp/Mixed), keeping the pre-§3.4
+               legacy strings as fallbacks for rows the P0.T5 backfill
+               didn't reach, and an {% else %} plain badge for anything
+               else. The badge-green/red/gray/yellow color-hook classes
+               match the legacy badges' convention (undefined in base CSS
+               app-wide — the label, not the tint, is the functional part). #}
+            {% set er = r.exit_reason or "" %}
+            {% if er.startswith('TP') or er == 'tp_hit' %}<span class="badge badge-green">TP</span>
+            {% elif er.startswith('SL') or er in ['sl_hit', 'trailing_stop'] %}<span class="badge badge-red">SL</span>
+            {% elif er.startswith('MANUAL') or er in ['manual', 'limit_close'] %}<span class="badge badge-gray">Manual</span>
+            {% elif er in ['LIQUIDATION', 'ADL', 'liquidation'] %}<span class="badge badge-red">Liq</span>
+            {% elif er == 'EXPIRED' %}<span class="badge badge-gray">Exp</span>
+            {% elif er == 'MIXED' %}<span class="badge badge-yellow">Mixed</span>
+            {% else %}<span class="badge">{{ er or "—" }}</span>
             {% endif %}
           </td>
           <td class="text-green">{{ fmt(r.tp_price, 4) if r.tp_price else "—" }}</td>

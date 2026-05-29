@@ -158,6 +158,48 @@ class TestPositionHistoryMigration:
         assert 'class="tr-p tr-p-clickable"' in out
         assert 'onclick="togglePosRow(1)"' in out
 
+    def _render_one(self, exit_reason):
+        env = _make_env()
+        tpl = env.get_template("fragments/history/closed_positions_table.html")
+        rows = [{
+            "id": 1, "entry_time_ms": 1, "exit_time_ms": 2,
+            "symbol": "BTCUSDT", "direction": "LONG", "quantity": 1.0,
+            "entry_price": 60000.0, "exit_price": 62000.0,
+            "net_pnl": 100.0, "total_fees": 0.1, "hold_time_ms": 60000,
+            "exit_reason": exit_reason, "tp_price": 62000.0, "sl_price": 59000.0,
+            "mfe": 100.0, "mae": -50.0, "backfill_completed": True,
+        }]
+        return tpl.render(
+            rows=rows, total=1, page=1, per_page=20, total_pages=1,
+            search="", sort_by="exit_time_ms", sort_dir="DESC",
+            date_from="2026-01-01", date_to="2026-12-31",
+        )
+
+    @pytest.mark.parametrize("exit_reason,badge_class,label", [
+        # T2.7: spec §3.4 enum colorized by family.
+        ("TP_PLANNED", "badge-green", "TP"),
+        ("TP_AMENDED", "badge-green", "TP"),
+        ("SL_PLANNED", "badge-red", "SL"),
+        ("SL_AMENDED", "badge-red", "SL"),
+        ("MANUAL_OTHER", "badge-gray", "Manual"),
+        ("MANUAL_DISCIPLINE_BREAK", "badge-gray", "Manual"),
+        ("LIQUIDATION", "badge-red", "Liq"),
+        ("ADL", "badge-red", "Liq"),
+        ("EXPIRED", "badge-gray", "Exp"),
+        ("MIXED", "badge-yellow", "Mixed"),
+        # Legacy fallbacks (rows the P0.T5 backfill didn't reach).
+        ("tp_hit", "badge-green", "TP"),
+        ("sl_hit", "badge-red", "SL"),
+        ("manual", "badge-gray", "Manual"),
+    ])
+    def test_exit_reason_badge_colorized(self, exit_reason, badge_class, label):
+        out = self._render_one(exit_reason)
+        assert f'class="badge {badge_class}">{label}</span>' in out
+
+    def test_unknown_exit_reason_falls_through_to_plain_badge(self):
+        out = self._render_one("SOMETHING_NEW")
+        assert '<span class="badge">SOMETHING_NEW</span>' in out
+
 
 # ── Order History migration ─────────────────────────────────────────────────
 

@@ -332,6 +332,26 @@ remain as shipped. **Still deferred** (operator-approved): `tp_drift_pct`/
   same-model scale-ins it agrees anyway. Converge opportunistically (read
   `model_name` from the primary calc) if it ever matters.
 
+### exit_reason §3.4 enum — forward path (T235 / P2.T7)
+
+The live close path now writes the spec §3.4 `exit_reason` enum
+(`TP_PLANNED` / `SL_PLANNED` / `MANUAL_OTHER`) instead of legacy
+tp_hit/sl_hit/manual/limit_close/trailing_stop — matching the §3.4 values
+the P0.T5 backfill applied to historical rows (the forward path was the
+last legacy-string emitter). The history template maps the enum to family
+badge labels (TP/SL/Manual/Liq/…) — replacing the raw-enum-string
+fallthrough — with legacy fallbacks for any un-backfilled rows. (The
+badge color-hook classes are undefined in base CSS app-wide, as they were
+for the pre-T2.7 legacy badges; the label mapping is the functional win.) **`*_AMENDED` is
+deferred to Phase 4** (no amendment data + final-TP/SL unknowable at close,
+continuing the T2.5 deferral) — so every TP/SL close reads `*_PLANNED`
+until P4.1/4.3 wire amendment tracking; analytics filtering on
+`TP_AMENDED`/`SL_AMENDED` returns empty by design until then. **Residual
+legacy writer (flagged, not fixed):** `database.py` Task-76 startup
+migration still defaults empty/NULL `exit_reason`→`'manual'` (legacy) — only
+fires on empty rows (forward rows never are), cosmetically neutral (the
+template maps `manual`→gray too); change to `MANUAL_OTHER` opportunistically.
+
 ### Junction contributed_qty redelivery double-count (T232 audit — confirmed, deferred)
 
 Holistic Phase-2 audit (after T231) + my own runtime probe confirmed:

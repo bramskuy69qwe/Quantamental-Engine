@@ -1267,3 +1267,73 @@ class TestClosedPositionPrimaryCalc:
         await om._build_close_row_for_fill(ACCOUNT_ID, close)
         cp = await _closed_pos(db, "POS-1")
         assert cp["calc_id"] == "calc-early"   # tie → earliest first_fill_ts
+
+
+# ── 11. T2.7 — exit_reason spec §3.4 enum (forward path) ───────────────
+
+
+async def _seed_order_with_type(db, eoid, order_type):
+    await db._conn.execute(
+        "INSERT INTO orders (account_id, exchange_order_id, symbol, side, "
+        " order_type, status, price, reduce_only) "
+        "VALUES (1, ?, 'BTCUSDT', 'SELL', ?, 'filled', 50000, 1)",
+        (eoid, order_type),
+    )
+    await db._conn.commit()
+
+
+class TestExitReasonEnum:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("order_type,expected", [
+        ("take_profit", "TP_PLANNED"),
+        ("take_profit_market", "TP_PLANNED"),
+        ("stop_loss", "SL_PLANNED"),
+        ("stop_market", "SL_PLANNED"),
+        ("trailing_stop", "SL_PLANNED"),   # trailing collapses to SL (deviation)
+        ("market", "MANUAL_OTHER"),
+        ("limit", "MANUAL_OTHER"),
+        ("", "MANUAL_OTHER"),
+    ])
+    async def test_order_type_maps_to_enum(self, db, om, order_type, expected):
+        await _seed_order_with_type(db, "O-X", order_type)
+        assert await om._determine_exit_reason(ACCOUNT_ID, "O-X") == expected
+
+    @pytest.mark.asyncio
+    async def test_empty_eoid_and_missing_order_are_manual_other(self, db, om):
+        assert await om._determine_exit_reason(ACCOUNT_ID, "") == "MANUAL_OTHER"
+        assert await om._determine_exit_reason(ACCOUNT_ID, "O-NONE") == "MANUAL_OTHER"
+
+    @pytest.mark.asyncio
+    async def test_never_emits_amended_or_legacy(self, db, om):
+        # T2.7 emits only *_PLANNED / MANUAL_OTHER; *_AMENDED is Phase-4,
+        # and the legacy strings (tp_hit/sl_hit/manual/limit_close) are gone.
+        results = set()
+        for ot in ("take_profit", "stop_loss", "trailing_stop", "market", "limit"):
+            await db._conn.execute("DELETE FROM orders WHERE exchange_order_id='O-X'")
+            await db._conn.commit()
+            await _seed_order_with_type(db, "O-X", ot)
+            results.add(await om._determine_exit_reason(ACCOUNT_ID, "O-X"))
+        assert results <= {"TP_PLANNED", "SL_PLANNED", "MANUAL_OTHER"}
+        assert not (results & {"tp_hit", "sl_hit", "manual", "limit_close",
+                               "trailing_stop", "TP_AMENDED", "SL_AMENDED"})
+
+    @pytest.mark.asyncio
+    async def test_exit_reason_enum_via_real_close_path(self, real):
+        # The forward close row persists the §3.4 enum, not a legacy string.
+        om, db = real
+        await _seed_linked_order_and_calc(db, eoid="O-1", calc_id="calc-a")
+        await db._conn.execute(
+            "UPDATE pre_trade_log SET effective_entry=50000.0 WHERE calc_id='calc-a'")
+        await db._conn.commit()
+        await om._process_single_fill(
+            ACCOUNT_ID, _fill("O-1", "POS-1", 5.0, fid="FO", price=50000.0, ts=1000))
+        await db._conn.execute(
+            "INSERT INTO orders (account_id, exchange_order_id, symbol, side, "
+            " order_type, status, price, reduce_only) "
+            "VALUES (1, 'O-TP', 'BTCUSDT', 'SELL', 'take_profit', 'new', 55000, 1)")
+        await db._conn.commit()
+        close = _fill("O-TP", "POS-1", 5.0, is_close=1, fid="FC", price=55000.0, ts=3000)
+        await om._process_single_fill(ACCOUNT_ID, close)
+        await om._build_close_row_for_fill(ACCOUNT_ID, close)
+        cp = await _closed_pos(db, "POS-1")
+        assert cp["exit_reason"] == "TP_PLANNED"   # not legacy "tp_hit"

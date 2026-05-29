@@ -1618,26 +1618,53 @@ class OrderManager:
     async def _determine_exit_reason(
         self, account_id: int, exchange_order_id: str
     ) -> str:
-        """Derive exit reason from the parent order's order_type."""
+        """Derive the spec §3.4 exit_reason enum from the close order's type.
+
+        T2.7 (plan §2 task 2.7): the forward close path now emits the
+        canonical §3.4 enum (was legacy tp_hit/sl_hit/manual/limit_close/
+        trailing_stop), aligning new rows with the §3.4 values the P0.T5
+        backfill already applied to historical rows. Mapping mirrors that
+        backfill's EXIT_REASON_REMAP (tp→TP_PLANNED, sl→SL_PLANNED,
+        manual/none→MANUAL_OTHER):
+          - take_profit*           → TP_PLANNED
+          - trailing*, stop_loss*, stop → SL_PLANNED
+          - market / limit / none / not-found → MANUAL_OTHER
+
+        Always the *_PLANNED variant (never *_AMENDED). The AMENDED
+        distinction is DEFERRED to Phase 4: spec §3.4 keys it on
+        ``cumulative_amendment_count > 0`` (Phase 4.3, populated from the
+        Phase-4.1 ws_manager amendment writer that is unwired today) AND a
+        plan-vs-final-TP/SL price difference (Phase 4.6) — and the final
+        amended TP/SL isn't reliably knowable at close (the close order
+        exposes only the single triggered level; the same data-availability
+        reason T2.5 deferred tp_drift/sl_drift). Re-classifying *_PLANNED →
+        *_AMENDED is a Phase-4 re-derivation on the idempotent close-row
+        rebuild seam.
+
+        Deviations (deviation discipline): ``trailing`` has no §3.4 enum —
+        a trailing stop is mechanically an SL, so it collapses to
+        SL_PLANNED. ``limit_close`` likewise has no enum — an operator
+        limit close is operator-initiated → MANUAL_OTHER (the finer
+        MANUAL_* subtypes need operator close-note input; LIQUIDATION/ADL
+        need venue status signals; EXPIRED needs the cancel-category map —
+        all out of T2.7 scope, routed to the closest available enum here).
+        """
         if not exchange_order_id:
-            return "manual"
+            return "MANUAL_OTHER"
         order = await self._db.get_order_by_exchange_id(
             account_id, exchange_order_id,
         )
         if not order:
-            return "manual"
+            return "MANUAL_OTHER"
         otype = order.get("order_type", "")
         if "take_profit" in otype:
-            return "tp_hit"
+            return "TP_PLANNED"
         if "trailing" in otype:
-            return "trailing_stop"
+            return "SL_PLANNED"   # trailing stop is mechanically an SL
         if "stop_loss" in otype or "stop" in otype:
-            return "sl_hit"
-        if otype == "market":
-            return "manual"
-        if otype == "limit":
-            return "limit_close"
-        return "manual"
+            return "SL_PLANNED"
+        # market / limit / manual / anything else → operator-initiated close
+        return "MANUAL_OTHER"
 
     async def _compute_shortfall(
         self,

@@ -643,7 +643,7 @@ class TestClosePositionGuards:
 
     def _make_om(self, db):
         om = OrderManager(db)
-        om._determine_exit_reason = AsyncMock(return_value="manual")
+        om._determine_exit_reason = AsyncMock(return_value="MANUAL_OTHER")
         om._compute_shortfall = AsyncMock(return_value={"model_name": ""})
         return om
 
@@ -766,7 +766,7 @@ class TestClosePositionGuards:
 
     def _make_om_with_db(self, db):
         om = OrderManager(db)
-        om._determine_exit_reason = AsyncMock(return_value="manual")
+        om._determine_exit_reason = AsyncMock(return_value="MANUAL_OTHER")
         om._compute_shortfall = AsyncMock(return_value={"model_name": ""})
         return om
 
@@ -892,7 +892,7 @@ class TestClosePositionOverfillCap:
     def _make_om(self, db):
         from core.order_manager import OrderManager
         om = OrderManager(db)
-        om._determine_exit_reason = AsyncMock(return_value="manual")
+        om._determine_exit_reason = AsyncMock(return_value="MANUAL_OTHER")
         om._compute_shortfall = AsyncMock(return_value={"model_name": ""})
         return om
 
@@ -1028,7 +1028,7 @@ class TestClosePositionSilentSwallow:
     def _make_om(self, db):
         from core.order_manager import OrderManager
         om = OrderManager(db)
-        om._determine_exit_reason = AsyncMock(return_value="manual")
+        om._determine_exit_reason = AsyncMock(return_value="MANUAL_OTHER")
         om._compute_shortfall = AsyncMock(return_value={"model_name": ""})
         return om
 
