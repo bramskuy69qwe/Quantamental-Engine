@@ -410,15 +410,17 @@ class OrderManager:
         which stamps only the entry order; revisit if the Phase-7 lifecycle
         join needs protective-order rows.
 
-        link_status NOTE: writes ``orders.link_status`` via a RAW UPDATE,
-        matching the matcher's initial-arrival set in
-        ``order_enrichment._try_correlate``. A NULL→LINKED initial-arrival
-        set is explicitly the matcher's job, NOT routed through
-        ``core.link_state.transition`` (link_state.py:53 — that choke-point
-        only validates current→target between existing enum values; a NULL
-        current would raise ``IllegalStateTransition``). P3.T1 will sweep
-        BOTH sites onto the choke-point together. Maintains the invariant
-        "calc_id present ⟺ link_status=LINKED" (plan §1 acceptance).
+        link_status NOTE (P3.T1 done): the ``orders.link_status`` write
+        routes through ``core.link_state.auto_classify`` (spec §3.6) — the
+        engine-classification sibling of ``transition()``, matching the
+        matcher's link write in ``order_enrichment._try_correlate``. This
+        NULL→LINKED set is an auto-classification, not an operator
+        transition: the protective leg has no prior DECIDED link_status
+        (the matcher early-returns for reduce-only/close types), so it is
+        deliberately NOT routed through ``transition()`` (which validates
+        between existing enum values and would reject a NULL/UNPLANNED
+        source). Maintains the invariant "calc_id present ⟺
+        link_status=LINKED" (plan §1 acceptance).
         """
         if not symbol:
             return
@@ -493,11 +495,28 @@ class OrderManager:
             if not updates:
                 return
 
+            # P3.T1: route the link_status write through the link_state
+            # auto-classification choke-point (spec §3.6). The protective
+            # leg's link_status is NULL here (the matcher early-returns
+            # for reduce-only/close types, so it never set one), making
+            # this an engine auto-classification, not an operator
+            # transition(). apply_fn does the UPDATE (calc_id +
+            # link_status, guarded by WHERE calc_id IS NULL for
+            # idempotency); the single commit stays AFTER the loop to
+            # preserve the batch write. The link event map is empty
+            # pre-Phase-6, so the commit-after-event ordering is moot
+            # today (revisit when Phase 6 wires link-status events).
+            from core.link_state import LinkStatus, auto_classify
+
             for src_calc, oid in updates:
-                await self._db._conn.execute(
-                    "UPDATE orders SET calc_id = ?, link_status = 'LINKED' "
-                    "WHERE id = ? AND calc_id IS NULL",
-                    (src_calc, oid),
+                async def _apply_leg(src_calc=src_calc, oid=oid) -> None:
+                    await self._db._conn.execute(
+                        "UPDATE orders SET calc_id = ?, link_status = ? "
+                        "WHERE id = ? AND calc_id IS NULL",
+                        (src_calc, LinkStatus.LINKED.value, oid),
+                    )
+                await auto_classify(
+                    oid, LinkStatus.LINKED.value, apply_fn=_apply_leg,
                 )
             await self._db._conn.commit()
             log.info(
@@ -2100,7 +2119,11 @@ class OrderManager:
         )
         if not order:
             return "MANUAL_OTHER"
-        otype = order.get("order_type", "")
+        # order_type is canonically lowercased at every adapter ingest
+        # point today; .lower() here hardens against a future adapter that
+        # forgets and keeps this consistent with _classify_final_exit_reason
+        # (P2 audit follow-up, 2026-05-29).
+        otype = (order.get("order_type", "") or "").lower()
         if "take_profit" in otype:
             return "TP_PLANNED"
         if "trailing" in otype:

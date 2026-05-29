@@ -440,7 +440,7 @@ link via side-by-side diff panel. UNPLANNED auto-classification.
 
 | # | Task | File(s) |
 |---|---|---|
-| 3.1 | Set `link_status` on every order arrival based on matcher outcome (LINKED, NEEDS_MANUAL_REVIEW, UNLINKED) | `core/order_manager.py` |
+| 3.1 | **SHIPPED (T241, P3.T1)**: route EVERY `orders.link_status` write through the `core/link_state` choke-point (spec §3.6 — no raw UPDATEs). Added `auto_classify()`, the ENGINE-classification sibling of `transition()`: the matcher assigns link_status from an UNDECIDED source (NULL on first arrival, or UNPLANNED on a re-run — an UNPLANNED→LINKED re-match upgrade is one `transition()` correctly rejects, since UNPLANNED is operator-terminal). Swept BOTH raw-UPDATE sites onto it — the matcher (`order_enrichment._try_correlate`) and bracket inheritance (`order_manager._propagate_bracket_calc_id`). `transition()` (validated decided→decided moves) is reserved for the operator endpoints (P3.T2/T3). The link_status set-on-arrival itself predates this (Phase-1 matcher). 14 tests in `tests/test_phase3_link_state.py`, incl. the load-bearing UNPLANNED→LINKED upgrade. | `core/link_state.py`, `core/order_enrichment.py`, `core/order_manager.py` |
 | 3.2 | Auto-UNPLANNED logic: if matcher finds zero candidates in window for (account, ticker, direction), set `link_status=UNPLANNED` immediately | `core/calc_correlation.py` |
 | 3.3 | New endpoint `POST /orders/{id}/manual_link` accepting `calc_id` | `api/routes_orders.py` |
 | 3.4 | New endpoint `POST /orders/{id}/mark_unplanned` for operator downgrade UNLINKED→UNPLANNED | `api/routes_orders.py` |
@@ -931,7 +931,7 @@ T10 needs T1-T9 done.
 
 | # | Task | Scope |
 |---|---|---|
-| P3.T1 | `link_status` auto-classification | LINKED / NEEDS_REVIEW / UNLINKED / UNPLANNED on order arrival. **All link_status transitions go through `core/link_state.transition()` choke-point (P0.T6)**. |
+| P3.T1 | **SHIPPED (T241)** — `link_status` auto-classification choke-point | All `orders.link_status` writes route through `core/link_state` (spec §3.6): `auto_classify()` for engine sets (matcher + bracket; undecided NULL/UNPLANNED source), `transition()` reserved for operator moves (P3.T2/T3). See detailed §3 table row 3.1. |
 | P3.T2 | Endpoints | `manual_link`, `mark_unplanned`, `needs_review` listing |
 | P3.T3 | Needs-link tab UI | Template + JS + per-criterion diff panel (template wiring tests per CLAUDE.md) |
 | P3.T4 | Status badges + nav counter | History tab badges + nav badge count |

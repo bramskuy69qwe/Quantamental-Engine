@@ -23,9 +23,23 @@ UNLINKED → UNPLANNED is allowed (operator downgrade); but LINKED ↔
 NEEDS_MANUAL_REVIEW is NOT allowed (a verified link should not be
 un-verified — operators investigate the link via a separate workflow).
 
-Phase 0.6 (P0.T6) ships this helper; Phase 3.1 (P3.T1) wires the
-matcher and the manual-link endpoint to route every link_status change
-through ``transition()``.
+Phase 0.6 (P0.T6) ships this module; Phase 3.1 (P3.T1) wires every
+``orders.link_status`` write through it (spec §3.6 — no raw UPDATEs):
+
+  - :func:`auto_classify` — ENGINE-driven assignment from an *undecided*
+    source (NULL on first arrival, or UNPLANNED on a matcher re-run).
+    Used by the strict matcher (``order_enrichment._try_correlate``,
+    §4.3) and bracket inheritance (``order_manager.
+    _propagate_bracket_calc_id``, §4.5).
+  - :func:`transition` — OPERATOR-driven moves between *decided* states
+    (NEEDS_MANUAL_REVIEW → LINKED, UNLINKED → UNPLANNED, …), validated
+    against :data:`LINK_TRANSITIONS`. Wired by the Phase-3.2/3.3
+    manual-link / mark-unplanned endpoints.
+
+The split exists because the matcher legitimately upgrades UNPLANNED →
+LINKED when newly-arriving calcs bring a previously candidate-less order
+into a match — a move :func:`transition` (correctly) rejects, since for
+the OPERATOR state machine UNPLANNED is terminal.
 """
 from __future__ import annotations
 
@@ -50,8 +64,14 @@ class LinkStatus(str, Enum):
 # manual-link discovery) per Phase 3.1 (link_status auto-classification)
 # + Phase 3.4 (POST /orders/{id}/mark_unplanned endpoint).
 #
-# Initial-arrival transitions (None → any) are handled by the matcher
-# at insert time (Phase 3.1), not via this state machine.
+# Engine-driven classification (the matcher + bracket inheritance
+# assigning link_status from an UNDECIDED source — NULL on first arrival
+# or UNPLANNED on a matcher re-run) does NOT appear in this table: it has
+# no prior DECIDED enum to validate a move FROM, and UNPLANNED→LINKED is
+# a legitimate re-classification this operator machine deliberately
+# rejects. P3.T1 routes those writes through :func:`auto_classify`
+# instead, so every orders.link_status write still funnels through this
+# module (spec §3.6).
 LINK_TRANSITIONS: Dict[LinkStatus, Set[LinkStatus]] = {
     LinkStatus.LINKED: {
         # LINKED is treated as terminal forward — no transitions out.
@@ -81,6 +101,17 @@ TERMINAL_STATES = {
 REVIEWABLE_STATES = {
     LinkStatus.NEEDS_MANUAL_REVIEW,
     LinkStatus.UNLINKED,
+}
+
+# Engine auto-classification targets (spec §4.3 matcher + §4.5 bracket
+# inheritance). The matcher emits exactly these three from an undecided
+# source; UNLINKED is operator-set only (never auto-assigned — see
+# core/calc_correlation.py:44), so it is deliberately excluded and an
+# auto_classify() to UNLINKED fails loud.
+AUTO_CLASSIFY_TARGETS: Set[LinkStatus] = {
+    LinkStatus.LINKED,
+    LinkStatus.NEEDS_MANUAL_REVIEW,
+    LinkStatus.UNPLANNED,
 }
 
 
@@ -170,25 +201,115 @@ async def transition(
     """
     assert_transition(order_id, current_status, target_status)
     await apply_fn()
+    await _emit_link_event(
+        order_id, current_status, target_status, reason, event_payload,
+    )
 
-    target_enum = LinkStatus(target_status)
-    topic = TRANSITION_EVENT_MAP.get(target_enum)
-    if topic is not None:
-        from core.event_bus import event_bus
-        payload = {
-            "order_id": order_id,
-            "from_status": current_status,
-            "to_status": target_status,
-        }
-        if reason is not None:
-            payload["reason_note"] = reason
-        if event_payload:
-            payload.update(event_payload)
-        try:
-            await event_bus.publish(topic, payload)
-        except Exception:
-            log.exception(
-                "link_state.transition: event_bus.publish failed for "
-                "topic=%r order_id=%r",
-                topic, order_id,
-            )
+
+async def _emit_link_event(
+    order_id: int,
+    from_status: Optional[str],
+    target_status: str,
+    reason: Optional[str],
+    event_payload: Optional[Dict],
+) -> None:
+    """Publish the catalogued event for ``target_status`` (if any).
+
+    Shared by :func:`transition` and :func:`auto_classify`.
+    :data:`TRANSITION_EVENT_MAP` is empty until Phase 6 catalogues
+    link-status events, so today this is a no-op for every target —
+    factored out so BOTH entry points light up together the moment
+    Phase 6 fills the map. Best-effort: a publish failure logs + is
+    swallowed, never rolling back the DB UPDATE the caller already
+    applied.
+    """
+    topic = TRANSITION_EVENT_MAP.get(LinkStatus(target_status))
+    if topic is None:
+        return
+    from core.event_bus import event_bus
+    payload = {
+        "order_id": order_id,
+        "from_status": from_status,
+        "to_status": target_status,
+    }
+    if reason is not None:
+        payload["reason_note"] = reason
+    if event_payload:
+        payload.update(event_payload)
+    try:
+        await event_bus.publish(topic, payload)
+    except Exception:
+        log.exception(
+            "link_state: event_bus.publish failed for topic=%r order_id=%r",
+            topic, order_id,
+        )
+
+
+def assert_auto_classify(order_id: int, target: str) -> None:
+    """Raise :class:`IllegalStateTransition` unless ``target`` is a valid
+    engine auto-classification (one of :data:`AUTO_CLASSIFY_TARGETS`)."""
+    try:
+        ok = LinkStatus(target) in AUTO_CLASSIFY_TARGETS
+    except ValueError:
+        ok = False
+    if not ok:
+        allowed = sorted(s.value for s in AUTO_CLASSIFY_TARGETS)
+        raise IllegalStateTransition(
+            order_id, "(auto)", target,
+            message=(
+                f"{target!r} is not a valid auto-classification target "
+                f"(order_id={order_id!r}); allowed: {allowed}"
+            ),
+        )
+
+
+async def auto_classify(
+    order_id: int,
+    target_status: str,
+    *,
+    apply_fn: ApplyFn,
+    reason: Optional[str] = None,
+    event_payload: Optional[Dict] = None,
+) -> None:
+    """Engine-driven link-status classification choke-point.
+
+    The strict matcher (``core/order_enrichment._try_correlate``, spec
+    §4.3) and bracket inheritance (``core/order_manager.
+    _propagate_bracket_calc_id``, spec §4.5) assign ``orders.link_status``
+    from an *undecided* source — NULL on first arrival, or UNPLANNED on a
+    matcher re-run (a previously candidate-less order upgrades to
+    LINKED / NEEDS_MANUAL_REVIEW when new calcs arrive). Neither has a
+    prior DECIDED enum to validate a transition FROM, so this is NOT
+    :func:`transition` (which validates current→target between existing
+    enum values and — correctly for the operator machine — rejects both
+    NULL→X and UNPLANNED→X).
+
+    Same choke-point discipline as :func:`transition`: validate target →
+    DB UPDATE (the caller's ``apply_fn``, which carries its own
+    idempotency / WHERE guards) → emit any catalogued event. Routing
+    both write sites here keeps every ``orders.link_status`` write inside
+    this module (spec §3.6), so a future linter can flag raw UPDATEs and
+    Phase 6 can wire link-status events in one place.
+
+    Args:
+        order_id: target order identifier (carried into the event payload
+            and into :class:`IllegalStateTransition` on a bad target).
+        target_status: the classification to assign — must be one of
+            :data:`AUTO_CLASSIFY_TARGETS` (LINKED / NEEDS_MANUAL_REVIEW /
+            UNPLANNED). UNLINKED is operator-set only and fails loud here.
+        apply_fn: async callable performing the actual ``UPDATE orders
+            SET link_status = ?, ...`` (the matcher also sets ``calc_id``
+            in the same statement; the bracket path adds a
+            ``WHERE calc_id IS NULL`` idempotency guard).
+        reason / event_payload: merged into the emitted event (forward-
+            compat; the event map is empty until Phase 6).
+
+    Raises:
+        IllegalStateTransition: when ``target_status`` is not an
+            auto-classification target. ``apply_fn`` is NOT called.
+    """
+    assert_auto_classify(order_id, target_status)
+    await apply_fn()
+    await _emit_link_event(
+        order_id, None, target_status, reason, event_payload,
+    )

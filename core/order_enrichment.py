@@ -124,9 +124,10 @@ async def _try_correlate(order: Dict[str, Any], db_path: str) -> None:
     §3.3 defaults applied when fields are missing. Calls the pure sync
     matcher (``core/calc_correlation.correlate_order_to_calc``).
     Persists per-criterion audit rows into ``calc_match_audit``. Writes
-    ``orders.link_status`` (always) and ``orders.calc_id`` (on full
-    match). For a full match, routes the calc-status flip
-    ``active|released → matched`` through
+    ``orders.link_status`` (always, via the
+    :func:`core.link_state.auto_classify` choke-point — P3.T1, spec §3.6)
+    and ``orders.calc_id`` (on full match). For a full match, routes the
+    calc-status flip ``active|released → matched`` through
     :func:`core.calc_state.transition` so the event-bus fires through
     the choke-point installed in P0.T6.
     """
@@ -233,7 +234,21 @@ async def _try_correlate(order: Dict[str, Any], db_path: str) -> None:
         finally:
             conn.close()
 
-    await asyncio.to_thread(_update_orders_sync)
+    # P3.T1: route the link_status write through the link_state
+    # auto-classification choke-point (spec §3.6) rather than a raw
+    # UPDATE. apply_fn does the actual UPDATE (also stamping calc_id on a
+    # full match); auto_classify validates the target + is the Phase-6
+    # event hook. This is auto_classify, NOT transition(): the source
+    # here is undecided (calc_id NULL + link_status NULL-or-UNPLANNED,
+    # guaranteed by the gates above), and an UNPLANNED→LINKED re-match
+    # upgrade is one transition() correctly rejects for the operator
+    # machine.
+    from core.link_state import auto_classify
+
+    async def _apply_link() -> None:
+        await asyncio.to_thread(_update_orders_sync)
+
+    await auto_classify(row["id"], result.link_status, apply_fn=_apply_link)
 
     # Route calc-status flip through calc_state.transition (the
     # choke-point P0.T6 installed). apply_fn does the actual UPDATE;

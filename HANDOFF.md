@@ -1,11 +1,55 @@
 # Handoff — next Claude Code session
 
 **Date**: 2026-05-29
-**Current branch**: `v2.5/post-rewind-drop-regime-infra` @ `task 240 (P2.T12)` — pushed to origin
-**Tests**: 2802 passed, 7 skipped, 1 unrelated pre-existing failure
+**Current branch**: `v2.5/post-rewind-drop-regime-infra` @ `task 241 (P3.T1 + P2 audit hardening)` — pushed to origin
+**Tests**: 2816 passed, 7 skipped, 1 unrelated pre-existing failure
 **Pre-existing failure**: `tests/test_data_cache_dd.py::TestRollingWindowPeak::test_old_high_excluded_from_window` — 30-day rolling-window boundary bug; unrelated to calc-linkage. Worth filing as its own task.
 
-## ★ STATUS (2026-05-29) — PHASE 2 COMPLETE; next = Phase 3
+## ★ STATUS (2026-05-29) — PHASE 2 COMPLETE + RE-AUDITED; P3.T1 SHIPPED; next = P3.T2
+
+**P3.T1 (task 241) shipped** — every `orders.link_status` write now routes through
+the `core/link_state` choke-point (spec §3.6). Added `auto_classify()`, the
+ENGINE-classification sibling of `transition()`: the matcher assigns link_status
+from an UNDECIDED source (NULL on first arrival, or UNPLANNED on a re-run —
+`order_enrichment._try_correlate` re-runs UNPLANNED orders, and UNPLANNED→LINKED is
+an upgrade `transition()` correctly REJECTS since UNPLANNED is operator-terminal in
+`LINK_TRANSITIONS`). So initial/engine classification can't go through `transition()`
+— hence the separate entry point. Swept both raw-UPDATE sites onto it: the matcher
+and bracket inheritance (`order_manager._propagate_bracket_calc_id`). `transition()`
+stays reserved for the operator moves P3.T2/T3 wire (NEEDS_MANUAL_REVIEW→LINKED,
+UNLINKED→UNPLANNED). `_emit_link_event` is shared by both so Phase 6 lights up both
+at once. `AUTO_CLASSIFY_TARGETS = {LINKED, NEEDS_MANUAL_REVIEW, UNPLANNED}` (UNLINKED
+is operator-only — fails loud if auto-assigned). Tests: `tests/test_phase3_link_state.py`
+(14), incl. the load-bearing UNPLANNED→LINKED re-run upgrade. Bundled a one-line P2
+audit-follow-up hardening: `_determine_exit_reason` now lowercases `order_type` (was
+case-sensitive; harmless today since adapters canonically lowercase, but now
+consistent with `_classify_final_exit_reason`).
+
+**⚠ Environment note (task 241):** mid-task, `core/order_enrichment.py` was reverted
+on disk by something OUTSIDE the session (a linter/editor, not the operator) AFTER a
+green full-suite run — the matcher routing silently vanished (`git diff` for that
+file went empty while the other two P3.T1 files survived). Re-applied + re-verified.
+If a stale editor buffer of that file exists, a save could clobber it again. The
+review workflow caught this only after fixing an aggregation bug in the review script
+itself (see [[feedback-workflow-audit-aggregation]] memory).
+
+**Phase 2 holistically RE-AUDITED (clean).** A 7-dimension adversarial workflow
+(R1 convergence, junction integrity, close deltas/exit_reason, multi-TP completion,
+bracket detect/inherit, PositionInfo/cache/rehydrate, cross-DB/hot-path safety) over
+T2.1–T2.12 filed 8 candidate findings; **all 8 were adversarially refuted** —
+5 mechanism-mismatch (3 repeating the SAME wrong belief that SQLite `ON CONFLICT DO
+UPDATE SET` nulls omitted columns — it does NOT; only `INSERT OR REPLACE` does, so
+`calc_id`/`link_status` survive redelivery), 1 race-framing, 1 unreachable-path
+(the exit_reason case-sensitivity, now hardened anyway), 1 correct-by-design. I
+independently re-verified the two highest false-negative-risk refutations: (a) the
+exit_reason case-sensitivity is unreachable (every adapter lowercases `order_type`,
+incl. the `otype.lower()` fallback in binance ws/rest); (b) the R1 "closing-fill vs
+close-row primary divergence" is benign — both call the SAME `_position_primary_calc`
+→ `_most_contributing_calc_id`, so R1's single-shared-rule guarantee holds; a
+transient lag in the denormalized `fills.calc_id` leaves the authoritative
+`closed_positions.calc_id` correct. The documented deferrals (a)–(i) stand
+unchanged — none worse than recorded. **No code changes from the audit beyond the
+one-line hardening.**
 
 **Phase 2 (position-level attribution, plan §2) is fully shipped + independently
 audited, T2.1–T2.12** (T2.10 was removed per spec §15 R2). Commit trail on this
@@ -31,18 +75,21 @@ per-task notes are in the sections below + `docs/design/calc_linkage_implementat
   ladder `exit_reason` (TP_LADDER_COMPLETE/MIXED) fire on the FINAL close (T2.11).
 
 **NEXT — Phase 3 (manual-link UI + link_status state machine, plan §3):**
-- **P3.T1** — route EVERY `orders.link_status` write through the
-  `core/link_state.transition()` choke-point (shipped in P0.T6, currently unused).
-  Two known raw-UPDATE sites to sweep onto it: `core/order_enrichment._try_correlate`
-  (the matcher's NULL→LINKED/NEEDS_MANUAL_REVIEW/UNPLANNED initial set) and
-  `core/order_manager._propagate_bracket_calc_id` (T2.9's raw `link_status='LINKED'`,
-  anchor-commented for this sweep). Note: `link_state.transition` only validates
-  `current→target` between existing enum values — initial-arrival (NULL→X) sets need
-  a dedicated path (see link_state.py:53).
-- **P3.T2** — auto-UNPLANNED when the matcher finds zero candidates in-window.
-- Manual-link tab / endpoint (spec §6.2): NEEDS_MANUAL_REVIEW + UNLINKED queue,
-  operator link/mark-unplanned actions (POST /orders/{id}/...), routed through the
-  choke-point. `core/exec_link.py` already computes per-fill display link status.
+- ~~**P3.T1**~~ DONE (task 241) — choke-point routing shipped (see STATUS above).
+  The operator-move entry point `core/link_state.transition()` is now wired and ready
+  for P3.T2/T3 to call (it validates decided→decided moves: NEEDS_MANUAL_REVIEW→LINKED,
+  UNLINKED→UNPLANNED, etc.); engine sets use `auto_classify()`.
+- **P3.T2** — endpoints: `POST /orders/{id}/manual_link`, `POST /orders/{id}/mark_unplanned`,
+  `GET /orders/needs_review`. The operator transitions MUST route through
+  `core/link_state.transition()` (now wired). Note: auto-UNPLANNED on zero in-window
+  candidates is ALREADY emitted by the matcher today (test_phase3_link_state
+  `test_no_candidate_routes_unplanned`); the outstanding gate is the deferred
+  order-side TP/SL early-return (`_try_correlate` returns before the matcher if the
+  order lacks both trigger prices — see Phase-1 deferrals below). Reconcile
+  `find_candidate_calcs` drift (T223 deferral) when building the needs-review finder.
+- Manual-link tab / UI (spec §6.2, P3.T3/T4): NEEDS_MANUAL_REVIEW + UNLINKED queue,
+  per-criterion diff panel, status badges + nav counter. `core/exec_link.py` already
+  computes per-fill display link status.
 - Deployment context is single-tenant localhost (CLAUDE.md, Task 163): no auth/CSRF
   work; threat model is correctness + observability + recovery.
 
