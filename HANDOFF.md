@@ -290,12 +290,12 @@ one; the fix is seal-at-close, deferred because it must distinguish full
 vs partial close (couples with Phase 2.11 multi-TP). Not a live blocker;
 documented as an anchor comment in `order_manager.py`.
 
-### closed_positions attribution lags the junction primary (until P2.T5/T6)
+### closed_positions attribution lags the junction primary (until P2.T6)
 
 Surfaced by the holistic Phase-2 audit (after T229). Within ONE position
-three attribution surfaces can disagree until P2.T5/T6 land:
-- `fills.calc_id` (closing) + `PositionInfo.calc_id` = the junction
-  PRIMARY / most-contributing calc (set by P2.T2 + P2.T3).
+`closed_positions.calc_id` can disagree with the junction primary:
+- `fills.calc_id` (closing) + `PositionInfo.calc_id` + the T2.5 close-time
+  deltas = the junction PRIMARY / most-contributing calc.
 - `closed_positions.calc_id` = the EARLIEST opening fill's calc_id —
   still the Phase-1 `_build_close_row_for_fill` behavior
   (`order_manager.py`, the "calc_id from earliest entry fill" block).
@@ -306,8 +306,19 @@ close → `closed_positions.calc_id=calc-A` while everything else = calc-B.
 **P2.T6 explicitly sets `closed_positions.calc_id = most-contributing`,
 which resolves this.** Also: `closed_positions.lifecycle_id` is NULL on
 close-built rows today — spec §3.5 says it's "sealed at close", so the
-P2.T5/T6 close-row enrichment must stamp it from the junction. No data
-loss; an attribution-consistency gap the remaining close-row tasks close.
+P2.T6 close-row enrichment must stamp it from the junction. No data
+loss; an attribution-consistency gap P2.T6 closes.
+
+**T2.5 (T233) close-time deltas landed**: `entry_px_delta_pct`,
+`size_delta_pct`, `exit_vs_target_pct`, `realized_r`, `planned_r`,
+`hold_time_actual_ms` are now computed against the most-contributing calc
+at close and persisted (REPLACE-preserved). Note T2.5 computes deltas
+against the junction primary even though `closed_positions.calc_id` itself
+is still the earliest-entry value until T2.6 — so a scale-in's deltas and
+its stored `calc_id` can transiently reference different calcs until T2.6.
+**Deferred from T2.5** (operator-approved): `tp_drift_pct`/`sl_drift_pct`
+→ P4.6 (need final amended TP/SL); `cumulative_amendment_count` → P4.3
+(`order_amendments` unwired); `hold_time_planned_ms` → no source column.
 
 ### Junction contributed_qty redelivery double-count (T232 audit — confirmed, deferred)
 

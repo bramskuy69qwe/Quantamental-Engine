@@ -267,6 +267,48 @@ class TestPreserveLifecycleId:
             assert (await cur.fetchone())["lifecycle_id"] == "seal-1"
 
 
+class TestPreserveCloseDeltas:
+    """T2.5: the close-time delta columns (entry_px_delta_pct, etc.) are
+    omitted from a no-delta REPLACE (e.g. exchange_history_backfill
+    re-running over a live-built row) and would be wiped to NULL without
+    preservation — the same T176/T232 shape."""
+
+    @pytest.mark.asyncio
+    async def test_replace_preserves_computed_deltas(self, test_db):
+        # 1. Close row written WITH deltas (the _build_close_row_for_fill path).
+        await test_db.insert_closed_position(_close_row(
+            entry_px_delta_pct=1.5, size_delta_pct=-10.0, realized_r=2.25,
+            planned_r=3.0, exit_vs_target_pct=-0.5, hold_time_actual_ms=12345,
+        ))
+        # 2. A recompute REPLACEs on the same UNIQUE key with NO delta keys
+        #    (backfill/reconciler shape).
+        await test_db.insert_closed_position(_close_row(exit_price=81300.0))
+        # T2.5 assertion: the computed deltas survived the REPLACE.
+        async with test_db._conn.execute(
+            "SELECT entry_px_delta_pct, size_delta_pct, realized_r, planned_r, "
+            "exit_vs_target_pct, hold_time_actual_ms, exit_price "
+            "FROM closed_positions"
+        ) as cur:
+            r = await cur.fetchone()
+        assert r["entry_px_delta_pct"] == 1.5, "T2.5 regression: REPLACE wiped a delta"
+        assert r["size_delta_pct"] == -10.0
+        assert r["realized_r"] == 2.25
+        assert r["planned_r"] == 3.0
+        assert r["exit_vs_target_pct"] == -0.5
+        assert r["hold_time_actual_ms"] == 12345
+        assert r["exit_price"] == 81300.0   # close-row-owned column still updates
+
+    @pytest.mark.asyncio
+    async def test_caller_supplied_deltas_win(self, test_db):
+        # A fresh recompute that DOES supply deltas overwrites the old ones.
+        await test_db.insert_closed_position(_close_row(realized_r=1.0))
+        await test_db.insert_closed_position(_close_row(realized_r=2.0))
+        async with test_db._conn.execute(
+            "SELECT realized_r FROM closed_positions"
+        ) as cur:
+            assert (await cur.fetchone())["realized_r"] == 2.0
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 2. T176 — aggTrades trailing buffer widened (Fix B)
 # ─────────────────────────────────────────────────────────────────────────────

@@ -12,6 +12,18 @@ from typing import Any, Dict, List, Optional, Tuple
 log = logging.getLogger("database")
 
 
+# P2.T5 close-time delta columns persisted on closed_positions. Computed
+# in OrderManager._compute_close_deltas and written here; preserved across
+# INSERT OR REPLACE recompute (T176/T232 wipe pattern). tp_drift_pct /
+# sl_drift_pct (Phase 4.6), cumulative_amendment_count (Phase 4.3), and
+# hold_time_planned_ms (no source) are intentionally NOT in this set —
+# their owning tasks add them later.
+_CLOSED_POS_DELTA_COLS = (
+    "entry_px_delta_pct", "size_delta_pct", "exit_vs_target_pct",
+    "realized_r", "planned_r", "hold_time_actual_ms",
+)
+
+
 def _escape_like(value: str) -> str:
     """MED-022 (Task 147): escape SQL LIKE wildcards (`%`, `_`) so a
     user-supplied prefix/search string is matched literally rather
@@ -266,10 +278,18 @@ class OrdersMixin:
         # would wipe it without this preservation. Carry forward a
         # caller-supplied value if present, else an existing stamped one.
         preserved_lifecycle = row.get("lifecycle_id")
+        # T232/T2.5 (T176-class): the P2.T5 close-time delta columns are
+        # likewise omitted-then-wiped by an INSERT OR REPLACE recompute
+        # that doesn't recompute them (e.g. exchange_history_backfill
+        # REPLACEing a live-built row). _build_close_row_for_fill supplies
+        # them deterministically; carry forward an existing value when a
+        # caller doesn't (caller-wins).
+        preserved_deltas = {c: row.get(c) for c in _CLOSED_POS_DELTA_COLS}
         try:
             async with self._conn.execute(
-                "SELECT mfe, mae, backfill_completed, lifecycle_id "
-                "FROM closed_positions "
+                "SELECT mfe, mae, backfill_completed, lifecycle_id, "
+                + ", ".join(_CLOSED_POS_DELTA_COLS)
+                + " FROM closed_positions "
                 "WHERE account_id = ? AND terminal_position_id = ? "
                 "AND exit_time_ms = ? LIMIT 1",
                 (row.get("account_id", 1),
@@ -286,6 +306,11 @@ class OrdersMixin:
                 # supplying one (caller wins on first insert / forward seal).
                 if existing and existing["lifecycle_id"] and not preserved_lifecycle:
                     preserved_lifecycle = existing["lifecycle_id"]
+                # Same caller-wins-else-carry-forward for the delta columns.
+                if existing:
+                    for c in _CLOSED_POS_DELTA_COLS:
+                        if preserved_deltas[c] is None and existing[c] is not None:
+                            preserved_deltas[c] = existing[c]
         except Exception:
             pass  # if the read fails, fall through to caller-supplied values
 
@@ -297,7 +322,9 @@ class OrdersMixin:
                 net_pnl, funding_fees, mfe, mae, backfill_completed, hold_time_ms,
                 exit_reason, model_name, notes,
                 shortfall_entry, shortfall_exit, source, calc_id,
-                tp_price, sl_price, lifecycle_id
+                tp_price, sl_price, lifecycle_id,
+                entry_px_delta_pct, size_delta_pct, exit_vs_target_pct,
+                realized_r, planned_r, hold_time_actual_ms
             ) VALUES (
                 :account_id, :exchange_position_id, :terminal_position_id,
                 :symbol, :direction, :quantity, :entry_price, :exit_price,
@@ -305,7 +332,9 @@ class OrdersMixin:
                 :net_pnl, :funding_fees, :mfe, :mae, :backfill_completed, :hold_time_ms,
                 :exit_reason, :model_name, :notes,
                 :shortfall_entry, :shortfall_exit, :source, :calc_id,
-                :tp_price, :sl_price, :lifecycle_id
+                :tp_price, :sl_price, :lifecycle_id,
+                :entry_px_delta_pct, :size_delta_pct, :exit_vs_target_pct,
+                :realized_r, :planned_r, :hold_time_actual_ms
             )
         """
         try:
@@ -338,6 +367,7 @@ class OrdersMixin:
                 "tp_price":             tp_price,
                 "sl_price":             sl_price,
                 "lifecycle_id":         preserved_lifecycle,
+                **preserved_deltas,
             })
             if commit:
                 await self._conn.commit()

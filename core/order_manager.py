@@ -1454,6 +1454,16 @@ class OrderManager:
                         close_calc_id = f["calc_id"]
                         break
 
+            # ── T2.5: close-time deltas vs the most-contributing calc ───
+            # Spec §3.2 delta-basis rule. Best-effort (try/except → {}),
+            # so a junction/calc read failure never blocks the close-row
+            # write. Deterministically recomputed on every close-row build,
+            # and preserved across INSERT OR REPLACE in insert_closed_position.
+            deltas = await self._compute_close_deltas(
+                account_id, pos_id, entry_price, total_open_qty,
+                exit_price, entry_time, exit_time,
+            )
+
             # ── Persist ─────────────────────────────────────────────────
             net_pnl = realized_pnl - total_fees
             await self._db.insert_closed_position({
@@ -1476,6 +1486,7 @@ class OrderManager:
                 "source":               fill.get("source", ""),
                 "calc_id":              close_calc_id,
                 **shortfall,
+                **deltas,
             })
 
             await event_bus.publish("risk:position_closed", {
@@ -1669,3 +1680,132 @@ class OrderManager:
             )
 
         return result
+
+    async def _compute_close_deltas(
+        self,
+        account_id: int,
+        pos_id: str,
+        entry_price: float,
+        actual_size: float,
+        exit_price: float,
+        entry_time: int,
+        exit_time: int,
+    ) -> Dict[str, Any]:
+        """T2.5 (plan §2 task 2.5): close-time deltas vs the position's
+        MOST-CONTRIBUTING calc (spec §3.2 delta-basis rule).
+
+        Basis: ``_position_primary_calc`` (largest ``contributed_qty``;
+        tie-break earliest ``first_fill_ts``) — the single source of truth
+        for the §3.2 rule, shared with T2.2/T2.3. Planned size/TP/SL come
+        from that calc's junction row (the T2.4 contribution-time
+        snapshot); planned entry + planned_r come from its
+        ``pre_trade_log`` row (no junction column exists for those).
+
+        Computes the 6 deltas fully derivable from data available at
+        close, all stored RAW/signed per the literal §3.2 formulas
+        (``realized_r`` is direction-agnostic as written — a SHORT flips
+        both numerator and denominator; the ``*_delta_pct`` are price
+        deltas whose better/worse reading is a display concern):
+          entry_px_delta_pct, size_delta_pct, exit_vs_target_pct,
+          realized_r, planned_r, hold_time_actual_ms.
+
+        Every key is omitted (→ stays NULL via the nullable column) when
+        its planned denominator is missing/zero. Best-effort: any read
+        failure or absent junction (UNPLANNED / binance empty-tpid)
+        returns ``{}`` so the close-row write never blocks.
+
+        Deliberately NOT computed here (left NULL until their owning task):
+          - ``tp_drift_pct`` / ``sl_drift_pct`` → Phase 4.6 (need the final
+            AMENDED TP/SL, which requires amendment tracking; the close
+            order exposes only the single triggered level).
+          - ``cumulative_amendment_count`` → Phase 4.3 (``order_amendments``
+            is unwired today; a literal ``0`` would mean "zero amendments"
+            rather than the truth "tracking not yet wired").
+          - ``hold_time_planned_ms`` → no planned-duration column exists in
+            ``pre_trade_log`` or the junction.
+        """
+        if not pos_id:
+            return {}
+        try:
+            primary_calc_id, _lifecycle = await self._position_primary_calc(
+                account_id, pos_id,
+            )
+            if not primary_calc_id:
+                return {}  # no junction → UNPLANNED; nothing to compute against
+
+            # Planned size/TP/SL from the primary calc's junction row (T2.4 snapshot).
+            async with self._db._conn.execute(
+                "SELECT planned_size, planned_tp, planned_sl "
+                "FROM positions_calcs "
+                "WHERE position_id = ? AND calc_id = ? AND account_id = ? "
+                "ORDER BY id ASC LIMIT 1",
+                (pos_id, primary_calc_id, account_id),
+            ) as cur:
+                jrow = await cur.fetchone()
+            planned_size = jrow[0] if jrow else None
+            planned_tp = jrow[1] if jrow else None
+            planned_sl = jrow[2] if jrow else None
+
+            # Planned entry + planned_r from the primary calc's pre_trade_log
+            # row. planned_entry uses effective_entry (fallback average) — the
+            # same basis the legacy _compute_shortfall uses for "intended entry".
+            async with self._db._conn.execute(
+                "SELECT effective_entry, average, est_r FROM pre_trade_log "
+                "WHERE calc_id = ? AND account_id = ? ORDER BY id ASC LIMIT 1",
+                (primary_calc_id, account_id),
+            ) as cur:
+                prow = await cur.fetchone()
+            planned_entry = _first_truthy(prow[0], prow[1]) if prow else None
+            planned_r = (prow[2] or None) if prow else None
+
+            out: Dict[str, Any] = {}
+
+            # entry_px_delta_pct = (actual_entry - planned_entry)/planned_entry*100
+            if planned_entry and entry_price:
+                out["entry_px_delta_pct"] = round(
+                    (entry_price - planned_entry) / planned_entry * 100, 4)
+
+            # size_delta_pct = (actual_size - planned_size)/planned_size*100.
+            # Guard actual_size too: the close-row builder passes
+            # total_open_qty=0 when opening fills can't be VWAP-resolved
+            # (degraded/orphan DB) — without this guard size_delta_pct would
+            # persist a spurious -100% instead of NULL, breaking the
+            # "omit when inputs aren't real" contract the sibling deltas honor.
+            if planned_size and actual_size:
+                out["size_delta_pct"] = round(
+                    (actual_size - planned_size) / planned_size * 100, 4)
+
+            # exit_vs_target_pct = (actual_exit - relevant_planned_level)/level*100.
+            # relevant level = whichever of planned_tp/planned_sl is CLOSER to
+            # the actual exit (the _compute_shortfall closest-to-exit precedent).
+            if exit_price:
+                if planned_tp and planned_sl:
+                    level = (planned_tp
+                             if abs(exit_price - planned_tp) < abs(exit_price - planned_sl)
+                             else planned_sl)
+                else:
+                    level = planned_tp or planned_sl
+                if level:
+                    out["exit_vs_target_pct"] = round(
+                        (exit_price - level) / level * 100, 4)
+
+            # realized_r = (exit - entry) / (planned_entry - planned_sl).
+            # Price-distance denominator per spec §3.2 (NOT a USDT risk amount).
+            if (planned_entry and planned_sl and planned_entry != planned_sl
+                    and exit_price and entry_price):
+                out["realized_r"] = round(
+                    (exit_price - entry_price) / (planned_entry - planned_sl), 4)
+
+            # planned_r = the calc's R estimate (pre_trade_log.est_r).
+            if planned_r:
+                out["planned_r"] = planned_r
+
+            if entry_time:
+                out["hold_time_actual_ms"] = exit_time - entry_time
+
+            return out
+        except Exception:
+            # Best-effort: ANY failure (read OR arithmetic) yields no deltas —
+            # the close-row write must never be blocked by this enrichment.
+            log.debug("close-deltas failed for %s", pos_id, exc_info=True)
+            return {}

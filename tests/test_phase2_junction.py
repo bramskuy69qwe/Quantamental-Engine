@@ -90,25 +90,29 @@ async def _seed_calc(db, calc_id, lifecycle_id=None, ticker="BTCUSDT",
                      *, account_id=ACCOUNT_ID, size=0.0, tp_price=0.0,
                      sl_price=0.0, overridden_size=None, planned_size=None,
                      overridden_tp=None, planned_tp=None,
-                     overridden_sl=None, planned_sl=None) -> None:
+                     overridden_sl=None, planned_sl=None,
+                     effective_entry=0.0, average=0.0, est_r=0.0) -> None:
     # Legacy size/tp_price/sl_price (NOT NULL DEFAULT 0) are what the
     # calculator writes today; overridden_*/planned_* (P0.T3, NULL on
     # every live calc) are the spec-named source the T2.4 snapshot
-    # prefers if a future calculator ever populates them.
+    # prefers if a future calculator ever populates them. effective_entry/
+    # average/est_r back the T2.5 close-time deltas (planned_entry, planned_r).
     await db._conn.execute(
         "INSERT INTO pre_trade_log (account_id, timestamp, ticker, calc_id, "
         " lifecycle_id, size, tp_price, sl_price, overridden_size, planned_size, "
-        " overridden_tp, planned_tp, overridden_sl, planned_sl) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " overridden_tp, planned_tp, overridden_sl, planned_sl, "
+        " effective_entry, average, est_r) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (account_id, "2026-05-29T00:00:00Z", ticker, calc_id, lifecycle_id,
          size, tp_price, sl_price, overridden_size, planned_size,
-         overridden_tp, planned_tp, overridden_sl, planned_sl),
+         overridden_tp, planned_tp, overridden_sl, planned_sl,
+         effective_entry, average, est_r),
     )
     await db._conn.commit()
 
 
 def _fill(eoid, tpid, qty, ts=1000, is_close=0, symbol="BTCUSDT", fid="F-1",
-          account_id=ACCOUNT_ID):
+          account_id=ACCOUNT_ID, price=0.0):
     return {
         "account_id": account_id,
         "exchange_fill_id": fid,
@@ -116,6 +120,7 @@ def _fill(eoid, tpid, qty, ts=1000, is_close=0, symbol="BTCUSDT", fid="F-1",
         "terminal_position_id": tpid,
         "symbol": symbol,
         "quantity": qty,
+        "price": price,
         "timestamp_ms": ts,
         "is_close": is_close,
     }
@@ -614,11 +619,14 @@ class TestRealFillPathWiring:
 
 
 async def _seed_junction(db, position_id, calc_id, order_id, qty, ts,
-                         lifecycle_id):
+                         lifecycle_id, *, planned_size=None,
+                         planned_tp=None, planned_sl=None):
     await db.upsert_position_calc_link({
         "position_id": position_id, "calc_id": calc_id, "order_id": order_id,
         "account_id": ACCOUNT_ID, "contributed_qty": qty,
         "first_fill_ts": ts, "last_fill_ts": ts, "lifecycle_id": lifecycle_id,
+        "planned_size": planned_size, "planned_tp": planned_tp,
+        "planned_sl": planned_sl,
     })
 
 
@@ -917,3 +925,195 @@ class TestPositionInfoCalcId:
         monkeypatch.setattr(app_state, "positions", [pos])
         await om.refresh_cache(ACCOUNT_ID)
         assert pos.calc_id == "calc-a"
+
+
+# ── 9. T2.5 — close-time deltas vs most-contributing calc ──────────────
+
+
+async def _closed_pos(db, tpid):
+    async with db._conn.execute(
+        "SELECT * FROM closed_positions WHERE terminal_position_id = ? "
+        "ORDER BY id DESC LIMIT 1", (tpid,),
+    ) as cur:
+        row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+class TestCloseDeltas:
+    """T2.5: _compute_close_deltas against the most-contributing calc."""
+
+    @pytest.mark.asyncio
+    async def test_all_six_deltas_computed(self, db, om):
+        await _seed_calc(db, "calc-a", effective_entry=50000.0, est_r=2.0)
+        await _seed_junction(db, "POS-1", "calc-a", 100, 10.0, 1000, "lc-1",
+                             planned_size=10.0, planned_tp=55000.0, planned_sl=48000.0)
+        out = await om._compute_close_deltas(
+            ACCOUNT_ID, "POS-1",
+            entry_price=50500.0, actual_size=11.0, exit_price=54000.0,
+            entry_time=1000, exit_time=4000,
+        )
+        assert out["entry_px_delta_pct"] == pytest.approx(1.0)       # (50500-50000)/50000*100
+        assert out["size_delta_pct"] == pytest.approx(10.0)         # (11-10)/10*100
+        # exit 54000 is closer to planned_tp 55000 than planned_sl 48000:
+        assert out["exit_vs_target_pct"] == pytest.approx((54000-55000)/55000*100, abs=1e-3)
+        assert out["realized_r"] == pytest.approx(1.75)             # (54000-50500)/(50000-48000)
+        assert out["planned_r"] == pytest.approx(2.0)
+        assert out["hold_time_actual_ms"] == 3000
+
+    @pytest.mark.asyncio
+    async def test_basis_is_most_contributing_calc(self, db, om):
+        # calc-b contributes more → its plan is the basis (not calc-a).
+        await _seed_calc(db, "calc-a", effective_entry=50000.0, est_r=1.0)
+        await _seed_calc(db, "calc-b", effective_entry=51000.0, est_r=3.0)
+        await _seed_junction(db, "POS-1", "calc-a", 100, 2.0, 1000, "lc-1",
+                             planned_size=2.0, planned_tp=55000.0, planned_sl=49000.0)
+        await _seed_junction(db, "POS-1", "calc-b", 101, 8.0, 2000, "lc-1",
+                             planned_size=8.0, planned_tp=60000.0, planned_sl=48000.0)
+        out = await om._compute_close_deltas(
+            ACCOUNT_ID, "POS-1",
+            entry_price=51000.0, actual_size=10.0, exit_price=59000.0,
+            entry_time=1000, exit_time=5000,
+        )
+        # planned_entry = calc-b's 51000 → entry_px_delta_pct = 0
+        assert out["entry_px_delta_pct"] == pytest.approx(0.0)
+        # planned_r = calc-b's est_r 3.0
+        assert out["planned_r"] == pytest.approx(3.0)
+        # realized_r uses calc-b's planned_sl 48000: (59000-51000)/(51000-48000)
+        assert out["realized_r"] == pytest.approx(8000/3000, abs=1e-3)
+
+    @pytest.mark.asyncio
+    async def test_realized_r_short_direction_agnostic(self, db, om):
+        # SHORT: entry 100, stop ABOVE at 110, exit 90 (a win). The spec
+        # formula (exit-entry)/(planned_entry-planned_sl) flips both
+        # numerator and denominator → +1 R without any sign handling.
+        await _seed_calc(db, "calc-s", effective_entry=100.0)
+        await _seed_junction(db, "POS-S", "calc-s", 100, 5.0, 1000, "lc-s",
+                             planned_size=5.0, planned_tp=90.0, planned_sl=110.0)
+        out = await om._compute_close_deltas(
+            ACCOUNT_ID, "POS-S",
+            entry_price=100.0, actual_size=5.0, exit_price=90.0,
+            entry_time=1000, exit_time=2000,
+        )
+        assert out["realized_r"] == pytest.approx(1.0)   # (90-100)/(100-110)
+
+    @pytest.mark.asyncio
+    async def test_null_guard_missing_planned_entry(self, db, om):
+        # No effective_entry/average on the calc → planned_entry falsy →
+        # entry_px_delta_pct and realized_r omitted; size_delta_pct still set.
+        await _seed_calc(db, "calc-a")   # effective_entry/average default 0
+        await _seed_junction(db, "POS-1", "calc-a", 100, 10.0, 1000, "lc-1",
+                             planned_size=10.0, planned_tp=55000.0, planned_sl=48000.0)
+        out = await om._compute_close_deltas(
+            ACCOUNT_ID, "POS-1",
+            entry_price=50500.0, actual_size=10.0, exit_price=54000.0,
+            entry_time=1000, exit_time=2000,
+        )
+        assert "entry_px_delta_pct" not in out
+        assert "realized_r" not in out
+        assert out["size_delta_pct"] == pytest.approx(0.0)   # planned_size present
+
+    @pytest.mark.asyncio
+    async def test_no_junction_returns_empty(self, db, om):
+        out = await om._compute_close_deltas(
+            ACCOUNT_ID, "POS-NONE",
+            entry_price=50000.0, actual_size=1.0, exit_price=51000.0,
+            entry_time=1000, exit_time=2000,
+        )
+        assert out == {}
+
+    @pytest.mark.asyncio
+    async def test_actual_size_zero_omits_size_delta(self, db, om):
+        # Opens-unresolvable fallback passes actual_size=0; size_delta_pct
+        # must be OMITTED (NULL), not a spurious -100% (T233 review fix).
+        await _seed_calc(db, "calc-a", effective_entry=50000.0)
+        await _seed_junction(db, "POS-1", "calc-a", 100, 10.0, 1000, "lc-1",
+                             planned_size=10.0, planned_tp=55000.0, planned_sl=48000.0)
+        out = await om._compute_close_deltas(
+            ACCOUNT_ID, "POS-1",
+            entry_price=50500.0, actual_size=0.0, exit_price=54000.0,
+            entry_time=1000, exit_time=2000,
+        )
+        assert "size_delta_pct" not in out
+
+    @pytest.mark.asyncio
+    async def test_planned_size_none_omits_size_delta(self, db, om):
+        # No planned_size on the junction (NULL) → size_delta_pct omitted.
+        await _seed_calc(db, "calc-a", effective_entry=50000.0)
+        await _seed_junction(db, "POS-1", "calc-a", 100, 10.0, 1000, "lc-1",
+                             planned_size=None, planned_tp=55000.0, planned_sl=48000.0)
+        out = await om._compute_close_deltas(
+            ACCOUNT_ID, "POS-1",
+            entry_price=50500.0, actual_size=10.0, exit_price=54000.0,
+            entry_time=1000, exit_time=2000,
+        )
+        assert "size_delta_pct" not in out
+
+    @pytest.mark.asyncio
+    async def test_zero_planned_r_omitted(self, db, om):
+        # est_r==0 ("no R estimate") → planned_r omitted (NULL), not stored
+        # as a literal 0 — consistent with the absent-value→NULL convention.
+        await _seed_calc(db, "calc-a", effective_entry=50000.0, est_r=0.0)
+        await _seed_junction(db, "POS-1", "calc-a", 100, 10.0, 1000, "lc-1",
+                             planned_size=10.0, planned_tp=55000.0, planned_sl=48000.0)
+        out = await om._compute_close_deltas(
+            ACCOUNT_ID, "POS-1",
+            entry_price=50500.0, actual_size=10.0, exit_price=54000.0,
+            entry_time=1000, exit_time=2000,
+        )
+        assert "planned_r" not in out
+
+    @pytest.mark.asyncio
+    async def test_deferred_columns_not_emitted(self, db, om):
+        # tp_drift_pct/sl_drift_pct (P4.6), cumulative_amendment_count
+        # (P4.3), hold_time_planned_ms (no source) are NOT T2.5's job.
+        await _seed_calc(db, "calc-a", effective_entry=50000.0, est_r=2.0)
+        await _seed_junction(db, "POS-1", "calc-a", 100, 10.0, 1000, "lc-1",
+                             planned_size=10.0, planned_tp=55000.0, planned_sl=48000.0)
+        out = await om._compute_close_deltas(
+            ACCOUNT_ID, "POS-1",
+            entry_price=50500.0, actual_size=10.0, exit_price=54000.0,
+            entry_time=1000, exit_time=2000,
+        )
+        for deferred in ("tp_drift_pct", "sl_drift_pct",
+                         "cumulative_amendment_count", "hold_time_planned_ms"):
+            assert deferred not in out
+
+    @pytest.mark.asyncio
+    async def test_deltas_persisted_via_real_close_path(self, real):
+        # Rule 8: deltas flow through _build_close_row_for_fill →
+        # insert_closed_position → closed_positions columns. Drives the
+        # real open (junction planned_* snapshot via T2.4) then close.
+        om, db = real
+        await _seed_linked_order_and_calc(db, eoid="O-1", calc_id="calc-a")
+        await db._conn.execute(
+            "UPDATE pre_trade_log SET size=10.0, tp_price=55000.0, sl_price=48000.0, "
+            "effective_entry=50000.0, est_r=2.0 WHERE calc_id='calc-a'")
+        await db._conn.commit()
+        # Opening fill @ 50500 → junction + planned_* snapshot.
+        await om._process_single_fill(
+            ACCOUNT_ID, _fill("O-1", "POS-1", 10.0, fid="F-OPEN", price=50500.0, ts=1000))
+        # Reduce-only close order + closing fill @ 54000.
+        await db._conn.execute(
+            "INSERT INTO orders (account_id, exchange_order_id, symbol, side, "
+            " order_type, status, price, reduce_only) "
+            "VALUES (1, 'O-C', 'BTCUSDT', 'SELL', 'take_profit', 'new', 54000, 1)")
+        await db._conn.commit()
+        close = _fill("O-C", "POS-1", 10.0, is_close=1, fid="F-CLOSE",
+                      price=54000.0, ts=4000)
+        await om._process_single_fill(ACCOUNT_ID, close)
+        await om._build_close_row_for_fill(ACCOUNT_ID, close)
+
+        cp = await _closed_pos(db, "POS-1")
+        assert cp is not None
+        assert cp["entry_px_delta_pct"] == pytest.approx(1.0)
+        assert cp["size_delta_pct"] == pytest.approx(0.0)
+        assert cp["realized_r"] == pytest.approx(1.75)
+        assert cp["planned_r"] == pytest.approx(2.0)
+        assert cp["hold_time_actual_ms"] == 3000
+        # Deferred columns remain NULL (flipping any to non-NULL is the
+        # conscious signal that its owning task — P4.6 / P4.3 / no-source —
+        # landed, and must update this assertion).
+        assert cp["tp_drift_pct"] is None              # P4.6
+        assert cp["sl_drift_pct"] is None              # P4.6
+        assert cp["cumulative_amendment_count"] is None  # P4.3
+        assert cp["hold_time_planned_ms"] is None       # no source column
