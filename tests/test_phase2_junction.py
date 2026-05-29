@@ -210,11 +210,19 @@ class TestMultiFillSameOrder:
         await _seed_order(db, "O-1", calc_id="calc-a")
         await _seed_calc(db, "calc-a")
 
+        # Two DISTINCT fills of the same order (distinct exchange_fill_id)
+        # genuinely accumulate. (T232: previously both used the default
+        # fid='F-1', which looked like — but did not test — redelivery
+        # safety; the helper accumulates regardless of fill identity, so
+        # distinct fids reflect honest two-fill accumulation. The
+        # same-fid redelivery double-count is the separately-documented
+        # deferred finding — see HANDOFF "junction contributed_qty
+        # redelivery double-count".)
         await om._link_position_calc_on_open(
-            ACCOUNT_ID, _fill("O-1", "POS-1", 3.0, ts=1000),
+            ACCOUNT_ID, _fill("O-1", "POS-1", 3.0, ts=1000, fid="F-1"),
         )
         await om._link_position_calc_on_open(
-            ACCOUNT_ID, _fill("O-1", "POS-1", 4.0, ts=2000),
+            ACCOUNT_ID, _fill("O-1", "POS-1", 4.0, ts=2000, fid="F-2"),
         )
 
         rows = await _junction(db)
@@ -578,6 +586,14 @@ class TestRealFillPathWiring:
             "SELECT lifecycle_id FROM pre_trade_log WHERE calc_id = 'calc-a'",
         ) as cur:
             assert (await cur.fetchone())[0] == lc
+        # T232: the OPENING fill itself is stamped with the same lifecycle
+        # (spec §3.5 lists fills among the stamping targets; previously
+        # only closing fills got it). Closes the Phase-7 single-key
+        # /context/lifecycle/{id} fills-join gap for new positions.
+        async with db._conn.execute(
+            "SELECT lifecycle_id FROM fills WHERE exchange_fill_id = 'F-1'",
+        ) as cur:
+            assert (await cur.fetchone())[0] == lc
 
     @pytest.mark.asyncio
     async def test_closing_fill_no_junction_via_real_path(self, real):
@@ -848,6 +864,32 @@ class TestPositionInfoCalcId:
         positions = [_pos("POS-REOPEN", calc_id="stale-calc")]
         await om._enrich_positions_calc_id(ACCOUNT_ID, positions)
         assert positions[0].calc_id == ""
+
+    @pytest.mark.asyncio
+    async def test_enrich_clears_stale_in_mixed_batch(self, db, om):
+        # T232 (holistic-audit R2 discrimination): the clear must be
+        # PER-POSITION, not "only when the junction table is empty". One
+        # position HAS a junction (non-empty `primary` dict); the stale
+        # reopen does NOT — it must still be cleared. A regression that
+        # only cleared on an empty table would pass the empty-table test
+        # but fail HERE.
+        await _seed_junction(db, "POS-A", "calc-a", 100, 5.0, 1000, "uuid-a")
+        positions = [_pos("POS-A"), _pos("POS-REOPEN-STALE", calc_id="stale")]
+        await om._enrich_positions_calc_id(ACCOUNT_ID, positions)
+        assert positions[0].calc_id == "calc-a"   # keeps its primary
+        assert positions[1].calc_id == ""         # stale cleared despite non-empty batch
+
+    @pytest.mark.asyncio
+    async def test_enrich_self_heals_after_junction_appears(self, db, om):
+        # Clear-then-repopulate the SAME tpid: first no junction → cleared;
+        # then the new position's first opening fill writes its junction →
+        # next enrich picks up the new primary (the R2 self-heal claim).
+        stale = _pos("POS-REOPEN", calc_id="stale")
+        await om._enrich_positions_calc_id(ACCOUNT_ID, [stale])
+        assert stale.calc_id == ""
+        await _seed_junction(db, "POS-REOPEN", "calc-new", 100, 5.0, 3000, "uuid-new")
+        await om._enrich_positions_calc_id(ACCOUNT_ID, [stale])
+        assert stale.calc_id == "calc-new"
 
     @pytest.mark.asyncio
     async def test_no_junction_leaves_empty(self, db, om):

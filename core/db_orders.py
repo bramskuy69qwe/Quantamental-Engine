@@ -257,9 +257,19 @@ class OrdersMixin:
         preserved_mfe = row.get("mfe", 0)
         preserved_mae = row.get("mae", 0)
         preserved_backfill = 0
+        # T232 (T176-class): lifecycle_id is omitted from the INSERT below,
+        # so an INSERT OR REPLACE recompute (DELETE+INSERT on the UNIQUE
+        # natural key) would reset a previously-stamped lifecycle_id to
+        # DEFAULT NULL — the same data-loss shape T176 fixed for mfe/mae.
+        # The Phase-2 backfill stamps closed_positions.lifecycle_id on
+        # historical rows TODAY, so re-running exchange_history_backfill
+        # would wipe it without this preservation. Carry forward a
+        # caller-supplied value if present, else an existing stamped one.
+        preserved_lifecycle = row.get("lifecycle_id")
         try:
             async with self._conn.execute(
-                "SELECT mfe, mae, backfill_completed FROM closed_positions "
+                "SELECT mfe, mae, backfill_completed, lifecycle_id "
+                "FROM closed_positions "
                 "WHERE account_id = ? AND terminal_position_id = ? "
                 "AND exit_time_ms = ? LIMIT 1",
                 (row.get("account_id", 1),
@@ -272,6 +282,10 @@ class OrdersMixin:
                     preserved_mfe = existing["mfe"]
                     preserved_mae = existing["mae"]
                     preserved_backfill = existing["backfill_completed"]
+                # Preserve a stamped lifecycle_id unless the caller is
+                # supplying one (caller wins on first insert / forward seal).
+                if existing and existing["lifecycle_id"] and not preserved_lifecycle:
+                    preserved_lifecycle = existing["lifecycle_id"]
         except Exception:
             pass  # if the read fails, fall through to caller-supplied values
 
@@ -283,7 +297,7 @@ class OrdersMixin:
                 net_pnl, funding_fees, mfe, mae, backfill_completed, hold_time_ms,
                 exit_reason, model_name, notes,
                 shortfall_entry, shortfall_exit, source, calc_id,
-                tp_price, sl_price
+                tp_price, sl_price, lifecycle_id
             ) VALUES (
                 :account_id, :exchange_position_id, :terminal_position_id,
                 :symbol, :direction, :quantity, :entry_price, :exit_price,
@@ -291,7 +305,7 @@ class OrdersMixin:
                 :net_pnl, :funding_fees, :mfe, :mae, :backfill_completed, :hold_time_ms,
                 :exit_reason, :model_name, :notes,
                 :shortfall_entry, :shortfall_exit, :source, :calc_id,
-                :tp_price, :sl_price
+                :tp_price, :sl_price, :lifecycle_id
             )
         """
         try:
@@ -323,6 +337,7 @@ class OrdersMixin:
                 "calc_id":              calc_id,
                 "tp_price":             tp_price,
                 "sl_price":             sl_price,
+                "lifecycle_id":         preserved_lifecycle,
             })
             if commit:
                 await self._conn.commit()
@@ -1304,8 +1319,17 @@ class OrdersMixin:
             ON CONFLICT(position_id, calc_id, order_id) DO UPDATE SET
                 contributed_qty = positions_calcs.contributed_qty + excluded.contributed_qty,
                 last_fill_ts    = MAX(positions_calcs.last_fill_ts, excluded.last_fill_ts),
-                size_delta_pct  = excluded.size_delta_pct,
                 lifecycle_id    = COALESCE(positions_calcs.lifecycle_id, excluded.lifecycle_id)
+                -- size_delta_pct + planned_size/tp/sl are OMITTED from DO
+                -- UPDATE SET deliberately: planned_* are a contribution-time
+                -- snapshot (first-write-wins, T2.4) and size_delta_pct is a
+                -- CLOSE-time quantity (T2.5) that needs the cumulative
+                -- contributed_qty. T232: size_delta_pct used to be
+                -- `= excluded.size_delta_pct` here, which would have
+                -- clobbered a T2.5 close-computed value to NULL on any
+                -- later fill of the same triple. T2.5 must write
+                -- size_delta_pct via a dedicated close-time UPDATE, not
+                -- through this per-fill UPSERT.
         """
         try:
             await self._conn.execute(sql, {

@@ -222,6 +222,51 @@ class TestPreserveReconcilerColumns:
         )
 
 
+class TestPreserveLifecycleId:
+    """T232 (holistic Phase-2 audit): the same INSERT OR REPLACE that
+    motivated T176 also wipes closed_positions.lifecycle_id (a P0.T4
+    column omitted from the INSERT list) on any recompute. The Phase-2
+    backfill stamps lifecycle_id on historical closed_positions today,
+    so a re-run of exchange_history_backfill (same UNIQUE key) would
+    REPLACE-wipe it to NULL without preservation. Pin it like mfe/mae."""
+
+    @pytest.mark.asyncio
+    async def test_replace_preserves_stamped_lifecycle_id(self, test_db):
+        # 1. Initial close-row insert (real-time path supplies no lifecycle).
+        await test_db.insert_closed_position(_close_row())
+        # 2. Backfill stamps a lifecycle_id (mirrors backfill_calc_linkage).
+        await test_db._conn.execute(
+            "UPDATE closed_positions SET lifecycle_id = ? "
+            "WHERE terminal_position_id = ?",
+            ("life-uuid-1", "term-abc"),
+        )
+        await test_db._conn.commit()
+        # 3. A recompute REPLACEs the row on the same UNIQUE key, with no
+        #    lifecycle_id supplied (the forward close-row builder's shape).
+        await test_db.insert_closed_position(_close_row(exit_price=81100.0))
+        # T232 assertion: the stamped lifecycle_id survived the REPLACE.
+        async with test_db._conn.execute(
+            "SELECT lifecycle_id, exit_price FROM closed_positions"
+        ) as cur:
+            r = await cur.fetchone()
+        assert r["lifecycle_id"] == "life-uuid-1", (
+            "T232 regression: INSERT OR REPLACE wiped a stamped "
+            "closed_positions.lifecycle_id back to NULL (T176-class)"
+        )
+        assert r["exit_price"] == 81100.0   # close-row-owned column still updates
+
+    @pytest.mark.asyncio
+    async def test_caller_supplied_lifecycle_wins_on_first_insert(self, test_db):
+        # When the caller (future P2.T6 seal) supplies lifecycle_id, it is
+        # written; a later no-lifecycle REPLACE preserves it.
+        await test_db.insert_closed_position(_close_row(lifecycle_id="seal-1"))
+        await test_db.insert_closed_position(_close_row(exit_price=81200.0))
+        async with test_db._conn.execute(
+            "SELECT lifecycle_id FROM closed_positions"
+        ) as cur:
+            assert (await cur.fetchone())["lifecycle_id"] == "seal-1"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 2. T176 — aggTrades trailing buffer widened (Fix B)
 # ─────────────────────────────────────────────────────────────────────────────

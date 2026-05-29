@@ -1176,11 +1176,18 @@ class OrderManager:
             "lifecycle_id":    lifecycle_id,
         })
 
-        # Back-fill lifecycle_id onto the contributing calc + order
-        # (spec §3.5). Idempotent via WHERE lifecycle_id IS NULL: the
-        # first opening fill stamps; repeat fills no-op. A calc
+        # Back-fill lifecycle_id onto the contributing calc + order + this
+        # opening fill (spec §3.5 lists fills among the lifecycle_id
+        # stamping targets). Idempotent via WHERE lifecycle_id IS NULL:
+        # the first opening fill stamps; repeat fills no-op. A calc
         # contributes to one position lifecycle and an order belongs to
         # one position, so the stamped value is always the right one.
+        # T232: the fill stamp closes the spec-§3.5 gap where forward
+        # OPENING fills carried NULL fills.lifecycle_id (only closing
+        # fills — T2.2 — and backfilled legacy fills had it), which would
+        # have left the Phase-7 single-key /context/lifecycle/{id} fills
+        # join incomplete for new positions.
+        fill_id = fill.get("exchange_fill_id", "") or ""
         try:
             await self._db._conn.execute(
                 "UPDATE pre_trade_log SET lifecycle_id = ? "
@@ -1192,6 +1199,13 @@ class OrderManager:
                 "WHERE id = ? AND lifecycle_id IS NULL",
                 (lifecycle_id, order_id),
             )
+            if fill_id:
+                await self._db._conn.execute(
+                    "UPDATE fills SET lifecycle_id = ? "
+                    "WHERE account_id = ? AND exchange_fill_id = ? "
+                    "  AND lifecycle_id IS NULL",
+                    (lifecycle_id, account_id, fill_id),
+                )
             await self._db._conn.commit()
         except Exception:
             log.warning(
@@ -1277,7 +1291,11 @@ class OrderManager:
 
         ONE batched junction read per refresh (not per position) — this
         runs on every WS order update, so the fan-out is kept off the
-        hot path. Best-effort; only ever SETS calc_id (never clears).
+        hot path. Best-effort and AUTHORITATIVE (T230 R2): calc_id mirrors
+        the junction each refresh — set to the primary when a junction row
+        exists, and CLEARED to "" when none does (UNPLANNED, pre-first-
+        fill, or a same-(symbol,direction) reopen that inherited a stale
+        calc_id via _PRESERVE_FIELDS). See the per-position loop below.
         """
         if not any(p.position_id for p in positions):
             return

@@ -309,6 +309,35 @@ close-built rows today — spec §3.5 says it's "sealed at close", so the
 P2.T5/T6 close-row enrichment must stamp it from the junction. No data
 loss; an attribution-consistency gap the remaining close-row tasks close.
 
+### Junction contributed_qty redelivery double-count (T232 audit — confirmed, deferred)
+
+Holistic Phase-2 audit (after T231) + my own runtime probe confirmed:
+delivering the SAME `exchange_fill_id` twice through `_process_single_fill`
+leaves `fills` deduped to one row (UNIQUE constraint) but
+`positions_calcs.contributed_qty` **double-counts** (junction UPSERT does
+`contributed_qty = existing + excluded`, keyed on the (position,calc,order)
+triple, not fill identity). Measured: junction `contributed_qty=6` for two
+deliveries of a qty-3 fill. **`orders.filled_qty` double-counts identically
+(=6)** — this is a pre-existing engine-wide shape, NOT new to Phase 2; the
+junction inherited it. The engine's settled discipline elsewhere is
+SUM-from-fills ("never accumulate", e.g. `get_position_fees`).
+
+Impact: `contributed_qty` is the most-contributing-calc (primary) basis, so
+a redelivery hitting one calc on a *near-tie* scale-in could flip the
+primary → wrong calc on closing-fill stamp + PositionInfo.calc_id.
+Edge-of-edge; single-tenant localhost; observe-only.
+
+**Not fixed in T232** because the clean fix (derive `contributed_qty` from
+`SELECT SUM(quantity) FROM fills WHERE exchange_order_id=? AND
+terminal_position_id=? AND is_close=0`, idempotent via the fills dedup) is
+non-trivial: the unit tests drive `_link_position_calc_on_open` directly
+WITHOUT persisting fills, so a SUM-from-fills approach needs the test
+seeding reworked to persist fills first. **Deferred to a focused task**
+that should apply the SUM-discipline to the junction (and ideally align
+`orders.filled_qty` the same way). The misleading `test_qty_accumulates_
+lifecycle_stable` (used the same `fid` for both fills, which looked like
+a redelivery-safety test but wasn't) was fixed in T232 to use distinct fids.
+
 ### Calc-cancel UI wiring (deferred from T219 / P1.T4)
 
 Cancel endpoint + transition shipped; the "Cancel calc" button (spec

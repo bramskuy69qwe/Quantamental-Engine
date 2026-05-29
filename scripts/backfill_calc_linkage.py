@@ -18,8 +18,9 @@ Three operations, all idempotent + safe to re-run, per plan tasks
        - closed_positions.lifecycle_id
        - All fills with matching terminal_position_id
          (fills.lifecycle_id)
-     Forward fills (Phase 2.1) generate lifecycle_id at the first
-     opening fill, so this only catches legacy rows.
+     The forward path stamps fills.lifecycle_id on BOTH opening fills
+     (P2.T1 junction link, T232) and closing fills (P2.T2 primary
+     inherit), so this backfill only catches legacy/historical rows.
 
   3. Backfill positions_calcs junction from fills WHERE calc_id IS
      NOT NULL. Per (closed_position.id, calc_id, orders.id) tuple,
