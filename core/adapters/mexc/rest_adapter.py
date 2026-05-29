@@ -216,6 +216,29 @@ class MexcLinearAdapter(BaseExchangeAdapter):
 
     # ── Orders ───────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def detect_bracket(orders, window_ms=2000):
+        """Group entry+TP/SL bracket siblings so P2.T9 can inherit calc_id.
+
+        MEXC carries NO shared bracket id, position_side, OR reduce_only on
+        the order record (fetch_open_orders populates none of them), so
+        detection is (symbol, <no position_side>) + 2s time-window
+        clustering, with entry-vs-protective discrimination by order_type —
+        the weakest of the three venues. Delegates to
+        core.bracket_detection.detect_brackets.
+
+        KNOWN LIMITATION (T236 review, pre-existing, MEXC Beta): MEXC's WS
+        parse_order_update does not populate created_at_ms, so WS-sourced
+        MEXC orders persist with created_at_ms=0 → the time-window tier
+        degenerates (all such orders look simultaneous) and would over-group
+        on a symbol. Detection is reliable only for REST-sourced MEXC orders
+        (which carry a real timestamp). Fix belongs to the MEXC WS adapter
+        (populate created_at_ms from the venue push), not bracket detection;
+        MEXC is not the live venue today. See HANDOFF.
+        """
+        from core.bracket_detection import detect_brackets
+        return detect_brackets(orders, link_field=None, window_ms=window_ms)
+
     async def fetch_open_orders(self) -> List[NormalizedOrder]:
         raw = await self._run(self._ex.fetch_open_orders)
         orders = []

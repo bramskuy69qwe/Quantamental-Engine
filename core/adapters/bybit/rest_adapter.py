@@ -313,6 +313,22 @@ class BybitLinearAdapter(BaseExchangeAdapter):
             ))
         return positions
 
+    # ── Bracket detection (P2.T8, spec §4.5) ───────────────────────────────────
+
+    @staticmethod
+    def detect_bracket(orders, window_ms=2000):
+        """Group entry+TP/SL bracket siblings so P2.T9 can inherit calc_id.
+
+        Bybit's ``orderLinkId`` (stored in ``client_order_id``) is the
+        venue-native shared bracket key — orders sharing a non-empty value
+        are siblings. Legs that don't share one fall to (symbol,
+        position_side) + 2s time-window clustering. Delegates to
+        core.bracket_detection.detect_brackets. (Bybit is Beta — no live
+        data yet to validate the orderLinkId-sharing convention.)
+        """
+        from core.bracket_detection import detect_brackets
+        return detect_brackets(orders, link_field="client_order_id", window_ms=window_ms)
+
     # ── Open orders ──────────────────────────────────────────────────────────
 
     async def fetch_open_orders(self) -> List[NormalizedOrder]:

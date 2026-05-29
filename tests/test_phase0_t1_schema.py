@@ -451,3 +451,32 @@ class TestCalcMatchAuditBatchAndRead:
         rows = await db.get_order_match_audit(100)
         assert rows[0]["matched"] == 0
         assert rows[0]["winning"] == 0
+
+
+# ── upsert_order_batch reduce_only=None coercion (T236 review) ──────────
+
+
+class TestUpsertOrderReduceOnlyCoercion:
+    """T236 (P2.T8 bracket-detection review): upsert_order_batch must coerce
+    a present-but-None reduce_only to 0, not crash on int(None) and (inside
+    the batch loop's try/except) silently swallow the ENTIRE order batch.
+    MEXC's NormalizedOrder leaves reduce_only=None, so without this an entire
+    MEXC order snapshot would be lost — blocking MEXC bracket detection."""
+
+    @pytest.mark.asyncio
+    async def test_none_reduce_only_persists_whole_batch(self, db):
+        await db.upsert_order_batch([
+            {"account_id": 1, "exchange_order_id": "O-NONE", "symbol": "BTCUSDT",
+             "side": "BUY", "order_type": "limit", "reduce_only": None},
+            {"account_id": 1, "exchange_order_id": "O-OK", "symbol": "BTCUSDT",
+             "side": "SELL", "order_type": "take_profit", "reduce_only": True},
+        ])
+        async with db._conn.execute(
+            "SELECT exchange_order_id, reduce_only FROM orders "
+            "ORDER BY exchange_order_id",
+        ) as cur:
+            by = {r["exchange_order_id"]: r["reduce_only"] for r in await cur.fetchall()}
+        # Batch NOT swallowed — both rows present; None coerced to 0.
+        assert set(by) == {"O-NONE", "O-OK"}
+        assert by["O-NONE"] == 0
+        assert by["O-OK"] == 1

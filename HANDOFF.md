@@ -352,6 +352,36 @@ migration still defaults empty/NULL `exit_reason`→`'manual'` (legacy) — only
 fires on empty rows (forward rows never are), cosmetically neutral (the
 template maps `manual`→gray too); change to `MANUAL_OTHER` opportunistically.
 
+### TP/SL bracket detection (T236 / P2.T8) — detect-only + MEXC ingest gaps
+
+`core/bracket_detection.py` (`detect_brackets`) + per-adapter
+`detect_bracket()` (binance/bybit/mexc) ship the bracket-grouping primitive
+(spec §4.5): two-tier (venue-native shared link → `(symbol, position_side)`
++ anchor-bounded 2s window; a bracket needs ≥1 entry + ≥1 protective leg).
+**DETECT-ONLY** — unwired; P2.T9 consumes it to propagate the entry's
+calc_id to TP/SL. OKX dropped (no adapter); MT4/MT5 forex forward-looking.
+
+The review surfaced two **pre-existing MEXC ingest gaps** (MEXC is Beta /
+not the live venue; both block MEXC bracket detection from functioning
+until fixed):
+- **FIXED in T236**: `upsert_order_batch` did `int(reduce_only)` which
+  raised on MEXC's `reduce_only=None` and (inside the batch try/except)
+  silently swallowed the WHOLE order batch → MEXC orders never reached the
+  table. Now `int(reduce_only or 0)`. (Hardens all adapters; regression
+  test in test_phase0_t1_schema.py.)
+- **DEFERRED (documented)**: MEXC's WS `parse_order_update` doesn't populate
+  `created_at_ms` → WS-sourced MEXC orders persist with `created_at_ms=0`,
+  degenerating the time-window tier (all look simultaneous). Fix belongs to
+  the MEXC WS adapter (extract the venue push timestamp); detection is
+  reliable only for REST-sourced MEXC orders until then. Anchor-commented
+  in `mexc/rest_adapter.detect_bracket`.
+
+Heuristic limit (all venues, bounded): live Binance has no shared bracket
+id (`exchange_position_id` empty, clientOrderId unique), so detection is
+the (symbol, positionSide)+window heuristic; the false-positive risk
+(two entries within the window) is bounded by P2.T9 only propagating from
+an entry that carries a calc_id.
+
 ### Junction contributed_qty redelivery double-count (T232 audit — confirmed, deferred)
 
 Holistic Phase-2 audit (after T231) + my own runtime probe confirmed:

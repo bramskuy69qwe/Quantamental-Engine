@@ -503,12 +503,28 @@ then places a new order:
 When operator places entry + TP + SL as a venue-native bracket, the
 TP/SL orders inherit calc_id from the entry order.
 
-Detection priority per adapter:
-1. **Venue-native**: Bybit `orderLinkId`, Binance `positionSide` + symbol
-   clustering, OKX `algoOrdId`.
-2. **Fallback**: time-window clustering — orders for same
-   `(symbol, direction)` within N seconds (default 2s) treated as
-   bracket siblings.
+Detection priority per adapter (implemented T2.8 — `core/bracket_detection.py`
+engine + thin per-adapter `detect_bracket()`):
+1. **Venue-native shared link**: Bybit `orderLinkId` (stored in
+   `client_order_id`) — orders sharing a non-empty value are siblings.
+   Binance has **no** shared bracket id on the order record (clientOrderId
+   is unique per order; `exchange_position_id` is empty on the
+   observe-only path), so it has no tier-1 key; MEXC likewise carries no
+   shared id (and no `position_side`/`reduce_only` on its order record).
+   (OKX `algoOrdId` was named in earlier drafts but there is **no OKX
+   adapter** — out of scope; MT4/MT5 forex brokers are forward-looking.)
+2. **Fallback** (carries detection for Binance + MEXC, and any Bybit legs
+   without a shared link): cluster orders for the same
+   `(symbol, position_side)` whose `created_at_ms` are within N seconds of
+   each other (default 2s) — "placed together" detection. Binance uses
+   `positionSide` as the direction key; MEXC clusters by `(symbol, ∅)`.
+   Entry-vs-protective discrimination is by `order_type` (universal across
+   venues), with `reduce_only` as a secondary signal where present.
+
+A detected bracket requires **both** an entry leg AND a protective (TP/SL)
+leg placed together; a cluster of only-entries or only-protective orders
+(a standalone TP/SL — see below) is not a bracket. T2.8 detects only; the
+calc_id inheritance is T2.9.
 
 If detection fails (e.g., operator places TP/SL separately after entry,
 OR operator places a protective stop on an already-open position),

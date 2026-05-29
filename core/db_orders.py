@@ -120,7 +120,13 @@ class OrdersMixin:
                         "quantity":             row.get("quantity", 0),
                         "filled_qty":           row.get("filled_qty", 0),
                         "avg_fill_price":       row.get("avg_fill_price", 0),
-                        "reduce_only":          int(row.get("reduce_only", False)),
+                        # `or 0` coerces a present-but-None reduce_only to 0:
+                        # int(None) would raise and (inside this batch loop's
+                        # try/except) silently swallow the ENTIRE order batch.
+                        # MEXC's NormalizedOrder leaves reduce_only=None (its
+                        # fetch_open_orders never sets it), so a MEXC snapshot
+                        # would otherwise lose every order (T236 review).
+                        "reduce_only":          int(row.get("reduce_only") or 0),
                         "time_in_force":        row.get("time_in_force", ""),
                         "position_side":        row.get("position_side", ""),
                         "exchange_position_id": row.get("exchange_position_id", ""),
