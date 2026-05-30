@@ -5,7 +5,20 @@
 **Tests**: 2862 passed, 7 skipped, 1 unrelated pre-existing failure
 **Pre-existing failure**: `tests/test_data_cache_dd.py::TestRollingWindowPeak::test_old_high_excluded_from_window` — 30-day rolling-window boundary bug; unrelated to calc-linkage. Worth filing as its own task.
 
-## ★ STATUS (2026-05-31) — PHASE 3 COMPLETE (T1–T4); next = Phase 4 (amendment tracking + deviation)
+## ★ STATUS (2026-05-31) — PHASE 3 COMPLETE (T1–T4) + RE-AUDITED CLEAN; next = Phase 4 (amendment tracking + deviation)
+
+**Phase 3 holistically RE-AUDITED (clean) — no code changes.** A 7-dimension adversarial
+workflow (link-state-machine integrity, manual-link backend, UI/htmx render,
+cross-surface consistency, spec §6 completeness, hot-path/DB safety, holistic test
+coverage) over T1–T4 filed 5 candidate findings; **all 5 adversarially refuted**
+(2 documented-deferral, 2 convention-followed, 1 mechanism-mismatch). I independently
+re-verified the core spec §3.6 invariant by grep: EVERY production `orders.link_status`
+WRITE routes through `core/link_state` — the matcher (`order_enrichment._try_correlate`)
++ bracket inheritance (`order_manager._propagate_bracket_calc_id`) via `auto_classify`,
+and the operator handlers (`link_actions.manual_link_order` / `mark_order_unplanned`)
+via `transition`. The legacy `/admin/calc_link` writes `calc_id` only (NOT link_status),
+so it does not bypass the choke-point — it can only create the documented
+calc_id-without-LINKED inconsistency. Two observations folded into the carry-forwards.
 
 **P3.T4 (task 243) shipped — link_status badges + needs-link nav counter (last Phase-3 task).**
 *3.7 badges*: new shared macro `templates/primitives/link_status_badge.html` (LINKED→green /
@@ -131,11 +144,23 @@ per-task notes are in the sections below + `docs/design/calc_linkage_implementat
   amendment data lands (the T2.7 deferral).
 
 **Phase-3 deferred carry-forwards** (file/address as Phase 3 follow-up):
+- **`UNLINKED` is defined-but-unproduced forward scaffolding** (Phase-3 audit observation).
+  Nothing sets `link_status='UNLINKED'`: the matcher emits `NEEDS_MANUAL_REVIEW` for the
+  "candidates exist but no full match" case (calc_correlation.py:52-56 — a deliberate
+  Rule-6 pin), `auto_classify` excludes UNLINKED, and the operator handlers reach only
+  LINKED / UNPLANNED. So the UNLINKED branches in the needs-link queue/counter `WHERE`,
+  the `link_status_badge` macro, and the `LINK_TRANSITIONS` edges are harmlessly DEAD —
+  but fully wired to activate the moment a producer is added (like Phase-1's
+  `partially_actioned`, spec §16). Decide later: wire a producer (operator "unlink", or
+  matcher "rejected-all" → UNLINKED per spec §2[B]) OR prune the dead branches.
 - Order-side TP/SL early-return gate: a no-TP/SL order never reaches the matcher → never
   classified (link_status stays NULL → "—" badge; plan §3 row 3.2 residual).
 - Late-manual-link does NOT retro-create `positions_calcs` junction rows (offline rebuild).
 - The legacy `/admin/calc_link` raw-UPDATE surface (sets calc_id WITHOUT link_status, no
   choke-point) should be REMOVED now the needs-link tab is shipped (plan §11 compat shim).
+  The audit confirmed it can now create a `calc_id`-without-`LINKED` order that the new
+  badge/queue assume away — bounded (operator must use the legacy admin page), but the
+  cleanest fix is to retire the page (or route its confirm through `manual_link_order`).
 - Deployment context is single-tenant localhost (CLAUDE.md, Task 163): no auth/CSRF
   work; threat model is correctness + observability + recovery.
 
