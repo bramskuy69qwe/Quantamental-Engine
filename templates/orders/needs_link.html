@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% set active_page = "needs_link" %}
+{% block title %}Needs Link — {{ project_name }}{% endblock %}
+
+{% block content %}
+<div style="padding:10px 12px;">
+
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+    <button class="btn btn-secondary btn-sm"
+            hx-get="/fragments/needs_link"
+            hx-target="#nl-queue"
+            hx-swap="innerHTML">↻ Refresh</button>
+    <span style="font-size:.62rem;color:var(--muted);">
+      Orders the matcher couldn't auto-link. Pick the matching calc, or mark the order unplanned.
+    </span>
+  </div>
+
+  <!-- Review queue: lazy-loaded on page load; re-fetched by Refresh + after an action. -->
+  <div id="nl-queue"
+       hx-get="/fragments/needs_link"
+       hx-trigger="load"
+       hx-swap="innerHTML">
+    <div class="es es-info"><div class="es-msg">Loading review queue…</div></div>
+  </div>
+
+</div>
+
+<script>
+(function () {
+  // P3.T3: after a successful Link / Mark-UNPLANNED action the per-order alert
+  // shows briefly, then the queue is re-fetched so the resolved order drops out.
+  // (Inlined per the codebase's page-script convention, e.g. history.html's
+  // histMainTab — avoids a separate static/js mount for ~12 lines.)
+  document.body.addEventListener('htmx:afterRequest', function (e) {
+    var cfg = e.detail && e.detail.requestConfig;
+    var path = (cfg && cfg.path) || '';
+    if (!e.detail.successful) return;
+    if (/\/orders\/\d+\/(manual_link|mark_unplanned)$/.test(path)) {
+      setTimeout(function () {
+        if (document.getElementById('nl-queue')) {
+          htmx.ajax('GET', '/fragments/needs_link',
+                    { target: '#nl-queue', swap: 'innerHTML' });
+        }
+      }, 1200);
+    }
+  });
+})();
+</script>
+{% endblock %}

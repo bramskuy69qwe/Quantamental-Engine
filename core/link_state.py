@@ -145,6 +145,32 @@ class IllegalStateTransition(Exception):
         super().__init__(msg)
 
 
+class LinkTransitionRaceLost(Exception):
+    """Raised by a caller-supplied ``apply_fn`` when its UPDATE affects 0
+    rows — another writer flipped ``orders.link_status`` (or set
+    ``calc_id``) out of the expected state between the caller's SELECT and
+    the apply_fn UPDATE.
+
+    Mirror of :class:`core.calc_state.CalcTransitionRaceLost` for the order
+    link-status TOCTOU guard. The operator manual-link / mark-unplanned
+    handlers (P3.T2) raise it from their apply_fn on rowcount 0 and catch
+    it to report a benign "raced" outcome rather than a hard error.
+    """
+
+    def __init__(
+        self, order_id: int, expected: str, target: str,
+        message: Optional[str] = None,
+    ) -> None:
+        self.order_id = order_id
+        self.expected = expected
+        self.target = target
+        msg = message or (
+            f"order {order_id!r} moved out of {expected!r} before UPDATE "
+            f"to {target!r}; transition skipped"
+        )
+        super().__init__(msg)
+
+
 def validate_transition(current: str, target: str) -> bool:
     """Return ``True`` if ``current → target`` is a valid transition.
 

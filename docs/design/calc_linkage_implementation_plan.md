@@ -441,11 +441,11 @@ link via side-by-side diff panel. UNPLANNED auto-classification.
 | # | Task | File(s) |
 |---|---|---|
 | 3.1 | **SHIPPED (T241, P3.T1)**: route EVERY `orders.link_status` write through the `core/link_state` choke-point (spec §3.6 — no raw UPDATEs). Added `auto_classify()`, the ENGINE-classification sibling of `transition()`: the matcher assigns link_status from an UNDECIDED source (NULL on first arrival, or UNPLANNED on a re-run — an UNPLANNED→LINKED re-match upgrade is one `transition()` correctly rejects, since UNPLANNED is operator-terminal). Swept BOTH raw-UPDATE sites onto it — the matcher (`order_enrichment._try_correlate`) and bracket inheritance (`order_manager._propagate_bracket_calc_id`). `transition()` (validated decided→decided moves) is reserved for the operator endpoints (P3.T2/T3). The link_status set-on-arrival itself predates this (Phase-1 matcher). 14 tests in `tests/test_phase3_link_state.py`, incl. the load-bearing UNPLANNED→LINKED upgrade. | `core/link_state.py`, `core/order_enrichment.py`, `core/order_manager.py` |
-| 3.2 | Auto-UNPLANNED logic: if matcher finds zero candidates in window for (account, ticker, direction), set `link_status=UNPLANNED` immediately | `core/calc_correlation.py` |
-| 3.3 | New endpoint `POST /orders/{id}/manual_link` accepting `calc_id` | `api/routes_orders.py` |
-| 3.4 | New endpoint `POST /orders/{id}/mark_unplanned` for operator downgrade UNLINKED→UNPLANNED | `api/routes_orders.py` |
-| 3.5 | New endpoint `GET /orders/needs_review` returning all NEEDS_MANUAL_REVIEW + UNLINKED orders with candidate calcs per-criterion diff | `api/routes_orders.py` |
-| 3.6 | Build needs-link tab UI: side-by-side per-criterion diff panel (order on left, candidates with color-coded matches on right); "Link to this calc" / "Mark UNPLANNED" buttons | `templates/needs_link.html` (new), `static/js/needs_link.js` (new) |
+| 3.2 | **SATISFIED (pre-existing matcher)**: the strict matcher already sets `link_status=UNPLANNED` when zero in-window candidates exist (verified by `test_phase3_link_state.test_no_candidate_routes_unplanned`). Residual gap (deferred): the order-side TP/SL early-return (`_try_correlate` returns before the matcher if the order lacks both trigger prices) — a no-TP/SL order never reaches the matcher to be classified. | `core/calc_correlation.py` |
+| 3.3 | **SHIPPED (T242, P3.T2)**: `POST /orders/{id}/manual_link` (Form `calc_id`) → `core.link_actions.manual_link_order`: routes the order NEEDS_MANUAL_REVIEW\|UNLINKED → LINKED through the `link_state` choke-point (TOCTOU-guarded), flips the calc active\|released → matched (mirrors the auto-matcher), propagates calc_id to opening fills. 200 + discriminated HTML alert. | `api/routes_orders.py`, `core/link_actions.py` (new) |
+| 3.4 | **SHIPPED (T242, P3.T2)**: `POST /orders/{id}/mark_unplanned` → `mark_order_unplanned`: NEEDS_MANUAL_REVIEW\|UNLINKED → UNPLANNED through the choke-point. Added `LinkTransitionRaceLost` (mirror of `CalcTransitionRaceLost`). | `api/routes_orders.py`, `core/link_actions.py`, `core/link_state.py` |
+| 3.5 | **SHIPPED (T242, P3.T2)**: `GET /orders/needs_review` → `list_needs_review`: NEEDS_MANUAL_REVIEW + UNLINKED orders, each annotated with `find_candidate_calcs` per-criterion diff. Returns JSON (the data layer; P3.T3 renders it). | `api/routes_orders.py`, `core/link_actions.py` |
+| 3.6 | **SHIPPED (T242, P3.T3)**: needs-link TAB — `templates/orders/needs_link.html` (page, lazy-loads the queue) + `templates/fragments/needs_link_queue.html` (Card-per-order, StatusIndicator badge, per-criterion diff via text-green/text-red, Link + Mark-UNPLANNED buttons → the choke-pointed P3.T2 endpoints). New routes `GET /orders/needs_link` + `GET /fragments/needs_link`; nav tab + page_meta in base.html (nav label humanized `\|capitalize`→`\|replace('_',' ')\|title`). Auto-refresh script inlined per the codebase page-script convention (deviation from `static/js/needs_link.js`). 10 compile-render wiring tests. | `templates/orders/needs_link.html` (new), `templates/fragments/needs_link_queue.html` (new), `api/routes_orders.py`, `templates/base.html` |
 | 3.7 | Persistent status badge in trades/history tab per order: green LINKED / yellow NEEDS_REVIEW / gray UNLINKED / blue UNPLANNED | `templates/history.html`, `static/css/badges.css` |
 | 3.8 | Nav badge counter for needs-link tab (count of NEEDS_REVIEW + UNLINKED orders) | base template |
 
@@ -932,9 +932,9 @@ T10 needs T1-T9 done.
 | # | Task | Scope |
 |---|---|---|
 | P3.T1 | **SHIPPED (T241)** — `link_status` auto-classification choke-point | All `orders.link_status` writes route through `core/link_state` (spec §3.6): `auto_classify()` for engine sets (matcher + bracket; undecided NULL/UNPLANNED source), `transition()` reserved for operator moves (P3.T2/T3). See detailed §3 table row 3.1. |
-| P3.T2 | Endpoints | `manual_link`, `mark_unplanned`, `needs_review` listing |
-| P3.T3 | Needs-link tab UI | Template + JS + per-criterion diff panel (template wiring tests per CLAUDE.md) |
-| P3.T4 | Status badges + nav counter | History tab badges + nav badge count |
+| P3.T2 | **SHIPPED (T242)** — Endpoints | `manual_link`, `mark_unplanned`, `needs_review` (+ `core/link_actions.py`, `LinkTransitionRaceLost`). All operator link_status writes through the choke-point. See detailed §3 rows 3.3–3.5. |
+| P3.T3 | **SHIPPED (T242)** — Needs-link tab UI | Page + queue fragment + nav tab; per-criterion diff via primitives; choke-pointed action buttons; 10 compile-render wiring tests. See detailed §3 row 3.6. |
+| P3.T4 | Status badges + nav counter | History tab badges + nav badge count (needs-link nav badge count) |
 
 #### Phase 4 — Amendments + deviation (5 tasks)
 

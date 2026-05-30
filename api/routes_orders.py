@@ -319,6 +319,91 @@ async def confirm_exec_link(request: Request, fill_id: int = Form(0)):
     return await frag_exec_link(request, fill_id=fill_id)
 
 
+# ── Manual-link operator actions (P3.T2 / spec §6, §10.3) ────────────────────
+
+# result string → (alert css class, operator-facing message). The handlers
+# in core.link_actions funnel every link_status write through the
+# core.link_state choke-point (spec §3.6). All branches return HTTP 200 so
+# htmx swaps the discriminated body into the target — base.html's
+# htmx:responseError handler swallows non-2xx bodies (T219 audit note).
+_LINK_ACTION_MSG = {
+    "linked":             ("alert-success", "Order linked to calc."),
+    "marked":             ("alert-success", "Order marked unplanned."),
+    "missing_calc_id":    ("alert-error",   "No calc selected."),
+    "order_not_found":    ("alert-error",   "Order not found."),
+    "already_linked":     ("alert-error",   "Order is already linked."),
+    "calc_not_found":     ("alert-error",   "Calc not found."),
+    "invalid_transition": ("alert-error",   "Order is not in a linkable state "
+                                            "(only needs-review / unlinked orders)."),
+    "race_lost":          ("alert-warning", "Order changed concurrently — refresh and retry."),
+    "error":              ("alert-error",   "Action failed — see logs."),
+}
+
+
+def _link_action_fragment(result: str) -> HTMLResponse:
+    cls, msg = _LINK_ACTION_MSG.get(result, ("alert-error", "Action failed."))
+    return HTMLResponse(f'<div class="alert {cls}">{msg}</div>')
+
+
+@router.post("/orders/{order_id}/manual_link", response_class=HTMLResponse)
+async def manual_link(order_id: int, calc_id: str = Form("")):
+    """P3.T2 (plan §3 task 3.3): operator links an order to a calc.
+
+    Routes the order NEEDS_MANUAL_REVIEW|UNLINKED → LINKED transition through
+    the core.link_state choke-point and flips the calc active|released →
+    matched (via core.link_actions.manual_link_order). Returns a 200
+    status-discriminated HTML fragment (htmx swaps it; see _LINK_ACTION_MSG).
+    """
+    from core.link_actions import manual_link_order
+    result = await manual_link_order(app_state.active_account_id, order_id, calc_id)
+    return _link_action_fragment(result)
+
+
+@router.post("/orders/{order_id}/mark_unplanned", response_class=HTMLResponse)
+async def mark_unplanned(order_id: int):
+    """P3.T2 (plan §3 task 3.4): operator downgrades an order to UNPLANNED
+    (NEEDS_MANUAL_REVIEW|UNLINKED → UNPLANNED via the choke-point)."""
+    from core.link_actions import mark_order_unplanned
+    result = await mark_order_unplanned(app_state.active_account_id, order_id)
+    return _link_action_fragment(result)
+
+
+@router.get("/orders/needs_review")
+async def needs_review():
+    """P3.T2 (plan §3 task 3.5): the manual-link review queue —
+    NEEDS_MANUAL_REVIEW + UNLINKED orders with per-order candidate calcs +
+    per-criterion diff. Returns JSON data; the needs-link tab UI (P3.T3)
+    renders it."""
+    from core.link_actions import list_needs_review
+    orders = await list_needs_review(app_state.active_account_id)
+    return JSONResponse({"orders": orders, "count": len(orders)})
+
+
+@router.get("/orders/needs_link", response_class=HTMLResponse)
+async def needs_link_page(request: Request):
+    """P3.T3 (plan §3 task 3.6): the needs-link tab page. Thin shell that
+    lazy-loads the queue fragment (GET /fragments/needs_link)."""
+    from api.helpers import _ctx
+    return templates.TemplateResponse(
+        request, "orders/needs_link.html", _ctx(request, active_page="needs_link"),
+    )
+
+
+@router.get("/fragments/needs_link", response_class=HTMLResponse)
+async def frag_needs_link(request: Request):
+    """P3.T3: the manual-link review queue fragment — NEEDS_MANUAL_REVIEW +
+    UNLINKED orders, each with its candidate calcs + per-criterion diff and
+    Link / Mark-UNPLANNED action buttons (POSTing to the choke-pointed P3.T2
+    endpoints). Server-side render of core.link_actions.list_needs_review —
+    the same data the JSON GET /orders/needs_review returns."""
+    from core.link_actions import list_needs_review
+    orders = await list_needs_review(app_state.active_account_id)
+    return templates.TemplateResponse(
+        request, "fragments/needs_link_queue.html",
+        _table_ctx(request, orders=orders),
+    )
+
+
 # ── Backfill + consistency ───────────────────────────────────────────────────
 
 @router.post("/api/orders/backfill")

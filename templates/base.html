@@ -470,6 +470,7 @@
         ('dashboard',  '/'),
         ('calculator', '/calculator'),
         ('history',    '/history'),
+        ('needs_link', '/orders/needs_link'),
         ('analytics',  '/analytics'),
         ('backtest',   '/backtest'),
         ('regime',     '/regime'),
@@ -484,7 +485,7 @@
           color:{% if active_page==page_key %}#fff{% else %}var(--sub){% endif %};
           border-bottom:{% if active_page==page_key %}2px solid #fff{% else %}none{% endif %};
           transition:background .1s,color .1s;">
-        {{ page_key|capitalize }}
+        {{ page_key|replace('_', ' ')|title }}
       </a>
       {% endfor %}
     </nav>
@@ -566,6 +567,7 @@
   'dashboard':  ('Dashboard',   'Live overview · equity · risk · positions'),
   'calculator': ('Calculator',  'Position sizing · TP/SL · order preview'),
   'history':    ('History',     'Trade log · executions · pre-trade journal'),
+  'needs_link': ('Needs Link',  'Manual-link queue · candidate calcs · per-criterion diff'),
   'config':     ('Configuration','Accounts · connections · risk parameters'),
   'analytics':  ('Analytics',   'Portfolio performance · equity curve · pairs'),
   'backtest':   ('Backtest',    'Strategy simulation · model management · QT import'),

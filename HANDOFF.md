@@ -1,11 +1,36 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-05-29
-**Current branch**: `v2.5/post-rewind-drop-regime-infra` @ `task 241 (P3.T1 + P2 audit hardening)` — pushed to origin
-**Tests**: 2816 passed, 7 skipped, 1 unrelated pre-existing failure
+**Date**: 2026-05-30
+**Current branch**: `v2.5/post-rewind-drop-regime-infra` @ `task 242 (P3.T2 endpoints + P3.T3 needs-link tab)` — pushed to origin
+**Tests**: 2845 passed, 7 skipped, 1 unrelated pre-existing failure
 **Pre-existing failure**: `tests/test_data_cache_dd.py::TestRollingWindowPeak::test_old_high_excluded_from_window` — 30-day rolling-window boundary bug; unrelated to calc-linkage. Worth filing as its own task.
 
-## ★ STATUS (2026-05-29) — PHASE 2 COMPLETE + RE-AUDITED; P3.T1 SHIPPED; next = P3.T2
+## ★ STATUS (2026-05-30) — PHASE 3 T1–T3 SHIPPED (choke-point + manual-link endpoints + needs-link tab); next = P3.T4
+
+**P3.T2 + P3.T3 (task 242) shipped — manual-link backend + tab UI.**
+*P3.T2*: `core/link_actions.py` (new) — `manual_link_order` / `mark_order_unplanned` /
+`list_needs_review`; every `orders.link_status` write routed through the
+`link_state.transition()` choke-point (operator decided→decided moves, mirroring
+`handlers.cancel_calc_by_operator`). `manual_link_order` also flips the calc
+active|released→matched (mirrors the auto-matcher) + propagates calc_id to opening
+fills. Added `LinkTransitionRaceLost` (mirror of `CalcTransitionRaceLost`). Endpoints:
+`POST /orders/{id}/manual_link` (Form calc_id), `POST /orders/{id}/mark_unplanned`
+(both → 200 + discriminated HTML alert), `GET /orders/needs_review` (JSON queue + per-
+criterion candidate diff). Review: 2 confirmed (MED untested `race_lost` branch → tests
+added; LOW new sync-sqlite-in-async callsite → `asyncio.to_thread`), both fixed.
+*P3.T3*: needs-link TAB — `templates/orders/needs_link.html` (page, lazy-loads the
+queue) + `templates/fragments/needs_link_queue.html` (Card-per-order, StatusIndicator
+badge, per-criterion diff via text-green/text-red, Link + Mark-UNPLANNED buttons → the
+choke-pointed T2 endpoints, per-order alert div). Routes `GET /orders/needs_link` +
+`GET /fragments/needs_link`; nav tab + page_meta in base.html (nav label humanized
+`|capitalize`→`|replace('_',' ')|title` for multi-word keys — backward-compatible).
+Auto-refresh script inlined (deviation from `static/js/needs_link.js`, page-script
+convention). Review clean (0 confirmed / 8 refuted; the hx-vals→`Form("calc_id")`
+wiring verified — htmx 1.9.12 JSON-parses hx-vals into form params). Tests:
+`test_phase3_endpoints.py` (19, incl. both race_lost) + `test_phase3_needs_link_ui.py`
+(10 compile-render). **Legacy `/admin/calc_link`** (raw UPDATE, no choke-point) left as
+the documented Phase-3 fallback (plan §11); late-manual-link junction backfill +
+operator_id (Phase 9) deferred.
 
 **P3.T1 (task 241) shipped** — every `orders.link_status` write now routes through
 the `core/link_state` choke-point (spec §3.6). Added `auto_classify()`, the
@@ -74,22 +99,21 @@ per-task notes are in the sections below + `docs/design/calc_linkage_implementat
 - Multi-TP: per-partial `closed_positions` rows preserved; calc completion +
   ladder `exit_reason` (TP_LADDER_COMPLETE/MIXED) fire on the FINAL close (T2.11).
 
-**NEXT — Phase 3 (manual-link UI + link_status state machine, plan §3):**
-- ~~**P3.T1**~~ DONE (task 241) — choke-point routing shipped (see STATUS above).
-  The operator-move entry point `core/link_state.transition()` is now wired and ready
-  for P3.T2/T3 to call (it validates decided→decided moves: NEEDS_MANUAL_REVIEW→LINKED,
-  UNLINKED→UNPLANNED, etc.); engine sets use `auto_classify()`.
-- **P3.T2** — endpoints: `POST /orders/{id}/manual_link`, `POST /orders/{id}/mark_unplanned`,
-  `GET /orders/needs_review`. The operator transitions MUST route through
-  `core/link_state.transition()` (now wired). Note: auto-UNPLANNED on zero in-window
-  candidates is ALREADY emitted by the matcher today (test_phase3_link_state
-  `test_no_candidate_routes_unplanned`); the outstanding gate is the deferred
-  order-side TP/SL early-return (`_try_correlate` returns before the matcher if the
-  order lacks both trigger prices — see Phase-1 deferrals below). Reconcile
-  `find_candidate_calcs` drift (T223 deferral) when building the needs-review finder.
-- Manual-link tab / UI (spec §6.2, P3.T3/T4): NEEDS_MANUAL_REVIEW + UNLINKED queue,
-  per-criterion diff panel, status badges + nav counter. `core/exec_link.py` already
-  computes per-fill display link status.
+**NEXT — Phase 3 (plan §3):**
+- ~~P3.T1~~ (task 241), ~~P3.T2~~ + ~~P3.T3~~ (task 242) DONE — see STATUS above.
+- **P3.T4** (last Phase-3 task) — status badges + nav counter:
+  (a) per-order persistent link_status badge in the trades/history tab (green LINKED /
+  yellow NEEDS_REVIEW / gray UNLINKED / blue UNPLANNED — detailed §3 row 3.7); (b) a nav
+  badge COUNTER on the new "Needs Link" tab showing the count of NEEDS_MANUAL_REVIEW +
+  UNLINKED orders (row 3.8). The count is already available via
+  `core/link_actions.list_needs_review` (len) or a cheap COUNT query; the tab is wired
+  (base.html nav_items `needs_link` + `/orders/needs_link`). The history badges reuse
+  the same link_status enum the needs-link tab renders.
+- **Deferred carry-forwards** for Phase-3 follow-up: the order-side TP/SL early-return
+  gate (a no-TP/SL order never reaches the matcher → never classified — plan §3 row 3.2
+  residual); late-manual-link does NOT retro-create `positions_calcs` junction rows
+  (relies on offline rebuild); the legacy `/admin/calc_link` raw-UPDATE surface should
+  be REMOVED once the needs-link tab is proven stable (plan §11 compat shim).
 - Deployment context is single-tenant localhost (CLAUDE.md, Task 163): no auth/CSRF
   work; threat model is correctness + observability + recovery.
 
