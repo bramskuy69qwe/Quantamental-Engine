@@ -2,6 +2,7 @@
 {% from "fragments/history/_pagination.html" import pagination %}
 {% from "primitives/table_row.html" import tr_open, tr_close %}
 {% from "primitives/empty_state.html" import empty_state %}
+{% from "primitives/link_status_badge.html" import link_status_badge %}
 {% set ep = "/fragments/history/order_history" %}
 {% set tid = "order-history-table" %}
 {% set df = date_from | replace(":", "%3A") | replace("+", "%2B") %}
@@ -32,6 +33,7 @@
         {{ sort_th("Trigger",   "stop_price",    ep, tid, sort_by, sort_dir, qs) }}
         <th>TIF</th>
         {{ sort_th("Status",    "status",        ep, tid, sort_by, sort_dir, qs) }}
+        <th>Link</th>
         <th>Order ID</th>
         <th>Avg Fill</th>
       </tr></thead>
@@ -59,6 +61,7 @@
             {% else %}<span class="badge">{{ r.status }}</span>
             {% endif %}
           </td>
+          <td>{{ link_status_badge(r.link_status) }}</td>
           <td class="td-dim">{{ r.exchange_order_id[:12] if r.exchange_order_id else "—" }}</td>
           <td>{{ fmt(r.avg_fill_price, 6) if r.avg_fill_price else "—" }}</td>
         {{ tr_close() }}

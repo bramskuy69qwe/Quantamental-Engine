@@ -1,0 +1,24 @@
+{#
+  link_status_badge(status) — P3.T4 (plan §3 row 3.7).
+
+  Renders a colored badge for an order's calc-linkage state (orders.link_status),
+  using the app-wide badge color family (defined in base.html):
+
+    LINKED              → green   (badge-green)  — auto/operator linked to a calc
+    NEEDS_MANUAL_REVIEW → amber   (badge-yellow) — candidates exist, operator must pick
+    UNLINKED            → gray    (badge-gray)   — operator-set, awaiting decision
+    UNPLANNED           → blue    (badge-blue)   — no calc in window (auto / operator)
+    (NULL / other)      → "—"     — order never classified (e.g. matcher gate skip)
+
+  Single source of truth for the link_status → badge mapping so the order
+  history + open-orders tables stay consistent. LinkStatus enum: core/link_state.py.
+#}
+{% macro link_status_badge(status) -%}
+{%- if status == "LINKED" %}<span class="badge badge-green">LINKED</span>
+{%- elif status == "NEEDS_MANUAL_REVIEW" %}<span class="badge badge-yellow">NEEDS REVIEW</span>
+{%- elif status == "UNLINKED" %}<span class="badge badge-gray">UNLINKED</span>
+{%- elif status == "UNPLANNED" %}<span class="badge badge-blue">UNPLANNED</span>
+{%- elif status %}<span class="badge">{{ status }}</span>
+{%- else %}<span class="td-dim">—</span>
+{%- endif %}
+{%- endmacro %}

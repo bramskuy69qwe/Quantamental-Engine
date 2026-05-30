@@ -404,6 +404,20 @@ async def frag_needs_link(request: Request):
     )
 
 
+@router.get("/fragments/needs_link_count", response_class=HTMLResponse)
+async def frag_needs_link_count():
+    """P3.T4 (plan §3 task 3.8): live nav-badge counter for the Needs Link
+    tab — count of NEEDS_MANUAL_REVIEW + UNLINKED orders for the active
+    account. Returns an amber count badge, or EMPTY when the queue is clear
+    (so the nav shows no '0' badge). Polled by the nav span every 5s."""
+    count = await db.count_needs_link(app_state.active_account_id)
+    if not count:
+        return HTMLResponse("")
+    return HTMLResponse(
+        f'<span class="badge badge-yellow" style="margin-left:5px;">{count}</span>'
+    )
+
+
 # ── Backfill + consistency ───────────────────────────────────────────────────
 
 @router.post("/api/orders/backfill")

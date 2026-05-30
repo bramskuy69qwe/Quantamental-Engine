@@ -75,6 +75,14 @@
     .badge-warning { background:#251500; color:var(--amber); }
     .badge-unknown { background:var(--panel); color:var(--muted); }
     .badge-info    { background:#071828; color:var(--cyan); }
+    /* P3.T4: the semantic-color family the status/exit_reason/link_status
+       badges use (was undefined app-wide — T235 gap). Mirrors the
+       background/role of the badge-ok/limit/warning/unknown family above. */
+    .badge-green   { background:#071a10; color:var(--green); }
+    .badge-red     { background:#200808; color:var(--red); }
+    .badge-gray    { background:var(--panel); color:var(--muted); }
+    .badge-yellow  { background:#251500; color:var(--amber); }
+    .badge-blue    { background:#071828; color:var(--blue); }
     .regime-trending   { background:#0a2018; color:var(--green);  }
     .regime-choppy     { background:#082028; color:var(--cyan);   }
     .regime-neutral    { background:var(--panel); color:var(--sub);  }
@@ -486,6 +494,13 @@
           border-bottom:{% if active_page==page_key %}2px solid #fff{% else %}none{% endif %};
           transition:background .1s,color .1s;">
         {{ page_key|replace('_', ' ')|title }}
+        {%- if page_key == 'needs_link' %}
+        {# P3.T4 (3.8): live count of NEEDS_MANUAL_REVIEW + UNLINKED orders.
+           Empty until the fragment loads / when the queue is clear. #}
+        <span hx-get="/fragments/needs_link_count"
+              hx-trigger="load, every 5s"
+              hx-swap="innerHTML"></span>
+        {%- endif %}
       </a>
       {% endfor %}
     </nav>

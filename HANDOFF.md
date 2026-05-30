@@ -1,11 +1,25 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-05-30
-**Current branch**: `v2.5/post-rewind-drop-regime-infra` @ `task 242 (P3.T2 endpoints + P3.T3 needs-link tab)` — pushed to origin
-**Tests**: 2845 passed, 7 skipped, 1 unrelated pre-existing failure
+**Date**: 2026-05-31
+**Current branch**: `v2.5/post-rewind-drop-regime-infra` @ `task 243 (P3.T4 link_status badges + needs-link nav counter)` — pushed to origin
+**Tests**: 2862 passed, 7 skipped, 1 unrelated pre-existing failure
 **Pre-existing failure**: `tests/test_data_cache_dd.py::TestRollingWindowPeak::test_old_high_excluded_from_window` — 30-day rolling-window boundary bug; unrelated to calc-linkage. Worth filing as its own task.
 
-## ★ STATUS (2026-05-30) — PHASE 3 T1–T3 SHIPPED (choke-point + manual-link endpoints + needs-link tab); next = P3.T4
+## ★ STATUS (2026-05-31) — PHASE 3 COMPLETE (T1–T4); next = Phase 4 (amendment tracking + deviation)
+
+**P3.T4 (task 243) shipped — link_status badges + needs-link nav counter (last Phase-3 task).**
+*3.7 badges*: new shared macro `templates/primitives/link_status_badge.html` (LINKED→green /
+NEEDS_MANUAL_REVIEW→yellow / UNLINKED→gray / UNPLANNED→blue; NULL→"—"), used in the
+order_history + open_orders tables (new "Link" column). **Operator chose Option A: defined the
+missing `badge-green/red/gray/yellow/blue` family in base.html** — the link badge uses it AND it
+retroactively COLORS the existing status/exit_reason badges app-wide (closes the T235 "undefined
+badge color classes" gap across ~6 templates). Additive CSS, zero functional risk. *3.8 counter*:
+`db.count_needs_link(account_id)` (cheap COUNT of NEEDS_MANUAL_REVIEW + UNLINKED) → new
+`GET /fragments/needs_link_count` (amber badge, EMPTY when the queue is clear) → a nav `<span>`
+inside the needs_link tab polling `load, every 5s` (htmx live-fragment, ws_status pattern — chosen
+over a `_ctx` sync COUNT to avoid a per-render DB hit / MED-005). Review: 5 dims → 2 confirmed
+(both LOW test-coverage gaps — count account-scoping + Link-column position; both closed, the
+production code was correct), 3 refuted. Tests: `test_phase3_t4_badges.py` (17).
 
 **P3.T2 + P3.T3 (task 242) shipped — manual-link backend + tab UI.**
 *P3.T2*: `core/link_actions.py` (new) — `manual_link_order` / `mark_order_unplanned` /
@@ -99,21 +113,29 @@ per-task notes are in the sections below + `docs/design/calc_linkage_implementat
 - Multi-TP: per-partial `closed_positions` rows preserved; calc completion +
   ladder `exit_reason` (TP_LADDER_COMPLETE/MIXED) fire on the FINAL close (T2.11).
 
-**NEXT — Phase 3 (plan §3):**
-- ~~P3.T1~~ (task 241), ~~P3.T2~~ + ~~P3.T3~~ (task 242) DONE — see STATUS above.
-- **P3.T4** (last Phase-3 task) — status badges + nav counter:
-  (a) per-order persistent link_status badge in the trades/history tab (green LINKED /
-  yellow NEEDS_REVIEW / gray UNLINKED / blue UNPLANNED — detailed §3 row 3.7); (b) a nav
-  badge COUNTER on the new "Needs Link" tab showing the count of NEEDS_MANUAL_REVIEW +
-  UNLINKED orders (row 3.8). The count is already available via
-  `core/link_actions.list_needs_review` (len) or a cheap COUNT query; the tab is wired
-  (base.html nav_items `needs_link` + `/orders/needs_link`). The history badges reuse
-  the same link_status enum the needs-link tab renders.
-- **Deferred carry-forwards** for Phase-3 follow-up: the order-side TP/SL early-return
-  gate (a no-TP/SL order never reaches the matcher → never classified — plan §3 row 3.2
-  residual); late-manual-link does NOT retro-create `positions_calcs` junction rows
-  (relies on offline rebuild); the legacy `/admin/calc_link` raw-UPDATE surface should
-  be REMOVED once the needs-link tab is proven stable (plan §11 compat shim).
+**NEXT — Phase 4 (amendment tracking + deviation, plan §4):** Phase 3 is fully shipped
+(T1 task 241, T2+T3 task 242, T4 task 243). Phase 4 (depends on Phase 0 + Phase 2):
+- **P4.T1** — amendment detection from WS: compare incoming order_update against the
+  stored order; if entry_price / tp_price / sl_price / size / leverage changed, write an
+  `order_amendments` row (`core/ws_manager.py`). This is the bottleneck — the
+  `order_amendments` table (P0.T2) + the `cumulative_amendment_count` / `tp_drift_pct` /
+  `sl_drift_pct` close columns are all UNWIRED today (deferred from T2.5/T2.7 precisely
+  because no amendment data exists yet).
+- **P4.T2** — `deviation_pct` per amendment + `cumulative_amendment_count` rollup at close.
+- **P4.T3** — live deviation badge logic + frontend (yellow/red thresholds from
+  `config_json`; spec §3.2 most-contributing-calc basis). **Consumes T2.12's
+  `PositionInfo.size_delta_pct`** (already stored; the badge threshold logic is the
+  Phase-4.4 consumer).
+- **P4.T4** — `position:amended` event; **P4.T5** — `tp_drift_pct`/`sl_drift_pct` at close.
+- Reclassify `exit_reason` *_PLANNED → *_AMENDED on the close-row rebuild seam once
+  amendment data lands (the T2.7 deferral).
+
+**Phase-3 deferred carry-forwards** (file/address as Phase 3 follow-up):
+- Order-side TP/SL early-return gate: a no-TP/SL order never reaches the matcher → never
+  classified (link_status stays NULL → "—" badge; plan §3 row 3.2 residual).
+- Late-manual-link does NOT retro-create `positions_calcs` junction rows (offline rebuild).
+- The legacy `/admin/calc_link` raw-UPDATE surface (sets calc_id WITHOUT link_status, no
+  choke-point) should be REMOVED now the needs-link tab is shipped (plan §11 compat shim).
 - Deployment context is single-tenant localhost (CLAUDE.md, Task 163): no auth/CSRF
   work; threat model is correctness + observability + recovery.
 

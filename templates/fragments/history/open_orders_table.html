@@ -1,5 +1,6 @@
 {% from "fragments/history/_sort_header.html" import sort_th %}
 {% from "fragments/history/_pagination.html" import pagination %}
+{% from "primitives/link_status_badge.html" import link_status_badge %}
 {% set ep = "/fragments/history/open_orders" %}
 {% set tid = "open-orders-table" %}
 {% set qs = "per_page=" ~ per_page ~ "&search=" ~ search ~ "&sort_by=" ~ sort_by ~ "&sort_dir=" ~ sort_dir %}
@@ -22,6 +23,7 @@
         {{ sort_th("Symbol",    "symbol",        ep, tid, sort_by, sort_dir, qs) }}
         {{ sort_th("Side",      "side",          ep, tid, sort_by, sort_dir, qs) }}
         {{ sort_th("Type",      "order_type",    ep, tid, sort_by, sort_dir, qs) }}
+        <th>Link</th>
         {{ sort_th("Qty",       "quantity",       ep, tid, sort_by, sort_dir, qs) }}
         {{ sort_th("Filled",    "filled_qty",    ep, tid, sort_by, sort_dir, qs) }}
         <th>Remaining</th>
@@ -36,6 +38,7 @@
           <td style="color:var(--blue);font-weight:700;">{{ r.symbol }}</td>
           <td class="{{ 'pos-long' if r.side == 'BUY' else 'pos-short' }}">{{ r.side }}</td>
           <td style="color:var(--sub);">{{ r.order_type }}</td>
+          <td>{{ link_status_badge(r.link_status) }}</td>
           <td>{{ fmt(r.quantity, 4) }}</td>
           <td>{{ fmt(r.filled_qty, 4) }}</td>
           <td style="color:var(--sub);">{{ fmt(r.quantity - r.filled_qty, 4) }}</td>

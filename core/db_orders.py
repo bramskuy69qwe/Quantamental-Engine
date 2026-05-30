@@ -675,6 +675,17 @@ class OrdersMixin:
             date_from_ms, date_to_ms,
         )
 
+    async def count_needs_link(self, account_id: int) -> int:
+        """P3.T4 (plan §3 row 3.8): count orders in the manual-link review
+        queue — link_status in (NEEDS_MANUAL_REVIEW, UNLINKED) — for the
+        Needs-Link nav badge counter. Cheap COUNT (indexed-ish, no row build)."""
+        async with self._conn.execute(
+            "SELECT COUNT(*) FROM orders "
+            "WHERE account_id=? AND link_status IN ('NEEDS_MANUAL_REVIEW', 'UNLINKED')",
+            (account_id,),
+        ) as cur:
+            return (await cur.fetchone())[0]
+
     async def query_fills(
         self, account_id: int, page: int = 1, per_page: int = 25,
         sort_by: str = "timestamp_ms", sort_dir: str = "DESC", search: str = "",
