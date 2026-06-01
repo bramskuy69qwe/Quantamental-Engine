@@ -224,7 +224,7 @@ TOCTOU guards, and each is verified end-to-end.
 
 | Plan ref | Task | Commit(s) |
 |---|---|---|
-| P1.T1 | Strict 5/5 LIMIT / 6/6 MARKET matcher + per-criterion audit | 210 (b667616); audits 211 (fbd3569), 212 (f174511) |
+| P1.T1 | Strict 6/6 matcher (LIMIT + MARKET; entry source differs) + per-criterion audit | 210 (b667616); audits 211 (fbd3569), 212 (f174511) |
 | P1.T2 | Per-account config (`core/account_config.py`) + freeze `window_seconds` at calc creation | 213 (f7ce004); audit 215 (10e558d) |
 | P1.T3 | Calc revision / supersede (active\|released → superseded) | 214 (6e7e76c); audits 215, 217 (6d421e5) |
 | P1.T4 | Calc cancel endpoint (`POST /calculator/cancel/{calc_id}`) | 219 (40144f0); audit 220 (884810c) |

@@ -3,8 +3,9 @@ Phase 1 Task 1 (P1.T1) tests — strict matcher rewrite.
 
 Verifies the new strict matcher per spec §4:
 
-  - LIMIT 5/5 (ticker, side, in-window, entry-loose, TP, SL — all must match)
-  - MARKET 6/6 (same, with entry compared against avg_fill_price)
+  - LIMIT 6/6 (ticker, side, in-window, entry-loose, TP, SL — all must match;
+    entry compared against the order's limit price)
+  - MARKET 6/6 (same six, with entry compared against avg_fill_price)
   - Per-criterion audit rows persist for every candidate
   - Winner's audit rows carry winning=True
   - 0 candidates in window → UNPLANNED, no audit rows
@@ -182,9 +183,10 @@ def _build_order(
 
 
 class TestStrictLimit:
-    """LIMIT 5/5 — ticker, side, in-window, entry-loose, TP, SL.
+    """LIMIT 6/6 — ticker, side, in-window, entry-loose, TP, SL.
 
-    Spec §4.1: "5/5 (all must match)" — no scoring, no partial-auto-link.
+    Spec §4.1: 6/6 (all must match), entry vs the order's limit price —
+    no scoring, no partial-auto-link.
     """
 
     @pytest.mark.asyncio

@@ -1581,11 +1581,11 @@ class OrdersMixin:
     ) -> int:
         """INSERT a batch of per-criterion audit rows in one transaction.
 
-        Phase 1.4 calls this per matcher decision with N rows (one per
-        criterion per candidate calc — typically 5/5 for limit, 6/6
-        for market across each candidate). Batched to amortize the
-        commit cost on hot-path matcher decisions. Returns the count
-        of rows inserted.
+        Phase 1.4 calls this per matcher decision with N rows — one per
+        criterion per candidate calc (six per candidate: ticker,
+        direction, window, entry, tp, sl; same six for both order
+        types). Batched to amortize the commit cost on hot-path matcher
+        decisions. Returns the count of rows inserted.
         """
         if not rows:
             return 0

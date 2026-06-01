@@ -51,8 +51,8 @@ within a configurable window.
 [B] Order arrival
   Order arrives via WS
     → matcher attempts strict match:
-        - limit: 5/5 (ticker, direction, in-window, entry, TP, SL)
-        - market: 6/6 (entry compared against fill px loose tolerance)
+        - limit:  6/6 (ticker, direction, in-window, entry, TP, SL); entry vs order price
+        - market: 6/6 (same six); entry vs fill px (loose tolerance)
     → per-criterion audit row written regardless of outcome
     → on FULL match: orders.calc_id stamped, link_status=LINKED
       → in-process event: calc:linked
@@ -449,8 +449,22 @@ Transition events fire automatically from the helper (no manual
 
 | Order type | Required matches | Criteria considered |
 |---|---|---|
-| LIMIT | 5/5 (all must match) | ticker, direction, in-window, TP, SL (entry uses loose tolerance) |
-| MARKET | 6/6 (all must match) | ticker, direction, in-window, entry-vs-fill-px-loose, TP, SL |
+| LIMIT | 6/6 (all must match) | ticker, direction, in-window, entry (loose, vs limit price), TP, SL |
+| MARKET | 6/6 (all must match) | ticker, direction, in-window, entry (loose, vs avg fill price), TP, SL |
+
+> **6/6 for both — the only difference is the entry source (reconciled
+> with the implementation, 2026-06-01).** Earlier drafts labeled LIMIT
+> "5/5" by not enumerating entry as a named criterion. The shipped
+> matcher (`core/calc_correlation.py`) gates entry for BOTH order types:
+> it always evaluates the same six criteria (ticker, direction,
+> in-window, entry, TP, SL) and requires all six. The genuine
+> LIMIT-vs-MARKET distinction is the entry comparison **source** — a
+> LIMIT order compares the operator's typed limit price (`order.price`);
+> a MARKET order compares the average fill price (`order.avg_fill_price`),
+> since a market order carries no limit price. Both use the loose
+> `entry_tolerance_pct` band (§4.2); ticker/direction are exact and
+> in-window is pre-filtered, so the three criteria that can actually
+> fail are entry, TP, SL.
 
 **No scoring, no partial-auto-link**. Anything below the threshold falls
 through to the needs-link tab for manual operator review.
@@ -563,8 +577,8 @@ consumer reads a protective leg's `orders.calc_id`.
 If detection fails (e.g., operator places TP/SL separately after entry,
 OR operator places a protective stop on an already-open position),
 the standalone stop goes through the **standard matcher** (§4.1) — no
-auto-inherit. If its TP/SL/entry values match an active calc 5/5 (limit)
-or 6/6 (market), it auto-links. Otherwise it lands in the needs-link
+auto-inherit. If its TP/SL/entry values match an active calc 6/6 (all six
+criteria; entry source per order type — §4.1), it auto-links. Otherwise it lands in the needs-link
 tab (§6.2). This unifies what was previously Q19 (auto-inherit on
 existing position) and Q54 (manual-link for post-entry separately-placed
 TP/SL) under a single rule: **the matcher is the only auto-link path,
@@ -974,7 +988,7 @@ read both DBs and join in application code, not SQL.
 ## 13. Out of scope / deferred
 
 - **Engine-generated tag for deterministic linkage**: explicitly walked
-  back (gap #10 stays open by deliberate choice). Fuzzy 5/5 / 6/6
+  back (gap #10 stays open by deliberate choice). Fuzzy 6/6
   remains the only auto-link path.
 - **Close-calc pathway**: operator cannot compute calcs at close.
   Engine auto-computes deviations; manual close categorized via
@@ -1005,7 +1019,7 @@ read both DBs and join in application code, not SQL.
 | Q8 | Close calc | Optional close calc (later WALKED BACK — engine auto-computes deviations; no operator close calc) |
 | Q9 | Match audit | Full per-criterion evidence row per match attempt |
 | Q10 | Expiry event | Mark + event + payload |
-| Q11 | QT linkage | Engine-generated tag (later WALKED BACK — fuzzy 5/5 / 6/6 only, no tag) |
+| Q11 | QT linkage | Engine-generated tag (later WALKED BACK — fuzzy 6/6 only, no tag) |
 | Q12 | Cancel reason | Categorized + raw + ts + emit `calc:order_cancelled` |
 | Q13 | TP/SL link | Inherit from entry via bracket detection |
 | Q14 | Scale plan | Per-calc planned values in junction |
@@ -1048,7 +1062,7 @@ read both DBs and join in application code, not SQL.
 | Q51 | Event topics | Hierarchical per-account on in-process `event_bus` (NOT Redis) |
 | Q52 | Hedge mode | Natural fit via (account, symbol, direction) keying |
 | Q53 | Migration | Backfill `positions_calcs` from existing `fills.calc_id` |
-| Q54 | Loose TP/SL | Manual-link tab → **UNIFIED RULE** (post-Q19 revision): standard matcher is the only auto-link path; standalone TP/SL goes through 5/5 or 6/6 like any other order, fails to manual-link if criteria don't match. |
+| Q54 | Loose TP/SL | Manual-link tab → **UNIFIED RULE** (post-Q19 revision): standard matcher is the only auto-link path; standalone TP/SL goes through the 6/6 matcher like any other order, fails to manual-link if criteria don't match. |
 | Q55 | Dashboard | Multi-pane workspace |
 | Q56 | Operator ID | On every action row + session-handoff audit |
 | Q57 | Junction grain | Single row per order; per-fill via JOIN to fills |
@@ -1079,7 +1093,7 @@ resolutions applied to spec:
 - **R2 — Q19 vs Q54 UNIFIED**: auto-inherit dropped. All standalone
   TP/SL (whether placed after entry-but-before-position-established or
   on long-running open positions) go through the standard matcher
-  (§4.5). 5/5 (limit) or 6/6 (market) value-sync against active calc →
+  (§4.5). 6/6 value-sync (all six criteria) against active calc →
   auto-link; otherwise → manual-link tab. No special-case logic.
 - **R3 — Drift tolerance ADDED** to `config_json`
   (`snapshot_drift_tolerance_pct`, default 0.5%): `position:size_drift`

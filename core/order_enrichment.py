@@ -118,7 +118,7 @@ def _populate_tp_sl_trigger_prices(order: Dict[str, Any], db_path: str) -> None:
 
 
 async def _try_correlate(order: Dict[str, Any], db_path: str) -> None:
-    """Strict 5/5 (LIMIT) / 6/6 (MARKET) matcher per spec §4.
+    """Strict 6/6 matcher (LIMIT + MARKET) per spec §4.
 
     Reads ``accounts.config_json`` for tolerance + window config; spec
     §3.3 defaults applied when fields are missing. Calls the pure sync

@@ -1,8 +1,12 @@
 """
 Calculator-to-order correlation — strict matcher per spec §4.
 
-LIMIT orders: 5/5 criteria (ticker, side, in-window, entry-loose, TP, SL).
-MARKET orders: 6/6 (entry-loose compared against avg_fill_price).
+Both LIMIT and MARKET orders evaluate the SAME 6/6 criteria (ticker,
+side, in-window, entry-loose, TP, SL — all must match). The only
+difference is the entry comparison source: LIMIT uses the order's limit
+price, MARKET uses avg_fill_price (a market order carries no limit
+price). Earlier drafts labeled LIMIT "5/5" by not counting entry; the
+matcher gates entry for both.
 
 Pure function — returns a :class:`MatchResult` carrying the decision plus
 per-criterion audit rows. The caller (``core/order_enrichment.py``)
@@ -136,7 +140,11 @@ def correlate_order_to_calc(
     db_path: Optional[str] = None,
     data_dir: Optional[str] = None,
 ) -> MatchResult:
-    """Strict 5/5 (LIMIT) / 6/6 (MARKET) matcher per spec §4.
+    """Strict 6/6 matcher (LIMIT + MARKET) per spec §4.
+
+    Both order types gate the same six criteria; only the entry
+    comparison source differs (LIMIT → limit price, MARKET → avg fill
+    price). See the module docstring.
 
     Args:
         order: dict with keys ``account_id``, ``symbol``, ``side``,
