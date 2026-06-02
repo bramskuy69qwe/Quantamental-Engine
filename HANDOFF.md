@@ -1,86 +1,80 @@
 # Handoff — next Claude Code session
 
 **Date**: 2026-06-02
-**Current branch**: `v2.5/post-rewind-drop-regime-infra` @ `task 253 (P4 re-audit close-out)` — pushed to origin (`fa68daa`)
-**Tests**: 2941 passed, 7 skipped, 1 unrelated pre-existing failure
+**Current branch**: `v2.5/post-rewind-drop-regime-infra` @ `task 257 (P5 holistic audit fixes)` + this HANDOFF (258) — pushed to origin
+**Tests**: 2971 passed, 7 skipped, 1 unrelated pre-existing failure (0 new from Phase 5; +30 vs the task-253 2941 baseline)
 **Pre-existing failure**: `tests/test_data_cache_dd.py::TestRollingWindowPeak::test_old_high_excluded_from_window` — 30-day rolling-window boundary bug; unrelated to calc-linkage. Worth filing as its own task.
 
-## ★ STATUS (2026-06-02) — PHASE 4 COMPLETE (T1–T5) + AUDITED + RE-AUDITED CLEAN; next = Phase 5 (funding + fees)
+## ★ STATUS (2026-06-02) — PHASE 5 COMPLETE (T1–T7) + HOLISTICALLY AUDITED; next = Phase 6 (event bus enrichment)
 
-**Phase 4 (amendment tracking + deviation, plan §4) is fully shipped + independently audited
-+ re-audited.** Tasks 246–253 on this branch:
-- P4.T1 (246) order amendment detection (WS pre-gate) · P4.T2 (247) `cumulative_amendment_count`
-  rollup at close · P4.T3 (248) live deviation badge · P4.T4 (249) `position:amended` trade event ·
-  P4.T5 (250) `tp_drift_pct`/`sl_drift_pct` at close · (251) multi-TP drift scratch note ·
-  (252) holistic-audit fixes · (253) re-audit close-out.
-- **Holistic Phase-4 audit (task 252)** — 8 dimensions + completeness critic → 8 confirmed,
-  re-investigated → **4 real fixes**: the orphaned-amendment-`calc_id` BACKFILL FAMILY (an order
-  amended while calc-less records the amendment with `calc_id=NULL`; EVERY calc_id-assignment site —
-  bracket inheritance, manual-link, matcher re-match — now backfills via the shared
-  `db.backfill_amendment_calc_id`, best-effort); the drift `ts_ms <= exit_time` temporal filter;
-  the badge query-fail WARNING visibility; the HOT-TXN rowcount guard. 13 refuted.
-- **Re-audit of the fixes (task 253)** — 5 focused dims → **10 refuted** (matcher hot-path
-  durability, aiosqlite swallow-then-commit, backfill attribution all CLEAN), 2 confirmed
-  (1 documented-accepted transient badge miss, 1 LOW dead-code removed).
-Full Phase-4 detail (per-task deviations + the audit trail) is in the "Phase 4 — SHIPPED"
-section below + `docs/design/calc_linkage_implementation_plan.md` §4.
+**Phase 5 (funding + fees, plan §5) is fully shipped + holistically audited.** Tasks 255–257:
+- **P5.T1** funding feed — `schedulers._funding_refresh_loop` REST-polls FUNDING_FEE income (reuses
+  `exchange_income.fetch_income_history`; inclusive cursor; dedup-idempotent; non-fatal).
+- **P5.T2/T3** attribution + dedup — `core/funding_handler.py` maps symbol→open-position tpid, resolves
+  the PRIMARY calc via the shared `_position_primary_calc` (no second rule — R1/T240), writes a
+  `funding_events` row deduped on a deterministic synthetic `venue_event_id`.
+- **P5.T4/T5** close aggregation — `closed_positions.funding_fees = SUM(funding_events)` on the FINAL
+  close row only (per-partial rows preserved → final-only avoids overcount); `net_pnl = realized −
+  total_fees + funding_fees`. **P5.T6** verified `total_fees == SUM(fills.fee)` (close + prorated entry).
+- **P5.T7** live unrealized-funding view — grouped `sum_funding_by_positions` populates
+  `PositionInfo.individual_funding_fees` each refresh (hoisted above the junction-read early-returns so
+  a junction fault can't strand it); a Funding column folded into Net across the 3 open-position views.
+- **Schema reconcile** — `funding_events.position_id` INTEGER→TEXT (match the universal
+  `terminal_position_id` key; fail-loud, re-runnable, empty-table guarded migration).
+- **Holistic audit (task 257)** — 8 adversarial dims (end-to-end key-match, ingestion, close, schema,
+  live-view, spec-fidelity, test-integrity, completeness) + my re-verification. **Core verified sound**:
+  the TEXT key-match holds at every hop (write→close-read→live-read), single-DB, R1 intact, net_pnl
+  sign, preserve-deviation, no live-DB pollution (md5-verified). Fixes: 2 misleading-comment
+  corrections (the "recoverable" claim; migration "reads-0"→numeric-collision), the T7 funding-stamp
+  hoist, 6 anchor-noted deferrals, +5 Rule-8 tests.
+Full Phase-5 detail: `docs/design/calc_linkage_implementation_plan.md` §5 + the task 255/256/257 commits.
 
-**Calc-linkage now spans Phase 0 (foundation) → 1 (matcher + calc state machine) → 2 (position
-attribution + junction) → 3 (link-status state machine + needs-link UI) → 4 (amendments +
-deviation). Phase 5 (funding + fees) is next.**
+**Calc-linkage now spans Phase 0 → 1 → 2 → 3 → 4 → 5. Phase 6 (event-bus enrichment + close payload) is next.**
 
-## NEXT SESSION — Phase 5 (funding + fees attribution)
+### ⚠ Phase-5 deferred follow-ups (filed in-code; the headline is real, the rest bounded)
+- **🔴 Deferred-funding-at-close / venue reconciliation (HEADLINE)**: the close-time funding SUM runs
+  ONCE; funding settling in the ≤5min window after a settlement but before the next poll is
+  under-counted on `closed_positions.funding_fees`/`net_pnl` and NEVER recomputed (the poll writes
+  `funding_events` but never touches `closed_positions`). Bounded (last-settlement-near-close; the
+  `funding_events` rows ARE preserved) but **plan §5's "reconcile within $0.01 of venue" acceptance
+  criterion is NOT yet met.** Fix = a deferred-funding reconcile (on funding arrival for an
+  already-closed tpid, recompute that closed row's funding_fees/net_pnl) — strong **Phase-6 candidate**
+  (spec §12.3). Anchor-commented in `order_manager._build_close_row_for_fill` + the disappearance backstop.
+- **Overfill-split funding double-count**: closing fills exceeding open qty across distinct orders at
+  distinct ts → each can satisfy `is_final` and stamp the full SUM. Anomaly-gated; documented, not
+  guarded (don't destabilize the T238 `is_final`).
+- **Multi-account**: funding loop is active-account-only (like all REST loops); `last_seen_ms` cursor
+  not reset on account switch (dedup prevents double-writes; the new account's pre-cursor funding can skip).
+- **Non-binance key prefix**: synthetic `venue_event_id` hard-codes `binance:` — gate/parametrize before Bybit/MEXC.
+- **Funding-loop observability**: no heartbeat — a silently-stopped poll reads funding 0 with no operator signal.
+- **`mark_price`/`funding_rate`** on `funding_events` intentionally NULL (not on the income feed).
+- **`position:closed` payload `funding_fees`/`net_pnl`**: Phase 6 (close-payload expansion).
+- **Hedge-mode `tranId`** + `fetch_income` pagination: deferred (one-way live is collision-free; pagination
+  only matters after a >1000-row multi-day-outage backlog).
+- **Two-views-not-two-totals**: funding lives in BOTH `exchange_history` (equity/wallet, abs, FIFO) AND
+  `funding_events` (per-position, signed) — no double-count today, but a future report must NOT sum
+  `closed_positions.net_pnl` with an `exchange_history`-derived total.
 
-**Spec**: `docs/design/calc_linkage_spec.md` — `closed_positions.funding_fees`/`net_pnl` (§3
-schema), §9 close payload (`funding_fees`, `net_pnl`), §12.7 (DB routing).
-**Plan**: `docs/design/calc_linkage_implementation_plan.md` §5 (~line 509).
-**Depends on**: Phase 0 (funding_events table + CRUD) + Phase 2 (position lifecycle + junction).
-**Effort: M.** Goal: funding events written per-event; fees aggregated at close; realized PnL
-includes funding.
+## NEXT SESSION — Phase 6 (event-bus enrichment + close payload)
 
-### VERIFY-FIRST — what Phase 0 ALREADY built (cheap state-check before scoping any code)
-- **`funding_events` table** — `core/database.py:512` + indexes (position, account_ts, lifecycle).
-- **CRUD ready** — `core/db_orders.py`: `insert_funding_event` (INSERT OR IGNORE dedup on
-  `venue_event_id` → **row 5.3 is effectively DONE**), `get_position_funding_events`,
-  `sum_position_funding` (the row-5.7 live-view basis).
-- **`closed_positions.funding_fees`** column exists (`database.py:442`) — populated by row 5.4.
-- The close path computes `net_pnl = realized_pnl - total_fees` (`order_manager.py:2155`); row 5.5
-  adds `+ funding_fees`. `total_fees` is built at `order_manager.py:2044` (verify it == SUM(fills.fee)).
+**Spec**: `docs/design/calc_linkage_spec.md` §9 (event catalog + `position:closed` full payload), §3.4
+(exit_reason enum). **Plan**: `docs/design/calc_linkage_implementation_plan.md` §6 (rows 6.1–6.8).
+**Depends on**: Phases 1–5 (the events' data is now all produced). **Effort: M.**
+Goal: hierarchical per-account topics (`engine:account:{id}:{domain}:{event}`); the full `position:closed`
+payload (now incl. `funding_fees`/`net_pnl`); sweep all calc:*/position:* emissions; `order:duplicate_detected`;
+the snapshot-wins drift inversion (feature-flagged — the riskiest single change; isolate + monitor).
 
-### Tasks (plan §5)
-| # | Task | File(s) / status |
-|---|---|---|
-| P5.T1 | Subscribe to the venue income/funding WS stream per adapter | binance/bybit WS handlers — **TODO** |
-| **P5.T2** | On funding arrival: look up the active position for (account, symbol); write a `funding_events` row (position_id, calc_id=PRIMARY, amount, mark_price, funding_rate, ts, venue_event_id) | **the bottleneck — new `core/funding_handler.py`** |
-| P5.T3 | Dedup on `venue_event_id` | **DONE** — route through `insert_funding_event` |
-| P5.T4 | At close: `funding_fees = SUM(funding_events.amount WHERE position_id=…)` | `_build_close_row_for_fill` |
-| P5.T5 | `net_pnl = realized_pnl - total_fees + funding_fees` | `_build_close_row_for_fill` |
-| P5.T6 | Verify `total_fees = SUM(fills.fee)` is correctly populated | `order_manager.py` close path |
-| P5.T7 | Live unrealized-funding view (helper + position-detail UI) | `core/state.py`, position detail template |
-
-### Recommended start — P5.T1 + P5.T2 (funding feed + handler)
-The bottleneck that unblocks T4/T5. Subscribe to the funding/income WS stream (Binance is the live
-venue), and on arrival look up the open position for (account, symbol) and write a `funding_events`
-row via `insert_funding_event`. Use the position's PRIMARY (most-contributing) calc for `calc_id`
-— the §3.2 basis, via the shared `_most_contributing_calc_id` / `_position_primary_calc` selector
-(same rule every other surface uses; do NOT introduce a second primary rule — T240/R1).
-
-### Wrinkles to VERIFY before writing P5.T2
-- **funding_events is single-DB** (`config.DB_PATH` = risk_engine.db), like `positions_calcs` — NOT
-  per-account. (`trade_events` is the per-account one — don't confuse them; spec §12.7. A close-row
-  funding SUM joins in-process, no cross-DB SQL.)
-- **position_id type mismatch risk**: the CRUD helpers type `position_id: int`, but positions key
-  off `terminal_position_id` (TEXT) everywhere else (junction, fills, closed_positions). VERIFY the
-  `funding_events.position_id` column type + the intended join key FIRST — a mismatch silently
-  orphans the close-row SUM (row 5.4 would read 0).
-- **OBSERVE-ONLY**: the engine observes Quantower→venue (no order placement). Confirm Binance
-  actually pushes funding/income on the observed WS stream; if WS-absent, P5.T1 may need a REST
-  poll (analogous to the MEXC `created_at_ms` gap). binance has `core/adapters/binance/rest_adapter.py`.
-- **REPLACE-preserve**: the close-row funding SUM is recomputed each build (multi-TP partial rows)
-  — check whether `funding_fees` needs adding to `_CLOSED_POS_DELTA_COLS` (`db_orders.py`) so a
-  non-computing backfill/rebuild REPLACE can't wipe a live-built SUM (the T2.5/P4.T2 pattern).
-- **Liquidation/ADL** (spec §9 `position:liquidated`): out of Phase-5 scope (own later work);
-  funding is the §5 deliverable.
+### VERIFY-FIRST before scoping Phase 6
+- The event_bus topic map (`TRANSITION_EVENT_MAP` in calc_state/link_state) is **empty-until-Phase-6 by
+  design** — Phases 1–5 emit TRADE events (`log_trade_event`) now, with the formal in-process event_bus
+  topics deferred to Phase 6 (P4.T4 `position:amended`, T238 `partial_close`/`position_opened` all
+  follow this split). Phase 6 row 6.4 lights up the event_bus topics from the SAME seams.
+- The `position:closed` payload today is anemic (`order_manager.py` `risk:position_closed` carries only
+  symbol/direction/realized_pnl/net_pnl); §9 wants the full payload (contributing_calc_ids, model_names,
+  deltas, exit_reason, MFE/MAE, funding_fees, …) — all now on the close row.
+- **Fold the §5 deferred-funding reconcile into Phase 6** (spec §12.3 reconciliation) — see the headline above.
+- §3.4 `*_PLANNED → *_AMENDED` exit_reason reclassification (the T2.7/T235 deferral — now HAS the
+  amendment data) is a natural Phase-6 close-row-rebuild-seam item.
 
 ### Phase-4-adjacent follow-ups still OPEN (file/pick up opportunistically — none blocking)
 - `_detect_modification_events` dead-path (the legacy `tp_modified`/`sl_modified` detector runs
