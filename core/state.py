@@ -150,9 +150,37 @@ class PositionInfo:
     contributing_calc_ids:   List[str] = field(default_factory=list)
     # P2.T12: live size deviation = (Σ contributed_qty − primary calc's
     # planned_size) / planned_size × 100 (signed; spec §3.2 most-contributing
-    # basis). 0.0 when no junction / no planned_size. The yellow/red BADGE
-    # thresholding + TP/SL live deviation are Phase 4.4 (need amendments).
+    # basis). 0.0 when no junction / no planned_size. Drives the P4.T3 badge.
     size_delta_pct:          float = 0.0
+    # P4.T3: live deviation badge (set in _enrich_positions_calc_id each
+    # refresh; preserved across snapshot rebuilds via _PRESERVE_FIELDS).
+    # amendment_count = order_amendments rows for this position's contributing
+    # calcs; deviation_badge = "green"/"yellow"/"red" combined level, or "" for
+    # a position with no junction key (binance one-way).
+    amendment_count:         int   = 0
+    deviation_badge:         str   = ""
+
+
+def deviation_badge_level(
+    *, has_calc: bool, size_delta_pct: float, amendment_count: int,
+    yellow_pct: float, red_pct: float,
+) -> str:
+    """P4.T3 combined live-deviation badge level (spec §10.2 + plan §4.4).
+
+    Unifies the spec's semantic badge (green on-plan / yellow amended / red
+    no-calc) with the plan's config thresholds:
+      - red:    no calc (UNPLANNED) OR |size_delta_pct| >= red_pct (far off plan)
+      - yellow: amended (amendment_count > 0) OR |size_delta_pct| >= yellow_pct
+      - green:  linked, on-plan, no amendments
+    """
+    if not has_calc:
+        return "red"
+    mag = abs(size_delta_pct or 0.0)
+    if mag >= red_pct:
+        return "red"
+    if amendment_count > 0 or mag >= yellow_pct:
+        return "yellow"
+    return "green"
 
 
 @dataclass

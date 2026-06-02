@@ -74,6 +74,8 @@ _PRESERVE_FIELDS = (
     # same treatment as calc_id (authoritatively re-derived each refresh_cache,
     # preserved between to avoid a blank-then-repopulate flicker on rebuild).
     "contributing_calc_ids", "size_delta_pct",
+    # P4.T3: live deviation badge inputs/level — same refresh+preserve treatment.
+    "amendment_count", "deviation_badge",
 )
 
 # How long (ms) a WS/Platform update protects state from being overwritten by REST

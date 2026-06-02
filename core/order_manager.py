@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from core.event_bus import event_bus
 from core.order_state import validate_transition, ACTIVE_STATES, OrderStatus, resolve_tpsl_direction
-from core.state import app_state, PositionInfo
+from core.state import app_state, PositionInfo, deviation_badge_level
 
 log = logging.getLogger("order_manager")
 
@@ -1769,6 +1769,32 @@ class OrderManager:
             agg["qty"] += (qty or 0.0)
             if agg["planned"] is None and planned:
                 agg["planned"] = planned
+
+        # P4.T3 live deviation badge: batch the amendment tally (ONE grouped
+        # query for ALL contributing calcs) + read the account's yellow/red
+        # thresholds ONCE here (not per position). Only needed for junction'd
+        # positions; no-calc positions are "red" without thresholds.
+        # Thresholds DEFAULT to the spec values so a transient read failure
+        # degrades gracefully — leaving red_pct at 0.0 would make EVERY linked
+        # position "off-plan"/red (audit P4T3-MED). Config read is internally
+        # exception-safe and done FIRST, so an amendments-query failure can't
+        # strand the thresholds; both reads are best-effort. (Config read per
+        # refresh is acceptable + cacheable later.)
+        from core.account_config import (
+            DEFAULT_YELLOW_DEVIATION_PCT, DEFAULT_RED_DEVIATION_PCT,
+            read_account_config_async,
+        )
+        amend_by_calc: Dict[str, int] = {}
+        yellow_pct, red_pct = DEFAULT_YELLOW_DEVIATION_PCT, DEFAULT_RED_DEVIATION_PCT
+        if per_pos:
+            try:
+                cfg = await read_account_config_async(self._db, account_id)
+                yellow_pct, red_pct = cfg.yellow_deviation_pct, cfg.red_deviation_pct
+                all_calc_ids = {cid for calcs in per_pos.values() for cid in calcs}
+                amend_by_calc = await self._db.count_amendments_by_calcs(all_calc_ids)
+            except Exception:
+                log.debug("deviation-badge enrichment read failed", exc_info=True)
+
         # Authoritative: the three fields mirror the junction on each refresh.
         # A position with no junction row is CLEARED — UNPLANNED, a
         # pre-first-fill position, or a same-(symbol,direction) reopen that
@@ -1783,6 +1809,8 @@ class OrderManager:
                 pos.calc_id = ""
                 pos.contributing_calc_ids = []
                 pos.size_delta_pct = 0.0
+                pos.amendment_count = 0
+                pos.deviation_badge = "red"  # no-calc / UNPLANNED (spec §10.2)
                 continue
             items = list(calcs.items())  # insertion order = first_fill ASC
             # Primary via the SHARED selector (largest summed contributed_qty
@@ -1807,6 +1835,15 @@ class OrderManager:
             actual = sum(a["qty"] for _, a in items)
             pos.size_delta_pct = (
                 (actual - planned) / planned * 100.0 if planned else 0.0
+            )
+            # P4.T3 live deviation badge (combined: spec §10.2 + plan §4.4).
+            pos.amendment_count = sum(
+                amend_by_calc.get(cid, 0) for cid in pos.contributing_calc_ids
+            )
+            pos.deviation_badge = deviation_badge_level(
+                has_calc=True, size_delta_pct=pos.size_delta_pct,
+                amendment_count=pos.amendment_count,
+                yellow_pct=yellow_pct, red_pct=red_pct,
             )
 
     # ── Position Close ─────────────────────────────────────────────────────

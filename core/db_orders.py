@@ -1535,6 +1535,24 @@ class OrdersMixin:
             row = await cur.fetchone()
             return int(row[0]) if row and row[0] is not None else 0
 
+    async def count_amendments_by_calcs(self, calc_ids: Any) -> Dict[str, int]:
+        """{calc_id: count} of order_amendments for the given calc_ids (P4.T3).
+
+        Batched companion to count_amendments_for_calcs — ONE grouped query for
+        the live deviation badge's per-position amendment tally (the enricher
+        sums each position's contributing calcs). Falsy ids dropped; empty → {}.
+        """
+        ids = [c for c in (calc_ids or []) if c]
+        if not ids:
+            return {}
+        placeholders = ",".join("?" * len(ids))
+        async with self._conn.execute(
+            f"SELECT calc_id, COUNT(*) FROM order_amendments "
+            f"WHERE calc_id IN ({placeholders}) GROUP BY calc_id",
+            ids,
+        ) as cur:
+            return {r[0]: int(r[1]) for r in await cur.fetchall()}
+
     # ── funding_events ─────────────────────────────────────────────────
 
     async def insert_funding_event(self, row: Dict[str, Any]) -> bool:

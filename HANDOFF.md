@@ -161,8 +161,21 @@ per-task notes are in the sections below + `docs/design/calc_linkage_implementat
   the T2.5 deltas; nullable → backfilled rows stay NULL). `deviation_pct` was already done in P4.T1.
   Tests: `tests/test_phase4_amendment_rollup.py` (10) + updated the T2.5 deferred-column assertion.
   240 touched-path tests green. **NOT yet committed** (audit pending).
-- **NEXT after T2**: P4.T3 (live deviation badge — consumes T2.12 `size_delta_pct` + the amendment
-  data now flowing), P4.T4 (`position:amended` event), P4.T5 (`tp_drift_pct`/`sl_drift_pct` at close).
+- **P4.T3 — SHIPPED (2026-06-02)**: combined live deviation badge (spec §10.2 semantic ∪ §4.4
+  thresholds — operator-chosen). `core.state.deviation_badge_level` (pure): red = no-calc OR
+  |size_delta_pct| ≥ red_pct; yellow = amended (live amendment count > 0) OR |size_delta_pct| ≥
+  yellow_pct; green = linked/on-plan/no-amendments. `amendment_count` + `deviation_badge` stamped
+  onto each PositionInfo in `_enrich_positions_calc_id` (ONE grouped `count_amendments_by_calcs`
+  query + one `read_account_config_async` per refresh — NO per-render DB hit; both in
+  `_PRESERVE_FIELDS`). Inline render via new `templates/primitives/deviation_badge.html` macro on
+  the live positions row. **Deviation**: live TP/SL-vs-planned drift deferred (needs `planned_tp/sl`
+  on PositionInfo). **Audit: 1 MED fixed** — thresholds DEFAULT to spec values (config read first)
+  so a transient amendments-query failure can't strand `red_pct=0.0` (would paint every linked
+  position red); rest verified clean. Tests: `tests/test_phase4_deviation_badge.py` (18); touched-path green.
+- **NEXT after T3**: P4.T4 (`position:amended` event on each amendment row insert — emit from the
+  ws_manager pre-gate seam alongside `detect_and_persist_amendment`); P4.T5 (`tp_drift_pct`/
+  `sl_drift_pct` at close — needs final-amended TP/SL, the same data the deferred AMENDED exit_reason
+  reclassification wants). Then the `_detect_modification_events` dead-path fix (filed).
 - **P4.T3** — live deviation badge logic + frontend (yellow/red thresholds from
   `config_json`; spec §3.2 most-contributing-calc basis). **Consumes T2.12's
   `PositionInfo.size_delta_pct`** (already stored; the badge threshold logic is the

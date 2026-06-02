@@ -1,0 +1,23 @@
+{#
+  deviation_badge(level, size_delta_pct, amendment_count) — P4.T3 (plan §4.4).
+
+  Renders the live position deviation badge using the app-wide badge color
+  family (defined in base.html). The level is computed by
+  core.state.deviation_badge_level and stamped onto PositionInfo.deviation_badge
+  in OrderManager._enrich_positions_calc_id (combined spec §10.2 + §4.4
+  thresholds):
+
+    green  → on-plan  (linked, within yellow threshold, no amendments)
+    yellow → amended  (amendment present OR |size_delta_pct| ≥ yellow_pct)
+    red    → off-plan (no calc / UNPLANNED, OR |size_delta_pct| ≥ red_pct)
+    ("")   → no badge  (binance one-way / no junction key)
+
+  The title carries the detail (signed size delta + amendment count). Single
+  source of truth for the level → badge mapping.
+#}
+{% macro deviation_badge(level, size_delta_pct=0.0, amendment_count=0) -%}
+{%- set label = {"green": "on-plan", "yellow": "amended", "red": "off-plan"} -%}
+{%- if level in label %}<span class="badge badge-{{ level }}" title="size Δ {{ '%+.1f'|format(size_delta_pct or 0.0) }}% · {{ amendment_count }} amendment{{ '' if amendment_count == 1 else 's' }}">{{ label[level] }}</span>
+{%- elif level %}<span class="badge">{{ level }}</span>
+{%- endif %}
+{%- endmacro %}
