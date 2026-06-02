@@ -15,7 +15,7 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
-from core.event_bus import event_bus
+from core.event_bus import event_bus, DOMAIN_CALC
 from core.order_state import validate_transition, ACTIVE_STATES, OrderStatus, resolve_tpsl_direction
 from core.state import app_state, PositionInfo, deviation_badge_level
 
@@ -770,7 +770,7 @@ class OrderManager:
 
         try:
             async with self._db._conn.execute(
-                "SELECT calc_id, filled_qty FROM orders "
+                "SELECT calc_id, filled_qty, id FROM orders "
                 "WHERE account_id = ? AND exchange_order_id = ?",
                 (account_id, eid),
             ) as cur:
@@ -783,6 +783,7 @@ class OrderManager:
             return
         calc_id = row[0]
         filled_qty = row[1] or 0.0
+        order_row_id = row[2]  # internal id — matches calc:linked's order_id
         if not calc_id:
             return  # UNPLANNED / unlinked order — nothing to release
         if filled_qty > 0:
@@ -828,9 +829,9 @@ class OrderManager:
         try:
             # T217: no event_payload — RELEASED has no entry in
             # TRANSITION_EVENT_MAP (calc_state.py), so transition()
-            # emits no event for this edge and any payload would be
-            # dead. (Spec §9's calc:order_cancelled event is a separate,
-            # deferred concern — see T216 notes.)
+            # emits no event for this edge. The spec §9 calc:order_cancelled
+            # event is emitted SEPARATELY below (P6, no longer deferred) — it
+            # is about the ORDER cancel, not the matched→released transition.
             await transition(
                 calc_id=calc_id,
                 current_status=CalcStatus.MATCHED.value,
@@ -839,6 +840,20 @@ class OrderManager:
                 account_id=account_id,
             )
             log.info("Released calc %s on operator cancel of order %s", calc_id, eid)
+            # P6 (calc:order_cancelled event_bus topic, spec §9): fired only on
+            # a SUCCESSFUL release (matched→released won the TOCTOU; a race-lost
+            # calc skips to the except below and emits nothing). publish_engine
+            # is enqueue-only (never raises). cancel_reason_category mirrors the
+            # 'OPERATOR' default written onto the order above; raw = the cancel
+            # status string.
+            await event_bus.publish_engine(
+                account_id, DOMAIN_CALC, "order_cancelled", {
+                    "calc_id":                calc_id,
+                    "order_id":               order_row_id,
+                    "cancel_reason_category": "OPERATOR",
+                    "raw":                    order.get("status", ""),
+                },
+            )
         except CalcTransitionRaceLost as exc:
             log.info("%s", exc)
         except Exception:

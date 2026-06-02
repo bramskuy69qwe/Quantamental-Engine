@@ -466,3 +466,48 @@ class TestDefensiveMissingFields:
 
         old = await _read_calc(d, "should-survive")
         assert old["status"] == "active"  # untouched
+
+
+# ── 7. calc:created event (P6 — spec §9) ──────────────────────────────
+
+
+class TestCalcCreatedEvent:
+    """P6 (spec §9 calc:created): an ELIGIBLE calc creation emits calc:created
+    on the per-account topic engine:account:{id}:calc:created, mirroring the
+    existing calc_created trade-event gate (calc_id + eligible).
+    """
+
+    @pytest.mark.asyncio
+    async def test_eligible_calc_emits_created_event(self, wired_handlers):
+        from core.state import app_state
+        handlers, d, db_path = wired_handlers
+        _drain_events()
+        await handlers.handle_risk_calculated({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "ticker": "ETHUSDT", "side": "short",
+            "effective_entry": 3000.0, "tp_price": 2800.0, "sl_price": 3100.0,
+            "calc_id": "cr-1", "model_name": "momentum_v3", "eligible": True,
+        })
+        events = _drain_events("calc:created")
+        assert len(events) == 1, f"expected 1 calc:created, got {events!r}"
+        topic, payload = events[0]
+        aid = app_state.active_account_id
+        assert topic == f"engine:account:{aid}:calc:created"
+        assert payload["calc_id"] == "cr-1"
+        assert payload["ticker"] == "ETHUSDT"
+        assert payload["direction"] == "short"     # side -> direction (spec §9)
+        assert payload["model_name"] == "momentum_v3"
+        assert "window_seconds" in payload         # frozen from account config
+
+    @pytest.mark.asyncio
+    async def test_ineligible_calc_emits_no_created_event(self, wired_handlers):
+        # Rule 8: pins the eligible gate (mirrors the calc_created trade event).
+        handlers, d, db_path = wired_handlers
+        _drain_events()
+        await handlers.handle_risk_calculated({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "ticker": "ETHUSDT", "side": "short",
+            "effective_entry": 3000.0, "tp_price": 2800.0, "sl_price": 3100.0,
+            "calc_id": "cr-2",  # no 'eligible' -> falsy -> no event
+        })
+        assert _drain_events("calc:created") == []

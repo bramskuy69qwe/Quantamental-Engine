@@ -601,6 +601,29 @@ async def handle_risk_calculated(payload: Dict[str, Any]) -> None:
             "recorded (event_log infrastructure failed): %r", exc,
         )
 
+    # P6 (calc:created event_bus topic, spec §9): mirror the calc_created trade
+    # event onto the per-account topic engine:account:{id}:calc:created. Same
+    # gate as the trade event (an eligible calc with an id). Best-effort —
+    # publish_engine is enqueue-only; never block the calc write on it.
+    try:
+        from core.event_bus import event_bus, DOMAIN_CALC
+        created_calc_id = payload.get("calc_id")
+        if created_calc_id and payload.get("eligible"):
+            await event_bus.publish_engine(account_id, DOMAIN_CALC, "created", {
+                "calc_id":        created_calc_id,
+                "ticker":         payload.get("ticker", ""),
+                "direction":      payload.get("side", ""),
+                "window_seconds": account_config.window_seconds,
+                "model_name":     payload.get("model_name", ""),
+                "tags":           payload.get("tags"),
+                "operator_id":    payload.get("operator_id"),  # Phase 9
+            })
+    except Exception:
+        log.warning(
+            "handle_risk_calculated: calc:created event_bus publish failed",
+            exc_info=True,
+        )
+
     # Maintain in-memory cache (same shape as the old CSV-backed list)
     row = {
         "timestamp":         payload.get("timestamp", now_in_account_tz(app_state.active_account_id).isoformat()),

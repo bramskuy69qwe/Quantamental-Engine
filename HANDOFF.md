@@ -91,16 +91,18 @@ the snapshot-wins drift inversion (feature-flagged — the riskiest single chang
   undetected (dropped → suffix-only); (b) only `linked`/`cancelled` had full-topic+account assertions →
   added a parametrized `test_state_machines` test covering ALL 6 events × a non-default account (7). Full
   suite 3001 passed / 7 skip / 1 pre-existing fail / 0 new.
-- **⚠ DEFERRED (P6.T3 scope call) — the 3 NEW-PRODUCER calc:* events** (`calc:created`,
-  `calc:size_deviated`, `calc:order_cancelled`, spec §9). T3 was a *rescope* of the 6 existing transition
-  emissions; these three don't emit at all today and need their own producers/design: `calc:created` =
-  a clean publish_engine in `handle_risk_calculated` (easy, has account_id); `calc:size_deviated` needs a
-  deviation-threshold producer (no seam yet — `PositionInfo.size_delta_pct` exists but no "crossed
-  threshold" event); `calc:order_cancelled` was deliberately deferred at T216 (RELEASED has no event;
-  seam = `_release_calc_on_operator_cancel`, which has order_id + cancel_reason_category). Pick up as a
-  P6.T3-follow-up. NOTE for whoever does it: route through `event_bus.publish_engine(account_id,
-  DOMAIN_CALC, "<event>", payload)` (same wrapper); these are NOT status transitions so they don't go
-  through `calc_state.transition()` / `TRANSITION_EVENT_MAP`.
+- **✅ NEW-PRODUCER calc:* events — 2 of 3 SHIPPED (task 262, P6.T3-follow-up)**: `calc:created` (emitted
+  from `handle_risk_calculated`, gated on `calc_id and eligible`, payload = §9 keys
+  calc_id/ticker/direction/window_seconds/model_name/tags/operator_id) + `calc:order_cancelled` (emitted
+  from `_release_calc_on_operator_cancel` on a SUCCESSFUL release only; payload = calc_id/order_id(internal,
+  matches calc:linked)/cancel_reason_category='OPERATOR'/raw). Both route through
+  `event_bus.publish_engine(account_id, DOMAIN_CALC, "<event>", payload)` — NOT status transitions, so NOT
+  via `calc_state.transition()`/`TRANSITION_EVENT_MAP`. Audit clean (payloads match §9; mutation-verified
+  Rule-8 tests). Tests: `test_phase1_calc_revision::TestCalcCreatedEvent` (2) + `test_phase1_calc_release`
+  (+2). **⚠ STILL DEFERRED — `calc:size_deviated`**: its only data source (`_enrich_positions_calc_id`)
+  recomputes `size_delta_pct` EVERY refresh, so a naive emit spams every poll; it needs a
+  threshold-crossing / anti-spam producer (emit once per crossing, per-(position,calc) dedup state) — its
+  own task, NOT a small add.
 - **NEXT in Phase 6**: P6.T2 (`position:closed` full payload — ⚠ `risk:position_closed` HAS a live
   reconciler subscriber, so expand additively / compat-shim) + P6.T4 (position:* sweep — light up the
   event_bus topics from the `position_opened`/`partial_close`/`position_amended`/`position_closed`

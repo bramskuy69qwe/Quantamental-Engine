@@ -155,6 +155,61 @@ class TestReleaseOnOperatorCancel:
         assert fields["ts_ms"] >= before_ms
 
     @pytest.mark.asyncio
+    async def test_order_cancelled_event_emitted(self, om):
+        # P6 (spec §9 calc:order_cancelled): a SUCCESSFUL release emits the event
+        # on the per-account topic. RELEASED itself has no transition event, so
+        # this is the ONLY event on the release path.
+        o, db = om
+        from core.event_bus import event_bus
+        await _insert_calc(db, calc_id="rel-e", status="matched")
+        await _insert_order(db, eid="o-rel-e", calc_id="rel-e",
+                            status="canceled", filled_qty=0.0)
+        while not event_bus._queue.empty():
+            event_bus._queue.get_nowait()
+
+        await o._release_calc_on_operator_cancel(
+            1, {"exchange_order_id": "o-rel-e", "status": "canceled"},
+        )
+
+        events = []
+        while not event_bus._queue.empty():
+            events.append(event_bus._queue.get_nowait())
+        cancelled = [
+            (c, p) for c, p in events
+            if c == "engine:account:1:calc:order_cancelled"
+        ]
+        assert len(cancelled) == 1, f"expected 1 calc:order_cancelled, got {events!r}"
+        _, payload = cancelled[0]
+        assert payload["calc_id"] == "rel-e"
+        assert payload["cancel_reason_category"] == "OPERATOR"
+        assert payload["raw"] == "canceled"
+        assert isinstance(payload["order_id"], int)   # internal order id
+
+    @pytest.mark.asyncio
+    async def test_no_event_when_release_is_noop(self, om):
+        # Rule 8: the event fires ONLY on a successful release. A non-matched
+        # calc (already released) → TOCTOU no-op → NO calc:order_cancelled.
+        o, db = om
+        from core.event_bus import event_bus
+        await _insert_calc(db, calc_id="rel-n", status="released")
+        await _insert_order(db, eid="o-rel-n", calc_id="rel-n",
+                            status="canceled", filled_qty=0.0)
+        while not event_bus._queue.empty():
+            event_bus._queue.get_nowait()
+
+        await o._release_calc_on_operator_cancel(
+            1, {"exchange_order_id": "o-rel-n", "status": "canceled"},
+        )
+
+        events = [
+            c for c, _ in (
+                event_bus._queue.get_nowait()
+                for _ in range(event_bus._queue.qsize())
+            )
+        ]
+        assert not any(c.endswith(":calc:order_cancelled") for c in events)
+
+    @pytest.mark.asyncio
     async def test_released_calc_is_matcher_eligible_again(self, om):
         """After release, the calc's status='released' is in the matcher's
         candidate filter (spec §4.3). Verify a fresh order re-links it.
