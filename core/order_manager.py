@@ -2005,6 +2005,29 @@ class OrderManager:
                 exit_price, entry_time, exit_time,
             )
 
+            # Contributing calcs for this position (distinct opening-fill
+            # calc_ids; fallback to the primary when the junctionless / binance
+            # empty-tpid path leaves opens without a calc_id). Computed ONCE
+            # here and reused by the is_final completion below.
+            contributing_calc_ids = {
+                f["calc_id"] for f in opens if f.get("calc_id")
+            }
+            if not contributing_calc_ids and close_calc_id:
+                contributing_calc_ids = {close_calc_id}
+
+            # ── P4.T2 (spec §3.2): cumulative_amendment_count ───────────
+            # Count order_amendments linked to the position's contributing
+            # calcs — entry legs (matcher calc_id) AND protective TP/SL legs
+            # (T2.9-inherited calc_id), both of which denormalize calc_id onto
+            # the amendment row. Recomputed on every close-row build (like the
+            # T2.5 deltas) and preserved across INSERT OR REPLACE. Best-effort.
+            try:
+                cumulative_amendment_count = (
+                    await self._db.count_amendments_for_calcs(contributing_calc_ids)
+                )
+            except Exception:
+                cumulative_amendment_count = 0
+
             # ── Persist ─────────────────────────────────────────────────
             net_pnl = realized_pnl - total_fees
             await self._db.insert_closed_position({
@@ -2027,6 +2050,7 @@ class OrderManager:
                 "source":               fill.get("source", ""),
                 "calc_id":              close_calc_id,
                 "lifecycle_id":         close_lifecycle_id,
+                "cumulative_amendment_count": cumulative_amendment_count,
                 **shortfall,
                 **deltas,
             })
@@ -2061,16 +2085,10 @@ class OrderManager:
             # calc_ids across the opening fills. Runs AFTER the close row +
             # events are persisted so a completion failure can't undo the
             # close. Best-effort.
-            if is_final:
-                contributing_calc_ids = {
-                    f["calc_id"] for f in opens if f.get("calc_id")
-                }
-                if not contributing_calc_ids and close_calc_id:
-                    contributing_calc_ids = {close_calc_id}
-                if contributing_calc_ids:
-                    await self._complete_calcs_on_close(
-                        account_id, contributing_calc_ids, pos_id,
-                    )
+            if is_final and contributing_calc_ids:
+                await self._complete_calcs_on_close(
+                    account_id, contributing_calc_ids, pos_id,
+                )
 
             log.info(
                 "Closed position row: %s %s qty=%.4f pnl=%.2f exit=%s",
@@ -2417,11 +2435,14 @@ class OrderManager:
           - ``tp_drift_pct`` / ``sl_drift_pct`` → Phase 4.6 (need the final
             AMENDED TP/SL, which requires amendment tracking; the close
             order exposes only the single triggered level).
-          - ``cumulative_amendment_count`` → Phase 4.3 (``order_amendments``
-            is unwired today; a literal ``0`` would mean "zero amendments"
-            rather than the truth "tracking not yet wired").
           - ``hold_time_planned_ms`` → no planned-duration column exists in
             ``pre_trade_log`` or the junction.
+
+        ``cumulative_amendment_count`` is NOT returned here either, but it IS
+        computed at close — P4.T2 supplies it directly in
+        ``_build_close_row_for_fill`` via ``count_amendments_for_calcs`` (kept
+        out of this return so the explicit value isn't overridden by the
+        ``**deltas`` spread).
         """
         if not pos_id:
             return {}

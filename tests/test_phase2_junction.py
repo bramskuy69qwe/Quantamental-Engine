@@ -1111,11 +1111,13 @@ class TestCloseDeltas:
         assert cp["planned_r"] == pytest.approx(2.0)
         assert cp["hold_time_actual_ms"] == 3000
         # Deferred columns remain NULL (flipping any to non-NULL is the
-        # conscious signal that its owning task — P4.6 / P4.3 / no-source —
-        # landed, and must update this assertion).
+        # conscious signal that its owning task — P4.6 / no-source — landed,
+        # and must update this assertion).
         assert cp["tp_drift_pct"] is None              # P4.6
         assert cp["sl_drift_pct"] is None              # P4.6
-        assert cp["cumulative_amendment_count"] is None  # P4.3
+        # P4.T2 LANDED: cumulative_amendment_count now computed at close from
+        # order_amendments; 0 here (this fixture seeds no amendments).
+        assert cp["cumulative_amendment_count"] == 0   # P4.3 / P4.T2
         assert cp["hold_time_planned_ms"] is None       # no source column
 
 

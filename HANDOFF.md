@@ -154,7 +154,15 @@ per-task notes are in the sections below + `docs/design/calc_linkage_implementat
   (`test_modification_events.py`) only checks the comparison logic inline, masking this. Fix:
   relocate the call pre-gate to `ws_manager` (same shape as P4.T1), or fold the event emit into
   `detect_and_persist_amendment`. Surfaced during P4.T1; operator chose file-separately.
-- **P4.T2** — `deviation_pct` DONE in P4.T1 (computed inline); remainder = `cumulative_amendment_count` rollup at close.
+- **P4.T2 — SHIPPED (2026-06-02)**: `closed_positions.cumulative_amendment_count` computed at
+  close in `_build_close_row_for_fill` via `db.count_amendments_for_calcs(contributing_calc_ids)`
+  — counts `order_amendments` by the position's contributing calc_ids (entry + T2.9-inherited
+  TP/SL legs, both denormalize calc_id). Added to `_CLOSED_POS_DELTA_COLS` (REPLACE-preserved like
+  the T2.5 deltas; nullable → backfilled rows stay NULL). `deviation_pct` was already done in P4.T1.
+  Tests: `tests/test_phase4_amendment_rollup.py` (10) + updated the T2.5 deferred-column assertion.
+  240 touched-path tests green. **NOT yet committed** (audit pending).
+- **NEXT after T2**: P4.T3 (live deviation badge — consumes T2.12 `size_delta_pct` + the amendment
+  data now flowing), P4.T4 (`position:amended` event), P4.T5 (`tp_drift_pct`/`sl_drift_pct` at close).
 - **P4.T3** — live deviation badge logic + frontend (yellow/red thresholds from
   `config_json`; spec §3.2 most-contributing-calc basis). **Consumes T2.12's
   `PositionInfo.size_delta_pct`** (already stored; the badge threshold logic is the

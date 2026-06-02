@@ -13,14 +13,17 @@ log = logging.getLogger("database")
 
 
 # P2.T5 close-time delta columns persisted on closed_positions. Computed
-# in OrderManager._compute_close_deltas and written here; preserved across
-# INSERT OR REPLACE recompute (T176/T232 wipe pattern). tp_drift_pct /
-# sl_drift_pct (Phase 4.6), cumulative_amendment_count (Phase 4.3), and
-# hold_time_planned_ms (no source) are intentionally NOT in this set —
-# their owning tasks add them later.
+# in OrderManager (deltas → _compute_close_deltas; cumulative_amendment_count
+# → count_amendments_for_calcs) and written here; preserved across INSERT OR
+# REPLACE recompute (T176/T232 wipe pattern) so a non-computing REPLACE
+# (exchange_history_backfill / rebuild) can't wipe a live-built value.
+# tp_drift_pct / sl_drift_pct (Phase 4.6) and hold_time_planned_ms (no source)
+# are intentionally NOT in this set — their owning tasks add them later.
+# cumulative_amendment_count joined the set in P4.T2.
 _CLOSED_POS_DELTA_COLS = (
     "entry_px_delta_pct", "size_delta_pct", "exit_vs_target_pct",
     "realized_r", "planned_r", "hold_time_actual_ms",
+    "cumulative_amendment_count",
 )
 
 
@@ -339,7 +342,8 @@ class OrdersMixin:
                 shortfall_entry, shortfall_exit, source, calc_id,
                 tp_price, sl_price, lifecycle_id,
                 entry_px_delta_pct, size_delta_pct, exit_vs_target_pct,
-                realized_r, planned_r, hold_time_actual_ms
+                realized_r, planned_r, hold_time_actual_ms,
+                cumulative_amendment_count
             ) VALUES (
                 :account_id, :exchange_position_id, :terminal_position_id,
                 :symbol, :direction, :quantity, :entry_price, :exit_price,
@@ -349,7 +353,8 @@ class OrdersMixin:
                 :shortfall_entry, :shortfall_exit, :source, :calc_id,
                 :tp_price, :sl_price, :lifecycle_id,
                 :entry_px_delta_pct, :size_delta_pct, :exit_vs_target_pct,
-                :realized_r, :planned_r, :hold_time_actual_ms
+                :realized_r, :planned_r, :hold_time_actual_ms,
+                :cumulative_amendment_count
             )
         """
         try:
@@ -1509,6 +1514,26 @@ class OrdersMixin:
             params = (calc_id,)
         async with self._conn.execute(sql, params) as cur:
             return [dict(r) for r in await cur.fetchall()]
+
+    async def count_amendments_for_calcs(self, calc_ids: Any) -> int:
+        """COUNT of order_amendments rows linked to any of *calc_ids* (P4.T2).
+
+        The cumulative_amendment_count basis for a closed position: amendments
+        to the position's contributing calcs' orders — entry legs (matcher
+        calc_id) AND protective TP/SL legs (T2.9-inherited calc_id), both of
+        which denormalize calc_id onto the amendment row. Falsy ids are
+        dropped; an empty set returns 0.
+        """
+        ids = [c for c in (calc_ids or []) if c]
+        if not ids:
+            return 0
+        placeholders = ",".join("?" * len(ids))
+        async with self._conn.execute(
+            f"SELECT COUNT(*) FROM order_amendments WHERE calc_id IN ({placeholders})",
+            ids,
+        ) as cur:
+            row = await cur.fetchone()
+            return int(row[0]) if row and row[0] is not None else 0
 
     # ── funding_events ─────────────────────────────────────────────────
 
