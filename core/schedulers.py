@@ -723,12 +723,26 @@ async def _funding_refresh_loop(interval_s: int = 300):
     not a correctness dependency. Non-fatal on errors (log + continue), like
     the sibling REST loops.
 
+    Deviation (plan §5.1 said "subscribe to the income WS stream"): we REST-poll
+    instead because no funding-specific WS user-data event is wired, the income
+    REST path already exists, and dedup makes re-polls idempotent — REST is the
+    pragmatic, lower-risk source for a 3x/day settlement.
+
     Bounded window (audit note): this issues a single non-paginated fetch
     (adapter ``limit=1000``), so a backlog exceeding 1000 funding rows after
     the cursor — only reachable after a multi-day outage across many symbols,
     and mostly for by-then-closed positions that orphan anyway — could skip the
     overflow. Dedup makes any re-fetch idempotent; paginate (like
     ``fetch_income_for_backfill``) if that window ever matters.
+
+    Scope (audit notes, filed): (1) ACTIVE-account only — like every sibling
+    REST loop; inactive accounts accrue no funding attribution, and the module
+    ``last_seen_ms`` cursor is not reset on account switch (dedup prevents
+    double-writes, but the new account's pre-cursor funding can be skipped).
+    (2) the synthetic ``venue_event_id`` prefix is hard-coded ``binance:`` and
+    the one-funded-position-per-settlement no-collision assumption is
+    Binance-one-way-specific; gate to Binance or parametrize the prefix before
+    relying on this for Bybit/MEXC.
     """
     from core.exchange import _get_adapter
     from core.exchange_income import fetch_income_history

@@ -36,6 +36,16 @@ Design notes (verified against the shipped plumbing):
   one-way path) — is counted/logged as an orphan and skipped, per spec §11[F]'s
   "optional orphan funding log". This is the same key-availability limitation the
   ``positions_calcs`` junction already carries.
+
+- **Two-views, not two-totals (audit note)**: funding ALSO flows through the
+  pre-existing equity pipeline — ``exchange_income`` folds ``FUNDING_FEE`` into
+  ``exchange_history.fee`` (``abs()``, FIFO-windowed) for the wallet/equity-curve
+  view. ``funding_events`` here is the SEPARATE position-attributed view (signed,
+  lifecycle-windowed) feeding ``closed_positions.funding_fees``/``net_pnl``. They
+  populate DIFFERENT tables — there is NO double-count today — but they are two
+  views of the same venue charges with opposite sign + different windowing; a
+  future report must NOT sum ``closed_positions.net_pnl`` together with an
+  ``exchange_history``-derived total, or it will double-count funding.
 """
 from __future__ import annotations
 

@@ -85,16 +85,20 @@ async def _resolver_ab(_account_id, _tpid):
 class TestFundingPositionIdKey:
     @pytest.mark.asyncio
     async def test_schema_position_id_is_text(self, db):
-        # The whole point of P5's verify-first fix: the funding key must be the
-        # TEXT terminal_position_id, not the shipped INTEGER (else the close SUM
-        # would join an INTEGER-coerced key against a TEXT tpid and read 0).
+        # The funding key must be the TEXT terminal_position_id, not the shipped
+        # INTEGER. The real INTEGER-affinity hazard is COLLISION, not a zero-read:
+        # distinct numeric tpids collapse (leading-zero "00123"==123; >int64
+        # overflow), leaking another position's funding into the SUM. Matching
+        # the sibling TEXT key (positions_calcs/closed_positions) is unambiguous.
         cols = await _table_columns(db, "funding_events")
         assert cols["position_id"] == "TEXT"
 
     @pytest.mark.asyncio
     async def test_text_tpid_round_trips_through_sum(self, db):
-        # A non-numeric TEXT tpid (the shape Quantower can emit) must store and
-        # sum back exactly — the failure mode INTEGER affinity would cause.
+        # A non-numeric TEXT tpid stores + sums back exactly under TEXT. (Under
+        # INTEGER affinity it would also store fine — affinity can't coerce it —
+        # so this pins the round-trip; the numeric-collision hazard is the actual
+        # reason for the TEXT migration, asserted by the schema-type test.)
         tpid = "pos-abc-123"
         for i, amt in enumerate([-0.05, -0.04, 0.02], start=1):
             ok = await db.insert_funding_event({
@@ -163,6 +167,51 @@ class TestFundingPositionIdKey:
             await dbm2.initialize()
             assert (await _table_columns(dbm2, "funding_events"))["position_id"] == "TEXT"
             await dbm2.close()
+        finally:
+            for ext in ("", "-wal", "-shm"):
+                try:
+                    os.unlink(tmp.name + ext)
+                except OSError:
+                    pass
+
+    @pytest.mark.asyncio
+    async def test_migration_fails_loud_if_not_text(self, monkeypatch):
+        # FAIL-LOUD guard (audit): if the recreate does NOT flip the column to
+        # TEXT, initialize() must RAISE (abort startup) rather than boot with a
+        # mis-keyed funding column. Sabotage = no-op the recreate executescript
+        # so position_id stays INTEGER; the post-migration PRAGMA verify must
+        # then raise. Pins that a future edit can't silently swallow the failure.
+        import aiosqlite
+        from core.database import DatabaseManager
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        try:
+            conn = await aiosqlite.connect(tmp.name)
+            await conn.execute(
+                "CREATE TABLE funding_events (id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                " position_id INTEGER NOT NULL, calc_id TEXT, account_id INTEGER"
+                " NOT NULL, symbol TEXT NOT NULL, amount REAL NOT NULL DEFAULT 0,"
+                " mark_price REAL, funding_rate REAL, ts_ms INTEGER NOT NULL,"
+                " venue_event_id TEXT NOT NULL, lifecycle_id TEXT,"
+                " UNIQUE(venue_event_id))")
+            await conn.commit()
+            await conn.close()
+
+            real_es = aiosqlite.Connection.executescript
+
+            async def _sabotage(self, sql):
+                if "_funding_events_int" in sql:   # the recreate script only
+                    return                          # no-op → stays INTEGER
+                return await real_es(self, sql)
+
+            monkeypatch.setattr(aiosqlite.Connection, "executescript", _sabotage)
+            dbm = DatabaseManager(path=tmp.name)
+            with pytest.raises(RuntimeError, match="migration did not take"):
+                await dbm.initialize()
+            try:
+                await dbm.close()
+            except Exception:
+                pass
         finally:
             for ext in ("", "-wal", "-shm"):
                 try:
@@ -291,6 +340,21 @@ class TestHandleFundingIncomes:
         assert res["written"] == 2
         assert await db.sum_position_funding("pos-btc") == pytest.approx(-0.05)
         assert await db.sum_position_funding("pos-eth") == pytest.approx(-0.03)
+
+    @pytest.mark.asyncio
+    async def test_orphan_writes_no_funding_row(self, db):
+        # An orphan must be SKIPPED, not written under an empty/sentinel key —
+        # else the empty-key row would later be picked up by funding_by_pos.get("")
+        # or a COUNT. Assert the table stays empty (audit Rule-8 gap: prior
+        # orphan tests only checked sum("pos-1")==0, not row absence).
+        res = await handle_funding_incomes(
+            account_id=1, incomes=[_income("XRPUSDT", -0.01, 1000)],
+            positions=[PositionInfo(position_id="", ticker="XRPUSDT")],
+            db=db, primary_calc_resolver=_resolver_ab,
+        )
+        assert res["orphan"] == 1 and res["written"] == 0
+        async with db._conn.execute("SELECT COUNT(*) FROM funding_events") as cur:
+            assert (await cur.fetchone())[0] == 0
 
 
 # ── 4. loop wiring smoke ─────────────────────────────────────────────────────
@@ -429,6 +493,25 @@ class TestFundingAtClose:
         assert row["net_pnl"] == pytest.approx(9.0)
 
     @pytest.mark.asyncio
+    async def test_positive_funding_received_increases_net(self, db, om):
+        # Funding RECEIVED (positive — short side of a negative-rate symbol):
+        # net must INCREASE. Guards the sign on the funding-received path; every
+        # other funded test uses negative funding, so an abs()/sign-flip slip
+        # would otherwise survive (audit Rule-8 gap).
+        await _seed_junction_cp(db, "POS-1", "C1", qty=1.0)
+        await _seed_order_cp(db, "EO", "limit", "BUY")
+        await _seed_fill_cp(db, "FO", "EO", "POS-1", 1.0, False, 1000, fee=0.5)
+        await _seed_funding_cp(db, "POS-1", 0.10, 1200, "fe-pos")
+        await _seed_order_cp(db, "XO", "market", "SELL")
+        await _seed_fill_cp(db, "FX", "XO", "POS-1", 1.0, True, 2000,
+                            fee=0.5, realized_pnl=20.0)
+        await om._build_close_row_for_fill(ACCOUNT_ID, _close_fill_cp("XO", "POS-1", 2000))
+        row = await _closed_row_cp(db, "POS-1", 2000)
+        assert row["funding_fees"] == pytest.approx(0.10)
+        # net = realized(20) - fees(1.0) + funding(+0.10) = 19.10
+        assert row["net_pnl"] == pytest.approx(19.10)
+
+    @pytest.mark.asyncio
     async def test_partial_carries_zero_final_carries_full(self, db, om):
         # Multi-TP: per-partial rows preserved (T2.11). Funding lands ONLY on
         # the final row — the partial row must be 0 so the position total isn't
@@ -533,6 +616,53 @@ class TestLiveFundingEnrichment:
         await om._enrich_positions_calc_id(ACCOUNT_ID, positions)
         assert positions[0].individual_funding_fees == pytest.approx(0.0)
         assert positions[1].individual_funding_fees == pytest.approx(-0.05)
+
+    @pytest.mark.asyncio
+    async def test_junctioned_position_funding_and_calc_coexist(self, db, om):
+        # A PLANNED position (has a positions_calcs junction) must get BOTH
+        # calc_id (junction logic) AND individual_funding_fees stamped — funding
+        # enrichment must not be skipped when the junction/badge branch runs
+        # (audit Rule-8 gap: the other enrichment tests have no junction, so
+        # per_pos is empty and the junction branch never executes).
+        await db.upsert_position_calc_link({
+            "position_id": "POS-1", "calc_id": "calc-z", "order_id": 1,
+            "account_id": ACCOUNT_ID, "contributed_qty": 5.0,
+            "first_fill_ts": 1000, "last_fill_ts": 1000,
+            "lifecycle_id": "lc-z", "planned_size": 5.0,
+            "planned_tp": None, "planned_sl": None,
+        })
+        await _seed_funding_cp(db, "POS-1", -0.07, 1000, "fe-j")
+        positions = [PositionInfo(position_id="POS-1", ticker="BTCUSDT")]
+        await om._enrich_positions_calc_id(ACCOUNT_ID, positions)
+        assert positions[0].individual_funding_fees == pytest.approx(-0.07)
+        assert positions[0].calc_id == "calc-z"   # junction logic still ran
+
+
+class TestFundingResolverIntegration:
+    @pytest.mark.asyncio
+    async def test_real_primary_calc_resolver_denormalizes(self, db, om):
+        # Drive the handler with the REAL OrderManager._position_primary_calc
+        # (not the _resolver_ab fake), so a resolver-contract drift (return
+        # shape / (calc_id, lifecycle_id) order) is caught through the funding
+        # path — the loop wires this real method but every other test fakes it
+        # (audit Rule-8 gap: TestFundingLoopWiring is only a source-grep smoke).
+        await db.upsert_position_calc_link({
+            "position_id": "POS-1", "calc_id": "calc-z", "order_id": 1,
+            "account_id": ACCOUNT_ID, "contributed_qty": 5.0,
+            "first_fill_ts": 1000, "last_fill_ts": 1000,
+            "lifecycle_id": "lc-z", "planned_size": 5.0,
+            "planned_tp": None, "planned_sl": None,
+        })
+        res = await handle_funding_incomes(
+            account_id=ACCOUNT_ID,
+            incomes=[_income("BTCUSDT", -0.05, 1000)],
+            positions=[PositionInfo(position_id="POS-1", ticker="BTCUSDT")],
+            db=db, primary_calc_resolver=om._position_primary_calc,
+        )
+        assert res["written"] == 1
+        rows = await db.get_position_funding_events("POS-1")
+        assert rows[0]["calc_id"] == "calc-z"        # (calc_id, lifecycle_id)
+        assert rows[0]["lifecycle_id"] == "lc-z"     # order correct
 
 
 class TestFundingUiSurfacing:

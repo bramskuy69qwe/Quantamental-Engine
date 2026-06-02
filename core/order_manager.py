@@ -1810,6 +1810,23 @@ class OrderManager:
         yellow/red badge thresholding and TP/SL live deviation are Phase 4.4
         (they need the order-amendment tracking that isn't wired yet).
         """
+        # P5.T7: live unrealized funding — stamped FIRST and INDEPENDENTLY of the
+        # junction below, so a junction-read fault (the early returns) can't
+        # strand a stale funding value (audit). ONE grouped SUM keyed by
+        # terminal_position_id (covers UNPLANNED / no-calc positions with a
+        # tpid). Best-effort: on a read fault, DON'T overwrite — leave the
+        # preserved value (only stamp on success, incl. 0.0 for no-funding).
+        _open_tpids = [p.position_id for p in positions if p.position_id]
+        if _open_tpids:
+            try:
+                funding_by_pos = await self._db.sum_funding_by_positions(_open_tpids)
+            except Exception:
+                log.debug("live funding sum failed", exc_info=True)
+            else:
+                for _p in positions:
+                    _p.individual_funding_fees = funding_by_pos.get(
+                        _p.position_id, 0.0)
+
         if not any(p.position_id for p in positions):
             return
         try:
@@ -1881,18 +1898,6 @@ class OrderManager:
                     "refresh)", exc_info=True,
                 )
 
-        # P5.T7: live unrealized funding per open position — ONE grouped SUM
-        # keyed by terminal_position_id (independent of the junction; funding
-        # attributes by tpid, so this covers UNPLANNED / no-calc positions too).
-        # Best-effort: a read fault leaves the preserved value untouched.
-        funding_by_pos: Dict[str, float] = {}
-        _open_tpids = [p.position_id for p in positions if p.position_id]
-        if _open_tpids:
-            try:
-                funding_by_pos = await self._db.sum_funding_by_positions(_open_tpids)
-            except Exception:
-                log.debug("live funding sum failed", exc_info=True)
-
         # Authoritative: the three fields mirror the junction on each refresh.
         # A position with no junction row is CLEARED — UNPLANNED, a
         # pre-first-fill position, or a same-(symbol,direction) reopen that
@@ -1900,8 +1905,8 @@ class OrderManager:
         # R2). Self-heals once the new position's first opening fill writes
         # its junction.
         for pos in positions:
-            # P5.T7: live unrealized funding (0.0 for empty-tpid / no-funding).
-            pos.individual_funding_fees = funding_by_pos.get(pos.position_id, 0.0)
+            # (individual_funding_fees already stamped above, before the early
+            # returns — independent of the junction.)
             if not pos.position_id:
                 continue  # binance one-way / pre-snapshot — no junction key
             calcs = per_pos.get(pos.position_id)
@@ -2171,8 +2176,27 @@ class OrderManager:
             # (is_final): T2.11 preserves per-partial rows, so stamping the full
             # position SUM on every partial would overcount when summed across
             # rows. Partial rows and the junctionless / binance empty-tpid path
-            # carry 0.0. The final row's exit_time IS the position close, so the
-            # SUM is complete + as-of-correct (no temporal filter needed).
+            # carry 0.0. The SUM is computed ONCE here and never recomputed.
+            #
+            # KNOWN GAP (audit, filed — "deferred funding at close"): funding
+            # settles ~3x/day but the attribution poll runs every ~5min, so a
+            # position closing in the window AFTER a settlement but BEFORE the
+            # poll lands that funding_events row will under-count here (the row
+            # arrives later, keyed to this now-closed tpid, but is never folded
+            # in). Bounded (only a last-settlement-near-close; funding_events is
+            # preserved) but it means plan §5's "reconcile within $0.01 of venue"
+            # is NOT yet met. Fix = a deferred-funding reconcile (on funding
+            # arrival for an already-closed tpid, recompute that row's
+            # funding_fees/net_pnl) — its own follow-up task.
+            #
+            # OVERFILL edge (audit, documented): if closing fills on this tpid
+            # exceed open qty across DISTINCT closing orders at distinct ts, each
+            # can satisfy is_final and stamp the full SUM on its own row →
+            # funding double-counts (same anomaly that over-attributes prop_entry
+            # above; HIGH-009 caps prop_entry only, not is_final). Anomaly-gated
+            # (you can't normally close more than you hold); not guarded here to
+            # avoid destabilizing the T238-tuned is_final logic.
+            #
             # Best-effort — a funding read fault must not block the close write.
             #
             # NOT added to _CLOSED_POS_DELTA_COLS (unlike the T2.5/P4 deltas):
@@ -2342,9 +2366,11 @@ class OrderManager:
             # P5 known-gap (same WS-gap class): closed_positions.funding_fees
             # rides on is_final in a BUILT close row, so a recorded-but-never-
             # final position likewise misses its funding rollup here. The
-            # funding_events rows are preserved (not lost) — only the per-close
-            # SUM is skipped — so a later reconciliation/rebuild can recover it.
-            # Not repaired in this delicate backstop (filed follow-up).
+            # funding_events rows are PRESERVED (not lost) — but NO shipped path
+            # recomputes closed_positions.funding_fees from them (the reconciler
+            # UPDATEs only mfe/mae; rebuild uses rebuilt:/bf: tpids). So recovery
+            # needs a FUTURE deferred-funding reconcile (filed — see the close
+            # funding block above). Not repaired in this delicate backstop.
             await self._complete_position_calcs(account_id, prev.position_id)
         except Exception:
             log.exception(
