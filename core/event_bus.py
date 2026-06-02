@@ -4,12 +4,20 @@ In-process asyncio event bus (Redis dependency dropped in v2.1).
 Keeps the same pub/sub interface as the old redis_bus so all call sites
 are unchanged except the import path and singleton name.
 
-Channels:
+Channels (legacy flat scheme — engine-internal lifecycle):
     risk:account_updated      – WS ACCOUNT_UPDATE received
     risk:positions_refreshed  – positions refreshed (after fill or periodically)
     risk:risk_calculated      – risk calculator run completed
     risk:params_updated       – user updated risk parameters
     risk:trade_closed         – position fully closed
+
+Phase-6 hierarchical, per-account topics (spec §9 — calc-linkage event catalog):
+    engine:account:{account_id}:{domain}:{event}
+    e.g. engine:account:2:calc:linked, engine:account:2:position:closed
+    Built via ``ch_engine()`` / published via ``EventBus.publish_engine()`` so
+    topic construction lives in one place. The calc:* / position:* emission
+    sweeps (plan §6 rows 6.2-6.4, tasks P6.T3/T4) route through this wrapper;
+    the account scope is carried by the TOPIC, not duplicated into the payload.
 
 Usage:
     from core.event_bus import event_bus
@@ -46,6 +54,35 @@ def ch_account(account_id: int, suffix: str) -> str:
     e.g. ch_account(2, "account_updated") → "risk:2:account_updated"
     """
     return f"risk:{account_id}:{suffix}"
+
+
+# Phase-6 (P6.T1) domain segments for the hierarchical topic scheme (spec §9).
+# The catalog spans exactly these three domains; named here so the emission
+# sweeps (P6.T3/T4) and any subscriber share one vocabulary instead of
+# stringly-typed literals scattered across call sites.
+DOMAIN_CALC     = "calc"
+DOMAIN_POSITION = "position"
+DOMAIN_ORDER    = "order"
+
+
+def ch_engine(account_id: int, domain: str, event: str) -> str:
+    """Return a Phase-6 hierarchical, per-account event topic (spec §9).
+
+    ``engine:account:{account_id}:{domain}:{event}`` —
+    e.g. ``ch_engine(2, DOMAIN_POSITION, "closed")`` →
+    ``"engine:account:2:position:closed"``.
+
+    The account scope lives in the topic (NOT duplicated into the payload),
+    so a per-account subscriber can route on the topic alone. ``domain`` is one
+    of ``DOMAIN_CALC`` / ``DOMAIN_POSITION`` / ``DOMAIN_ORDER``; ``event`` is the
+    spec §9 suffix (``linked`` / ``closed`` / ``amended`` / ``duplicate_detected`` …).
+
+    ``domain``/``event`` MUST be code-controlled literals with no ``:`` (the
+    closed §9 catalog satisfies this) — dispatch is exact-match so a stray ``:``
+    can't mis-route today, but it would make the topic ambiguous to a FUTURE
+    split-based / prefix subscriber. Not validated here (no user input reaches it).
+    """
+    return f"engine:account:{account_id}:{domain}:{event}"
 
 
 Handler = Callable[[Dict[str, Any]], Awaitable[None]]
@@ -85,6 +122,22 @@ class EventBus:
     async def publish(self, channel: str, payload: Dict[str, Any]) -> None:
         """Enqueue an event for dispatch. Never raises."""
         await self._queue.put((channel, payload))
+
+    async def publish_engine(
+        self, account_id: int, domain: str, event: str,
+        payload: Dict[str, Any],
+    ) -> None:
+        """Publish on a Phase-6 per-account hierarchical topic (spec §9).
+
+        Thin wrapper over :meth:`publish` that builds
+        ``engine:account:{account_id}:{domain}:{event}`` via :func:`ch_engine`.
+        The calc:* / position:* / order:* emission sweeps (P6.T3/T4) route
+        through this so topic construction lives in ONE place. The payload is
+        forwarded verbatim — the account scope is carried by the topic, not
+        duplicated into the payload (matches the spec §9 payload shapes).
+        Never raises (inherits :meth:`publish`'s enqueue-only contract).
+        """
+        await self.publish(ch_engine(account_id, domain, event), payload)
 
     async def _dispatch(self, channel: str, payload: Dict[str, Any]) -> None:
         for handler in self._handlers.get(channel, []):
