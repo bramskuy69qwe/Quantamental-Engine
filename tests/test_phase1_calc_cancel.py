@@ -78,7 +78,14 @@ def _drain(channel: str | None = None) -> List[tuple]:
     evs = []
     while not event_bus._queue.empty():
         evs.append(event_bus._queue.get_nowait())
-    return [(c, p) for c, p in evs if c == channel] if channel else evs
+    # P6.T3: calc:* events ride the per-account topic
+    # engine:account:{id}:calc:{event}; match by the calc:{event} suffix ONLY
+    # (no flat-topic fallback — so a regression back to the flat "calc:{event}"
+    # topic FAILS these tests, Rule 8). Full per-account topic + account scoping
+    # asserted in test_state_machines.
+    if not channel:
+        return evs
+    return [(c, p) for c, p in evs if c.endswith(":" + channel)]
 
 
 # ── Core flow ─────────────────────────────────────────────────────────

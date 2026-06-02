@@ -172,11 +172,12 @@ class TestManualLink:
         _assert_calcid_linked_invariant(o)
         # calc flipped active → matched (mirrors the auto-matcher)
         assert await _calc_status(linkdb, "C1") == "matched"
-        # calc:linked fired through the choke-point
+        # calc:linked fired through the choke-point (P6.T3: now rides the
+        # per-account topic engine:account:{id}:calc:linked).
         events = []
         while not event_bus._queue.empty():
             events.append(event_bus._queue.get_nowait())
-        assert any(c == "calc:linked" for c, _ in events)
+        assert any(c.endswith(":calc:linked") for c, _ in events)
 
     @pytest.mark.asyncio
     async def test_unlinked_to_linked(self, linkdb):

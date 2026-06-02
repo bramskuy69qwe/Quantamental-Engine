@@ -105,18 +105,20 @@ ACTIVE_STATES = {
 }
 
 
-# Per spec §5: each transition target maps to exactly one event topic
-# (or no event for transitions not catalogued in spec §5 / §9, like
-# ``released → matched`` re-match).
+# Per spec §5/§9: each transition target maps to its calc:* EVENT name — the
+# §9 "{domain}:{event}" topic suffix with the domain dropped (this module is
+# calc-only, so the domain is implicitly event_bus.DOMAIN_CALC). P6.T3:
+# transition() builds the full per-account topic
+# ``engine:account:{id}:calc:{event}`` via event_bus.publish_engine. No entry =
+# no event (e.g. the ``released → matched`` re-match, and RELEASED itself —
+# covered by Phase 1.7's replacement-modal scaffold, which surfaces UI directly).
 TRANSITION_EVENT_MAP: Dict[CalcStatus, str] = {
-    CalcStatus.MATCHED:                "calc:linked",
-    CalcStatus.SUPERSEDED:             "calc:superseded",
-    CalcStatus.EXPIRED:                "calc:expired",
-    CalcStatus.CANCELLED_BY_OPERATOR:  "calc:cancelled",
-    CalcStatus.COMPLETED_VIA_POSITION: "calc:completed",
-    CalcStatus.PARTIALLY_ACTIONED:     "calc:partially_filled",
-    # RELEASED has no dedicated event (covered by Phase 1.7's
-    # replacement-modal scaffold, which surfaces UI state directly).
+    CalcStatus.MATCHED:                "linked",
+    CalcStatus.SUPERSEDED:             "superseded",
+    CalcStatus.EXPIRED:                "expired",
+    CalcStatus.CANCELLED_BY_OPERATOR:  "cancelled",
+    CalcStatus.COMPLETED_VIA_POSITION: "completed",
+    CalcStatus.PARTIALLY_ACTIONED:     "partially_filled",
 }
 
 
@@ -204,6 +206,7 @@ async def transition(
     target_status: str,
     *,
     apply_fn: ApplyFn,
+    account_id: int,
     reason: Optional[str] = None,
     event_payload: Optional[Dict] = None,
 ) -> None:
@@ -226,6 +229,10 @@ async def transition(
             the caller because the full SET clause varies (e.g.,
             ``superseded`` writes ``superseded_by_calc_id`` too;
             ``cancelled_by_operator`` writes ``cancelled_reason``).
+        account_id: owning account — scopes the emitted event onto the
+            P6 per-account topic ``engine:account:{account_id}:calc:{event}``
+            (spec §9). Required (keyword-only) so every transition site
+            supplies it explicitly; every calc operation is account-scoped.
         reason: optional free-text reason (cancelled_by_operator,
             superseded). Included in the emitted event payload as
             ``reason_note``.
@@ -244,9 +251,9 @@ async def transition(
 
     # 3. Emit transition event (if this target has a catalogued event).
     target_enum = CalcStatus(target_status)
-    topic = TRANSITION_EVENT_MAP.get(target_enum)
-    if topic is not None:
-        from core.event_bus import event_bus
+    event = TRANSITION_EVENT_MAP.get(target_enum)
+    if event is not None:
+        from core.event_bus import event_bus, DOMAIN_CALC
         payload = {
             "calc_id": calc_id,
             "from_status": current_status,
@@ -273,12 +280,15 @@ async def transition(
         if event_payload:
             payload.update(event_payload)
         try:
-            await event_bus.publish(topic, payload)
+            # P6.T3: per-account hierarchical topic
+            # engine:account:{account_id}:calc:{event} (spec §9), built in one
+            # place by event_bus.publish_engine (P6.T1 wrapper).
+            await event_bus.publish_engine(account_id, DOMAIN_CALC, event, payload)
         except Exception:
             # Event-bus publish is best-effort — never roll back the DB
             # UPDATE on an event failure. Log + move on.
             log.exception(
-                "calc_state.transition: event_bus.publish failed for "
-                "topic=%r calc_id=%r",
-                topic, calc_id,
+                "calc_state.transition: event_bus.publish_engine failed for "
+                "account=%s event=calc:%s calc_id=%r",
+                account_id, event, calc_id,
             )

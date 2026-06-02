@@ -585,7 +585,8 @@ class TestEnrichOrderIntegration:
         events: List[tuple] = []
         while not event_bus._queue.empty():
             events.append(event_bus._queue.get_nowait())
-        calc_linked = [(c, p) for c, p in events if c == "calc:linked"]
+        # P6.T3: calc:linked now rides engine:account:{id}:calc:linked.
+        calc_linked = [(c, p) for c, p in events if c.endswith(":calc:linked")]
 
         # Assert calc_match_audit persisted (one row per criterion = 6)
         conn = sqlite3.connect(db_path)

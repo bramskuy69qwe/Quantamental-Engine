@@ -340,6 +340,7 @@ async def _try_correlate(order: Dict[str, Any], db_path: str) -> None:
                 current_status=result.matched_from_status,
                 target_status=CalcStatus.MATCHED.value,
                 apply_fn=_apply_status_flip,
+                account_id=aid,
                 event_payload={"order_id": row["id"]},
             )
         except CalcTransitionRaceLost as exc:

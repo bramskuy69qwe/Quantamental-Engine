@@ -99,17 +99,20 @@ class TestCalcTransitionMatrix:
             assert calc_state.CALC_TRANSITIONS[s] == set()
 
     def test_event_topic_map_covers_all_emitting_targets(self):
-        # Per spec §5: 6 transition events catalogued.
+        # Per spec §5/§9: 6 transition events catalogued. P6.T3 — the map now
+        # stores the calc:* EVENT name (the §9 "{domain}:{event}" suffix minus
+        # the implicit calc domain); transition() prepends
+        # engine:account:{id}:calc: via publish_engine.
         expected = {
-            CalcStatus.MATCHED:                "calc:linked",
-            CalcStatus.SUPERSEDED:             "calc:superseded",
-            CalcStatus.EXPIRED:                "calc:expired",
-            CalcStatus.CANCELLED_BY_OPERATOR:  "calc:cancelled",
-            CalcStatus.COMPLETED_VIA_POSITION: "calc:completed",
-            CalcStatus.PARTIALLY_ACTIONED:     "calc:partially_filled",
+            CalcStatus.MATCHED:                "linked",
+            CalcStatus.SUPERSEDED:             "superseded",
+            CalcStatus.EXPIRED:                "expired",
+            CalcStatus.CANCELLED_BY_OPERATOR:  "cancelled",
+            CalcStatus.COMPLETED_VIA_POSITION: "completed",
+            CalcStatus.PARTIALLY_ACTIONED:     "partially_filled",
         }
-        for status, topic in expected.items():
-            assert calc_state.TRANSITION_EVENT_MAP[status] == topic
+        for status, event in expected.items():
+            assert calc_state.TRANSITION_EVENT_MAP[status] == event
 
 
 # ── 2. LinkStatus transitions match spec §6 ────────────────────────────
@@ -188,12 +191,14 @@ class TestCalcTransitionChokePoint:
         await calc_state.transition(
             "calc-1", "active", "matched",
             apply_fn=apply_fn,
+            account_id=2,
             event_payload={"order_id": 100},
         )
         assert applied["called"] is True
         assert len(published) == 1
         topic, payload = published[0]
-        assert topic == "calc:linked"
+        # P6.T3: per-account hierarchical topic (was the flat "calc:linked").
+        assert topic == "engine:account:2:calc:linked"
         assert payload["calc_id"] == "calc-1"
         assert payload["from_status"] == "active"
         assert payload["to_status"] == "matched"
@@ -215,9 +220,11 @@ class TestCalcTransitionChokePoint:
         await calc_state.transition(
             "calc-2", "active", "cancelled_by_operator",
             apply_fn=apply_fn,
+            account_id=1,
             reason="operator gave up",
         )
-        _, payload = published[0]
+        topic, payload = published[0]
+        assert topic == "engine:account:1:calc:cancelled"
         assert payload["reason_note"] == "operator gave up"
 
     @pytest.mark.asyncio
@@ -231,6 +238,7 @@ class TestCalcTransitionChokePoint:
             await calc_state.transition(
                 "calc-3", "expired", "matched",  # illegal
                 apply_fn=apply_fn,
+                account_id=1,
             )
         assert applied["called"] is False
 
@@ -244,6 +252,7 @@ class TestCalcTransitionChokePoint:
             await calc_state.transition(
                 "calc-4", "active", "matched",
                 apply_fn=apply_fn,
+                account_id=1,
             )
 
     @pytest.mark.asyncio
@@ -264,6 +273,7 @@ class TestCalcTransitionChokePoint:
             await calc_state.transition(
                 "calc-5", "active", "matched",
                 apply_fn=apply_fn,
+                account_id=1,
             )
         assert published == []
 
@@ -287,6 +297,7 @@ class TestCalcTransitionChokePoint:
         await calc_state.transition(
             "calc-6", "active", "matched",
             apply_fn=apply_fn,
+            account_id=1,
         )
         assert applied["called"] is True
 
@@ -307,9 +318,46 @@ class TestCalcTransitionChokePoint:
         await calc_state.transition(
             "calc-7", "matched", "released",
             apply_fn=apply_fn,
+            account_id=1,
         )
         # released has no event in TRANSITION_EVENT_MAP; should NOT publish.
         assert published == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("current,target,event", [
+        ("active",  "matched",                "linked"),
+        ("active",  "superseded",             "superseded"),
+        ("active",  "expired",                "expired"),
+        ("active",  "cancelled_by_operator",  "cancelled"),
+        ("matched", "completed_via_position", "completed"),
+        ("active",  "partially_actioned",     "partially_filled"),
+    ])
+    async def test_emits_per_account_hierarchical_topic(
+        self, monkeypatch, current, target, event,
+    ):
+        # P6.T3 (closes the audit's two Rule-8 gaps): EVERY calc transition
+        # event must ride the spec §9 per-account topic
+        # engine:account:{id}:calc:{event}. This pins (a) the hierarchical shape
+        # for ALL 6 events — a regression to a flat "calc:{event}" topic FAILS
+        # here — and (b) the account segment — a wrong/transposed account_id in
+        # transition() FAILS here (account 7 ≠ the default 1).
+        published = []
+
+        async def fake_publish(channel, payload):
+            published.append((channel, dict(payload)))
+
+        from core import event_bus as ebmod
+        monkeypatch.setattr(ebmod.event_bus, "publish", fake_publish)
+
+        async def apply_fn():
+            pass
+
+        await calc_state.transition(
+            "calc-acct", current, target, apply_fn=apply_fn, account_id=7,
+        )
+        assert len(published) == 1
+        topic, _ = published[0]
+        assert topic == f"engine:account:7:calc:{event}"
 
 
 # ── 5. transition() choke-point behavior (link_state) ──────────────────

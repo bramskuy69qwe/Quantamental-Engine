@@ -164,7 +164,8 @@ async def manual_link_order(account_id: int, order_id: int, calc_id: str) -> str
             await calc_transition(
                 calc_id=calc_id, current_status=calc_status,
                 target_status=CalcStatus.MATCHED.value,
-                apply_fn=_apply_calc, event_payload={"order_id": order_id},
+                apply_fn=_apply_calc, account_id=account_id,
+                event_payload={"order_id": order_id},
             )
         except CalcTransitionRaceLost as exc:
             log.info("manual_link_order: calc flip raced: %s", exc)

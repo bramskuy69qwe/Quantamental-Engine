@@ -489,7 +489,8 @@ class TestM3TOCTOUStatusFlip:
         events = []
         while not event_bus._queue.empty():
             events.append(event_bus._queue.get_nowait())
-        linked = [e for e in events if e[0] == "calc:linked"]
+        # P6.T3: calc:linked now rides engine:account:{id}:calc:linked.
+        linked = [e for e in events if e[0].endswith(":calc:linked")]
         assert len(linked) == 0, (
             f"matcher emitted calc:linked despite losing the race: "
             f"{linked}"

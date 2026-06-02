@@ -275,6 +275,7 @@ async def _supersede_prior_active_calcs(
                 current_status=old_status,
                 target_status=CalcStatus.SUPERSEDED.value,
                 apply_fn=_apply_supersede,
+                account_id=account_id,
                 event_payload={"new_calc_id": new_calc_id},
                 reason="operator_recalc",
             )
@@ -384,6 +385,7 @@ async def sweep_expired_calcs(
                 current_status=status,
                 target_status=CalcStatus.EXPIRED.value,
                 apply_fn=_apply_expire,
+                account_id=account_id,
                 event_payload={
                     "age_seconds": age_ms // 1000,
                     "ticker": ticker,
@@ -485,6 +487,7 @@ async def cancel_calc_by_operator(
             current_status=current_status,
             target_status=CalcStatus.CANCELLED_BY_OPERATOR.value,
             apply_fn=_apply_cancel,
+            account_id=account_id,
             reason=reason_value,
         )
         return "cancelled"

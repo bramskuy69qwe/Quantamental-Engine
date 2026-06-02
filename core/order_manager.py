@@ -836,6 +836,7 @@ class OrderManager:
                 current_status=CalcStatus.MATCHED.value,
                 target_status=CalcStatus.RELEASED.value,
                 apply_fn=_apply_release,
+                account_id=account_id,
             )
             log.info("Released calc %s on operator cancel of order %s", calc_id, eid)
         except CalcTransitionRaceLost as exc:
@@ -928,6 +929,7 @@ class OrderManager:
                     current_status=current_status,
                     target_status=CalcStatus.COMPLETED_VIA_POSITION.value,
                     apply_fn=_apply_complete,
+                    account_id=account_id,
                     event_payload={"position_id": position_id},
                 )
                 log.info(

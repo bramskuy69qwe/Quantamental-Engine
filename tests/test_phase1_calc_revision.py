@@ -112,7 +112,10 @@ def _drain_events(channel_filter: str | None = None) -> List[tuple]:
     while not event_bus._queue.empty():
         events.append(event_bus._queue.get_nowait())
     if channel_filter:
-        return [(c, p) for c, p in events if c == channel_filter]
+        # P6.T3: calc:* events ride engine:account:{id}:calc:{event}; match by
+        # the calc:{event} suffix ONLY (no flat fallback → a flat-topic
+        # regression FAILS the test, Rule 8). Full topic in test_state_machines.
+        return [(c, p) for c, p in events if c.endswith(":" + channel_filter)]
     return events
 
 

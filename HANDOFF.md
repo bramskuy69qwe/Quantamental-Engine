@@ -68,7 +68,7 @@ Full Phase-5 detail: `docs/design/calc_linkage_implementation_plan.md` §5 + the
   `funding_events` (per-position, signed) — no double-count today, but a future report must NOT sum
   `closed_positions.net_pnl` with an `exchange_history`-derived total.
 
-## NEXT SESSION — Phase 6 (event-bus enrichment + close payload)
+## PHASE 6 IN PROGRESS (event-bus enrichment + close payload)
 
 **Spec**: `docs/design/calc_linkage_spec.md` §9 (event catalog + `position:closed` full payload), §3.4
 (exit_reason enum). **Plan**: `docs/design/calc_linkage_implementation_plan.md` §6 (rows 6.1–6.8).
@@ -76,6 +76,36 @@ Full Phase-5 detail: `docs/design/calc_linkage_implementation_plan.md` §5 + the
 Goal: hierarchical per-account topics (`engine:account:{id}:{domain}:{event}`); the full `position:closed`
 payload (now incl. `funding_fees`/`net_pnl`); sweep all calc:*/position:* emissions; `order:duplicate_detected`;
 the snapshot-wins drift inversion (feature-flagged — the riskiest single change; isolate + monitor).
+
+### Phase-6 progress
+- **✅ P6.T1 — SHIPPED (task 260)**: the per-account topic wrapper — `event_bus.ch_engine(account_id,
+  domain, event)` → `engine:account:{id}:{domain}:{event}` + `EventBus.publish_engine(...)` +
+  `DOMAIN_CALC/POSITION/ORDER` constants. Purely additive; audit clean. Tests `test_phase6_events.py` (6).
+- **✅ P6.T3 — SHIPPED (task 261)**: rescoped the **6 calc-status-transition events** (linked/superseded/
+  expired/cancelled/completed/partially_filled) from FLAT topics to the per-account hierarchical topics via
+  `publish_engine`. `calc_state.transition()` gained a **required kw-only `account_id`**; all 7 callers
+  thread it (handlers ×3, order_enrichment matcher=`aid`, order_manager ×2, link_actions). `TRANSITION_EVENT_MAP`
+  values are now the bare event suffix. **Zero subscriber risk** (no in-process subscriber consumes flat
+  `calc:*`). Audit (5-dim workflow): 7 candidates → 2 confirmed, **both Rule-8 test-coverage gaps + fixed** —
+  (a) the phase1 `_drain` helpers kept a `c == channel` flat fallback so a flat-topic regression passed
+  undetected (dropped → suffix-only); (b) only `linked`/`cancelled` had full-topic+account assertions →
+  added a parametrized `test_state_machines` test covering ALL 6 events × a non-default account (7). Full
+  suite 3001 passed / 7 skip / 1 pre-existing fail / 0 new.
+- **⚠ DEFERRED (P6.T3 scope call) — the 3 NEW-PRODUCER calc:* events** (`calc:created`,
+  `calc:size_deviated`, `calc:order_cancelled`, spec §9). T3 was a *rescope* of the 6 existing transition
+  emissions; these three don't emit at all today and need their own producers/design: `calc:created` =
+  a clean publish_engine in `handle_risk_calculated` (easy, has account_id); `calc:size_deviated` needs a
+  deviation-threshold producer (no seam yet — `PositionInfo.size_delta_pct` exists but no "crossed
+  threshold" event); `calc:order_cancelled` was deliberately deferred at T216 (RELEASED has no event;
+  seam = `_release_calc_on_operator_cancel`, which has order_id + cancel_reason_category). Pick up as a
+  P6.T3-follow-up. NOTE for whoever does it: route through `event_bus.publish_engine(account_id,
+  DOMAIN_CALC, "<event>", payload)` (same wrapper); these are NOT status transitions so they don't go
+  through `calc_state.transition()` / `TRANSITION_EVENT_MAP`.
+- **NEXT in Phase 6**: P6.T2 (`position:closed` full payload — ⚠ `risk:position_closed` HAS a live
+  reconciler subscriber, so expand additively / compat-shim) + P6.T4 (position:* sweep — light up the
+  event_bus topics from the `position_opened`/`partial_close`/`position_amended`/`position_closed`
+  trade-event seams) + P6.T5 (`order:duplicate_detected`) + P6.T6 (snapshot-wins inversion — riskiest,
+  feature-flag it). See `[[project_phase6_event_bus_state]]` memory for the verified seam map.
 
 ### VERIFY-FIRST before scoping Phase 6 — DONE 2026-06-02 (corrects the prior claim; see `[[project_phase6_event_bus_state]]`)
 - ⚠ **CORRECTION**: the prior handoff said `TRANSITION_EVENT_MAP` in **calc_state/link_state** is
