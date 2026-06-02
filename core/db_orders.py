@@ -1452,14 +1452,19 @@ class OrdersMixin:
 
     # ── order_amendments ───────────────────────────────────────────────
 
-    async def insert_order_amendment(self, row: Dict[str, Any]) -> None:
-        """INSERT an immutable amendment audit row.
+    async def insert_order_amendment(self, row: Dict[str, Any]) -> bool:
+        """INSERT an immutable amendment audit row. Returns True on commit.
 
         Phase 4.1 calls this from the WS handler on every detected
         change to ``entry_price`` / ``tp_price`` / ``sl_price`` /
         ``size`` / ``leverage``. No upsert — each amendment event is
         its own row. ``deviation_pct`` is signed:
         ``(new - old) / old * 100``.
+
+        P4.T4: returns ``True`` only when the row committed, so the caller
+        emits the ``position:amended`` event 1:1 with persisted rows (a
+        swallowed insert fault → ``False`` → no event, keeping the spec §4
+        "events = order_amendments row count" parity intact).
         """
         sql = """
             INSERT INTO order_amendments (
@@ -1483,8 +1488,10 @@ class OrdersMixin:
                 "lifecycle_id":  row.get("lifecycle_id"),
             })
             await self._conn.commit()
+            return True
         except Exception:
             log.exception("insert_order_amendment failed")
+            return False
 
     async def get_order_amendments(self, order_id: int) -> List[Dict]:
         """Return all amendments for one order, oldest first."""

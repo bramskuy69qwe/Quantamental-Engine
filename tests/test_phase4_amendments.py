@@ -65,17 +65,42 @@ async def om(db):
     return OrderManager(db)
 
 
+@pytest.fixture(autouse=True)
+def emitted_events(monkeypatch):
+    """Capture ``log_trade_event`` calls for the whole module.
+
+    Two jobs: (1) no test writes into the real per-account DB — the producer
+    resolves ``config.DATA_DIR`` (where account 1 exists live), so an unpatched
+    call would pollute it; (2) P4.T4 tests assert the ``position:amended``
+    emission off the captured list. ``_emit_amendment_event`` lazy-imports
+    ``log_trade_event``, so patching the module attribute binds the fake at
+    call time. Autouse → protects the P4.T1 detect/persist tests too.
+    """
+    captured: list = []
+
+    def _fake(account_id, calc_id, event_type, payload, source, **_kw):
+        captured.append({
+            "account_id": account_id, "calc_id": calc_id,
+            "event_type": event_type, "payload": payload, "source": source,
+        })
+        return 1
+
+    monkeypatch.setattr("core.trade_event_log.log_trade_event", _fake)
+    return captured
+
+
 async def _seed_working_order(
     db, eoid, *, order_type="limit", price=0.0, stop_price=0.0, quantity=0.0,
     status="new", calc_id=None, lifecycle_id=None, symbol="BTCUSDT",
-    side="BUY", account_id=ACCOUNT_ID,
+    side="BUY", account_id=ACCOUNT_ID, terminal_position_id="",
 ) -> int:
     cur = await db._conn.execute(
         "INSERT INTO orders (account_id, exchange_order_id, symbol, side, "
-        " order_type, status, price, stop_price, quantity, calc_id, lifecycle_id) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " order_type, status, price, stop_price, quantity, calc_id, lifecycle_id, "
+        " terminal_position_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (account_id, eoid, symbol, side, order_type, status, price,
-         stop_price, quantity, calc_id, lifecycle_id),
+         stop_price, quantity, calc_id, lifecycle_id, terminal_position_id),
     )
     await db._conn.commit()
     return cur.lastrowid
@@ -352,3 +377,119 @@ class TestWsManagerWiring:
             "ws_manager._apply_algo_update must invoke detect_and_persist_amendment"
         assert src.index(detect_call) < src.index(process_call), \
             "algo amendment detection must run BEFORE process_order_update (pre-gate)"
+
+
+# ── 4. position:amended event emission (P4.T4) ──────────────────────────
+
+
+class TestPositionAmendedEvent:
+    """P4.T4 (spec §9 ``position:amended``): one trade event per persisted
+    ``order_amendments`` row, carrying the exact §9 payload key set. The
+    formal in-process event_bus topic is Phase 6 (plan §6 row 6.4); here the
+    event is the trade-event ledger record (same split as partial_close)."""
+
+    def test_position_amended_is_registered_trade_event_type(self):
+        # log_trade_event raises ValueError on an unknown type; since the
+        # producer swallows emission faults, an unregistered type would drop
+        # EVERY event silently. This guards the registration (Rule 8 intent).
+        from core.trade_event_log import _VALID_TRADE_EVENT_TYPES
+        assert "position_amended" in _VALID_TRADE_EVENT_TYPES
+
+    @pytest.mark.asyncio
+    async def test_amendment_emits_one_event_with_spec_payload(
+        self, db, om, emitted_events
+    ):
+        oid = await _seed_working_order(
+            db, "O-1", order_type="take_profit", stop_price=64000.0,
+            quantity=1.0, calc_id="calc-A", terminal_position_id="pos-9")
+        await om.detect_and_persist_amendment(
+            ACCOUNT_ID, _incoming("O-1", order_type="take_profit",
+                                  stop_price=64500.0, quantity=1.0,
+                                  updated_at_ms=777))
+        evs = [e for e in emitted_events if e["event_type"] == "position_amended"]
+        assert len(evs) == 1
+        e = evs[0]
+        assert e["calc_id"] == "calc-A"          # links the event to the calc
+        assert e["source"] == "order_manager"
+        assert e["payload"] == {
+            "position_id": "pos-9",
+            "order_id":    oid,
+            "field":       "tp_price",           # take_profit → tp_price (§3.2)
+            "old":         pytest.approx(64000.0),
+            "new":         pytest.approx(64500.0),
+            "ts":          777,
+            "operator_id": None,                 # Phase 9
+        }
+
+    @pytest.mark.asyncio
+    async def test_no_amendment_no_event(self, db, om, emitted_events):
+        await _seed_working_order(
+            db, "O-1", order_type="limit", price=50000.0, quantity=1.0)
+        await om.detect_and_persist_amendment(
+            ACCOUNT_ID, _incoming("O-1", price=50000.0, quantity=1.0))  # unchanged
+        assert [e for e in emitted_events
+                if e["event_type"] == "position_amended"] == []
+
+    @pytest.mark.asyncio
+    async def test_two_fields_emit_two_events_one_per_row(
+        self, db, om, emitted_events
+    ):
+        oid = await _seed_working_order(
+            db, "O-1", order_type="limit", price=50000.0, quantity=1.0)
+        await om.detect_and_persist_amendment(
+            ACCOUNT_ID, _incoming("O-1", price=50100.0, quantity=2.0))
+        evs = [e for e in emitted_events if e["event_type"] == "position_amended"]
+        assert sorted(e["payload"]["field"] for e in evs) == ["entry_price", "size"]
+        # parity invariant: exactly one event per persisted amendment row.
+        assert len(evs) == len(await _amendments(db, oid))
+
+    @pytest.mark.asyncio
+    async def test_position_id_empty_for_prefill_entry(
+        self, db, om, emitted_events
+    ):
+        # An entry order amended before any fill has no terminal_position_id.
+        await _seed_working_order(
+            db, "O-1", order_type="limit", price=50000.0, quantity=1.0)
+        await om.detect_and_persist_amendment(
+            ACCOUNT_ID, _incoming("O-1", price=50100.0, quantity=1.0))
+        evs = [e for e in emitted_events if e["event_type"] == "position_amended"]
+        assert evs and all(e["payload"]["position_id"] == "" for e in evs)
+
+    @pytest.mark.asyncio
+    async def test_chained_second_amendment_emits_chained_old(
+        self, db, om, emitted_events
+    ):
+        # The event's old/new must mirror the chained-baseline ledger (P4.T1):
+        # the 2nd event's old is the 1st amendment's new, not the stale row.
+        await _seed_working_order(
+            db, "O-1", order_type="limit", price=50000.0, quantity=1.0)
+        await om.detect_and_persist_amendment(
+            ACCOUNT_ID, _incoming("O-1", price=50100.0, quantity=1.0,
+                                  updated_at_ms=100))
+        await om.detect_and_persist_amendment(
+            ACCOUNT_ID, _incoming("O-1", price=50200.0, quantity=1.0,
+                                  updated_at_ms=200))
+        evs = [e for e in emitted_events
+               if e["event_type"] == "position_amended"
+               and e["payload"]["field"] == "entry_price"]
+        assert [(e["payload"]["old"], e["payload"]["new"]) for e in evs] == [
+            (pytest.approx(50000.0), pytest.approx(50100.0)),
+            (pytest.approx(50100.0), pytest.approx(50200.0)),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_no_event_when_insert_not_committed(
+        self, db, om, emitted_events, monkeypatch
+    ):
+        # 1:1-on-success: a swallowed insert (returns False) yields no event.
+        await _seed_working_order(
+            db, "O-1", order_type="limit", price=50000.0, quantity=1.0)
+
+        async def _fail(_row):
+            return False
+
+        monkeypatch.setattr(db, "insert_order_amendment", _fail)
+        await om.detect_and_persist_amendment(
+            ACCOUNT_ID, _incoming("O-1", price=50100.0, quantity=1.0))
+        assert [e for e in emitted_events
+                if e["event_type"] == "position_amended"] == []

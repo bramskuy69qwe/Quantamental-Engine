@@ -1105,6 +1105,10 @@ class OrderManager:
         ts_ms = int(incoming.get("updated_at_ms") or incoming.get("created_at_ms") or 0)
         calc_id = stored.get("calc_id")
         lifecycle_id = stored.get("lifecycle_id")
+        # P4.T4 (spec §9 position:amended payload): the position this amendment
+        # touches. "" for a pre-fill entry order (no position yet) or a
+        # junction-less path — the order_id still links the event row.
+        position_id = stored.get("terminal_position_id") or ""
 
         for field, col in self._amendment_field_pairs(otype):
             try:
@@ -1115,7 +1119,7 @@ class OrderManager:
                 continue
             # "Meaningfully different" without a math import; guard float noise.
             if old > 0 and new > 0 and abs(new - old) > max(1e-12, abs(old) * 1e-9):
-                await self._db.insert_order_amendment({
+                committed = await self._db.insert_order_amendment({
                     "order_id":      order_id,
                     "calc_id":       calc_id,
                     "field":         field,
@@ -1126,6 +1130,61 @@ class OrderManager:
                     "deviation_pct": (new - old) / old * 100.0 if old else None,
                     "lifecycle_id":  lifecycle_id,
                 })
+                # P4.T4: emit position:amended 1:1 with each persisted row (only
+                # on a confirmed commit — a swallowed insert yields no event).
+                # to_thread: log_trade_event opens its OWN sync sqlite3 conn to
+                # the per-account DB — wrap it so this WS-hot-path coroutine
+                # doesn't block the event loop on the file lock (T212/P3.T2
+                # audit convention for new sync-sqlite-in-async callsites; safe
+                # here — _emit_amendment_event never touches the aiosqlite _conn).
+                if committed:
+                    await asyncio.to_thread(
+                        self._emit_amendment_event,
+                        account_id,
+                        order_id=order_id, calc_id=calc_id,
+                        position_id=position_id, field=field,
+                        old=old, new=new, ts_ms=ts_ms,
+                    )
+
+    def _emit_amendment_event(
+        self, account_id: int, *, order_id: int, calc_id: Optional[str],
+        position_id: str, field: str, old: float, new: float, ts_ms: int,
+    ) -> None:
+        """P4.T4 (spec §9 ``position:amended``): one trade event per persisted
+        ``order_amendments`` row.
+
+        Sibling of :meth:`_emit_fill_events` — trade-event emission lives here
+        (co-located with the persist), NOT in the ``ws_manager`` seam: the
+        per-row ``field``/``old``/``new`` only exist inside
+        :meth:`detect_and_persist_amendment`'s detection loop, and emitting from
+        the seam would duplicate across both ``_apply_order_update`` and
+        ``_apply_algo_update``. Payload is the exact spec §9 key set;
+        ``position_id`` is ``""`` for a pre-fill entry order and ``operator_id``
+        is Phase 9. The formal §9 in-process ``event_bus`` topic is Phase 6
+        (plan §6 row 6.4) — same trade-event-now / event_bus-later split as
+        ``partial_close`` / ``position_opened``. Best-effort: an emission fault
+        never blocks amendment persistence.
+
+        Dispatched via ``asyncio.to_thread`` by the caller (the sync
+        ``log_trade_event`` opens its own sqlite3 conn — T212/P3.T2 hot-path
+        convention). NB the sibling :meth:`_emit_fill_events` predates that
+        convention and is still called sync — same exposure, filed as a
+        separate consistency cleanup, not retrofitted here (Rule 3).
+        """
+        try:
+            from core.trade_event_log import log_trade_event
+
+            log_trade_event(account_id, calc_id, "position_amended", {
+                "position_id": position_id,
+                "order_id":    order_id,
+                "field":       field,
+                "old":         old,
+                "new":         new,
+                "ts":          ts_ms,
+                "operator_id": None,  # Phase 9 (operator session)
+            }, source="order_manager")
+        except Exception:
+            log.debug("position_amended event emission failed", exc_info=True)
 
     def _emit_fill_events(self, account_id: int, fill: Dict[str, Any]) -> None:
         """Emit trade events for fills. Best-effort."""

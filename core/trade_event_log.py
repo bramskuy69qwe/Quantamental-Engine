@@ -33,6 +33,7 @@ TradeEventType = Literal[
     "position_opened",
     "position_closed",
     "partial_close",
+    "position_amended",  # P4.T4 (spec §9 position:amended): one per order_amendments insert
     "tp_modified",
     "sl_modified",
     "liquidated",

@@ -172,10 +172,51 @@ per-task notes are in the sections below + `docs/design/calc_linkage_implementat
   on PositionInfo). **Audit: 1 MED fixed** — thresholds DEFAULT to spec values (config read first)
   so a transient amendments-query failure can't strand `red_pct=0.0` (would paint every linked
   position red); rest verified clean. Tests: `tests/test_phase4_deviation_badge.py` (18); touched-path green.
-- **NEXT after T3**: P4.T4 (`position:amended` event on each amendment row insert — emit from the
-  ws_manager pre-gate seam alongside `detect_and_persist_amendment`); P4.T5 (`tp_drift_pct`/
-  `sl_drift_pct` at close — needs final-amended TP/SL, the same data the deferred AMENDED exit_reason
-  reclassification wants). Then the `_detect_modification_events` dead-path fix (filed).
+- **P4.T4 — SHIPPED (2026-06-02, task 249)**: emit `position:amended` on each persisted
+  `order_amendments` row, as a **trade event** (`log_trade_event` → `"position_amended"`, registered in
+  `TradeEventType`). **Mechanism = trade event, NOT event_bus** — the §9 event_bus topic map
+  (`TRANSITION_EVENT_MAP` in calc_state/link_state) is empty-until-Phase-6 by design, plan §6 row 6.4
+  explicitly schedules the event_bus emission for Phase 6, and the precedent (`partial_close`/
+  `position_opened`, T238) emits trade events now with the event_bus topic deferred. New sync helper
+  `OrderManager._emit_amendment_event` (sibling of `_emit_fill_events`) called from **inside**
+  `detect_and_persist_amendment`'s loop — **NOT** the ws_manager seam the prior HANDOFF suggested: the
+  per-row `field`/`old`/`new` only exist inside the detection loop, it mirrors the `_emit_fill_events`
+  convention (trade-event emission lives in order_manager), and it avoids double-emitting across both
+  `_apply_order_update` + `_apply_algo_update`. `insert_order_amendment` now returns `bool`; the event
+  fires **1:1 on a confirmed commit** (swallowed insert → no event → "events = row count" parity holds).
+  Payload = exact §9 keys (`position_id`/`order_id`/`field`/`old`/`new`/`ts`/`operator_id`);
+  `position_id` from the stored order's `terminal_position_id` (`""` for a pre-fill entry order),
+  `operator_id` None (Phase 9). **Completeness sweep**: `position_amended` added to both `TradeEventType`
+  mirror dropdowns (`templates/fragments/history/trade_events_table.html`, `templates/admin/trade_events.html`)
+  — exhaustive lists, leaving them stale is silent enumerated-mirror drift. **Independent audit (6 agents):
+  1 HIGH confirmed + fixed** — the sync `log_trade_event` (its own sqlite3 conn) on the WS hot path is now
+  dispatched via `asyncio.to_thread` (T212/P3.T2 convention for new sync-sqlite-in-async; **safe** — verified
+  `_emit_amendment_event` never touches the aiosqlite `_conn`). This **reverses** my initial sync-mirror-of-
+  `_emit_fill_events` decision: the more-recent audit-established convention (Rule 6) is to_thread; the
+  sibling `_emit_fill_events` predates it (same exposure → **filed**, not retrofitted, Rule 3). Tests:
+  `tests/test_phase4_amendments.py` 31 (was 24; +7 `TestPositionAmendedEvent`) + an autouse `log_trade_event`
+  capture fixture that shields ALL tests (incl. the 24 P4.T1 ones) from live-DB writes — verified **0** live
+  `position_amended` rows after the full 2921-test suite. Full suite: 2921 passed, 7 skipped, 1 pre-existing
+  failure (TestRollingWindowPeak), 0 new failures.
+- **NEXT after T4**: P4.T5 (`tp_drift_pct`/`sl_drift_pct` at close — needs final-amended TP/SL, the same
+  data the deferred AMENDED exit_reason reclassification wants). Then the `_detect_modification_events`
+  dead-path fix (filed). Phase 4 is then complete (T1–T5).
+- **⚠ FILED (P4.T4 audit) — `_emit_fill_events` sync-sqlite-in-async consistency cleanup.** The sibling
+  trade-event emitter `_emit_fill_events` (called sync from `process_fill`, hot fill path) has the SAME
+  blocking exposure P4.T4's audit flagged on `_emit_amendment_event` (sync `log_trade_event` → its own
+  sqlite3 conn, no `asyncio.to_thread`). It predates the T212/P3.T2 to_thread convention and was left
+  un-retrofitted (Rule 3 — P4.T4 stayed surgical). Wrap it (and grep for any other un-retrofitted
+  sync-`log_trade_event`-in-async callsites) in its own cleanup task. Safe pattern: it must not touch the
+  aiosqlite `_conn` (it doesn't — `log_trade_event` opens a separate sqlite3 conn).
+- **⚠ FILED (observed during P4.T4) — trade-event test pollution of the LIVE per-account DB.** Running
+  `test_order_manager` / `test_om5_tpsl_matching` (and any process_fill/close-row test with `account_id=1`,
+  which EXISTS live) writes real `position_closed`/`order_filled` rows into
+  `data/per_account/quantower__binancefutures__binance.db` via the un-isolated `_emit_fill_events` /
+  close-row `log_trade_event` calls (they resolve `config.DATA_DIR`, not a temp dir, and don't monkeypatch
+  it the way `test_trade_event_producers` does). PRE-EXISTING (P4.T4 did NOT introduce it — its own emit is
+  fully isolated by an autouse capture fixture, verified 0 live `position_amended`). Fix: a session-scoped
+  conftest autouse that points `config.DATA_DIR` at a tmp dir for the suite, OR per-file capture fixtures.
+  Not touched here (live-DB rows are operator-owned; the cleanup is its own task).
 - **P4.T3** — live deviation badge logic + frontend (yellow/red thresholds from
   `config_json`; spec §3.2 most-contributing-calc basis). **Consumes T2.12's
   `PositionInfo.size_delta_pct`** (already stored; the badge threshold logic is the
