@@ -153,7 +153,8 @@ class TestRowsOnlyRefresh:
         """Empty state is a colspan row, not a separate div."""
         content = open("templates/fragments/dashboard_positions_rows.html", encoding="utf-8").read()
         assert 'pos-empty-row' in content
-        assert 'colspan="14"' in content
+        # 15 cols since P5.T7 added the Funding column (was 14).
+        assert 'colspan="15"' in content
 
     def test_shell_has_count_spans(self):
         """Tab buttons have ID'd spans for count updates."""

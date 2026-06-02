@@ -1881,6 +1881,18 @@ class OrderManager:
                     "refresh)", exc_info=True,
                 )
 
+        # P5.T7: live unrealized funding per open position — ONE grouped SUM
+        # keyed by terminal_position_id (independent of the junction; funding
+        # attributes by tpid, so this covers UNPLANNED / no-calc positions too).
+        # Best-effort: a read fault leaves the preserved value untouched.
+        funding_by_pos: Dict[str, float] = {}
+        _open_tpids = [p.position_id for p in positions if p.position_id]
+        if _open_tpids:
+            try:
+                funding_by_pos = await self._db.sum_funding_by_positions(_open_tpids)
+            except Exception:
+                log.debug("live funding sum failed", exc_info=True)
+
         # Authoritative: the three fields mirror the junction on each refresh.
         # A position with no junction row is CLEARED — UNPLANNED, a
         # pre-first-fill position, or a same-(symbol,direction) reopen that
@@ -1888,6 +1900,8 @@ class OrderManager:
         # R2). Self-heals once the new position's first opening fill writes
         # its junction.
         for pos in positions:
+            # P5.T7: live unrealized funding (0.0 for empty-tpid / no-funding).
+            pos.individual_funding_fees = funding_by_pos.get(pos.position_id, 0.0)
             if not pos.position_id:
                 continue  # binance one-way / pre-snapshot — no junction key
             calcs = per_pos.get(pos.position_id)

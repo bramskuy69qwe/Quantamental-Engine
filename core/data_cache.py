@@ -76,6 +76,10 @@ _PRESERVE_FIELDS = (
     "contributing_calc_ids", "size_delta_pct",
     # P4.T3: live deviation badge inputs/level — same refresh+preserve treatment.
     "amendment_count", "deviation_badge",
+    # P5.T7: live unrealized funding (Σ funding_events for the open position),
+    # re-derived each refresh by _enrich_positions_calc_id; preserved between
+    # so a snapshot rebuild doesn't flicker it to 0.
+    "individual_funding_fees",
 )
 
 # How long (ms) a WS/Platform update protects state from being overwritten by REST

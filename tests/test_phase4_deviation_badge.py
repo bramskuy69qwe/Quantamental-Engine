@@ -286,9 +286,13 @@ class TestBadgeTemplates:
             ticker="BTCUSDT", direction="LONG", entry_timestamp="x",
             average=50000, fair_price=51000, contract_amount=1.0,
             position_value_usdt=50000, individual_unrealized=100,
-            individual_fees=1.0, session_mfe=10, session_mae=-5,
+            individual_fees=1.0, individual_funding_fees=-0.5,
+            session_mfe=10, session_mae=-5,
             individual_tp_price=55000, individual_sl_price=48000,
             deviation_badge="yellow", size_delta_pct=-7.5, amendment_count=2)
         out = tmpl.render(open_positions=[pos])
         assert "badge-yellow" in out and "amended" in out
         assert "BTCUSDT" in out
+        # P5.T7: funding cell rendered + folded into net (100 - 1.0 + -0.5 = 98.5)
+        assert "-0.5000" in out
+        assert "98.50" in out

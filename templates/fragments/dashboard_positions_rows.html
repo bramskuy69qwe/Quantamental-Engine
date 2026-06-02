@@ -1,6 +1,6 @@
 {% from "primitives/deviation_badge.html" import deviation_badge %}
 {% for p in open_positions %}
-{% set net = p.individual_unrealized - p.individual_fees %}
+{% set net = p.individual_unrealized - p.individual_fees + p.individual_funding_fees %}
 <tr id="pos-row-{{ p.ticker }}-{{ p.direction }}">
   <td style="color:var(--blue);font-weight:700;">{{ p.ticker }} {{ deviation_badge(p.deviation_badge, p.size_delta_pct, p.amendment_count) }}</td>
   <td class="{{ 'pos-long' if p.direction=='LONG' else 'pos-short' }}">{{ p.direction }}</td>
@@ -13,6 +13,7 @@
     {{ fmt(p.individual_unrealized, 2) }}
   </td>
   <td style="color:var(--sub);">{{ fmt(p.individual_fees, 4) }}</td>
+  <td style="color:{{ 'var(--green)' if p.individual_funding_fees >= 0 else 'var(--red)' }};">{{ fmt(p.individual_funding_fees, 4) }}</td>
   <td style="color:{{ 'var(--green)' if net >= 0 else 'var(--red)' }};font-weight:700;">
     {{ fmt(net, 2) }}
   </td>
@@ -22,5 +23,5 @@
   <td style="color:var(--red);">{{ fmt(p.individual_sl_price, 4) if p.individual_sl_price else '—' }}</td>
 </tr>
 {% else %}
-<tr id="pos-empty-row"><td colspan="14" style="text-align:center;padding:24px 0;color:var(--muted);font-size:.78rem;">No open positions.</td></tr>
+<tr id="pos-empty-row"><td colspan="15" style="text-align:center;padding:24px 0;color:var(--muted);font-size:.78rem;">No open positions.</td></tr>
 {% endfor %}

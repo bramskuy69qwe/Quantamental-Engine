@@ -480,3 +480,92 @@ class TestFundingAtClose:
         from core.db_orders import _CLOSED_POS_DELTA_COLS
         assert "funding_fees" not in _CLOSED_POS_DELTA_COLS
         assert "net_pnl" not in _CLOSED_POS_DELTA_COLS
+
+
+# ── 6. P5.T7: live unrealized-funding view ───────────────────────────────────
+
+import jinja2  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+
+_REPO = os.path.dirname(os.path.dirname(__file__))
+
+
+class TestSumFundingByPositions:
+    @pytest.mark.asyncio
+    async def test_groups_by_position(self, db):
+        await _seed_funding_cp(db, "P1", -0.05, 1000, "e1")
+        await _seed_funding_cp(db, "P1", -0.04, 2000, "e2")
+        await _seed_funding_cp(db, "P2", 0.02, 1500, "e3")
+        out = await db.sum_funding_by_positions(["P1", "P2", "P3"])
+        assert out["P1"] == pytest.approx(-0.09)
+        assert out["P2"] == pytest.approx(0.02)
+        assert "P3" not in out          # no funding → absent (caller defaults 0)
+
+    @pytest.mark.asyncio
+    async def test_empty_input_returns_empty(self, db):
+        assert await db.sum_funding_by_positions([]) == {}
+
+
+class TestLiveFundingEnrichment:
+    @pytest.mark.asyncio
+    async def test_funded_position_stamped(self, db, om):
+        await _seed_funding_cp(db, "POS-1", -0.05, 1000, "e1")
+        await _seed_funding_cp(db, "POS-1", -0.03, 2000, "e2")
+        positions = [PositionInfo(position_id="POS-1", ticker="BTCUSDT")]
+        await om._enrich_positions_calc_id(ACCOUNT_ID, positions)
+        assert positions[0].individual_funding_fees == pytest.approx(-0.08)
+
+    @pytest.mark.asyncio
+    async def test_position_without_funding_zero(self, db, om):
+        positions = [PositionInfo(position_id="POS-9", ticker="ETHUSDT")]
+        await om._enrich_positions_calc_id(ACCOUNT_ID, positions)
+        assert positions[0].individual_funding_fees == pytest.approx(0.0)
+
+    @pytest.mark.asyncio
+    async def test_empty_tpid_zero_funded_neighbor_summed(self, db, om):
+        # binance one-way empty-tpid stays 0 (not attributable); a funded
+        # tpid'd neighbor in the same refresh still gets its SUM.
+        await _seed_funding_cp(db, "POS-1", -0.05, 1000, "e1")
+        positions = [
+            PositionInfo(position_id="", ticker="XRPUSDT"),
+            PositionInfo(position_id="POS-1", ticker="BTCUSDT"),
+        ]
+        await om._enrich_positions_calc_id(ACCOUNT_ID, positions)
+        assert positions[0].individual_funding_fees == pytest.approx(0.0)
+        assert positions[1].individual_funding_fees == pytest.approx(-0.05)
+
+
+class TestFundingUiSurfacing:
+    def test_in_preserve_fields(self):
+        from core.data_cache import _PRESERVE_FIELDS
+        assert "individual_funding_fees" in _PRESERVE_FIELDS
+
+    def _env(self):
+        env = jinja2.Environment(
+            loader=jinja2.FileSystemLoader(os.path.join(_REPO, "templates")))
+        env.globals["fmt"] = lambda v, n=2: f"{float(v):.{n}f}"
+        env.globals["hold_time"] = lambda ts: "1h"
+        return env
+
+    def test_rows_fragment_renders_funding_and_net(self):
+        env = self._env()
+        tmpl = env.get_template("fragments/dashboard_positions_rows.html")
+        pos = SimpleNamespace(
+            ticker="BTCUSDT", direction="LONG", entry_timestamp="x",
+            average=50000, fair_price=51000, contract_amount=1.0,
+            position_value_usdt=50000, individual_unrealized=100.0,
+            individual_fees=1.0, individual_funding_fees=-0.5,
+            session_mfe=10, session_mae=-5,
+            individual_tp_price=55000, individual_sl_price=48000,
+            deviation_badge="green", size_delta_pct=0.0, amendment_count=0)
+        out = tmpl.render(open_positions=[pos])
+        assert "-0.5000" in out                 # funding cell
+        assert "98.50" in out                    # net = 100 - 1.0 + (-0.5)
+
+    def test_other_open_position_templates_compile(self):
+        # Compile (parse) the other two open-position templates touched by P5.T7
+        # so a Jinja-syntax error in the added Funding column/cell is caught
+        # (CLAUDE.md: source-grep is insufficient; compile-render catches it).
+        env = self._env()
+        env.get_template("fragments/dashboard_body.html")
+        env.get_template("fragments/history/open_positions.html")

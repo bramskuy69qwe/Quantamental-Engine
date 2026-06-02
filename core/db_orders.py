@@ -1664,6 +1664,28 @@ class OrdersMixin:
             row = await cur.fetchone()
         return float(row[0]) if row and row[0] is not None else 0.0
 
+    async def sum_funding_by_positions(
+        self, position_ids: List[str],
+    ) -> Dict[str, float]:
+        """Return ``{position_id: SUM(amount)}`` for the given positions.
+
+        P5.T7: ONE grouped query for the live open-positions enrichment — keeps
+        the funding fan-out off the refresh hot path (vs a per-position
+        ``sum_position_funding`` call; the P4.T3 ``count_amendments_by_calcs``
+        pattern). ``position_ids`` are TEXT ``terminal_position_id``s. Positions
+        with no funding are simply absent from the dict (caller defaults 0.0).
+        """
+        if not position_ids:
+            return {}
+        placeholders = ",".join("?" * len(position_ids))
+        async with self._conn.execute(
+            f"SELECT position_id, COALESCE(SUM(amount), 0) "
+            f"FROM funding_events WHERE position_id IN ({placeholders}) "
+            f"GROUP BY position_id",
+            tuple(position_ids),
+        ) as cur:
+            return {r[0]: float(r[1]) for r in await cur.fetchall()}
+
     # ── calc_match_audit ───────────────────────────────────────────────
 
     async def insert_calc_match_audit_batch(
