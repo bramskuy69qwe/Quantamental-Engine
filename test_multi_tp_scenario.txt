@@ -1,0 +1,46 @@
+MULTI-TP SCENARIO ANALYSIS:
+
+Position: LONG 1.0 BTC, enters at 50000
+Primary calc: "C1" (has 1.0 qty)
+Planned TP levels (from pre_trade_log calc "C1"):
+  - TP1: 55000 (0.5 BTC)
+  - TP2: 56000 (0.3 BTC)
+  - TP3: 57000 (0.2 BTC)
+
+On the junction (positions_calcs):
+  Row for (pos, calc_id="C1", order_id=TP1_ORDER) has planned_tp=55000
+  (OR: the junction has a single row with tp_levels JSON, but this is only advisory)
+
+Two TP orders created under calc_id="C1":
+  Order 1 (TP1): tp_price = 55000
+  Order 2 (TP2): tp_price = 56000
+
+Amendments (order_amendments):
+  Amendment 1: order_id=Order1, calc_id="C1", field="tp_price", old=55000, new=55500, ts=1500
+  Amendment 2: order_id=Order2, calc_id="C1", field="tp_price", old=56000, new=56200, ts=1600
+
+get_calc_amendments("C1") returns both amendments in ts order:
+  [Amendment 1, Amendment 2]
+
+last_amend dict building:
+  After Amend1: last_amend["tp_price"] = 55500
+  After Amend2: last_amend["tp_price"] = 56200  <- OVERWRITES the first TP amendment
+
+final_tp = 56200 (the LAST amended TP across the primary calc)
+
+But which TP is this?
+- It's from TP2 Order
+- TP1 (0.5 BTC) was not amended to 56200
+- The drift calculation then computes: (56200 - planned_tp) / planned_tp
+
+ISSUE: Which planned_tp do we use?
+- The junction row for calc_id="C1" may have only ONE planned_tp value
+- But there are multiple TP levels
+- The code uses the single junction planned_tp (either snapshotted at contribution time or the latest)
+
+This is indeed a POTENTIAL issue for multi-TP scenarios:
+- final_tp = 56200 (last-wins across ALL tp_price amendments)
+- planned_tp = the single junction value (e.g., 55000, the first TP)
+- Drift = (56200 - 55000) / 55000 = +2% 
+
+But 56200 is TP2's amended value, being compared against TP1's planned value!
