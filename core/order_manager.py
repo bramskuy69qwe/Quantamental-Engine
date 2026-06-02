@@ -2178,16 +2178,20 @@ class OrderManager:
             # rows. Partial rows and the junctionless / binance empty-tpid path
             # carry 0.0. The SUM is computed ONCE here and never recomputed.
             #
-            # KNOWN GAP (audit, filed — "deferred funding at close"): funding
-            # settles ~3x/day but the attribution poll runs every ~5min, so a
-            # position closing in the window AFTER a settlement but BEFORE the
-            # poll lands that funding_events row will under-count here (the row
-            # arrives later, keyed to this now-closed tpid, but is never folded
-            # in). Bounded (only a last-settlement-near-close; funding_events is
-            # preserved) but it means plan §5's "reconcile within $0.01 of venue"
-            # is NOT yet met. Fix = a deferred-funding reconcile (on funding
-            # arrival for an already-closed tpid, recompute that row's
-            # funding_fees/net_pnl) — its own follow-up task.
+            # DEFERRED-FUNDING (P6 reconcile — was a filed P5 gap, now CLOSED):
+            # funding settles ~3x/day but the attribution poll runs every ~5min,
+            # so funding that settles while this position is OPEN but is first
+            # polled only AFTER it closed under-counts this one-shot SUM.
+            # CORRECTED MECHANISM (the earlier "filed" note said the late row is
+            # written-but-un-summed): the live attribution map is built from OPEN
+            # positions, so a closed position's late funding actually ORPHANED
+            # (never written) — not written-then-missed. The fix lives on the
+            # funding side: handle_funding_incomes now falls back to a closed-
+            # lifecycle window lookup (find_closed_position_for_funding) and
+            # reconcile_closed_position_funding recomputes THIS row's
+            # funding_fees/net_pnl from the now-written funding_events SUM. This
+            # one-shot SUM stays the fast path for the common (caught-while-open)
+            # case; the reconcile only touches rows that get late funding.
             #
             # OVERFILL edge (audit, documented): if closing fills on this tpid
             # exceed open qty across DISTINCT closing orders at distinct ts, each
@@ -2363,15 +2367,26 @@ class OrderManager:
             # disappearance is the authoritative close signal. Idempotent
             # (status-guarded in _complete_calcs_on_close).
             #
-            # P5 known-gap (same WS-gap class): closed_positions.funding_fees
-            # rides on is_final in a BUILT close row, so a recorded-but-never-
-            # final position likewise misses its funding rollup here. The
-            # funding_events rows are PRESERVED (not lost) — but NO shipped path
-            # recomputes closed_positions.funding_fees from them (the reconciler
-            # UPDATEs only mfe/mae; rebuild uses rebuilt:/bf: tpids). So recovery
-            # needs a FUTURE deferred-funding reconcile (filed — see the close
-            # funding block above). Not repaired in this delicate backstop.
             await self._complete_position_calcs(account_id, prev.position_id)
+
+            # P6 deferred-funding reconcile (was a filed P5 gap): funding rides
+            # on is_final in a BUILT close row, so a recorded-but-never-final
+            # position (WS-gap: Σclose < Σopen, is_final never fires) leaves the
+            # final row's funding_fees stamped 0 despite preserved funding_events
+            # rows. Disappearance is the authoritative close → recompute
+            # funding_fees/net_pnl from the SUM on the position's final close row.
+            # Idempotent (recompute from SUM → identical when already-final
+            # stamped it); no-op for empty-tpid / no-funding. Best-effort: a
+            # reconcile fault must not break the disappearance backstop.
+            try:
+                await self._db.reconcile_closed_position_funding(
+                    account_id, prev.position_id,
+                )
+            except Exception:
+                log.debug(
+                    "deferred-funding reconcile (backstop) failed for %s",
+                    prev.position_id, exc_info=True,
+                )
         except Exception:
             log.exception(
                 "build_final_close_row failed for %s %s",

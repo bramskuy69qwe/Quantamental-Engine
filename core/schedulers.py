@@ -780,7 +780,7 @@ async def _funding_refresh_loop(interval_s: int = 300):
                     last_seen_ms,
                     max(int(i.get("time", 0) or 0) for i in incomes),
                 )
-                if result["written"] or result["orphan"]:
+                if result["written"] or result["orphan"] or result.get("reconciled"):
                     log.info("Funding poll: %s", result)
         except Exception as e:
             log.warning("Funding refresh loop error: %s", e)

@@ -246,7 +246,7 @@ class TestHandleFundingIncomes:
             incomes=[_income("BTCUSDT", -0.05, 1000)],
             positions=positions, db=db, primary_calc_resolver=_resolver_ab,
         )
-        assert res == {"written": 1, "deduped": 0, "orphan": 0}
+        assert res == {"written": 1, "deduped": 0, "orphan": 0, "reconciled": 0}
         rows = await db.get_position_funding_events("pos-1")
         assert len(rows) == 1
         r = rows[0]
@@ -271,7 +271,7 @@ class TestHandleFundingIncomes:
             account_id=1, incomes=incomes, positions=positions, db=db,
             primary_calc_resolver=_resolver_ab,
         )
-        assert second == {"written": 0, "deduped": 2, "orphan": 0}
+        assert second == {"written": 0, "deduped": 2, "orphan": 0, "reconciled": 0}
         assert await db.sum_position_funding("pos-1") == pytest.approx(-0.09)
 
     @pytest.mark.asyncio
@@ -282,7 +282,7 @@ class TestHandleFundingIncomes:
             positions=[PositionInfo(position_id="pos-1", ticker="BTCUSDT")],
             db=db, primary_calc_resolver=_resolver_ab,
         )
-        assert res == {"written": 0, "deduped": 0, "orphan": 1}
+        assert res == {"written": 0, "deduped": 0, "orphan": 1, "reconciled": 0}
         assert await db.sum_position_funding("pos-1") == 0.0
 
     @pytest.mark.asyncio
@@ -699,3 +699,314 @@ class TestFundingUiSurfacing:
         env = self._env()
         env.get_template("fragments/dashboard_body.html")
         env.get_template("fragments/history/open_positions.html")
+
+
+# ── 7. P6 deferred-funding reconcile (was a filed P5 gap) ─────────────────────
+#
+# CORRECTED MECHANISM (re-investigation): the filed gap said the late funding
+# row is "written but never folded into closed_positions". It is NOT — the live
+# attribution map is built from OPEN positions only, so a closed position's
+# late funding ORPHANED (never written). The fix is two-part: late attribution
+# to the closed lifecycle whose [entry, exit] window contains the settlement ts
+# (find_closed_position_for_funding), then recompute funding_fees/net_pnl on
+# that row (reconcile_closed_position_funding). Both halves are exercised below.
+
+
+async def _insert_closed_cp(
+    db, tpid, *, symbol="BTCUSDT", entry=1000, exit_=2000,
+    realized=100.0, fees=2.0, funding=0.0, calc_id="C-sealed",
+    lifecycle="lc-sealed", direction="LONG",
+):
+    """Seed a closed_positions row directly (for the lookup/reconcile units)."""
+    await db.insert_closed_position({
+        "account_id": ACCOUNT_ID, "terminal_position_id": tpid, "symbol": symbol,
+        "direction": direction, "quantity": 1.0, "entry_price": 50000.0,
+        "exit_price": 51000.0, "entry_time_ms": entry, "exit_time_ms": exit_,
+        "realized_pnl": realized, "total_fees": fees,
+        "net_pnl": realized - fees + funding, "funding_fees": funding,
+        "exit_reason": "TP_PLANNED", "calc_id": calc_id, "lifecycle_id": lifecycle,
+    })
+
+
+class TestFindClosedPositionForFunding:
+    @pytest.mark.asyncio
+    async def test_window_match_returns_sealed_calc_lifecycle(self, db):
+        # A settlement ts INSIDE a closed lifecycle's [entry, exit] window
+        # attributes to that closed tpid; calc_id/lifecycle come from the sealed
+        # row (== junction primary at close, T2.6).
+        await _insert_closed_cp(db, "POS-OLD", entry=1000, exit_=2000,
+                                calc_id="C-sealed", lifecycle="lc-sealed")
+        hit = await db.find_closed_position_for_funding(ACCOUNT_ID, "BTCUSDT", 1500)
+        assert hit == {"position_id": "POS-OLD",
+                       "calc_id": "C-sealed", "lifecycle_id": "lc-sealed"}
+
+    @pytest.mark.asyncio
+    async def test_ts_outside_window_no_match(self, db):
+        # A settlement after the close (the position can't have been open at
+        # settlement) — and one before the open — must NOT match. This is the
+        # self-bounding property: only RECENTLY-closed positions can match.
+        await _insert_closed_cp(db, "POS-OLD", entry=1000, exit_=2000)
+        assert await db.find_closed_position_for_funding(ACCOUNT_ID, "BTCUSDT", 2500) is None
+        assert await db.find_closed_position_for_funding(ACCOUNT_ID, "BTCUSDT", 500) is None
+
+    @pytest.mark.asyncio
+    async def test_empty_tpid_excluded(self, db):
+        # binance one-way empty-tpid closed rows can't be keyed → excluded so
+        # their funding stays an orphan (matches the open-path empty-tpid skip).
+        await _insert_closed_cp(db, "", symbol="DOGEUSDT", entry=1000, exit_=2000)
+        assert await db.find_closed_position_for_funding(ACCOUNT_ID, "DOGEUSDT", 1500) is None
+
+    @pytest.mark.asyncio
+    async def test_multi_partial_picks_final_row(self, db):
+        # Multi-TP: per-partial rows share one tpid; MAX(exit_time_ms) resolves
+        # to the final/primary-sealed row (whichever calc/lifecycle it sealed).
+        await _insert_closed_cp(db, "POS-M", entry=1000, exit_=2000,
+                                calc_id="C-partial", lifecycle="lc-partial")
+        await _insert_closed_cp(db, "POS-M", entry=1000, exit_=3000,
+                                calc_id="C-final", lifecycle="lc-final")
+        hit = await db.find_closed_position_for_funding(ACCOUNT_ID, "BTCUSDT", 1500)
+        assert hit["position_id"] == "POS-M"
+        assert hit["calc_id"] == "C-final"        # the MAX-exit (final) row
+        assert hit["lifecycle_id"] == "lc-final"
+
+    @pytest.mark.asyncio
+    async def test_account_scoped(self, db):
+        # Another account's closed position must not leak into the lookup.
+        await db.insert_closed_position({
+            "account_id": 999, "terminal_position_id": "POS-OTHER",
+            "symbol": "BTCUSDT", "direction": "LONG", "quantity": 1.0,
+            "entry_price": 50000.0, "exit_price": 51000.0,
+            "entry_time_ms": 1000, "exit_time_ms": 2000, "realized_pnl": 1.0,
+            "total_fees": 0.0, "net_pnl": 1.0, "funding_fees": 0.0,
+            "exit_reason": "TP_PLANNED", "calc_id": "x", "lifecycle_id": "y",
+        })
+        assert await db.find_closed_position_for_funding(ACCOUNT_ID, "BTCUSDT", 1500) is None
+
+
+class TestReconcileClosedPositionFunding:
+    @pytest.mark.asyncio
+    async def test_recomputes_funding_and_net(self, db):
+        await _insert_closed_cp(db, "POS-1", realized=100.0, fees=2.0, funding=0.0)
+        await _seed_funding_cp(db, "POS-1", -0.05, 1200, "fe-1")
+        await _seed_funding_cp(db, "POS-1", -0.04, 1400, "fe-2")
+        assert await db.reconcile_closed_position_funding(ACCOUNT_ID, "POS-1") is True
+        row = await _closed_row_cp(db, "POS-1", 2000)
+        assert row["funding_fees"] == pytest.approx(-0.09)
+        # net = realized(100) - fees(2) + funding(-0.09) — the close-builder
+        # convention recomputed from the row's stored realized/fees.
+        assert row["net_pnl"] == pytest.approx(97.91)
+
+    @pytest.mark.asyncio
+    async def test_idempotent_noop_when_unchanged(self, db):
+        await _insert_closed_cp(db, "POS-1", realized=100.0, fees=2.0)
+        await _seed_funding_cp(db, "POS-1", -0.05, 1200, "fe-1")
+        # First reconcile changes the row (0 → -0.05) → True.
+        assert await db.reconcile_closed_position_funding(ACCOUNT_ID, "POS-1") is True
+        # Re-run with no new funding → already correct → NO-OP, returns False
+        # (the self-heal retries / per-close backstop calls must not churn).
+        assert await db.reconcile_closed_position_funding(ACCOUNT_ID, "POS-1") is False
+        row = await _closed_row_cp(db, "POS-1", 2000)
+        assert row["funding_fees"] == pytest.approx(-0.05)
+        assert row["net_pnl"] == pytest.approx(97.95)   # 100 - 2 - 0.05
+
+    @pytest.mark.asyncio
+    async def test_picks_up_new_funding_after_first_reconcile(self, db):
+        # A SECOND late settlement arriving after the first reconcile must be
+        # folded in (returns True; not skipped as "unchanged").
+        await _insert_closed_cp(db, "POS-1", realized=100.0, fees=2.0)
+        await _seed_funding_cp(db, "POS-1", -0.05, 1200, "fe-1")
+        assert await db.reconcile_closed_position_funding(ACCOUNT_ID, "POS-1") is True
+        await _seed_funding_cp(db, "POS-1", -0.03, 1400, "fe-2")
+        assert await db.reconcile_closed_position_funding(ACCOUNT_ID, "POS-1") is True
+        row = await _closed_row_cp(db, "POS-1", 2000)
+        assert row["funding_fees"] == pytest.approx(-0.08)
+        assert row["net_pnl"] == pytest.approx(97.92)   # 100 - 2 - 0.08
+
+    @pytest.mark.asyncio
+    async def test_no_row_returns_false(self, db):
+        assert await db.reconcile_closed_position_funding(ACCOUNT_ID, "NOPE") is False
+
+    @pytest.mark.asyncio
+    async def test_empty_tpid_returns_false(self, db):
+        # Empty position_id (binance one-way) can't key a SUM → no-op False even
+        # if empty-tpid funding_events somehow existed.
+        assert await db.reconcile_closed_position_funding(ACCOUNT_ID, "") is False
+
+    @pytest.mark.asyncio
+    async def test_targets_final_row_only(self, db):
+        # Multi-TP: reconcile must touch ONLY the final (MAX exit_time) row so
+        # the across-rows funding sum still counts funding exactly once (the
+        # per-partial row stays 0, as the is_final stamp left it).
+        await _insert_closed_cp(db, "POS-T", exit_=2000, realized=40.0, fees=0.3, funding=0.0)
+        await _insert_closed_cp(db, "POS-T", exit_=3000, realized=50.0, fees=1.0, funding=0.0)
+        await _seed_funding_cp(db, "POS-T", -0.06, 1500, "fe-1")
+        assert await db.reconcile_closed_position_funding(ACCOUNT_ID, "POS-T") is True
+        partial = await _closed_row_cp(db, "POS-T", 2000)
+        final = await _closed_row_cp(db, "POS-T", 3000)
+        assert partial["funding_fees"] == pytest.approx(0.0)      # untouched
+        assert final["funding_fees"] == pytest.approx(-0.06)      # full SUM
+        assert final["net_pnl"] == pytest.approx(50.0 - 1.0 - 0.06)
+        # Summed across rows, funding counted exactly once.
+        assert (partial["funding_fees"] + final["funding_fees"]) == pytest.approx(-0.06)
+
+
+class TestDeferredFundingLateAttribution:
+    @pytest.mark.asyncio
+    async def test_late_funding_attributes_and_reconciles(self, db):
+        # The headline fix: funding for a CLOSED position (no open position in
+        # the cache) is attributed to the closed lifecycle by window and the
+        # closed row's funding rollup is reconciled — NOT orphaned.
+        await _insert_closed_cp(db, "POS-C", entry=1000, exit_=2000,
+                                realized=100.0, fees=2.0, funding=0.0,
+                                calc_id="C-sealed", lifecycle="lc-sealed")
+        res = await handle_funding_incomes(
+            account_id=ACCOUNT_ID, incomes=[_income("BTCUSDT", -0.05, 1500)],
+            positions=[], db=db, primary_calc_resolver=_resolver_ab,
+        )
+        assert res == {"written": 1, "deduped": 0, "orphan": 0, "reconciled": 1}
+        # funding_events row keyed to the closed tpid, sealed calc/lifecycle.
+        rows = await db.get_position_funding_events("POS-C")
+        assert len(rows) == 1
+        assert rows[0]["calc_id"] == "C-sealed"
+        assert rows[0]["lifecycle_id"] == "lc-sealed"
+        # closed row reconciled.
+        row = await _closed_row_cp(db, "POS-C", 2000)
+        assert row["funding_fees"] == pytest.approx(-0.05)
+        assert row["net_pnl"] == pytest.approx(97.95)   # 100 - 2 - 0.05
+
+    @pytest.mark.asyncio
+    async def test_no_open_no_closed_still_orphans(self, db):
+        # A symbol with neither an open position nor a containing closed window
+        # is a TRUE orphan (e.g. funding for a never-traded symbol).
+        await _insert_closed_cp(db, "POS-C", symbol="BTCUSDT", entry=1000, exit_=2000)
+        res = await handle_funding_incomes(
+            account_id=ACCOUNT_ID, incomes=[_income("XRPUSDT", -0.01, 1500)],
+            positions=[], db=db, primary_calc_resolver=_resolver_ab,
+        )
+        assert res == {"written": 0, "deduped": 0, "orphan": 1, "reconciled": 0}
+
+    @pytest.mark.asyncio
+    async def test_empty_tpid_closed_orphans(self, db):
+        # A closed row with empty tpid can't be keyed → the late funding stays
+        # an orphan (not attributed to the empty key).
+        await _insert_closed_cp(db, "", symbol="DOGEUSDT", entry=1000, exit_=2000)
+        res = await handle_funding_incomes(
+            account_id=ACCOUNT_ID, incomes=[_income("DOGEUSDT", -0.02, 1500)],
+            positions=[], db=db, primary_calc_resolver=_resolver_ab,
+        )
+        assert res["orphan"] == 1 and res["written"] == 0 and res["reconciled"] == 0
+        async with db._conn.execute("SELECT COUNT(*) FROM funding_events") as cur:
+            assert (await cur.fetchone())[0] == 0
+
+    @pytest.mark.asyncio
+    async def test_late_funding_repoll_is_idempotent(self, db):
+        # Re-polling the same window after a late attribution dedups (synthetic
+        # venue_event_id) and does NOT re-reconcile — the closed row is stable.
+        await _insert_closed_cp(db, "POS-C", realized=100.0, fees=2.0)
+        first = await handle_funding_incomes(
+            account_id=ACCOUNT_ID, incomes=[_income("BTCUSDT", -0.05, 1500)],
+            positions=[], db=db, primary_calc_resolver=_resolver_ab,
+        )
+        assert first == {"written": 1, "deduped": 0, "orphan": 0, "reconciled": 1}
+        second = await handle_funding_incomes(
+            account_id=ACCOUNT_ID, incomes=[_income("BTCUSDT", -0.05, 1500)],
+            positions=[], db=db, primary_calc_resolver=_resolver_ab,
+        )
+        assert second == {"written": 0, "deduped": 1, "orphan": 0, "reconciled": 0}
+        row = await _closed_row_cp(db, "POS-C", 2000)
+        assert row["funding_fees"] == pytest.approx(-0.05)   # unchanged
+
+    @pytest.mark.asyncio
+    async def test_mixed_open_and_closed_late_in_one_batch(self, db):
+        # One income for an OPEN position + one for a CLOSED position in the same
+        # poll: both attributed (open via resolver, closed via window+reconcile).
+        await _insert_closed_cp(db, "POS-C", symbol="BTCUSDT", realized=100.0, fees=2.0)
+        res = await handle_funding_incomes(
+            account_id=ACCOUNT_ID,
+            incomes=[_income("ETHUSDT", -0.03, 1500),     # open
+                     _income("BTCUSDT", -0.05, 1500)],    # closed-late
+            positions=[PositionInfo(position_id="POS-OPEN", ticker="ETHUSDT")],
+            db=db, primary_calc_resolver=_resolver_ab,
+        )
+        assert res == {"written": 2, "deduped": 0, "orphan": 0, "reconciled": 1}
+        assert await db.sum_position_funding("POS-OPEN") == pytest.approx(-0.03)
+        assert await db.sum_position_funding("POS-C") == pytest.approx(-0.05)
+        assert (await _closed_row_cp(db, "POS-C", 2000))["funding_fees"] == pytest.approx(-0.05)
+
+    @pytest.mark.asyncio
+    async def test_swallowed_reconcile_fault_self_heals_next_poll(self, db, monkeypatch):
+        # Rule-8 (audit MED): the funding row is committed independently of the
+        # reconcile. If the reconcile RAISES (e.g. transient SQLite lock — the
+        # aiosqlite conn has no busy_timeout), poll 1 swallows it and the closed
+        # row stays stale. Poll 2 must SELF-HEAL: the income dedups but the
+        # closed tpid is still collected for reconcile (the add() is NOT gated on
+        # `inserted`), so the rollup folds in. A regression that re-gates on
+        # `inserted` would leave the row permanently stale and FAIL this test.
+        await _insert_closed_cp(db, "POS-C", realized=100.0, fees=2.0, funding=0.0)
+        real = db.reconcile_closed_position_funding
+        calls = {"n": 0}
+
+        async def _flaky(account_id, position_id):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("transient lock on first reconcile")
+            return await real(account_id, position_id)
+
+        monkeypatch.setattr(db, "reconcile_closed_position_funding", _flaky)
+
+        # Poll 1: row written, reconcile faults (swallowed) → reconciled 0, stale.
+        res1 = await handle_funding_incomes(
+            account_id=ACCOUNT_ID, incomes=[_income("BTCUSDT", -0.05, 1500)],
+            positions=[], db=db, primary_calc_resolver=_resolver_ab,
+        )
+        assert res1 == {"written": 1, "deduped": 0, "orphan": 0, "reconciled": 0}
+        assert (await _closed_row_cp(db, "POS-C", 2000))["funding_fees"] == pytest.approx(0.0)
+
+        # Poll 2: same income dedups, but the closed tpid is STILL reconciled →
+        # the rollup self-heals from the persisted funding_events SUM.
+        res2 = await handle_funding_incomes(
+            account_id=ACCOUNT_ID, incomes=[_income("BTCUSDT", -0.05, 1500)],
+            positions=[], db=db, primary_calc_resolver=_resolver_ab,
+        )
+        assert res2 == {"written": 0, "deduped": 1, "orphan": 0, "reconciled": 1}
+        row = await _closed_row_cp(db, "POS-C", 2000)
+        assert row["funding_fees"] == pytest.approx(-0.05)
+        assert row["net_pnl"] == pytest.approx(97.95)   # 100 - 2 - 0.05
+
+
+class TestDeferredFundingBackstop:
+    @pytest.mark.asyncio
+    async def test_backstop_reconciles_ws_gap_row(self, db, om, monkeypatch):
+        # WS-gap shape: opens sum to 2.0 but only 1.0 of closing fills is
+        # recorded → is_final never fires → the built close row stamps funding 0
+        # despite funding_events existing. The disappearance backstop
+        # (build_final_close_row) must reconcile that final row from the SUM.
+        from core.state import app_state
+        # active_account_id is a read-through property → patch it on the class
+        # so the backstop (which reads app_state.active_account_id) resolves to
+        # this test's account regardless of registry/test order.
+        monkeypatch.setattr(
+            type(app_state), "active_account_id",
+            property(lambda self: ACCOUNT_ID),
+        )
+        await _seed_junction_cp(db, "POS-1", "C1", qty=2.0)
+        await _seed_order_cp(db, "EO", "limit", "BUY")
+        await _seed_fill_cp(db, "FO", "EO", "POS-1", 2.0, False, 1000, fee=0.4)
+        await _seed_funding_cp(db, "POS-1", -0.06, 1500, "fe-1")
+        await _seed_order_cp(db, "XO", "take_profit", "SELL")
+        await _seed_fill_cp(db, "FX", "XO", "POS-1", 1.0, True, 2000,
+                            fee=0.3, realized_pnl=40.0, price=52000.0)
+        await om._build_close_row_for_fill(ACCOUNT_ID, _close_fill_cp("XO", "POS-1", 2000))
+
+        pre = await _closed_row_cp(db, "POS-1", 2000)
+        assert pre is not None
+        assert pre["funding_fees"] == pytest.approx(0.0)   # not final → 0
+
+        prev = PositionInfo(position_id="POS-1", ticker="BTCUSDT", direction="LONG")
+        await om.build_final_close_row(prev)
+
+        post = await _closed_row_cp(db, "POS-1", 2000)
+        assert post["funding_fees"] == pytest.approx(-0.06)
+        # net recomputed from the row's stored realized/fees + funding.
+        assert post["net_pnl"] == pytest.approx(
+            post["realized_pnl"] - post["total_fees"] - 0.06)

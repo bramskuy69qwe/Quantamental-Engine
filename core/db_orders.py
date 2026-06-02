@@ -1686,6 +1686,115 @@ class OrdersMixin:
         ) as cur:
             return {r[0]: float(r[1]) for r in await cur.fetchall()}
 
+    async def find_closed_position_for_funding(
+        self, account_id: int, symbol: str, ts_ms: int,
+    ) -> Optional[Dict[str, Any]]:
+        """Find the closed position whose lifecycle window contains a funding ts.
+
+        Deferred-funding attribution (P6 reconcile, spec §12.3): funding settles
+        ~3x/day but the attribution poll runs every ~5min, so funding that
+        settles while a position is open but is first polled only AFTER that
+        position closed has no OPEN position to attribute to. The live
+        ``handle_funding_incomes`` open-position map (built from
+        ``app_state.positions``) misses it, and it would otherwise orphan
+        (never written). This locates the closed position lifecycle for that
+        symbol whose ``[entry_time_ms, exit_time_ms]`` window contains the
+        settlement ts, so the funding row can be keyed to the now-closed tpid
+        and the closed row reconciled.
+
+        The window itself self-bounds to RECENT closes: a settlement ts only
+        matches a position with ``exit_time_ms >= ts`` (closed at/after the
+        settlement) — an old position that closed before the settlement can't
+        match — so no extra time bound is needed.
+
+        Returns ``{position_id, calc_id, lifecycle_id}`` of the most-recent
+        matching closed position (one-way: a symbol holds at most one position
+        at a time, so lifecycle windows don't overlap → unique; multi-TP
+        per-partial rows share one tpid, and ``MAX(exit_time_ms)`` resolves to
+        the final/primary-sealed row), or ``None``. **Empty-tpid (binance
+        one-way) rows are excluded** — their funding can't be keyed and stays an
+        orphan, consistent with the open-path empty-tpid skip.
+        """
+        async with self._conn.execute(
+            "SELECT terminal_position_id, calc_id, lifecycle_id "
+            "FROM closed_positions "
+            "WHERE account_id = ? AND symbol = ? "
+            "  AND terminal_position_id != '' "
+            "  AND entry_time_ms <= ? AND exit_time_ms >= ? "
+            "ORDER BY exit_time_ms DESC, id DESC LIMIT 1",
+            (account_id, symbol, ts_ms, ts_ms),
+        ) as cur:
+            r = await cur.fetchone()
+        if not r:
+            return None
+        return {"position_id": r[0], "calc_id": r[1], "lifecycle_id": r[2]}
+
+    async def reconcile_closed_position_funding(
+        self, account_id: int, position_id: str,
+    ) -> bool:
+        """Recompute ``funding_fees`` + ``net_pnl`` on a closed position's final
+        row from the preserved ``funding_events`` SUM (P6 deferred-funding
+        reconcile; spec §5 "within $0.01 of venue", §12.3).
+
+        The close-time SUM (``_build_close_row_for_fill``) runs ONCE on the
+        ``is_final`` row. Two filed gaps leave it short:
+
+          * deferred funding — a settlement polled only after close lands a
+            ``funding_events`` row (via :meth:`find_closed_position_for_funding`)
+            that the one-shot SUM never folded in;
+          * WS-gap backstop — a recorded-but-never-final close (``Σclose <
+            Σopen``) leaves funding stamped 0 on every per-partial row.
+
+        Both are repaired by re-deriving ``funding_fees = SUM(funding_events)``
+        and ``net_pnl = realized_pnl - total_fees + funding_fees`` on the row
+        that carries the position's funding — the FINAL close row, i.e.
+        ``MAX(exit_time_ms)`` for the tpid (matching the ``is_final`` stamp; for
+        multi-TP this is the last rung, and per-partial rows stay 0 so the
+        across-rows sum still counts funding exactly once). ``realized_pnl`` /
+        ``total_fees`` are read from the stored row (per-row, unchanged), so the
+        recomputed ``net_pnl`` matches the close-builder convention exactly.
+
+        Idempotent and a NO-OP when already reconciled — it recomputes from the
+        SUM and skips the write when the stored funding_fees/net_pnl already
+        match. This keeps the self-heal re-attempts (a later poll after a
+        swallowed reconcile fault re-runs this from the persisted SUM) and the
+        per-close backstop call FREE of write churn, and lets the caller's
+        ``reconciled`` count mean "a row was actually repaired". Returns ``True``
+        only when a row was UPDATED; ``False`` for no closed row, empty
+        ``position_id`` (binance one-way — funding orphans, can't key a SUM), or
+        an already-up-to-date row.
+        """
+        if not position_id:
+            return False
+        async with self._conn.execute(
+            "SELECT id, realized_pnl, total_fees, funding_fees, net_pnl "
+            "FROM closed_positions "
+            "WHERE account_id = ? AND terminal_position_id = ? "
+            "ORDER BY exit_time_ms DESC, id DESC LIMIT 1",
+            (account_id, position_id),
+        ) as cur:
+            row = await cur.fetchone()
+        if not row:
+            return False
+        row_id = row[0]
+        realized = float(row[1] or 0.0)
+        total_fees = float(row[2] or 0.0)
+        funding = await self.sum_position_funding(position_id)
+        net_pnl = realized - total_fees + funding
+        # No-op when the stored rollup already equals the recompute (same SQL
+        # SUM + same stored realized/fees → bit-identical when unchanged; the
+        # 1e-9 floor is a float-safety margin, well within the $0.01 criterion).
+        cur_funding = float(row[3] or 0.0)
+        cur_net = float(row[4] or 0.0)
+        if abs(cur_funding - funding) < 1e-9 and abs(cur_net - net_pnl) < 1e-9:
+            return False
+        await self._conn.execute(
+            "UPDATE closed_positions SET funding_fees = ?, net_pnl = ? WHERE id = ?",
+            (funding, net_pnl, row_id),
+        )
+        await self._conn.commit()
+        return True
+
     # ── calc_match_audit ───────────────────────────────────────────────
 
     async def insert_calc_match_audit_batch(

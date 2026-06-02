@@ -32,14 +32,27 @@ Full Phase-5 detail: `docs/design/calc_linkage_implementation_plan.md` §5 + the
 **Calc-linkage now spans Phase 0 → 1 → 2 → 3 → 4 → 5. Phase 6 (event-bus enrichment + close payload) is next.**
 
 ### ⚠ Phase-5 deferred follow-ups (filed in-code; the headline is real, the rest bounded)
-- **🔴 Deferred-funding-at-close / venue reconciliation (HEADLINE)**: the close-time funding SUM runs
-  ONCE; funding settling in the ≤5min window after a settlement but before the next poll is
-  under-counted on `closed_positions.funding_fees`/`net_pnl` and NEVER recomputed (the poll writes
-  `funding_events` but never touches `closed_positions`). Bounded (last-settlement-near-close; the
-  `funding_events` rows ARE preserved) but **plan §5's "reconcile within $0.01 of venue" acceptance
-  criterion is NOT yet met.** Fix = a deferred-funding reconcile (on funding arrival for an
-  already-closed tpid, recompute that closed row's funding_fees/net_pnl) — strong **Phase-6 candidate**
-  (spec §12.3). Anchor-commented in `order_manager._build_close_row_for_fill` + the disappearance backstop.
+- **✅ Deferred-funding-at-close / venue reconciliation (HEADLINE) — CLOSED (2026-06-02, first P6 step).**
+  **Re-investigation corrected the filed mechanism**: the filing said the late row "is written but
+  never folded into closed_positions" — WRONG. The attribution map is built from OPEN positions only,
+  so a closed position's late funding ORPHANED (never written). Fix is two-part: (1) late attribution —
+  `db.find_closed_position_for_funding` matches the closed lifecycle whose `[entry,exit]` window
+  contains the settlement ts (excludes empty-tpid; sealed calc/lifecycle); (2) reconcile —
+  `db.reconcile_closed_position_funding` recomputes `funding_fees=SUM`/`net_pnl` on the FINAL close row
+  (no-op when unchanged). `handle_funding_incomes` falls back to (1)+(2) on open-cache miss and returns
+  a `reconciled` count; also wired into the `build_final_close_row` backstop (WS-gap half). **Audit
+  (6-dim workflow): 1 MED confirmed + FIXED** — a swallowed reconcile fault left the row stale with no
+  retry (dedup blocked re-trigger) and my comment falsely claimed later-poll recovery; fixed by
+  collecting the closed tpid for reconcile regardless of `inserted` (self-heals on the next poll, since
+  reconcile is idempotent + no-op-when-unchanged). Tests: `test_phase5_funding.py` §7 (+18; incl. the
+  Rule-8 fault-injection self-heal test). Full suite 2989 passed / 7 skip / 1 pre-existing fail / 0 new.
+  See `[[project_deferred_funding_reconcile]]` memory.
+  - **⚠ FILED (audit, not fixed — pre-existing, engine-wide)**: the aiosqlite `_conn`
+    (`database.py:624`) sets WAL but **no `PRAGMA busy_timeout`**, so a concurrent write-lock collision
+    raises `OperationalError` immediately (the trigger for the swallowed-reconcile fault above, and any
+    other best-effort aiosqlite write). Self-heal makes the funding path resilient regardless, but a
+    `busy_timeout=5000` on the connection would reduce transient-lock raises engine-wide. Own task
+    (touches all aiosqlite writes — out of this funding fix's surgical scope).
 - **Overfill-split funding double-count**: closing fills exceeding open qty across distinct orders at
   distinct ts → each can satisfy `is_final` and stamp the full SUM. Anomaly-gated; documented, not
   guarded (don't destabilize the T238 `is_final`).
@@ -64,15 +77,24 @@ Goal: hierarchical per-account topics (`engine:account:{id}:{domain}:{event}`); 
 payload (now incl. `funding_fees`/`net_pnl`); sweep all calc:*/position:* emissions; `order:duplicate_detected`;
 the snapshot-wins drift inversion (feature-flagged — the riskiest single change; isolate + monitor).
 
-### VERIFY-FIRST before scoping Phase 6
-- The event_bus topic map (`TRANSITION_EVENT_MAP` in calc_state/link_state) is **empty-until-Phase-6 by
-  design** — Phases 1–5 emit TRADE events (`log_trade_event`) now, with the formal in-process event_bus
-  topics deferred to Phase 6 (P4.T4 `position:amended`, T238 `partial_close`/`position_opened` all
-  follow this split). Phase 6 row 6.4 lights up the event_bus topics from the SAME seams.
-- The `position:closed` payload today is anemic (`order_manager.py` `risk:position_closed` carries only
-  symbol/direction/realized_pnl/net_pnl); §9 wants the full payload (contributing_calc_ids, model_names,
-  deltas, exit_reason, MFE/MAE, funding_fees, …) — all now on the close row.
-- **Fold the §5 deferred-funding reconcile into Phase 6** (spec §12.3 reconciliation) — see the headline above.
+### VERIFY-FIRST before scoping Phase 6 — DONE 2026-06-02 (corrects the prior claim; see `[[project_phase6_event_bus_state]]`)
+- ⚠ **CORRECTION**: the prior handoff said `TRANSITION_EVENT_MAP` in **calc_state/link_state** is
+  empty-until-Phase-6 — **imprecise**. `core/calc_state.py:111` is **POPULATED**: 6 `calc:*` events
+  ALREADY fire on the event_bus via `transition()` (`calc:linked/superseded/expired/cancelled/completed/
+  partially_filled`) — but as **FLAT topics** (`"calc:linked"`), NOT the §9 per-account hierarchical
+  `engine:account:{id}:calc:{event}`. So **P6.T1/T3 is a topic-RESCOPE of existing emissions, not
+  add-from-scratch.** Only **`link_state.TRANSITION_EVENT_MAP` is genuinely empty** (the real link:* gap).
+  `calc:created`/`calc:size_deviated`/`calc:order_cancelled` are NOT on the event_bus (not transitions).
+- **position:* events: NONE on the event_bus** — emitted today only as trade events (`log_trade_event`:
+  `position_opened` om.py:1245, `partial_close` :1272, `position_amended` :1190, `position_closed`
+  :2261). P6.T4 lights up the event_bus topics from those SAME seams (this part of the claim holds).
+- ⚠ **`risk:position_closed` (flat, anemic, om.py:2253) HAS a LIVE subscriber** —
+  `_reconciler.on_position_closed` (`schedulers.py:390`). So **P6.T2 (full close payload) is NOT
+  zero-subscriber**: expand additively / preserve the reconciler's keys (compat-shim). (Lesson 10's
+  "zero calc:* subscribers" still holds — nothing subscribes to `calc:linked` etc.)
+- **P6.T6** snapshot-wins inversion target confirmed = `data_cache._should_accept_position_update`
+  (`_WS_PRIORITY_WINDOW_MS` priority window), ~`data_cache.py:173-204`.
+- **✅ §5 deferred-funding reconcile is now SHIPPED** (see the CLOSED headline above) — no longer a Phase-6 item.
 - §3.4 `*_PLANNED → *_AMENDED` exit_reason reclassification (the T2.7/T235 deferral — now HAS the
   amendment data) is a natural Phase-6 close-row-rebuild-seam item.
 
