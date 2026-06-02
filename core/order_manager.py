@@ -2151,8 +2151,37 @@ class OrderManager:
             except Exception:
                 cumulative_amendment_count = 0
 
+            # ── P5.T4/T5: funding fees + net PnL ────────────────────────
+            # closed_positions.funding_fees = SUM(funding_events.amount) for
+            # the position (spec §11[F]), written on the FINAL close row only
+            # (is_final): T2.11 preserves per-partial rows, so stamping the full
+            # position SUM on every partial would overcount when summed across
+            # rows. Partial rows and the junctionless / binance empty-tpid path
+            # carry 0.0. The final row's exit_time IS the position close, so the
+            # SUM is complete + as-of-correct (no temporal filter needed).
+            # Best-effort — a funding read fault must not block the close write.
+            #
+            # NOT added to _CLOSED_POS_DELTA_COLS (unlike the T2.5/P4 deltas):
+            # closed_positions.funding_fees is NOT NULL DEFAULT 0, but that
+            # preserve path uses None as the "not-computed" sentinel and would
+            # spread None over the explicit default → constraint violation. It
+            # also isn't needed: this builder is the SOLE writer of real-tpid
+            # rows and recomputes the full SUM on every final-row build, while
+            # the offline rebuild/backfill paths use bf:/rebuilt: synthetic tpids
+            # that never REPLACE a live real-tpid row (same as net_pnl).
+            funding_fees = 0.0
+            if is_final and pos_id:
+                try:
+                    funding_fees = await self._db.sum_position_funding(pos_id)
+                except Exception:
+                    log.debug(
+                        "funding sum failed for position %s", pos_id,
+                        exc_info=True,
+                    )
+                    funding_fees = 0.0
+
             # ── Persist ─────────────────────────────────────────────────
-            net_pnl = realized_pnl - total_fees
+            net_pnl = realized_pnl - total_fees + funding_fees
             await self._db.insert_closed_position({
                 "account_id":           account_id,
                 "exchange_position_id": fill.get("exchange_position_id", ""),
@@ -2167,6 +2196,7 @@ class OrderManager:
                 "realized_pnl":         realized_pnl,
                 "total_fees":           total_fees,
                 "net_pnl":              net_pnl,
+                "funding_fees":         funding_fees,
                 "hold_time_ms":         exit_time - entry_time if entry_time else 0,
                 "exit_reason":          exit_reason,
                 "model_name":           model_name,
@@ -2294,6 +2324,13 @@ class OrderManager:
             # complete. Force-complete contributing calcs here regardless;
             # disappearance is the authoritative close signal. Idempotent
             # (status-guarded in _complete_calcs_on_close).
+            #
+            # P5 known-gap (same WS-gap class): closed_positions.funding_fees
+            # rides on is_final in a BUILT close row, so a recorded-but-never-
+            # final position likewise misses its funding rollup here. The
+            # funding_events rows are preserved (not lost) — only the per-close
+            # SUM is skipped — so a later reconciliation/rebuild can recover it.
+            # Not repaired in this delicate backstop (filed follow-up).
             await self._complete_position_calcs(account_id, prev.position_id)
         except Exception:
             log.exception(

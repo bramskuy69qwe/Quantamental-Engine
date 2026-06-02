@@ -511,7 +511,12 @@ CREATE INDEX IF NOT EXISTS idx_oa_lifecycle    ON order_amendments (lifecycle_id
 
 CREATE TABLE IF NOT EXISTS funding_events (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    position_id     INTEGER NOT NULL,
+    -- P5: keyed by terminal_position_id (TEXT) — the engine's universal
+    -- position key, same as positions_calcs.position_id (P2.T1) and
+    -- closed_positions.terminal_position_id. Shipped as INTEGER in P0.T1
+    -- (stale spec §3.1 type); reconciled to TEXT in initialize()'s
+    -- one-shot migrations so the close-time SUM joins on a matching key.
+    position_id     TEXT    NOT NULL,
     calc_id         TEXT    DEFAULT NULL,
     account_id      INTEGER NOT NULL,
     symbol          TEXT    NOT NULL,
@@ -876,6 +881,91 @@ class DatabaseManager(
             "DELETE FROM regime_signals WHERE signal_name = 'btc_dominance'"
         )
         await self._conn.commit()
+
+        # ── P5: reconcile funding_events.position_id INTEGER → TEXT ──────────
+        # funding_events shipped (P0.T1) with position_id INTEGER, but the
+        # engine's universal position key is terminal_position_id (TEXT) — the
+        # same settled-TEXT decision positions_calcs.position_id took in P2.T1
+        # (spec §3.1 note). Phase 5 is the first writer, so the table is empty
+        # and a guarded recreate is zero-data-risk. SQLite can't ALTER COLUMN
+        # type, hence the rename→create→copy→drop dance. Hardening from the P5
+        # ingestion audit:
+        #   - leading DROP IF EXISTS makes a re-run after an interrupted attempt
+        #     safe (a stranded _funding_events_int won't block the RENAME);
+        #   - DROP precedes the CREATE INDEXes so the old index names (carried
+        #     onto the renamed table) are freed first;
+        #   - the INSERT names its columns so a future column reorder can't
+        #     silently shift data (CAST preserves any defensive pre-existing rows);
+        #   - PRAGMA guard makes it idempotent (skips once position_id is TEXT);
+        #   - FAIL LOUD: a funding key that silently fails to migrate would
+        #     mis-key the close-time SUM, so a failed migration aborts startup
+        #     (mirrors the MED-024 loud pattern above) rather than booting wrong.
+        try:
+            async with self._conn.execute(
+                "PRAGMA table_info(funding_events)"
+            ) as cur:
+                _fe_cols = await cur.fetchall()
+            _pid = next(
+                (c for c in _fe_cols if c["name"] == "position_id"), None
+            )
+            if _pid is not None and str(_pid["type"]).upper() != "TEXT":
+                await self._conn.executescript(
+                    """
+                    DROP TABLE IF EXISTS _funding_events_int;
+                    ALTER TABLE funding_events RENAME TO _funding_events_int;
+                    CREATE TABLE funding_events (
+                        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                        position_id     TEXT    NOT NULL,
+                        calc_id         TEXT    DEFAULT NULL,
+                        account_id      INTEGER NOT NULL,
+                        symbol          TEXT    NOT NULL,
+                        amount          REAL    NOT NULL DEFAULT 0,
+                        mark_price      REAL    DEFAULT NULL,
+                        funding_rate    REAL    DEFAULT NULL,
+                        ts_ms           INTEGER NOT NULL,
+                        venue_event_id  TEXT    NOT NULL,
+                        lifecycle_id    TEXT    DEFAULT NULL,
+                        UNIQUE (venue_event_id)
+                    );
+                    INSERT INTO funding_events (
+                        id, position_id, calc_id, account_id, symbol, amount,
+                        mark_price, funding_rate, ts_ms, venue_event_id,
+                        lifecycle_id
+                    )
+                        SELECT id, CAST(position_id AS TEXT), calc_id,
+                               account_id, symbol, amount, mark_price,
+                               funding_rate, ts_ms, venue_event_id, lifecycle_id
+                        FROM _funding_events_int;
+                    DROP TABLE _funding_events_int;
+                    CREATE INDEX IF NOT EXISTS idx_fe_position   ON funding_events (position_id);
+                    CREATE INDEX IF NOT EXISTS idx_fe_account_ts ON funding_events (account_id, ts_ms);
+                    CREATE INDEX IF NOT EXISTS idx_fe_lifecycle  ON funding_events (lifecycle_id);
+                    """
+                )
+                await self._conn.commit()
+                # Fail loud if the column type did not actually change.
+                async with self._conn.execute(
+                    "PRAGMA table_info(funding_events)"
+                ) as cur:
+                    _after = await cur.fetchall()
+                _pid2 = next(
+                    (c for c in _after if c["name"] == "position_id"), None
+                )
+                if _pid2 is None or str(_pid2["type"]).upper() != "TEXT":
+                    raise RuntimeError(
+                        "P5 funding_events.position_id migration did not take "
+                        "(column is still not TEXT); the close-time funding SUM "
+                        "would mis-key. Aborting startup — resolve before restart."
+                    )
+                log.info(
+                    "P5: migrated funding_events.position_id INTEGER → TEXT"
+                )
+        except Exception:
+            log.error(
+                "funding_events position_id migration FAILED — aborting startup",
+                exc_info=True,
+            )
+            raise
 
         # AN-1: mark already-computed rows so they aren't reprocessed on first
         # startup after migration.  Idempotent — rows already marked 1 stay 1.

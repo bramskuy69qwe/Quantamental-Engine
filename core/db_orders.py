@@ -1635,8 +1635,12 @@ class OrdersMixin:
             log.exception("insert_funding_event failed")
             return False
 
-    async def get_position_funding_events(self, position_id: int) -> List[Dict]:
-        """Return all funding events for one position, oldest first."""
+    async def get_position_funding_events(self, position_id: str) -> List[Dict]:
+        """Return all funding events for one position, oldest first.
+
+        ``position_id`` is the TEXT ``terminal_position_id`` (P5 — same key
+        as positions_calcs / closed_positions).
+        """
         async with self._conn.execute(
             "SELECT * FROM funding_events WHERE position_id = ? "
             "ORDER BY ts_ms ASC, id ASC",
@@ -1644,12 +1648,13 @@ class OrdersMixin:
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
 
-    async def sum_position_funding(self, position_id: int) -> float:
+    async def sum_position_funding(self, position_id: str) -> float:
         """Return SUM(amount) of funding events for one position.
 
-        Phase 5.4 uses this at position close to populate
-        ``closed_positions.funding_fees``. Phase 5.7's live unrealized
-        funding helper uses this on open positions.
+        ``position_id`` is the TEXT ``terminal_position_id`` (P5 — same key
+        as positions_calcs / closed_positions). Phase 5.4 uses this at
+        position close to populate ``closed_positions.funding_fees``;
+        Phase 5.7's live unrealized funding helper uses it on open positions.
         """
         async with self._conn.execute(
             "SELECT COALESCE(SUM(amount), 0) FROM funding_events "

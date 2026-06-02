@@ -708,6 +708,71 @@ async def _algo_order_sync_loop():
         await asyncio.sleep(15)
 
 
+# ── Funding attribution (Phase 5 — NOT plugin-gated) ─────────────────────────
+
+async def _funding_refresh_loop(interval_s: int = 300):
+    """P5.T1: periodically pull FUNDING_FEE income and attribute it to the
+    open position for each symbol, writing position_id-keyed funding_events
+    rows (the close-time ``closed_positions.funding_fees`` SUM basis).
+
+    Reuses the existing income fetch (``exchange_income.fetch_income_history``)
+    rather than a second REST path — funding settles ~3x/day on Binance, so a
+    5-min cadence is responsive and cheap. Dedup is by a deterministic
+    synthetic ``venue_event_id`` (``funding_handler``), so an overlapping
+    re-poll is idempotent and the ``start_ms`` cursor is a pure optimization,
+    not a correctness dependency. Non-fatal on errors (log + continue), like
+    the sibling REST loops.
+
+    Bounded window (audit note): this issues a single non-paginated fetch
+    (adapter ``limit=1000``), so a backlog exceeding 1000 funding rows after
+    the cursor — only reachable after a multi-day outage across many symbols,
+    and mostly for by-then-closed positions that orphan anyway — could skip the
+    overflow. Dedup makes any re-fetch idempotent; paginate (like
+    ``fetch_income_for_backfill``) if that window ever matters.
+    """
+    from core.exchange import _get_adapter
+    from core.exchange_income import fetch_income_history
+    from core.funding_handler import handle_funding_incomes
+    from core.database import db
+
+    await asyncio.sleep(7)  # initial delay for engine bootstrap
+    last_seen_ms = 0
+    while True:
+        try:
+            adapter = _get_adapter()
+            if not hasattr(adapter, "fetch_income"):
+                await asyncio.sleep(interval_s)
+                continue
+            account_id = app_state.active_account_id
+            # Inclusive boundary (last_seen_ms, NOT +1): symbols settle at the
+            # same boundary ms, so +1 could skip a same-ms event. Re-fetching
+            # the boundary is idempotent — the synthetic venue_event_id dedups
+            # it — so the cursor is a query-size optimization, not correctness.
+            incomes = await fetch_income_history(
+                income_type="FUNDING_FEE",
+                start_ms=last_seen_ms or None,
+            )
+            if incomes:
+                result = await handle_funding_incomes(
+                    account_id=account_id,
+                    incomes=incomes,
+                    positions=list(app_state.positions),
+                    db=db,
+                    primary_calc_resolver=(
+                        platform_bridge.order_manager._position_primary_calc
+                    ),
+                )
+                last_seen_ms = max(
+                    last_seen_ms,
+                    max(int(i.get("time", 0) or 0) for i in incomes),
+                )
+                if result["written"] or result["orphan"]:
+                    log.info("Funding poll: %s", result)
+        except Exception as e:
+            log.warning("Funding refresh loop error: %s", e)
+        await asyncio.sleep(interval_s)
+
+
 # ── Public API ───────────────────────────────────────────────────────────────
 
 async def _calc_expiry_loop(interval_s: int = 60) -> None:
@@ -746,3 +811,4 @@ def start_background_tasks() -> None:
     _spawn(_order_staleness_loop(),  name="order_staleness")
     _spawn(_algo_order_sync_loop(),  name="algo_order_sync")
     _spawn(_calc_expiry_loop(),      name="calc_expiry")
+    _spawn(_funding_refresh_loop(),  name="funding_refresh")
