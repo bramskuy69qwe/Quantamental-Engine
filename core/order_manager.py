@@ -1859,19 +1859,18 @@ class OrderManager:
         amend_by_calc: Dict[str, int] = {}
         yellow_pct, red_pct = DEFAULT_YELLOW_DEVIATION_PCT, DEFAULT_RED_DEVIATION_PCT
         if per_pos:
-            # P4 audit (P4T3-001): the config read and the amendment count are
-            # SEPARATE failure modes — a single shared try would let a config
-            # failure skip the amendment count (and vice versa). Config first
-            # (defaults already set, so a failure can't strand red_pct=0). The
-            # amendment-count failure is logged at WARNING, not debug: it masks
-            # live amendments for THIS refresh (a real amended position paints
-            # green), so it must be diagnosable. Self-heals on the next
-            # successful refresh (the badge is htmx-polled) — bounded, transient.
-            try:
-                cfg = await read_account_config_async(self._db, account_id)
-                yellow_pct, red_pct = cfg.yellow_deviation_pct, cfg.red_deviation_pct
-            except Exception:
-                log.debug("deviation-badge config read failed", exc_info=True)
+            # read_account_config_async is exception-safe by contract (returns a
+            # fully-defaulted AccountConfig on any error — account_config.py), so
+            # it needs no guard here; a try would be dead code (re-audit BADGE-001).
+            # The amendment count, in contrast, CAN raise (a transient DB error)
+            # — its OWN try keeps that failure from stranding the badge, separate
+            # from the config read (P4 audit P4T3-001: one shared try would let
+            # either failure skip the other). Logged at WARNING, not debug: a
+            # masked-amendment miss paints a real amended position green for THIS
+            # refresh, so it must be diagnosable; self-heals on the next
+            # successful htmx poll — bounded, transient.
+            cfg = await read_account_config_async(self._db, account_id)
+            yellow_pct, red_pct = cfg.yellow_deviation_pct, cfg.red_deviation_pct
             try:
                 all_calc_ids = {cid for calcs in per_pos.values() for cid in calcs}
                 amend_by_calc = await self._db.count_amendments_by_calcs(all_calc_ids)

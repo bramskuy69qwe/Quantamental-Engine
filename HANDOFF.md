@@ -275,6 +275,18 @@ per-task notes are in the sections below + `docs/design/calc_linkage_implementat
     `order.quantity` maps to Binance `q` = original qty, constant across fills; I'd independently traced
     this before the audit confirmed the refutation).
   Full suite after fixes: **2941 passed, 7 skipped, 1 pre-existing failure (TestRollingWindowPeak), 0 new.**
+- **PHASE 4 FIXES RE-AUDITED — CLEAN (2026-06-02, task 253).** A focused 5-dimension re-audit of the
+  task-252 fixes (matcher hot-path, aiosqlite swallow-then-commit durability, backfill attribution,
+  drift temporal filter, badge split) completed without stalling (17 agents): **12 candidates → 2
+  confirmed, 10 REFUTED.** Every substantive concern was refuted — the matcher sync-backfill durability
+  (a swallowed missing-table error still commits the orders calc_id), the aiosqlite best-effort
+  durability, rowcount-guard reliability, and wrong-calc attribution are all CLEAN. The 2 confirmed were
+  both badge-split: **BADGE-003 (MED)** = the already-documented transient false-green on amendment-query
+  failure (the verifier's own verdict: "no fix needed — accepted trade-off"); **BADGE-001 (LOW)** = the
+  config `try/except` I added in T252 was dead code (`read_account_config_async` is contract-safe, never
+  raises) — **removed** (the amendment-count try stays; `refresh_cache` calls the enricher directly, and
+  the now-unguarded config call + frozen-dataclass attribute access can't raise, so no propagation risk).
+  Tests: `test_phase4_deviation_badge` + `test_phase2_rehydrate` green.
 - **⚠ FILED (P4.T4 audit) — `_emit_fill_events` sync-sqlite-in-async consistency cleanup.** The sibling
   trade-event emitter `_emit_fill_events` (called sync from `process_fill`, hot fill path) has the SAME
   blocking exposure P4.T4's audit flagged on `_emit_amendment_event` (sync `log_trade_event` → its own
