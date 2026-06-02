@@ -1063,9 +1063,12 @@ class TestCloseDeltas:
         assert "planned_r" not in out
 
     @pytest.mark.asyncio
-    async def test_deferred_columns_not_emitted(self, db, om):
-        # tp_drift_pct/sl_drift_pct (P4.6), cumulative_amendment_count
-        # (P4.3), hold_time_planned_ms (no source) are NOT T2.5's job.
+    async def test_columns_not_emitted_without_amendments(self, db, om):
+        # No amendments seeded → tp_drift_pct/sl_drift_pct omitted (P4.T5
+        # computes them only when the primary calc's TP/SL leg was amended —
+        # see test_phase4_drift). cumulative_amendment_count is computed in
+        # _build_close_row_for_fill, NOT this dict; hold_time_planned_ms has
+        # no source — both stay out here regardless.
         await _seed_calc(db, "calc-a", effective_entry=50000.0, est_r=2.0)
         await _seed_junction(db, "POS-1", "calc-a", 100, 10.0, 1000, "lc-1",
                              planned_size=10.0, planned_tp=55000.0, planned_sl=48000.0)
@@ -1074,9 +1077,9 @@ class TestCloseDeltas:
             entry_price=50500.0, actual_size=10.0, exit_price=54000.0,
             entry_time=1000, exit_time=2000,
         )
-        for deferred in ("tp_drift_pct", "sl_drift_pct",
-                         "cumulative_amendment_count", "hold_time_planned_ms"):
-            assert deferred not in out
+        for omitted in ("tp_drift_pct", "sl_drift_pct",
+                        "cumulative_amendment_count", "hold_time_planned_ms"):
+            assert omitted not in out
 
     @pytest.mark.asyncio
     async def test_deltas_persisted_via_real_close_path(self, real):
@@ -1110,11 +1113,11 @@ class TestCloseDeltas:
         assert cp["realized_r"] == pytest.approx(1.75)
         assert cp["planned_r"] == pytest.approx(2.0)
         assert cp["hold_time_actual_ms"] == 3000
-        # Deferred columns remain NULL (flipping any to non-NULL is the
-        # conscious signal that its owning task — P4.6 / no-source — landed,
-        # and must update this assertion).
-        assert cp["tp_drift_pct"] is None              # P4.6
-        assert cp["sl_drift_pct"] is None              # P4.6
+        # tp/sl drift stay NULL here — no amendment seeded (P4.T5 computes
+        # them only for an AMENDED stop; see test_phase4_drift for the
+        # amended path). hold_time_planned_ms remains NULL (no source).
+        assert cp["tp_drift_pct"] is None              # no amendment
+        assert cp["sl_drift_pct"] is None              # no amendment
         # P4.T2 LANDED: cumulative_amendment_count now computed at close from
         # order_amendments; 0 here (this fixture seeds no amendments).
         assert cp["cumulative_amendment_count"] == 0   # P4.3 / P4.T2

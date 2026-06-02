@@ -17,13 +17,16 @@ log = logging.getLogger("database")
 # → count_amendments_for_calcs) and written here; preserved across INSERT OR
 # REPLACE recompute (T176/T232 wipe pattern) so a non-computing REPLACE
 # (exchange_history_backfill / rebuild) can't wipe a live-built value.
-# tp_drift_pct / sl_drift_pct (Phase 4.6) and hold_time_planned_ms (no source)
-# are intentionally NOT in this set — their owning tasks add them later.
-# cumulative_amendment_count joined the set in P4.T2.
+# hold_time_planned_ms (no source) is intentionally NOT in this set — its
+# owning task adds it later. cumulative_amendment_count joined in P4.T2;
+# tp_drift_pct / sl_drift_pct joined in P4.T5 (computed when the primary
+# calc's TP/SL leg was amended — same preserve-across-REPLACE need as the
+# other live-built deltas).
 _CLOSED_POS_DELTA_COLS = (
     "entry_px_delta_pct", "size_delta_pct", "exit_vs_target_pct",
     "realized_r", "planned_r", "hold_time_actual_ms",
     "cumulative_amendment_count",
+    "tp_drift_pct", "sl_drift_pct",
 )
 
 
@@ -343,7 +346,7 @@ class OrdersMixin:
                 tp_price, sl_price, lifecycle_id,
                 entry_px_delta_pct, size_delta_pct, exit_vs_target_pct,
                 realized_r, planned_r, hold_time_actual_ms,
-                cumulative_amendment_count
+                cumulative_amendment_count, tp_drift_pct, sl_drift_pct
             ) VALUES (
                 :account_id, :exchange_position_id, :terminal_position_id,
                 :symbol, :direction, :quantity, :entry_price, :exit_price,
@@ -354,7 +357,7 @@ class OrdersMixin:
                 :tp_price, :sl_price, :lifecycle_id,
                 :entry_px_delta_pct, :size_delta_pct, :exit_vs_target_pct,
                 :realized_r, :planned_r, :hold_time_actual_ms,
-                :cumulative_amendment_count
+                :cumulative_amendment_count, :tp_drift_pct, :sl_drift_pct
             )
         """
         try:

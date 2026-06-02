@@ -198,9 +198,43 @@ per-task notes are in the sections below + `docs/design/calc_linkage_implementat
   capture fixture that shields ALL tests (incl. the 24 P4.T1 ones) from live-DB writes — verified **0** live
   `position_amended` rows after the full 2921-test suite. Full suite: 2921 passed, 7 skipped, 1 pre-existing
   failure (TestRollingWindowPeak), 0 new failures.
-- **NEXT after T4**: P4.T5 (`tp_drift_pct`/`sl_drift_pct` at close — needs final-amended TP/SL, the same
-  data the deferred AMENDED exit_reason reclassification wants). Then the `_detect_modification_events`
-  dead-path fix (filed). Phase 4 is then complete (T1–T5).
+- **P4.T5 — SHIPPED (2026-06-02, task 250)**: populate `closed_positions.tp_drift_pct` / `sl_drift_pct`
+  = (final amended TP/SL − planned) / planned × 100, in `_compute_close_deltas` (the T2.5 delta home).
+  **planned_tp/sl from the PRIMARY (most-contributing) calc's junction snapshot — NOT literally the
+  "first" calc** the plan row 4.6 wording implies (§3.2 delta-basis rule; consistent with every other
+  close-row delta + T2.6 convergence — deviation surfaced). **final_tp/sl = the latest
+  `order_amendments.new_value` for `tp_price`/`sl_price` on the primary calc's legs** (reuses
+  `get_calc_amendments`, last-wins per field; the orders row goes stale post-amendment so the ledger is
+  authoritative — P4.T1). **Amended-only**: NULL when never amended (the §4 acceptance criterion
+  "populated for amended-stop positions") or planned missing. Persisted + REPLACE-preserved: added to
+  `_CLOSED_POS_DELTA_COLS` AND to `insert_closed_position`'s INSERT column/placeholder lists — **the
+  columns were in the schema but the INSERT never wrote them; the real-close-path test caught the gap**.
+  **Independent audit (6 agents): 1 MED confirmed + FIXED at the root** — SCOPING-001: a protective leg
+  amended BEFORE bracket inheritance assigned its calc_id leaves an orphaned `calc_id=NULL` amendment
+  that the calc_id-scoped drift (AND P4.T2's `cumulative_amendment_count`) silently miss. Fixed in
+  `_propagate_bracket_calc_id` (`_apply_leg` now backfills `UPDATE order_amendments SET calc_id WHERE
+  order_id=? AND calc_id IS NULL` alongside the orders update — same propagate-on-link discipline as
+  `fills.calc_id`; covers WS + REST; guarded so an already-attributed amendment isn't clobbered). I
+  verified the mechanism + the all-sites coverage independently before applying (the batch REST wrapper
+  delegates to the same `_apply_leg`). **Residual documented edge**: a scale-in protective leg inherited
+  under a NON-primary calc_id (T2.9 earliest-entry pick) → drift NULL on the §3.2 primary basis (a
+  genuine basis limitation, not a bug). **Residual minor edge (filed below)**: the matcher's
+  UNPLANNED→LINKED re-match can likewise orphan an ENTRY amendment for P4.T2's count (drift unaffected —
+  it reads only tp/sl). Tests: `tests/test_phase4_drift.py` (13) + 2 bracket-backfill tests
+  (`test_phase2_bracket_inheritance.py`) + 2 refreshed T2.5 deferred-column assertions. Full suite:
+  2936 passed, 7 skipped, 1 pre-existing failure (TestRollingWindowPeak), 0 new.
+- **⚠ FILED (P4.T5 audit, minor) — matcher-side orphaned-amendment count edge.** Symmetric to the
+  bracket-inheritance backfill (now fixed): if an ENTRY order is amended while UNPLANNED (calc_id NULL)
+  and LATER re-matched UNPLANNED→LINKED (the auto_classify upgrade), its amendment stays
+  `calc_id=NULL` → P4.T2's `cumulative_amendment_count` (scoped by calc_id) under-counts. Drift is
+  UNAFFECTED (it reads only tp_price/sl_price on protective legs, never entry amendments). Narrow
+  (needs amend-while-UNPLANNED then re-match). Fix mirror: backfill in `order_enrichment` auto_classify
+  the same way `_apply_leg` now does. Filed, not fixed (out of P4.T5 drift scope).
+- **NEXT**: P4.T1–T5 are all shipped → **Phase 4 plan tasks complete.** Remaining Phase-4-adjacent work:
+  the `_detect_modification_events` dead-path fix (filed earlier); the §3.4 `*_PLANNED → *_AMENDED`
+  exit_reason reclassification (the T2.7 deferral — now has the amendment data it needed); plus the
+  P4.T4-filed items (`_emit_fill_events` to_thread consistency; trade-event test pollution) and this
+  matcher-side count edge. Then Phase 5 (funding + fees) / Phase 6 (event_bus topics).
 - **⚠ FILED (P4.T4 audit) — `_emit_fill_events` sync-sqlite-in-async consistency cleanup.** The sibling
   trade-event emitter `_emit_fill_events` (called sync from `process_fill`, hot fill path) has the SAME
   blocking exposure P4.T4's audit flagged on `_emit_amendment_event` (sync `log_trade_event` → its own

@@ -515,6 +515,23 @@ class OrderManager:
                         "WHERE id = ? AND calc_id IS NULL",
                         (src_calc, LinkStatus.LINKED.value, oid),
                     )
+                    # P4.T5 audit (SCOPING-001): a protective leg amended
+                    # BEFORE this inheritance ran was recorded (P4.T1) with
+                    # the leg's then-NULL calc_id. The close-time drift
+                    # (get_calc_amendments) AND P4.T2's cumulative count
+                    # (count_amendments_for_calcs) are both scoped by calc_id,
+                    # so an orphaned NULL-calc_id amendment would be silently
+                    # missed. Backfill the leg's orphaned amendments to the
+                    # inherited calc_id — keeping the amendment ledger's
+                    # denormalized calc_id consistent with orders.calc_id (the
+                    # same propagate-on-link discipline as fills.calc_id). The
+                    # amendment EVENTS stay immutable (old/new/ts untouched);
+                    # only the denormalized FK is filled.
+                    await self._db._conn.execute(
+                        "UPDATE order_amendments SET calc_id = ? "
+                        "WHERE order_id = ? AND calc_id IS NULL",
+                        (src_calc, oid),
+                    )
                 await auto_classify(
                     oid, LinkStatus.LINKED.value, apply_fn=_apply_leg,
                 )
@@ -2514,23 +2531,22 @@ class OrderManager:
         snapshot); planned entry + planned_r come from its
         ``pre_trade_log`` row (no junction column exists for those).
 
-        Computes the 6 deltas fully derivable from data available at
-        close, all stored RAW/signed per the literal §3.2 formulas
-        (``realized_r`` is direction-agnostic as written — a SHORT flips
-        both numerator and denominator; the ``*_delta_pct`` are price
-        deltas whose better/worse reading is a display concern):
+        Computes the deltas derivable from data available at close, all
+        stored RAW/signed per the literal §3.2 formulas (``realized_r`` is
+        direction-agnostic as written — a SHORT flips both numerator and
+        denominator; the ``*_delta_pct``/``*_drift_pct`` are price deltas
+        whose better/worse reading is a display concern):
           entry_px_delta_pct, size_delta_pct, exit_vs_target_pct,
-          realized_r, planned_r, hold_time_actual_ms.
+          realized_r, planned_r, hold_time_actual_ms,
+          tp_drift_pct, sl_drift_pct (P4.T5).
 
         Every key is omitted (→ stays NULL via the nullable column) when
-        its planned denominator is missing/zero. Best-effort: any read
+        its planned denominator is missing/zero (and the drift keys also
+        when the leg was never amended — see below). Best-effort: any read
         failure or absent junction (UNPLANNED / binance empty-tpid)
         returns ``{}`` so the close-row write never blocks.
 
         Deliberately NOT computed here (left NULL until their owning task):
-          - ``tp_drift_pct`` / ``sl_drift_pct`` → Phase 4.6 (need the final
-            AMENDED TP/SL, which requires amendment tracking; the close
-            order exposes only the single triggered level).
           - ``hold_time_planned_ms`` → no planned-duration column exists in
             ``pre_trade_log`` or the junction.
 
@@ -2615,6 +2631,34 @@ class OrderManager:
             # planned_r = the calc's R estimate (pre_trade_log.est_r).
             if planned_r:
                 out["planned_r"] = planned_r
+
+            # tp_drift_pct / sl_drift_pct (P4.T5, spec §3.2 + plan §4.6): the
+            # FINAL AMENDED TP/SL trigger vs the primary calc's planned value.
+            # "Final" = the latest order_amendments.new_value for that field on
+            # the primary calc's legs — the orders row goes stale post-amendment
+            # (the SR-1 gate rejects the amend upsert), so the amendment ledger
+            # is authoritative (P4.T1). Scoped to the PRIMARY calc (same §3.2
+            # basis as planned_tp/sl above) — a scale-in protective leg inherited
+            # under a NON-primary calc_id (T2.9 earliest-entry pick) stays NULL
+            # on this basis (documented edge; the common single-calc case has
+            # entry == primary == the inherited TP/SL calc_id). NULL when the leg
+            # was never amended (no "final amended" value) — drift is populated
+            # only for an AMENDED stop (the plan §4 acceptance criterion).
+            final_tp = final_sl = None
+            try:
+                last_amend: Dict[str, Any] = {}
+                for a in await self._db.get_calc_amendments(primary_calc_id):
+                    last_amend[a["field"]] = a["new_value"]
+                final_tp = last_amend.get("tp_price")
+                final_sl = last_amend.get("sl_price")
+            except Exception:
+                pass
+            if planned_tp and final_tp is not None:
+                out["tp_drift_pct"] = round(
+                    (final_tp - planned_tp) / planned_tp * 100, 4)
+            if planned_sl and final_sl is not None:
+                out["sl_drift_pct"] = round(
+                    (final_sl - planned_sl) / planned_sl * 100, 4)
 
             if entry_time:
                 out["hold_time_actual_ms"] = exit_time - entry_time

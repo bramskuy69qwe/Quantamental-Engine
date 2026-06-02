@@ -116,6 +116,50 @@ class TestBracketPropagation:
         assert (await _read(db, "E"))["calc_id"] == "C1"
 
     @pytest.mark.asyncio
+    async def test_orphaned_amendment_backfilled_on_link(self, db, om):
+        # P4.T5 audit (SCOPING-001): a protective leg amended BEFORE this
+        # inheritance ran carries calc_id=NULL (P4.T1 records the order's
+        # then-NULL calc_id). On link, the leg's orphaned amendments must be
+        # backfilled to the inherited calc_id — else the close-time drift
+        # (get_calc_amendments) + P4.T2's cumulative count
+        # (count_amendments_for_calcs), both scoped by calc_id, silently miss it.
+        await _seed_order(db, "E", order_type="limit", calc_id="C1",
+                          link_status="LINKED", created_at_ms=1000)
+        sl_oid = await _seed_order(db, "SL", order_type="stop_loss",
+                                   reduce_only=1, side="SELL", created_at_ms=1100)
+        await db.insert_order_amendment({
+            "order_id": sl_oid, "calc_id": None, "field": "sl_price",
+            "old_value": 48000.0, "new_value": 47040.0, "ts_ms": 1050,
+            "operator_id": None, "deviation_pct": -2.0, "lifecycle_id": None,
+        })
+
+        await om._propagate_bracket_calc_id(ACCOUNT_ID, "BTCUSDT")
+
+        assert (await _read(db, "SL"))["calc_id"] == "C1"
+        amends = await db.get_order_amendments(sl_oid)
+        assert len(amends) == 1
+        assert amends[0]["calc_id"] == "C1"   # backfilled — no longer orphaned
+
+    @pytest.mark.asyncio
+    async def test_backfill_does_not_overwrite_attributed_amendment(self, db, om):
+        # The backfill is guarded WHERE calc_id IS NULL — an amendment already
+        # attributed to a calc is NOT clobbered when its leg inherits a calc_id.
+        await _seed_order(db, "E", order_type="limit", calc_id="C1",
+                          link_status="LINKED", created_at_ms=1000)
+        tp_oid = await _seed_order(db, "TP", order_type="take_profit",
+                                   reduce_only=1, side="SELL", created_at_ms=1100)
+        await db.insert_order_amendment({
+            "order_id": tp_oid, "calc_id": "C-PRIOR", "field": "tp_price",
+            "old_value": 55000.0, "new_value": 56000.0, "ts_ms": 1050,
+            "operator_id": None, "deviation_pct": 1.8, "lifecycle_id": None,
+        })
+
+        await om._propagate_bracket_calc_id(ACCOUNT_ID, "BTCUSDT")
+
+        amends = await db.get_order_amendments(tp_oid)
+        assert amends[0]["calc_id"] == "C-PRIOR"   # NOT overwritten
+
+    @pytest.mark.asyncio
     async def test_idempotent_does_not_overwrite_existing_calc(self, db, om):
         await _seed_order(db, "E", order_type="limit", calc_id="C1",
                           created_at_ms=1000)
