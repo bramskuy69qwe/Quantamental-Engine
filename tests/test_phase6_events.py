@@ -113,3 +113,32 @@ class TestPublishEngine:
         await bus.publish_engine(2, DOMAIN_POSITION, "closed", {"position_id": "p2"})
         await _drain_one(bus)
         assert got_acct1 == []      # account-1 handler saw nothing
+
+
+# ── 3. publish_engine_nowait (sync enqueue for loop-thread non-coroutines) ────
+
+
+class TestPublishEngineNowait:
+    @pytest.mark.asyncio
+    async def test_sync_enqueue_routes_to_subscriber(self):
+        # P6.T4: the SYNC enqueue path used by OrderManager._emit_fill_events
+        # (sync, on the loop thread). Builds the same hierarchical topic and
+        # routes the payload verbatim to a subscriber.
+        bus = EventBus()
+        received = []
+
+        async def handler(payload):
+            received.append(payload)
+
+        bus.subscribe(ch_engine(3, DOMAIN_POSITION, "partial_close"), handler)
+        bus.publish_engine_nowait(3, DOMAIN_POSITION, "partial_close", {"position_id": "p9"})
+        channel, _ = await _drain_one(bus)
+        assert channel == "engine:account:3:position:partial_close"
+        assert received == [{"position_id": "p9"}]
+
+    def test_enqueue_only_and_best_effort(self):
+        # Sync, no await; enqueues exactly one item and never raises (it must not
+        # break the fill hot path it is called from).
+        bus = EventBus()
+        bus.publish_engine_nowait(1, DOMAIN_POSITION, "opened", {"x": 1})
+        assert bus._queue.qsize() == 1

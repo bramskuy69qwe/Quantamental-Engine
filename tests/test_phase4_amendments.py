@@ -493,3 +493,53 @@ class TestPositionAmendedEvent:
             ACCOUNT_ID, _incoming("O-1", price=50100.0, quantity=1.0))
         assert [e for e in emitted_events
                 if e["event_type"] == "position_amended"] == []
+
+
+class TestPositionAmendedEventBus:
+    """P6.T4 (spec §9 position:amended event_bus topic): detect_and_persist_amendment
+    emits engine:account:{id}:position:amended 1:1 with each committed amendment,
+    from the on-loop caller (the trade event P4.T4 shipped is a separate sink)."""
+
+    @pytest.mark.asyncio
+    async def test_amendment_emits_position_amended_topic(self, db, om):
+        from core.event_bus import event_bus
+        oid = await _seed_working_order(
+            db, "O-1", order_type="limit", price=50000.0, quantity=1.0,
+            calc_id="calc-a", lifecycle_id="lc-1", terminal_position_id="POS-1")
+        while not event_bus._queue.empty():
+            event_bus._queue.get_nowait()
+        await om.detect_and_persist_amendment(
+            ACCOUNT_ID, _incoming("O-1", price=50100.0, quantity=1.0, updated_at_ms=777))
+        events = []
+        while not event_bus._queue.empty():
+            events.append(event_bus._queue.get_nowait())
+        amended = [(c, p) for c, p in events if c == "engine:account:1:position:amended"]
+        assert len(amended) == 1, f"expected 1 position:amended, got {events!r}"
+        _, p = amended[0]
+        assert p["position_id"] == "POS-1"
+        assert p["order_id"] == oid
+        assert p["field"] == "entry_price"
+        assert p["old"] == pytest.approx(50000.0)
+        assert p["new"] == pytest.approx(50100.0)
+        assert p["ts"] == 777
+
+    @pytest.mark.asyncio
+    async def test_no_topic_when_insert_not_committed(self, db, om, monkeypatch):
+        # Rule 8: 1:1-on-commit — a swallowed insert yields no event_bus topic.
+        from core.event_bus import event_bus
+        await _seed_working_order(
+            db, "O-1", order_type="limit", price=50000.0, quantity=1.0,
+            terminal_position_id="POS-1")
+
+        async def _fail(_row):
+            return False
+
+        monkeypatch.setattr(db, "insert_order_amendment", _fail)
+        while not event_bus._queue.empty():
+            event_bus._queue.get_nowait()
+        await om.detect_and_persist_amendment(
+            ACCOUNT_ID, _incoming("O-1", price=50100.0, quantity=1.0))
+        events = []
+        while not event_bus._queue.empty():
+            events.append(event_bus._queue.get_nowait())
+        assert not any(c.endswith(":position:amended") for c, _ in events)

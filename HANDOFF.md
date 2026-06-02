@@ -103,11 +103,27 @@ the snapshot-wins drift inversion (feature-flagged — the riskiest single chang
   recomputes `size_delta_pct` EVERY refresh, so a naive emit spams every poll; it needs a
   threshold-crossing / anti-spam producer (emit once per crossing, per-(position,calc) dedup state) — its
   own task, NOT a small add.
-- **NEXT in Phase 6**: P6.T2 (`position:closed` full payload — ⚠ `risk:position_closed` HAS a live
-  reconciler subscriber, so expand additively / compat-shim) + P6.T4 (position:* sweep — light up the
-  event_bus topics from the `position_opened`/`partial_close`/`position_amended`/`position_closed`
-  trade-event seams) + P6.T5 (`order:duplicate_detected`) + P6.T6 (snapshot-wins inversion — riskiest,
-  feature-flag it). See `[[project_phase6_event_bus_state]]` memory for the verified seam map.
+- **✅ P6.T4 + P6.T2 — SHIPPED (task 263)**: the five `position:*` events on the per-account event_bus.
+  `position:opened` (lifecycle MINT) + `position:scale_in` (lifecycle reuse + calc new to the junction) in
+  `_link_position_calc_on_open` — POSITION-level semantics from the mint-vs-reuse signal (the per-CALC
+  `position_opened` TRADE event is unchanged). `position:partial_close` in `_emit_fill_events` via the NEW
+  sync **`EventBus.publish_engine_nowait`** (put_nowait; `_emit_fill_events` is sync but on the loop thread).
+  `position:amended` from the on-loop `detect_and_persist_amendment` caller (NOT the to_thread'd worker —
+  asyncio.Queue isn't thread-safe). **P6.T2** `position:closed` FULL §9 payload (FINAL-only via `is_final`)
+  beside the KEPT flat `risk:position_closed` (compat shim — the reconciler subscriber is untouched).
+  Audit (6-dim workflow): 6 candidates → 3 confirmed, all LOW/MED (NO functional/money/thread-safety bug):
+  (a/b) the nested `position:closed` `deltas` leaked `hold_time_actual_ms` (a TOP-LEVEL §9 field) — FIXED
+  (filter it from the nested block; the close-ROW `**deltas` spread keeps the column) + pinned the deltas
+  key set in the test; (c) the partial_close test seeded equal qty_reduced/remaining_qty so a source-swap
+  passed — FIXED (distinct seeds 1.0/3.0). Documented payload limits: `position:closed` model_names=[primary],
+  model_tags=[], hold_time_planned_ms/close_note=None, mfe/mae=None (reconciler-computed post-close). Tests:
+  `test_phase6_events` (+2 nowait), `test_phase2_junction` (opened/scale_in/same-calc + partial_close),
+  `test_phase4_amendments` (+2 amended event_bus), `test_phase5_funding` (+2 closed). Full suite 3015 / 7 skip
+  / 1 pre-existing fail / 0 new.
+- **NEXT in Phase 6**: P6.T5 (`order:duplicate_detected` — near-dup detection in the order-arrival path) +
+  P6.T6 (`position:size_drift` + snapshot-wins inversion — the riskiest single change; feature-flag behind
+  `config_json.feature_flags.snapshot_wins_drift`, isolate + monitor) + P6.T7 (`position:liquidated`
+  dedicated event). Plus the deferred `calc:size_deviated` producer. See `[[project_phase6_event_bus_state]]`.
 
 ### VERIFY-FIRST before scoping Phase 6 — DONE 2026-06-02 (corrects the prior claim; see `[[project_phase6_event_bus_state]]`)
 - ⚠ **CORRECTION**: the prior handoff said `TRANSITION_EVENT_MAP` in **calc_state/link_state** is

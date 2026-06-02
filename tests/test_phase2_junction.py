@@ -1342,3 +1342,109 @@ class TestExitReasonEnum:
         await om._build_close_row_for_fill(ACCOUNT_ID, close)
         cp = await _closed_pos(db, "POS-1")
         assert cp["exit_reason"] == "TP_PLANNED"   # not legacy "tp_hit"
+
+
+# ── 13. P6.T4 — position:opened / scale_in / partial_close on the event_bus ──
+
+
+def _drain_bus():
+    from core.event_bus import event_bus
+    out = []
+    while not event_bus._queue.empty():
+        out.append(event_bus._queue.get_nowait())
+    return out
+
+
+class TestPositionOpenedScaleInEvents:
+    """P6.T4 (spec §9): _link_position_calc_on_open emits position:opened on a
+    position's FIRST open (lifecycle mint) and position:scale_in when a calc
+    NEW to the position contributes (lifecycle reuse) — the §9-correct
+    position-level split (distinct from the per-calc position_opened trade event).
+    """
+
+    @pytest.mark.asyncio
+    async def test_first_open_emits_position_opened(self, om, db):
+        await _seed_calc(db, "C1")
+        await _seed_order(db, "EO", calc_id="C1")
+        _drain_bus()
+        f = _fill("EO", "POS-1", 2.0, ts=1000, fid="F1", price=50000.0)
+        f["direction"] = "LONG"
+        await om._link_position_calc_on_open(ACCOUNT_ID, f)
+        events = _drain_bus()
+        opened = [(c, p) for c, p in events if c == "engine:account:1:position:opened"]
+        assert len(opened) == 1, f"expected 1 position:opened, got {events!r}"
+        _, p = opened[0]
+        assert p["position_id"] == "POS-1"
+        assert p["calc_ids"] == ["C1"]
+        assert p["symbol"] == "BTCUSDT"
+        assert p["direction"] == "LONG"
+        assert p["entry_px"] == pytest.approx(50000.0)
+        assert p["size"] == pytest.approx(2.0)
+        assert not any(c.endswith(":position:scale_in") for c, _ in events)
+
+    @pytest.mark.asyncio
+    async def test_scale_in_emits_scale_in_not_opened(self, om, db):
+        await _seed_calc(db, "C1")
+        await _seed_calc(db, "C2")
+        await _seed_order(db, "EO1", calc_id="C1")
+        await _seed_order(db, "EO2", calc_id="C2")
+        await om._link_position_calc_on_open(
+            ACCOUNT_ID, _fill("EO1", "POS-1", 2.0, ts=1000, fid="F1"))
+        _drain_bus()  # discard the position:opened from the first fill
+        await om._link_position_calc_on_open(
+            ACCOUNT_ID, _fill("EO2", "POS-1", 1.0, ts=2000, fid="F2"))
+        events = _drain_bus()
+        scale = [(c, p) for c, p in events if c == "engine:account:1:position:scale_in"]
+        assert len(scale) == 1, f"expected 1 position:scale_in, got {events!r}"
+        _, p = scale[0]
+        assert p["new_calc_id"] == "C2"
+        assert p["added_qty"] == pytest.approx(1.0)
+        # A scale-in must NOT also re-emit position:opened.
+        assert not any(c.endswith(":position:opened") for c, _ in events)
+
+    @pytest.mark.asyncio
+    async def test_same_calc_additional_fill_emits_neither(self, om, db):
+        # Another fill of the SAME (position, calc) is neither an open nor a
+        # scale-in — no lifecycle event (Rule 8: pins the membership check).
+        await _seed_calc(db, "C1")
+        await _seed_order(db, "EO1", calc_id="C1")
+        await om._link_position_calc_on_open(
+            ACCOUNT_ID, _fill("EO1", "POS-1", 2.0, ts=1000, fid="F1"))
+        _drain_bus()
+        await om._link_position_calc_on_open(
+            ACCOUNT_ID, _fill("EO1", "POS-1", 1.0, ts=1500, fid="F2"))
+        events = _drain_bus()
+        assert not any(
+            c.endswith(":position:opened") or c.endswith(":position:scale_in")
+            for c, _ in events
+        )
+
+
+class TestPartialCloseEvent:
+    @pytest.mark.asyncio
+    async def test_partial_close_emits_event(self, om, monkeypatch):
+        # P6.T4 (spec §9 position:partial_close): _emit_fill_events emits it for
+        # a reduce-only fill while the position still has remaining qty. Patch
+        # log_trade_event so the sync trade-event sink can't touch the live DB;
+        # the closing fill carries calc_id (skips the config.DB_PATH lookup).
+        from core.state import app_state
+        monkeypatch.setattr("core.trade_event_log.log_trade_event", lambda *a, **k: None)
+        pos = _pos("POS-1")
+        # DISTINCT from the fill qty so the two payload fields can't be confused:
+        # remaining_qty (position size after the rung) = 3.0, qty_reduced (this
+        # fill's size) = 1.0 — a source-expression swap would now FAIL.
+        pos.contract_amount = 3.0   # remaining > 0 → partial, not final
+        monkeypatch.setattr(app_state, "positions", [pos])
+        _drain_bus()
+        fill = _fill("XO", "POS-1", 1.0, is_close=1, fid="FX", price=52000.0)
+        fill["calc_id"] = "C1"
+        fill["realized_pnl"] = 40.0
+        om._emit_fill_events(ACCOUNT_ID, fill)
+        events = _drain_bus()
+        pc = [(c, p) for c, p in events if c == "engine:account:1:position:partial_close"]
+        assert len(pc) == 1, f"expected 1 position:partial_close, got {events!r}"
+        _, p = pc[0]
+        assert p["position_id"] == "POS-1"
+        assert p["qty_reduced"] == pytest.approx(1.0)     # this fill's size
+        assert p["remaining_qty"] == pytest.approx(3.0)   # position size after
+        assert p["realized_pnl_partial"] == pytest.approx(40.0)

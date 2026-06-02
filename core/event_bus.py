@@ -139,6 +139,29 @@ class EventBus:
         """
         await self.publish(ch_engine(account_id, domain, event), payload)
 
+    def publish_engine_nowait(
+        self, account_id: int, domain: str, event: str,
+        payload: Dict[str, Any],
+    ) -> None:
+        """SYNC sibling of :meth:`publish_engine` for emitters that run on the
+        event-loop thread but are NOT coroutines (e.g.
+        ``OrderManager._emit_fill_events``, called synchronously from the async
+        fill path). Uses ``Queue.put_nowait`` — safe from the loop thread on the
+        unbounded queue (``maxsize=0`` → never ``QueueFull``).
+
+        **Loop-thread only** — ``asyncio.Queue`` is not thread-safe, so a caller
+        running in a worker thread (``asyncio.to_thread``) must NOT use this;
+        it should emit from its on-loop caller via :meth:`publish_engine`.
+        Best-effort: a put failure is swallowed so it never breaks the hot path.
+        """
+        try:
+            self._queue.put_nowait((ch_engine(account_id, domain, event), payload))
+        except Exception:
+            log.debug(
+                "publish_engine_nowait enqueue failed for %s:%s:%s",
+                account_id, domain, event, exc_info=True,
+            )
+
     async def _dispatch(self, channel: str, payload: Dict[str, Any]) -> None:
         for handler in self._handlers.get(channel, []):
             try:

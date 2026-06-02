@@ -15,7 +15,7 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
-from core.event_bus import event_bus, DOMAIN_CALC
+from core.event_bus import event_bus, DOMAIN_CALC, DOMAIN_POSITION
 from core.order_state import validate_transition, ACTIVE_STATES, OrderStatus, resolve_tpsl_direction
 from core.state import app_state, PositionInfo, deviation_badge_level
 
@@ -1175,6 +1175,23 @@ class OrderManager:
                         position_id=position_id, field=field,
                         old=old, new=new, ts_ms=ts_ms,
                     )
+                    # P6.T4 (spec §9 position:amended): the formal event_bus
+                    # topic (P4.T4 shipped the trade event; plan §6 row 6.4
+                    # catalogues the topic here). Emitted from THIS on-loop caller
+                    # — NOT inside the to_thread'd _emit_amendment_event, since an
+                    # asyncio.Queue is not thread-safe. Same 1:1-on-commit gate as
+                    # the trade event. publish_engine is enqueue-only.
+                    await event_bus.publish_engine(
+                        account_id, DOMAIN_POSITION, "amended", {
+                            "position_id": position_id,
+                            "order_id":    order_id,
+                            "field":       field,
+                            "old":         old,
+                            "new":         new,
+                            "ts":          ts_ms,
+                            "operator_id": None,  # Phase 9
+                        },
+                    )
 
     def _emit_amendment_event(
         self, account_id: int, *, order_id: int, calc_id: Optional[str],
@@ -1295,6 +1312,20 @@ class OrderManager:
                                 "remaining_qty": pos.contract_amount,
                                 "realized_pnl_partial": fill.get("realized_pnl", 0),
                             }, source="order_manager")
+                            # P6.T4 (spec §9 position:partial_close): mirror onto
+                            # the per-account event_bus topic. _emit_fill_events
+                            # is sync but runs ON the loop thread (sync call from
+                            # async _process_single_fill) → put_nowait is safe.
+                            # tp_level_idx omitted (same deferral as the trade
+                            # event — needs calc.tp_levels price matching).
+                            event_bus.publish_engine_nowait(
+                                account_id, DOMAIN_POSITION, "partial_close", {
+                                    "position_id":          pos_id,
+                                    "qty_reduced":          fill.get("quantity", 0),
+                                    "remaining_qty":        pos.contract_amount,
+                                    "realized_pnl_partial": fill.get("realized_pnl", 0),
+                                },
+                            )
                 except Exception:
                     pass
 
@@ -1632,6 +1663,26 @@ class OrderManager:
             log.debug("junction link: lifecycle lookup failed for %s", pos_id, exc_info=True)
             return
         lifecycle_id = lrow[0] if lrow and lrow[0] else str(uuid.uuid4())
+        # P6.T4: the lifecycle mint-vs-reuse signal IS the position-level
+        # open-vs-scale-in distinction. No prior lifecycle → this fill OPENS the
+        # position. Reuse → the position is already open; whether THIS is a
+        # scale-in (a calc new to the position) vs just another fill of an
+        # existing contribution is resolved by the junction-membership check
+        # below (run BEFORE the upsert creates the row).
+        is_first_open = not (lrow and lrow[0])
+        calc_new_to_position = False
+        if not is_first_open:
+            try:
+                async with self._db._conn.execute(
+                    "SELECT 1 FROM positions_calcs "
+                    "WHERE position_id = ? AND calc_id = ? AND account_id = ? LIMIT 1",
+                    (pos_id, calc_id, account_id),
+                ) as cur:
+                    calc_new_to_position = (await cur.fetchone()) is None
+            except Exception:
+                log.debug(
+                    "scale-in check failed for %s/%s", pos_id, calc_id, exc_info=True,
+                )
 
         # T2.4 (plan §2 task 2.4): snapshot the calc's planned size / TP /
         # SL onto the junction row at contribution time (spec §3.1).
@@ -1731,6 +1782,31 @@ class OrderManager:
             "Linked position %s ↔ calc %s (order_id=%s, lifecycle=%s, qty=%.6f)",
             pos_id, calc_id, order_id, lifecycle_id, qty,
         )
+
+        # P6.T4 (spec §9): position lifecycle events on the per-account topic,
+        # emitted AFTER the durable junction write. POSITION-level semantics
+        # from the mint-vs-reuse signal — note the position_opened TRADE event
+        # in _emit_fill_events is per-CALC-first-fill (so it ALSO fires on a
+        # scale-in); these event_bus topics use the §9-correct position-first-
+        # open vs scale_in split. Best-effort (publish_engine is enqueue-only).
+        try:
+            if is_first_open:
+                await event_bus.publish_engine(account_id, DOMAIN_POSITION, "opened", {
+                    "position_id": pos_id,
+                    "calc_ids":    [calc_id],
+                    "symbol":      fill.get("symbol", ""),
+                    "direction":   fill.get("direction", ""),
+                    "entry_px":    fill.get("price", 0),
+                    "size":        qty,
+                })
+            elif calc_new_to_position:
+                await event_bus.publish_engine(account_id, DOMAIN_POSITION, "scale_in", {
+                    "position_id": pos_id,
+                    "new_calc_id": calc_id,
+                    "added_qty":   qty,
+                })
+        except Exception:
+            log.debug("position opened/scale_in event emit failed", exc_info=True)
 
     async def _stamp_closing_fill_attribution(
         self, account_id: int, fill: Dict[str, Any]
@@ -2271,6 +2347,63 @@ class OrderManager:
                 "symbol": symbol, "direction": direction,
                 "realized_pnl": realized_pnl, "net_pnl": net_pnl,
             })
+
+            # P6.T2 (spec §9 position:closed FULL payload): the per-account topic
+            # carries the complete close context for external models (Phase 7).
+            # FINAL-close only (is_final) — a "position:closed" means the position
+            # is flat; per-partial rungs already emit position:partial_close. This
+            # is the key difference from the flat risk:position_closed above, which
+            # is KEPT unconditionally for the existing reconciler subscriber (it
+            # reconciles per-partial closed_positions rows) as a compat shim
+            # (emit both; deprecate the flat one once subscribers migrate, §11).
+            # Documented payload limits (match the data available at close):
+            #   - model_names = [primary's model_name] — model_name is sourced by
+            #     symbol+entry-window, not the primary calc (T234 known limit);
+            #   - model_tags / hold_time_planned_ms / close_note have no source today;
+            #   - mfe/mae are reconciler-computed AFTER close → None here (a
+            #     subscriber reads the closed_positions row for the finalized pair).
+            try:
+                if is_final:
+                    await event_bus.publish_engine(
+                        account_id, DOMAIN_POSITION, "closed", {
+                            "position_id":                pos_id,
+                            "symbol":                     symbol,
+                            "direction":                  direction,
+                            "contributing_calc_ids":      sorted(contributing_calc_ids),
+                            "primary_calc_id":            close_calc_id,
+                            "lifecycle_id":               close_lifecycle_id,
+                            "model_names":                [model_name] if model_name else [],
+                            "model_tags":                 [],
+                            "open_ts_ms":                 entry_time,
+                            "close_ts_ms":                exit_time,
+                            "hold_time_actual_ms":        exit_time - entry_time if entry_time else 0,
+                            "hold_time_planned_ms":       None,
+                            "avg_entry_px":               entry_price,
+                            "avg_exit_px":                exit_price,
+                            "realized_pnl":               realized_pnl,
+                            "total_fees":                 total_fees,
+                            "funding_fees":               funding_fees,
+                            "net_pnl":                    net_pnl,
+                            # §9 deltas sub-object = exactly the 7 delta keys.
+                            # The close-ROW `deltas` dict also carries
+                            # hold_time_actual_ms, which §9 places at the payload
+                            # TOP level (emitted above) — drop it from the nested
+                            # block so the shape matches §9 (the **deltas spread
+                            # into the closed_positions ROW still keeps the column).
+                            "deltas": {
+                                k: v for k, v in deltas.items()
+                                if k != "hold_time_actual_ms"
+                            },
+                            "exit_reason":                exit_reason,
+                            "was_manually_closed":        str(exit_reason).startswith("MANUAL"),
+                            "close_note":                 None,
+                            "cumulative_amendment_count": cumulative_amendment_count,
+                            "mfe":                        None,  # reconciler post-close
+                            "mae":                        None,
+                        },
+                    )
+            except Exception:
+                log.debug("position:closed event_bus emit failed", exc_info=True)
 
             # v2.4: emit position_closed trade event
             try:

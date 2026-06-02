@@ -1010,3 +1010,77 @@ class TestDeferredFundingBackstop:
         # net recomputed from the row's stored realized/fees + funding.
         assert post["net_pnl"] == pytest.approx(
             post["realized_pnl"] - post["total_fees"] - 0.06)
+
+
+# ── 8. P6.T2: position:closed FULL §9 payload on the event_bus ────────────────
+
+
+class TestPositionClosedEvent:
+    @pytest.mark.asyncio
+    async def test_final_close_emits_full_payload_and_keeps_flat(self, db, om):
+        # P6.T2: the close path emits the FULL spec §9 position:closed payload on
+        # the per-account topic, AND keeps the flat risk:position_closed (compat
+        # shim for the reconciler subscriber). Both must appear on a final close.
+        from core.event_bus import event_bus
+        await _seed_junction_cp(db, "POS-1", "C1", qty=2.0)
+        await _seed_order_cp(db, "EO", "limit", "BUY")
+        await _seed_fill_cp(db, "FO", "EO", "POS-1", 2.0, False, 1000, fee=0.5)
+        await _seed_order_cp(db, "XO", "market", "SELL")
+        await _seed_fill_cp(db, "FX", "XO", "POS-1", 2.0, True, 2000,
+                            fee=1.5, realized_pnl=100.0, price=51000.0)
+        while not event_bus._queue.empty():
+            event_bus._queue.get_nowait()
+
+        await om._build_close_row_for_fill(ACCOUNT_ID, _close_fill_cp("XO", "POS-1", 2000))
+
+        events = []
+        while not event_bus._queue.empty():
+            events.append(event_bus._queue.get_nowait())
+        # compat shim: the flat event is still emitted for the reconciler.
+        assert any(c == "risk:position_closed" for c, _ in events)
+        closed = [(c, p) for c, p in events if c == "engine:account:1:position:closed"]
+        assert len(closed) == 1, f"expected 1 position:closed, got {[c for c, _ in events]!r}"
+        _, p = closed[0]
+        assert p["position_id"] == "POS-1"
+        assert p["primary_calc_id"] == "C1"
+        assert p["contributing_calc_ids"] == ["C1"]
+        assert p["realized_pnl"] == pytest.approx(100.0)
+        # net_pnl self-consistent with the payload's own fee/funding fields.
+        assert p["net_pnl"] == pytest.approx(
+            p["realized_pnl"] - p["total_fees"] + p["funding_fees"])
+        # §9 deltas sub-object: ONLY the 7 spec delta keys — hold_time_actual_ms
+        # is a TOP-LEVEL §9 field (must not leak into the nested block from the
+        # close-ROW delta dict). issubset tolerates a conditionally-absent delta
+        # but FAILS on any extra key (e.g. a hold_time_actual_ms leak).
+        assert isinstance(p["deltas"], dict)
+        assert set(p["deltas"]).issubset({
+            "entry_px_delta_pct", "size_delta_pct", "tp_drift_pct", "sl_drift_pct",
+            "exit_vs_target_pct", "realized_r", "planned_r",
+        }), p["deltas"].keys()
+        assert "hold_time_actual_ms" not in p["deltas"]   # nested: excluded
+        assert "hold_time_actual_ms" in p                 # top-level: present
+        assert p["exit_reason"]                       # non-empty §3.4 enum
+        assert p["mfe"] is None and p["mae"] is None  # reconciler-computed post-close
+
+    @pytest.mark.asyncio
+    async def test_partial_close_does_not_emit_position_closed(self, db, om):
+        # FINAL-only: a non-final (multi-TP partial) close emits NO
+        # position:closed (it would falsely signal the position is flat). The
+        # flat risk:position_closed still fires (per-row, for the reconciler).
+        from core.event_bus import event_bus
+        await _seed_junction_cp(db, "POS-1", "C1", qty=2.0)
+        await _seed_order_cp(db, "EO", "limit", "BUY")
+        await _seed_fill_cp(db, "FO", "EO", "POS-1", 2.0, False, 1000, fee=0.4)
+        await _seed_order_cp(db, "XO1", "take_profit", "SELL")
+        await _seed_fill_cp(db, "FX1", "XO1", "POS-1", 1.0, True, 2000,
+                            fee=0.3, realized_pnl=40.0, price=52000.0)
+        while not event_bus._queue.empty():
+            event_bus._queue.get_nowait()
+
+        # Σclose(1) < Σopen(2) → NOT final.
+        await om._build_close_row_for_fill(ACCOUNT_ID, _close_fill_cp("XO1", "POS-1", 2000))
+
+        events = []
+        while not event_bus._queue.empty():
+            events.append(event_bus._queue.get_nowait())
+        assert not any(c.endswith(":position:closed") for c, _ in events)
