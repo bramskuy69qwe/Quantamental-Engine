@@ -15,11 +15,18 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
-from core.event_bus import event_bus, DOMAIN_CALC, DOMAIN_POSITION
+from core.event_bus import event_bus, DOMAIN_CALC, DOMAIN_POSITION, DOMAIN_ORDER
 from core.order_state import validate_transition, ACTIVE_STATES, OrderStatus, resolve_tpsl_direction
 from core.state import app_state, PositionInfo, deviation_badge_level
 
 log = logging.getLogger("order_manager")
+
+# P6.T5 (spec §9 order:duplicate_detected): two orders with an IDENTICAL shape
+# arriving within this window are treated as a likely accidental double-submit.
+# 2s mirrors the bracket-detection window (T2.8); tight enough to separate an
+# accidental double-paste from a deliberate scale-in (seconds-to-minutes apart).
+# Heuristic + a module constant for now (config-driven window is a later refinement).
+DUP_WINDOW_MS = 2000
 
 
 def _first_truthy(*vals: Any) -> Optional[float]:
@@ -229,6 +236,11 @@ class OrderManager:
         # bracket TP/SL siblings. Runs AFTER enrichment so the entry's
         # calc_id is committed when this reads it; idempotent + best-effort.
         await self._propagate_bracket_calc_id(account_id, order.get("symbol") or "")
+        # P6.T5 (spec §9 order:duplicate_detected): flag 2+ identical-shape orders
+        # arriving within DUP_WINDOW_MS (a likely accidental double-submit). New
+        # arrivals only (prev_order is None) — an update/fill of an existing order
+        # is not a new submission.
+        await self._detect_duplicate_orders(account_id, order, prev_order)
         self._emit_order_events(account_id, order)
         self._detect_modification_events(account_id, order, prev_order)
         # T216 (P1.T5): release the calc back to the re-match pool when
@@ -237,6 +249,67 @@ class OrderManager:
         self._publish_order_update(account_id, order)
         await self.refresh_cache(account_id)
         return True
+
+    async def _detect_duplicate_orders(
+        self, account_id: int, order: Dict[str, Any], prev_order: Optional[Dict],
+    ) -> None:
+        """P6.T5 (spec §9 ``order:duplicate_detected``): emit when 2+ orders with
+        an IDENTICAL shape arrived within :data:`DUP_WINDOW_MS` — a likely
+        accidental double-submit (the operator pasted the same order twice).
+
+        Identity = ``(symbol, side, order_type, price, stop_price, quantity)``,
+        EXACT — a double-paste produces bit-identical values, so exact match is
+        the lowest-false-positive interpretation of "near-identical". ``stop_price``
+        is in the key so multi-TP rungs at DIFFERENT triggers are not flagged.
+
+        Runs on NEW arrivals only (``prev_order is None`` — an update/fill of an
+        existing order is not a new submission) and requires ``created_at_ms > 0``
+        (no reliable arrival time → can't window; e.g. the MEXC-WS gap where
+        ``created_at_ms`` is 0, same limitation as bracket detection). The just-
+        persisted order is already in the table, so the query returns the whole
+        cluster (this order + any prior dups); ≥2 ⇒ emit ``order_ids[]`` (internal
+        ids) + ``dup_window_ms``. Best-effort: a detection fault never breaks the
+        order-arrival path.
+
+        **Known false-positive edges** (bounded; no consumer yet — forward-
+        scaffolding, surfaced for operator judgment when the UI badge / Phase-7
+        consumer lands): a deliberate scale-in at the EXACT same price+qty within
+        2s; a cancel-then-repaste (cancel-replace) of the same shape within 2s
+        (status is intentionally NOT filtered — the tight window is the discriminator).
+        """
+        if prev_order is not None:
+            return
+        try:
+            created = int(order.get("created_at_ms", 0) or 0)
+            if created <= 0:
+                return
+            symbol = order.get("symbol", "") or ""
+            if not symbol:
+                return
+            side = order.get("side", "") or ""
+            otype = order.get("order_type", "") or ""
+            price = float(order.get("price", 0) or 0)
+            stop_price = float(order.get("stop_price", 0) or 0)
+            qty = float(order.get("quantity", 0) or 0)
+            async with self._db._conn.execute(
+                "SELECT id FROM orders "
+                "WHERE account_id = ? AND symbol = ? AND side = ? AND order_type = ? "
+                "  AND price = ? AND stop_price = ? AND quantity = ? "
+                "  AND created_at_ms > 0 AND ABS(created_at_ms - ?) <= ? "
+                "ORDER BY id ASC",
+                (account_id, symbol, side, otype, price, stop_price, qty,
+                 created, DUP_WINDOW_MS),
+            ) as cur:
+                ids = [r[0] for r in await cur.fetchall()]
+            if len(ids) >= 2:
+                await event_bus.publish_engine(
+                    account_id, DOMAIN_ORDER, "duplicate_detected", {
+                        "order_ids":     ids,
+                        "dup_window_ms": DUP_WINDOW_MS,
+                    },
+                )
+        except Exception:
+            log.debug("duplicate-order detection failed", exc_info=True)
 
     # ── DD-aware order gate (v2.4 Priority 1c) ─────────────────────────────
 

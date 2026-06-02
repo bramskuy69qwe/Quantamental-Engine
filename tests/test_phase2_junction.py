@@ -1448,3 +1448,122 @@ class TestPartialCloseEvent:
         assert p["qty_reduced"] == pytest.approx(1.0)     # this fill's size
         assert p["remaining_qty"] == pytest.approx(3.0)   # position size after
         assert p["realized_pnl_partial"] == pytest.approx(40.0)
+
+
+# ── 14. P6.T5 — order:duplicate_detected ──────────────────────────────────────
+
+
+async def _seed_dup_order(db, eoid, *, symbol="BTCUSDT", side="BUY",
+                          order_type="limit", price=50000.0, stop_price=0.0,
+                          quantity=1.0, created_at_ms=1000, account_id=ACCOUNT_ID):
+    cur = await db._conn.execute(
+        "INSERT INTO orders (account_id, exchange_order_id, symbol, side, "
+        " order_type, status, price, stop_price, quantity, created_at_ms) "
+        "VALUES (?, ?, ?, ?, ?, 'new', ?, ?, ?, ?)",
+        (account_id, eoid, symbol, side, order_type, price, stop_price,
+         quantity, created_at_ms),
+    )
+    await db._conn.commit()
+    return cur.lastrowid
+
+
+def _arriving(eoid, *, symbol="BTCUSDT", side="BUY", order_type="limit",
+              price=50000.0, stop_price=0.0, quantity=1.0, created_at_ms=1000):
+    return {
+        "account_id": ACCOUNT_ID, "exchange_order_id": eoid, "symbol": symbol,
+        "side": side, "order_type": order_type, "price": price,
+        "stop_price": stop_price, "quantity": quantity, "created_at_ms": created_at_ms,
+    }
+
+
+class TestDuplicateOrderDetection:
+    """P6.T5 (spec §9 order:duplicate_detected): 2+ IDENTICAL-shape orders within
+    DUP_WINDOW_MS → emit order_ids[] + dup_window_ms. New arrivals only."""
+
+    @pytest.mark.asyncio
+    async def test_two_identical_within_window_emit(self, om, db):
+        id1 = await _seed_dup_order(db, "O-A", created_at_ms=1000)
+        id2 = await _seed_dup_order(db, "O-B", created_at_ms=1500)  # +500ms
+        _drain_bus()
+        await om._detect_duplicate_orders(
+            ACCOUNT_ID, _arriving("O-B", created_at_ms=1500), None)
+        events = _drain_bus()
+        dup = [(c, p) for c, p in events if c == "engine:account:1:order:duplicate_detected"]
+        assert len(dup) == 1, f"expected 1 order:duplicate_detected, got {events!r}"
+        _, p = dup[0]
+        assert sorted(p["order_ids"]) == sorted([id1, id2])
+        assert p["dup_window_ms"] == 2000
+
+    @pytest.mark.asyncio
+    async def test_single_order_no_emit(self, om, db):
+        await _seed_dup_order(db, "O-A", created_at_ms=1000)
+        _drain_bus()
+        await om._detect_duplicate_orders(
+            ACCOUNT_ID, _arriving("O-A", created_at_ms=1000), None)
+        assert not any(c.endswith(":order:duplicate_detected") for c, _ in _drain_bus())
+
+    @pytest.mark.asyncio
+    async def test_different_price_no_emit(self, om, db):
+        await _seed_dup_order(db, "O-A", price=50000.0, created_at_ms=1000)
+        await _seed_dup_order(db, "O-B", price=50100.0, created_at_ms=1500)
+        _drain_bus()
+        await om._detect_duplicate_orders(
+            ACCOUNT_ID, _arriving("O-B", price=50100.0, created_at_ms=1500), None)
+        assert not any(c.endswith(":order:duplicate_detected") for c, _ in _drain_bus())
+
+    @pytest.mark.asyncio
+    async def test_different_stop_price_not_dup(self, om, db):
+        # Multi-TP rungs: identical except the trigger (stop_price) — NOT dups.
+        await _seed_dup_order(db, "O-A", order_type="take_profit", price=0.0,
+                              stop_price=55000.0, created_at_ms=1000)
+        await _seed_dup_order(db, "O-B", order_type="take_profit", price=0.0,
+                              stop_price=56000.0, created_at_ms=1500)
+        _drain_bus()
+        await om._detect_duplicate_orders(
+            ACCOUNT_ID, _arriving("O-B", order_type="take_profit", price=0.0,
+                                  stop_price=56000.0, created_at_ms=1500), None)
+        assert not any(c.endswith(":order:duplicate_detected") for c, _ in _drain_bus())
+
+    @pytest.mark.asyncio
+    async def test_outside_window_no_emit(self, om, db):
+        await _seed_dup_order(db, "O-A", created_at_ms=1000)
+        await _seed_dup_order(db, "O-B", created_at_ms=5000)  # +4s > 2s window
+        _drain_bus()
+        await om._detect_duplicate_orders(
+            ACCOUNT_ID, _arriving("O-B", created_at_ms=5000), None)
+        assert not any(c.endswith(":order:duplicate_detected") for c, _ in _drain_bus())
+
+    @pytest.mark.asyncio
+    async def test_update_of_existing_order_no_emit(self, om, db):
+        # prev_order is not None → an UPDATE, not a new submission → skip.
+        await _seed_dup_order(db, "O-A", created_at_ms=1000)
+        await _seed_dup_order(db, "O-B", created_at_ms=1500)
+        _drain_bus()
+        await om._detect_duplicate_orders(
+            ACCOUNT_ID, _arriving("O-B", created_at_ms=1500), {"status": "new"})
+        assert not any(c.endswith(":order:duplicate_detected") for c, _ in _drain_bus())
+
+    @pytest.mark.asyncio
+    async def test_zero_created_at_skips(self, om, db):
+        # No reliable arrival time (e.g. MEXC WS gap) → can't window → skip.
+        await _seed_dup_order(db, "O-A", created_at_ms=0)
+        await _seed_dup_order(db, "O-B", created_at_ms=0)
+        _drain_bus()
+        await om._detect_duplicate_orders(
+            ACCOUNT_ID, _arriving("O-B", created_at_ms=0), None)
+        assert not any(c.endswith(":order:duplicate_detected") for c, _ in _drain_bus())
+
+    @pytest.mark.asyncio
+    async def test_wired_into_process_order_update(self, real, monkeypatch):
+        # Rule-8 wiring: two identical orders through the REAL process_order_update
+        # path emit the event once (when the 2nd arrives). Patch log_trade_event so
+        # _emit_order_events doesn't write the live per-account DB.
+        monkeypatch.setattr("core.trade_event_log.log_trade_event", lambda *a, **k: None)
+        om, db = real
+        _drain_bus()
+        await om.process_order_update(ACCOUNT_ID, _arriving("DUP-1", created_at_ms=1000))
+        await om.process_order_update(ACCOUNT_ID, _arriving("DUP-2", created_at_ms=1200))
+        events = _drain_bus()
+        dup = [(c, p) for c, p in events if c == "engine:account:1:order:duplicate_detected"]
+        assert len(dup) == 1, f"expected 1 (on the 2nd arrival), got {[c for c, _ in events]!r}"
+        assert len(dup[0][1]["order_ids"]) == 2

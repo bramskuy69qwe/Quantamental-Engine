@@ -120,10 +120,22 @@ the snapshot-wins drift inversion (feature-flagged — the riskiest single chang
   `test_phase6_events` (+2 nowait), `test_phase2_junction` (opened/scale_in/same-calc + partial_close),
   `test_phase4_amendments` (+2 amended event_bus), `test_phase5_funding` (+2 closed). Full suite 3015 / 7 skip
   / 1 pre-existing fail / 0 new.
-- **NEXT in Phase 6**: P6.T5 (`order:duplicate_detected` — near-dup detection in the order-arrival path) +
-  P6.T6 (`position:size_drift` + snapshot-wins inversion — the riskiest single change; feature-flag behind
-  `config_json.feature_flags.snapshot_wins_drift`, isolate + monitor) + P6.T7 (`position:liquidated`
-  dedicated event). Plus the deferred `calc:size_deviated` producer. See `[[project_phase6_event_bus_state]]`.
+- **✅ P6.T5 — SHIPPED (task 264)**: `order:duplicate_detected` — `_detect_duplicate_orders` in
+  `process_order_update` (WS, NEW arrivals only, `prev_order is None`) flags 2+ orders with an IDENTICAL
+  shape `(symbol, side, order_type, price, stop_price, quantity)` arriving within `DUP_WINDOW_MS=2000`
+  (created_at_ms window; `>0` guard for the MEXC-WS gap). Emits `order_ids[]` (internal ids) + `dup_window_ms`
+  via `publish_engine(account_id, DOMAIN_ORDER, "duplicate_detected", …)`. The just-persisted order is in the
+  cluster query, so ≥2 ⇒ ≥1 other dup. REST snapshot/algo paths intentionally NOT wired (reconciliation,
+  not live submission); `exchange_order_id` upsert key collapses WS+REST/re-delivery to one row (no
+  inflation). **Audit clean (single agent, 0 findings; §9 payload exact; 4 mutations all caught).** Known
+  bounded false-positives (documented, no consumer yet): deliberate scale-in at identical price+qty within
+  2s; cancel-then-repaste (status NOT filtered — tight window is the discriminator). **UI badge deferred**
+  (no event consumer until Phase 7/8). Tests: `test_phase2_junction::TestDuplicateOrderDetection` (8, incl.
+  the real-path wiring test). Full suite 3023 / 7 skip / 1 pre-existing fail / 0 new.
+- **NEXT in Phase 6**: P6.T6 (`position:size_drift` + snapshot-wins inversion — the riskiest single change;
+  feature-flag behind `config_json.feature_flags.snapshot_wins_drift`, isolate + monitor) + P6.T7
+  (`position:liquidated` dedicated event). Plus the deferred `calc:size_deviated` producer. See
+  `[[project_phase6_event_bus_state]]`.
 
 ### VERIFY-FIRST before scoping Phase 6 — DONE 2026-06-02 (corrects the prior claim; see `[[project_phase6_event_bus_state]]`)
 - ⚠ **CORRECTION**: the prior handoff said `TRANSITION_EVENT_MAP` in **calc_state/link_state** is
