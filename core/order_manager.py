@@ -510,28 +510,24 @@ class OrderManager:
 
             for src_calc, oid in updates:
                 async def _apply_leg(src_calc=src_calc, oid=oid) -> None:
-                    await self._db._conn.execute(
+                    cur = await self._db._conn.execute(
                         "UPDATE orders SET calc_id = ?, link_status = ? "
                         "WHERE id = ? AND calc_id IS NULL",
                         (src_calc, LinkStatus.LINKED.value, oid),
                     )
-                    # P4.T5 audit (SCOPING-001): a protective leg amended
-                    # BEFORE this inheritance ran was recorded (P4.T1) with
-                    # the leg's then-NULL calc_id. The close-time drift
-                    # (get_calc_amendments) AND P4.T2's cumulative count
-                    # (count_amendments_for_calcs) are both scoped by calc_id,
-                    # so an orphaned NULL-calc_id amendment would be silently
-                    # missed. Backfill the leg's orphaned amendments to the
-                    # inherited calc_id — keeping the amendment ledger's
-                    # denormalized calc_id consistent with orders.calc_id (the
-                    # same propagate-on-link discipline as fills.calc_id). The
-                    # amendment EVENTS stay immutable (old/new/ts untouched);
-                    # only the denormalized FK is filled.
-                    await self._db._conn.execute(
-                        "UPDATE order_amendments SET calc_id = ? "
-                        "WHERE order_id = ? AND calc_id IS NULL",
-                        (src_calc, oid),
-                    )
+                    # P4.T5 audit (SCOPING-001): a protective leg amended BEFORE
+                    # this inheritance ran was recorded (P4.T1) with the leg's
+                    # then-NULL calc_id. The close-time drift + P4.T2/P4.T3
+                    # counts are all scoped by calc_id, so an orphaned
+                    # NULL-calc_id amendment would be silently missed — backfill
+                    # it to the inherited calc_id (shared helper, same
+                    # propagate-on-link discipline as fills.calc_id). Guarded on
+                    # rowcount>0 (HOT-TXN-001): only when THIS call actually
+                    # linked the leg — on a re-run the leg already carries its
+                    # calc_id (so new amendments aren't orphaned) and the orders
+                    # UPDATE no-ops, making the backfill a redundant no-op anyway.
+                    if cur.rowcount > 0:
+                        await self._db.backfill_amendment_calc_id(oid, src_calc)
                 await auto_classify(
                     oid, LinkStatus.LINKED.value, apply_fn=_apply_leg,
                 )
@@ -1863,13 +1859,28 @@ class OrderManager:
         amend_by_calc: Dict[str, int] = {}
         yellow_pct, red_pct = DEFAULT_YELLOW_DEVIATION_PCT, DEFAULT_RED_DEVIATION_PCT
         if per_pos:
+            # P4 audit (P4T3-001): the config read and the amendment count are
+            # SEPARATE failure modes — a single shared try would let a config
+            # failure skip the amendment count (and vice versa). Config first
+            # (defaults already set, so a failure can't strand red_pct=0). The
+            # amendment-count failure is logged at WARNING, not debug: it masks
+            # live amendments for THIS refresh (a real amended position paints
+            # green), so it must be diagnosable. Self-heals on the next
+            # successful refresh (the badge is htmx-polled) — bounded, transient.
             try:
                 cfg = await read_account_config_async(self._db, account_id)
                 yellow_pct, red_pct = cfg.yellow_deviation_pct, cfg.red_deviation_pct
+            except Exception:
+                log.debug("deviation-badge config read failed", exc_info=True)
+            try:
                 all_calc_ids = {cid for calcs in per_pos.values() for cid in calcs}
                 amend_by_calc = await self._db.count_amendments_by_calcs(all_calc_ids)
             except Exception:
-                log.debug("deviation-badge enrichment read failed", exc_info=True)
+                log.warning(
+                    "deviation-badge amendment count failed — amendments masked "
+                    "this refresh (positions may paint green; self-heals next "
+                    "refresh)", exc_info=True,
+                )
 
         # Authoritative: the three fields mirror the junction on each refresh.
         # A position with no junction row is CLEARED — UNPLANNED, a
@@ -2635,20 +2646,29 @@ class OrderManager:
             # tp_drift_pct / sl_drift_pct (P4.T5, spec §3.2 + plan §4.6): the
             # FINAL AMENDED TP/SL trigger vs the primary calc's planned value.
             # "Final" = the latest order_amendments.new_value for that field on
-            # the primary calc's legs — the orders row goes stale post-amendment
-            # (the SR-1 gate rejects the amend upsert), so the amendment ledger
-            # is authoritative (P4.T1). Scoped to the PRIMARY calc (same §3.2
-            # basis as planned_tp/sl above) — a scale-in protective leg inherited
-            # under a NON-primary calc_id (T2.9 earliest-entry pick) stays NULL
-            # on this basis (documented edge; the common single-calc case has
-            # entry == primary == the inherited TP/SL calc_id). NULL when the leg
-            # was never amended (no "final amended" value) — drift is populated
-            # only for an AMENDED stop (the plan §4 acceptance criterion).
+            # the primary calc's legs AS OF this close's exit_time — the orders
+            # row goes stale post-amendment (the SR-1 gate rejects the amend
+            # upsert), so the amendment ledger is authoritative (P4.T1).
+            # **ts_ms <= exit_time** (P4-CLOSE-001): for a multi-TP partial close
+            # (T2.11, per-rung rows, recomputed each build / on a REPLACE) an
+            # amendment that post-dates an earlier rung's close must NOT corrupt
+            # that rung's as-of drift — mirrors the is_final closing-fill
+            # timestamp cut. Scoped to the PRIMARY calc (same §3.2 basis as
+            # planned_tp/sl). NULL when the leg was never amended (drift is
+            # populated only for an AMENDED stop — the plan §4 criterion).
+            # Documented approximations (own-task refinements, not bugs):
+            #   - scale-in protective leg inherited under a NON-primary calc_id
+            #     (T2.9 earliest-entry pick) stays NULL on this basis;
+            #   - multi-TP ladder (SPEC-001): planned_tp is the single junction
+            #     snapshot while final_tp is last-wins across the primary calc's
+            #     TP legs, so the compared rung may differ (exact for the common
+            #     single-TP/SL case). See test_multi_tp_scenario.txt.
             final_tp = final_sl = None
             try:
                 last_amend: Dict[str, Any] = {}
                 for a in await self._db.get_calc_amendments(primary_calc_id):
-                    last_amend[a["field"]] = a["new_value"]
+                    if int(a.get("ts_ms", 0) or 0) <= exit_time:
+                        last_amend[a["field"]] = a["new_value"]
                 final_tp = last_amend.get("tp_price")
                 final_sl = last_amend.get("sl_price")
             except Exception:

@@ -187,6 +187,29 @@ class TestManualLink:
         assert (await _order(linkdb, oid))["link_status"] == "LINKED"
 
     @pytest.mark.asyncio
+    async def test_manual_link_backfills_orphaned_amendment(self, linkdb):
+        # P4 audit (COMPLETENESS-001): an order amended while calc-less (the
+        # amendment row carries calc_id NULL), then manually linked, must have
+        # its orphaned amendment backfilled to the calc — else the calc_id-
+        # scoped consumers (cumulative count, deviation badge, tp/sl drift)
+        # silently miss it. Mirrors the bracket-inheritance backfill.
+        from core.link_actions import manual_link_order
+        oid = await _seed_order(linkdb, eoid="O-AM",
+                                link_status="NEEDS_MANUAL_REVIEW", calc_id=None)
+        await _seed_calc(linkdb, calc_id="C1", status="active")
+        await linkdb.insert_order_amendment({
+            "order_id": oid, "calc_id": None, "field": "sl_price",
+            "old_value": 48000.0, "new_value": 47000.0, "ts_ms": 1000,
+            "operator_id": None, "deviation_pct": -2.08, "lifecycle_id": None,
+        })
+        assert await manual_link_order(ACCOUNT_ID, oid, "C1") == "linked"
+        amends = await linkdb.get_order_amendments(oid)
+        assert len(amends) == 1
+        assert amends[0]["calc_id"] == "C1"   # backfilled on link
+        # the count consumer now sees it
+        assert await linkdb.count_amendments_for_calcs(["C1"]) == 1
+
+    @pytest.mark.asyncio
     async def test_order_not_found(self, linkdb):
         from core.link_actions import manual_link_order
         await _seed_calc(linkdb, calc_id="C3")

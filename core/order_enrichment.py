@@ -224,6 +224,27 @@ async def _try_correlate(order: Dict[str, Any], db_path: str) -> None:
                     "  AND calc_id IS NULL",
                     (result.calc_id, result.link_status, aid, eid),
                 )
+                # P4 audit (COMPLETENESS-002): backfill amendments orphaned
+                # (calc_id NULL) before this match — an UNPLANNED order that was
+                # amended, then re-matched (UNPLANNED->LINKED upgrade). Keeps the
+                # calc_id-scoped consumers (count/badge/drift) able to see them,
+                # same discipline as bracket inheritance + manual link. Sync
+                # conn here (separate from the aiosqlite helper); keyed via the
+                # order's id (the amendments FK). WHERE calc_id IS NULL is
+                # idempotent — no-op once the order's amendments carry the calc.
+                # Best-effort: a backfill failure (e.g. an older DB without the
+                # order_amendments table) must NEVER abort the calc_id assignment
+                # — the orders UPDATE above is the critical write.
+                try:
+                    conn.execute(
+                        "UPDATE order_amendments SET calc_id = ? WHERE calc_id IS NULL "
+                        "AND order_id IN (SELECT id FROM orders "
+                        "                 WHERE account_id = ? AND exchange_order_id = ?)",
+                        (result.calc_id, aid, eid),
+                    )
+                except Exception:
+                    log.debug("matcher amendment backfill skipped for %s", eid,
+                              exc_info=True)
             else:
                 conn.execute(
                     "UPDATE orders SET link_status = ? "

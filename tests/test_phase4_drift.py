@@ -226,6 +226,26 @@ class TestComputeTpSlDrift:
         out = await _deltas(om)
         assert out == {}
 
+    @pytest.mark.asyncio
+    async def test_amendment_after_exit_time_excluded(self, db, om):
+        # P4-CLOSE-001: an amendment timestamped AFTER this close's exit_time
+        # (a later multi-TP rung, or out-of-order WS delivery) must NOT affect
+        # this row's drift — the drift is as-of exit_time.
+        await _seed_junction(db, "POS-1", "calc-a", planned_tp=55000.0)
+        await _amend(db, "calc-a", "tp_price", 55000.0, 56100.0, 1500)  # ≤ exit
+        await _amend(db, "calc-a", "tp_price", 56100.0, 60000.0, 2500)  # > exit (2000)
+        out = await _deltas(om)  # exit_time=2000
+        # final_tp = 56100 (the ts=2500 amendment is excluded), not 60000.
+        assert out["tp_drift_pct"] == pytest.approx(2.0)
+
+    @pytest.mark.asyncio
+    async def test_only_post_exit_amendment_omits_drift(self, db, om):
+        # If the ONLY amendment post-dates exit_time, this row saw no amendment.
+        await _seed_junction(db, "POS-1", "calc-a", planned_tp=55000.0)
+        await _amend(db, "calc-a", "tp_price", 55000.0, 56000.0, 2500)  # > exit
+        out = await _deltas(om)
+        assert "tp_drift_pct" not in out
+
 
 # ── 2. preserve across INSERT OR REPLACE ────────────────────────────────
 

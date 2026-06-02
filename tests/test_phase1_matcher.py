@@ -619,6 +619,59 @@ class TestEnrichOrderIntegration:
         assert payload["to_status"] == "matched"
 
     @pytest.mark.asyncio
+    async def test_match_backfills_orphaned_amendment(self, db, monkeypatch):
+        # P4 audit (COMPLETENESS-002): an order amended while UNPLANNED (the
+        # amendment row carries calc_id NULL), then matched on a re-run, must
+        # have its orphaned amendment backfilled to the matched calc — else the
+        # calc_id-scoped consumers (count/badge/drift) silently miss it. Mirrors
+        # the bracket-inheritance + manual-link backfills.
+        from core.order_enrichment import enrich_order
+        d, db_path = db
+        import config
+        monkeypatch.setattr(config, "DB_PATH", db_path)
+
+        _insert_calc(db_path, calc_id="calc-bf", ticker="BTCUSDT", side="long",
+                     effective_entry=50000.0, tp_price=55000.0, sl_price=48000.0)
+        order_id = _insert_order(
+            db_path, exchange_order_id="bf1", symbol="BTCUSDT", side="long",
+            order_type="limit", price=50000.0,
+            tp_trigger_price=55000.0, sl_trigger_price=48000.0,
+        )
+        # amendment recorded while the order was still calc-less (calc_id NULL)
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute(
+                "INSERT INTO order_amendments (order_id, calc_id, field, "
+                " old_value, new_value, ts_ms, operator_id, deviation_pct, "
+                " lifecycle_id) VALUES (?, NULL, 'tp_price', 55000, 56000, "
+                " 1000, NULL, 1.8, NULL)",
+                (order_id,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        await enrich_order(
+            {"account_id": 1, "exchange_order_id": "bf1",
+             "symbol": "BTCUSDT", "side": "long", "order_type": "limit"},
+            db_path,
+        )
+
+        conn = sqlite3.connect(db_path)
+        try:
+            order_calc = conn.execute(
+                "SELECT calc_id FROM orders WHERE id = ?", (order_id,),
+            ).fetchone()[0]
+            amend_calc = conn.execute(
+                "SELECT calc_id FROM order_amendments WHERE order_id = ?",
+                (order_id,),
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        assert order_calc == "calc-bf"        # order matched
+        assert amend_calc == "calc-bf"        # amendment backfilled on match
+
+    @pytest.mark.asyncio
     async def test_no_match_writes_link_status_without_calc_id(self, db, monkeypatch):
         """When matcher returns NEEDS_MANUAL_REVIEW, link_status is set
         but calc_id stays NULL — operator picks the calc later via the

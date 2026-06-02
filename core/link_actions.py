@@ -111,6 +111,14 @@ async def manual_link_order(account_id: int, order_id: int, calc_id: str) -> str
             "  AND calc_id IS NULL",
             (calc_id, LinkStatus.LINKED.value, account_id, order_id, current_link),
         )
+        # P4 audit (COMPLETENESS-001): backfill amendments orphaned (calc_id
+        # NULL) before this manual link, so the calc_id-scoped consumers
+        # (cumulative count, deviation badge, tp/sl drift) can see them — the
+        # same propagate-on-link discipline as bracket inheritance + fills.
+        # Only when the link actually applied (rowcount>0); atomic via the
+        # shared commit below.
+        if cur2.rowcount > 0:
+            await db.backfill_amendment_calc_id(order_id, calc_id)
         await db._conn.commit()
         if cur2.rowcount == 0:
             raise LinkTransitionRaceLost(

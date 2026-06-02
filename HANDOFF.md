@@ -235,6 +235,46 @@ per-task notes are in the sections below + `docs/design/calc_linkage_implementat
   exit_reason reclassification (the T2.7 deferral — now has the amendment data it needed); plus the
   P4.T4-filed items (`_emit_fill_events` to_thread consistency; trade-event test pollution) and this
   matcher-side count edge. Then Phase 5 (funding + fees) / Phase 6 (event_bus topics).
+- **PHASE 4 HOLISTIC AUDIT — RAN + FIXES SHIPPED (2026-06-02, task 252).** An 8-dimension
+  adversarial workflow (amendment capture, calc_id-scoping consistency, "amended" semantics +
+  badge, close persistence, event emission, hot-path/txn, test integrity, spec/cross-task) +
+  completeness critic over all of T1–T5. **The workflow process died mid-run during a long idle**
+  (machine sleep) — 30/31 agents had completed; I **salvaged all results from the run journal**
+  (`wf_d552334e-f58/journal.jsonl`) rather than re-run: **22 candidates → 8 CONFIRMED, 13 REFUTED**
+  (1 verifier was the hung agent). Re-investigated each (CLAUDE.md mechanism-before-fix discipline):
+  - **FIXED — orphaned-amendment-calc_id backfill family** (COMPLETENESS-001/002 + SCHEMA-INVARIANT-001):
+    SCOPING-001 (bracket inheritance) was only ONE of the calc_id-assignment sites. An order amended
+    while calc-less records the amendment with calc_id=NULL; manual-link (`link_actions.manual_link_order`)
+    and the matcher (`order_enrichment._update_orders_sync`, the UNPLANNED→LINKED re-match) ALSO assign
+    calc_id but didn't backfill → the calc_id-scoped consumers (count/badge/drift) silently miss the
+    amendment. Extracted a shared `db.backfill_amendment_calc_id(order_id, calc_id)` (best-effort —
+    a denormalization sync must never break the link path; an older DB without `order_amendments` is
+    swallowed) and wired ALL THREE sites (bracket via the helper + a rowcount guard, manual-link via
+    the helper, matcher via an inline sync UPDATE keyed by the order's id). Legacy `/admin/calc_link`
+    noted (slated for retirement). Tests: matcher (`test_phase1_matcher`), manual-link
+    (`test_phase3_endpoints`), bracket (`test_phase2_bracket_inheritance`).
+  - **FIXED — drift temporal filter** (P4-CLOSE-001 + TEST-INTEGRITY-004, HIGH): `_compute_close_deltas`
+    read amendments with no time bound, so a multi-TP PARTIAL row (recomputed each build / on REPLACE)
+    could pick up an amendment that post-dates its own close → as-of-wrong drift. Added
+    `if ts_ms <= exit_time` (mirrors the existing is_final closing-fill cut). Tests in `test_phase4_drift`.
+  - **FIXED — badge query-fail visibility** (P4T3-001 + TEST-INTEGRITY-002, HIGH→MED): in
+    `_enrich_positions_calc_id` the config read + amendment count shared one try/except; an amendment-
+    query failure masked live amendments (false-green). Split into two try/excepts; the amendment
+    failure now logs at **WARNING** (was silent debug). The miss is transient/self-healing (htmx-polled)
+    — an "unknown" badge state would be over-engineering. Test in `test_phase4_deviation_badge`.
+  - **REFRAMED — HOT-TXN-001 (filed BLOCKER → actually defensive)**: claimed the bracket backfill
+    re-attributes amendments on a re-run. **Unreachable** — after a leg is linked, NEW amendments carry
+    the now-set calc_id (not NULL), and there's no concurrent linker, so the "unconditional" UPDATE is a
+    no-op. Applied the cheap `rowcount>0` guard anyway (makes the "alongside" coupling explicit).
+  - **DOCUMENTED — SPEC-001 (filed HIGH)**: the specific junction mechanism is wrong (the junction is
+    per-entry-order, NOT per-TP-rung), but the high-level concern IS the known multi-TP drift
+    approximation (planned_tp = single junction snapshot vs final_tp = last-wins across the primary
+    calc's TP legs; exact for single-TP/SL). Anchor-commented in `_compute_close_deltas` +
+    `test_multi_tp_scenario.txt`; a per-rung-matched planned_tp is a future refinement (own task).
+  - **REFUTED (13)** incl. AMEND-CAPTURE-001 ("partial fills recorded as size amendments" — wrong:
+    `order.quantity` maps to Binance `q` = original qty, constant across fills; I'd independently traced
+    this before the audit confirmed the refutation).
+  Full suite after fixes: **2941 passed, 7 skipped, 1 pre-existing failure (TestRollingWindowPeak), 0 new.**
 - **⚠ FILED (P4.T4 audit) — `_emit_fill_events` sync-sqlite-in-async consistency cleanup.** The sibling
   trade-event emitter `_emit_fill_events` (called sync from `process_fill`, hot fill path) has the SAME
   blocking exposure P4.T4's audit flagged on `_emit_amendment_event` (sync `log_trade_event` → its own

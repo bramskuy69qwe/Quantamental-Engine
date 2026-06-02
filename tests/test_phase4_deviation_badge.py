@@ -196,6 +196,30 @@ class TestEnrichBadge:
         assert pos.amendment_count == 0
 
     @pytest.mark.asyncio
+    async def test_amendment_query_failure_with_real_amendments_warns(
+        self, db, om, monkeypatch, caplog
+    ):
+        # P4 audit (P4T3-001 / TEST-INTEGRITY-002): when REAL amendments exist
+        # but the count query fails, the badge can't see them THIS refresh (an
+        # unavoidable transient miss that self-heals next poll). The fix makes
+        # it DIAGNOSABLE — a WARNING (not a silent debug) — and decoupled from
+        # the config read (a config failure no longer skips the count).
+        await _seed_junction(db, "POS-1", "C1", qty=10.0, planned_size=10.0)
+        await _amend(db, "C1", field="entry_price")   # a REAL amendment exists
+
+        async def _boom(*a, **k):
+            raise RuntimeError("database is locked")
+        monkeypatch.setattr(db, "count_amendments_by_calcs", _boom)
+
+        pos = _pos()
+        with caplog.at_level("WARNING"):
+            await om._enrich_positions_calc_id(ACCOUNT_ID, [pos])
+        # transient miss (documented): masked this refresh...
+        assert pos.amendment_count == 0
+        # ...but now VISIBLE in the logs (was a silent debug before the fix).
+        assert any("amendment count failed" in r.message for r in caplog.records)
+
+    @pytest.mark.asyncio
     async def test_empty_position_id_skipped_no_badge(self, db, om):
         # binance one-way (no position_id) is skipped → badge stays default "".
         pos = _pos(position_id="")

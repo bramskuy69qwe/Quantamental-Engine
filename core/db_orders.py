@@ -1563,6 +1563,38 @@ class OrdersMixin:
         ) as cur:
             return {r[0]: int(r[1]) for r in await cur.fetchall()}
 
+    async def backfill_amendment_calc_id(self, order_id: int, calc_id: str) -> None:
+        """Backfill ``order_amendments.calc_id`` for rows orphaned (NULL) before
+        their order was linked to a calc (Phase-4 audit COMPLETENESS family).
+
+        The amendment ledger denormalizes ``calc_id`` (P4.T1) so the calc_id-
+        scoped consumers can filter fast: ``cumulative_amendment_count`` (P4.T2),
+        the live deviation badge (P4.T3), and tp/sl drift (P4.T5). An amendment
+        recorded while its order was still calc-less carries ``calc_id=NULL``;
+        EVERY calc_id-assignment site — bracket inheritance, manual link, matcher
+        re-match — must backfill it on link, or those consumers silently miss the
+        amendment (the SCOPING-001 / COMPLETENESS-001/002 family). Guarded
+        ``WHERE calc_id IS NULL`` so an already-attributed amendment is never
+        clobbered; a no-op when there are none. The immutable amendment EVENTS
+        (old/new/ts) are untouched — only the denormalized FK is filled. The
+        caller owns the commit, so the backfill is atomic with the orders update.
+        Best-effort: a denormalization sync must NEVER break the critical
+        calc_id-assignment / link path, so any failure (e.g. an older test DB
+        without the order_amendments table) is logged + swallowed, leaving the
+        caller's orders update intact.
+        """
+        try:
+            await self._conn.execute(
+                "UPDATE order_amendments SET calc_id = ? "
+                "WHERE order_id = ? AND calc_id IS NULL",
+                (calc_id, order_id),
+            )
+        except Exception:
+            log.debug(
+                "amendment calc_id backfill skipped for order %s", order_id,
+                exc_info=True,
+            )
+
     # ── funding_events ─────────────────────────────────────────────────
 
     async def insert_funding_event(self, row: Dict[str, Any]) -> bool:
