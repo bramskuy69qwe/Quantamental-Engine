@@ -128,13 +128,33 @@ per-task notes are in the sections below + `docs/design/calc_linkage_implementat
 
 **NEXT — Phase 4 (amendment tracking + deviation, plan §4):** Phase 3 is fully shipped
 (T1 task 241, T2+T3 task 242, T4 task 243). Phase 4 (depends on Phase 0 + Phase 2):
-- **P4.T1** — amendment detection from WS: compare incoming order_update against the
-  stored order; if entry_price / tp_price / sl_price / size / leverage changed, write an
-  `order_amendments` row (`core/ws_manager.py`). This is the bottleneck — the
-  `order_amendments` table (P0.T2) + the `cumulative_amendment_count` / `tp_drift_pct` /
-  `sl_drift_pct` close columns are all UNWIRED today (deferred from T2.5/T2.7 precisely
-  because no amendment data exists yet).
-- **P4.T2** — `deviation_pct` per amendment + `cumulative_amendment_count` rollup at close.
+- **P4.T1 — SHIPPED (2026-06-02)**: `OrderManager.detect_and_persist_amendment` writes an
+  `order_amendments` row per changed working-order field (entry_price/tp_price/sl_price/size),
+  invoked from `ws_manager._apply_order_update` **before** `process_order_update`.
+  **Pre-gate placement is load-bearing**: an amendment arrives as a `new→new` self-transition,
+  which the SR-1 `validate_transition` gate REJECTS (no self-edges — order_state.py +
+  test_order_manager.py:121, intentional anti-stale-replay), so a post-gate hook would never
+  see it (my first attempt placed it post-gate in `process_order_update` — reverted). **Baseline
+  chains off the last prior amendment's new_value** (the orders row goes stale because the gate
+  rejects the amend upsert, so the amendment ledger is the authoritative chain). `deviation_pct`
+  computed inline. **Deviations**: `leverage` is not on the per-order WS stream (documented gap);
+  WS path only for the BATCH/REST path (deferred — needs a dedup key, order_amendments is
+  immutable-insert). **Independent audit (9 agents) ran; 2 confirmed findings fixed**: (CORR-001/HIGH)
+  `*_entry` stop/TP ENTRY orders (FE-13 suffix) read `stop_price` under the `entry_price` label —
+  else a stop-market entry's trigger amendment silently drops (price==0); (ALGO-001) detection also
+  wired into `_apply_algo_update` (defensive — no-op under Binance cancel-replace, but the engine
+  observes Quantower). `trailing_stop` excluded (venue-automatic). 2 replay/out-of-order findings
+  REFUTED (no reachable feeder; no-dedup-key is a deliberate spec/schema choice). Tests:
+  `tests/test_phase4_amendments.py` (24) incl. chained-baseline + entry-stop regression; touched-path
+  suites green.
+- **⚠ FINDING (filed, fix as its own task) — `_detect_modification_events` is dead in production.**
+  The existing TP/SL `tp_modified`/`sl_modified` trade-event detector (`order_manager.py`) is
+  called from `process_order_update` AFTER the SR-1 transition gate, so for a pure price
+  modification (`new→new`) it NEVER fires live (the gate returns False first). Its unit test
+  (`test_modification_events.py`) only checks the comparison logic inline, masking this. Fix:
+  relocate the call pre-gate to `ws_manager` (same shape as P4.T1), or fold the event emit into
+  `detect_and_persist_amendment`. Surfaced during P4.T1; operator chose file-separately.
+- **P4.T2** — `deviation_pct` DONE in P4.T1 (computed inline); remainder = `cumulative_amendment_count` rollup at close.
 - **P4.T3** — live deviation badge logic + frontend (yellow/red thresholds from
   `config_json`; spec §3.2 most-contributing-calc basis). **Consumes T2.12's
   `PositionInfo.size_delta_pct`** (already stored; the badge threshold logic is the

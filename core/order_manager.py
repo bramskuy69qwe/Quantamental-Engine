@@ -998,6 +998,135 @@ class OrderManager:
         except Exception:
             log.debug("modification event detection failed", exc_info=True)
 
+    # ── P4.T1: order amendment detection (spec §3.2 / plan §4.1) ─────────────
+    #
+    # CALLED FROM ws_manager._apply_order_update BEFORE process_order_update.
+    # That ordering is load-bearing: the SR-1 transition gate in
+    # process_order_update rejects the new→new (and pf→pf) self-transition that
+    # an amendment arrives as (validate_transition has no self-edges —
+    # order_state.py + test_order_manager.py:121/124, intentional anti-stale-
+    # replay), so a post-gate hook would never see amendments. The detection
+    # logic lives here (domain layer, has self._db, unit-testable); ws_manager
+    # only supplies the pre-gate call site.
+    #
+    # Scope (deviation-discipline):
+    #   - `leverage` (spec §3.2 field) is account/position-level, NOT on a
+    #     per-order WS update → not detectable here. Documented gap.
+    #   - `trailing_stop` is EXCLUDED: a trailing stop's trigger is moved
+    #     AUTOMATICALLY by the venue (callback rate), so its stop_price changes
+    #     are not operator amendments (same documented-exclusion class as
+    #     leverage). _amendment_field_pairs returns () for it.
+    #   - Invoked from BOTH ws_manager._apply_order_update (ORDER_TRADE_UPDATE)
+    #     and _apply_algo_update (ALGO_UPDATE). The algo wiring is defensive:
+    #     live Binance conditional orders are cancel-replace (a re-price mints a
+    #     new `algo:{aid}` → `if not stored: return`), so it is a no-op there
+    #     today — but the engine observes Quantower (which may model in-place
+    #     algo modifies) and the call cannot mis-record (worst case no-op).
+    #   - REST reconciliation (process_order_snapshot/algo BATCH) amendments are
+    #     a separate path; covering it needs a dedup key first (order_amendments
+    #     is immutable-insert) — deferred follow-up.
+    _AMENDMENT_TP_TYPES = frozenset({
+        "take_profit", "take_profit_market", "take_profit_limit",
+    })
+    _AMENDMENT_SL_TYPES = frozenset({
+        "stop_loss", "stop_market", "stop_loss_limit",
+    })
+    # Non-reduce-only stop/TP orders used to OPEN a position carry the FE-13
+    # `_entry` suffix (binance/bybit ws adapters). They are ENTRIES (→ spec
+    # `entry_price` field), but their amendable trigger lives in `stop_price`,
+    # not `price` (price==0 for a stop-market entry) — so they read the
+    # stop_price column under the entry_price label. Without this they'd fall to
+    # the plain-entry branch, read price==0, and the change guard would silently
+    # drop every entry-stop trigger amendment.
+    _AMENDMENT_ENTRY_STOP_TYPES = frozenset({
+        "stop_loss_entry", "take_profit_entry",
+    })
+    _AMENDMENT_EXCLUDED_TYPES = frozenset({"trailing_stop"})
+
+    def _amendment_field_pairs(
+        self, order_type: Optional[str],
+    ) -> Tuple[Tuple[str, str], ...]:
+        """(spec §3.2 amendment field, orders column) pairs for this order_type.
+
+        Reduce-only protective legs: take_profit→stop_price→'tp_price';
+        stop_loss→stop_price→'sl_price'. Non-reduce-only entry stops (`*_entry`)
+        →stop_price→'entry_price' (trigger is in stop_price; price==0 for a
+        stop-market entry). Plain entries→price→'entry_price'. Always also
+        quantity→'size'. `trailing_stop` is excluded (venue-automatic) → ().
+        """
+        otype = (order_type or "").lower()
+        if otype in self._AMENDMENT_EXCLUDED_TYPES:
+            return ()  # venue-automatic trigger — not an operator amendment
+        if otype in self._AMENDMENT_TP_TYPES:
+            price = ("tp_price", "stop_price")
+        elif otype in self._AMENDMENT_SL_TYPES:
+            price = ("sl_price", "stop_price")
+        elif otype in self._AMENDMENT_ENTRY_STOP_TYPES:
+            price = ("entry_price", "stop_price")
+        else:
+            price = ("entry_price", "price")
+        return (price, ("size", "quantity"))
+
+    async def detect_and_persist_amendment(
+        self, account_id: int, incoming: Dict[str, Any],
+    ) -> None:
+        """P4.T1: write an order_amendments row per changed working-order field.
+
+        Per-field baseline (old_value) is the most recent prior amendment's
+        new_value for that (order, field) — chained — falling back to the
+        stored order row on the first amendment. The orders row itself goes
+        stale (the SR-1 gate rejects the amend upsert), so the amendment ledger
+        is the authoritative chain (decided 2026-06-02). Only a real prior
+        value changing to a *different* real value counts: a 0/absent old or
+        new is a set/remove (a cancel — handled by the ws_manager
+        CANCELED/EXPIRED path), so a market entry (price 0) never yields an
+        entry_price amendment. calc_id + lifecycle_id are denormalized from the
+        stored order (for a TP/SL leg, the T2.9-propagated calc_id when present;
+        NULL otherwise — the order_id FK still links the row). deviation_pct is
+        signed (new-old)/old*100. Best-effort; venue-agnostic (pure diff).
+        """
+        eid = incoming.get("exchange_order_id")
+        if not eid:
+            return
+        stored = (await self._db.get_active_orders_map(account_id)).get(eid)
+        if not stored:
+            return  # unknown / not a working order → placement or terminal, not an amend
+        order_id = stored.get("id")
+        if not order_id:
+            return
+
+        otype = incoming.get("order_type") or stored.get("order_type")
+        # Chained baseline: latest prior amendment new_value per field
+        # (get_order_amendments returns ts ASC, so the last write wins).
+        last_new: Dict[str, float] = {}
+        for a in await self._db.get_order_amendments(order_id):
+            last_new[a["field"]] = a["new_value"]
+
+        ts_ms = int(incoming.get("updated_at_ms") or incoming.get("created_at_ms") or 0)
+        calc_id = stored.get("calc_id")
+        lifecycle_id = stored.get("lifecycle_id")
+
+        for field, col in self._amendment_field_pairs(otype):
+            try:
+                new = float(incoming.get(col) or 0.0)
+                base = last_new.get(field)
+                old = float(stored.get(col) or 0.0) if base is None else float(base or 0.0)
+            except (TypeError, ValueError):
+                continue
+            # "Meaningfully different" without a math import; guard float noise.
+            if old > 0 and new > 0 and abs(new - old) > max(1e-12, abs(old) * 1e-9):
+                await self._db.insert_order_amendment({
+                    "order_id":      order_id,
+                    "calc_id":       calc_id,
+                    "field":         field,
+                    "old_value":     old,
+                    "new_value":     new,
+                    "ts_ms":         ts_ms,
+                    "operator_id":   None,  # Phase 9 (operator session)
+                    "deviation_pct": (new - old) / old * 100.0 if old else None,
+                    "lifecycle_id":  lifecycle_id,
+                })
+
     def _emit_fill_events(self, account_id: int, fill: Dict[str, Any]) -> None:
         """Emit trade events for fills. Best-effort."""
         try:

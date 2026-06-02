@@ -229,6 +229,16 @@ async def _apply_order_update(msg: dict, ws_adapter) -> None:
             "created_at_ms":      order.created_at_ms,
             "updated_at_ms":      order.updated_at_ms,
         }
+        # P4.T1 (spec §3.2): detect + persist order_amendments BEFORE the
+        # SR-1 transition gate in process_order_update rejects the new→new
+        # self-transition that amendments arrive as. Isolated try so a
+        # detection fault can't block order persistence.
+        try:
+            await platform_bridge.order_manager.detect_and_persist_amendment(
+                app_state.active_account_id, order_dict,
+            )
+        except Exception as _ae:
+            log.debug("amendment detection skipped: %s", _ae)
         await platform_bridge.order_manager.process_order_update(
             app_state.active_account_id, order_dict,
         )
@@ -303,6 +313,14 @@ async def _apply_algo_update(msg: dict, ws_adapter) -> None:
             "created_at_ms":      order.created_at_ms,
             "updated_at_ms":      order.updated_at_ms,
         }
+        # P4.T1: amendment detection on the algo path too (defensive — see
+        # detect_and_persist_amendment scope note: no-op under cancel-replace).
+        try:
+            await platform_bridge.order_manager.detect_and_persist_amendment(
+                app_state.active_account_id, order_dict,
+            )
+        except Exception as _ae:
+            log.debug("algo amendment detection skipped: %s", _ae)
         await platform_bridge.order_manager.process_order_update(
             app_state.active_account_id, order_dict,
         )
