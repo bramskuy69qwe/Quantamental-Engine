@@ -1084,3 +1084,150 @@ class TestPositionClosedEvent:
         while not event_bus._queue.empty():
             events.append(event_bus._queue.get_nowait())
         assert not any(c.endswith(":position:closed") for c, _ in events)
+
+
+# ── 9. P6.T7: position:liquidated (forced-liq detection + dedicated event) ────
+
+
+class TestPositionLiquidatedEvent:
+    @pytest.mark.asyncio
+    async def test_determine_exit_reason_liquidation(self, db, om):
+        # Per-order: a "liquidation" order_type (Binance forced-liq fallback) →
+        # exit_reason LIQUIDATION (highest priority).
+        await _seed_order_cp(db, "LQ", "liquidation", "SELL")
+        assert await om._determine_exit_reason(ACCOUNT_ID, "LQ") == "LIQUIDATION"
+
+    @pytest.mark.asyncio
+    async def test_liquidation_close_detects_emits_persists(self, db, om):
+        from core.event_bus import event_bus
+        await _seed_junction_cp(db, "POS-1", "C1", qty=2.0)
+        await _seed_order_cp(db, "EO", "limit", "BUY")
+        await _seed_fill_cp(db, "FO", "EO", "POS-1", 2.0, False, 1000, fee=0.5)
+        await _seed_order_cp(db, "LQ", "liquidation", "SELL")
+        await _seed_fill_cp(db, "FX", "LQ", "POS-1", 2.0, True, 2000,
+                            fee=1.0, realized_pnl=-500.0, price=49000.0)
+        while not event_bus._queue.empty():
+            event_bus._queue.get_nowait()
+        await om._build_close_row_for_fill(ACCOUNT_ID, _close_fill_cp("LQ", "POS-1", 2000))
+
+        # exit_reason classified LIQUIDATION; liquidation_px persisted (=exit px).
+        row = await _closed_row_cp(db, "POS-1", 2000)
+        assert row["exit_reason"] == "LIQUIDATION"
+        assert row["liquidation_px"] == pytest.approx(49000.0)
+
+        events = []
+        while not event_bus._queue.empty():
+            events.append(event_bus._queue.get_nowait())
+        liq = [(c, p) for c, p in events if c == "engine:account:1:position:liquidated"]
+        assert len(liq) == 1, f"expected 1 position:liquidated, got {[c for c, _ in events]!r}"
+        _, p = liq[0]
+        assert p["position_id"] == "POS-1"
+        assert p["liquidation_px"] == pytest.approx(49000.0)
+        assert p["bankruptcy_px"] is None         # no venue-event source
+        assert p["insurance_fund_fee"] is None
+        assert p["adl_indicator"] is None
+        # position:closed ALSO fires on a liquidation close (both events).
+        assert any(c == "engine:account:1:position:closed" for c, _ in events)
+
+    @pytest.mark.asyncio
+    async def test_non_liquidation_close_no_event_null_px(self, db, om):
+        from core.event_bus import event_bus
+        await _seed_junction_cp(db, "POS-2", "C1", qty=1.0)
+        await _seed_order_cp(db, "EO", "limit", "BUY")
+        await _seed_fill_cp(db, "FO", "EO", "POS-2", 1.0, False, 1000, fee=0.5)
+        await _seed_order_cp(db, "XO", "market", "SELL")
+        await _seed_fill_cp(db, "FX", "XO", "POS-2", 1.0, True, 2000,
+                            fee=0.5, realized_pnl=10.0)
+        while not event_bus._queue.empty():
+            event_bus._queue.get_nowait()
+        await om._build_close_row_for_fill(ACCOUNT_ID, _close_fill_cp("XO", "POS-2", 2000))
+        row = await _closed_row_cp(db, "POS-2", 2000)
+        assert row["exit_reason"] != "LIQUIDATION"
+        assert row["liquidation_px"] is None
+        events = []
+        while not event_bus._queue.empty():
+            events.append(event_bus._queue.get_nowait())
+        assert not any(c.endswith(":position:liquidated") for c, _ in events)
+
+    @pytest.mark.asyncio
+    async def test_liquidation_dominates_ladder(self, db, om):
+        # A TP rung then a forced liquidation on the rest: the FINAL close reads
+        # LIQUIDATION (it dominates the TP+liq mix — not MIXED).
+        from core.event_bus import event_bus
+        await _seed_junction_cp(db, "POS-3", "C1", qty=2.0)
+        await _seed_order_cp(db, "EO", "limit", "BUY")
+        await _seed_fill_cp(db, "FO", "EO", "POS-3", 2.0, False, 1000, fee=0.4)
+        await _seed_order_cp(db, "TP", "take_profit", "SELL")
+        await _seed_fill_cp(db, "FT", "TP", "POS-3", 1.0, True, 2000,
+                            fee=0.3, realized_pnl=40.0, price=52000.0)
+        await om._build_close_row_for_fill(ACCOUNT_ID, _close_fill_cp("TP", "POS-3", 2000))
+        await _seed_order_cp(db, "LQ", "liquidation", "SELL")
+        await _seed_fill_cp(db, "FL", "LQ", "POS-3", 1.0, True, 3000,
+                            fee=0.5, realized_pnl=-300.0, price=48000.0)
+        while not event_bus._queue.empty():
+            event_bus._queue.get_nowait()
+        await om._build_close_row_for_fill(ACCOUNT_ID, _close_fill_cp("LQ", "POS-3", 3000))
+
+        # The partial TP row keeps its per-order reason; the FINAL row = LIQUIDATION.
+        partial = await _closed_row_cp(db, "POS-3", 2000)
+        final = await _closed_row_cp(db, "POS-3", 3000)
+        assert partial["exit_reason"] == "TP_PLANNED"
+        assert final["exit_reason"] == "LIQUIDATION"
+        assert any(c == "engine:account:1:position:liquidated"
+                   for c, _ in (event_bus._queue.get_nowait()
+                                for _ in range(event_bus._queue.qsize())))
+
+    @pytest.mark.asyncio
+    async def test_partial_liquidation_emits_no_event(self, db, om):
+        # Audit F2 (Rule-8 gate): Binance does PARTIAL liquidations. A partial
+        # forced-liq close is exit_reason=LIQUIDATION but is_final=False → the
+        # is_final conjunct must SUPPRESS position:liquidated (it fires only on
+        # the final close). Dropping the is_final gate would fail this test.
+        from core.event_bus import event_bus
+        await _seed_junction_cp(db, "POS-4", "C1", qty=2.0)
+        await _seed_order_cp(db, "EO", "limit", "BUY")
+        await _seed_fill_cp(db, "FO", "EO", "POS-4", 2.0, False, 1000, fee=0.4)
+        await _seed_order_cp(db, "LQ", "liquidation", "SELL")
+        # partial liq: closes 1 of 2 → is_final False
+        await _seed_fill_cp(db, "FL", "LQ", "POS-4", 1.0, True, 2000,
+                            fee=0.5, realized_pnl=-200.0, price=49000.0)
+        while not event_bus._queue.empty():
+            event_bus._queue.get_nowait()
+        await om._build_close_row_for_fill(ACCOUNT_ID, _close_fill_cp("LQ", "POS-4", 2000))
+        row = await _closed_row_cp(db, "POS-4", 2000)
+        assert row["exit_reason"] == "LIQUIDATION"   # per-order classified
+        events = []
+        while not event_bus._queue.empty():
+            events.append(event_bus._queue.get_nowait())
+        assert not any(c.endswith(":position:liquidated") for c, _ in events)
+
+    @pytest.mark.asyncio
+    async def test_liquidation_px_is_liq_fill_not_final_order(self, db, om):
+        # Audit F1: liquidation_px must be the LIQUIDATION fill's price even when
+        # a NON-liquidation order completes the close AFTER a partial liquidation
+        # (margin recovered). Source = the liq fill VWAP (49000), NOT the final
+        # non-liq order's price (53000). Old code (=exit_price) would record 53000.
+        from core.event_bus import event_bus
+        await _seed_junction_cp(db, "POS-5", "C1", qty=2.0)
+        await _seed_order_cp(db, "EO", "limit", "BUY")
+        await _seed_fill_cp(db, "FO", "EO", "POS-5", 2.0, False, 1000, fee=0.4)
+        # partial liquidation FIRST (1 of 2) at 49000
+        await _seed_order_cp(db, "LQ", "liquidation", "SELL")
+        await _seed_fill_cp(db, "FL", "LQ", "POS-5", 1.0, True, 2000,
+                            fee=0.5, realized_pnl=-200.0, price=49000.0)
+        await om._build_close_row_for_fill(ACCOUNT_ID, _close_fill_cp("LQ", "POS-5", 2000))
+        # non-liq close LAST (remaining 1) at 53000
+        await _seed_order_cp(db, "MX", "market", "SELL")
+        await _seed_fill_cp(db, "FM", "MX", "POS-5", 1.0, True, 3000,
+                            fee=0.5, realized_pnl=20.0, price=53000.0)
+        while not event_bus._queue.empty():
+            event_bus._queue.get_nowait()
+        await om._build_close_row_for_fill(ACCOUNT_ID, _close_fill_cp("MX", "POS-5", 3000))
+        final = await _closed_row_cp(db, "POS-5", 3000)
+        assert final["exit_reason"] == "LIQUIDATION"          # liq dominates
+        assert final["liquidation_px"] == pytest.approx(49000.0)  # liq fill, not 53000
+        liq = [(c, p) for c, p in (event_bus._queue.get_nowait()
+                                   for _ in range(event_bus._queue.qsize()))
+               if c == "engine:account:1:position:liquidated"]
+        assert len(liq) == 1
+        assert liq[0][1]["liquidation_px"] == pytest.approx(49000.0)

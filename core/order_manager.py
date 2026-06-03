@@ -2275,6 +2275,21 @@ class OrderManager:
                     account_id, pos_id, fallback=exit_reason,
                 )
 
+            # P6.T7: liquidation_px = the realized LIQUIDATION-fill VWAP (NOT
+            # this close row's exit_price). _classify_final_exit_reason sets
+            # LIQUIDATION whenever ANY closing order for the position is a
+            # liquidation (position-scoped), but exit_price is order-scoped — so
+            # in a partial-liq-then-non-liq-final ordering they'd diverge. Source
+            # liquidation_px from the liquidation fills directly so it's the liq
+            # execution price regardless of close ordering (audit P6T7-LIQPX).
+            # Falls back to exit_price when no liq fills are keyable (empty-tpid
+            # one-way path, where this close IS the liquidation).
+            liquidation_px = None
+            if exit_reason == "LIQUIDATION":
+                liquidation_px = await self._liquidation_vwap(account_id, pos_id)
+                if liquidation_px is None:
+                    liquidation_px = exit_price
+
             # ── Implementation shortfall vs pre_trade_log ───────────────
             shortfall = await self._compute_shortfall(
                 account_id, symbol, direction,
@@ -2412,6 +2427,11 @@ class OrderManager:
                 "calc_id":              close_calc_id,
                 "lifecycle_id":         close_lifecycle_id,
                 "cumulative_amendment_count": cumulative_amendment_count,
+                # P6.T7: realized liquidation execution price on a forced-liq
+                # close (NULL otherwise; = the liquidation-fill VWAP, computed
+                # above). bankruptcy_px / insurance_fund_fee / adl_indicator stay
+                # schema-NULL (no venue-event source today).
+                "liquidation_px":       liquidation_px,
                 **shortfall,
                 **deltas,
             })
@@ -2477,6 +2497,28 @@ class OrderManager:
                     )
             except Exception:
                 log.debug("position:closed event_bus emit failed", exc_info=True)
+
+            # P6.T7 (spec §9 position:liquidated): a DEDICATED event for a forced
+            # liquidation, fired ALONGSIDE position:closed (the general close
+            # context) when the FINAL close was a liquidation. liquidation_px =
+            # the realized close-fill execution price; bankruptcy_px /
+            # insurance_fund_fee / adl_indicator have NO venue-event source today
+            # (NULL — ingesting venue liquidation events is a separate "venue
+            # status signals" task). Detection: a close order whose order_type is
+            # "liquidation" (the Binance forced-liq fallback) → exit_reason=LIQUIDATION.
+            try:
+                if is_final and exit_reason == "LIQUIDATION":
+                    await event_bus.publish_engine(
+                        account_id, DOMAIN_POSITION, "liquidated", {
+                            "position_id":        pos_id,
+                            "liquidation_px":     liquidation_px,
+                            "bankruptcy_px":      None,
+                            "insurance_fund_fee": None,
+                            "adl_indicator":      None,
+                        },
+                    )
+            except Exception:
+                log.debug("position:liquidated event_bus emit failed", exc_info=True)
 
             # v2.4: emit position_closed trade event
             try:
@@ -2709,6 +2751,13 @@ class OrderManager:
         # forgets and keeps this consistent with _classify_final_exit_reason
         # (P2 audit follow-up, 2026-05-29).
         otype = (order.get("order_type", "") or "").lower()
+        # P6.T7: a forced-liquidation close. Binance sends order type "LIQUIDATION"
+        # (not in ORDER_TYPE_FROM_BINANCE → the adapter's otype.lower() fallback
+        # yields "liquidation"). Highest priority — a liquidation is neither a
+        # planned TP nor SL. (bankruptcy_px / insurance_fund_fee / adl_indicator
+        # need venue liquidation-event ingestion, not done — see position:liquidated.)
+        if "liquidation" in otype:
+            return "LIQUIDATION"
         if "take_profit" in otype:
             return "TP_PLANNED"
         if "trailing" in otype:
@@ -2768,14 +2817,60 @@ class OrderManager:
         if not rows:
             return fallback
         tp_orders, non_tp_orders = [], []
+        liq_present = False
         for eoid, otype in rows:
-            (tp_orders if "take_profit" in (otype or "").lower()
-             else non_tp_orders).append(eoid)
+            ot = (otype or "").lower()
+            if "liquidation" in ot:
+                liq_present = True
+            (tp_orders if "take_profit" in ot else non_tp_orders).append(eoid)
+        # P6.T7: a liquidation DOMINATES the ladder classification — if any
+        # closing order was a forced liquidation, the position was liquidated
+        # (even if earlier TP rungs hit first), so the close reads LIQUIDATION
+        # rather than MIXED/TP_LADDER_COMPLETE.
+        if liq_present:
+            return "LIQUIDATION"
         if tp_orders and non_tp_orders:
             return "MIXED"
         if len(tp_orders) >= 2:
             return "TP_LADDER_COMPLETE"
         return fallback
+
+    async def _liquidation_vwap(
+        self, account_id: int, pos_id: str,
+    ) -> Optional[float]:
+        """P6.T7: VWAP of the position's LIQUIDATION close fills — the realized
+        forced-liquidation execution price.
+
+        Order-scope-independent: sources the price from the fills of the
+        liquidation closing order(s) (``order_type`` containing ``liquidation``),
+        so it stays correct even when a partial liquidation precedes a
+        non-liquidation final close (where this row's ``exit_price`` would be the
+        non-liq order's VWAP). Returns ``None`` when there's no ``pos_id``
+        (binance one-way empty-tpid — the caller falls back to this close's
+        ``exit_price``, which IS the liquidation on that single-close path) or no
+        liquidation fills are found. Best-effort.
+        """
+        if not pos_id:
+            return None
+        try:
+            async with self._db._conn.execute(
+                "SELECT f.price, f.quantity FROM fills f "
+                "JOIN orders o ON o.account_id = f.account_id "
+                "  AND o.exchange_order_id = f.exchange_order_id "
+                "WHERE f.account_id = ? AND f.terminal_position_id = ? "
+                "  AND f.is_close = 1 AND LOWER(o.order_type) LIKE '%liquidation%'",
+                (account_id, pos_id),
+            ) as cur:
+                rows = await cur.fetchall()
+        except Exception:
+            log.debug("liquidation VWAP read failed for pos %s", pos_id, exc_info=True)
+            return None
+        tot_qty = sum(abs(float(q or 0)) for _, q in rows)
+        if tot_qty <= 0:
+            return None
+        return sum(
+            float(p or 0) * abs(float(q or 0)) for p, q in rows
+        ) / tot_qty
 
     async def _compute_shortfall(
         self,

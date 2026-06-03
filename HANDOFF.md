@@ -132,10 +132,25 @@ the snapshot-wins drift inversion (feature-flagged — the riskiest single chang
   2s; cancel-then-repaste (status NOT filtered — tight window is the discriminator). **UI badge deferred**
   (no event consumer until Phase 7/8). Tests: `test_phase2_junction::TestDuplicateOrderDetection` (8, incl.
   the real-path wiring test). Full suite 3023 / 7 skip / 1 pre-existing fail / 0 new.
+- **✅ P6.T7 — SHIPPED (task 265, operator chose "emit + minimal detection")**: `position:liquidated`.
+  **Detection**: a close order whose `order_type` contains `"liquidation"` → `exit_reason="LIQUIDATION"`
+  (Binance forced-liq sends `o="LIQUIDATION"`, NOT in `ORDER_TYPE_FROM_BINANCE` → `otype.lower()` fallback).
+  Added to BOTH classifiers — `_determine_exit_reason` (highest priority) + `_classify_final_exit_reason`
+  (a liquidation among the closing orders DOMINATES → LIQUIDATION over MIXED/TP_LADDER). **liquidation_px**
+  persisted to `closed_positions` (added to `insert_closed_position` INSERT; column existed since Phase 0.8
+  but was never written) = the **liquidation-fill VWAP** (`_liquidation_vwap`, order-scope-independent — NOT
+  this row's exit_price; audit-fixed). **Emit** `position:liquidated` gated on `is_final AND
+  exit_reason=="LIQUIDATION"`, alongside `position:closed`; payload `{position_id, liquidation_px,
+  bankruptcy_px:None, insurance_fund_fee:None, adl_indicator:None}` — the latter 3 have NO venue-event
+  source (deferred "venue status signals"). Audit (3-dim workflow): 2 confirmed LOW + FIXED — (1)
+  liquidation_px order-scope decoupling (partial-liq-then-non-liq-final → wrong price) → fixed via
+  `_liquidation_vwap`; (2) the `is_final` gate (suppresses the event on a Binance PARTIAL liquidation) was
+  untested → added the partial-liq-no-event test. Tests: `test_phase5_funding::TestPositionLiquidatedEvent`
+  (6). Full suite 3029 / 7 skip / 1 pre-existing fail / 0 new.
 - **NEXT in Phase 6**: P6.T6 (`position:size_drift` + snapshot-wins inversion — the riskiest single change;
-  feature-flag behind `config_json.feature_flags.snapshot_wins_drift`, isolate + monitor) + P6.T7
-  (`position:liquidated` dedicated event). Plus the deferred `calc:size_deviated` producer. See
-  `[[project_phase6_event_bus_state]]`.
+  feature-flag behind `config_json.feature_flags.snapshot_wins_drift`, isolate + monitor). Plus the deferred
+  `calc:size_deviated` producer, and the deferred liquidation-field ingestion (bankruptcy_px/insurance_fund_fee/
+  adl_indicator — "venue status signals"). See `[[project_phase6_event_bus_state]]`.
 
 ### VERIFY-FIRST before scoping Phase 6 — DONE 2026-06-02 (corrects the prior claim; see `[[project_phase6_event_bus_state]]`)
 - ⚠ **CORRECTION**: the prior handoff said `TRANSITION_EVENT_MAP` in **calc_state/link_state** is

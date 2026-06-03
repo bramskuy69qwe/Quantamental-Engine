@@ -346,7 +346,8 @@ class OrdersMixin:
                 tp_price, sl_price, lifecycle_id,
                 entry_px_delta_pct, size_delta_pct, exit_vs_target_pct,
                 realized_r, planned_r, hold_time_actual_ms,
-                cumulative_amendment_count, tp_drift_pct, sl_drift_pct
+                cumulative_amendment_count, tp_drift_pct, sl_drift_pct,
+                liquidation_px
             ) VALUES (
                 :account_id, :exchange_position_id, :terminal_position_id,
                 :symbol, :direction, :quantity, :entry_price, :exit_price,
@@ -357,7 +358,8 @@ class OrdersMixin:
                 :tp_price, :sl_price, :lifecycle_id,
                 :entry_px_delta_pct, :size_delta_pct, :exit_vs_target_pct,
                 :realized_r, :planned_r, :hold_time_actual_ms,
-                :cumulative_amendment_count, :tp_drift_pct, :sl_drift_pct
+                :cumulative_amendment_count, :tp_drift_pct, :sl_drift_pct,
+                :liquidation_px
             )
         """
         try:
@@ -390,6 +392,11 @@ class OrdersMixin:
                 "tp_price":             tp_price,
                 "sl_price":             sl_price,
                 "lifecycle_id":         preserved_lifecycle,
+                # P6.T7: realized liquidation price on a forced-liq close (NULL
+                # otherwise). Sole real-tpid writer is _build_close_row_for_fill;
+                # offline rebuild/backfill use synthetic tpids (no real-row REPLACE),
+                # so — like funding_fees — it needs no _CLOSED_POS_DELTA_COLS preserve.
+                "liquidation_px":       row.get("liquidation_px"),
                 **preserved_deltas,
             })
             if commit:
