@@ -51,6 +51,10 @@ DEFAULT_SNAPSHOT_DRIFT_TOLERANCE_PCT = 0.5
 DEFAULT_YELLOW_DEVIATION_PCT         = 5.0
 DEFAULT_RED_DEVIATION_PCT            = 15.0
 DEFAULT_SIZE_DEVIATION_THRESHOLD_PCT = 10.0
+# P6.T6: feature flag (config_json.feature_flags.snapshot_wins_drift). Default
+# OFF — the inversion of the WS-fills-win policy + the position:size_drift event
+# are opt-in per account (spec §12.6 / plan §6 row 6.8).
+DEFAULT_SNAPSHOT_WINS_DRIFT          = False
 
 
 @dataclass(frozen=True)
@@ -74,6 +78,8 @@ class AccountConfig:
     yellow_deviation_pct: float         = DEFAULT_YELLOW_DEVIATION_PCT
     red_deviation_pct: float            = DEFAULT_RED_DEVIATION_PCT
     size_deviation_threshold_pct: float = DEFAULT_SIZE_DEVIATION_THRESHOLD_PCT
+    # P6.T6 feature flag — read from config_json.feature_flags.snapshot_wins_drift.
+    snapshot_wins_drift: bool           = DEFAULT_SNAPSHOT_WINS_DRIFT
 
 
 def _parse_config_json(blob: Optional[str]) -> AccountConfig:
@@ -99,6 +105,16 @@ def _parse_config_json(blob: Optional[str]) -> AccountConfig:
     if not isinstance(deviation, dict):
         deviation = {}
 
+    # P6.T6: feature_flags.snapshot_wins_drift (nested dict, default off).
+    # STRICT bool — only a genuine JSON boolean enables the inversion; any other
+    # type (a string "false"/"0", a number, null) falls back to OFF. bool("false")
+    # would be True, which must NOT silently enable a risky money-path inversion.
+    flags = parsed.get("feature_flags")
+    if not isinstance(flags, dict):
+        flags = {}
+    _swd = flags.get("snapshot_wins_drift", DEFAULT_SNAPSHOT_WINS_DRIFT)
+    snapshot_wins_drift = _swd if isinstance(_swd, bool) else DEFAULT_SNAPSHOT_WINS_DRIFT
+
     def _int(key: str, default: int) -> int:
         try:
             return int(parsed.get(key, default))
@@ -119,6 +135,7 @@ def _parse_config_json(blob: Optional[str]) -> AccountConfig:
         yellow_deviation_pct         = _float("yellow_pct", DEFAULT_YELLOW_DEVIATION_PCT, source=deviation),
         red_deviation_pct            = _float("red_pct", DEFAULT_RED_DEVIATION_PCT, source=deviation),
         size_deviation_threshold_pct = _float("size_deviation_threshold_pct", DEFAULT_SIZE_DEVIATION_THRESHOLD_PCT),
+        snapshot_wins_drift          = snapshot_wins_drift,
     )
 
 

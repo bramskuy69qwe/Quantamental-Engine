@@ -249,8 +249,23 @@ class DataCache:
         if ts_ms == 0:
             ts_ms = int(time.time() * 1000)
 
+        # P6.T6: read the snapshot-drift config OFF the lock (only for a REST
+        # snapshot — the sole source the inversion touches — and never for a
+        # forced refresh) so self._lock is NEVER held across a DB await. That
+        # single-writer invariant (no I/O under the cache lock) predates this
+        # task; the inversion preserves it by reading config here and passing it
+        # into the now-synchronous helper. cfg=None for non-REST/force → no-op.
+        drift_cfg = None
+        if source == UpdateSource.REST and not force:
+            drift_cfg = await self._read_drift_config()
+
+        size_drifts: List[Dict[str, Any]] = []
         async with self._lock:
-            if not force and not self._should_accept_position_update(source, ts_ms):
+            accept = force or self._should_accept_position_update(source, ts_ms)
+            accept, size_drifts = self._apply_snapshot_wins_inversion(
+                source, incoming, accept, drift_cfg,
+            )
+            if not accept:
                 return None
 
             existing = {(p.ticker, p.direction): p for p in self._positions}
@@ -316,12 +331,81 @@ class DataCache:
         except Exception:
             pass  # Redis unavailable — dual-publish is best-effort
 
+        # P6.T6 (spec §9 position:size_drift): one event per position whose
+        # venue-snapshot size disagreed with the fill-derived size beyond
+        # tolerance (only populated when the snapshot-wins-drift flag accepted an
+        # otherwise-rejected REST snapshot above). publish_engine is enqueue-only.
+        if size_drifts:
+            from core.event_bus import DOMAIN_POSITION
+            from core.state import app_state as _as_drift
+            for d in size_drifts:
+                await self._event_bus.publish_engine(
+                    _as_drift.active_account_id, DOMAIN_POSITION, "size_drift", d,
+                )
+
         log.debug(
             "DataCache: snapshot applied (source=%s, count=%d, closed=%d, new=%d)",
             source.value, len(incoming), len(closed_syms), len(result.new_syms),
         )
 
         return result
+
+    def _apply_snapshot_wins_inversion(
+        self, source: UpdateSource, incoming: List[PositionInfo],
+        base_accept: bool, cfg,
+    ) -> Tuple[bool, List[Dict[str, Any]]]:
+        """P6.T6 (spec §12.6): the snapshot-wins-drift inversion, isolated for
+        testability. SYNCHRONOUS — the caller reads ``cfg`` (the account's
+        :class:`AccountConfig`, or ``None`` for non-REST/force) OFF the lock and
+        passes it in, so no DB await runs under ``self._lock``. Called holding
+        ``self._lock`` (reads ``self._positions``).
+
+        ``base_accept`` is the verdict of the existing WS-priority policy
+        (``_should_accept_position_update``). This only acts on the ONE case that
+        policy rejects — a REST snapshot inside the WS-priority window (the exact
+        "WS-fills-win-within-5s" policy this task inverts). When ``cfg`` has
+        ``snapshot_wins_drift`` ON, it returns ``accept=True`` (the venue snapshot
+        is authoritative) plus a ``position:size_drift`` payload for every
+        position whose snapshot size disagrees with the current fill-derived size
+        beyond ``snapshot_drift_tolerance_pct``. Flag OFF / no cfg / non-REST /
+        already-accepted → returns ``(base_accept, [])`` unchanged — provably zero
+        behaviour change.
+        """
+        if base_accept or source != UpdateSource.REST:
+            return base_accept, []
+        if cfg is None or not cfg.snapshot_wins_drift:
+            return base_accept, []   # flag OFF / no cfg → REST stays rejected
+        drifts: List[Dict[str, Any]] = []
+        cur_by_key = {(p.ticker, p.direction): p for p in self._positions}
+        tol = cfg.snapshot_drift_tolerance_pct / 100.0
+        for p in incoming:
+            cur_pos = cur_by_key.get((p.ticker, p.direction))
+            if cur_pos is None or not cur_pos.contract_amount:
+                continue
+            if abs(p.contract_amount - cur_pos.contract_amount) \
+                    / abs(cur_pos.contract_amount) > tol:
+                drifts.append({
+                    "position_id":       cur_pos.position_id or p.position_id,
+                    "fill_derived_size": cur_pos.contract_amount,
+                    "snapshot_size":     p.contract_amount,
+                    "delta":             p.contract_amount - cur_pos.contract_amount,
+                })
+        return True, drifts   # inversion: the venue snapshot wins
+
+    async def _read_drift_config(self):
+        """P6.T6: read this account's snapshot-drift config (the feature flag +
+        tolerance) for the REST-within-window conflict branch. Lazy db access via
+        the module singleton + the active account; any error → defaults (flag
+        OFF) so the inversion stays safely disabled. Called ONLY on the rare
+        REST-rejection conflict, so the per-call query cost is bounded."""
+        from core.account_config import read_account_config_async, AccountConfig
+        try:
+            from core.database import db
+            from core.state import app_state
+            return await read_account_config_async(db, app_state.active_account_id)
+        except Exception:
+            log.debug("drift config read failed; defaulting flag OFF", exc_info=True)
+            return AccountConfig()
 
     # ── Apply: incremental WS update ─────────────────────────────────────────
 

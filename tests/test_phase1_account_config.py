@@ -181,6 +181,30 @@ class TestParseConfigJson:
         assert cfg.window_seconds == DEFAULT_WINDOW_SECONDS
         assert cfg.entry_tolerance_pct == DEFAULT_ENTRY_TOLERANCE_PCT
 
+    def test_snapshot_wins_drift_flag_defaults_off(self):
+        # P6.T6: the inversion flag is OFF unless explicitly enabled — default,
+        # empty config, and missing feature_flags all → False.
+        assert AccountConfig().snapshot_wins_drift is False
+        assert _parse_config_json("").snapshot_wins_drift is False
+        assert _parse_config_json("{}").snapshot_wins_drift is False
+        assert _parse_config_json('{"feature_flags": {}}').snapshot_wins_drift is False
+
+    def test_snapshot_wins_drift_flag_parsed_when_set(self):
+        # P6.T6: config_json.feature_flags.snapshot_wins_drift = true → enabled.
+        cfg = _parse_config_json(json.dumps(
+            {"feature_flags": {"snapshot_wins_drift": True}}))
+        assert cfg.snapshot_wins_drift is True
+        # A non-dict feature_flags must not crash (→ flag off).
+        assert _parse_config_json('{"feature_flags": "nope"}').snapshot_wins_drift is False
+
+    def test_snapshot_wins_drift_non_bool_stays_off(self):
+        # P6.T6 (audit): STRICT bool — only a genuine JSON boolean enables the
+        # inversion. bool("false") would be True, so a string/number/null value
+        # MUST fall back to OFF (a risky money-path flag must not enable by typo).
+        for bad in ('"false"', '"true"', '"0"', '1', '0', 'null', '"yes"'):
+            blob = '{"feature_flags": {"snapshot_wins_drift": %s}}' % bad
+            assert _parse_config_json(blob).snapshot_wins_drift is False, bad
+
 
 # ── 2. Sync + async readers agree ────────────────────────────────────
 

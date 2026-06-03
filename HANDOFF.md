@@ -147,10 +147,30 @@ the snapshot-wins drift inversion (feature-flagged — the riskiest single chang
   `_liquidation_vwap`; (2) the `is_final` gate (suppresses the event on a Binance PARTIAL liquidation) was
   untested → added the partial-liq-no-event test. Tests: `test_phase5_funding::TestPositionLiquidatedEvent`
   (6). Full suite 3029 / 7 skip / 1 pre-existing fail / 0 new.
-- **NEXT in Phase 6**: P6.T6 (`position:size_drift` + snapshot-wins inversion — the riskiest single change;
-  feature-flag behind `config_json.feature_flags.snapshot_wins_drift`, isolate + monitor). Plus the deferred
-  `calc:size_deviated` producer, and the deferred liquidation-field ingestion (bankruptcy_px/insurance_fund_fee/
-  adl_indicator — "venue status signals"). See `[[project_phase6_event_bus_state]]`.
+- **✅ P6.T6 — SHIPPED (task 266) — the riskiest change, feature-flagged default-OFF**:
+  `position:size_drift` + the snapshot-wins inversion of `data_cache`'s WS-fills-win-within-5s POSITION
+  policy. Gated behind `config_json.feature_flags.snapshot_wins_drift` (default OFF → **provably zero
+  behaviour change**; the full suite passing at 0-new confirms it). `AccountConfig.snapshot_wins_drift`
+  (STRICT bool parse — a string "false" must NOT enable a money-path flag). The inversion is isolated in a
+  SYNC `_apply_snapshot_wins_inversion(source, incoming, base_accept, cfg)` that only acts on the REST-within-
+  window rejection: flag ON → accept the snapshot (venue authoritative) + emit `position:size_drift`
+  `{position_id, fill_derived_size, snapshot_size, delta}` per position disagreeing beyond
+  `snapshot_drift_tolerance_pct`. **Config is read OFF the lock** (only for REST-non-force) and passed in, so
+  `self._lock` is never held across a DB await (the DataCache single-writer invariant). Scope: positions only
+  (`_should_accept_account_update` untouched); out-of-window REST drift not detected (documented). Audit
+  (4-dim workflow): 8 confirmed → 2 distinct real fixes (await-under-lock → hoisted off-lock; bare `bool()`
+  flag coercion → strict `isinstance(bool)`) + test-coverage (multi-position, safe-default, string-flag) + an
+  untracked-test-file reminder. Tests: `test_phase6_size_drift.py` (11) + `test_phase1_account_config` (+3).
+  Full suite 3043 / 7 skip / 1 pre-existing fail / 0 new. (NB a flaky aiosqlite-teardown thread warning is
+  pre-existing — not from this change; non-deterministic across runs.)
+- **🎉 Phase 6 (event-bus enrichment) is FUNCTIONALLY COMPLETE** — P6.T1–T7 all shipped (tasks 260–266; the
+  §5 funding reconcile was 259). The full §9 calc:*/position:*/order:* event catalog now emits on the
+  per-account in-process event_bus.
+- **Phase-6 DEFERRED (own tasks)**: `calc:size_deviated` producer (needs a threshold-crossing/anti-spam
+  emitter — naive emit spams every refresh); liquidation-field ingestion (bankruptcy_px/insurance_fund_fee/
+  adl_indicator — "venue status signals"); always-on (flag-off) `position:size_drift` observability if ever
+  wanted. **Next phase: Phase 7 (reverse-query + audit export)** — see plan §7 / spec §11.
+  See `[[project_phase6_event_bus_state]]`.
 
 ### VERIFY-FIRST before scoping Phase 6 — DONE 2026-06-02 (corrects the prior claim; see `[[project_phase6_event_bus_state]]`)
 - ⚠ **CORRECTION**: the prior handoff said `TRANSITION_EVENT_MAP` in **calc_state/link_state** is
