@@ -1391,6 +1391,13 @@ class OrderManager:
                             # async _process_single_fill) → put_nowait is safe.
                             # tp_level_idx omitted (same deferral as the trade
                             # event — needs calc.tp_levels price matching).
+                            # KNOWN (T238 F6, holistic-audit [7]): remaining_qty
+                            # reads app_state.contract_amount, which on the FINAL
+                            # closing fill still reflects PRE-fill size (>0) — so a
+                            # final fill emits partial_close with a stale positive
+                            # remaining_qty, then position:closed fires ~2s later.
+                            # qty_reduced + realized_pnl_partial are authoritative;
+                            # a consumer treats remaining_qty as best-effort.
                             event_bus.publish_engine_nowait(
                                 account_id, DOMAIN_POSITION, "partial_close", {
                                     "position_id":          pos_id,
@@ -2403,6 +2410,29 @@ class OrderManager:
                     )
                     funding_fees = 0.0
 
+            # P6 holistic-audit: make the §9 position:closed / position:liquidated
+            # events idempotent per (account, tpid, exit_time). Two +2s builds can
+            # reach this for the SAME final close — the per-fill deferred build and
+            # the position-disappearance backstop (build_final_close_row,
+            # force_final=True). Emit the §9 events ONLY when THIS build creates a
+            # NEW close row, not on a REPLACE. get_unrecorded_closing_fills already
+            # skips recorded fills, so the residual is just a narrow
+            # both-build-before-either-commits race → the §9 events are
+            # AT-LEAST-ONCE under disappearance; a subscriber must dedup on
+            # position_id+close_ts_ms (or lifecycle_id). The flat
+            # risk:position_closed is intentionally NOT gated (the reconciler
+            # tolerates re-delivery + relies on per-partial firing).
+            close_row_is_new = True
+            try:
+                async with self._db._conn.execute(
+                    "SELECT 1 FROM closed_positions WHERE account_id = ? "
+                    "AND terminal_position_id = ? AND exit_time_ms = ? LIMIT 1",
+                    (account_id, pos_id, exit_time),
+                ) as _cur:
+                    close_row_is_new = (await _cur.fetchone()) is None
+            except Exception:
+                close_row_is_new = True   # best-effort: prefer emit over silent drop
+
             # ── Persist ─────────────────────────────────────────────────
             net_pnl = realized_pnl - total_fees + funding_fees
             await self._db.insert_closed_position({
@@ -2455,8 +2485,15 @@ class OrderManager:
             #   - model_tags / hold_time_planned_ms / close_note have no source today;
             #   - mfe/mae are reconciler-computed AFTER close → None here (a
             #     subscriber reads the closed_positions row for the finalized pair).
+            #   - lifecycle_id is an ADDITIVE §3.5 correlation key (the §9 example
+            #     JSON omits it, but §3.5 surfaces lifecycle_id on all position:*
+            #     events — intentional, not a leak).
+            #   - funding_fees/net_pnl are AS-OF-CLOSE: the deferred-funding
+            #     reconcile (task 259) may revise them in closed_positions after
+            #     this event (same post-close mutability as mfe/mae) — the
+            #     closed_positions row is the authoritative finalized value.
             try:
-                if is_final:
+                if is_final and close_row_is_new:
                     await event_bus.publish_engine(
                         account_id, DOMAIN_POSITION, "closed", {
                             "position_id":                pos_id,
@@ -2507,7 +2544,7 @@ class OrderManager:
             # status signals" task). Detection: a close order whose order_type is
             # "liquidation" (the Binance forced-liq fallback) → exit_reason=LIQUIDATION.
             try:
-                if is_final and exit_reason == "LIQUIDATION":
+                if is_final and close_row_is_new and exit_reason == "LIQUIDATION":
                     await event_bus.publish_engine(
                         account_id, DOMAIN_POSITION, "liquidated", {
                             "position_id":        pos_id,

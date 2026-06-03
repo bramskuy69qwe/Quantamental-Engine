@@ -188,9 +188,12 @@ class TestApplySnapshotInversionE2E:
             UpdateSource.REST, [_pos("BTCUSDT", "LONG", 3.0)], ts_ms=1500)
         assert res is not None                          # accepted (inversion)
         assert dc.positions[0].contract_amount == 3.0   # snapshot size won
-        drift = [(c, p) for c, p in _drain(dc)
-                 if c.endswith(":position:size_drift")]
-        assert len(drift) == 1
+        # [11] pin the ACCOUNT segment of the topic (size_drift scopes off
+        # app_state.active_account_id, not a threaded arg) — full topic, not endswith.
+        from core.state import app_state
+        want = "engine:account:%d:position:size_drift" % app_state.active_account_id
+        drift = [(c, p) for c, p in _drain(dc) if c == want]
+        assert len(drift) == 1, "size_drift not on the active-account topic %r" % want
         _, p = drift[0]
         assert p["fill_derived_size"] == 2.0
         assert p["snapshot_size"] == 3.0

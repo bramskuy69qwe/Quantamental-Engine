@@ -166,6 +166,18 @@ the snapshot-wins drift inversion (feature-flagged — the riskiest single chang
 - **🎉 Phase 6 (event-bus enrichment) is FUNCTIONALLY COMPLETE** — P6.T1–T7 all shipped (tasks 260–266; the
   §5 funding reconcile was 259). The full §9 calc:*/position:*/order:* event catalog now emits on the
   per-account in-process event_bus.
+- **✅ HOLISTIC Phase-6 audit — RAN + RECONCILED (task 267)**: a 5-dim cross-task workflow over 259–266 (the
+  whole-phase view the per-task audits couldn't see) found 11 confirmed, all LOW/MED, **none blocking** (all
+  forward-scaffolding — no event_bus subscribers yet). Fixed in 267: (1 real) `position:closed`/`liquidated`
+  now idempotent per (account,tpid,exit_time) — emit only on a NEW close row, not a REPLACE, so the per-fill
+  build + the disappearance backstop can't double-emit (residual narrow race → AT-LEAST-ONCE; a subscriber
+  dedups on position_id+close_ts_ms). Plus: `calc:linked` link_audit_summary deferral DOCUMENTED (recoverable
+  from calc_match_audit; full threading = Phase-7); `_read_drift_config` docstring corrected (runs per REST
+  poll off-lock, not rare-only); `position:closed` lifecycle_id (§3.5 key) + funding_fees/net_pnl
+  (post-close-mutable, like mfe/mae) clarified; `calc:partially_filled` no-producer + `partial_close`
+  stale-remaining_qty (T238 F6) anchor-noted. +Rule-8 tests: account-scope (non-default acct 7) for
+  position:opened + order:duplicate_detected, position:closed value-pins, size_drift account segment, the
+  idempotency gate. Full suite 3046 / 7 skip / 1 pre-existing fail / 0 new.
 - **Phase-6 DEFERRED (own tasks)**: `calc:size_deviated` producer (needs a threshold-crossing/anti-spam
   emitter — naive emit spams every refresh); liquidation-field ingestion (bankruptcy_px/insurance_fund_fee/
   adl_indicator — "venue status signals"); always-on (flag-off) `position:size_drift` observability if ever
@@ -774,8 +786,10 @@ change unless the transactional path migrates to per-account routing
 - **`find_candidate_calcs` drift** (T223 audit): the Phase-3 manual-link
   finder wasn't updated to the matcher's null-handling / norm_side
   exactly. Reconcile when building the Phase-3 needs-link UI.
-- **`calc:order_cancelled` event** (spec §9): not emitted (RELEASED has
-  no event topic; deferred per T216). No consumers yet.
+- **`calc:order_cancelled` event** (spec §9): ✅ NOW EMITTED (task 262) from
+  `_release_calc_on_operator_cancel` on a successful release — separate from the
+  RELEASED transition (which still has no TRANSITION_EVENT_MAP entry). No
+  consumers yet (forward-scaffolding).
 - **`partially_actioned` has no producer** (spec §16, T222): the state +
   edges + `calc:partially_filled` event are defined but nothing
   transitions a calc INTO it. Producer ("partial fill + no further

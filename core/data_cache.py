@@ -394,10 +394,12 @@ class DataCache:
 
     async def _read_drift_config(self):
         """P6.T6: read this account's snapshot-drift config (the feature flag +
-        tolerance) for the REST-within-window conflict branch. Lazy db access via
-        the module singleton + the active account; any error → defaults (flag
-        OFF) so the inversion stays safely disabled. Called ONLY on the rare
-        REST-rejection conflict, so the per-call query cost is bounded."""
+        tolerance). Called by apply_position_snapshot OFF the lock for every
+        non-forced REST snapshot (~one per REST poll, ≈15-30s) so self._lock is
+        never held across the DB await — NOT only on the rare rejection (the
+        accept verdict that scopes the inversion is computed later, inside the
+        lock). Lazy db access via the module singleton + the active account; any
+        error → defaults (flag OFF) so the inversion stays safely disabled."""
         from core.account_config import read_account_config_async, AccountConfig
         try:
             from core.database import db

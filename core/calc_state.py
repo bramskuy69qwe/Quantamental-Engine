@@ -118,6 +118,11 @@ TRANSITION_EVENT_MAP: Dict[CalcStatus, str] = {
     CalcStatus.EXPIRED:                "expired",
     CalcStatus.CANCELLED_BY_OPERATOR:  "cancelled",
     CalcStatus.COMPLETED_VIA_POSITION: "completed",
+    # NB (holistic-audit [3]): calc:partially_filled has NO live producer — nothing
+    # transitions a calc INTO partially_actioned yet (spec §16; pre-Phase-6 gap).
+    # Phase 6 wired the POSITION-side position:partial_close event, but the
+    # CALC-side partially_actioned producer remains deferred, so this entry is
+    # forward-scaffolding (it lights up the moment a producer is added).
     CalcStatus.PARTIALLY_ACTIONED:     "partially_filled",
 }
 

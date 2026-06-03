@@ -1419,6 +1419,20 @@ class TestPositionOpenedScaleInEvents:
             for c, _ in events
         )
 
+    @pytest.mark.asyncio
+    async def test_opened_on_owning_account_topic(self, om, db):
+        # P6 holistic-audit [9]: pin the per-account topic for a position:* emit
+        # site with a NON-default account (7 != app_state's default 1) so a
+        # wrong/transposed/hardcoded account_id at the emit can't coincide with 1.
+        await _seed_calc(db, "C7", account_id=7)
+        await _seed_order(db, "EO7", calc_id="C7", account_id=7)
+        _drain_bus()
+        f = _fill("EO7", "POS-7", 2.0, ts=1000, fid="F7", price=50000.0, account_id=7)
+        f["direction"] = "LONG"
+        await om._link_position_calc_on_open(7, f)
+        topics = [c for c, _ in _drain_bus()]
+        assert "engine:account:7:position:opened" in topics
+
 
 class TestPartialCloseEvent:
     @pytest.mark.asyncio
@@ -1567,3 +1581,15 @@ class TestDuplicateOrderDetection:
         dup = [(c, p) for c, p in events if c == "engine:account:1:order:duplicate_detected"]
         assert len(dup) == 1, f"expected 1 (on the 2nd arrival), got {[c for c, _ in events]!r}"
         assert len(dup[0][1]["order_ids"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_duplicate_detected_on_owning_account_topic(self, om, db):
+        # P6 holistic-audit [9]: account scope for order:duplicate_detected with a
+        # NON-default account (7) — the query + topic must both use the passed
+        # account, not the default 1.
+        await _seed_dup_order(db, "DA", created_at_ms=1000, account_id=7)
+        await _seed_dup_order(db, "DB", created_at_ms=1500, account_id=7)
+        _drain_bus()
+        await om._detect_duplicate_orders(7, _arriving("DB", created_at_ms=1500), None)
+        topics = [c for c, _ in _drain_bus()]
+        assert "engine:account:7:order:duplicate_detected" in topics

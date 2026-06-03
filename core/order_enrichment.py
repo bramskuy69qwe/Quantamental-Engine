@@ -335,6 +335,14 @@ async def _try_correlate(order: Dict[str, Any], db_path: str) -> None:
                 )
 
         try:
+            # P6 holistic-audit deferral: spec §9 calc:linked lists
+            # link_audit_summary as an essential field; it is NOT emitted here.
+            # The per-criterion match evidence IS persisted to calc_match_audit
+            # (insert_calc_match_audit_batch) keyed by this order_id just above, so
+            # it is fully recoverable; threading a compact inline summary into the
+            # payload is deferred to the Phase-7 reverse-query/subscriber work
+            # (no calc:* event_bus subscriber exists yet). Documented so this
+            # dropped field isn't a silent §9 gap (cf. partial_close's tp_level_idx).
             await transition(
                 calc_id=result.calc_id,
                 current_status=result.matched_from_status,

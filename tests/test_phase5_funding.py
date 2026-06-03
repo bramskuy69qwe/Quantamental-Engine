@@ -1045,6 +1045,14 @@ class TestPositionClosedEvent:
         assert p["primary_calc_id"] == "C1"
         assert p["contributing_calc_ids"] == ["C1"]
         assert p["realized_pnl"] == pytest.approx(100.0)
+        # [10] value-pin the descriptive/price fields so a mis-shaped payload
+        # (avg_entry/exit swap, dropped symbol/direction) FAILS, not just the keys.
+        assert p["symbol"] == "BTCUSDT"
+        assert p["direction"] == "LONG"
+        assert p["avg_entry_px"] == pytest.approx(50000.0)   # opening fill px
+        assert p["avg_exit_px"] == pytest.approx(51000.0)    # closing fill px
+        assert p["avg_entry_px"] != p["avg_exit_px"]         # not swapped/equal
+        assert p["lifecycle_id"] == "lc-1"                   # §3.5 correlation key
         # net_pnl self-consistent with the payload's own fee/funding fields.
         assert p["net_pnl"] == pytest.approx(
             p["realized_pnl"] - p["total_fees"] + p["funding_fees"])
@@ -1080,6 +1088,30 @@ class TestPositionClosedEvent:
         # Σclose(1) < Σopen(2) → NOT final.
         await om._build_close_row_for_fill(ACCOUNT_ID, _close_fill_cp("XO1", "POS-1", 2000))
 
+        events = []
+        while not event_bus._queue.empty():
+            events.append(event_bus._queue.get_nowait())
+        assert not any(c.endswith(":position:closed") for c, _ in events)
+
+    @pytest.mark.asyncio
+    async def test_position_closed_not_re_emitted_on_rebuild(self, db, om):
+        # P6 holistic-audit [5]: a SECOND build of the same final close row (e.g.
+        # the disappearance backstop re-running after the per-fill build) must NOT
+        # re-emit position:closed — idempotent per (account, tpid, exit_time).
+        # Removing the close_row_is_new gate would re-emit and FAIL this.
+        from core.event_bus import event_bus
+        await _seed_junction_cp(db, "POS-9", "C1", qty=2.0)
+        await _seed_order_cp(db, "EO", "limit", "BUY")
+        await _seed_fill_cp(db, "FO", "EO", "POS-9", 2.0, False, 1000, fee=0.5)
+        await _seed_order_cp(db, "XO", "market", "SELL")
+        await _seed_fill_cp(db, "FX", "XO", "POS-9", 2.0, True, 2000,
+                            fee=1.5, realized_pnl=100.0, price=51000.0)
+        # First build → row created → emits position:closed.
+        await om._build_close_row_for_fill(ACCOUNT_ID, _close_fill_cp("XO", "POS-9", 2000))
+        while not event_bus._queue.empty():
+            event_bus._queue.get_nowait()
+        # Second build of the SAME close (row already exists) → no re-emit.
+        await om._build_close_row_for_fill(ACCOUNT_ID, _close_fill_cp("XO", "POS-9", 2000))
         events = []
         while not event_bus._queue.empty():
             events.append(event_bus._queue.get_nowait())
