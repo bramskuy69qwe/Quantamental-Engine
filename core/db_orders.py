@@ -915,6 +915,21 @@ class OrdersMixin:
             row = await cur.fetchone()
             return dict(row) if row else None
 
+    async def get_closed_positions_in_range(
+        self, account_id: int, from_ms: int, to_ms: int,
+    ) -> List[Dict]:
+        """``(id, terminal_position_id, exit_time_ms)`` for an account's closed
+        positions with ``exit_time_ms`` in ``[from_ms, to_ms]``, oldest exit
+        first. Backs P7.T6 batch export (`idx_closed_pos_ts`). The caller dedups
+        multi-partial rows by ``terminal_position_id``."""
+        async with self._conn.execute(
+            "SELECT id, terminal_position_id, exit_time_ms FROM closed_positions "
+            "WHERE account_id=? AND exit_time_ms BETWEEN ? AND ? "
+            "ORDER BY exit_time_ms ASC, id ASC",
+            (account_id, from_ms, to_ms),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
     async def get_fill_by_id(
         self, fill_id: int, account_id: int,
     ) -> Optional[Dict]:

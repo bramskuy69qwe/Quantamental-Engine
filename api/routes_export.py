@@ -13,7 +13,13 @@ from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse, Response
 
 from core.database import db
-from core.audit_export import build_closed_position_export, render_export_pdf
+from core.state import app_state
+from core.audit_export import (
+    build_closed_position_export,
+    render_export_pdf,
+    build_batch_export,
+    render_batch_zip,
+)
 
 log = logging.getLogger("routes.export")
 router = APIRouter()
@@ -41,3 +47,25 @@ async def export_closed_position(
                      f'attachment; filename="audit_closed_position_{closed_position_id}.pdf"'},
         )
     return JSONResponse(envelope)
+
+
+@router.post("/export/closed_positions")
+async def export_closed_positions_batch(
+    account_id: int = Query(None),
+    from_ms: int = Query(0),
+    to_ms: int = Query((1 << 63) - 1),
+    fmt: str = Query("json", alias="format"),
+):
+    """Per-account compliance batch export (P7.T6, spec §7.7): a ZIP of one
+    signed bundle per closed position whose ``exit_time_ms`` is in
+    ``[from_ms, to_ms]`` (epoch ms; omitted → all), plus a signed
+    ``manifest.json``. ``?format=json`` (default) packs the signed envelopes;
+    ``?format=pdf`` packs the rendered PDFs. Defaults to the active account."""
+    aid = account_id if account_id is not None else app_state.active_account_id
+    batch = await build_batch_export(db, aid, from_ms, to_ms)
+    blob = render_batch_zip(batch, fmt.lower())
+    fname = f"audit_batch_account{aid}_{from_ms}_{to_ms}.zip"
+    return Response(
+        content=blob, media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )

@@ -193,3 +193,81 @@ def render_export_pdf(envelope: Dict[str, Any]) -> bytes:
     canonical bundle) in a footer block."""
     from core.pdf_writer import text_pdf
     return text_pdf(_export_text_lines(envelope))
+
+
+# ── Batch / date-range export (P7.T6, spec §7.7) ─────────────────────────────
+
+MAX_BATCH_POSITIONS = 1000   # safety cap; exceeded → manifest.truncated = True (no silent cap)
+
+
+async def build_batch_export(
+    db: Any, account_id: int, from_ms: int, to_ms: int,
+) -> Dict[str, Any]:
+    """Per-account compliance batch: one signed export envelope per CLOSED
+    POSITION whose ``exit_time_ms`` falls in ``[from_ms, to_ms]``. Multi-partial
+    rows are deduped by ``terminal_position_id`` (any one row's id yields the
+    same full-position bundle); empty-tpid (observe-only) rows are each their
+    own member. Returns ``{"manifest": <signed>, "exports": [<envelope>, ...]}``.
+    The manifest is signed over its own canonical form (which includes every
+    member signature), so the batch is tamper-evident as a whole."""
+    rows = await db.get_closed_positions_in_range(account_id, from_ms, to_ms)
+    seen: set = set()
+    rep_ids: list = []
+    for r in rows:
+        tpid = r.get("terminal_position_id") or ""
+        if tpid:
+            if tpid in seen:
+                continue
+            seen.add(tpid)
+        rep_ids.append(r["id"])
+
+    truncated = len(rep_ids) > MAX_BATCH_POSITIONS
+    rep_ids = rep_ids[:MAX_BATCH_POSITIONS]
+
+    exports: list = []
+    for cid in rep_ids:
+        env = await build_closed_position_export(db, cid)
+        if env is not None:
+            exports.append(env)
+
+    manifest = {
+        "kind": "closed_positions_batch",
+        "schema_version": EXPORT_SCHEMA_VERSION,
+        "account_id": account_id,
+        "from_ms": from_ms,
+        "to_ms": to_ms,
+        "count": len(exports),
+        "truncated": truncated,          # surfaced, never silent
+        "cap": MAX_BATCH_POSITIONS,
+        "closed_position_ids": [e["export"]["closed_position_id"] for e in exports],
+        "position_ids": [e["export"]["position_id"] for e in exports],
+        "member_signatures": [e["export"]["signature"] for e in exports],
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    algo, signature = _sign(_canonical(manifest))
+    manifest["signature_algo"] = algo
+    manifest["signature"] = signature
+    return {"manifest": manifest, "exports": exports}
+
+
+def render_batch_zip(batch: Dict[str, Any], fmt: str = "json") -> bytes:
+    """Package a :func:`build_batch_export` result into a ZIP: ``manifest.json``
+    (signed) + one ``closed_position_<id>.<json|pdf>`` per member. ``fmt`` is
+    ``json`` (the signed envelope per position) or ``pdf`` (the rendered report).
+    The signature lives in the manifest (over the manifest's canonical form), so
+    ZIP non-determinism (entry timestamps) does NOT affect tamper-evidence."""
+    import io
+    import zipfile
+
+    manifest = batch.get("manifest", {})
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("manifest.json", json.dumps(manifest, indent=2, default=str))
+        for env in batch.get("exports", []):
+            cid = env["export"]["closed_position_id"]
+            if fmt == "pdf":
+                z.writestr(f"closed_position_{cid}.pdf", render_export_pdf(env))
+            else:
+                z.writestr(f"closed_position_{cid}.json",
+                           json.dumps(env, indent=2, default=str))
+    return buf.getvalue()

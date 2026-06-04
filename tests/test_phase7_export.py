@@ -22,6 +22,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import config
 from core.audit_export import (
     build_closed_position_export,
+    build_batch_export,
+    render_batch_zip,
     _canonical,
     _sign,
     EXPORT_SCHEMA_VERSION,
@@ -460,3 +462,125 @@ class TestExportPdf:
         pdf = render_export_pdf(env)
         assert pdf.startswith(b"%PDF") and pdf.rstrip().endswith(b"%%EOF")
         assert b"closed_row_only" in pdf
+
+
+# ── Batch / date-range export (P7.T6) ────────────────────────────────────────
+
+
+async def _seed_batch(db):
+    """POS1 (full graph + 2 partial closed rows, exits 2000+3000) + POS2 (one
+    closed row, exit 4000). All account 1."""
+    await _seed(db)            # POS1: graph + 1 closed row @ exit 2000
+    c = db._conn
+    await c.execute(
+        "INSERT INTO closed_positions (account_id, terminal_position_id, symbol, "
+        "exit_time_ms, calc_id, lifecycle_id) VALUES (?, ?, ?, ?, ?, ?)",
+        (ACCOUNT_ID, "POS1", "BTCUSDT", 3000, "C1", "L1"))     # 2nd partial, same tpid
+    await c.execute(
+        "INSERT INTO closed_positions (account_id, terminal_position_id, symbol, "
+        "exit_time_ms) VALUES (?, ?, ?, ?)",
+        (ACCOUNT_ID, "POS2", "ETHUSDT", 4000))                 # a distinct position
+    await c.commit()
+
+
+class TestBatchExport:
+    @pytest.mark.asyncio
+    async def test_range_helper(self, db):
+        await _seed_batch(db)
+        rows = await db.get_closed_positions_in_range(ACCOUNT_ID, 0, 10 ** 15)
+        assert [r["exit_time_ms"] for r in rows] == [2000, 3000, 4000]   # oldest first
+        assert await db.get_closed_positions_in_range(ACCOUNT_ID, 0, 100) == []   # range filter
+
+    @pytest.mark.asyncio
+    async def test_batch_dedups_multipartial_and_signs(self, db, monkeypatch):
+        monkeypatch.setattr(config, "EXPORT_SIGNING_KEY", "")
+        await _seed_batch(db)
+        batch = await build_batch_export(db, ACCOUNT_ID, 0, 10 ** 15)
+        m = batch["manifest"]
+        assert m["kind"] == "closed_positions_batch"
+        assert m["count"] == 2                              # POS1 (deduped) + POS2
+        assert set(m["position_ids"]) == {"POS1", "POS2"}
+        assert len(batch["exports"]) == 2
+        assert len(m["member_signatures"]) == 2
+        # the POS1 member's bundle carries BOTH partials (export = whole position)
+        pos1 = next(e for e in batch["exports"] if e["export"]["position_id"] == "POS1")
+        assert len(pos1["bundle"]["closed_positions"]) == 2
+        # manifest signature recomputes
+        sig, algo = m.pop("signature"), m.pop("signature_algo")
+        a2, s2 = _sign(_canonical(m))
+        assert (a2, s2) == (algo, sig)
+
+    @pytest.mark.asyncio
+    async def test_batch_empty_range(self, db, monkeypatch):
+        monkeypatch.setattr(config, "EXPORT_SIGNING_KEY", "")
+        await _seed_batch(db)
+        batch = await build_batch_export(db, ACCOUNT_ID, 0, 100)   # before any exit
+        assert batch["manifest"]["count"] == 0
+        assert batch["exports"] == []
+        assert batch["manifest"]["truncated"] is False
+
+    @pytest.mark.asyncio
+    async def test_batch_truncation_flagged_not_silent(self, db, monkeypatch):
+        import core.audit_export as ae
+        monkeypatch.setattr(config, "EXPORT_SIGNING_KEY", "")
+        monkeypatch.setattr(ae, "MAX_BATCH_POSITIONS", 1)
+        await _seed_batch(db)                                 # 2 positions
+        batch = await ae.build_batch_export(db, ACCOUNT_ID, 0, 10 ** 15)
+        assert batch["manifest"]["truncated"] is True        # surfaced, not silent
+        assert batch["manifest"]["count"] == 1               # capped
+        assert batch["manifest"]["cap"] == 1
+
+    @pytest.mark.asyncio
+    async def test_render_batch_zip_json(self, db, monkeypatch):
+        import io
+        import zipfile
+        monkeypatch.setattr(config, "EXPORT_SIGNING_KEY", "")
+        await _seed_batch(db)
+        batch = await build_batch_export(db, ACCOUNT_ID, 0, 10 ** 15)
+        z = zipfile.ZipFile(io.BytesIO(render_batch_zip(batch, "json")))
+        names = z.namelist()
+        assert "manifest.json" in names
+        members = [n for n in names if n.startswith("closed_position_") and n.endswith(".json")]
+        assert len(members) == 2
+        env = json.loads(z.read(members[0]))
+        assert env["export"]["signature"]                    # a signed envelope per member
+        man = json.loads(z.read("manifest.json"))
+        assert man["count"] == 2 and man["signature"]
+
+    @pytest.mark.asyncio
+    async def test_render_batch_zip_pdf(self, db, monkeypatch):
+        import io
+        import zipfile
+        monkeypatch.setattr(config, "EXPORT_SIGNING_KEY", "")
+        await _seed_batch(db)
+        batch = await build_batch_export(db, ACCOUNT_ID, 0, 10 ** 15)
+        z = zipfile.ZipFile(io.BytesIO(render_batch_zip(batch, "pdf")))
+        pdfs = [n for n in z.namelist() if n.endswith(".pdf")]
+        assert len(pdfs) == 2
+        assert z.read(pdfs[0]).startswith(b"%PDF")
+
+    @pytest.mark.asyncio
+    async def test_batch_route_zip_and_active_account_default(self, db, monkeypatch):
+        import io
+        import types
+        import zipfile
+        import api.routes_export as rx
+        monkeypatch.setattr(config, "EXPORT_SIGNING_KEY", "")
+        monkeypatch.setattr(rx, "db", db)
+        # active_account_id is a read-through property (no setter) → patch the
+        # route module's app_state reference to a stub for the default-account path.
+        monkeypatch.setattr(rx, "app_state", types.SimpleNamespace(active_account_id=ACCOUNT_ID))
+        await _seed_batch(db)
+
+        resp = await rx.export_closed_positions_batch(
+            account_id=ACCOUNT_ID, from_ms=0, to_ms=10 ** 15, fmt="json")
+        assert resp.status_code == 200
+        assert resp.media_type == "application/zip"
+        z = zipfile.ZipFile(io.BytesIO(bytes(resp.body)))
+        assert "manifest.json" in z.namelist()
+
+        # account_id=None → falls back to the active account
+        resp2 = await rx.export_closed_positions_batch(
+            account_id=None, from_ms=0, to_ms=10 ** 15, fmt="json")
+        man = json.loads(zipfile.ZipFile(io.BytesIO(bytes(resp2.body))).read("manifest.json"))
+        assert man["account_id"] == ACCOUNT_ID
