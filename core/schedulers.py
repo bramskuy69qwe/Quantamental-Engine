@@ -394,6 +394,24 @@ async def _startup_fetch():
             name="reconciler_closed_positions_periodic",
         )
 
+        # P7.T3 (spec §11.3): position-closed webhook dispatcher — the FIRST
+        # event_bus position:closed subscriber. Per-account handlers ENQUEUE the
+        # §9 payload (non-blocking); the worker POSTs to the account's
+        # webhook_url with retry + backoff + dead-letter (gated OFF per account
+        # by default). Subscribe before event_bus.run() so no close is missed.
+        try:
+            from core.webhook_dispatcher import WebhookDispatcher
+            from core.account_registry import account_registry
+            from core.database import db as _wh_db
+            _webhook = WebhookDispatcher(_wh_db)
+            _accts = await account_registry.list_accounts()
+            _webhook.subscribe_all(
+                event_bus, [a["id"] for a in _accts if a.get("id") is not None],
+            )
+            _spawn(_webhook.run(), name="webhook_dispatcher")
+        except Exception:
+            log.error("webhook dispatcher startup failed", exc_info=True)
+
         _spawn(event_bus.run(), name="event_bus")
     except Exception as e:
         log.error(f"EventBus startup failed: {e}")

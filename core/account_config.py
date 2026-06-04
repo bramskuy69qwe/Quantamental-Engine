@@ -55,6 +55,10 @@ DEFAULT_SIZE_DEVIATION_THRESHOLD_PCT = 10.0
 # OFF — the inversion of the WS-fills-win policy + the position:size_drift event
 # are opt-in per account (spec §12.6 / plan §6 row 6.8).
 DEFAULT_SNAPSHOT_WINS_DRIFT          = False
+# P7.T3: position-closed webhook (spec §11.3 / plan §7.4-7.5). Default OFF — the
+# engine never POSTs outbound unless an operator sets a webhook_url AND flips the
+# config_json.feature_flags.webhook_enabled flag (no accidental outbound traffic).
+DEFAULT_WEBHOOK_ENABLED              = False
 
 
 @dataclass(frozen=True)
@@ -80,6 +84,11 @@ class AccountConfig:
     size_deviation_threshold_pct: float = DEFAULT_SIZE_DEVIATION_THRESHOLD_PCT
     # P6.T6 feature flag — read from config_json.feature_flags.snapshot_wins_drift.
     snapshot_wins_drift: bool           = DEFAULT_SNAPSHOT_WINS_DRIFT
+    # P7.T3 position-closed webhook (spec §11.3). webhook_url from config_json
+    # top-level; webhook_enabled from config_json.feature_flags.webhook_enabled.
+    # The dispatcher POSTs only when BOTH are set (enabled AND a non-empty URL).
+    webhook_url: Optional[str]          = None
+    webhook_enabled: bool               = DEFAULT_WEBHOOK_ENABLED
 
 
 def _parse_config_json(blob: Optional[str]) -> AccountConfig:
@@ -115,6 +124,14 @@ def _parse_config_json(blob: Optional[str]) -> AccountConfig:
     _swd = flags.get("snapshot_wins_drift", DEFAULT_SNAPSHOT_WINS_DRIFT)
     snapshot_wins_drift = _swd if isinstance(_swd, bool) else DEFAULT_SNAPSHOT_WINS_DRIFT
 
+    # P7.T3: webhook_url (top-level str; blank/non-str → None) + webhook_enabled
+    # (feature_flags, STRICT bool like snapshot_wins_drift — a string "true" must
+    # NOT enable outbound POSTs).
+    _url = parsed.get("webhook_url")
+    webhook_url = _url.strip() if isinstance(_url, str) and _url.strip() else None
+    _we = flags.get("webhook_enabled", DEFAULT_WEBHOOK_ENABLED)
+    webhook_enabled = _we if isinstance(_we, bool) else DEFAULT_WEBHOOK_ENABLED
+
     def _int(key: str, default: int) -> int:
         try:
             return int(parsed.get(key, default))
@@ -136,6 +153,8 @@ def _parse_config_json(blob: Optional[str]) -> AccountConfig:
         red_deviation_pct            = _float("red_pct", DEFAULT_RED_DEVIATION_PCT, source=deviation),
         size_deviation_threshold_pct = _float("size_deviation_threshold_pct", DEFAULT_SIZE_DEVIATION_THRESHOLD_PCT),
         snapshot_wins_drift          = snapshot_wins_drift,
+        webhook_url                  = webhook_url,
+        webhook_enabled              = webhook_enabled,
     )
 
 

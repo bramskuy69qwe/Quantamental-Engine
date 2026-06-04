@@ -41,6 +41,7 @@ EventType = Literal[
     "would_have_blocked_weekly_pnl",
     "calc_blocked_contract",
     "close_row_build_failed",  # HIGH-026 (Task 95): structured failure trail for _build_close_row_for_fill
+    "webhook_dispatch_failed",  # P7.T3: dead-letter — position-closed webhook exhausted all retries
 ]
 
 _VALID_EVENT_TYPES: frozenset[str] = frozenset(EventType.__args__)  # type: ignore[attr-defined]
