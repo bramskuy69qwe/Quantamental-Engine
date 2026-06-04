@@ -5,7 +5,7 @@
 **Tests**: 3085 passed, 7 skipped, 1 unrelated pre-existing failure (0 new; +39 vs the task-267 3046 baseline — 268 +1, 269 +29, +misc)
 **Pre-existing failure**: `tests/test_data_cache_dd.py::TestRollingWindowPeak::test_old_high_excluded_from_window` — 30-day rolling-window boundary bug; unrelated to calc-linkage. Worth filing as its own task.
 
-## ★ STATUS (2026-06-04) — PHASE 6 COMPLETE (T1–T7, holistically audited) + PHASE 7 IN PROGRESS (P7.T1–T5 shipped); next = P7.T6 (LAST Phase-7 task)
+## ★ STATUS (2026-06-04) — PHASE 6 COMPLETE + PHASE 7 COMPLETE (reverse-query + audit export, T1–T6); next = Phase 8 (operator UX) or Phase 9 (multi-operator)
 
 **Tasks 268–269 (this session):**
 - **task 268 — 4 deferred follow-ups (pre-Phase-7 cleanup)**: (1) aiosqlite `PRAGMA busy_timeout=5000` on
@@ -61,12 +61,26 @@ now IN PROGRESS:**
   with the SAME signature in a footer. `POST /export/closed_position/{id}?format=pdf` (case-insensitive) →
   `Response(application/pdf)`; `?format=json` (default) unchanged. The PDF's byte-validity (xref offsets,
   /Length, escaping) was independently audited + test-pinned. Tests (26).
-- **next = P7.T6** (LAST Phase-7 task — batch/date-range export for compliance dumps, plan §7.7; likely a
-  per-account `POST /export/closed_positions?from=&to=` returning a zip/ndjson of per-position signed
-  bundles, reusing `build_closed_position_export`). After T6, **Phase 7 is COMPLETE** → Phase 8 (operator
-  UX: the multi-pane dashboard, modals, the Export-Audit button wiring) or Phase 9 (multi-operator). Plan
-  §7 / §14.3. ⚠ See the **DEV-ENVIRONMENT HAZARD** section directly below before trusting a red test run or
-  running destructive git.
+- **P7.T6 shipped (283 + audit-fixes 284)** — `POST /export/closed_positions?account_id=&from_ms=&to_ms=
+  &format=json|pdf`: a per-account compliance ZIP of one signed bundle per closed position in the
+  (epoch-ms) range + a signed `manifest.json`. `build_batch_export` reuses `build_closed_position_export`,
+  dedups multi-partial rows by tpid, signs the manifest over its own canonical form (incl. every member
+  signature → tamper-evident whole), surfaces a `MAX_BATCH_POSITIONS` cap via `manifest.truncated`.
+  `get_closed_positions_in_range` (new). Account-scoped. Tests (38).
+
+**🎉 PHASE 7 (reverse-query + audit export) is COMPLETE** — T1 (`/context/calc` + `/context/lifecycle`),
+T2 (`/context/position`), T3 (position-closed webhook dispatcher), T4 (signed JSON audit export), T5
+(audit PDF via the vendored `core/pdf_writer.py`), T6 (batch/date-range export). The end-to-end
+model-feedback loop now exists: a downstream model can subscribe via webhook (T3) AND re-fetch the full
+causal graph via reverse-query (T1/T2), and compliance can export signed audit bundles (T4-T6).
+- **next = Phase 8 (operator UX)** — multi-pane dashboard, replacement/manual-close modals, notifications,
+  calculator window config, AND the per-position events drilldown (P8.T9). Phase 8 would also wire an
+  **Export-Audit button** to the P7.T4/T5 endpoints (`POST /export/closed_position/{id}?format=json|pdf`)
+  and a settings UI for `accounts.config_json` (incl. the P7.T3 `webhook_url` + `feature_flags`). OR
+  **Phase 9 (multi-operator)** — single-operator-per-account lock + `operator_id` propagation (the
+  `operator_id` columns + the None placeholders Phases 1-7 left are its inputs). Plan §8 / §9 / §14.3.
+  ⚠ See the **DEV-ENVIRONMENT HAZARD** section directly below before trusting a red test run or running
+  destructive git.
 
 ---
 
