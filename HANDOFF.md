@@ -43,10 +43,39 @@ now IN PROGRESS:**
   unchanged; `position` resolves THIS position open-or-closed; works for junction-less/UNPLANNED positions;
   2 new `get_{orders,fills}_by_position_id` reads).
 - **next = P7.T3** (webhook dispatcher + retry + dead-letter, `core/webhook_dispatcher.py`); then T4–T6
-  export (JSON → PDF/signed → batch). Plan §7 / §14.3. ⚠ Process note: an external chaos/mutation process
-  in the dev env transiently rewrites source files mid-run (caught by the T1+T2 audits as
-  `exit_time_ms_RENAMED` on `db_orders.py`, and once an audit agent's `git checkout` reverted uncommitted
-  T2 tests — restored). COMMIT promptly after each task; re-verify the working tree before trusting a red run.
+  export (JSON → PDF/signed → batch). Plan §7 / §14.3. ⚠ See the **DEV-ENVIRONMENT HAZARD** section directly
+  below before trusting a red test run or running destructive git.
+
+---
+
+## ⚠ DEV-ENVIRONMENT HAZARD (observed 2026-06-04) — something rewrites source files mid-run
+
+**Symptom.** During tasks 269 + 271 (Phase 7), an external process in this dev environment was observed
+**mutating tracked source files on disk MID-SESSION**, independent of any edit I made:
+- The T1 *and* T2 audits (independent subagents) each caught `core/db_orders.py` transiently containing a
+  bogus `exit_time_ms_RENAMED` column in a helper's `ORDER BY` — producing **spurious, non-deterministic
+  red test runs** (`sqlite3.OperationalError: no such column`) that vanished on the next run. The working
+  tree was clean before and after; the mutation was momentary. (This looks like an external
+  mutation-testing / chaos harness rewriting files.)
+- Separately, an **audit subagent ran `git checkout tests/<file>`** (to revert its own scratch edits),
+  which **silently reverted my UNCOMMITTED P7.T2 test additions** back to the last commit. Caught via
+  `git status` (production code still `M`, test file not) + `grep`; the 9 tests were re-authored and the
+  audit's improvements folded in. (Precedent: Task 241's `order_enrichment.py` on-disk revert.)
+
+**Why it matters.** A red run may be an **artifact**, not a real failure (cf. CLAUDE.md audit-time-artifact
+discipline). And uncommitted work is not safe between a task's implementation and its commit.
+
+**Mitigations (do these):**
+1. **COMMIT each task as soon as it's green + audited** — don't leave a task's code/tests uncommitted across
+   a long audit fan-out. Tasks 268–272 followed this (small, frequent commits).
+2. **On a red run, re-verify the working tree first**: `git status` + `git diff` + grep the failing
+   symbol/column in the source. A failure citing a column/identifier that *shouldn't exist*
+   (`*_RENAMED`, etc.) is the tell — re-run once before investigating as a real bug.
+3. **Instruct audit/subagents NOT to run destructive git** (`checkout`/`reset`/`restore`) on the working
+   tree — they should revert their own edits with the Edit tool, or work read-only. If one must, commit
+   first so the working tree is recoverable.
+4. If files keep mutating, **find + stop the external process** (mutation-testing harness, file watcher,
+   linter-on-save, sync agent) before the next session.
 
 ---
 
