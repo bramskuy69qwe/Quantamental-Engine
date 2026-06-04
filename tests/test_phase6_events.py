@@ -121,8 +121,8 @@ class TestPublishEngine:
 class TestPublishEngineNowait:
     @pytest.mark.asyncio
     async def test_sync_enqueue_routes_to_subscriber(self):
-        # P6.T4: the SYNC enqueue path used by OrderManager._emit_fill_events
-        # (sync, on the loop thread). Builds the same hierarchical topic and
+        # P6.T4: the SYNC enqueue path OrderManager._emit_fill_events calls on
+        # the loop thread (without await). Builds the same hierarchical topic and
         # routes the payload verbatim to a subscriber.
         bus = EventBus()
         received = []

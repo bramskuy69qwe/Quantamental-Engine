@@ -182,6 +182,18 @@ class TestExpandedRowKeyValueGrid:
         # The compact detail for tp_modified: "60000.0000 → 62000.0000"
         assert "→" in html  # the arrow specific to tp_modified/sl_modified
 
+    def test_position_amended_renders_field_arrow(self):
+        """Migrated modification signal: a position_amended row (field=sl_price)
+        renders 'sl_price: old → new' in the compact Detail column — the arrow
+        UX previously carried by tp_modified/sl_modified, now keyed on the live
+        amendment event (the dead _detect_modification_events was removed)."""
+        payload = {"field": "sl_price", "old": 49000.0, "new": 49500.0,
+                   "order_id": 7, "position_id": "POS-1"}
+        html = _render_events_table([_row("position_amended", payload)])
+        assert "→" in html                 # the amendment arrow
+        assert "sl_price" in html          # the field label
+        assert "49000.0000" in html and "49500.0000" in html  # fmt(.,4) old/new
+
 
 # ── Template still compiles (MED-047 explicit pin) ───────────────────────────
 

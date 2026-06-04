@@ -13,6 +13,7 @@
   'position_opened': 'badge-ok',
   'position_closed': 'badge-ok',
   'partial_close': 'badge-ok',
+  'position_amended': 'badge-warning',
   'tp_modified': 'badge-warning',
   'sl_modified': 'badge-warning',
   'liquidated': 'badge-limit',
@@ -75,7 +76,9 @@
           <td class="td-dim mono" style="font-size:.62rem;">{{ r.calc_id[-8:] if r.calc_id else '—' }}</td>
           <td class="td-sub">{{ r.source }}</td>
           <td class="td-sub" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-            {%- if r.event_type in ('tp_modified', 'sl_modified') and p.get('from_price') is not none -%}
+            {%- if r.event_type == 'position_amended' and p.get('old') is not none -%}
+              {{ p.get('field', '') }}: {{ fmt(p.old, 4) }} → {{ fmt(p.new, 4) }}
+            {%- elif r.event_type in ('tp_modified', 'sl_modified') and p.get('from_price') is not none -%}
               {{ fmt(p.from_price, 4) }} → {{ fmt(p.to_price, 4) }}
             {%- elif r.event_type == 'order_filled' and p.get('price') is not none -%}
               Price: {{ fmt(p.price, 4) }} · Qty: {{ fmt(p.get('quantity', p.get('fill_qty', 0)), 4) }}

@@ -242,7 +242,13 @@ class OrderManager:
         # is not a new submission.
         await self._detect_duplicate_orders(account_id, order, prev_order)
         self._emit_order_events(account_id, order)
-        self._detect_modification_events(account_id, order, prev_order)
+        # TP/SL price modifications flow through the P4.T1 amendment path
+        # (ws_manager._apply_order_update → detect_and_persist_amendment, PRE the
+        # SR-1 gate) which emits position_amended (field=tp_price/sl_price). The
+        # legacy post-gate _detect_modification_events was dead (the SR-1 gate
+        # rejects the new→new self-transition an amendment arrives as before this
+        # line runs) and was removed; tp_modified/sl_modified survive only as
+        # historical event types (read-side rendering kept).
         # T216 (P1.T5): release the calc back to the re-match pool when
         # the operator cancels a working (unfilled) entry order.
         await self._release_calc_on_operator_cancel(account_id, order)
@@ -1032,74 +1038,15 @@ class OrderManager:
                     calc_id, position_id, exc_info=True,
                 )
 
-    def _detect_modification_events(
-        self, account_id: int, order: Dict[str, Any], prev_order: Optional[Dict]
-    ) -> None:
-        """Detect TP/SL price modifications and emit trade events."""
-        if not prev_order:
-            return
-        try:
-            from core.trade_event_log import log_trade_event
-
-            otype = (order.get("order_type") or "").lower()
-            if otype not in ("stop_loss", "stop_market", "stop_loss_limit",
-                             "take_profit", "take_profit_market", "take_profit_limit"):
-                return
-
-            new_stop = order.get("stop_price") or order.get("price", 0)
-            old_stop = prev_order.get("stop_price") or prev_order.get("price", 0)
-            if not new_stop or not old_stop or new_stop == old_stop:
-                return
-
-            # Determine event type
-            is_tp = otype in ("take_profit", "take_profit_market", "take_profit_limit")
-            event_type = "tp_modified" if is_tp else "sl_modified"
-
-            # Time since entry (from position's first fill)
-            time_since = 0
-            try:
-                import sqlite3, config as _cfg
-                pos_id = order.get("exchange_position_id", "")
-                if pos_id:
-                    conn = sqlite3.connect(_cfg.DB_PATH)
-                    row = conn.execute(
-                        "SELECT MIN(timestamp_ms) FROM fills WHERE "
-                        "account_id = ? AND exchange_position_id = ? AND is_close = 0",
-                        (account_id, pos_id),
-                    ).fetchone()
-                    conn.close()
-                    if row and row[0]:
-                        import time
-                        time_since = int(time.time() * 1000) - row[0]
-            except Exception:
-                pass
-
-            # Read calc_id from parent entry order
-            calc_id = None
-            try:
-                import sqlite3, config as _cfg2
-                pos_id = order.get("exchange_position_id", "")
-                conn = sqlite3.connect(_cfg2.DB_PATH)
-                row = conn.execute(
-                    "SELECT calc_id FROM orders WHERE account_id = ? AND "
-                    "exchange_position_id = ? AND reduce_only = 0 AND calc_id IS NOT NULL LIMIT 1",
-                    (account_id, pos_id),
-                ).fetchone()
-                conn.close()
-                calc_id = row[0] if row else None
-            except Exception:
-                pass
-
-            log_trade_event(account_id, calc_id, event_type, {  # type: ignore[arg-type]
-                "symbol": order.get("symbol", ""),
-                "exchange_order_id": order.get("exchange_order_id", ""),
-                "from_price": old_stop,
-                "to_price": new_stop,
-                "time_since_entry_ms": time_since,
-            }, source="order_manager")
-
-        except Exception:
-            log.debug("modification event detection failed", exc_info=True)
+    # NOTE: the legacy `_detect_modification_events` (tp_modified/sl_modified
+    # trade events) was DELETED here. It was called post-gate in
+    # process_order_update, but a TP/SL price modification arrives as a new→new
+    # self-transition that the SR-1 gate rejects first, so it never fired live.
+    # The P4.T1 amendment path below (invoked PRE-gate from ws_manager) detects
+    # the same TP/SL changes and emits position_amended (field=tp_price/sl_price)
+    # — the single, spec-§9, event_bus-backed modification signal. The
+    # tp_modified/sl_modified event TYPES are retained in trade_event_log +
+    # rendered by the history table for any historical rows, but have no producer.
 
     # ── P4.T1: order amendment detection (spec §3.2 / plan §4.1) ─────────────
     #
@@ -1287,9 +1234,9 @@ class OrderManager:
 
         Dispatched via ``asyncio.to_thread`` by the caller (the sync
         ``log_trade_event`` opens its own sqlite3 conn — T212/P3.T2 hot-path
-        convention). NB the sibling :meth:`_emit_fill_events` predates that
-        convention and is still called sync — same exposure, filed as a
-        separate consistency cleanup, not retrofitted here (Rule 3).
+        convention). The sibling :meth:`_emit_fill_events` now follows the same
+        convention — its blocking writes run in :meth:`_write_fill_trade_events`
+        via ``asyncio.to_thread`` (the consistency cleanup the P4.T4 audit filed).
         """
         try:
             from core.trade_event_log import log_trade_event
@@ -1306,8 +1253,77 @@ class OrderManager:
         except Exception:
             log.debug("position_amended event emission failed", exc_info=True)
 
-    def _emit_fill_events(self, account_id: int, fill: Dict[str, Any]) -> None:
-        """Emit trade events for fills. Best-effort."""
+    async def _emit_fill_events(self, account_id: int, fill: Dict[str, Any]) -> None:
+        """Emit fill trade events + the ``position:partial_close`` event_bus
+        topic. Best-effort.
+
+        Split across the loop / a worker thread (the consistency cleanup the
+        P4.T4 audit filed; mirrors :meth:`_emit_amendment_event`):
+
+        - The ``position:partial_close`` event_bus publish is an
+          ``asyncio.Queue.put_nowait`` (``publish_engine_nowait``) — NOT
+          thread-safe — so it runs HERE on the loop thread. ``app_state`` is
+          read here too (loop thread), so ``remaining_qty`` is computed once
+          and handed to the worker (no cross-thread ``app_state`` read).
+        - The blocking trade-event writes (``log_trade_event`` opens its own
+          sync sqlite3 conn to the per-account DB) are dispatched off-loop via
+          ``asyncio.to_thread`` so this WS-hot-path coroutine doesn't block the
+          event loop on the file lock (T212/P3.T2 convention; safe — the worker
+          never touches the aiosqlite ``_conn``).
+        """
+        remaining_qty: Optional[float] = None
+        # partial_close: reduce-only fill, position still open. Read app_state +
+        # publish the bus event ON the loop thread (put_nowait is not thread-safe).
+        try:
+            if fill.get("is_close"):
+                pos_id = fill.get("terminal_position_id", "")
+                if pos_id:
+                    pos = next(
+                        (p for p in app_state.positions if p.position_id == pos_id), None
+                    )
+                    if pos and pos.contract_amount > 0:
+                        remaining_qty = pos.contract_amount
+                        # P6.T4 (spec §9 position:partial_close): mirror onto the
+                        # per-account event_bus topic. tp_level_idx omitted (needs
+                        # calc.tp_levels parsing + price matching — deferred).
+                        # KNOWN (T238 F6, holistic-audit [7]): remaining_qty reads
+                        # app_state.contract_amount, which on the FINAL closing fill
+                        # still reflects PRE-fill size (>0) — so a final fill emits
+                        # partial_close with a stale positive remaining_qty, then
+                        # position:closed fires ~2s later. qty_reduced +
+                        # realized_pnl_partial are authoritative; a consumer treats
+                        # remaining_qty as best-effort.
+                        event_bus.publish_engine_nowait(
+                            account_id, DOMAIN_POSITION, "partial_close", {
+                                "position_id":          pos_id,
+                                "qty_reduced":          fill.get("quantity", 0),
+                                "remaining_qty":        remaining_qty,
+                                "realized_pnl_partial": fill.get("realized_pnl", 0),
+                            },
+                        )
+        except Exception:
+            log.debug("fill event_bus emission failed", exc_info=True)
+
+        # Blocking trade-event writes → off the loop. remaining_qty carries both
+        # the partial_close gate (None = not a tracked partial) and the value.
+        try:
+            await asyncio.to_thread(
+                self._write_fill_trade_events, account_id, fill, remaining_qty,
+            )
+        except Exception:
+            log.debug("fill trade-event emission failed", exc_info=True)
+
+    def _write_fill_trade_events(
+        self, account_id: int, fill: Dict[str, Any],
+        remaining_qty: Optional[float],
+    ) -> None:
+        """Worker body of :meth:`_emit_fill_events`: the blocking trade-event
+        writes (``log_trade_event``, own sync sqlite3 conn). Runs in a worker
+        thread (``asyncio.to_thread``) — must NOT touch asyncio primitives (the
+        partial_close event_bus publish stays on the loop in the caller).
+        ``remaining_qty is not None`` ⇔ reduce-only fill with the position still
+        open ⇒ emit the partial_close trade event (the same gate the caller used
+        for the bus event). Best-effort."""
         try:
             from core.trade_event_log import log_trade_event
 
@@ -1358,56 +1374,22 @@ class OrderManager:
                 except Exception:
                     pass
 
-            # partial_close: reduce-only fill, position still open
-            if fill.get("is_close"):
-                try:
-                    import sqlite3, config as _cfg2
-                    pos_id = fill.get("terminal_position_id", "")
-                    if pos_id:
-                        # Check if position still has remaining qty
-                        pos = next(
-                            (p for p in app_state.positions if p.position_id == pos_id), None
-                        )
-                        if pos and pos.contract_amount > 0:
-                            # T2.11 (spec §8/§9 position:partial_close payload):
-                            # carry qty_reduced + realized_pnl_partial so the
-                            # multi-TP ladder is reconstructable from the event
-                            # stream. tp_level_idx is omitted — mapping a TP
-                            # fill to its tp_levels rung needs calc.tp_levels
-                            # parsing + price matching (deferred; not load-
-                            # bearing for the ladder lifecycle).
-                            log_trade_event(account_id, calc_id, "partial_close", {
-                                "symbol": fill.get("symbol", ""),
-                                "position_id": pos_id,
-                                "fill_price": fill.get("price", 0),
-                                "fill_qty": fill.get("quantity", 0),
-                                "qty_reduced": fill.get("quantity", 0),
-                                "remaining_qty": pos.contract_amount,
-                                "realized_pnl_partial": fill.get("realized_pnl", 0),
-                            }, source="order_manager")
-                            # P6.T4 (spec §9 position:partial_close): mirror onto
-                            # the per-account event_bus topic. _emit_fill_events
-                            # is sync but runs ON the loop thread (sync call from
-                            # async _process_single_fill) → put_nowait is safe.
-                            # tp_level_idx omitted (same deferral as the trade
-                            # event — needs calc.tp_levels price matching).
-                            # KNOWN (T238 F6, holistic-audit [7]): remaining_qty
-                            # reads app_state.contract_amount, which on the FINAL
-                            # closing fill still reflects PRE-fill size (>0) — so a
-                            # final fill emits partial_close with a stale positive
-                            # remaining_qty, then position:closed fires ~2s later.
-                            # qty_reduced + realized_pnl_partial are authoritative;
-                            # a consumer treats remaining_qty as best-effort.
-                            event_bus.publish_engine_nowait(
-                                account_id, DOMAIN_POSITION, "partial_close", {
-                                    "position_id":          pos_id,
-                                    "qty_reduced":          fill.get("quantity", 0),
-                                    "remaining_qty":        pos.contract_amount,
-                                    "realized_pnl_partial": fill.get("realized_pnl", 0),
-                                },
-                            )
-                except Exception:
-                    pass
+            # partial_close trade event: same gate as the caller's bus event.
+            if remaining_qty is not None:
+                # T2.11 (spec §8/§9 position:partial_close payload): carry
+                # qty_reduced + realized_pnl_partial so the multi-TP ladder is
+                # reconstructable from the event stream. tp_level_idx is omitted
+                # — mapping a TP fill to its tp_levels rung needs calc.tp_levels
+                # parsing + price matching (deferred; not load-bearing).
+                log_trade_event(account_id, calc_id, "partial_close", {
+                    "symbol": fill.get("symbol", ""),
+                    "position_id": fill.get("terminal_position_id", ""),
+                    "fill_price": fill.get("price", 0),
+                    "fill_qty": fill.get("quantity", 0),
+                    "qty_reduced": fill.get("quantity", 0),
+                    "remaining_qty": remaining_qty,
+                    "realized_pnl_partial": fill.get("realized_pnl", 0),
+                }, source="order_manager")
 
         except Exception:
             log.debug("fill event emission failed", exc_info=True)
@@ -1534,7 +1516,7 @@ class OrderManager:
         # opening fills. Runs before close-row scheduling so the fills row
         # carries position attribution.
         await self._stamp_closing_fill_attribution(account_id, fill)
-        self._emit_fill_events(account_id, fill)
+        await self._emit_fill_events(account_id, fill)
         self._publish_fill(account_id, fill)
 
         # 3. Refresh position fees from DB (SUM query, not accumulate)

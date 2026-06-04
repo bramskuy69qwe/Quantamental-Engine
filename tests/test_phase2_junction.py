@@ -1438,9 +1438,12 @@ class TestPartialCloseEvent:
     @pytest.mark.asyncio
     async def test_partial_close_emits_event(self, om, monkeypatch):
         # P6.T4 (spec §9 position:partial_close): _emit_fill_events emits it for
-        # a reduce-only fill while the position still has remaining qty. Patch
-        # log_trade_event so the sync trade-event sink can't touch the live DB;
-        # the closing fill carries calc_id (skips the config.DB_PATH lookup).
+        # a reduce-only fill while the position still has remaining qty. The bus
+        # publish runs ON the loop (publish_engine_nowait is not thread-safe);
+        # the blocking trade-event writes are dispatched via asyncio.to_thread,
+        # so _emit_fill_events is now a coroutine and must be awaited. Patch
+        # log_trade_event so the worker can't touch the live DB; the closing fill
+        # carries calc_id (skips the config.DB_PATH lookup).
         from core.state import app_state
         monkeypatch.setattr("core.trade_event_log.log_trade_event", lambda *a, **k: None)
         pos = _pos("POS-1")
@@ -1453,7 +1456,7 @@ class TestPartialCloseEvent:
         fill = _fill("XO", "POS-1", 1.0, is_close=1, fid="FX", price=52000.0)
         fill["calc_id"] = "C1"
         fill["realized_pnl"] = 40.0
-        om._emit_fill_events(ACCOUNT_ID, fill)
+        await om._emit_fill_events(ACCOUNT_ID, fill)
         events = _drain_bus()
         pc = [(c, p) for c, p in events if c == "engine:account:1:position:partial_close"]
         assert len(pc) == 1, f"expected 1 position:partial_close, got {events!r}"
@@ -1462,6 +1465,28 @@ class TestPartialCloseEvent:
         assert p["qty_reduced"] == pytest.approx(1.0)     # this fill's size
         assert p["remaining_qty"] == pytest.approx(3.0)   # position size after
         assert p["realized_pnl_partial"] == pytest.approx(40.0)
+
+    @pytest.mark.asyncio
+    async def test_emit_fill_events_awaitable_and_dispatches_trade_events(
+        self, om, monkeypatch
+    ):
+        # Consistency cleanup (P4.T4-filed): _emit_fill_events is now a coroutine
+        # that dispatches the blocking log_trade_event writes off-loop via
+        # asyncio.to_thread. This pins (a) it is awaitable, and (b) the worker
+        # actually runs and emits order_filled. is_close + empty positions →
+        # remaining_qty stays None → no partial_close, and calc_id is set →
+        # neither sqlite3 branch fires, so the worker touches no live DB.
+        from core.state import app_state
+        captured: list = []
+        monkeypatch.setattr(
+            "core.trade_event_log.log_trade_event",
+            lambda account_id, calc_id, et, payload, **k: captured.append(et) or 1,
+        )
+        monkeypatch.setattr(app_state, "positions", [])
+        fill = _fill("EO", "POS-1", 1.0, is_close=1, fid="FO", price=50000.0)
+        fill["calc_id"] = "C1"
+        await om._emit_fill_events(ACCOUNT_ID, fill)   # must be awaitable
+        assert "order_filled" in captured              # worker ran in the thread
 
 
 # ── 14. P6.T5 — order:duplicate_detected ──────────────────────────────────────

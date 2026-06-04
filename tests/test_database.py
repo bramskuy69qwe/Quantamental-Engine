@@ -61,6 +61,17 @@ async def test_wal_mode_enabled(test_db):
     assert row[0].lower() == "wal"
 
 
+@pytest.mark.asyncio
+async def test_busy_timeout_set(test_db):
+    """The aiosqlite writer carries a non-zero busy_timeout so a concurrent
+    write-lock collision waits/retries instead of raising OperationalError
+    immediately (deferred follow-up). The exact value is the filed 5000 ms;
+    the load-bearing intent is `> 0` (SQLite default is 0 = instant raise)."""
+    async with test_db._conn.execute("PRAGMA busy_timeout") as cur:
+        row = await cur.fetchone()
+    assert row[0] == 5000, f"busy_timeout should be 5000 ms, got {row[0]}"
+
+
 # ── Snapshots ────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio

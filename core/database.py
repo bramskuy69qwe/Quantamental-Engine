@@ -623,6 +623,21 @@ class DatabaseManager(
         self._conn.row_factory = aiosqlite.Row
         await self._conn.execute("PRAGMA journal_mode=WAL")
         await self._conn.execute("PRAGMA foreign_keys=ON")
+        # Deferred follow-up (filed P5/§5 audit): give the long-lived
+        # aiosqlite WRITER a busy wait so a concurrent write-lock collision
+        # retries instead of raising OperationalError immediately. WAL admits
+        # readers during a write, but two WRITERS on the same file still
+        # serialize on the lock. The aiosqlite connection (this writer, and the
+        # db._conn a best-effort funding reconcile uses) defaulted to
+        # busy_timeout=0 → it lost the lock and raised AT ONCE; the sync sqlite3
+        # writers already wait (Python's sqlite3 `timeout` kwarg — same
+        # mechanism, in SECONDS — defaults to 5s, and account_config.py passes
+        # 10s). This PRAGMA makes the aiosqlite writer wait too. aiosqlite runs
+        # each statement on its own background thread, so the busy wait blocks
+        # that thread + the awaiting coroutine, NOT the event loop. Value is in
+        # MILLISECONDS; 5s is the filed recommendation, ample at localhost
+        # single-tenant scale.
+        await self._conn.execute("PRAGMA busy_timeout=5000")
         # Task 160 (MED-024): duplicate pre-check must run BEFORE
         # executescript because _CREATE_STATEMENTS includes the partial
         # UNIQUE INDEX on (exchange, broker_account_id). If the accounts

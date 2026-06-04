@@ -246,6 +246,32 @@ async def frag_position_fills(request: Request, position_id: int = 0):
     )
 
 
+def _has_tpsl_modification(events: list) -> bool:
+    """True if any trade-event row marks a TP/SL price modification.
+
+    Forward signal: P4.T4 ``position_amended`` rows whose ``field`` is
+    ``tp_price``/``sl_price`` — the live source since the dead
+    ``_detect_modification_events`` (which emitted ``tp_modified``/
+    ``sl_modified``) was removed. Historical: legacy ``tp_modified``/
+    ``sl_modified`` rows, now producerless but still present in older
+    per-account DBs. Rows come from ``query_trade_events`` (raw dicts with
+    ``event_type`` + unparsed ``payload_json``).
+    """
+    import json
+    for e in events:
+        et = e.get("event_type")
+        if et in ("tp_modified", "sl_modified"):
+            return True
+        if et == "position_amended":
+            try:
+                fld = json.loads(e.get("payload_json") or "{}").get("field")
+            except Exception:
+                fld = None
+            if fld in ("tp_price", "sl_price"):
+                return True
+    return False
+
+
 @router.get("/fragments/history/exec_link", response_class=HTMLResponse)
 async def frag_exec_link(request: Request, fill_id: int = 0):
     """Exec link comparison panel for a single fill."""
@@ -283,9 +309,7 @@ async def frag_exec_link(request: Request, fill_id: int = 0):
                     event_type=None,
                     limit=100,
                 )
-                has_modifications = any(
-                    e["event_type"] in ("tp_modified", "sl_modified") for e in evts
-                )
+                has_modifications = _has_tpsl_modification(evts)
             except Exception:
                 pass
 

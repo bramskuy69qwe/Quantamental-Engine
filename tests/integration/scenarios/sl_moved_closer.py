@@ -1,4 +1,10 @@
-"""SL modified closer (risk-reducing). Asserts sl_modified event."""
+"""SL modified closer (risk-reducing): asserts correlation survives an SL move.
+
+The expected state pins orders/fills (calc_id stays linked across the SL move),
+NOT a trade event. The SL modification now flows through the P4.T1 amendment
+path (position_amended, field=sl_price) — the legacy sl_modified producer
+(_detect_modification_events) was removed as dead post-gate code.
+"""
 from datetime import datetime, timedelta, timezone
 from tests.integration.scenario import *
 

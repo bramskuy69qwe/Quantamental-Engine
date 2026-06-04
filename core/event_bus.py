@@ -143,11 +143,12 @@ class EventBus:
         self, account_id: int, domain: str, event: str,
         payload: Dict[str, Any],
     ) -> None:
-        """SYNC sibling of :meth:`publish_engine` for emitters that run on the
-        event-loop thread but are NOT coroutines (e.g.
-        ``OrderManager._emit_fill_events``, called synchronously from the async
-        fill path). Uses ``Queue.put_nowait`` — safe from the loop thread on the
-        unbounded queue (``maxsize=0`` → never ``QueueFull``).
+        """SYNC sibling of :meth:`publish_engine` for a non-coroutine emit on
+        the event-loop thread (e.g. ``OrderManager._emit_fill_events`` calls
+        this synchronously, without ``await``, on the loop thread before it
+        dispatches its blocking trade-event writes off-loop). Uses
+        ``Queue.put_nowait`` — safe from the loop thread on the unbounded queue
+        (``maxsize=0`` → never ``QueueFull``).
 
         **Loop-thread only** — ``asyncio.Queue`` is not thread-safe, so a caller
         running in a worker thread (``asyncio.to_thread``) must NOT use this;
