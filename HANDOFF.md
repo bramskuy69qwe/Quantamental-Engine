@@ -5,7 +5,7 @@
 **Tests**: 3085 passed, 7 skipped, 1 unrelated pre-existing failure (0 new; +39 vs the task-267 3046 baseline — 268 +1, 269 +29, +misc)
 **Pre-existing failure**: `tests/test_data_cache_dd.py::TestRollingWindowPeak::test_old_high_excluded_from_window` — 30-day rolling-window boundary bug; unrelated to calc-linkage. Worth filing as its own task.
 
-## ★ STATUS (2026-06-04) — PHASE 6 COMPLETE (T1–T7, holistically audited) + PHASE 7 STARTED (P7.T1 shipped); next = P7.T2
+## ★ STATUS (2026-06-04) — PHASE 6 COMPLETE (T1–T7, holistically audited) + PHASE 7 IN PROGRESS (P7.T1+T2 shipped); next = P7.T3
 
 **Tasks 268–269 (this session):**
 - **task 268 — 4 deferred follow-ups (pre-Phase-7 cleanup)**: (1) aiosqlite `PRAGMA busy_timeout=5000` on
@@ -35,9 +35,18 @@
 
 **Phase 6 (event-bus enrichment) is COMPLETE** (tasks 260–267) — per-task detail in the "PHASE 6 IN
 PROGRESS" section below + `[[project_phase6_event_bus_state]]`. **Phase 7 (reverse-query + audit export) is
-now IN PROGRESS: P7.T1 shipped (269); next = P7.T2** — `GET /context/position/{id}`, which REUSES the
-`core/context_query` assembler (pivot on `terminal_position_id` → its junction calcs/lifecycle). Then T3
-webhook, T4–T6 export (plan §7 / §14.3).
+now IN PROGRESS:**
+- **P7.T1 shipped (269)** — `GET /context/calc/{id}` + `GET /context/lifecycle/{id}` (assembler in
+  `core/context_query.py`; cross-DB §12.7; `json_safe` inf-guard; 6 keyed db_orders reads).
+- **P7.T2 shipped (271)** — `GET /context/position/{id}` (`assemble_position_context`, keyed on
+  `terminal_position_id`; extracted a shared `_aggregate_tail` reused by lifecycle + position — lifecycle
+  unchanged; `position` resolves THIS position open-or-closed; works for junction-less/UNPLANNED positions;
+  2 new `get_{orders,fills}_by_position_id` reads).
+- **next = P7.T3** (webhook dispatcher + retry + dead-letter, `core/webhook_dispatcher.py`); then T4–T6
+  export (JSON → PDF/signed → batch). Plan §7 / §14.3. ⚠ Process note: an external chaos/mutation process
+  in the dev env transiently rewrites source files mid-run (caught by the T1+T2 audits as
+  `exit_time_ms_RENAMED` on `db_orders.py`, and once an audit agent's `git checkout` reverted uncommitted
+  T2 tests — restored). COMMIT promptly after each task; re-verify the working tree before trusting a red run.
 
 ---
 
