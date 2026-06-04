@@ -189,6 +189,77 @@ class TestBuildExport:
         assert env["export"]["signature"] != hashlib.sha256(canon.encode()).hexdigest()
 
     @pytest.mark.asyncio
+    async def test_header_tamper_changes_signature(self, db, monkeypatch):
+        # The signature covers the HEADER too — tampering a header field (not
+        # just the bundle) must be detected.
+        monkeypatch.setattr(config, "EXPORT_SIGNING_KEY", "")
+        cid = await _seed(db)
+        env = await build_closed_position_export(db, cid)
+        header = _header_without_sig(env["export"])
+        header["account_id"] = 999          # tamper a HEADER field
+        _, sig2 = _sign(_canonical({"header": header, "bundle": env["bundle"]}))
+        assert sig2 != env["export"]["signature"]
+
+    @pytest.mark.asyncio
+    async def test_json_safe_in_signed_bundle(self, db, monkeypatch):
+        # A non-finite REAL column must be coerced to null IN THE EXPORTED bundle,
+        # and the signature must be over the coerced content (so a verifier of the
+        # served bundle recomputes the same signature).
+        monkeypatch.setattr(config, "EXPORT_SIGNING_KEY", "")
+        c = db._conn
+        cur = await c.execute(
+            "INSERT INTO closed_positions (account_id, terminal_position_id, symbol, "
+            "exit_time_ms, entry_px_delta_pct) VALUES (?, ?, ?, ?, ?)",
+            (ACCOUNT_ID, "POSI", "BTCUSDT", 7000, float("inf")))
+        await c.commit()
+        env = await build_closed_position_export(db, cur.lastrowid)
+        cp = env["bundle"]["closed_positions"][0]
+        assert cp["entry_px_delta_pct"] is None       # inf → null in the bundle
+        header = _header_without_sig(env["export"])
+        _, sig = _sign(_canonical({"header": header, "bundle": env["bundle"]}))
+        assert sig == env["export"]["signature"]      # signed over the coerced content
+
+    @pytest.mark.asyncio
+    async def test_lifecycle_fallback_bundle(self, db, monkeypatch):
+        # A closed row with EMPTY tpid but a real lifecycle_id (+ a junction under
+        # that lifecycle) routes to the lifecycle assembler → bundle_kind=lifecycle.
+        monkeypatch.setattr(config, "EXPORT_SIGNING_KEY", "")
+        c = db._conn
+        await c.execute(
+            "INSERT INTO pre_trade_log (account_id, timestamp, ticker, calc_id, lifecycle_id) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (ACCOUNT_ID, "2026-06-01T00:00:00Z", "ETHUSDT", "CL", "LX"))
+        await c.execute(
+            "INSERT INTO positions_calcs (position_id, calc_id, order_id, account_id, "
+            "contributed_qty, first_fill_ts, lifecycle_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("POSL", "CL", 1, ACCOUNT_ID, 1.0, 1100, "LX"))
+        cur = await c.execute(
+            "INSERT INTO closed_positions (account_id, terminal_position_id, symbol, "
+            "exit_time_ms, lifecycle_id) VALUES (?, ?, ?, ?, ?)",
+            (ACCOUNT_ID, "", "ETHUSDT", 6000, "LX"))   # empty tpid, lifecycle set
+        await c.commit()
+        env = await build_closed_position_export(db, cur.lastrowid)
+        assert env["export"]["bundle_kind"] == "lifecycle"
+        assert env["export"]["position_id"] is None
+        assert env["export"]["lifecycle_id"] == "LX"
+        assert [c2["calc_id"] for c2 in env["bundle"]["calcs"]] == ["CL"]
+
+    @pytest.mark.asyncio
+    async def test_multi_partial_closed_rows_in_bundle(self, db, monkeypatch):
+        # Export by ONE partial's id → the bundle carries ALL the position's
+        # closed rows (export = whole position, §10.6).
+        monkeypatch.setattr(config, "EXPORT_SIGNING_KEY", "")
+        cid = await _seed(db)   # closed row for POS1 @ exit 2000
+        c = db._conn
+        await c.execute(
+            "INSERT INTO closed_positions (account_id, terminal_position_id, symbol, "
+            "exit_time_ms, calc_id, lifecycle_id) VALUES (?, ?, ?, ?, ?, ?)",
+            (ACCOUNT_ID, "POS1", "BTCUSDT", 3000, "C1", "L1"))   # 2nd partial, same tpid
+        await c.commit()
+        env = await build_closed_position_export(db, cid)
+        assert len(env["bundle"]["closed_positions"]) == 2
+
+    @pytest.mark.asyncio
     async def test_not_found_returns_none(self, db):
         assert await build_closed_position_export(db, 424242) is None
 

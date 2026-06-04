@@ -40,7 +40,14 @@ EXPORT_SCHEMA_VERSION = 1
 def _canonical(obj: Any) -> str:
     """Deterministic JSON for signing: sorted keys, no whitespace. The bundle is
     pre-``json_safe``'d (no NaN/Infinity); ``default=str`` covers any stray
-    non-serializable value so signing never raises."""
+    non-serializable value so signing never raises.
+
+    A verifier MUST re-canonicalize the PARSED ``{"header": <export minus
+    signature/signature_algo>, "bundle": <bundle>}`` with these same rules and
+    recompute the signature — it must NOT hash the raw response body bytes
+    (Starlette serves with ``ensure_ascii=False`` while this signs the
+    transport-independent canonical form; the two differ only on the wire for
+    non-ASCII, and parse-then-canonicalize reconciles them)."""
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), default=str)
 
 
