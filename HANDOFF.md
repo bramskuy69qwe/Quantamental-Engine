@@ -5,7 +5,7 @@
 **Tests**: 3085 passed, 7 skipped, 1 unrelated pre-existing failure (0 new; +39 vs the task-267 3046 baseline — 268 +1, 269 +29, +misc)
 **Pre-existing failure**: `tests/test_data_cache_dd.py::TestRollingWindowPeak::test_old_high_excluded_from_window` — 30-day rolling-window boundary bug; unrelated to calc-linkage. Worth filing as its own task.
 
-## ★ STATUS (2026-06-04) — PHASE 6 COMPLETE (T1–T7, holistically audited) + PHASE 7 IN PROGRESS (P7.T1+T2+T3 shipped); next = P7.T4
+## ★ STATUS (2026-06-04) — PHASE 6 COMPLETE (T1–T7, holistically audited) + PHASE 7 IN PROGRESS (P7.T1–T4 shipped); next = P7.T5
 
 **Tasks 268–269 (this session):**
 - **task 268 — 4 deferred follow-ups (pre-Phase-7 cleanup)**: (1) aiosqlite `PRAGMA busy_timeout=5000` on
@@ -50,9 +50,16 @@ now IN PROGRESS:**
   `json_safe` keeps NaN/Inf off the wire + out of the dead-letter. Wired via `start_webhook_dispatcher` in
   `_startup_fetch` (subscribe-before-run, guarded). Deviation: engine_events dead-letter ROW not a replay
   table (spec §11.3 fire-and-forget + reverse-query re-fetch → miss self-heals). Tests (19).
-- **next = P7.T4** (audit export — JSON `POST /export/closed_position/{id}`, plan §7.6), then T5 (PDF +
-  signed timestamp) + T6 (batch export). Plan §7 / §14.3. ⚠ See the **DEV-ENVIRONMENT HAZARD** section
-  directly below before trusting a red test run or running destructive git.
+- **P7.T4 shipped (277 + audit-fixes 278)** — `core/audit_export.py` + `POST /export/closed_position/{id}`:
+  a SIGNED JSON audit bundle. Resolves the closed row by PK → `terminal_position_id` →
+  `assemble_position_context` (REUSES the P7.2 assembler → the full §10.6 graph), with lifecycle +
+  closed-row-only fallbacks. Signed-timestamp envelope = signature over canonical(header+bundle):
+  HMAC-SHA256 if `config.EXPORT_SIGNING_KEY` set, else unkeyed SHA-256 (tamper-evidence; localhost
+  default). `json_safe` keeps NaN/Inf out. `get_closed_position_by_id` (new). Tests (15).
+- **next = P7.T5** (PDF generation + signed timestamp on the audit bundle — reportlab or similar; plan
+  §7.5/§7.6), then T6 (batch/date-range export). The signing envelope + `build_closed_position_export`
+  bundle are already in place — T5 renders that same bundle to PDF. Plan §7 / §14.3. ⚠ See the
+  **DEV-ENVIRONMENT HAZARD** section directly below before trusting a red test run or running destructive git.
 
 ---
 
