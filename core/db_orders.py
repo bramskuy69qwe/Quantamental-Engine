@@ -904,6 +904,17 @@ class OrdersMixin:
             row = await cur.fetchone()
             return dict(row) if row else None
 
+    async def get_closed_position_by_id(self, closed_pos_id: int) -> Optional[Dict]:
+        """Full closed_positions row by integer PK. Backs P7.T4 audit export
+        (``POST /export/closed_position/{id}``) — resolves the row's
+        terminal_position_id / lifecycle_id / account_id to assemble the bundle."""
+        async with self._conn.execute(
+            "SELECT * FROM closed_positions WHERE id=?",
+            (closed_pos_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
     async def get_fill_by_id(
         self, fill_id: int, account_id: int,
     ) -> Optional[Dict]:

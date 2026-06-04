@@ -172,6 +172,14 @@ BWE_NEWS_WS_URL = os.getenv("BWE_NEWS_WS_URL", "wss://bwenews-api.bwe-ws.com/ws"
 # Generate: python -c "import secrets; print(secrets.token_hex(32))"
 PLATFORM_TOKEN = os.getenv("PLATFORM_TOKEN", "")
 
+# ── Audit export signing (P7.T4) ─────────────────────────────────────────────
+# Optional HMAC key for the closed-position audit export's signed timestamp. When
+# set, exports are HMAC-SHA256 signed (authenticity); when empty (the localhost
+# single-tenant default — CLAUDE.md Task 163), exports carry an unkeyed SHA-256
+# content digest (tamper-evidence). HMAC-with-key is exposure-driven hardening,
+# deferred until the deployment shape changes.
+EXPORT_SIGNING_KEY = os.getenv("EXPORT_SIGNING_KEY", "")
+
 REGIME_STALE_MINUTES = 90   # current_regime older than this is treated as stale
 
 # Task 165 (MED-017): mark-price freshness. If the latest WS mark
