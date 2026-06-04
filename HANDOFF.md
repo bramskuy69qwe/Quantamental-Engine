@@ -5,7 +5,7 @@
 **Tests**: 3085 passed, 7 skipped, 1 unrelated pre-existing failure (0 new; +39 vs the task-267 3046 baseline — 268 +1, 269 +29, +misc)
 **Pre-existing failure**: `tests/test_data_cache_dd.py::TestRollingWindowPeak::test_old_high_excluded_from_window` — 30-day rolling-window boundary bug; unrelated to calc-linkage. Worth filing as its own task.
 
-## ★ STATUS (2026-06-04) — PHASE 6 COMPLETE (T1–T7, holistically audited) + PHASE 7 IN PROGRESS (P7.T1–T4 shipped); next = P7.T5
+## ★ STATUS (2026-06-04) — PHASE 6 COMPLETE (T1–T7, holistically audited) + PHASE 7 IN PROGRESS (P7.T1–T5 shipped); next = P7.T6 (LAST Phase-7 task)
 
 **Tasks 268–269 (this session):**
 - **task 268 — 4 deferred follow-ups (pre-Phase-7 cleanup)**: (1) aiosqlite `PRAGMA busy_timeout=5000` on
@@ -56,10 +56,17 @@ now IN PROGRESS:**
   closed-row-only fallbacks. Signed-timestamp envelope = signature over canonical(header+bundle):
   HMAC-SHA256 if `config.EXPORT_SIGNING_KEY` set, else unkeyed SHA-256 (tamper-evidence; localhost
   default). `json_safe` keeps NaN/Inf out. `get_closed_position_by_id` (new). Tests (15).
-- **next = P7.T5** (PDF generation + signed timestamp on the audit bundle — reportlab or similar; plan
-  §7.5/§7.6), then T6 (batch/date-range export). The signing envelope + `build_closed_position_export`
-  bundle are already in place — T5 renders that same bundle to PDF. Plan §7 / §14.3. ⚠ See the
-  **DEV-ENVIRONMENT HAZARD** section directly below before trusting a red test run or running destructive git.
+- **P7.T5 shipped (280 + audit-fixes 281)** — `render_export_pdf` + the VENDORED dependency-free
+  `core/pdf_writer.py` (operator chose no PDF dependency): a paginated Courier-text PDF of the audit bundle
+  with the SAME signature in a footer. `POST /export/closed_position/{id}?format=pdf` (case-insensitive) →
+  `Response(application/pdf)`; `?format=json` (default) unchanged. The PDF's byte-validity (xref offsets,
+  /Length, escaping) was independently audited + test-pinned. Tests (26).
+- **next = P7.T6** (LAST Phase-7 task — batch/date-range export for compliance dumps, plan §7.7; likely a
+  per-account `POST /export/closed_positions?from=&to=` returning a zip/ndjson of per-position signed
+  bundles, reusing `build_closed_position_export`). After T6, **Phase 7 is COMPLETE** → Phase 8 (operator
+  UX: the multi-pane dashboard, modals, the Export-Audit button wiring) or Phase 9 (multi-operator). Plan
+  §7 / §14.3. ⚠ See the **DEV-ENVIRONMENT HAZARD** section directly below before trusting a red test run or
+  running destructive git.
 
 ---
 
