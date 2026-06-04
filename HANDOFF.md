@@ -1,11 +1,47 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-06-02
-**Current branch**: `v2.5/post-rewind-drop-regime-infra` @ `task 257 (P5 holistic audit fixes)` + this HANDOFF (258) — pushed to origin
-**Tests**: 2971 passed, 7 skipped, 1 unrelated pre-existing failure (0 new from Phase 5; +30 vs the task-253 2941 baseline)
+**Date**: 2026-06-04
+**Current branch**: `v2.5/post-rewind-drop-regime-infra` @ `task 269 (P7.T1 reverse-query)` — tasks 268 (4 deferred fixes) + 269 committed locally; NOT pushed
+**Tests**: 3085 passed, 7 skipped, 1 unrelated pre-existing failure (0 new; +39 vs the task-267 3046 baseline — 268 +1, 269 +29, +misc)
 **Pre-existing failure**: `tests/test_data_cache_dd.py::TestRollingWindowPeak::test_old_high_excluded_from_window` — 30-day rolling-window boundary bug; unrelated to calc-linkage. Worth filing as its own task.
 
-## ★ STATUS (2026-06-02) — PHASE 5 COMPLETE (T1–T7) + HOLISTICALLY AUDITED; next = Phase 6 (event bus enrichment)
+## ★ STATUS (2026-06-04) — PHASE 6 COMPLETE (T1–T7, holistically audited) + PHASE 7 STARTED (P7.T1 shipped); next = P7.T2
+
+**Tasks 268–269 (this session):**
+- **task 268 — 4 deferred follow-ups (pre-Phase-7 cleanup)**: (1) aiosqlite `PRAGMA busy_timeout=5000` on
+  the writer (`database.py`); (2) **`_emit_fill_events` split async** — the `position:partial_close` bus
+  event stays on-loop (`put_nowait` not thread-safe), the blocking `log_trade_event` writes go via
+  `asyncio.to_thread` in `_write_fill_trade_events` (mirrors `_emit_amendment_event`); caller now `await`s
+  it; (3) **DELETED dead `_detect_modification_events`** (ran POST the SR-1 gate, which rejects the
+  `new→new` amendment self-transition → never fired live) + migrated the TP/SL-modification signal to
+  `position_amended` (field∈{tp_price,sl_price}) via `routes_orders._has_tpsl_modification` + the history
+  table's arrow branch; legacy `tp_modified`/`sl_modified` TYPES kept (no producer) for historical rows;
+  (4) **per-account log test-pollution guard** — `tests/conftest.py::_isolate_live_per_account_logs`
+  (autouse) patches `_resolve_db_path` in BOTH `core.trade_event_log` AND `core.event_log` so un-isolated
+  process_fill/close/calc tests redirect their `trade_events`/`engine_events` writes off the LIVE
+  per-account DB. (A session-wide `config.DATA_DIR` redirect was tried first and broke 36 tests that
+  resolve OTHER DBs off DATA_DIR — the narrow resolver patch is the fix.) Audited (4 agents): all four
+  correct, LOW nits fixed. ⚠ **The live DB still holds the PRE-guard pollution** (~thousands of `calc_id=C1`
+  etc. test rows in trade_events + engine_events); cleanup is a deferred operator-confirmed task — see
+  `[[project_live_db_test_pollution]]`.
+- **task 269 — P7.T1 (reverse-query)**: `GET /context/calc/{calc_id}` + `GET /context/lifecycle/{id}`. New
+  `core/context_query.py` (shared assembly `assemble_calc_context`/`assemble_lifecycle_context`; cross-DB
+  §12.7 — `trade_events` from the per-account DB joined in Python via `asyncio.to_thread`; §3.2
+  most-contributing `position` resolution open-or-closed; `json_safe()` coerces non-finite REAL floats→null
+  so the JSON layer can't 500). 6 keyed reads in `db_orders.py` (orders/fills/closed_positions by
+  calc_id/lifecycle_id/terminal_position_id). `api/routes_context.py` + `api/router.py` registration.
+  Audited (3 agents): assembly correct; fixes = inf-guard, route tests, e2e cross-DB sentinel, multi-partial
+  pinning. Tests `test_phase7_context.py` (29). Plan §7 row 7.1.
+
+**Phase 6 (event-bus enrichment) is COMPLETE** (tasks 260–267) — per-task detail in the "PHASE 6 IN
+PROGRESS" section below + `[[project_phase6_event_bus_state]]`. **Phase 7 (reverse-query + audit export) is
+now IN PROGRESS: P7.T1 shipped (269); next = P7.T2** — `GET /context/position/{id}`, which REUSES the
+`core/context_query` assembler (pivot on `terminal_position_id` → its junction calcs/lifecycle). Then T3
+webhook, T4–T6 export (plan §7 / §14.3).
+
+---
+
+## ★ HISTORICAL STATUS (2026-06-02) — PHASE 5 COMPLETE (T1–T7) + HOLISTICALLY AUDITED
 
 **Phase 5 (funding + fees, plan §5) is fully shipped + holistically audited.** Tasks 255–257:
 - **P5.T1** funding feed — `schedulers._funding_refresh_loop` REST-polls FUNDING_FEE income (reuses

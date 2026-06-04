@@ -599,8 +599,8 @@ position. Audit export for compliance.
 
 | # | Task | File(s) |
 |---|---|---|
-| 7.1 | New endpoint `GET /context/calc/{calc_id}` returning full graph payload per spec §11.1 | new `api/routes_context.py` |
-| 7.2 | New endpoint `GET /context/position/{position_id}` returning full graph keyed on position | `api/routes_context.py` |
+| 7.1 | **SHIPPED (task 269)**: `GET /context/calc/{calc_id}` + `GET /context/lifecycle/{lifecycle_id}` returning the full §11.1 graph. New `core/context_query.py` holds the shared assembly (`assemble_calc_context` / `assemble_lifecycle_context`); cross-DB per §12.7 — calc-linkage tables from `risk_engine.db` (db singleton), `trade_events` from the PER-ACCOUNT DB joined in Python by calc_id (sync `query_trade_events` via `asyncio.to_thread`, best-effort). `position` resolves the §3.2 most-contributing position (open `PositionInfo` else most-recent closed row); `deviations` surfaces the persisted close-time deltas (closed) or the live size-delta surface (open). `json_safe()` coerces non-finite REAL floats (inf/nan)→null so the JSON layer can't 500 (Starlette `allow_nan=False`; SQLite round-trips inf). 6 keyed read helpers in `db_orders.py` (orders/fills/closed_positions by calc_id/lifecycle_id/terminal_position_id). Audited (3 agents): assembly correct; fixes = inf-guard, route tests, e2e cross-DB sentinel, multi-partial pinning. Tests `test_phase7_context.py` (29). | `core/context_query.py` (new), `api/routes_context.py` (new), `api/router.py`, `core/db_orders.py` |
+| 7.2 | New endpoint `GET /context/position/{position_id}` returning full graph keyed on position (reuses the T1 `core/context_query` assembler) | `api/routes_context.py`, `core/context_query.py` |
 | 7.3 | Pagination + caching for endpoints if response > N KB (likely needed for multi-day positions with many amendments + funding events) | same |
 | 7.4 | Position-closed webhook: single configured URL per account in `config_json.webhook_url`; engine POSTs `{event: position_closed, payload: <full §9>}` on every close | new `core/webhook_dispatcher.py` |
 | 7.5 | Webhook retry with exponential backoff + dead-letter queue | `core/webhook_dispatcher.py` |
@@ -971,8 +971,8 @@ T10 needs T1-T9 done.
 
 | # | Task | Scope |
 |---|---|---|
-| P7.T1 | `GET /context/calc/{id}` + `GET /context/lifecycle/{lifecycle_id}` | Full graph payload assembly (shared helper). Lifecycle endpoint pivots on `lifecycle_id` (spec §3.5) and is the single-key audit query that joins every table for one trade. |
-| P7.T2 | `GET /context/position/{id}` | Position-keyed equivalent (same helper as T1) |
+| P7.T1 | **SHIPPED (task 269)** — `GET /context/calc/{id}` + `GET /context/lifecycle/{lifecycle_id}` | Full graph assembly (`core/context_query.py`, shared helper). Cross-DB §12.7 (trade_events joined in Python via to_thread); §3.2 primary-position resolution; `json_safe` inf-guard. 6 keyed db_orders reads. Audited; 29 tests. See detailed §7 row 7.1. |
+| P7.T2 | `GET /context/position/{id}` | Position-keyed equivalent (reuses the T1 `context_query` assembler — pivots on `terminal_position_id`) |
 | P7.T3 | Webhook dispatcher + retry + dead-letter | Per-account webhook URL from `config_json`; exponential backoff |
 | P7.T4 | Audit export — JSON only | `POST /export/closed_position/{id}` |
 | P7.T5 | PDF generation + signed timestamp | Add to audit export; reportlab or similar |
