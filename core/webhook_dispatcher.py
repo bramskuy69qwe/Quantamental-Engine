@@ -144,7 +144,10 @@ class WebhookDispatcher:
                     "position_id": payload.get("position_id"),
                     "attempts": self._max_attempts,
                     "error": str(error),
-                    "payload": payload,
+                    # json_safe here too: a non-finite float would otherwise be
+                    # written as an Infinity/NaN token into the engine_events
+                    # payload_json (invalid JSON for a strict reader).
+                    "payload": json_safe(payload),
                 }, "webhook_dispatcher",
             )
             log.error(
@@ -153,3 +156,19 @@ class WebhookDispatcher:
             )
         except Exception:
             log.exception("webhook dead-letter write failed account=%s", account_id)
+
+
+async def start_webhook_dispatcher(bus: Any, db: Any) -> WebhookDispatcher:
+    """Build the dispatcher + subscribe EVERY loaded account's ``position:closed``
+    topic; return it (the caller spawns :meth:`WebhookDispatcher.run`). Extracted
+    from schedulers startup so the wiring — account enumeration + the
+    ``None``-id filter — is unit-testable without driving the full
+    ``_startup_fetch`` path."""
+    from core.account_registry import account_registry
+
+    dispatcher = WebhookDispatcher(db)
+    accounts = await account_registry.list_accounts()
+    dispatcher.subscribe_all(
+        bus, [a["id"] for a in accounts if a.get("id") is not None],
+    )
+    return dispatcher

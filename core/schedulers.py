@@ -400,14 +400,9 @@ async def _startup_fetch():
         # webhook_url with retry + backoff + dead-letter (gated OFF per account
         # by default). Subscribe before event_bus.run() so no close is missed.
         try:
-            from core.webhook_dispatcher import WebhookDispatcher
-            from core.account_registry import account_registry
+            from core.webhook_dispatcher import start_webhook_dispatcher
             from core.database import db as _wh_db
-            _webhook = WebhookDispatcher(_wh_db)
-            _accts = await account_registry.list_accounts()
-            _webhook.subscribe_all(
-                event_bus, [a["id"] for a in _accts if a.get("id") is not None],
-            )
+            _webhook = await start_webhook_dispatcher(event_bus, _wh_db)
             _spawn(_webhook.run(), name="webhook_dispatcher")
         except Exception:
             log.error("webhook dispatcher startup failed", exc_info=True)

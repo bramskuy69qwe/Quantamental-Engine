@@ -61,6 +61,11 @@ class TestWebhookConfig:
         assert _parse_config_json(
             json.dumps({"feature_flags": {"webhook_enabled": False}})).webhook_enabled is False
 
+    def test_feature_flags_non_dict_safe(self):
+        # feature_flags not a dict (string/list) → treated as {} → enabled stays off.
+        assert _parse_config_json(json.dumps({"feature_flags": "nope"})).webhook_enabled is False
+        assert _parse_config_json(json.dumps({"feature_flags": [1, 2]})).webhook_enabled is False
+
 
 # ── wiring ───────────────────────────────────────────────────────────────────
 
@@ -86,6 +91,27 @@ class TestWiring:
         assert calls == ["engine:account:1:position:closed",
                          "engine:account:2:position:closed",
                          "engine:account:7:position:closed"]
+
+    @pytest.mark.asyncio
+    async def test_start_webhook_dispatcher_subscribes_loaded_accounts(self, monkeypatch):
+        # The extracted startup helper: enumerate accounts via the registry, DROP
+        # None / missing ids, subscribe each. Pins the integration seam that
+        # _startup_fetch wires (previously untested).
+        from core.webhook_dispatcher import start_webhook_dispatcher
+
+        async def _fake_list():
+            return [{"id": 1}, {"id": 4}, {"id": None}, {"name": "no-id"}]
+        monkeypatch.setattr(
+            "core.account_registry.account_registry.list_accounts", _fake_list)
+        topics = []
+
+        class _Bus:
+            def subscribe(self, topic, handler):
+                topics.append(topic)
+
+        await start_webhook_dispatcher(_Bus(), db=None)
+        assert topics == ["engine:account:1:position:closed",
+                          "engine:account:4:position:closed"]   # None + missing-id dropped
 
 
 # ── dispatch ─────────────────────────────────────────────────────────────────
@@ -209,6 +235,64 @@ class TestDispatch:
         await d._dead_letter(5, {"position_id": "PZ"}, RuntimeError("x"))
         assert captured == [(5, "webhook_dispatch_failed", "webhook_dispatcher", "PZ")]
 
+    @pytest.mark.asyncio
+    async def test_dead_letter_payload_is_json_safe(self, monkeypatch):
+        # The stored audit payload must NOT contain Infinity/NaN tokens (invalid
+        # JSON for a strict reader of engine_events.payload_json).
+        stored = {}
+
+        def _fake_log_event(account_id, event_type, payload, source, **k):
+            stored.update(payload)
+            return 1
+        monkeypatch.setattr("core.event_log.log_event", _fake_log_event)
+
+        d = WebhookDispatcher(db=None, max_attempts=1)
+        await d._dead_letter(1, {"position_id": "P", "net_pnl": float("inf")},
+                             RuntimeError("x"))
+        assert stored["payload"]["net_pnl"] is None   # coerced in the stored record
+
+
+class TestPostContract:
+    @pytest.mark.asyncio
+    async def test_post_raises_on_non_2xx(self, monkeypatch):
+        # The retry loop depends on _post RAISING on non-2xx (resp.raise_for_status).
+        # All other tests substitute _post, so pin the real httpx path once with a
+        # fake AsyncClient: 200 → no raise; 5xx → raise.
+        import httpx
+
+        class _Resp:
+            def __init__(self, code):
+                self.status_code = code
+
+            def raise_for_status(self):
+                if self.status_code >= 400:
+                    raise RuntimeError(f"HTTP {self.status_code}")
+
+        class _Client:
+            code = 200
+
+            def __init__(self, *a, **k):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def post(self, url, json=None):
+                return _Resp(_Client.code)
+
+        monkeypatch.setattr(httpx, "AsyncClient", _Client)
+        d = WebhookDispatcher(db=None)
+
+        _Client.code = 200
+        await d._post("http://x", {"a": 1})          # 2xx must NOT raise
+
+        _Client.code = 500
+        with pytest.raises(RuntimeError):
+            await d._post("http://x", {"a": 1})      # non-2xx must raise (drives retry)
+
 
 # ── composition over the real event_bus ──────────────────────────────────────
 
@@ -243,5 +327,33 @@ class TestEventBusComposition:
                     pass
         assert len(posts) == 1
         assert posts[0]["payload"]["position_id"] == "PE2"
-        # account 5's topic was never subscribed → no leak
-        assert all(b["payload"]["position_id"] == "PE2" for b in posts)
+
+    @pytest.mark.asyncio
+    async def test_multi_account_routing_no_late_binding(self):
+        # Subscribe TWO accounts; publish a close on EACH topic; assert each
+        # handler enqueues ITS OWN account_id. A closure late-binding bug (all
+        # handlers closing over the last loop var) would make both enqueue
+        # account 5 — this is the regression guard for that. Also proves
+        # account-scoping (each event routes only to its own topic's handler).
+        from core.event_bus import EventBus, DOMAIN_POSITION
+        bus = EventBus()
+        d = WebhookDispatcher(db=None)
+        d.subscribe_all(bus, [2, 5])
+        bus_worker = asyncio.create_task(bus.run())
+        try:
+            await bus.publish_engine(2, DOMAIN_POSITION, "closed", {"position_id": "P2"})
+            await bus.publish_engine(5, DOMAIN_POSITION, "closed", {"position_id": "P5"})
+            await asyncio.wait_for(bus._queue.join(), timeout=2.0)
+        finally:
+            bus_worker.cancel()
+            try:
+                await bus_worker
+            except asyncio.CancelledError:
+                pass
+        drained = []
+        while not d._queue.empty():
+            aid, payload = d._queue.get_nowait()
+            drained.append((aid, payload["position_id"]))
+        # each (account_id, payload) pairs its OWN account: {(2,P2),(5,P5)} — a
+        # late-binding bug would give {(5,P2),(5,P5)}.
+        assert sorted(drained) == [(2, "P2"), (5, "P5")]
