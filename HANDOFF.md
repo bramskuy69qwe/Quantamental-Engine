@@ -1,8 +1,8 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-06-04
-**Current branch**: `v2.5/post-rewind-drop-regime-infra` @ `task 269 (P7.T1 reverse-query)` — tasks 268 (4 deferred fixes) + 269 committed locally; NOT pushed
-**Tests**: 3085 passed, 7 skipped, 1 unrelated pre-existing failure (0 new; +39 vs the task-267 3046 baseline — 268 +1, 269 +29, +misc)
+**Date**: 2026-06-05
+**Current branch**: `v2.5/post-rewind-drop-regime-infra` @ `task 286 (Phase 7 holistic audit)` — tasks 268–286 (full Phase-7 build T1–T6 + holistic audit) committed AND **pushed to origin** (`5a9c03e..92a700a`; in sync, 0 ahead)
+**Tests**: 3156 passed, 7 skipped, 1 unrelated pre-existing failure (0 new; Phase-7 suite 100 passed)
 **Pre-existing failure**: `tests/test_data_cache_dd.py::TestRollingWindowPeak::test_old_high_excluded_from_window` — 30-day rolling-window boundary bug; unrelated to calc-linkage. Worth filing as its own task.
 
 ## ★ STATUS (2026-06-04) — PHASE 6 COMPLETE + PHASE 7 COMPLETE (reverse-query + audit export, T1–T6); next = Phase 8 (operator UX) or Phase 9 (multi-operator)
