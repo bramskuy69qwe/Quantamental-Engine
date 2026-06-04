@@ -295,14 +295,14 @@ class TestRoute:
         monkeypatch.setattr(rx, "db", db)
         cid = await _seed(db)
 
-        resp = await rx.export_closed_position(cid)
+        resp = await rx.export_closed_position(cid, fmt="json")
         assert resp.status_code == 200
         body = json.loads(bytes(resp.body))
         assert body["export"]["closed_position_id"] == cid
         assert body["bundle"]["position_id"] == "POS1"
         assert body["export"]["signature"]
 
-        nf = await rx.export_closed_position(999999)
+        nf = await rx.export_closed_position(999999, fmt="json")
         assert nf.status_code == 404
         assert "error" in json.loads(bytes(nf.body))
 
@@ -344,6 +344,37 @@ class TestPdfWriter:
         pdf = text_pdf([])
         assert pdf.startswith(b"%PDF") and pdf.rstrip().endswith(b"%%EOF")
 
+    def test_xref_entries_point_to_objects(self):
+        # Every xref entry's byte offset must index its `N 0 obj` — a random-access
+        # reader relies on this. Multi-page input exercises the LATER offsets too
+        # (the ones that drift silently on a pagination regression).
+        import re
+        from core.pdf_writer import text_pdf
+        pdf = text_pdf([f"line {i}" for i in range(150)])
+        off = int(pdf.rsplit(b"startxref", 1)[1].split(b"%%EOF")[0].strip())
+        xref = pdf[off:]
+        n = int(re.search(rb"xref\n0 (\d+)", xref).group(1))
+        entries = re.findall(rb"(\d{10}) 00000 n", xref)
+        assert len(entries) == n - 1                       # object 0 is the free head
+        for i, e in enumerate(entries, start=1):
+            o = int(e)
+            assert pdf[o:].startswith(b"%d 0 obj" % i), f"xref entry {i} offset {o} wrong"
+
+    def test_content_stream_length_exact(self):
+        # /Length must equal the exact byte span between `stream\n` and
+        # `\nendstream` (the classic off-by-one a strict reader rejects).
+        import re
+        from core.pdf_writer import text_pdf
+        pdf = text_pdf(["alpha", "beta gamma", "delta"])
+        found = 0
+        for m in re.finditer(rb"/Length (\d+) >>\nstream\n", pdf):
+            length = int(m.group(1))
+            start = m.end()
+            tail = b"\nendstream"
+            assert pdf[start + length:start + length + len(tail)] == tail
+            found += 1
+        assert found >= 1
+
 
 class TestExportPdf:
     @pytest.mark.asyncio
@@ -355,8 +386,13 @@ class TestExportPdf:
         pdf = render_export_pdf(env)
         assert pdf.startswith(b"%PDF-1.4") and pdf.rstrip().endswith(b"%%EOF")
         assert b"CLOSED-POSITION AUDIT EXPORT" in pdf
-        assert b"POS1" in pdf                                # the position id
+        assert b"POS1" in pdf                                # the position id (header)
         assert env["export"]["signature"].encode() in pdf   # SAME signature, in the footer
+        # body content from the BUNDLE sections — a header-only regression (e.g.
+        # dropping the _PDF_SECTIONS loop) would fail these, not just b"POS1".
+        # (Section labels asserted WITHOUT the "(" — it's PDF-escaped to "\(".)
+        assert b"ORDERS" in pdf and b"FILLS" in pdf and b"FUNDING" in pdf
+        assert b"EO1" in pdf and b"F1" in pdf                # seeded order/fill ids (rows)
 
     @pytest.mark.asyncio
     async def test_route_format_pdf(self, db, monkeypatch):
@@ -375,5 +411,52 @@ class TestExportPdf:
         assert jr.status_code == 200
         assert json.loads(bytes(jr.body))["bundle"]["position_id"] == "POS1"
 
+        # case-insensitive: ?format=PDF must also yield a PDF
+        up = await rx.export_closed_position(cid, fmt="PDF")
+        assert up.media_type == "application/pdf"
+        assert bytes(up.body).startswith(b"%PDF")
+
         nf = await rx.export_closed_position(999999, fmt="pdf")
         assert nf.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_render_pdf_lifecycle_shape(self, db, monkeypatch):
+        # The lifecycle-fallback bundle (no top-level position) must render.
+        from core.audit_export import render_export_pdf
+        monkeypatch.setattr(config, "EXPORT_SIGNING_KEY", "")
+        c = db._conn
+        await c.execute(
+            "INSERT INTO pre_trade_log (account_id, timestamp, ticker, calc_id, lifecycle_id) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (ACCOUNT_ID, "2026-06-01T00:00:00Z", "ETHUSDT", "CL", "LX"))
+        await c.execute(
+            "INSERT INTO positions_calcs (position_id, calc_id, order_id, account_id, "
+            "contributed_qty, first_fill_ts, lifecycle_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("POSL", "CL", 1, ACCOUNT_ID, 1.0, 1100, "LX"))
+        cur = await c.execute(
+            "INSERT INTO closed_positions (account_id, terminal_position_id, symbol, "
+            "exit_time_ms, lifecycle_id) VALUES (?, ?, ?, ?, ?)",
+            (ACCOUNT_ID, "", "ETHUSDT", 6000, "LX"))
+        await c.commit()
+        env = await build_closed_position_export(db, cur.lastrowid)
+        assert env["export"]["bundle_kind"] == "lifecycle"
+        pdf = render_export_pdf(env)
+        assert pdf.startswith(b"%PDF") and pdf.rstrip().endswith(b"%%EOF")
+        assert b"lifecycle" in pdf and b"CL" in pdf
+
+    @pytest.mark.asyncio
+    async def test_render_pdf_closed_row_only_shape(self, db, monkeypatch):
+        # The degenerate closed-row-only bundle (no graph) must render.
+        from core.audit_export import render_export_pdf
+        monkeypatch.setattr(config, "EXPORT_SIGNING_KEY", "")
+        c = db._conn
+        cur = await c.execute(
+            "INSERT INTO closed_positions (account_id, terminal_position_id, symbol, "
+            "exit_time_ms) VALUES (?, ?, ?, ?)",
+            (ACCOUNT_ID, "", "BTCUSDT", 5000))
+        await c.commit()
+        env = await build_closed_position_export(db, cur.lastrowid)
+        assert env["export"]["bundle_kind"] == "closed_row_only"
+        pdf = render_export_pdf(env)
+        assert pdf.startswith(b"%PDF") and pdf.rstrip().endswith(b"%%EOF")
+        assert b"closed_row_only" in pdf

@@ -33,7 +33,7 @@ async def export_closed_position(
         return JSONResponse(
             {"error": f"closed_position {closed_position_id} not found"}, status_code=404,
         )
-    if fmt == "pdf":
+    if fmt.lower() == "pdf":          # case-insensitive: ?format=PDF works too
         pdf = render_export_pdf(envelope)
         return Response(
             content=pdf, media_type="application/pdf",

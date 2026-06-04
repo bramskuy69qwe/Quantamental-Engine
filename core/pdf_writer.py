@@ -24,9 +24,11 @@ _LINES_PER_PAGE = (_PAGE_H - 2 * _MARGIN) // _LEADING   # ~65
 
 
 def _escape(text: str) -> bytes:
-    """Latin-1-encode + escape the PDF string special chars, dropping controls."""
+    """Latin-1-encode + escape the PDF string special chars, replacing all
+    control bytes (C0 0x00-0x1F incl. CR/LF, DEL 0x7F, C1 0x80-0x9F) with '?'
+    so only printable ASCII + printable latin-1 reach the stream."""
     raw = text.encode("latin-1", "replace")          # non-latin-1 → b'?'
-    raw = bytes(b if 32 <= b <= 255 else ord("?") for b in raw)  # strip controls
+    raw = bytes(b if (32 <= b <= 126 or 160 <= b <= 255) else ord("?") for b in raw)
     return raw.replace(b"\\", b"\\\\").replace(b"(", b"\\(").replace(b")", b"\\)")
 
 

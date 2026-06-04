@@ -141,8 +141,8 @@ def _export_text_lines(envelope: Dict[str, Any]) -> list:
     (the source for :func:`render_export_pdf`). Tolerant of the three bundle
     shapes (position / lifecycle / closed_row_only) — sections absent from a
     given bundle are simply skipped."""
-    exp = envelope.get("export", {})
-    bundle = envelope.get("bundle", {})
+    exp = envelope.get("export") or {}
+    bundle = envelope.get("bundle") or {}            # tolerate a None/absent bundle
     L: list = []
     bar = "=" * 78
     L += [bar, "CLOSED-POSITION AUDIT EXPORT", bar]
@@ -152,7 +152,9 @@ def _export_text_lines(envelope: Dict[str, Any]) -> list:
             L.append(f"{k:>20}: {exp[k]}")
     L.append("")
 
-    dev = bundle.get("deviations") or {}
+    dev = bundle.get("deviations")
+    if not isinstance(dev, dict):                    # tolerate a non-dict deviations
+        dev = {}
     if dev:
         L.append("-- DEVIATIONS " + "-" * 60)
         L += [f"{k:>26}: {v}" for k, v in dev.items()]
