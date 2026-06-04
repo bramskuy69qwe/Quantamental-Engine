@@ -305,3 +305,75 @@ class TestRoute:
         nf = await rx.export_closed_position(999999)
         assert nf.status_code == 404
         assert "error" in json.loads(bytes(nf.body))
+
+
+# ── PDF writer (P7.T5) ───────────────────────────────────────────────────────
+
+
+class TestPdfWriter:
+    def test_valid_pdf_structure(self):
+        from core.pdf_writer import text_pdf
+        pdf = text_pdf(["hello world", "second line"])
+        assert pdf.startswith(b"%PDF-1.4")
+        assert pdf.rstrip().endswith(b"%%EOF")
+        assert b"xref" in pdf and b"trailer" in pdf and b"startxref" in pdf
+        assert b"/BaseFont /Courier" in pdf
+        assert b"(hello world)" in pdf and b"(second line)" in pdf   # uncompressed text
+
+    def test_startxref_points_to_xref_table(self):
+        from core.pdf_writer import text_pdf
+        pdf = text_pdf(["x"])
+        off = int(pdf.rsplit(b"startxref", 1)[1].split(b"%%EOF")[0].strip())
+        assert pdf[off:off + 4] == b"xref"     # the offset actually indexes the xref keyword
+
+    def test_string_special_chars_escaped(self):
+        from core.pdf_writer import text_pdf
+        pdf = text_pdf(["a (b) \\ c"])
+        assert b"a \\(b\\) \\\\ c" in pdf       # ( ) \ backslash-escaped in the stream
+
+    def test_pagination_multipage(self):
+        import re
+        from core.pdf_writer import text_pdf
+        pdf = text_pdf([f"line {i}" for i in range(200)])   # > 65/page → several pages
+        m = re.search(rb"/Count (\d+)", pdf)
+        assert m and int(m.group(1)) >= 3
+        assert b"(line 0)" in pdf and b"(line 199)" in pdf
+
+    def test_empty_input_is_valid(self):
+        from core.pdf_writer import text_pdf
+        pdf = text_pdf([])
+        assert pdf.startswith(b"%PDF") and pdf.rstrip().endswith(b"%%EOF")
+
+
+class TestExportPdf:
+    @pytest.mark.asyncio
+    async def test_render_export_pdf_contains_key_fields(self, db, monkeypatch):
+        from core.audit_export import render_export_pdf
+        monkeypatch.setattr(config, "EXPORT_SIGNING_KEY", "")
+        cid = await _seed(db)
+        env = await build_closed_position_export(db, cid)
+        pdf = render_export_pdf(env)
+        assert pdf.startswith(b"%PDF-1.4") and pdf.rstrip().endswith(b"%%EOF")
+        assert b"CLOSED-POSITION AUDIT EXPORT" in pdf
+        assert b"POS1" in pdf                                # the position id
+        assert env["export"]["signature"].encode() in pdf   # SAME signature, in the footer
+
+    @pytest.mark.asyncio
+    async def test_route_format_pdf(self, db, monkeypatch):
+        import api.routes_export as rx
+        monkeypatch.setattr(config, "EXPORT_SIGNING_KEY", "")
+        monkeypatch.setattr(rx, "db", db)
+        cid = await _seed(db)
+
+        resp = await rx.export_closed_position(cid, fmt="pdf")
+        assert resp.status_code == 200
+        assert resp.media_type == "application/pdf"
+        assert bytes(resp.body).startswith(b"%PDF")
+        assert "attachment" in resp.headers.get("content-disposition", "")
+
+        jr = await rx.export_closed_position(cid, fmt="json")
+        assert jr.status_code == 200
+        assert json.loads(bytes(jr.body))["bundle"]["position_id"] == "POS1"
+
+        nf = await rx.export_closed_position(999999, fmt="pdf")
+        assert nf.status_code == 404
