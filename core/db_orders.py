@@ -1456,6 +1456,8 @@ class OrdersMixin:
         for delta basis (spec §3.2) and to surface the per-calc
         breakdown of a scale-in position.
         """
+        if not position_id:                          # empty/None tpid → no junction
+            return []
         async with self._conn.execute(
             "SELECT * FROM positions_calcs WHERE position_id = ? "
             "ORDER BY first_fill_ts ASC, id ASC",
@@ -1789,6 +1791,8 @@ class OrdersMixin:
         ``position_id`` is the TEXT ``terminal_position_id`` (P5 — same key
         as positions_calcs / closed_positions).
         """
+        if not position_id:                          # empty/None tpid → no funding
+            return []
         async with self._conn.execute(
             "SELECT * FROM funding_events WHERE position_id = ? "
             "ORDER BY ts_ms ASC, id ASC",

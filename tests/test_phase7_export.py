@@ -653,3 +653,112 @@ class TestBatchExport:
         assert resp.status_code == 200 and resp.media_type == "application/zip"
         z = zipfile.ZipFile(io.BytesIO(bytes(resp.body)))
         assert any(n.endswith(".pdf") for n in z.namelist())   # the route's pdf plumbing
+
+
+# ── Cross-task integration (Phase 7 holistic audit, Task 286) ─────────────────
+
+
+class TestContextExportEquivalence:
+    """The export bundle and the /context graph come from the SAME assembler;
+    these pin that the two entrypoints stay in lock-step AND that the signed
+    export is sealed to the DB (the holistic-audit MED reproducibility fix)."""
+
+    @pytest.mark.asyncio
+    async def test_export_bundle_equals_context_graph_fully_closed(self, db, monkeypatch):
+        # A fully-closed position with no live open: the signed export's bundle
+        # must be byte-for-byte the /context/position graph (export = signed
+        # /context — the two assembler entrypoints must not drift).
+        from core.context_query import assemble_position_context, json_safe
+        monkeypatch.setattr(config, "EXPORT_SIGNING_KEY", "")
+        cid = await _seed(db)                              # POS1 fully closed
+        env = await build_closed_position_export(db, cid)
+        ctx = json_safe(await assemble_position_context(db, "POS1"))   # /context path
+        assert env["export"]["bundle_kind"] == "position"
+        assert env["bundle"] == ctx                        # same graph, both json_safe'd
+
+    @pytest.mark.asyncio
+    async def test_export_seals_closed_even_with_live_open_same_tpid(self, db, monkeypatch):
+        # The MED reproducibility fix (prefer_open=False): a signed export is
+        # sealed to the PERSISTED closed row even if the same tpid is live OPEN in
+        # app_state (a re-open under the same id). /context surfaces the live OPEN
+        # snapshot; the export must stay CLOSED so its bundle is DB-reproducible.
+        from core.context_query import assemble_position_context
+        from core.state import app_state, PositionInfo
+        monkeypatch.setattr(config, "EXPORT_SIGNING_KEY", "")
+        cid = await _seed(db)                              # POS1 closed row persisted
+        monkeypatch.setattr(app_state, "positions",
+                            [PositionInfo(position_id="POS1", size_delta_pct=9.0,
+                                          amendment_count=2)])   # live re-open, same tpid
+        # /context (prefer_open=True) surfaces the live OPEN snapshot …
+        ctx = await assemble_position_context(db, "POS1")
+        assert ctx["position_state"] == "open"
+        # … but the signed export seals to the CLOSED row.
+        env = await build_closed_position_export(db, cid)
+        assert env["bundle"]["position_state"] == "closed"
+        assert env["bundle"]["position"]["terminal_position_id"] == "POS1"
+        # reproducible: a second export yields the IDENTICAL bundle regardless of
+        # live state (the envelope's generated_at differs by design; the sealed
+        # bundle does not — that's what makes the signature recomputable).
+        env2 = await build_closed_position_export(db, cid)
+        assert env2["bundle"] == env["bundle"]
+
+    @pytest.mark.asyncio
+    async def test_batch_mixed_bundle_kinds(self, db, monkeypatch):
+        # One batch carrying all THREE member shapes at once: a full position
+        # graph ("position"), an empty-tpid+lifecycle row ("lifecycle"), and an
+        # empty-tpid no-lifecycle row ("closed_row_only"). Empty-tpid rows are
+        # each their own member (dedup only collapses non-empty tpids).
+        monkeypatch.setattr(config, "EXPORT_SIGNING_KEY", "")
+        await _seed(db)                                   # POS1 full graph → "position"
+        c = db._conn
+        await c.execute(
+            "INSERT INTO pre_trade_log (account_id, timestamp, ticker, calc_id, lifecycle_id) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (ACCOUNT_ID, "2026-06-01T00:00:00Z", "ETHUSDT", "CL", "LX"))
+        await c.execute(
+            "INSERT INTO positions_calcs (position_id, calc_id, order_id, account_id, "
+            "contributed_qty, first_fill_ts, lifecycle_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("POSL", "CL", 1, ACCOUNT_ID, 1.0, 1100, "LX"))
+        await c.execute(                                  # empty tpid + lifecycle → "lifecycle"
+            "INSERT INTO closed_positions (account_id, terminal_position_id, symbol, "
+            "exit_time_ms, lifecycle_id) VALUES (?, ?, ?, ?, ?)",
+            (ACCOUNT_ID, "", "ETHUSDT", 6000, "LX"))
+        await c.execute(                                  # empty tpid + no lifecycle → "closed_row_only"
+            "INSERT INTO closed_positions (account_id, terminal_position_id, symbol, "
+            "exit_time_ms) VALUES (?, ?, ?, ?)",
+            (ACCOUNT_ID, "", "SOLUSDT", 7000))
+        await c.commit()
+        batch = await build_batch_export(db, ACCOUNT_ID, 0, 10 ** 15)
+        assert batch["manifest"]["count"] == 3
+        assert sorted(e["export"]["bundle_kind"] for e in batch["exports"]) == \
+            ["closed_row_only", "lifecycle", "position"]
+        # every member is independently signed (tamper-evidence per member)
+        assert all(e["export"]["signature"] for e in batch["exports"])
+
+
+class TestRouteAliasWiring:
+    """The ``?format=`` query alias must bind to the ``fmt`` handler param. The
+    handler tests call the functions directly (passing ``fmt=`` themselves),
+    BYPASSING alias resolution — so a regression dropping ``alias="format"``
+    would slip past them. Inspect the route's resolved query params instead
+    (no TestClient — the suite's TestClient-in-a-fresh-file gotcha hangs)."""
+
+    def _aliases(self, path):
+        from fastapi.routing import APIRoute
+        import api.routes_export as rx
+        for r in rx.router.routes:
+            if isinstance(r, APIRoute) and r.path == path:
+                out = {}
+                for qp in r.dependant.query_params:
+                    out[qp.name] = getattr(qp, "alias", None) or getattr(
+                        getattr(qp, "field_info", None), "alias", None)
+                return out
+        raise AssertionError(f"route {path} not found")
+
+    def test_single_export_format_alias(self):
+        a = self._aliases("/export/closed_position/{closed_position_id}")
+        assert a["fmt"] == "format"          # ?format=pdf binds to fmt
+
+    def test_batch_export_format_alias(self):
+        a = self._aliases("/export/closed_positions")
+        assert a["fmt"] == "format"

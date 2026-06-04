@@ -82,6 +82,56 @@ causal graph via reverse-query (T1/T2), and compliance can export signed audit b
   ⚠ See the **DEV-ENVIRONMENT HAZARD** section directly below before trusting a red test run or running
   destructive git.
 
+- **task 286 — Phase-7 HOLISTIC cross-task audit** (6 adversarial agents: spec-fidelity/completeness,
+  cross-DB/reused-assembler, account-scoping/tpid-invariant, signing/tamper-evidence, webhook-as-first-
+  subscriber, test-integrity). **No BLOCKER/HIGH.** Fixes applied this task:
+  - **MED — export reproducibility (the load-bearing fix)**: a SIGNED compliance export was reading live
+    `app_state` (it preferred a live OPEN position over the persisted closed row). A signed bundle that
+    depends on volatile in-memory state isn't DB-reproducible. Threaded a `prefer_open` flag through
+    `_resolve_position → _aggregate_tail → assemble_{position,lifecycle}_context`; `build_closed_position_export`
+    now calls both assemblers with **`prefer_open=False`** → the export bundle is SEALED to the DB (a re-open
+    under the same tpid surfaces OPEN on `/context` but the export stays CLOSED → the signature recomputes).
+    Default `prefer_open=True` keeps `/context` live-preferred (unchanged behaviour).
+  - **LOW — falsy-guard consistency**: `get_position_calc_links` + `get_position_funding_events` lacked the
+    `if not position_id: return []` guard the sibling by-position reads have (2-of-5 inconsistency). Added.
+  - **LOW — docs**: account-scoping/tpid-invariant + re-open anchor on `assemble_position_context`;
+    receiver-MUST-be-idempotent (at-least-once delivery) note in `webhook_dispatcher`'s module docstring.
+  - **5 new cross-task tests** (`test_phase7_export.py`): /context≡/export bundle equivalence (fully-closed),
+    the prefer_open=False seal (export CLOSED while live OPEN), a mixed-shape batch (position+lifecycle+
+    closed_row_only in one ZIP), and the `?format=` alias→`fmt` route-dependant wiring (the handler tests
+    pass `fmt=` directly, bypassing alias resolution). Phase-7 suite now **100 passed**.
+
+### Phase-7 deferred follow-ups (filed task 286; none blocking — file/pick up opportunistically)
+
+The holistic audit confirmed these are bounded, deliberate gaps — not bugs. Listed so a future phase
+doesn't rediscover them as surprises:
+
+1. **`calc_match_audit` absent from the export bundle** — the audit table that records WHY a calc matched
+   an order (spec §10.x) is not assembled into the reverse-query graph / export. The bundle carries the
+   matched result (junction + deviations) but not the match-decision trace. Add a `get_calc_match_audit_by_*`
+   read + a `match_audit` bundle section if a downstream model needs the matcher's reasoning.
+2. **No JSON `/positions/open` endpoint** — open positions are resolvable only *through* a calc/lifecycle/
+   position key (the assembler's open-resolution). There is no "list all open positions" read API. Phase 8's
+   dashboard will likely need one (currently the UI reads `app_state` server-side).
+3. **§7.3 pagination / caching skipped** on the reverse-query reads — `get_{orders,fills}_by_position_id`
+   are full-scans (orders has no `terminal_position_id` index), and `/context` has no cache. **Acceptable
+   at localhost single-tenant scale** (CLAUDE.md Task 163 deployment context); revisit only if a position
+   accrues thousands of orders or the deployment shape changes.
+4. **Cross-language float contract undocumented** — `json_safe` coerces non-finite REALs → `null` at the
+   JSON boundary (so the engine never emits `Infinity`/`NaN`), but there is no published receiver contract
+   stating "a null in a numeric field MAY mean non-finite-at-source". A webhook/export *consumer* in another
+   language can't distinguish a true null from a coerced inf. Document in the spec if a non-Python consumer
+   is built.
+5. **Algorithmic signing-downgrade for exposure — N/A at this deployment**: the export falls back to an
+   *unkeyed* SHA-256 digest when `EXPORT_SIGNING_KEY` is unset (tamper-evidence, not authenticity). That's
+   correct for localhost single-tenant (threat model = silent data drift, not forgery — CLAUDE.md Task 163).
+   If the engine is ever exposed, set `EXPORT_SIGNING_KEY` (→ HMAC) and re-elevate this to a hardening item.
+6. **Shutdown task-cancellation drops an in-flight webhook** — the dispatcher worker (and funding loop) are
+   cancelled on shutdown; a job mid-POST is lost. **Covered by design**: delivery is at-least-once + the
+   §11.3 model has the subscriber RE-FETCH via reverse-query, so a dropped webhook self-heals on the next
+   poll. A replayable dead-letter QUEUE (vs the current `engine_events` row) would close it fully — deferred
+   (see `webhook_dispatcher` docstring deviation note).
+
 ---
 
 ## ⚠ DEV-ENVIRONMENT HAZARD (observed 2026-06-04) — something rewrites source files mid-run

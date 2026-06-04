@@ -20,6 +20,15 @@ of a dedicated replay table, because spec §11.3's webhook model is
 fire-and-forget with the subscriber RE-FETCHING via the reverse-query endpoints
 (Phase 7.1/7.2) — a missed webhook self-heals on the subscriber's next poll, so
 replay isn't load-bearing. A replayable queue table is a deferred follow-up.
+
+**Delivery is AT-LEAST-ONCE — the receiver MUST be idempotent.** A POST that
+times out (or returns a 5xx) after the server already processed it is retried
+here, so the same ``position_closed`` payload can arrive more than once. The §9
+payload is itself idempotent-per-``(account, terminal_position_id, exit_time)``
+(it is FINAL-only, emitted once per close), so a receiver should dedupe on that
+key — treat a repeat as a no-op, never double-count. The dispatcher makes no
+exactly-once guarantee and carries no delivery cursor; ordering across distinct
+positions is also not guaranteed (independent retry/backoff per job).
 """
 from __future__ import annotations
 

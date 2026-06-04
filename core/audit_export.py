@@ -80,13 +80,18 @@ async def build_closed_position_export(
     lifecycle_id = row.get("lifecycle_id") or ""
     account_id = row.get("account_id")
 
+    # prefer_open=False: a signed compliance export MUST be DB-reproducible — the
+    # bundle is sealed to the persisted closed row, never the live in-memory open
+    # position. If the same tpid re-opens after this close, /context would show the
+    # new OPEN snapshot but a re-export of THIS closed_position_id must reproduce
+    # the same signature (re-canonicalize → recompute), so the seal reads the DB.
     bundle: Optional[Dict[str, Any]] = None
     bundle_kind: str
     if tpid:
-        bundle = await assemble_position_context(db, tpid)
+        bundle = await assemble_position_context(db, tpid, prefer_open=False)
         bundle_kind = "position"
     if bundle is None and lifecycle_id:
-        bundle = await assemble_lifecycle_context(db, lifecycle_id)
+        bundle = await assemble_lifecycle_context(db, lifecycle_id, prefer_open=False)
         bundle_kind = "lifecycle"
     if bundle is None:
         # Degenerate: empty-tpid / no-junction closed row (binance observe-only)

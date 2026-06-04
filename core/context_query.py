@@ -123,16 +123,26 @@ def _deviations(state: Optional[str], position: Optional[Dict[str, Any]]) -> Dic
 
 
 async def _resolve_position(
-    db: Any, position_id: Optional[str],
+    db: Any, position_id: Optional[str], *, prefer_open: bool = True,
 ) -> Tuple[Optional[str], Optional[Dict[str, Any]], Dict[str, Any]]:
-    """Resolve a position_id to (state, position_dict, deviations). Prefers a
-    LIVE open position (in-memory PositionInfo); else the most-recent closed
-    row; else (None, None, {})."""
+    """Resolve a position_id to (state, position_dict, deviations).
+
+    ``prefer_open=True`` (the live /context default) prefers a LIVE open
+    PositionInfo (from in-memory app_state); else the most-recent closed row;
+    else (None, None, {}).
+
+    ``prefer_open=False`` (the SIGNED audit export, P7 holistic-audit fix) SKIPS
+    the live app_state lookup and resolves only the sealed closed row — so a
+    compliance artifact is DB-reproducible (its signature can be recomputed from
+    the DB alone, not app_state-at-export-time) and never reflects the live,
+    mutating state of a still-partially-open position (a multi-TP partial close
+    writes a closed_positions row WHILE the position is still open)."""
     if not position_id:
         return None, None, {}
-    op = _open_position_dict(position_id)
-    if op is not None:
-        return "open", op, _deviations("open", op)
+    if prefer_open:
+        op = _open_position_dict(position_id)
+        if op is not None:
+            return "open", op, _deviations("open", op)
     closed = await db.get_closed_positions_by_position_id(position_id)
     if closed:
         return "closed", closed[0], _deviations("closed", closed[0])
@@ -176,12 +186,15 @@ def _first(rows: List[Dict[str, Any]], key: str) -> Any:
 async def _aggregate_tail(
     db: Any, *, calc_ids: List[str], position_ids: List[str],
     primary_position_id: Optional[str], account_id: Optional[int],
+    prefer_open: bool = True,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Optional[str],
            Optional[Dict[str, Any]], Dict[str, Any], List[Dict[str, Any]]]:
     """Shared tail for the lifecycle + position aggregate graphs: amendments
     (per contributing calc, merged + time-sorted), funding (per position), the
     resolved primary position + its deviations, and the cross-DB events.
-    Returns ``(amendments, funding, position_state, position, deviations, events)``."""
+    ``prefer_open`` is threaded to :func:`_resolve_position` (False for the
+    signed export → sealed, DB-reproducible). Returns
+    ``(amendments, funding, position_state, position, deviations, events)``."""
     amendments: List[Dict[str, Any]] = []
     for cid in calc_ids:
         amendments.extend(await db.get_calc_amendments(cid))
@@ -191,7 +204,8 @@ async def _aggregate_tail(
     for pid in position_ids:
         funding.extend(await db.get_position_funding_events(pid))
 
-    state, position, deviations = await _resolve_position(db, primary_position_id)
+    state, position, deviations = await _resolve_position(
+        db, primary_position_id, prefer_open=prefer_open)
     events = await _events_for(account_id, calc_ids)
     return amendments, funding, state, position, deviations, events
 
@@ -237,7 +251,7 @@ async def assemble_calc_context(db: Any, calc_id: str) -> Optional[Dict[str, Any
 
 
 async def assemble_lifecycle_context(
-    db: Any, lifecycle_id: str,
+    db: Any, lifecycle_id: str, *, prefer_open: bool = True,
 ) -> Optional[Dict[str, Any]]:
     """Single-key audit graph for one trade lifecycle (spec §3.5 / §11.1).
     Returns ``None`` if no junction rows carry this lifecycle_id (404).
@@ -247,7 +261,11 @@ async def assemble_lifecycle_context(
     otherwise it mirrors the calc graph. orders/fills/closed are keyed directly
     on ``lifecycle_id`` (the single-key audit query); amendments + events are
     gathered per contributing calc (those tables carry calc_id, and trade_events
-    has no lifecycle_id column — spec §3.5)."""
+    has no lifecycle_id column — spec §3.5).
+
+    ``prefer_open=False`` seals ``position`` to the persisted closed row (the
+    signed-export path → DB-reproducible); the default True path (the /context
+    endpoint) prefers the live open position when one exists."""
     junction = await db.get_lifecycle_links(lifecycle_id)
     if not junction:
         return None
@@ -267,6 +285,7 @@ async def assemble_lifecycle_context(
     amendments, funding, state, position, deviations, events = await _aggregate_tail(
         db, calc_ids=calc_ids, position_ids=position_ids,
         primary_position_id=_primary_position_id(junction), account_id=account_id,
+        prefer_open=prefer_open,
     )
 
     return {
@@ -286,11 +305,18 @@ async def assemble_lifecycle_context(
 
 
 async def assemble_position_context(
-    db: Any, position_id: str,
+    db: Any, position_id: str, *, prefer_open: bool = True,
 ) -> Optional[Dict[str, Any]]:
     """Full graph for one position (spec §11.1, keyed on ``terminal_position_id``).
     Returns ``None`` if the position has NO trace anywhere (no junction, orders,
     fills, closed rows, or live open position) → the endpoint maps that to 404.
+
+    Account-scoping / tpid-invariant: ``position_id`` IS ``terminal_position_id``,
+    which is unique per position instance (spec §3.2 tpid-uniqueness — Quantower
+    emits one id per object; Binance leaves it empty so an empty/None id never
+    reaches here as a query key). All reads below are keyed on it, so the graph
+    is single-position by construction; no account filter is applied because the
+    tpid already pins one account's one position.
 
     Aggregates all contributing calcs (like the lifecycle graph: ``calcs`` plural
     + ``closed_positions`` + the per-position ``deviations``) but keyed DIRECTLY
@@ -298,7 +324,13 @@ async def assemble_position_context(
     (which has orders/fills/closed by position_id but no calc attribution → empty
     ``calcs``/``amendments``/``events``, since those are calc-keyed). The
     ``position`` field resolves THIS position open-or-closed (not a
-    most-contributing pick — the position is the query key)."""
+    most-contributing pick — the position is the query key).
+
+    ``prefer_open`` (default True) prefers the live in-memory open position when
+    one exists with this tpid — a position that re-opens under the same tpid would
+    surface its OPEN snapshot on /context. ``prefer_open=False`` (the signed
+    export) seals ``position`` to the persisted closed row so the sealed graph is
+    DB-reproducible regardless of live app_state."""
     junction = await db.get_position_calc_links(position_id)
     orders = await db.get_orders_by_position_id(position_id)
     fills = await db.get_fills_by_position_id(position_id)
@@ -316,6 +348,7 @@ async def assemble_position_context(
     amendments, funding, state, position, deviations, events = await _aggregate_tail(
         db, calc_ids=calc_ids, position_ids=[position_id],
         primary_position_id=position_id, account_id=account_id,
+        prefer_open=prefer_open,
     )
 
     return {
