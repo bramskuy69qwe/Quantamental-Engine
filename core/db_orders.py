@@ -1544,6 +1544,37 @@ class OrdersMixin:
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
 
+    async def get_orders_by_position_id(self, position_id: str) -> List[Dict]:
+        """All order rows for one ``terminal_position_id``, newest first. Backs
+        P7.T2 ``GET /context/position/{id}`` (works for junction-less / UNPLANNED
+        positions too — keyed purely on the position id). Full-scan: orders has
+        no terminal_position_id index (acceptable at localhost single-tenant
+        scale). Like the sibling by-key reads, NOT account-scoped — the position
+        subsystem already treats terminal_position_id as one position instance
+        (the tpid-uniqueness invariant in order_manager / get_position_calc_links)."""
+        if not position_id:
+            return []
+        async with self._conn.execute(
+            "SELECT * FROM orders WHERE terminal_position_id = ? "
+            "ORDER BY created_at_ms DESC, id DESC",
+            (position_id,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+    async def get_fills_by_position_id(self, position_id: str) -> List[Dict]:
+        """All fills for one ``terminal_position_id``, oldest first.
+        (idx_fills_position). Sibling of :meth:`get_position_fills` but not
+        account-scoped (P7.T2 keys on position_id directly; same tpid-uniqueness
+        invariant as :meth:`get_orders_by_position_id`)."""
+        if not position_id:
+            return []
+        async with self._conn.execute(
+            "SELECT * FROM fills WHERE terminal_position_id = ? "
+            "ORDER BY timestamp_ms ASC, id ASC",
+            (position_id,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
     # ── order_amendments ───────────────────────────────────────────────
 
     async def insert_order_amendment(self, row: Dict[str, Any]) -> bool:

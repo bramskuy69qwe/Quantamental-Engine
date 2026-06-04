@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from core.context_query import (
     assemble_calc_context,
     assemble_lifecycle_context,
+    assemble_position_context,
     json_safe,
     _primary_position_id,
     _ordered_unique,
@@ -88,6 +89,15 @@ class FakeDB:
 
     async def get_closed_positions_by_lifecycle_id(self, lifecycle_id):
         return [c for c in self.closed if c.get("lifecycle_id") == lifecycle_id]
+
+    async def get_position_calc_links(self, position_id):
+        return [j for j in self.junction if j.get("position_id") == position_id]
+
+    async def get_orders_by_position_id(self, position_id):
+        return [o for o in self.orders if o.get("terminal_position_id") == position_id]
+
+    async def get_fills_by_position_id(self, position_id):
+        return [f for f in self.fills if f.get("terminal_position_id") == position_id]
 
 
 def _calc(cid="C1", *, account_id=ACCOUNT_ID, lifecycle_id="L1"):
@@ -257,6 +267,105 @@ class TestAssembleLifecycleContext:
         assert await assemble_lifecycle_context(db, "NOPE") is None
 
 
+class TestAssemblePositionContext:
+    @pytest.mark.asyncio
+    async def test_junction_bearing_position_aggregates(self, monkeypatch):
+        # Scale-in position: two calcs → one position; keyed on position_id.
+        # `position` resolves THIS position (the query key), not a contributing
+        # pick. A confounding junction row for a DIFFERENT position (C9/POSOTHER)
+        # must NOT leak into contributing_calc_ids (pins the position_id filter).
+        from core.state import app_state
+        monkeypatch.setattr(app_state, "positions", [])
+        monkeypatch.setattr("core.trade_event_log.query_trade_events", lambda **kw: ([], 0))
+        db = FakeDB(
+            calcs=[_calc("C1"), _calc("C2"), _calc("C9")],
+            orders=[{"terminal_position_id": "POS1", "calc_id": "C1", "id": 1}],
+            fills=[{"terminal_position_id": "POS1", "calc_id": "C1", "id": 1}],
+            amendments=[{"calc_id": "C1", "field": "sl_price", "ts_ms": 10, "id": 1}],
+            junction=[_jrow("C1", "POS1"), _jrow("C2", "POS1"),
+                      _jrow("C9", "POSOTHER")],   # confound: a DIFFERENT position
+            funding=[{"position_id": "POS1", "amount": -1.0, "id": 1}],
+            closed=[_closed("POS1")],
+        )
+        g = await assemble_position_context(db, "POS1")
+        assert g["position_id"] == "POS1"
+        assert g["contributing_calc_ids"] == ["C1", "C2"]   # NOT C9 (other position)
+        assert g["lifecycle_id"] == "L1"
+        assert [c["calc_id"] for c in g["calcs"]] == ["C1", "C2"]
+        assert g["position_state"] == "closed"
+        assert g["position"]["terminal_position_id"] == "POS1"
+        assert g["deviations"]["entry_px_delta_pct"] == 0.31
+        assert len(g["orders"]) == 1 and len(g["fills"]) == 1
+        assert len(g["funding_events"]) == 1
+        assert g["amendments"][0]["field"] == "sl_price"
+
+    @pytest.mark.asyncio
+    async def test_junction_bearing_open_position(self, monkeypatch):
+        # Live scale-in: an OPEN position WITH junction calcs — `position` is the
+        # live PositionInfo (open wins) yet contributing_calc_ids stays populated.
+        from core.state import app_state, PositionInfo
+        pos = PositionInfo(position_id="POS1", size_delta_pct=4.0, amendment_count=1)
+        monkeypatch.setattr(app_state, "positions", [pos])
+        monkeypatch.setattr("core.trade_event_log.query_trade_events", lambda **kw: ([], 0))
+        db = FakeDB(
+            calcs=[_calc("C1"), _calc("C2")],
+            junction=[_jrow("C1", "POS1"), _jrow("C2", "POS1")],
+            closed=[_closed("POS1")],   # closed row exists but open wins
+        )
+        g = await assemble_position_context(db, "POS1")
+        assert g["position_state"] == "open"
+        assert g["position"]["position_id"] == "POS1"
+        assert g["contributing_calc_ids"] == ["C1", "C2"]
+        assert g["deviations"]["size_delta_pct"] == 4.0
+
+    @pytest.mark.asyncio
+    async def test_junction_less_unplanned_position(self, monkeypatch):
+        # An UNPLANNED position (no calc, no junction) still returns a graph from
+        # its position-keyed orders/fills/closed; calcs/amendments/events empty.
+        # lifecycle_id falls back to the closed row (junction arm empty).
+        from core.state import app_state
+        monkeypatch.setattr(app_state, "positions", [])
+        # query_trade_events must NOT run (no calc_ids → no account events)
+        monkeypatch.setattr(
+            "core.trade_event_log.query_trade_events",
+            lambda **kw: (_ for _ in ()).throw(AssertionError("no calc → no events read")))
+        db = FakeDB(
+            orders=[{"terminal_position_id": "POSU", "id": 9}],
+            fills=[{"terminal_position_id": "POSU", "id": 9}],
+            closed=[_closed("POSU", lifecycle_id="LU")],
+            junction=[],   # UNPLANNED → no junction
+        )
+        g = await assemble_position_context(db, "POSU")
+        assert g is not None
+        assert g["contributing_calc_ids"] == []
+        assert g["calcs"] == []
+        assert g["amendments"] == []
+        assert g["events"] == []
+        assert g["lifecycle_id"] == "LU"     # fell back to the closed row
+        assert g["position_state"] == "closed"
+        assert len(g["orders"]) == 1 and len(g["fills"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_open_position_keyed_directly(self, monkeypatch):
+        # `position` resolves the QUERIED position open-or-closed — for an open
+        # position it's the live PositionInfo, even with no junction.
+        from core.state import app_state, PositionInfo
+        pos = PositionInfo(position_id="POSO", size_delta_pct=3.0, amendment_count=1)
+        monkeypatch.setattr(app_state, "positions", [pos])
+        monkeypatch.setattr("core.trade_event_log.query_trade_events", lambda **kw: ([], 0))
+        db = FakeDB(orders=[{"terminal_position_id": "POSO", "id": 1}])
+        g = await assemble_position_context(db, "POSO")
+        assert g["position_state"] == "open"
+        assert g["position"]["position_id"] == "POSO"
+
+    @pytest.mark.asyncio
+    async def test_no_trace_returns_none(self, monkeypatch):
+        from core.state import app_state
+        monkeypatch.setattr(app_state, "positions", [])
+        db = FakeDB()  # nothing seeded
+        assert await assemble_position_context(db, "GHOST") is None
+
+
 class TestPureHelpers:
     def test_ordered_unique_drops_falsy_and_dups(self):
         assert _ordered_unique(["a", "b", "a", None, "", "c", "b"]) == ["a", "b", "c"]
@@ -342,8 +451,8 @@ async def _seed_full_graph(db):
         (ACCOUNT_ID, "2026-06-01T00:00:00Z", "BTCUSDT", "C1", "L1"))
     await c.execute(
         "INSERT INTO orders (account_id, exchange_order_id, symbol, side, calc_id, "
-        "lifecycle_id, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (ACCOUNT_ID, "EO1", "BTCUSDT", "BUY", "C1", "L1", 1000))
+        "lifecycle_id, terminal_position_id, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (ACCOUNT_ID, "EO1", "BTCUSDT", "BUY", "C1", "L1", "POS1", 1000))
     await c.execute(
         "INSERT INTO fills (account_id, exchange_fill_id, exchange_order_id, symbol, "
         "side, terminal_position_id, calc_id, lifecycle_id, timestamp_ms, is_close) "
@@ -383,6 +492,14 @@ class TestNewReadHelpers:
         await _seed_full_graph(db)
         assert (await db.get_fills_by_calc_id("C1"))[0]["exchange_fill_id"] == "F1"
         assert (await db.get_fills_by_lifecycle_id("L1"))[0]["exchange_fill_id"] == "F1"
+
+    @pytest.mark.asyncio
+    async def test_orders_and_fills_by_position_id(self, db):
+        await _seed_full_graph(db)   # order + fill both carry terminal_position_id=POS1
+        assert (await db.get_orders_by_position_id("POS1"))[0]["exchange_order_id"] == "EO1"
+        assert (await db.get_fills_by_position_id("POS1"))[0]["exchange_fill_id"] == "F1"
+        assert await db.get_orders_by_position_id("NONE") == []
+        assert await db.get_fills_by_position_id("") == []   # falsy guard
 
     @pytest.mark.asyncio
     async def test_closed_positions_by_position_and_lifecycle(self, db):
@@ -476,6 +593,28 @@ class TestEndToEnd:
         await _seed_full_graph(db)
         assert await assemble_lifecycle_context(db, "NOPE") is None
 
+    @pytest.mark.asyncio
+    async def test_position_context_e2e(self, db, monkeypatch):
+        from core.state import app_state
+        monkeypatch.setattr(app_state, "positions", [])
+        monkeypatch.setattr("core.trade_event_log.query_trade_events", lambda **kw: ([], 0))
+        await _seed_full_graph(db)
+        g = await assemble_position_context(db, "POS1")
+        assert g is not None
+        assert g["position_id"] == "POS1"
+        assert g["contributing_calc_ids"] == ["C1"]
+        assert g["lifecycle_id"] == "L1"
+        assert g["orders"][0]["exchange_order_id"] == "EO1"   # by terminal_position_id
+        assert g["fills"][0]["exchange_fill_id"] == "F1"
+        assert g["position_state"] == "closed"
+        assert g["closed_positions"][0]["entry_px_delta_pct"] == 0.5
+        assert g["funding_events"][0]["amount"] == -1.2
+
+    @pytest.mark.asyncio
+    async def test_position_not_found_e2e(self, db):
+        await _seed_full_graph(db)
+        assert await assemble_position_context(db, "GHOST") is None
+
 
 # ── Layer 4: route handlers (direct-call; no TestClient — Lesson 9 hang) ──────
 
@@ -523,6 +662,25 @@ class TestRouteHandlers:
         assert _json_body(resp)["lifecycle_id"] == "L1"
 
         nf = await rc.context_lifecycle("NOPE")
+        assert nf.status_code == 404
+        assert "error" in _json_body(nf)
+
+    @pytest.mark.asyncio
+    async def test_context_position_200_and_404(self, db, monkeypatch):
+        import api.routes_context as rc
+        from core.state import app_state
+        monkeypatch.setattr(rc, "db", db)
+        monkeypatch.setattr(app_state, "positions", [])
+        monkeypatch.setattr("core.trade_event_log.query_trade_events", lambda **kw: ([], 0))
+        await _seed_full_graph(db)
+
+        resp = await rc.context_position("POS1")
+        assert resp.status_code == 200
+        body = _json_body(resp)
+        assert body["position_id"] == "POS1"
+        assert body["contributing_calc_ids"] == ["C1"]
+
+        nf = await rc.context_position("GHOST")
         assert nf.status_code == 404
         assert "error" in _json_body(nf)
 

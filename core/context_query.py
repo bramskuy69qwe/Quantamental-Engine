@@ -164,6 +164,38 @@ async def _events_for(account_id: Optional[int], calc_ids: List[str]) -> List[Di
     return await asyncio.to_thread(_fetch_trade_events_sync, int(account_id), calc_ids)
 
 
+def _first(rows: List[Dict[str, Any]], key: str) -> Any:
+    """First non-None value of ``key`` across ``rows`` (insertion order), else None."""
+    for r in rows:
+        v = r.get(key)
+        if v is not None:
+            return v
+    return None
+
+
+async def _aggregate_tail(
+    db: Any, *, calc_ids: List[str], position_ids: List[str],
+    primary_position_id: Optional[str], account_id: Optional[int],
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Optional[str],
+           Optional[Dict[str, Any]], Dict[str, Any], List[Dict[str, Any]]]:
+    """Shared tail for the lifecycle + position aggregate graphs: amendments
+    (per contributing calc, merged + time-sorted), funding (per position), the
+    resolved primary position + its deviations, and the cross-DB events.
+    Returns ``(amendments, funding, position_state, position, deviations, events)``."""
+    amendments: List[Dict[str, Any]] = []
+    for cid in calc_ids:
+        amendments.extend(await db.get_calc_amendments(cid))
+    amendments.sort(key=lambda a: (a.get("ts_ms") or 0, a.get("id") or 0))
+
+    funding: List[Dict[str, Any]] = []
+    for pid in position_ids:
+        funding.extend(await db.get_position_funding_events(pid))
+
+    state, position, deviations = await _resolve_position(db, primary_position_id)
+    events = await _events_for(account_id, calc_ids)
+    return amendments, funding, state, position, deviations, events
+
+
 async def assemble_calc_context(db: Any, calc_id: str) -> Optional[Dict[str, Any]]:
     """Full causal graph for one calc (spec §11.1). Returns ``None`` if the
     calc does not exist (the endpoint maps that to 404).
@@ -231,20 +263,64 @@ async def assemble_lifecycle_context(
     fills = await db.get_fills_by_lifecycle_id(lifecycle_id)
     closed_positions = await db.get_closed_positions_by_lifecycle_id(lifecycle_id)
 
-    amendments: List[Dict[str, Any]] = []
-    for cid in calc_ids:
-        amendments.extend(await db.get_calc_amendments(cid))
-    amendments.sort(key=lambda a: (a.get("ts_ms") or 0, a.get("id") or 0))
-
     position_ids = _ordered_unique([j.get("position_id") for j in junction])
-    funding: List[Dict[str, Any]] = []
-    for pid in position_ids:
-        funding.extend(await db.get_position_funding_events(pid))
-
-    state, position, deviations = await _resolve_position(db, _primary_position_id(junction))
-    events = await _events_for(account_id, calc_ids)
+    amendments, funding, state, position, deviations, events = await _aggregate_tail(
+        db, calc_ids=calc_ids, position_ids=position_ids,
+        primary_position_id=_primary_position_id(junction), account_id=account_id,
+    )
 
     return {
+        "lifecycle_id": lifecycle_id,
+        "calcs": calcs,
+        "orders": orders,
+        "fills": fills,
+        "amendments": amendments,
+        "positions_calcs": junction,
+        "position": position,
+        "position_state": state,          # "open" | "closed" | None
+        "closed_positions": closed_positions,
+        "funding_events": funding,
+        "deviations": deviations,
+        "events": events,
+    }
+
+
+async def assemble_position_context(
+    db: Any, position_id: str,
+) -> Optional[Dict[str, Any]]:
+    """Full graph for one position (spec §11.1, keyed on ``terminal_position_id``).
+    Returns ``None`` if the position has NO trace anywhere (no junction, orders,
+    fills, closed rows, or live open position) → the endpoint maps that to 404.
+
+    Aggregates all contributing calcs (like the lifecycle graph: ``calcs`` plural
+    + ``closed_positions`` + the per-position ``deviations``) but keyed DIRECTLY
+    on ``position_id``, so it also works for a junction-less / UNPLANNED position
+    (which has orders/fills/closed by position_id but no calc attribution → empty
+    ``calcs``/``amendments``/``events``, since those are calc-keyed). The
+    ``position`` field resolves THIS position open-or-closed (not a
+    most-contributing pick — the position is the query key)."""
+    junction = await db.get_position_calc_links(position_id)
+    orders = await db.get_orders_by_position_id(position_id)
+    fills = await db.get_fills_by_position_id(position_id)
+    closed_positions = await db.get_closed_positions_by_position_id(position_id)
+    open_pos = _open_position_dict(position_id)
+    if not junction and not orders and not fills and not closed_positions and open_pos is None:
+        return None
+
+    calc_ids = _ordered_unique([j.get("calc_id") for j in junction])
+    calcs_map = await db.get_pretrade_logs_by_calc_ids(calc_ids)
+    calcs = [calcs_map[c] for c in calc_ids if c in calcs_map]
+    lifecycle_id = _first(junction, "lifecycle_id") or _first(closed_positions, "lifecycle_id")
+    account_id = _first(list(junction) + list(closed_positions) + list(orders), "account_id")
+
+    amendments, funding, state, position, deviations, events = await _aggregate_tail(
+        db, calc_ids=calc_ids, position_ids=[position_id],
+        primary_position_id=position_id, account_id=account_id,
+    )
+
+    return {
+        "position_id": position_id,
+        "contributing_calc_ids": calc_ids,
         "lifecycle_id": lifecycle_id,
         "calcs": calcs,
         "orders": orders,
