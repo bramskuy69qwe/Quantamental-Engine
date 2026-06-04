@@ -5,7 +5,7 @@
 **Tests**: 3085 passed, 7 skipped, 1 unrelated pre-existing failure (0 new; +39 vs the task-267 3046 baseline — 268 +1, 269 +29, +misc)
 **Pre-existing failure**: `tests/test_data_cache_dd.py::TestRollingWindowPeak::test_old_high_excluded_from_window` — 30-day rolling-window boundary bug; unrelated to calc-linkage. Worth filing as its own task.
 
-## ★ STATUS (2026-06-04) — PHASE 6 COMPLETE (T1–T7, holistically audited) + PHASE 7 IN PROGRESS (P7.T1+T2 shipped); next = P7.T3
+## ★ STATUS (2026-06-04) — PHASE 6 COMPLETE (T1–T7, holistically audited) + PHASE 7 IN PROGRESS (P7.T1+T2+T3 shipped); next = P7.T4
 
 **Tasks 268–269 (this session):**
 - **task 268 — 4 deferred follow-ups (pre-Phase-7 cleanup)**: (1) aiosqlite `PRAGMA busy_timeout=5000` on
@@ -42,9 +42,17 @@ now IN PROGRESS:**
   `terminal_position_id`; extracted a shared `_aggregate_tail` reused by lifecycle + position — lifecycle
   unchanged; `position` resolves THIS position open-or-closed; works for junction-less/UNPLANNED positions;
   2 new `get_{orders,fills}_by_position_id` reads).
-- **next = P7.T3** (webhook dispatcher + retry + dead-letter, `core/webhook_dispatcher.py`); then T4–T6
-  export (JSON → PDF/signed → batch). Plan §7 / §14.3. ⚠ See the **DEV-ENVIRONMENT HAZARD** section directly
-  below before trusting a red test run or running destructive git.
+- **P7.T3 shipped (274 + audit-fixes 275)** — `core/webhook_dispatcher.py`, the FIRST in-process event_bus
+  `position:closed` subscriber. Per-account handler closures ENQUEUE the §9 payload (non-blocking — the
+  event_bus dispatch loop is sequential); a worker POSTs `{event: position_closed, payload: <§9>}` to the
+  account's `webhook_url` with exp-backoff (cap 30s, 5 tries) + an `engine_events` `webhook_dispatch_failed`
+  dead-letter. `webhook_url` + STRICT-bool `feature_flags.webhook_enabled` on `AccountConfig` (default OFF).
+  `json_safe` keeps NaN/Inf off the wire + out of the dead-letter. Wired via `start_webhook_dispatcher` in
+  `_startup_fetch` (subscribe-before-run, guarded). Deviation: engine_events dead-letter ROW not a replay
+  table (spec §11.3 fire-and-forget + reverse-query re-fetch → miss self-heals). Tests (19).
+- **next = P7.T4** (audit export — JSON `POST /export/closed_position/{id}`, plan §7.6), then T5 (PDF +
+  signed timestamp) + T6 (batch export). Plan §7 / §14.3. ⚠ See the **DEV-ENVIRONMENT HAZARD** section
+  directly below before trusting a red test run or running destructive git.
 
 ---
 
