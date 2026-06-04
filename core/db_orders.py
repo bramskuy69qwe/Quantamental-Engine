@@ -1460,6 +1460,90 @@ class OrdersMixin:
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
 
+    # ── Phase 7 reverse-query reads (orders/fills/closed_positions by key) ──
+    #
+    # Thin keyed SELECTs backing core.context_query (the /context/* full-graph
+    # assembly, spec §11.1). Kept as helpers (not raw SQL in the assembler) per
+    # the routes/services-go-through-db-helpers convention. calc_id /
+    # lifecycle_id / terminal_position_id are globally unique keys, so no
+    # account scoping is needed.
+
+    async def get_orders_by_calc_id(self, calc_id: str) -> List[Dict]:
+        """All order rows stamped with this calc_id (the matched entry + any
+        T2.9-inherited TP/SL legs), newest first. (idx_orders_calc_id)"""
+        if not calc_id:
+            return []
+        async with self._conn.execute(
+            "SELECT * FROM orders WHERE calc_id = ? "
+            "ORDER BY created_at_ms DESC, id DESC",
+            (calc_id,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+    async def get_orders_by_lifecycle_id(self, lifecycle_id: str) -> List[Dict]:
+        """All order rows for one trade lifecycle, newest first.
+        (idx_orders_lifecycle)"""
+        if not lifecycle_id:
+            return []
+        async with self._conn.execute(
+            "SELECT * FROM orders WHERE lifecycle_id = ? "
+            "ORDER BY created_at_ms DESC, id DESC",
+            (lifecycle_id,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+    async def get_fills_by_calc_id(self, calc_id: str) -> List[Dict]:
+        """All fills stamped with this calc_id, oldest first."""
+        if not calc_id:
+            return []
+        async with self._conn.execute(
+            "SELECT * FROM fills WHERE calc_id = ? "
+            "ORDER BY timestamp_ms ASC, id ASC",
+            (calc_id,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+    async def get_fills_by_lifecycle_id(self, lifecycle_id: str) -> List[Dict]:
+        """All fills for one trade lifecycle, oldest first.
+        (idx_fills_lifecycle)"""
+        if not lifecycle_id:
+            return []
+        async with self._conn.execute(
+            "SELECT * FROM fills WHERE lifecycle_id = ? "
+            "ORDER BY timestamp_ms ASC, id ASC",
+            (lifecycle_id,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+    async def get_closed_positions_by_position_id(
+        self, position_id: str,
+    ) -> List[Dict]:
+        """Closed-position row(s) for one ``terminal_position_id``, newest exit
+        first. Multiple rows = the multi-TP per-partial rows the engine
+        preserves (T2.11)."""
+        if not position_id:
+            return []
+        async with self._conn.execute(
+            "SELECT * FROM closed_positions WHERE terminal_position_id = ? "
+            "ORDER BY exit_time_ms DESC, id DESC",
+            (position_id,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+    async def get_closed_positions_by_lifecycle_id(
+        self, lifecycle_id: str,
+    ) -> List[Dict]:
+        """Closed-position row(s) for one trade lifecycle, newest exit first.
+        (idx_closed_pos_lifecycle)"""
+        if not lifecycle_id:
+            return []
+        async with self._conn.execute(
+            "SELECT * FROM closed_positions WHERE lifecycle_id = ? "
+            "ORDER BY exit_time_ms DESC, id DESC",
+            (lifecycle_id,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
     # ── order_amendments ───────────────────────────────────────────────
 
     async def insert_order_amendment(self, row: Dict[str, Any]) -> bool:

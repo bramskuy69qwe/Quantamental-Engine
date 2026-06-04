@@ -24,6 +24,7 @@ from api.routes_config      import router as config_router
 from api.routes_orders      import router as orders_router
 from api.routes_admin       import router as admin_router
 from api.routes_streams     import router as streams_router
+from api.routes_context     import router as context_router
 
 router = APIRouter()
 router.include_router(dashboard_router)
@@ -42,3 +43,4 @@ router.include_router(config_router)
 router.include_router(orders_router)
 router.include_router(admin_router)
 router.include_router(streams_router)
+router.include_router(context_router)
