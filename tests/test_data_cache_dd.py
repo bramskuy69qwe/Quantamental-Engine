@@ -152,8 +152,18 @@ class TestRollingWindowPeak:
 
     def test_old_high_excluded_from_window(self, tmp_path, monkeypatch):
         """Old all-time-high is 60 days ago; window is 30d. Peak should be
-        the max within the 30d window, not the all-time high."""
-        now = datetime(2026, 5, 15, 12, 0, tzinfo=timezone.utc)
+        the max within the 30d window, not the all-time high.
+
+        NOTE: snapshots are anchored to the REAL current time, not a fixed
+        date. _fetch_rolling_peak_equity computes the window cutoff from
+        datetime.now(utc) (data_cache.py:107), so a hardcoded `now` goes
+        stale as wall-clock advances past it (the intended in-window 20-day
+        snapshot eventually falls outside the real 30d window — the source
+        of the long-standing TestRollingWindowPeak failure). Anchoring to
+        now() keeps the relative offsets (60d out / 20d in) correct forever;
+        the 10-day margin (20d vs 30d window) makes it boundary-insensitive.
+        """
+        now = datetime.now(timezone.utc)
         snapshots = [
             # 60 days ago: all-time high at 15000 — OUTSIDE 30d window
             (now - timedelta(days=60), 15000.0),
@@ -184,8 +194,14 @@ class TestRollingWindowPeak:
         assert peak == 5000.0
 
     def test_current_equity_above_window_peak(self, tmp_path, monkeypatch):
-        """If current equity exceeds all snapshots, peak = current (DD = 0)."""
-        now = datetime(2026, 5, 15, 12, 0, tzinfo=timezone.utc)
+        """If current equity exceeds all snapshots, peak = current (DD = 0).
+
+        Anchored to real now() (same reason as test_old_high_excluded_from_window):
+        the 5-day snapshot must stay inside the now-relative 30d window for the
+        test to exercise the in-window path rather than degenerating to an
+        empty window as wall-clock advances.
+        """
+        now = datetime.now(timezone.utc)
         snapshots = [(now - timedelta(days=5), 9000.0)]
         data_dir, _ = _make_snapshots_db(tmp_path, snapshots=snapshots)
         monkeypatch.setattr("core.db_account_settings.config.DATA_DIR", data_dir)
