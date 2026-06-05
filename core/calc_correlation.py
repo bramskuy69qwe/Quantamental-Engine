@@ -474,6 +474,32 @@ class CandidateCalc:
     sl_match: bool
     timestamp: str
     age_hours: float
+    # P8.T5 (reframe of the impossible §10.4 pre-submission modal): the calc's
+    # status ('active' | 'released'). A 'released' candidate means this order
+    # may be a REPLACEMENT for a cancelled order — replaced_order carries that
+    # cancelled order's context (exchange_order_id + cancel_ts_ms) so the
+    # needs-link UI can surface "replacement for order X @ time".
+    status: str = "active"
+    replaced_order: Optional[Dict[str, Any]] = None
+
+
+def _cancelled_order_for_calc(conn, calc_id: str) -> Optional[Dict[str, Any]]:
+    """P8.T5: the most-recent CANCELLED order for *calc_id* — the order this
+    released calc's replacement would stand in for. Best-effort: returns
+    ``{exchange_order_id, cancel_ts_ms}`` or None (older DBs may lack the
+    cancel_ts_ms column / have no cancelled order)."""
+    try:
+        r = conn.execute(
+            "SELECT exchange_order_id, cancel_ts_ms FROM orders "
+            "WHERE calc_id = ? AND status = 'canceled' "
+            "ORDER BY COALESCE(cancel_ts_ms, 0) DESC LIMIT 1",
+            (calc_id,),
+        ).fetchone()
+    except Exception:
+        return None
+    if not r:
+        return None
+    return {"exchange_order_id": r[0], "cancel_ts_ms": r[1]}
 
 
 def find_candidate_calcs(
@@ -517,37 +543,37 @@ def find_candidate_calcs(
     # manual-link UI intentionally shows near-misses.
     side_canonical = _norm_side(side)
 
+    # P8.T5: candidates are LIVE calcs only — status IN ('active','released'),
+    # matching the strict matcher's own candidate rule (spec §4.3). This drops
+    # expired/cancelled/superseded leakage AND fixes a latent bug: the old
+    # "exclude any calc_id present in orders" guard wrongly EXCLUDED released
+    # calcs (whose CANCELLED order still carries calc_id), so a replacement
+    # order's near-match to a released calc never surfaced in the manual-link
+    # queue. A linked (matched) calc is excluded by the status filter instead
+    # (linking flips active|released -> matched, so a live candidate can't be
+    # linked to a working order).
     try:
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
+    except Exception:
+        return []
+    try:
         rows = conn.execute(
-            "SELECT calc_id, side, effective_entry, tp_price, sl_price, timestamp "
+            "SELECT calc_id, side, effective_entry, tp_price, sl_price, timestamp, status "
             "FROM pre_trade_log "
             "WHERE ticker = ? AND timestamp >= ? "
-            "AND calc_id IS NOT NULL "
+            "AND calc_id IS NOT NULL AND status IN ('active', 'released') "
             "ORDER BY timestamp DESC",
             (ticker, cutoff),
         ).fetchall()
-        conn.close()
     except Exception:
+        conn.close()
         return []
-
-    # Filter out already-linked calc_ids
-    linked: set = set()
-    try:
-        conn = sqlite3.connect(db_path)
-        for r in conn.execute(
-            "SELECT DISTINCT calc_id FROM orders WHERE calc_id IS NOT NULL"
-        ).fetchall():
-            linked.add(r[0])
-        conn.close()
-    except Exception:
-        pass
 
     candidates: List[CandidateCalc] = []
     for row in rows:
         cid = row["calc_id"]
-        if not cid or cid in linked:
+        if not cid:
             continue
         if _norm_side(row["side"]) != side_canonical:
             continue  # side mismatch — not a candidate
@@ -575,14 +601,20 @@ def find_candidate_calcs(
         except Exception:
             age_h = 0
 
+        # P8.T5: surface the calc's status; a 'released' candidate is a
+        # replacement scenario — look up the cancelled order it replaces.
+        cstatus = row["status"] or "active"
+        replaced = _cancelled_order_for_calc(conn, cid) if cstatus == "released" else None
         candidates.append(CandidateCalc(
             calc_id=cid, ticker=ticker, side=side,
             effective_entry=eff, entry_drift_pct=round(e_drift, 6), entry_match=e_match,
             tp_price=tp, tp_drift_pct=round(t_drift, 6), tp_match=t_match,
             sl_price=sl, sl_drift_pct=round(s_drift, 6), sl_match=s_match,
             timestamp=row["timestamp"], age_hours=round(age_h, 1),
+            status=cstatus, replaced_order=replaced,
         ))
 
+    conn.close()
     candidates.sort(key=lambda c: (
         -(int(c.entry_match) + int(c.tp_match) + int(c.sl_match)),
         c.entry_drift_pct + c.tp_drift_pct + c.sl_drift_pct,

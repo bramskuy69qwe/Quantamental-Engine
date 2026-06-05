@@ -28,7 +28,10 @@ def _make_env(tmp_path, account_id=1, ptl_rows=None, orders_in_legacy=None):
         "timestamp TEXT, ticker TEXT, average REAL DEFAULT 0, "
         "side TEXT DEFAULT '', account_id INTEGER DEFAULT 1, "
         "effective_entry REAL DEFAULT 0, tp_price REAL DEFAULT 0, "
-        "sl_price REAL DEFAULT 0)"
+        # P8.T5: find_candidate_calcs now filters status IN ('active','released')
+        # (the per-account .sql migrations don't add `status`; production adds it
+        # via the Python ALTER in database.py). Default 'active' = a live calc.
+        "sl_price REAL DEFAULT 0, status TEXT DEFAULT 'active')"
     )
     # Also need orders table for linked-check
     conn.execute(
@@ -59,11 +62,12 @@ def _make_env(tmp_path, account_id=1, ptl_rows=None, orders_in_legacy=None):
         for r in ptl_rows:
             conn.execute(
                 "INSERT INTO pre_trade_log "
-                "(account_id, timestamp, ticker, side, effective_entry, tp_price, sl_price, average, calc_id) "
-                "VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "(account_id, timestamp, ticker, side, effective_entry, tp_price, sl_price, average, calc_id, status) "
+                "VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (r["timestamp"], r["ticker"], r["side"],
                  r["effective_entry"], r["tp_price"], r["sl_price"],
-                 r.get("average", r["effective_entry"]), r["calc_id"]),
+                 r.get("average", r["effective_entry"]), r["calc_id"],
+                 r.get("status", "active")),
             )
         conn.commit()
         conn.close()
@@ -139,14 +143,19 @@ class TestFindCandidates:
         assert len(cands) == 0
 
     def test_already_linked_excluded(self, tmp_path, monkeypatch):
+        # P8.T5: an already-linked calc is status='matched' (linking flips
+        # active|released -> matched). The candidate finder now excludes it via
+        # the status filter (status IN ('active','released')) — which replaced
+        # the old, buggy "exclude any calc_id present in orders" guard (that
+        # guard wrongly dropped RELEASED calcs whose cancelled order kept calc_id).
         data_dir, db_path = _make_env(tmp_path, ptl_rows=[{
             "timestamp": RECENT, "ticker": "BTCUSDT", "side": "BUY",
             "effective_entry": 50000, "tp_price": 55000, "sl_price": 48000,
-            "calc_id": "c-linked",
+            "calc_id": "c-linked", "status": "matched",
         }])
         monkeypatch.setattr("core.db_account_settings.config.DATA_DIR", data_dir)
 
-        # Mark as already linked
+        # The linked working order (calc is 'matched' — not a re-link candidate).
         conn = sqlite3.connect(db_path)
         conn.execute(
             "INSERT INTO orders (account_id, exchange_order_id, symbol, side, calc_id) "
@@ -158,7 +167,7 @@ class TestFindCandidates:
         order = {"account_id": 1, "symbol": "BTCUSDT", "side": "BUY",
                  "price": 50000, "tp_trigger_price": 55000, "sl_trigger_price": 48000}
         cands = find_candidate_calcs(order, db_path=db_path)
-        assert len(cands) == 0
+        assert len(cands) == 0  # 'matched' calc excluded by the status filter
 
 
 # ── Confirm link ─────────────────────────────────────────────────────────────

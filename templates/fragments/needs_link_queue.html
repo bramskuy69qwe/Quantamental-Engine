@@ -33,6 +33,18 @@
         <div style="flex:1.4;min-width:0;">
           <div class="mono" title="{{ c.calc_id }}">{{ c.calc_id[:14] }}…</div>
           <div style="color:var(--muted);">{{ c.age_hours }}h ago</div>
+          {# P8.T5 (reframe of the impossible §10.4 pre-submission modal): a
+             RELEASED candidate means this order may be a replacement for a
+             cancelled order — surface that context so the manual link IS the
+             replacement decision. #}
+          {% if c.status == 'released' %}
+          <div style="margin-top:2px;display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+            <span class="badge badge-blue" style="font-size:.52rem;padding:1px 5px;">REPLACEMENT</span>
+            {% if c.replaced_order %}
+            <span style="color:var(--muted);font-size:.52rem;">replaces {{ c.replaced_order.exchange_order_id or 'cancelled order' }}{% if c.replaced_order.cancel_ts_ms %} · {{ ms_to_local(c.replaced_order.cancel_ts_ms) }}{% endif %}</span>
+            {% endif %}
+          </div>
+          {% endif %}
         </div>
         <div style="flex:1;" class="{{ 'text-green' if c.entry_match else 'text-red' }}">
           Entry {{ '✓' if c.entry_match else '✗' }} {{ '%.2f' % (c.entry_drift_pct * 100) }}%
@@ -48,8 +60,8 @@
                 hx-vals='{"calc_id": "{{ c.calc_id }}"}'
                 hx-target="#nl-alert-{{ o.id }}"
                 hx-swap="innerHTML"
-                hx-confirm="Link order #{{ o.id }} to calc {{ c.calc_id[:8] }}?">
-          Link
+                hx-confirm="Link order #{{ o.id }} to calc {{ c.calc_id[:8] }}?{% if c.status == 'released' %} (replacement for a cancelled order){% endif %}">
+          {{ 'Link (replace)' if c.status == 'released' else 'Link' }}
         </button>
       </div>
       {% endfor %}
