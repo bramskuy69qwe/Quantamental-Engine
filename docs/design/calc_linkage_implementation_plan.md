@@ -642,7 +642,7 @@ window config.
 | 8.3 | Active calcs pane: live countdown timers using frozen `window_seconds + created_ts`; cancel button per calc | `templates/partials/calcs_pane.html`, `static/js/calc_countdown.js` |
 | 8.4 | Calculator tab: window dropdown (1/5/15 min) writing to `accounts.config_json.window_seconds`; override-aware size/TP/SL inputs (planned + overridden) | `templates/calculator.html` |
 | 8.5 | Multi-TP UI: allow tp_levels array entry in calculator | same |
-| 8.6 | Replacement modal (Q42): triggered at order-placement time when released calc near-matches; pre-submission decision | `static/js/replacement_modal.js` |
+| 8.6 | **REFRAMED + SHIPPED (task 297)**: the spec §10.4 *pre-submission* replacement modal is architecturally IMPOSSIBLE — the engine is observe-only (no `place_order` hook; orders are seen only post-arrival via WS — Lesson 4 / Phase-1 T225). A 5-reader understand phase re-confirmed 0% feasibility. The post-arrival replacement decision already works: a full 6/6 re-match of a replacement order to a RELEASED calc auto-relinks; a near match routes to the needs-link queue. T5 built the achievable equivalent — surface the "this order is a replacement for a cancelled order" context there: `find_candidate_calcs` now filters `status IN ('active','released')` (byte-aligned with the strict matcher; also FIXED a latent bug — the old "exclude any calc_id present in orders" guard wrongly dropped RELEASED calcs, whose cancelled order still carries calc_id, so they never surfaced as manual-link candidates), `CandidateCalc` carries `status` + the replaced cancelled order (`_cancelled_order_for_calc`), and `needs_link_queue.html` shows a REPLACEMENT badge + "replaces order X @ time" + a "Link (replace)" action. **NO `static/js/replacement_modal.js`** — no pre-submission window exists in an observe-only engine. | `core/calc_correlation.py`, `templates/fragments/needs_link_queue.html` |
 | 8.7 | Manual-close reason modal (Q33): triggered on opposite-side order detection without calc match; dropdown + optional note | `static/js/manual_close_modal.js` |
 | 8.8 | Notification system: toast banners + persistent badge counters; subscriptions from `config_json.notification_subscriptions` | `static/js/notifications.js`, `templates/partials/toast.html` |
 | 8.9 | Settings page for `accounts.config_json` (window, clock-skew, deviation thresholds, notification subscriptions) | `templates/settings.html` |
@@ -985,7 +985,7 @@ T10 needs T1-T9 done.
 | P8.T2 | Open positions pane | Deviation badges + uPnL refresh + MFE/MAE |
 | P8.T3 | Active calcs pane | Countdown timers JS using frozen ts |
 | P8.T4 | Calculator tab refresh | Window dropdown + planned/overridden inputs + multi-TP UI |
-| P8.T5 | Replacement modal | Pre-submission near-match prompt + flow integration |
+| P8.T5 | **REFRAMED + SHIPPED (task 297)** — replacement decision | The spec's *pre-submission* modal is IMPOSSIBLE (observe-only engine). Built the post-arrival equivalent: the released-calc "replacement" context in the needs-link queue (candidate `status` filter — matcher-aligned + fixes a released-exclusion bug — + REPLACEMENT badge + cancelled-order annotation + "Link (replace)"). No `replacement_modal.js`. See §8 detailed row 8.6. |
 | P8.T6 | Manual-close reason modal | Opposite-side detection trigger + dropdown + note |
 | P8.T7 | Notification system | Toast + badge counters from `config_json` subscriptions |
 | P8.T8 | Settings page for `accounts.config_json` | All knobs editable; validation |
