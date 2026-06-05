@@ -163,6 +163,35 @@
     </div>
   </div>
 
+  <!-- ── P8.T6 (spec §10.5): manual-close reason modal ──────────────────── -->
+  {# The pre-submission modal is impossible (observe-only); a manual close is
+     detected post-WS (classified MANUAL_OTHER). This refines the reason
+     (MANUAL_* subtype) + adds a note. Opened from a manual-close badge in the
+     closes table; persists via PUT /history/close_reason/{id}. #}
+  <div id="close-reason-modal"
+       style="display:none;position:fixed;inset:0;z-index:9998;align-items:center;justify-content:center;background:rgba(7,8,15,.85);backdrop-filter:blur(6px);">
+    <div class="card" style="width:100%;max-width:380px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <span class="sec-lbl" style="margin-bottom:0;">Manual close — reason</span>
+        <button type="button" onclick="closeCloseReasonModal()" class="btn btn-ghost btn-sm">✕</button>
+      </div>
+      <label class="lbl" style="display:block;margin-bottom:3px;">Reason</label>
+      <select id="cr-modal-reason" style="margin-bottom:8px;">
+        <option value="MANUAL_INTERVENTION">Intervention</option>
+        <option value="MANUAL_DISCIPLINE_BREAK">Discipline break</option>
+        <option value="MANUAL_NEW_OPPORTUNITY">New opportunity</option>
+        <option value="MANUAL_OTHER">Other</option>
+      </select>
+      <label class="lbl" style="display:block;margin-bottom:3px;">Note (optional)</label>
+      <textarea id="cr-modal-note" rows="3" placeholder="rationale…" style="margin-bottom:8px;"></textarea>
+      <div style="display:flex;gap:6px;">
+        <button type="button" class="btn btn-primary btn-md" style="flex:1;" onclick="submitCloseReason()">Save</button>
+        <button type="button" class="btn btn-secondary btn-md" onclick="closeCloseReasonModal()">Cancel</button>
+      </div>
+      <div id="cr-modal-result" style="margin-top:6px;"></div>
+    </div>
+  </div>
+
 </div>
 
 <script>
@@ -371,5 +400,37 @@ document.body.addEventListener('htmx:responseError',function(evt){
   document.getElementById('date-to-display').textContent=_isoDate(now);
   highlightPreset('30d');initCalendar();
 })();
+
+// ── P8.T6: manual-close reason modal ──────────────────────────────────────
+var _MANUAL_REASONS=['MANUAL_INTERVENTION','MANUAL_DISCIPLINE_BREAK','MANUAL_NEW_OPPORTUNITY','MANUAL_OTHER'];
+var _crCellId=null;
+window.openCloseReasonModal=function(el){
+  _crCellId=el.getAttribute('data-cr-id');
+  var reason=el.getAttribute('data-cr-reason')||'MANUAL_OTHER';
+  // legacy 'manual'/'limit_close' (or anything non-MANUAL_*) -> default OTHER
+  document.getElementById('cr-modal-reason').value=_MANUAL_REASONS.indexOf(reason)!==-1?reason:'MANUAL_OTHER';
+  document.getElementById('cr-modal-note').value=el.getAttribute('data-cr-note')||'';
+  document.getElementById('cr-modal-result').innerHTML='';
+  document.getElementById('close-reason-modal').style.display='flex';
+};
+window.closeCloseReasonModal=function(){
+  document.getElementById('close-reason-modal').style.display='none';_crCellId=null;
+};
+window.submitCloseReason=function(){
+  var id=_crCellId;if(!id)return;
+  var fd=new FormData();
+  fd.append('exit_reason',document.getElementById('cr-modal-reason').value);
+  fd.append('close_note',document.getElementById('cr-modal-note').value);
+  fetch('/history/close_reason/'+id,{method:'PUT',body:fd}).then(function(r){
+    if(!r.ok){return r.text().then(function(t){
+      document.getElementById('cr-modal-result').innerHTML='<div class="alert alert-error">'+(t||'Save failed')+'</div>';
+      throw new Error('cr');});}
+    return r.text();
+  }).then(function(html){
+    var cell=document.getElementById('cr-cell-'+id);
+    if(cell)cell.innerHTML=html;
+    closeCloseReasonModal();
+  }).catch(function(){});
+};
 </script>
 {% endblock %}

@@ -306,9 +306,26 @@ class OrdersMixin:
         # them deterministically; carry forward an existing value when a
         # caller doesn't (caller-wins).
         preserved_deltas = {c: row.get(c) for c in _CLOSED_POS_DELTA_COLS}
+        # P8.T6 (T176-class): the operator's manual-close reason refinement +
+        # close_note are operator-owned, set AFTER close via the close-reason
+        # endpoint — never supplied by the close-row builder. An INSERT OR
+        # REPLACE rebuild (fill redelivery / recovery script) would otherwise
+        # wipe them: close_note resets to NULL (omitted-then-default) and
+        # exit_reason recomputes back to the generic MANUAL_OTHER. Preserve
+        # both. close_note: caller never supplies it, so carry forward any
+        # existing value. exit_reason: ONLY override the caller when the
+        # existing row holds an operator-refined MANUAL_* subtype and the
+        # caller is recomputing the generic MANUAL_OTHER (a manual close always
+        # recomputes to MANUAL_OTHER) — leaves every other recompute (TP/SL/Liq,
+        # the future *_AMENDED reclassification) untouched.
+        preserved_close_note = row.get("close_note")
+        preserved_exit_reason = row.get("exit_reason", "")
+        _REFINED_MANUAL = ("MANUAL_INTERVENTION", "MANUAL_DISCIPLINE_BREAK",
+                           "MANUAL_NEW_OPPORTUNITY")
         try:
             async with self._conn.execute(
                 "SELECT mfe, mae, backfill_completed, lifecycle_id, "
+                "close_note, exit_reason, "
                 + ", ".join(_CLOSED_POS_DELTA_COLS)
                 + " FROM closed_positions "
                 "WHERE account_id = ? AND terminal_position_id = ? "
@@ -332,6 +349,13 @@ class OrdersMixin:
                     for c in _CLOSED_POS_DELTA_COLS:
                         if preserved_deltas[c] is None and existing[c] is not None:
                             preserved_deltas[c] = existing[c]
+                # P8.T6: carry forward operator close_note + refined exit_reason.
+                if existing:
+                    if preserved_close_note is None and existing["close_note"] is not None:
+                        preserved_close_note = existing["close_note"]
+                    if (existing["exit_reason"] in _REFINED_MANUAL
+                            and preserved_exit_reason == "MANUAL_OTHER"):
+                        preserved_exit_reason = existing["exit_reason"]
         except Exception:
             pass  # if the read fails, fall through to caller-supplied values
 
@@ -347,7 +371,7 @@ class OrdersMixin:
                 entry_px_delta_pct, size_delta_pct, exit_vs_target_pct,
                 realized_r, planned_r, hold_time_actual_ms,
                 cumulative_amendment_count, tp_drift_pct, sl_drift_pct,
-                liquidation_px
+                liquidation_px, close_note
             ) VALUES (
                 :account_id, :exchange_position_id, :terminal_position_id,
                 :symbol, :direction, :quantity, :entry_price, :exit_price,
@@ -359,7 +383,7 @@ class OrdersMixin:
                 :entry_px_delta_pct, :size_delta_pct, :exit_vs_target_pct,
                 :realized_r, :planned_r, :hold_time_actual_ms,
                 :cumulative_amendment_count, :tp_drift_pct, :sl_drift_pct,
-                :liquidation_px
+                :liquidation_px, :close_note
             )
         """
         try:
@@ -382,7 +406,7 @@ class OrdersMixin:
                 "mae":                  preserved_mae,
                 "backfill_completed":   preserved_backfill,
                 "hold_time_ms":         row.get("hold_time_ms", 0),
-                "exit_reason":          row.get("exit_reason", ""),
+                "exit_reason":          preserved_exit_reason,
                 "model_name":           row.get("model_name", ""),
                 "notes":                row.get("notes", ""),
                 "shortfall_entry":      row.get("shortfall_entry", 0),
@@ -397,6 +421,7 @@ class OrdersMixin:
                 # offline rebuild/backfill use synthetic tpids (no real-row REPLACE),
                 # so — like funding_fees — it needs no _CLOSED_POS_DELTA_COLS preserve.
                 "liquidation_px":       row.get("liquidation_px"),
+                "close_note":           preserved_close_note,
                 **preserved_deltas,
             })
             if commit:
@@ -914,6 +939,28 @@ class OrdersMixin:
         ) as cur:
             row = await cur.fetchone()
             return dict(row) if row else None
+
+    async def update_close_reason(
+        self, account_id: int, closed_pos_id: int,
+        exit_reason: str, close_note: str = "",
+    ) -> bool:
+        """P8.T6 (spec §10.5): operator sets the manual-close reason (a MANUAL_*
+        exit_reason) + an optional free-text close_note on a closed_positions
+        row. Account-scoped by PK. Returns True if a row was updated. The
+        endpoint validates exit_reason ∈ the MANUAL_* subtypes first; a blank
+        close_note is stored as NULL. The value survives a later close-row
+        REPLACE rebuild via the preserve logic in insert_closed_position."""
+        try:
+            cur = await self._conn.execute(
+                "UPDATE closed_positions SET exit_reason = ?, close_note = ? "
+                "WHERE id = ? AND account_id = ?",
+                (exit_reason, (close_note or None), closed_pos_id, account_id),
+            )
+            await self._conn.commit()
+            return cur.rowcount > 0
+        except Exception:
+            log.exception("update_close_reason failed (id=%s)", closed_pos_id)
+            return False
 
     async def get_closed_positions_in_range(
         self, account_id: int, from_ms: int, to_ms: int,

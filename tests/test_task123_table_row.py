@@ -181,8 +181,8 @@ class TestPositionHistoryMigration:
         ("TP_AMENDED", "badge-green", "TP"),
         ("SL_PLANNED", "badge-red", "SL"),
         ("SL_AMENDED", "badge-red", "SL"),
-        ("MANUAL_OTHER", "badge-gray", "Manual"),
-        ("MANUAL_DISCIPLINE_BREAK", "badge-gray", "Manual"),
+        # P8.T6: MANUAL_* / legacy 'manual' now render a CLICKABLE reason badge
+        # (see test_manual_exit_reason_is_clickable_reason_badge below).
         ("LIQUIDATION", "badge-red", "Liq"),
         ("ADL", "badge-red", "Liq"),
         ("EXPIRED", "badge-gray", "Exp"),
@@ -190,11 +190,29 @@ class TestPositionHistoryMigration:
         # Legacy fallbacks (rows the P0.T5 backfill didn't reach).
         ("tp_hit", "badge-green", "TP"),
         ("sl_hit", "badge-red", "SL"),
-        ("manual", "badge-gray", "Manual"),
     ])
     def test_exit_reason_badge_colorized(self, exit_reason, badge_class, label):
         out = self._render_one(exit_reason)
         assert f'class="badge {badge_class}">{label}</span>' in out
+
+    @pytest.mark.parametrize("exit_reason,label", [
+        ("MANUAL_OTHER", "Manual"),
+        ("MANUAL_INTERVENTION", "Intervention"),
+        ("MANUAL_DISCIPLINE_BREAK", "Discipline"),
+        ("MANUAL_NEW_OPPORTUNITY", "New Opp"),
+        ("manual", "Manual"),          # legacy → label falls back to Manual
+        ("limit_close", "Manual"),     # legacy
+    ])
+    def test_manual_exit_reason_is_clickable_reason_badge(self, exit_reason, label):
+        # P8.T6: a manual close renders a clickable badge (opens the reason
+        # modal) carrying the MANUAL_* subtype label, inside a #cr-cell-{id}
+        # wrapper so the PUT response can swap it.
+        out = self._render_one(exit_reason)
+        assert 'id="cr-cell-1"' in out
+        assert "badge-gray" in out
+        assert "openCloseReasonModal(this)" in out
+        assert f'data-cr-reason="{exit_reason}"' in out
+        assert f">{label}</span>" in out
 
     def test_unknown_exit_reason_falls_through_to_plain_badge(self):
         out = self._render_one("SOMETHING_NEW")

@@ -2,6 +2,7 @@
 {% from "fragments/history/_pagination.html" import pagination %}
 {% from "primitives/table_row.html" import tr_open, tr_close %}
 {% from "primitives/empty_state.html" import empty_state %}
+{% from "fragments/history/close_reason_badge.html" import manual_close_badge %}
 {% set ep = "/fragments/history/closed_positions" %}
 {% set tid = "closed-positions-table" %}
 {% set df = date_from | replace(":", "%3A") | replace("+", "%2B") %}
@@ -76,7 +77,8 @@
             {% set er = r.exit_reason or "" %}
             {% if er.startswith('TP') or er == 'tp_hit' %}<span class="badge badge-green">TP</span>
             {% elif er.startswith('SL') or er in ['sl_hit', 'trailing_stop'] %}<span class="badge badge-red">SL</span>
-            {% elif er.startswith('MANUAL') or er in ['manual', 'limit_close'] %}<span class="badge badge-gray">Manual</span>
+            {# P8.T6: manual close — clickable badge opens the reason modal. #}
+            {% elif er.startswith('MANUAL') or er in ['manual', 'limit_close'] %}<span id="cr-cell-{{ r.id }}">{{ manual_close_badge(er, r.close_note, r.id) }}</span>
             {% elif er in ['LIQUIDATION', 'ADL', 'liquidation'] %}<span class="badge badge-red">Liq</span>
             {% elif er == 'EXPIRED' %}<span class="badge badge-gray">Exp</span>
             {% elif er == 'MIXED' %}<span class="badge badge-yellow">Mixed</span>

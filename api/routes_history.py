@@ -262,3 +262,35 @@ async def update_position_note(trade_key: str = Form(""), notes: str = Form(""))
         f'onclick="editNote(this,\'{safe_key}\',\'position\')" '
         f'title="Click to edit">{safe_notes or "+ Add note"}</span>'
     )
+
+
+# P8.T6 (spec §10.5): manual-close reason. The pre-submission modal is
+# impossible (observe-only), but a manual close IS detectable post-WS — the
+# engine classifies it MANUAL_OTHER (order_manager._determine_exit_reason).
+# This lets the operator refine the reason (MANUAL_* subtype) + add a note on
+# a closed position. Returns the re-rendered badge cell for the table swap.
+_MANUAL_EXIT_REASONS = frozenset({
+    "MANUAL_INTERVENTION", "MANUAL_DISCIPLINE_BREAK",
+    "MANUAL_NEW_OPPORTUNITY", "MANUAL_OTHER",
+})
+
+
+@router.put("/history/close_reason/{closed_pos_id}", response_class=HTMLResponse)
+async def update_close_reason(
+    closed_pos_id: int, exit_reason: str = Form(...), close_note: str = Form(""),
+):
+    if exit_reason not in _MANUAL_EXIT_REASONS:
+        return HTMLResponse(
+            '<span class="text-red">invalid reason</span>', status_code=400,
+        )
+    ok = await db.update_close_reason(
+        app_state.active_account_id, closed_pos_id, exit_reason, close_note,
+    )
+    if not ok:
+        return HTMLResponse(
+            '<span class="text-red">close not found</span>', status_code=404,
+        )
+    html = templates.env.get_template(
+        "fragments/history/close_reason_cell.html"
+    ).render(exit_reason=exit_reason, close_note=close_note, row_id=closed_pos_id)
+    return HTMLResponse(html)
