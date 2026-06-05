@@ -36,7 +36,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
 log = logging.getLogger("account_config")
@@ -59,6 +59,14 @@ DEFAULT_SNAPSHOT_WINS_DRIFT          = False
 # engine never POSTs outbound unless an operator sets a webhook_url AND flips the
 # config_json.feature_flags.webhook_enabled flag (no accidental outbound traffic).
 DEFAULT_WEBHOOK_ENABLED              = False
+# P8.T7 (spec §12.5 / §3.3): in-app notification subscriptions. Which event
+# types raise a toast + bell badge. Default ON (subscribed). near_replacement_
+# match has no event producer yet (forward-scaffolding for the settings UI).
+NOTIFICATION_TYPES = (
+    "calc_expired", "position_liquidated", "position_size_drift",
+    "duplicate_order_detected", "near_replacement_match",
+)
+DEFAULT_NOTIFICATION_SUBSCRIPTIONS = {t: True for t in NOTIFICATION_TYPES}
 
 
 @dataclass(frozen=True)
@@ -89,6 +97,10 @@ class AccountConfig:
     # The dispatcher POSTs only when BOTH are set (enabled AND a non-empty URL).
     webhook_url: Optional[str]          = None
     webhook_enabled: bool               = DEFAULT_WEBHOOK_ENABLED
+    # P8.T7: {notification_type: subscribed_bool} for all NOTIFICATION_TYPES
+    # (defaults filled). default_factory because dict is mutable (frozen DC).
+    notification_subscriptions: Dict[str, bool] = field(
+        default_factory=lambda: dict(DEFAULT_NOTIFICATION_SUBSCRIPTIONS))
 
 
 def _parse_config_json(blob: Optional[str]) -> AccountConfig:
@@ -132,6 +144,16 @@ def _parse_config_json(blob: Optional[str]) -> AccountConfig:
     _we = flags.get("webhook_enabled", DEFAULT_WEBHOOK_ENABLED)
     webhook_enabled = _we if isinstance(_we, bool) else DEFAULT_WEBHOOK_ENABLED
 
+    # P8.T7: notification_subscriptions (top-level dict). Each known type is a
+    # STRICT bool (a non-bool / missing key defaults to subscribed=True).
+    _subs = parsed.get("notification_subscriptions")
+    if not isinstance(_subs, dict):
+        _subs = {}
+    notification_subscriptions = {
+        t: (_subs[t] if isinstance(_subs.get(t), bool) else True)
+        for t in NOTIFICATION_TYPES
+    }
+
     def _int(key: str, default: int) -> int:
         try:
             return int(parsed.get(key, default))
@@ -155,6 +177,7 @@ def _parse_config_json(blob: Optional[str]) -> AccountConfig:
         snapshot_wins_drift          = snapshot_wins_drift,
         webhook_url                  = webhook_url,
         webhook_enabled              = webhook_enabled,
+        notification_subscriptions   = notification_subscriptions,
     )
 
 

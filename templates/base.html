@@ -565,6 +565,17 @@
       <span style="color:var(--sub);">connecting...</span>
     </div>
 
+    <!-- P8.T7: notification bell + unseen-count badge -->
+    <a href="javascript:void(0)" title="Notifications" onclick="ackNotifications()"
+       style="display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;
+              border-radius:6px;color:var(--sub);text-decoration:none;font-size:1rem;position:relative;">
+      &#128276;
+      <span id="notif-count"
+            style="display:none;position:absolute;top:1px;right:1px;background:var(--red);color:#fff;
+                   font-size:.5rem;font-weight:700;min-width:13px;height:13px;border-radius:7px;
+                   align-items:center;justify-content:center;padding:0 2px;line-height:1;"></span>
+    </a>
+
     <!-- Config gear button -->
     <a href="/config" title="Configuration"
        style="display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;
@@ -1199,6 +1210,50 @@ if ('serviceWorker' in navigator) {
       }catch(e){}
     });
   },1000);
+})();
+</script>
+
+<!-- ── P8.T7: in-app notifications (global toast + bell badge) ─────────────── -->
+<script>
+(function(){
+  if (window._notifPoll) return;          // survive boosted-nav re-render
+  window._notifPoll = true;
+  var lastId = 0, unseen = 0;
+  function paintBadge(){
+    var b = document.getElementById('notif-count');
+    if (!b) return;
+    if (unseen > 0){ b.textContent = unseen > 99 ? '99+' : String(unseen); b.style.display = 'flex'; }
+    else { b.style.display = 'none'; }
+  }
+  window.ackNotifications = function(){ unseen = 0; paintBadge(); };
+  // Boosted nav swaps <body>, destroying the badge node; the surviving poll
+  // interval only repaints on a new notif/ack, so the unseen count would blank
+  // out until the next event. Repaint on every settle. Listener on `document`
+  // (not body — body is replaced by the swap) so it outlives the nav, and
+  // paintBadge re-queries getElementById so it finds the fresh node. (Audit P8.T7.)
+  document.addEventListener('htmx:afterSettle', paintBadge);
+  function poll(since){
+    fetch('/notifications/poll?since=' + since)
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(d){
+        if (!d) return;
+        (d.notifications || []).forEach(function(n){
+          if (typeof showToast === 'function') {
+            showToast(n.message, n.type === 'position_liquidated' ? 'error' : 'info');
+          }
+          unseen++;
+        });
+        if (d.notifications && d.notifications.length) paintBadge();
+        if (typeof d.latest_id === 'number') lastId = d.latest_id;
+      })
+      .catch(function(){});
+  }
+  // Init: establish the cursor (no backlog replay), THEN poll every 10s.
+  fetch('/notifications/poll?since=-1')
+    .then(function(r){ return r.ok ? r.json() : null; })
+    .then(function(d){ if (d && typeof d.latest_id === 'number') lastId = d.latest_id; })
+    .catch(function(){})
+    .finally(function(){ setInterval(function(){ poll(lastId); }, 10000); });
 })();
 </script>
 

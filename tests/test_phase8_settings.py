@@ -31,7 +31,15 @@ import pytest_asyncio
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from core.account_config import read_account_config_async, AccountConfig  # noqa: E402
+from core.account_config import (  # noqa: E402
+    read_account_config_async, AccountConfig, NOTIFICATION_TYPES,
+)
+
+# P8.T7 added a Notifications section (5 checkboxes, default ON) to this same
+# fragment. These render tests count " checked" to pin the webhook/snapshot
+# if/endif logic, so they switch the notif checkboxes OFF to stay isolated;
+# the notif prefill itself is covered in tests/test_phase8_notifications.py.
+_NOTIF_OFF = {t: False for t in NOTIFICATION_TYPES}
 
 
 @pytest_asyncio.fixture
@@ -158,7 +166,8 @@ class TestFragmentRender:
     def test_prefills_values_and_flags(self):
         cfg = AccountConfig(window_seconds=900, clock_skew_tolerance_sec=20,
                             webhook_url="https://x", webhook_enabled=True,
-                            snapshot_wins_drift=False)
+                            snapshot_wins_drift=False,
+                            notification_subscriptions=dict(_NOTIF_OFF))
         html = _render_cfg(cfg)
         assert 'name="window_seconds"' in html and 'value="900"' in html
         assert 'name="webhook_url"' in html and 'value="https://x"' in html
@@ -167,9 +176,12 @@ class TestFragmentRender:
         assert html.count(" checked") == 1            # only webhook_enabled (True)
 
     def test_checkbox_states(self):
-        # both False -> 0 checked; both True -> 2 checked (pins the if/endif logic)
-        assert _render_cfg(AccountConfig(webhook_enabled=False, snapshot_wins_drift=False)).count(" checked") == 0
-        assert _render_cfg(AccountConfig(webhook_enabled=True, snapshot_wins_drift=True)).count(" checked") == 2
+        # notif checkboxes forced OFF -> isolates webhook/snapshot if/endif logic:
+        # both False -> 0 checked; both True -> 2 checked.
+        assert _render_cfg(AccountConfig(webhook_enabled=False, snapshot_wins_drift=False,
+                                         notification_subscriptions=dict(_NOTIF_OFF))).count(" checked") == 0
+        assert _render_cfg(AccountConfig(webhook_enabled=True, snapshot_wins_drift=True,
+                                         notification_subscriptions=dict(_NOTIF_OFF))).count(" checked") == 2
 
     def test_template_compiles(self):
         jinja2.Environment(loader=jinja2.FileSystemLoader("templates")).get_template("config.html")

@@ -1,7 +1,7 @@
 {# P8.T8 (plan §8.9 / spec §3.3): per-account config_json editor. Pre-filled
    from the resolved AccountConfig (defaults fill anything absent). Saves via
    POST /config/account_config (reuses the T4a write_account_config writer).
-   notification_subscriptions deferred to P8.T7. #}
+   Notifications section (notification_subscriptions) wired in P8.T7. #}
 <div class="card card-p8" style="max-width:600px;">
   <span class="sec-lbl" style="margin-bottom:2px;">Calc-Linkage Config
     <span style="font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0;">— accounts.config_json (active account)</span>
@@ -60,6 +60,24 @@
       <input type="checkbox" name="snapshot_wins_drift" style="width:auto;height:auto;accent-color:var(--blue);" {% if cfg.snapshot_wins_drift %}checked{% endif %} />
       Snapshot-wins-drift (invert WS-fills-win; emit position:size_drift)
     </label>
+
+    <hr class="div" />
+    <span class="lbl">Notifications
+      <span style="font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0;">— toast + bell badge (P8.T7)</span>
+    </span>
+    {% set _notif = [
+      ("calc_expired", "Calc expired"),
+      ("position_liquidated", "Position liquidated"),
+      ("position_size_drift", "Position size drift"),
+      ("duplicate_order_detected", "Duplicate order detected"),
+      ("near_replacement_match", "Near replacement match"),
+    ] %}
+    {% for t, lbl in _notif %}
+    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:.72rem;color:var(--sub);">
+      <input type="checkbox" name="notif_{{ t }}" style="width:auto;height:auto;accent-color:var(--blue);" {% if cfg.notification_subscriptions.get(t) %}checked{% endif %} />
+      {{ lbl }}
+    </label>
+    {% endfor %}
 
     <div style="display:flex;gap:8px;align-items:center;margin-top:4px;">
       <button type="submit" class="btn btn-primary btn-md">Save</button>

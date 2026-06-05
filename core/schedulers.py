@@ -407,6 +407,15 @@ async def _startup_fetch():
         except Exception:
             log.error("webhook dispatcher startup failed", exc_info=True)
 
+        # P8.T7 (spec §12.5): in-app notification center — an event_bus catch-all
+        # subscriber that buffers the notifiable event subset for the
+        # /notifications/poll endpoint. Subscribe before run() so none are missed.
+        try:
+            from core.notifications import start_notification_center
+            start_notification_center(event_bus)
+        except Exception:
+            log.error("notification center startup failed", exc_info=True)
+
         _spawn(event_bus.run(), name="event_bus")
     except Exception as e:
         log.error(f"EventBus startup failed: {e}")

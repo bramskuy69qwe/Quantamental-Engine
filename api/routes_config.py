@@ -27,7 +27,7 @@ async def config_page(request: Request):
 # A "Calc-Linkage" tab in /config (NOT a separate /settings page — /config IS
 # the settings surface; a second config page would be redundant). Reuses the
 # T4a write_account_config / merge_config_json writer. notification_subscriptions
-# (§8.9) are deferred to P8.T7 (the notification system that defines them).
+# (§8.9 / §12.5) wired in P8.T7 — the form snapshots every type (full replace).
 
 
 def _bounded(raw, lo, hi, label, *, is_int=False):
@@ -71,6 +71,12 @@ async def save_account_config(
     webhook_url: str = Form(""),
     webhook_enabled: str = Form(""),
     snapshot_wins_drift: str = Form(""),
+    # P8.T7: notification subscription checkboxes (absent -> "" -> False).
+    notif_calc_expired: str = Form(""),
+    notif_position_liquidated: str = Form(""),
+    notif_position_size_drift: str = Form(""),
+    notif_duplicate_order_detected: str = Form(""),
+    notif_near_replacement_match: str = Form(""),
 ):
     """Validate + persist the per-account config_json knobs. All responses are
     200 + an inline span (htmx swallows non-2xx bodies). The form is the full
@@ -111,6 +117,15 @@ async def save_account_config(
             "webhook_enabled":     bool(webhook_enabled),
         },
         "webhook_url": url or None,
+        # P8.T7: notification subscriptions (full snapshot — every type has a
+        # checkbox, so a top-level replace loses nothing).
+        "notification_subscriptions": {
+            "calc_expired":             bool(notif_calc_expired),
+            "position_liquidated":      bool(notif_position_liquidated),
+            "position_size_drift":      bool(notif_position_size_drift),
+            "duplicate_order_detected": bool(notif_duplicate_order_detected),
+            "near_replacement_match":   bool(notif_near_replacement_match),
+        },
     }
     from core.account_config import write_account_config
     try:

@@ -99,6 +99,11 @@ class EventBus:
     def __init__(self) -> None:
         self._queue: asyncio.Queue = asyncio.Queue()
         self._handlers: Dict[str, List[Handler]] = {}
+        # P8.T7: catch-all handlers that receive EVERY published event as
+        # (channel, payload). The bus is otherwise exact-match per channel; the
+        # notification center uses this to route the notifiable subset without
+        # registering per-account × per-event-type channels.
+        self._global_handlers: "List[Callable[[str, Dict[str, Any]], Awaitable[None]]]" = []
         self.available: bool = True
 
     async def connect(self) -> None:
@@ -118,6 +123,14 @@ class EventBus:
             handlers.remove(handler)
         except ValueError:
             pass
+
+    def subscribe_all(self, handler) -> None:
+        """Register a handler that receives EVERY published event as
+        ``(channel, payload)`` (P8.T7). Idempotent. Dispatched AFTER the
+        per-channel handlers; a global-handler error is logged + swallowed so
+        it never affects the channel handlers or other global handlers."""
+        if handler not in self._global_handlers:
+            self._global_handlers.append(handler)
 
     async def publish(self, channel: str, payload: Dict[str, Any]) -> None:
         """Enqueue an event for dispatch. Never raises."""
@@ -169,6 +182,13 @@ class EventBus:
                 await handler(payload)
             except Exception as exc:
                 log.error("Handler error on channel %r: %s", channel, exc)
+        # P8.T7: catch-all handlers (channel + payload), after the exact-match
+        # ones. Isolated so one global handler's error can't break the others.
+        for ghandler in self._global_handlers:
+            try:
+                await ghandler(channel, payload)
+            except Exception as exc:
+                log.error("Global handler error on channel %r: %s", channel, exc)
 
     async def run(self) -> None:
         """Long-running coroutine: drain the queue and dispatch events."""
