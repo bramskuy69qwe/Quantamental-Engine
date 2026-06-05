@@ -187,6 +187,23 @@
         </div>
       </div>
 
+      {# P8.T4c (spec §10.1): optional multi-TP LADDER. Each row = TP price +
+         size_pct (portion closed at that level). Serialized to a tp_levels
+         JSON array on submit + persisted to pre_trade_log.tp_levels. If a
+         ladder is entered and the single TP Price above is blank, TP1 feeds
+         the matcher + est_profit. The ladder is recorded with the calc;
+         per-rung weighted profit / drift are a later phase. #}
+      <div class="card card-p8" style="margin-bottom:6px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:4px;">
+          <span class="lbl" style="margin-bottom:0;">TP Ladder
+            <span style="font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0;">— optional, recorded with the calc</span>
+          </span>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="addTpLevel()">+ Add TP level</button>
+        </div>
+        <div id="tp-ladder-rows" style="display:flex;flex-direction:column;gap:4px;"></div>
+        <div id="tp-ladder-sum" style="font-size:.6rem;color:var(--muted);margin-top:4px;"></div>
+      </div>
+
       <!-- ── Amounts + Model ──────────────────────────────────────────── -->
       <div class="card card-p8" style="margin-bottom:6px;">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
@@ -607,9 +624,15 @@ document.body.addEventListener('htmx:configRequest',function(evt){
   var tpP=0,slP=0;
   if(_tpslMode==='price'){tpP=parseFloat(document.getElementById('tp-price-input').value)||0;slP=parseFloat(document.getElementById('sl-price-input').value)||0;}
   else{var tpPct=parseFloat(document.getElementById('tp-pct-input').value)||0,slPct=parseFloat(document.getElementById('sl-pct-input').value)||0,dir=_side==='long'?1:-1;if(tpPct>0)tpP=entry*(1+dir*tpPct/100);if(slPct>0)slP=entry*(1-dir*slPct/100);}
+  // P8.T4c: serialize the TP ladder. If a ladder is present and the single TP
+  // Price is blank, TP1 feeds the matcher + est_profit (the ladder is the
+  // recorded plan). The single TP wins when explicitly set.
+  var _tpLevels=serializeTpLevels();
+  if(_tpLevels.length>0&&(!tpP||tpP<=0)){tpP=_tpLevels[0].price;}
   if(!slP||slP<=0){evt.preventDefault();if(!isAuto)document.getElementById('calc-result').innerHTML='<div class="alert alert-error">SL is required.</div>';_autoRefreshInFlight=false;return;}
   evt.detail.parameters.tp_price=tpP;
   evt.detail.parameters.sl_price=slP;
+  if(_tpLevels.length>0)evt.detail.parameters.tp_levels=JSON.stringify(_tpLevels);
   document.getElementById('tp_price_val').value=tpP;document.getElementById('sl_price_val').value=slP;
 });
 
@@ -624,6 +647,45 @@ document.body.addEventListener('htmx:afterSettle',function(evt){
 document.body.addEventListener('htmx:responseError',function(evt){
   if(evt.detail.elt&&evt.detail.elt.id==='calc-form'){_autoRefreshInFlight=false;document.getElementById('auto_refresh_val').value='0';}
 });
+
+// ── P8.T4c: TP ladder (multi-TP) ──────────────────────────────────────────
+// Self-contained widget: add/remove {price, size_pct} rows; serializeTpLevels()
+// builds the array the submit handler sends as the tp_levels JSON param.
+function addTpLevel(price, pct){
+  var rows=document.getElementById('tp-ladder-rows');
+  if(!rows)return;
+  var row=document.createElement('div');
+  row.className='tp-ladder-row';
+  row.style.cssText='display:grid;grid-template-columns:1fr 90px 26px;gap:4px;align-items:center;';
+  var p=(price!=null?(' value="'+price+'"'):'');
+  var q=(pct!=null?(' value="'+pct+'"'):'');
+  row.innerHTML=
+    '<input type="number" step="any" min="0" class="tpl-price" placeholder="TP price" style="color:var(--green);" oninput="updateTpLadderSum()"'+p+' />'+
+    '<input type="number" step="any" min="0" max="100" class="tpl-pct" placeholder="% size" oninput="updateTpLadderSum()"'+q+' />'+
+    '<button type="button" class="btn btn-ghost btn-sm" title="Remove" '+
+    'onclick="this.closest(\'.tp-ladder-row\').remove();updateTpLadderSum();">&#10005;</button>';
+  rows.appendChild(row);
+  updateTpLadderSum();
+}
+function updateTpLadderSum(){
+  var el=document.getElementById('tp-ladder-sum');if(!el)return;
+  var rows=document.querySelectorAll('#tp-ladder-rows .tp-ladder-row');
+  var sum=0,n=0;
+  rows.forEach(function(r){var p=parseFloat(r.querySelector('.tpl-pct').value)||0;if(p>0){sum+=p;n++;}});
+  if(n===0){el.textContent='';return;}
+  var over=sum>100.01;
+  el.textContent=n+' level'+(n>1?'s':'')+' · size total '+sum.toFixed(0)+'%'+(over?' — exceeds 100%':'');
+  el.style.color=over?'var(--red)':'var(--muted)';
+}
+function serializeTpLevels(){
+  var out=[];
+  document.querySelectorAll('#tp-ladder-rows .tp-ladder-row').forEach(function(r){
+    var price=parseFloat(r.querySelector('.tpl-price').value)||0;
+    var pct=parseFloat(r.querySelector('.tpl-pct').value)||0;
+    if(price>0&&pct>0)out.push({price:price,size_pct:pct});
+  });
+  return out;
+}
 
 // ── History (last 2 calcs) ────────────────────────────────────────────────
 function saveToCalcHistory(){
@@ -823,6 +885,7 @@ function clearCalculator(){
   document.getElementById('auto_refresh_val').value='0';
   ['ticker-input','market-price','limit-price','tp-price-input','sl-price-input','tp-pct-input','sl-pct-input','size-override-input'].forEach(function(id){var el=document.getElementById(id);if(el)el.value='';});
   document.querySelector('[name="tp_amount_pct"]').value='100';document.querySelector('[name="sl_amount_pct"]').value='100';
+  var _tplr=document.getElementById('tp-ladder-rows');if(_tplr){_tplr.innerHTML='';updateTpLadderSum();}
   document.querySelector('[name="model_name"]').value='';document.querySelector('[name="model_desc"]').value='';
   document.getElementById('price-preview').innerHTML='TP: — &nbsp;|&nbsp; SL: —';document.getElementById('pct-preview').innerHTML='TP: — &nbsp;|&nbsp; SL: —';
   ['ss-ticker','ss-entry','ss-tp','ss-sl','ss-size'].forEach(function(id){document.getElementById(id).value='—';});

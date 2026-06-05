@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
+import math
 
 from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse
@@ -15,6 +17,57 @@ from api.helpers import templates, _ctx
 
 log = logging.getLogger("routes.calculator")
 router = APIRouter()
+
+# P8.T4c (spec §10.1 / §3 schema): TP-ladder cap. Each level is {price, size_pct}.
+MAX_TP_LEVELS = 10
+
+
+def _parse_tp_levels(raw):
+    """Parse + validate the TP-ladder JSON (P8.T4c).
+
+    Returns a normalized ``list[{"price": float, "size_pct": float}]`` or None
+    for a blank/empty ladder. Raises ValueError on any malformed / out-of-range
+    input (the endpoint maps it to a 400). Rules: each level needs a numeric
+    price > 0 and size_pct in (0, 100]; at most MAX_TP_LEVELS levels; the
+    size_pct total must not exceed 100 (small tolerance for float entry).
+    """
+    if not raw or not str(raw).strip():
+        return None
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        raise ValueError("tp_levels must be valid JSON")
+    if not isinstance(data, list):
+        raise ValueError("tp_levels must be a JSON array")
+    if not data:
+        return None
+    if len(data) > MAX_TP_LEVELS:
+        raise ValueError(f"too many TP levels (max {MAX_TP_LEVELS})")
+    out = []
+    total = 0.0
+    for i, lvl in enumerate(data, start=1):
+        if not isinstance(lvl, dict):
+            raise ValueError(f"TP level {i} must be an object")
+        try:
+            price = float(lvl.get("price"))
+            pct = float(lvl.get("size_pct"))
+        except (TypeError, ValueError):
+            raise ValueError(f"TP level {i} price/size_pct must be numbers")
+        # Reject non-finite (NaN/Infinity): Python's json.loads accepts the
+        # NaN/Infinity literals and float("1e400") overflows to inf — both
+        # slip past the `price <= 0` guard and would persist as INVALID JSON
+        # (json.dumps emits bare NaN/Infinity tokens). (P8.T4c audit, MED.)
+        if not math.isfinite(price) or not math.isfinite(pct):
+            raise ValueError(f"TP level {i} price/size_pct must be finite")
+        if price <= 0:
+            raise ValueError(f"TP level {i} price must be > 0")
+        if not (0 < pct <= 100):
+            raise ValueError(f"TP level {i} size_pct must be in (0, 100]")
+        total += pct
+        out.append({"price": price, "size_pct": pct})
+    if total > 100.01:
+        raise ValueError(f"TP level size_pct total {total:.1f}% exceeds 100%")
+    return out
 
 
 @router.get("/calculator", response_class=HTMLResponse)
@@ -77,6 +130,9 @@ async def calculate_risk(
     # P8.T4b (spec §10.1): optional operator size override (contracts).
     # Blank → use the engine-recommended size. Parsed + validated below.
     size_override: str = Form(""),
+    # P8.T4c (spec §10.1): optional multi-TP ladder, a JSON array of
+    # {price, size_pct}. Blank → single-TP (tp_price). Validated below.
+    tp_levels: str = Form(""),
 ):
     ticker = ticker.upper().strip()
     ws_manager.set_calculator_symbol(ticker)
@@ -122,6 +178,14 @@ async def calculate_risk(
         if parsed_sz > 0:
             size_override_val = parsed_sz
 
+    # P8.T4c: parse + validate the optional TP ladder before any work.
+    try:
+        tp_levels_parsed = _parse_tp_levels(tp_levels)
+    except ValueError as exc:
+        return HTMLResponse(
+            f'<div class="alert alert-error">{exc}</div>', status_code=400,
+        )
+
     try:
         await fetch_orderbook(ticker)
         if ticker not in app_state.ohlcv_cache:
@@ -142,6 +206,12 @@ async def calculate_risk(
     # now persists link_window_seconds_override. None → DB default NULL →
     # compute_exec_match uses account default at fill time.
     calc["link_window_seconds_override"] = override_int
+    # P8.T4c: attach the validated TP ladder (list[{price, size_pct}] or None).
+    # insert_pre_trade_log JSON-serializes it to pre_trade_log.tp_levels;
+    # calc_result.html renders it. tp_levels is recorded metadata — the matcher
+    # + est_profit use the single tp_price (the UI feeds TP1 there if the
+    # single TP field is blank). Per-rung analytics are a later phase.
+    calc["tp_levels"] = tp_levels_parsed
 
     if auto_refresh != "1":
         await event_bus.publish("risk:risk_calculated", calc)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 from datetime import datetime, timezone, timedelta
@@ -124,7 +125,8 @@ class TradesMixin:
                     link_window_seconds_override,
                     regime_label, regime_multiplier, regime_mode, apply_regime_multiplier,
                     status, window_seconds,
-                    planned_size, overridden_size, planned_tp, overridden_tp, planned_sl, overridden_sl
+                    planned_size, overridden_size, planned_tp, overridden_tp, planned_sl, overridden_sl,
+                    tp_levels
                 ) VALUES (
                     :account_id, :timestamp, :ticker, :average, :side, :one_percent_depth, :individual_risk,
                     :tp_price, :tp_amount_pct, :tp_usdt, :sl_price, :sl_amount_pct, :sl_usdt,
@@ -134,7 +136,8 @@ class TradesMixin:
                     :link_window_seconds_override,
                     :regime_label, :regime_multiplier, :regime_mode, :apply_regime_multiplier,
                     :status, :window_seconds,
-                    :planned_size, :overridden_size, :planned_tp, :overridden_tp, :planned_sl, :overridden_sl
+                    :planned_size, :overridden_size, :planned_tp, :overridden_tp, :planned_sl, :overridden_sl,
+                    :tp_levels
                 )""",
                 {
                     "account_id":        row.get("account_id", 1),
@@ -228,6 +231,15 @@ class TradesMixin:
                     "overridden_tp":             row.get("overridden_tp"),
                     "planned_sl":                row.get("planned_sl"),
                     "overridden_sl":             row.get("overridden_sl"),
+                    # P8.T4c: multi-TP ladder. The calc dict carries a Python
+                    # list ([{price, size_pct}, ...]); store it as JSON TEXT
+                    # (the schema column is TEXT/JSON, nullable). A caller that
+                    # already passes a JSON string (or None) is stored as-is.
+                    "tp_levels":                 (
+                        json.dumps(row["tp_levels"])
+                        if isinstance(row.get("tp_levels"), (list, dict))
+                        else row.get("tp_levels")
+                    ),
                 },
             )
             await self._conn.commit()

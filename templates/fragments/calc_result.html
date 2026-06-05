@@ -198,6 +198,17 @@
     <div class="stat"><span class="lbl">Notional / Est. Size (USDT)</span><div class="val">{{ fmt(c.notional) }}</div></div>
     <div class="stat"><span class="lbl">TP → USDT profit</span><div class="val text-green">{{ fmt(c.tp_usdt) }}</div></div>
     <div class="stat"><span class="lbl">SL → USDT loss</span><div class="val text-red">{{ fmt(c.sl_usdt) }}</div></div>
+    {# P8.T4c: the recorded multi-TP ladder (planned). The matcher + est_profit
+       use the single TP above (TP1 if the single field was blank); this is the
+       full planned ladder persisted to pre_trade_log.tp_levels. #}
+    {% if c.tp_levels %}
+    <div class="stat" style="grid-column:1/-1;">
+      <span class="lbl">TP Ladder ({{ c.tp_levels|length }})</span>
+      <div style="font-size:.66rem;font-family:var(--font-mono);color:var(--sub);margin-top:2px;">
+        {% for lvl in c.tp_levels %}TP{{ loop.index }} @ {{ fmt(lvl.price, 4) }} <span style="color:var(--muted);">({{ fmt(lvl.size_pct, 0) }}%)</span>{% if not loop.last %} &nbsp;·&nbsp; {% endif %}{% endfor %}
+      </div>
+    </div>
+    {% endif %}
   </div>
 </div>
 
