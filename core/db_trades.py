@@ -123,7 +123,8 @@ class TradesMixin:
                     est_profit, est_loss, est_r, est_exposure, eligible, calc_id,
                     link_window_seconds_override,
                     regime_label, regime_multiplier, regime_mode, apply_regime_multiplier,
-                    status, window_seconds
+                    status, window_seconds,
+                    planned_size, overridden_size, planned_tp, overridden_tp, planned_sl, overridden_sl
                 ) VALUES (
                     :account_id, :timestamp, :ticker, :average, :side, :one_percent_depth, :individual_risk,
                     :tp_price, :tp_amount_pct, :tp_usdt, :sl_price, :sl_amount_pct, :sl_usdt,
@@ -132,7 +133,8 @@ class TradesMixin:
                     :est_profit, :est_loss, :est_r, :est_exposure, :eligible, :calc_id,
                     :link_window_seconds_override,
                     :regime_label, :regime_multiplier, :regime_mode, :apply_regime_multiplier,
-                    :status, :window_seconds
+                    :status, :window_seconds,
+                    :planned_size, :overridden_size, :planned_tp, :overridden_tp, :planned_sl, :overridden_sl
                 )""",
                 {
                     "account_id":        row.get("account_id", 1),
@@ -211,6 +213,21 @@ class TradesMixin:
                     # resolves this from account config; NULL fallback
                     # is fine — matcher uses spec default 300s.
                     "window_seconds":            row.get("window_seconds"),
+                    # P8.T4b (spec §10.1/§3.2): plan-vs-override capture from
+                    # the calculator. planned_size = engine recommendation,
+                    # overridden_size = operator's final size (== planned if
+                    # not overridden); planned_tp/sl = the entered TP/SL. All
+                    # nullable — callers that don't supply them (backtest
+                    # harness, legacy) store NULL, and the P2.T4 junction
+                    # snapshot falls back to size/tp_price/sl_price. The
+                    # calculator overrides SIZE only (§10.1), so overridden_
+                    # tp/sl are NULL unless a future caller wires them.
+                    "planned_size":              row.get("planned_size"),
+                    "overridden_size":           row.get("overridden_size"),
+                    "planned_tp":                row.get("planned_tp"),
+                    "overridden_tp":             row.get("overridden_tp"),
+                    "planned_sl":                row.get("planned_sl"),
+                    "overridden_sl":             row.get("overridden_sl"),
                 },
             )
             await self._conn.commit()

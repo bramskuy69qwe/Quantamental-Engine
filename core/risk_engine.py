@@ -379,6 +379,30 @@ def check_correlated_limit(
 
 # ── Full risk calculator output ───────────────────────────────────────────────
 
+def _resolve_size_override(computed_size: float, size_override):
+    """P8.T4b (spec §10.1): resolve the operator size override.
+
+    Returns ``(effective_size, planned_size, overridden_size, was_overridden)``:
+    - ``planned_size`` is ALWAYS the engine-recommended (computed) size;
+    - ``overridden_size`` == ``planned_size`` when there is no override (spec
+      line 264: "operator's final size (== planned if not overridden)");
+    - a None / non-numeric / non-positive override is treated as "no override".
+
+    The caller substitutes ``effective_size`` for ``size`` BEFORE the
+    downstream notional / profit / loss / exposure / eligibility computation,
+    so the whole calc reflects the operator's size (not just a scaled display).
+    """
+    planned = float(computed_size)
+    if size_override is not None:
+        try:
+            ov = float(size_override)
+        except (TypeError, ValueError):
+            ov = 0.0
+        if ov > 0:
+            return ov, planned, ov, True
+    return planned, planned, planned, False
+
+
 def run_risk_calculator(
     ticker:                 str,
     average:                float,
@@ -390,6 +414,11 @@ def run_risk_calculator(
     model_desc:             str = "",
     order_type:             str = "market",   # "market" | "limit" | "stop"
     apply_regime_multiplier: bool = True,
+    # P8.T4b (spec §10.1): operator size override (contracts). None → use the
+    # engine-recommended size. When set (>0), it replaces the computed size
+    # for ALL downstream metrics + eligibility, and planned_size / overridden_
+    # size are both recorded onto the calc (pre_trade_log) for deviation track.
+    size_override:          "float | None" = None,
 ) -> Dict:
     """Returns the full PRD-compliant risk calculator output dict."""
     acc          = app_state.account_state
@@ -545,6 +574,16 @@ def run_risk_calculator(
             ticker, exc,
         )
 
+    # P8.T4b (spec §10.1): apply the operator size override BEFORE any
+    # size-dependent computation so notional / profit / loss / est_exposure /
+    # eligibility all reflect the operator's size (not a post-hoc scale —
+    # est_exposure is portfolio-level and would NOT scale linearly). planned_
+    # size is the engine recommendation (post regime + contract snap), captured
+    # here before the substitution; both are returned for deviation tracking.
+    size, planned_size, overridden_size, size_overridden = _resolve_size_override(
+        size, size_override,
+    )
+
     est_size  = size * average          # = base_size × regime_mult × (1 − est_slippage)
 
     # TP / SL USDT amounts (applied to the est_size portion being closed)
@@ -699,6 +738,18 @@ def run_risk_calculator(
         "effective_entry":     sizing["effective_entry"],
         "size":                size,                # _size in contracts (0 if ineligible per T160)
         "notional":            est_size,            # est_size in USDT (0 if ineligible per T160)
+        # P8.T4b (spec §10.1 + §3.2): plan-vs-override capture. planned_size =
+        # engine recommendation (always, even if size was overridden/zeroed);
+        # overridden_size = operator's final size (== planned when not
+        # overridden); size_overridden flags the UI. Persisted by
+        # insert_pre_trade_log; the P2.T4 junction prefers overridden_size as
+        # the deviation baseline. planned_tp/sl = the entered TP/SL (the plan;
+        # the calculator overrides SIZE only per §10.1).
+        "planned_size":        planned_size,
+        "overridden_size":     overridden_size,
+        "size_overridden":     size_overridden,
+        "planned_tp":          tp_price,
+        "planned_sl":          sl_price,
         # Task 160: forensic counterparts — what the size/notional WOULD
         # have been if the eligibility gate hadn't fired. Surfaces "you'd
         # have placed 0.05 BTC but you're at max positions" via downstream

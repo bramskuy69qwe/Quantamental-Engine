@@ -74,6 +74,9 @@ async def calculate_risk(
     # HIGH-027 (Task 104b): optional per-calc override of the account
     # link window. Blank/omitted → use account default. Validated below.
     link_window_seconds_override: str = Form(""),
+    # P8.T4b (spec §10.1): optional operator size override (contracts).
+    # Blank → use the engine-recommended size. Parsed + validated below.
+    size_override: str = Form(""),
 ):
     ticker = ticker.upper().strip()
     ws_manager.set_calculator_symbol(ticker)
@@ -104,6 +107,21 @@ async def calculate_risk(
         else:
             override_int = parsed
 
+    # P8.T4b (spec §10.1): parse the optional size override. Blank / 0 /
+    # negative → no override (engine recommendation). Non-numeric → 400.
+    size_override_val: "float | None" = None
+    if size_override.strip():
+        try:
+            parsed_sz = float(size_override.strip())
+        except ValueError:
+            return HTMLResponse(
+                '<div class="alert alert-error">size_override must be a '
+                'number.</div>',
+                status_code=400,
+            )
+        if parsed_sz > 0:
+            size_override_val = parsed_sz
+
     try:
         await fetch_orderbook(ticker)
         if ticker not in app_state.ohlcv_cache:
@@ -117,6 +135,7 @@ async def calculate_risk(
         sl_amount_pct=sl_amount_pct, model_name=model_name, model_desc=model_desc,
         order_type=order_type,
         apply_regime_multiplier=(apply_regime_multiplier == "1"),
+        size_override=size_override_val,
     )
     # HIGH-027 (Task 104b): attach override to the calc dict before publish.
     # handle_risk_calculated forwards the dict to insert_pre_trade_log, which

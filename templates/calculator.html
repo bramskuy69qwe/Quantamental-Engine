@@ -207,6 +207,21 @@
             <input type="text" name="model_desc" tabindex="8" placeholder="optional notes" />
           </div>
         </div>
+        {# P8.T4b (spec §10.1): operator SIZE override (contracts). Blank → the
+           engine-recommended size is used. When set, the calc recomputes
+           notional / profit / loss / exposure / eligibility for this size and
+           persists planned_size (engine rec) + overridden_size (this) for
+           deviation tracking. Entry/TP/SL stay plain inputs (§10.1: size only). #}
+        <div style="margin-top:6px;">
+          <label class="lbl" style="display:block;margin-bottom:3px;">
+            Size override (contracts)
+            <span style="font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0;">— blank uses recommended</span>
+          </label>
+          <input type="number" name="size_override" id="size-override-input"
+                 step="any" min="0" tabindex="12"
+                 placeholder="(optional) override engine-recommended size" />
+        </div>
+
         {# HIGH-027 (Task 104b) — per-calc link window override. Preset
            dropdown matches the account settings shape. Empty / "default"
            submits as the empty string, parsed server-side as "no override
@@ -806,7 +821,7 @@ function clearCalculator(){
   stopAutoRefresh();if(_priceInterval){clearInterval(_priceInterval);_priceInterval=null;}
   _hasCalculated=false;_calcTicker='';_livePrice=0;_obTicker='';_autoRefreshInFlight=false;
   document.getElementById('auto_refresh_val').value='0';
-  ['ticker-input','market-price','limit-price','tp-price-input','sl-price-input','tp-pct-input','sl-pct-input'].forEach(function(id){var el=document.getElementById(id);if(el)el.value='';});
+  ['ticker-input','market-price','limit-price','tp-price-input','sl-price-input','tp-pct-input','sl-pct-input','size-override-input'].forEach(function(id){var el=document.getElementById(id);if(el)el.value='';});
   document.querySelector('[name="tp_amount_pct"]').value='100';document.querySelector('[name="sl_amount_pct"]').value='100';
   document.querySelector('[name="model_name"]').value='';document.querySelector('[name="model_desc"]').value='';
   document.getElementById('price-preview').innerHTML='TP: — &nbsp;|&nbsp; SL: —';document.getElementById('pct-preview').innerHTML='TP: — &nbsp;|&nbsp; SL: —';
