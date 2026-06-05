@@ -59,11 +59,12 @@ def _render(template: str, **ctx) -> str:
 
 
 def _pos(ticker="BTCUSDT", direction="LONG", upnl=12.5, badge="yellow",
-         size_delta=8.0, amend=1):
+         size_delta=8.0, amend=1, mfe=30.0, mae=-8.0):
     return {
         "ticker": ticker, "direction": direction,
         "individual_unrealized": upnl, "deviation_badge": badge,
         "size_delta_pct": size_delta, "amendment_count": amend,
+        "session_mfe": mfe, "session_mae": mae,
     }
 
 
@@ -81,6 +82,23 @@ class TestPositionsPane:
         html = _render("fragments/cockpit/positions.html",
                        positions=[_pos(upnl=-5.0)])
         assert "text-red" in html
+
+    def test_renders_mfe_and_mae(self):
+        # P8.T2: session MFE/MAE columns. MFE green, MAE red (fixed colors,
+        # mirroring the dashboard table).
+        html = _render("fragments/cockpit/positions.html",
+                       positions=[_pos(mfe=30.0, mae=-8.0)])
+        assert ">MFE<" in html and ">MAE<" in html      # column headers
+        assert "30.00" in html                          # MFE value
+        assert "8.00" in html                           # MAE value (magnitude)
+        # MFE cell is green, MAE cell is red
+        assert 'class="text-green" style="text-align:right;">30.00' in html
+        assert 'class="text-red" style="text-align:right;">-8.00' in html
+
+    def test_mfe_mae_null_safe(self):
+        html = _render("fragments/cockpit/positions.html",
+                       positions=[_pos(mfe=None, mae=None)])
+        assert "BTCUSDT" in html       # renders without crashing
 
     def test_no_badge_when_level_empty(self):
         # binance one-way / no junction -> deviation_badge "" -> no badge span
