@@ -1,0 +1,23 @@
+{# Cockpit · Active-calcs pane (P8.T1 scaffold).
+   Live (active|released) calcs for the account. P8.T3 adds the frozen-window
+   countdown timer + per-calc cancel button. #}
+{% from "primitives/empty_state.html" import empty_state %}
+{% if calcs %}
+<table>
+  <thead><tr>
+    <th>Symbol</th><th>Side</th><th style="text-align:right;">Entry</th><th>Status</th>
+  </tr></thead>
+  <tbody>
+    {% for c in calcs %}
+    <tr>
+      <td class="td-symbol">{{ c.ticker }}</td>
+      <td class="{{ 'pos-long' if (c.side|lower) == 'long' else 'pos-short' }}">{{ (c.side or '')|upper }}</td>
+      <td style="text-align:right;">{{ fmt(c.average, 4) if c.average else '—' }}</td>
+      <td><span class="badge {{ 'badge-blue' if c.status == 'active' else 'badge-gray' }}">{{ c.status }}</span></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+{{ empty_state(message="No active calcs.", tone="info", padding="tight") }}
+{% endif %}

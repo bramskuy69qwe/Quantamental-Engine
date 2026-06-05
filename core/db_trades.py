@@ -308,6 +308,27 @@ class TradesMixin:
             rows = await cur.fetchall()
             return [dict(r) for r in rows]
 
+    async def get_active_calcs(
+        self, account_id: int = 1, limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """Live (in-flight) calcs for the cockpit Active-Calcs pane (P8.T1).
+
+        Returns ``pre_trade_log`` rows whose status is ``active`` or
+        ``released`` — the two states the matcher still treats as live
+        candidates and the operator can still cancel (mirrors
+        ``handlers.cancel_calc_by_operator`` + the matcher's
+        ``status IN ('active','released')`` filter). Newest first.
+        Window countdown + per-calc cancel are layered on in P8.T3.
+        """
+        async with self._conn.execute(
+            "SELECT * FROM pre_trade_log "
+            "WHERE account_id=? AND status IN ('active','released') "
+            "ORDER BY timestamp DESC LIMIT ?",
+            (account_id, limit),
+        ) as cur:
+            rows = await cur.fetchall()
+            return [dict(r) for r in rows]
+
     async def get_all_execution_log(self, days: int = 365, account_id: int = 1) -> List[Dict[str, Any]]:
         """Return execution_log rows within the last N days, newest first."""
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()

@@ -1,0 +1,26 @@
+{# Cockpit · Recent-closes pane (P8.T1 scaffold).
+   Latest closed positions (newest exit first). A later Phase-8 task wires the
+   Export-Audit button (P7.T4/T5) onto each row. #}
+{% from "primitives/empty_state.html" import empty_state %}
+{% if rows %}
+<table>
+  <thead><tr>
+    <th>Close</th><th>Symbol</th><th>Dir</th>
+    <th style="text-align:right;">Net</th><th>Exit</th>
+  </tr></thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td class="td-ts">{{ ms_to_local(r.exit_time_ms) }}</td>
+      <td class="td-symbol">{{ r.symbol }}</td>
+      <td class="{{ 'pos-long' if r.direction == 'LONG' else 'pos-short' }}">{{ r.direction }}</td>
+      <td class="td-bold {{ 'text-green' if (r.net_pnl or 0) > 0 else 'text-red' if (r.net_pnl or 0) < 0 else '' }}"
+          style="text-align:right;">{{ fmt(r.net_pnl or 0, 2) }}</td>
+      <td class="td-sub" style="font-size:.6rem;">{{ r.exit_reason or '—' }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+{{ empty_state(message="No closed positions yet.", tone="info", padding="tight") }}
+{% endif %}

@@ -476,6 +476,7 @@
     <nav hx-boost="true" style="display:flex;overflow-x:auto;scrollbar-width:none;flex-shrink:1;">
       {% set nav_items = [
         ('dashboard',  '/'),
+        ('cockpit',    '/cockpit'),
         ('calculator', '/calculator'),
         ('history',    '/history'),
         ('needs_link', '/orders/needs_link'),
@@ -580,6 +581,7 @@
 <!-- ── Page title bar ──────────────────────────────────────────────────────── -->
 {% set page_meta = {
   'dashboard':  ('Dashboard',   'Live overview · equity · risk · positions'),
+  'cockpit':    ('Cockpit',     'Calc-linkage workflow · positions · active calcs · needs-link · closes'),
   'calculator': ('Calculator',  'Position sizing · TP/SL · order preview'),
   'history':    ('History',     'Trade log · executions · pre-trade journal'),
   'needs_link': ('Needs Link',  'Manual-link queue · candidate calcs · per-criterion diff'),

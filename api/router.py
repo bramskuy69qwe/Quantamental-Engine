@@ -9,6 +9,7 @@ routes_accounts.py handles this internally.
 from fastapi import APIRouter
 
 from api.routes_dashboard  import router as dashboard_router
+from api.routes_cockpit     import router as cockpit_router
 from api.routes_calculator import router as calculator_router
 from api.routes_history    import router as history_router
 from api.routes_params     import router as params_router
@@ -29,6 +30,7 @@ from api.routes_export      import router as export_router
 
 router = APIRouter()
 router.include_router(dashboard_router)
+router.include_router(cockpit_router)
 router.include_router(calculator_router)
 router.include_router(history_router)
 router.include_router(params_router)

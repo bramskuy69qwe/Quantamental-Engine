@@ -1,0 +1,26 @@
+{# Cockpit · Open-positions pane (P8.T1 scaffold).
+   Compact live list with the P4.T3 deviation badge. P8.T2 enriches this
+   pane (MFE/MAE, uPnL refresh detail). #}
+{% from "primitives/deviation_badge.html" import deviation_badge %}
+{% from "primitives/empty_state.html" import empty_state %}
+{% if positions %}
+<table>
+  <thead><tr>
+    <th>Symbol</th><th>Dir</th><th style="text-align:right;">uPnL</th><th>Plan</th>
+  </tr></thead>
+  <tbody>
+    {% for p in positions %}
+    <tr>
+      <td class="td-symbol">{{ p.ticker }}</td>
+      <td class="{{ 'pos-long' if p.direction == 'LONG' else 'pos-short' }}">{{ p.direction }}</td>
+      <td class="{{ 'text-green' if (p.individual_unrealized or 0) >= 0 else 'text-red' }}" style="text-align:right;">
+        {{ fmt(p.individual_unrealized or 0, 2) }}
+      </td>
+      <td>{{ deviation_badge(p.deviation_badge, p.size_delta_pct, p.amendment_count) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+{{ empty_state(message="No open positions.", tone="info", padding="tight") }}
+{% endif %}
