@@ -10,6 +10,7 @@ from core.risk_engine import run_risk_calculator
 from core.event_bus import event_bus
 from core.exchange import fetch_orderbook, fetch_ohlcv
 from core import ws_manager
+from core.database import db
 from api.helpers import templates, _ctx
 
 log = logging.getLogger("routes.calculator")
@@ -18,7 +19,42 @@ router = APIRouter()
 
 @router.get("/calculator", response_class=HTMLResponse)
 async def calculator_page(request: Request):
-    return templates.TemplateResponse(request, "calculator.html", _ctx(request, calc=None))
+    # P8.T4a: surface the account-level match window so the dropdown shows the
+    # current value selected. read_*_async returns the spec §3.3 default (300)
+    # on any error, so the page never fails to render over this.
+    from core.account_config import read_account_config_async
+    cfg = await read_account_config_async(db, app_state.active_account_id)
+    return templates.TemplateResponse(
+        request, "calculator.html",
+        _ctx(request, calc=None, window_seconds=cfg.window_seconds),
+    )
+
+
+@router.post("/calculator/window", response_class=HTMLResponse)
+async def set_account_window(window_seconds: int = Form(...)):
+    """P8.T4a (plan §8 row 8.4): set the account-level calc-linkage match
+    window (``config_json.window_seconds``) — the default the matcher freezes
+    onto each new calc (P1.T2/T3). Distinct from the per-calc
+    ``link_window_seconds_override`` form field (which overrides one calc).
+
+    Returns 200 + a tiny inline confirmation so htmx swaps it; a non-2xx body
+    would be swallowed by the global htmx error handler (base.html), so the
+    out-of-range case returns 200 with an error-styled span instead.
+    """
+    from core.exec_link import MAX_LINK_WINDOW_SECONDS
+    if window_seconds <= 0 or window_seconds > MAX_LINK_WINDOW_SECONDS:
+        return HTMLResponse(
+            f'<span class="text-red">invalid (1–{MAX_LINK_WINDOW_SECONDS}s)</span>'
+        )
+    from core.account_config import write_account_config
+    try:
+        await write_account_config(
+            db, app_state.active_account_id, {"window_seconds": window_seconds},
+        )
+    except Exception:
+        log.exception("set_account_window write failed")
+        return HTMLResponse('<span class="text-red">save failed</span>')
+    return HTMLResponse('<span class="text-green">saved ✓</span>')
 
 
 @router.post("/calculator/calculate", response_class=HTMLResponse)

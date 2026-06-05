@@ -212,3 +212,52 @@ async def read_account_config_async(db: Any, account_id: int) -> AccountConfig:
     if not row:
         return AccountConfig()
     return _parse_config_json(row[0])
+
+
+# ── Write side (P8.T4a) ───────────────────────────────────────────────────────
+
+
+def merge_config_json(blob: Optional[str], updates: Dict[str, Any]) -> str:
+    """Merge ``updates`` into an existing ``config_json`` blob (pure).
+
+    Returns the new JSON string with ``updates`` applied at the top level,
+    PRESERVING every other key already present (webhook_url, feature_flags,
+    deviation_thresholds, …). A missing / malformed / non-dict blob is
+    treated as an empty config (so the merge always produces a valid dict).
+    Testable without a DB; the async writer below is a thin wrapper.
+    """
+    try:
+        cur = json.loads(blob) if blob else {}
+    except (json.JSONDecodeError, TypeError):
+        cur = {}
+    if not isinstance(cur, dict):
+        cur = {}
+    cur.update(updates)
+    return json.dumps(cur)
+
+
+async def write_account_config(db: Any, account_id: int, updates: Dict[str, Any]) -> None:
+    """Merge ``updates`` into ``accounts.config_json`` for one account.
+
+    Read-merge-write via the long-lived aiosqlite connection so unrelated
+    keys survive (the read/parse path above resolves spec §3.3 defaults for
+    anything still absent). Single source of truth for config writes — P8.T8
+    (settings page) reuses this. Raises on DB error (the caller decides how
+    to surface it; the calculator endpoint validates inputs first).
+
+    NOTE: the SELECT→UPDATE is NOT a single transaction. Benign at the
+    single-tenant localhost deployment (CLAUDE.md Task 163) — all config
+    writes funnel through this one serialized async connection, so there is
+    no concurrent writer to lose a sibling-key change to. If a future caller
+    introduces a second concurrent config-write path, wrap this in an
+    explicit transaction (BEGIN IMMEDIATE) first.
+    """
+    async with db._conn.execute(
+        "SELECT config_json FROM accounts WHERE id = ?", (account_id,),
+    ) as cur:
+        row = await cur.fetchone()
+    new_blob = merge_config_json(row[0] if row else None, updates)
+    await db._conn.execute(
+        "UPDATE accounts SET config_json = ? WHERE id = ?", (new_blob, account_id),
+    )
+    await db._conn.commit()

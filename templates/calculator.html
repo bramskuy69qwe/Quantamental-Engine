@@ -21,6 +21,32 @@
     <div class="alert alert-error">⛔ Trading HALTED — hard stop active. Review Dashboard.</div>
     {% endif %}
 
+    {# P8.T4a (plan §8 row 8.4): account-level calc-linkage match window
+       (config_json.window_seconds) — the default the matcher freezes onto each
+       new calc (P1.T2/T3). Standalone control (NOT a calc-form field): POSTs to
+       /calculator/window on change. Distinct from the per-calc "Link window
+       override" select inside the form below. A non-preset current value is
+       shown as its own selected option so the dropdown never misrepresents it. #}
+    <div class="card card-p8" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+      <span class="lbl" style="margin-bottom:0;">Match window</span>
+      <select id="account-window-select" name="window_seconds"
+              style="height:24px;font-size:.66rem;width:auto;"
+              hx-post="/calculator/window"
+              hx-trigger="change"
+              hx-target="#account-window-msg"
+              hx-swap="innerHTML">
+        {% set _wpresets = [60, 300, 900] %}
+        {% if window_seconds is defined and window_seconds not in _wpresets %}
+        <option value="{{ window_seconds }}" selected>{{ window_seconds }} s</option>
+        {% endif %}
+        <option value="60"  {% if window_seconds == 60 %}selected{% endif %}>1 min</option>
+        <option value="300" {% if window_seconds == 300 or window_seconds is not defined %}selected{% endif %}>5 min</option>
+        <option value="900" {% if window_seconds == 900 %}selected{% endif %}>15 min</option>
+      </select>
+      <span id="account-window-msg" style="font-size:.6rem;color:var(--sub);"></span>
+      <span style="font-size:.58rem;color:var(--muted);">account default for auto-linking new calcs</span>
+    </div>
+
     <form id="calc-form"
           hx-post="/calculator/calculate"
           hx-target="#calc-result"
