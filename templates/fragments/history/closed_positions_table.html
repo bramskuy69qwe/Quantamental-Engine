@@ -105,6 +105,12 @@
         <tr id="fills-row-{{ r.id }}" style="display:none;">
           <td colspan="18" style="padding:0;background:var(--panel);"></td>
         </tr>
+        {# P8.T9 (plan §8.10): second drawer section — per-position trade-events
+           timeline. Lazy-loaded alongside the fills row on drawer open (see
+           togglePosRow in history.html), into its own /position_events fetch. #}
+        <tr id="events-row-{{ r.id }}" style="display:none;">
+          <td colspan="18" style="padding:0;background:var(--panel);"></td>
+        </tr>
         {% endfor %}
       </tbody>
     </table>

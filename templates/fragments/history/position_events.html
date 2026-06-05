@@ -1,0 +1,85 @@
+<!-- fragment: history/position_events — P8.T9 (plan §8.10): per-position
+     trade-events timeline, lazy-loaded as the Position History drawer's second
+     section beside the fills sub-table. Chronological (oldest-first). Chip +
+     timestamp + one-line payload summary mirror trade_events_table.html so the
+     two surfaces read the same. Empty-state (NOT error) for legacy / rebuilt
+     positions with no linked calc. -->
+{% from "primitives/empty_state.html" import empty_state %}
+{% from "primitives/table_row.html" import tr_open, tr_close %}
+{% set badge_map = {
+  'calc_created': 'badge-ok',
+  'order_placed': 'badge-ok',
+  'order_canceled': 'badge-limit',
+  'order_filled': 'badge-ok',
+  'position_opened': 'badge-ok',
+  'position_closed': 'badge-ok',
+  'partial_close': 'badge-ok',
+  'position_amended': 'badge-warning',
+  'tp_modified': 'badge-warning',
+  'sl_modified': 'badge-warning',
+  'liquidated': 'badge-limit',
+  'manual_close': 'badge-limit',
+  'manual_link_added': 'badge-unknown'
+} %}
+<div style="border-bottom:2px solid rgba(60,143,245,.2);padding:8px 10px 10px 32px;background:#050810;">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+    <span style="font-size:.58rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--blue);">▾ Trade Events</span>
+    <span class="mono" style="font-size:.65rem;color:var(--muted);">{{ events | length }} events</span>
+    <span style="font-size:.6rem;color:var(--muted);margin-left:auto;">chronological · this position's calc(s)</span>
+  </div>
+
+  {# P8.T9: never imply completeness — query_trade_events returns the newest
+     `events_cap` rows per calc, so on overflow the OLDEST are omitted. #}
+  {% if truncated %}
+  <div style="font-size:.6rem;color:var(--amber);margin-bottom:6px;">
+    ⚠ Showing the newest {{ events_cap }} events per calc — older events omitted.
+  </div>
+  {% endif %}
+
+  {% if events %}
+  <div style="overflow-x:auto;">
+    <table>
+      <thead><tr>
+        <th style="font-size:.58rem;">Time</th>
+        <th style="font-size:.58rem;">Event</th>
+        <th style="font-size:.58rem;">Source</th>
+        <th style="font-size:.58rem;">Detail</th>
+      </tr></thead>
+      <tbody>
+        {% for e in events %}
+        {% set p = e._payload %}
+        {{ tr_open() }}
+          <td class="td-ts" style="font-size:.66rem;">{{ e.timestamp[:19] | replace('T', ' ') }}</td>
+          <td><span class="badge {{ badge_map.get(e.event_type, 'badge-unknown') }}">{{ e.event_type }}</span></td>
+          <td class="td-sub" style="font-size:.62rem;">{{ e.source or '—' }}</td>
+          <td class="td-sub" style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+            {%- if e.event_type == 'position_amended' and p.get('old') is not none -%}
+              {{ p.get('field', '') }}: {{ fmt(p.old, 4) }} → {{ fmt(p.new, 4) }}
+            {%- elif e.event_type in ('tp_modified', 'sl_modified') and p.get('from_price') is not none -%}
+              {{ fmt(p.from_price, 4) }} → {{ fmt(p.to_price, 4) }}
+            {%- elif e.event_type == 'order_filled' and p.get('price') is not none -%}
+              Price: {{ fmt(p.price, 4) }} · Qty: {{ fmt(p.get('quantity', p.get('fill_qty', 0)), 4) }}
+            {%- elif e.event_type == 'position_closed' and p.get('pnl') is not none -%}
+              PnL: {{ fmt(p.pnl, 2) }}
+            {%- elif e.event_type == 'order_placed' and p.get('side') -%}
+              {{ p.side }} {{ p.get('order_type', '') }}
+            {%- elif p.get('symbol') or p.get('ticker') -%}
+              {{ p.get('symbol') or p.get('ticker') }}
+            {%- else -%}
+              {{ e.payload_json[:60] }}{{ '…' if e.payload_json | length > 60 else '' }}
+            {%- endif -%}
+          </td>
+        {{ tr_close() }}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% elif has_calc %}
+  {# Calc-attributed but no events recorded (e.g. a historical position whose
+     calc pre-dates the per-event emission sweeps). Still NOT an error. #}
+  {{ empty_state(message="No trade events recorded for this position's calc(s).", padding="tight") }}
+  {% else %}
+  {# Legacy / Phase-0.0.6-0.0.7 rebuilt rows: no linked calc -> no events log. #}
+  {{ empty_state(message="This position pre-dates the trade-events log (no linked calc).", padding="tight") }}
+  {% endif %}
+</div>

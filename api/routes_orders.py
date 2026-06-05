@@ -246,6 +246,81 @@ async def frag_position_fills(request: Request, position_id: int = 0):
     )
 
 
+# P8.T9: per-calc cap on the position-events drilldown. Generous for a single
+# position's lifecycle; the endpoint flags + logs when a calc exceeds it rather
+# than silently truncating (CLAUDE.md "No silent caps").
+_POSITION_EVENTS_CAP = 500
+
+
+@router.get("/fragments/history/position_events", response_class=HTMLResponse)
+async def frag_position_events(request: Request, position_id: int = 0):
+    """P8.T9 (plan §8.10): per-position trade-events timeline for the Position
+    History drawer — lazy-loaded as a second section beside the fills sub-table.
+
+    Reuses ``core.trade_event_log.query_trade_events`` (sync → ``to_thread``),
+    scoped to the position's OWN calc_id(s), which are resolved from the
+    ``positions_calcs`` junction by ``terminal_position_id``. A position can
+    scale in from several calcs, so we union the events across all its calc_ids
+    and merge them chronologically. Because each query filters ``calc_id`` to one
+    of THIS position's calcs, a sibling position's events can never leak in.
+
+    Positions with no calc_id — legacy rows + Phase-0.0.6/0.0.7 rebuilt rows
+    that pre-date the calculator workflow (empty ``terminal_position_id`` or no
+    junction rows) — render an EMPTY-STATE explaining the gap, NOT an error.
+    """
+    from api.helpers import _ctx
+    from core.trade_event_log import query_trade_events
+    import asyncio
+    import json as _json
+
+    events: list = []
+    calc_ids: list = []
+    truncated = False
+    if position_id:
+        aid = app_state.active_account_id
+        pos = await db.get_closed_position_terminal_key(position_id)
+        tpid = (pos or {}).get("terminal_position_id") or ""
+        if tpid:
+            # Distinct calc_ids in first-fill order (a scale-in position has
+            # several junction rows; one calc may also appear on >1 order).
+            seen = set()
+            for link in await db.get_position_calc_links(tpid):
+                cid = link.get("calc_id")
+                if cid and cid not in seen:
+                    seen.add(cid)
+                    calc_ids.append(cid)
+            for cid in calc_ids:
+                rows, total = await asyncio.to_thread(
+                    query_trade_events,
+                    account_id=aid, calc_id=cid, limit=_POSITION_EVENTS_CAP,
+                )
+                # No silent caps (CLAUDE.md): query_trade_events returns the
+                # NEWEST _POSITION_EVENTS_CAP rows; if a calc has more, the
+                # OLDEST are dropped. Log it + flag the UI rather than implying
+                # completeness with a partial "N events" count.
+                if total > len(rows):
+                    truncated = True
+                    log.warning(
+                        "position_events: calc %s has %d trade_events; showing "
+                        "newest %d (oldest omitted)", cid, total, len(rows),
+                    )
+                events.extend(rows)
+            # query_trade_events returns newest-first per calc; merge the unioned
+            # rows oldest-first (ISO-8601 timestamps sort lexically == chrono).
+            events.sort(key=lambda e: e.get("timestamp") or "")
+            for e in events:                          # pre-parse for the summary
+                try:
+                    e["_payload"] = _json.loads(e.get("payload_json") or "{}")
+                except (ValueError, TypeError):
+                    e["_payload"] = {}
+
+    return templates.TemplateResponse(
+        request, "fragments/history/position_events.html",
+        _ctx(request, events=events, has_calc=bool(calc_ids),
+             truncated=truncated, events_cap=_POSITION_EVENTS_CAP),
+    )
+
+
 def _has_tpsl_modification(events: list) -> bool:
     """True if any trade-event row marks a TP/SL price modification.
 

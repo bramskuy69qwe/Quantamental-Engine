@@ -222,11 +222,15 @@ window.toggleEventDetail = function(evtId) {
 
 window.togglePosRow = function(posId) {
   var row = document.getElementById('fills-row-' + posId);
+  // P8.T9: second drawer section (trade-events timeline), lazy-loaded + toggled
+  // together with the fills row.
+  var eventsRow = document.getElementById('events-row-' + posId);
   var chevron = document.getElementById('chev-' + posId);
   if (!row) return;
   var isOpen = row.style.display !== 'none';
   if (isOpen) {
     row.style.display = 'none';
+    if (eventsRow) eventsRow.style.display = 'none';
     if (chevron) chevron.textContent = '\u25B8';
   } else {
     row.style.display = '';
@@ -235,6 +239,14 @@ window.togglePosRow = function(posId) {
       var target = row.querySelector('td');
       htmx.ajax('GET', '/fragments/history/position_fills?position_id=' + posId, {target: target, swap: 'innerHTML'});
       row.dataset.loaded = '1';
+    }
+    if (eventsRow) {
+      eventsRow.style.display = '';
+      if (eventsRow.dataset.loaded !== '1') {
+        var etarget = eventsRow.querySelector('td');
+        htmx.ajax('GET', '/fragments/history/position_events?position_id=' + posId, {target: etarget, swap: 'innerHTML'});
+        eventsRow.dataset.loaded = '1';
+      }
     }
   }
 };
