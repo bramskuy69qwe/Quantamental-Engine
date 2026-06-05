@@ -17,6 +17,7 @@ PRD step-by-step chain:
 """
 from __future__ import annotations
 import logging
+import math
 import sqlite3
 import time
 from typing import Dict, List, Optional, Tuple
@@ -281,7 +282,14 @@ def calculate_position_size(
             "infrastructure unavailable: %r", exc,
         )
 
-    if average <= 0 or sl_price <= 0:
+    # Phase 8 audit (HIGH): finite guard MUST precede the <= 0 checks. NaN/Inf
+    # parse via float() but fail BOTH `<= 0` comparisons (nan<=0 and inf<=0 are
+    # decided the wrong way), so a non-finite average/sl_price would slip this
+    # gate and poison every downstream field (sl_pct→size→notional all NaN)
+    # while the eligibility gates (`> max_exposure`, etc.) silently return False
+    # on NaN — persisting an eligible calc with NaN size into pre_trade_log,
+    # which the matcher + deviation analytics then read. math.isfinite closes it.
+    if not (math.isfinite(average) and math.isfinite(sl_price)) or average <= 0 or sl_price <= 0:
         result["eligible"] = False
         result["ineligible_reason"] = "Invalid entry or SL price."
         return result

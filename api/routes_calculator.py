@@ -137,6 +137,22 @@ async def calculate_risk(
     ticker = ticker.upper().strip()
     ws_manager.set_calculator_symbol(ticker)
 
+    # Phase 8 audit (HIGH): float("nan")/float("inf")/"1e400" parse cleanly via
+    # Form(float) but slip EVERY downstream `<= 0` / range guard (all NaN
+    # comparisons are False), poisoning the calc (NaN size/notional persisted as
+    # eligible) + emitting bare NaN tokens into JSON columns. Reject non-finite
+    # price/percent inputs at the door. (calculate_position_size also guards
+    # average/sl_price as defense-in-depth for non-route callers.)
+    for _name, _v in (("average", average), ("sl_price", sl_price),
+                      ("tp_price", tp_price), ("tp_amount_pct", tp_amount_pct),
+                      ("sl_amount_pct", sl_amount_pct)):
+        if not math.isfinite(_v):
+            return HTMLResponse(
+                f'<div class="alert alert-error">{_name} must be a finite '
+                f'number.</div>',
+                status_code=400,
+            )
+
     # HIGH-027 (Task 104b): parse + validate override before any work.
     # Blank / 0 / negative → treat as "no override" (None in DB).
     # Beyond MAX_LINK_WINDOW_SECONDS → error fragment.
@@ -175,7 +191,9 @@ async def calculate_risk(
                 'number.</div>',
                 status_code=400,
             )
-        if parsed_sz > 0:
+        # math.isfinite: +inf parses and passes `> 0`, so it would persist as a
+        # live override (overridden_size=inf). NaN/-inf already fail `> 0`.
+        if math.isfinite(parsed_sz) and parsed_sz > 0:
             size_override_val = parsed_sz
 
     # P8.T4c: parse + validate the optional TP ladder before any work.

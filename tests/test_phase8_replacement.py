@@ -45,29 +45,39 @@ class TestCancelledOrderLookup:
     def _conn(self):
         c = sqlite3.connect(":memory:")
         c.execute(
-            "CREATE TABLE orders (id INTEGER PRIMARY KEY, calc_id TEXT, "
-            "status TEXT, exchange_order_id TEXT, cancel_ts_ms INTEGER)"
+            "CREATE TABLE orders (id INTEGER PRIMARY KEY, account_id INTEGER, "
+            "calc_id TEXT, status TEXT, exchange_order_id TEXT, cancel_ts_ms INTEGER)"
         )
         return c
 
     def test_returns_most_recent_cancelled(self):
         c = self._conn()
-        c.execute("INSERT INTO orders (calc_id, status, exchange_order_id, cancel_ts_ms) VALUES "
-                  "('R1', 'canceled', 'O-OLD', 1000), "
-                  "('R1', 'canceled', 'O-NEW', 5000), "
-                  "('R1', 'filled', 'O-FILLED', 9000)")
+        c.execute("INSERT INTO orders (account_id, calc_id, status, exchange_order_id, cancel_ts_ms) VALUES "
+                  "(1, 'R1', 'canceled', 'O-OLD', 1000), "
+                  "(1, 'R1', 'canceled', 'O-NEW', 5000), "
+                  "(1, 'R1', 'filled', 'O-FILLED', 9000), "
+                  "(2, 'R1', 'canceled', 'O-ACCT2', 9999)")     # newer but other account
         c.commit()
-        assert _cancelled_order_for_calc(c, "R1") == {"exchange_order_id": "O-NEW", "cancel_ts_ms": 5000}
+        assert _cancelled_order_for_calc(c, "R1", 1) == {"exchange_order_id": "O-NEW", "cancel_ts_ms": 5000}
+
+    def test_account_scoped(self):
+        # Phase 8 audit: the lookup must not leak another account's cancelled
+        # order even when it's more recent (combined-DB fallback safety).
+        c = self._conn()
+        c.execute("INSERT INTO orders (account_id, calc_id, status, exchange_order_id, cancel_ts_ms) VALUES "
+                  "(2, 'R1', 'canceled', 'O-ACCT2', 9999)")
+        c.commit()
+        assert _cancelled_order_for_calc(c, "R1", 1) is None     # account 1 sees nothing
 
     def test_none_when_no_cancelled(self):
         c = self._conn()
-        c.execute("INSERT INTO orders (calc_id, status, exchange_order_id) VALUES ('R2', 'new', 'O-1')")
+        c.execute("INSERT INTO orders (account_id, calc_id, status, exchange_order_id) VALUES (1, 'R2', 'new', 'O-1')")
         c.commit()
-        assert _cancelled_order_for_calc(c, "R2") is None
+        assert _cancelled_order_for_calc(c, "R2", 1) is None
 
     def test_none_on_bad_table(self):
         c = sqlite3.connect(":memory:")  # no orders table
-        assert _cancelled_order_for_calc(c, "X") is None
+        assert _cancelled_order_for_calc(c, "X", 1) is None
 
 
 # ── find_candidate_calcs status filter + replacement context ──────────────────

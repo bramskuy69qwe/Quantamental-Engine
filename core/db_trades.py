@@ -235,8 +235,12 @@ class TradesMixin:
                     # list ([{price, size_pct}, ...]); store it as JSON TEXT
                     # (the schema column is TEXT/JSON, nullable). A caller that
                     # already passes a JSON string (or None) is stored as-is.
+                    # allow_nan=False (Phase 8 audit, defense-in-depth): the
+                    # calculator validates math.isfinite before this, but a
+                    # future caller passing a NaN/Inf would otherwise emit a bare
+                    # NaN/Infinity token = invalid JSON. Fail loud instead.
                     "tp_levels":                 (
-                        json.dumps(row["tp_levels"])
+                        json.dumps(row["tp_levels"], allow_nan=False)
                         if isinstance(row.get("tp_levels"), (list, dict))
                         else row.get("tp_levels")
                     ),

@@ -8,6 +8,7 @@ Exports: templates, _fmt, _fmt_duration, _hold_time, _ctx, _paginate_list, _tabl
 """
 from __future__ import annotations
 
+import math
 import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -36,9 +37,15 @@ templates = Jinja2Templates(directory=os.path.join(_BASE_DIR, "templates"))
 
 def _fmt(val, decimals=2, suffix=""):
     try:
-        return f"{float(val):,.{decimals}f}{suffix}"
+        f = float(val)
     except (TypeError, ValueError):
         return str(val)
+    # Phase 8 audit: a NaN/Inf mark (bad WS tick) would otherwise render the
+    # literal "nan"/"inf" in uPnL/MFE/MAE cells AND skip the green/red sign
+    # class (nan>0 and nan<0 are both False). Render the em-dash sentinel.
+    if not math.isfinite(f):
+        return "—"
+    return f"{f:,.{decimals}f}{suffix}"
 
 
 def _fmt_duration(ms) -> str:

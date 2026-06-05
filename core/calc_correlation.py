@@ -483,17 +483,19 @@ class CandidateCalc:
     replaced_order: Optional[Dict[str, Any]] = None
 
 
-def _cancelled_order_for_calc(conn, calc_id: str) -> Optional[Dict[str, Any]]:
+def _cancelled_order_for_calc(conn, calc_id: str, account_id: int) -> Optional[Dict[str, Any]]:
     """P8.T5: the most-recent CANCELLED order for *calc_id* — the order this
     released calc's replacement would stand in for. Best-effort: returns
     ``{exchange_order_id, cancel_ts_ms}`` or None (older DBs may lack the
-    cancel_ts_ms column / have no cancelled order)."""
+    cancel_ts_ms column / have no cancelled order). Account-scoped (Phase 8
+    audit) — consistent with the strict matcher; matters on the combined-DB
+    fallback path where one file holds multiple accounts."""
     try:
         r = conn.execute(
             "SELECT exchange_order_id, cancel_ts_ms FROM orders "
-            "WHERE calc_id = ? AND status = 'canceled' "
+            "WHERE calc_id = ? AND account_id = ? AND status = 'canceled' "
             "ORDER BY COALESCE(cancel_ts_ms, 0) DESC LIMIT 1",
-            (calc_id,),
+            (calc_id, account_id),
         ).fetchone()
     except Exception:
         return None
@@ -520,6 +522,7 @@ def find_candidate_calcs(
     sl_price = order.get("sl_trigger_price", 0)
     ticker = order.get("symbol", "")
     side = order.get("side", "")
+    account_id = order.get("account_id", 1)
 
     if not ticker or not entry_price:
         return []
@@ -527,7 +530,7 @@ def find_candidate_calcs(
     if db_path is None:
         try:
             from core.db_account_settings import _resolve_db_path
-            db_path = _resolve_db_path(order.get("account_id", 1), data_dir)
+            db_path = _resolve_db_path(account_id, data_dir)
         except Exception:
             return []
 
@@ -561,10 +564,10 @@ def find_candidate_calcs(
         rows = conn.execute(
             "SELECT calc_id, side, effective_entry, tp_price, sl_price, timestamp, status "
             "FROM pre_trade_log "
-            "WHERE ticker = ? AND timestamp >= ? "
+            "WHERE ticker = ? AND timestamp >= ? AND account_id = ? "
             "AND calc_id IS NOT NULL AND status IN ('active', 'released') "
             "ORDER BY timestamp DESC",
-            (ticker, cutoff),
+            (ticker, cutoff, account_id),
         ).fetchall()
     except Exception:
         conn.close()
@@ -604,7 +607,7 @@ def find_candidate_calcs(
         # P8.T5: surface the calc's status; a 'released' candidate is a
         # replacement scenario — look up the cancelled order it replaces.
         cstatus = row["status"] or "active"
-        replaced = _cancelled_order_for_calc(conn, cid) if cstatus == "released" else None
+        replaced = _cancelled_order_for_calc(conn, cid, account_id) if cstatus == "released" else None
         candidates.append(CandidateCalc(
             calc_id=cid, ticker=ticker, side=side,
             effective_entry=eff, entry_drift_pct=round(e_drift, 6), entry_match=e_match,
