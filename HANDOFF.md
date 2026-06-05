@@ -1,11 +1,60 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-06-05
-**Current branch**: `v2.5/post-rewind-drop-regime-infra` @ `task 286 (Phase 7 holistic audit)` — tasks 268–286 (full Phase-7 build T1–T6 + holistic audit) committed AND **pushed to origin** (`5a9c03e..92a700a`; in sync, 0 ahead)
-**Tests**: 3156 passed, 7 skipped, 1 unrelated pre-existing failure (0 new; Phase-7 suite 100 passed)
-**Pre-existing failure**: `tests/test_data_cache_dd.py::TestRollingWindowPeak::test_old_high_excluded_from_window` — 30-day rolling-window boundary bug; unrelated to calc-linkage. Worth filing as its own task.
+**Date**: 2026-06-06
+**Current branch**: `v2.5/post-rewind-drop-regime-infra` @ `task 303 (Phase 8 holistic audit)` — HEAD `d66d97a`. Tasks 287–303 (all of **Phase 8 T1–T9** + the holistic audit) committed **LOCALLY, NOT pushed** (last push was task 286 `92a700a`; the branch is now far ahead of origin). **Push only when the operator asks.**
+**Tests**: **3402 passed, 7 skipped, 0 failures** (full suite, 2026-06-06). The old 30-day rolling-window pre-existing failure was FIXED in task 288 (`test_data_cache_dd` — wall-clock-anchored snapshots).
 
-## ★ STATUS (2026-06-04) — PHASE 6 COMPLETE + PHASE 7 COMPLETE (reverse-query + audit export, T1–T6); next = Phase 8 (operator UX) or Phase 9 (multi-operator)
+## ★ STATUS (2026-06-06) — 🎉 PHASE 8 (operator UX) COMPLETE + HOLISTICALLY AUDITED; next = Phase 9 (multi-operator) — but ⚠ VERIFY-FIRST whether it's warranted at this deployment
+
+**Phase 8 (operator UX, plan §8) is fully shipped (tasks 291–302) + holistically audited (303).** The calc-linkage system now has its operator surface: a multi-pane cockpit, a refreshed calculator, the post-arrival decision/close flows, in-app notifications, a config editor, and a per-position event drilldown. Calc-linkage now spans **Phase 0 → 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8**.
+
+### Phase-8 build (tasks 291–302)
+- **P8.T1 (291)** — cockpit multi-pane dashboard: 4-pane layout (open positions / active calcs / needs-link / recent closes) + scaffold. `api/routes_cockpit.py`, `templates/cockpit.html` + `fragments/cockpit/*`.
+- **P8.T2 (292)** — open-positions pane: deviation badges + uPnL + MFE/MAE columns (T174 display-together rule honored). Reads `app_state.positions` server-side.
+- **P8.T3 (293)** — active-calcs pane: client-side countdown timers from a server-frozen `expiry_ms = created_ts + window_seconds`, + a per-calc cancel button. **Cancel = RELEASE the calc record** (`calc_state.transition` → `calc:cancelled`), NOT a venue cancel (observe-only engine).
+- **P8.T4a/b/c (294/295/296)** — calculator: account match-window dropdown (writes `config_json.window_seconds`); operator size override (planned vs overridden both recorded for deviation); multi-TP ladder (`tp_levels` JSON array; `_parse_tp_levels` validates finiteness/bounds/count/Σ≤100).
+- **P8.T5 (297)** — **REFRAMED** replacement decision: the spec's *pre-submission* modal is impossible (observe-only). Built the post-arrival equivalent in the needs-link queue — `find_candidate_calcs` now `status IN ('active','released')` (matcher-aligned + fixed a released-exclusion bug) + REPLACEMENT badge + cancelled-order annotation. NO `replacement_modal.js`.
+- **P8.T6 (299)** — **REFRAMED** manual-close reason: not opposite-side order-stream detection (impossible) — a post-arrival **clickable reason badge** on the history close-reason cell → MANUAL_* dropdown + note → `update_close_reason`, **REPLACE-preserved** across a close-row rebuild (`_REFINED_MANUAL` guard in `insert_closed_position`).
+- **P8.T7 (301)** — in-app notifications: per-account ring buffer (`core/notifications.py`) fed by an `event_bus.subscribe_all` catch-all → toasts + bell badge, gated by `config_json.notification_subscriptions`; POLL delivery (`GET /notifications/poll`). Audit fixed 2 MED (cross-account cursor replay; badge-blank-after-boosted-nav).
+- **P8.T8 (300)** — config_json settings editor: a "Calc-Linkage" tab in `/config` (NOT a separate page) editing every knob (window/skew/tolerances/deviation thresholds/webhook/flags/notification subs) via the T4a `write_account_config` writer; validated (incl. `math.isfinite`).
+- **P8.T9 (302)** — per-position trade-events drilldown: a second lazy-loaded drawer section (`GET /fragments/history/position_events`) — calc_id(s) from the `positions_calcs` junction, `query_trade_events` unioned + chronological, scoped (no sibling leak), empty-state for no-calc rows; audit fixed a silent >500-cap.
+
+### Holistic Phase-8 audit (task 303) — 5 parallel auditors (dashboard / calculator / decision+modals / cross-cutting integration / test-quality)
+Suite was healthy (192 phase-8 tests green); one real HIGH + several LOW/defensive, all fixed:
+- **HIGH — NaN/Inf poison on the calc money-path**: `float("nan")/"inf"/"1e400"` parse via `Form(float)` but slip every downstream `<= 0`/range guard (NaN comparisons all False) → an **ELIGIBLE calc with NaN size/notional** persisted into `pre_trade_log`, read by the matcher + deviation analytics. Fixed at the calculator route (400 on non-finite average/sl/tp/pcts) AND in `calculate_position_size` (`math.isfinite` guard — plus the **missing `import math`** it depended on, which a test caught as a NameError-on-every-calc).
+- LOW: `size_override` requires `isfinite` (+inf was persisting); `find_candidate_calcs`/`_cancelled_order_for_calc` are account-scoped (combined-DB fallback safety); `db_trades` tp_levels `json.dumps(allow_nan=False)`; `_fmt` renders non-finite as `—` (app-wide — fixes cockpit uPnL/MFE/MAE on a bad WS tick).
+- DOC: reframed plan rows 8.7 + P8.T6 in-place. TESTS: `test_phase8_audit_followup.py` (24) — regressions for every fix + the gaps the per-task suites missed (MANUAL_DISCIPLINE_BREAK/NEW_OPPORTUNITY preserve+endpoint+label; position_size_drift notification; position_events detail-summary branches).
+- **Verified clean (no change)**: config_json multi-writer consistency (top-level merge preserves siblings; settings writes full nested snapshots); all phase-8 templates compile-render; REPLACE-preserve key correctness; notification dispatch/XSS/cursor; position-events scoping.
+
+### Phase-8 deferred (none blocking — file/pick up opportunistically)
+1. **No `/positions/open` JSON endpoint** — the cockpit positions pane reads `app_state.positions` server-side; there's still no list-all-open read API (Phase-7 deferred #2 predicted the dashboard would want one; it shipped reading app_state instead). Add only if a JSON consumer needs it.
+2. **Export-Audit button NOT wired** — the P7.T4/T5 signed-export endpoints (`POST /export/closed_position/{id}?format=json|pdf`) have no UI button. A one-row add to the history drawer / closes pane.
+3. **Two LOW audit items (pre-existing, NOT phase-8 regressions)**: (a) `base.html` has unguarded poll IIFEs (connection-poll + hold-time ticker) that stack duplicate `setInterval`s across `hx-boost` body-swaps — the P8.T7 notif IIFE is the only guarded one; retrofit `if(window._X)return` guards. (b) the cockpit per-calc cancel returns non-2xx on `not_cancellable`/`race_lost`, which the global htmx error handler swallows into a generic toast + a retry-the-failing-action fragment — the cancel endpoint's own docstring says the button-wiring task should return 200 with a status-discriminated body; do that.
+
+---
+
+## ★ NEXT: Phase 9 (multi-operator) — ⚠ VERIFY-FIRST: is it warranted at single-tenant localhost?
+
+**Before scoping ANY Phase-9 code, make the scoping call + surface it to the operator** ([[feedback_verify_first_default]]). Phase 9 is "single-operator-per-account lock + takeover + `operator_id` on all action rows" (plan §9). The deployment is **single-tenant localhost** (CLAUDE.md "Deployment context", Task 163 — HIGH-001 auth closed / N-A). Phase 9 is **NOT** auth/exposure hardening; its value is (a) operator-SESSION consistency / two-tab-clobber prevention, and (b) audit-trail `operator_id` completeness ("who created this calc"). At a single local operator, (a) is low-value; (b) has standalone worth. So the real options are:
+- **Build Phase 9 in full** — only if multi-tab / future multi-seat clobbering is a real concern;
+- **Cherry-pick P9.T3 (`operator_id` propagation)** for audit-trail completeness only, and defer the lock/takeover/timeout (T1/T2/T4);
+- **Defer Phase 9 entirely** and instead close the Phase-8 deferred UI items (export button, `/positions/open`) + the opportunistic hardening backlog (CLAUDE.md "Deployment context": MED-040 SRI, MED-041 CSP, LOW-001 ticker regex — all downgraded-to-opportunistic).
+
+**Phase-9 scaffold ALREADY EXISTS (Phase 0.5 / P0.T2 — logic is deferred stubs):**
+- `operator_sessions` table (`core/database.py:556`) + indexes; `core/db_auth.py` (134 lines — operator_sessions CRUD scaffold); `core/auth_state.py` (82 lines — `OperatorSession` dataclass + `is_active` + reserved Phase-9 event topics).
+- `operator_id TEXT DEFAULT NULL` columns are already on `pre_trade_log`, `orders`, `order_amendments` — the **None placeholders** Phases 1–7 stamped (every calc/order/`position_amended` write passes `operator_id=None` today). These are P9.T3's write targets.
+
+**Phase-9 tasks (plan §9 rows 9.1–9.4 / summary P9.T1–T4):**
+- **P9.T1 (bottleneck)** — single-operator lock: on UI load check `operator_sessions` for an active *foreign* session → read-only + takeover prompt. `core/auth_state.py` + frontend.
+- **P9.T2** — takeover endpoint: terminate the prior session, write a new row with `takeover_from_session_id`. `api/routes_auth.py` (new). **Needs T1.**
+- **P9.T3** — `operator_id` propagation sweep (**the BIGGEST task — pre-grep ALL action-row write sites first**, per CLAUDE.md broad-re-grep discipline): stamp the active session's operator_id on every action-row write (calcs, orders, amendments, manual_links, close_reasons) across `handlers.py`/`order_manager.py`/`ws_manager.py`/`api/routes_*`. **Standalone audit-trail value even without the lock.**
+- **P9.T4** — session timeout: idle auto-terminate after N min (default 30); background job in `auth_state`. Independent.
+
+Sequencing: **T1 → T2; T3 + T4 independent after T1.** Tests: `tests/test_phase9_multi_operator.py` (plan §9). Acceptance: two operators can't both act on one account; "who created this calc" returns `operator_id`; handoff visible in `operator_sessions`.
+
+---
+
+## ★ HISTORICAL STATUS (2026-06-04) — PHASE 6 COMPLETE + PHASE 7 COMPLETE (reverse-query + audit export, T1–T6); next = Phase 8 (operator UX) or Phase 9 (multi-operator)
 
 **Tasks 268–269 (this session):**
 - **task 268 — 4 deferred follow-ups (pre-Phase-7 cleanup)**: (1) aiosqlite `PRAGMA busy_timeout=5000` on
