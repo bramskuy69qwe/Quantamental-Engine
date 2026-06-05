@@ -99,9 +99,11 @@ DEFAULT_DB_PATH = os.path.join(
 )
 
 # Real calc_id format: uuid.uuid4().hex (risk_engine.py:230).
-HEX32 = re.compile(r"^[0-9a-f]{32}$")
-NUMERIC_OID = re.compile(r"^\d+$")
-ALGO_OID = re.compile(r"^algo:\d+$")
+# \Z (not $) so a trailing newline can't sneak a string past the exact-match
+# guard (re `$` matches before a final \n; these are exact-format checks).
+HEX32 = re.compile(r"^[0-9a-f]{32}\Z")
+NUMERIC_OID = re.compile(r"^\d+\Z")
+ALGO_OID = re.compile(r"^algo:\d+\Z")
 SYNTH_OID_PREFIXES = ("O-", "ord-", "OID-", "binance-order-", "POS-")
 
 # The real account is a tiny (~$82) Binance-Futures account. Test fixtures
