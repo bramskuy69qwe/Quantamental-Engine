@@ -13,6 +13,9 @@
     <button id="tab-btn-connections" onclick="switchConfigTab('connections')" class="tab-btn">
       Connections
     </button>
+    <button id="tab-btn-calc-linkage" onclick="switchConfigTab('calc-linkage')" class="tab-btn">
+      Calc-Linkage
+    </button>
   </div>
 
   <!-- ── Accounts Tab ──────────────────────────────────────────────────── -->
@@ -56,12 +59,24 @@
     </div>
   </div>
 
+  <!-- ── Calc-Linkage Tab (P8.T8: accounts.config_json editor) ──────────── -->
+  <div id="tab-calc-linkage" style="display:none;">
+    <div id="account-config-panel"
+         hx-get="/fragments/account_config"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+      <div style="color:var(--muted);font-size:.72rem;">Loading config...</div>
+    </div>
+  </div>
+
 </div>
 
 <script>
 function switchConfigTab(tab) {
-  document.getElementById('tab-accounts').style.display = tab === 'accounts' ? 'block' : 'none';
-  document.getElementById('tab-connections').style.display = tab === 'connections' ? 'block' : 'none';
+  ['accounts','connections','calc-linkage'].forEach(function(t){
+    var el = document.getElementById('tab-' + t);
+    if (el) el.style.display = t === tab ? 'block' : 'none';
+  });
   document.querySelectorAll('.tabs-line .tab-btn').forEach(btn => btn.classList.remove('active'));
   document.getElementById('tab-btn-' + tab).classList.add('active');
 }

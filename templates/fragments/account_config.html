@@ -1,0 +1,69 @@
+{# P8.T8 (plan §8.9 / spec §3.3): per-account config_json editor. Pre-filled
+   from the resolved AccountConfig (defaults fill anything absent). Saves via
+   POST /config/account_config (reuses the T4a write_account_config writer).
+   notification_subscriptions deferred to P8.T7. #}
+<div class="card card-p8" style="max-width:600px;">
+  <span class="sec-lbl" style="margin-bottom:2px;">Calc-Linkage Config
+    <span style="font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0;">— accounts.config_json (active account)</span>
+  </span>
+  <form hx-post="/config/account_config" hx-target="#acfg-result" hx-swap="innerHTML"
+        style="display:flex;flex-direction:column;gap:8px;margin-top:8px;">
+
+    <span class="lbl">Matcher</span>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+      <div>
+        <label class="lbl" style="display:block;margin-bottom:3px;color:var(--sub);">Match window (s)</label>
+        <input type="number" name="window_seconds" min="1" value="{{ cfg.window_seconds }}" />
+      </div>
+      <div>
+        <label class="lbl" style="display:block;margin-bottom:3px;color:var(--sub);">Clock-skew tolerance (s)</label>
+        <input type="number" name="clock_skew_tolerance_sec" min="0" value="{{ cfg.clock_skew_tolerance_sec }}" />
+      </div>
+      <div>
+        <label class="lbl" style="display:block;margin-bottom:3px;color:var(--sub);">Entry tolerance (%)</label>
+        <input type="number" name="entry_tolerance_pct" step="any" min="0" value="{{ cfg.entry_tolerance_pct }}" />
+      </div>
+      <div>
+        <label class="lbl" style="display:block;margin-bottom:3px;color:var(--sub);">Snapshot-drift tolerance (%)</label>
+        <input type="number" name="snapshot_drift_tolerance_pct" step="any" min="0" value="{{ cfg.snapshot_drift_tolerance_pct }}" />
+      </div>
+    </div>
+
+    <hr class="div" />
+    <span class="lbl">Deviation thresholds</span>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
+      <div>
+        <label class="lbl" style="display:block;margin-bottom:3px;color:var(--sub);">Yellow (%)</label>
+        <input type="number" name="yellow_pct" step="any" min="0" value="{{ cfg.yellow_deviation_pct }}" />
+      </div>
+      <div>
+        <label class="lbl" style="display:block;margin-bottom:3px;color:var(--sub);">Red (%)</label>
+        <input type="number" name="red_pct" step="any" min="0" value="{{ cfg.red_deviation_pct }}" />
+      </div>
+      <div>
+        <label class="lbl" style="display:block;margin-bottom:3px;color:var(--sub);">Size deviation (%)</label>
+        <input type="number" name="size_deviation_threshold_pct" step="any" min="0" value="{{ cfg.size_deviation_threshold_pct }}" />
+      </div>
+    </div>
+
+    <hr class="div" />
+    <span class="lbl">Webhook + flags</span>
+    <div>
+      <label class="lbl" style="display:block;margin-bottom:3px;color:var(--sub);">Webhook URL (position:closed)</label>
+      <input type="text" name="webhook_url" placeholder="https://… (blank to disable)" value="{{ cfg.webhook_url or '' }}" />
+    </div>
+    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:.72rem;color:var(--sub);">
+      <input type="checkbox" name="webhook_enabled" style="width:auto;height:auto;accent-color:var(--blue);" {% if cfg.webhook_enabled %}checked{% endif %} />
+      Webhook enabled (POST on position close)
+    </label>
+    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:.72rem;color:var(--sub);">
+      <input type="checkbox" name="snapshot_wins_drift" style="width:auto;height:auto;accent-color:var(--blue);" {% if cfg.snapshot_wins_drift %}checked{% endif %} />
+      Snapshot-wins-drift (invert WS-fills-win; emit position:size_drift)
+    </label>
+
+    <div style="display:flex;gap:8px;align-items:center;margin-top:4px;">
+      <button type="submit" class="btn btn-primary btn-md">Save</button>
+      <span id="acfg-result" style="font-size:.7rem;"></span>
+    </div>
+  </form>
+</div>
