@@ -16,6 +16,7 @@ dashboard is unchanged.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
@@ -32,6 +33,26 @@ router = APIRouter()
 _CALCS_LIMIT = 50
 _CLOSES_LIMIT = 15
 _NEEDS_LINK_PREVIEW = 8
+
+
+def _calc_expiry_ms(timestamp_iso, window_seconds):
+    """Frozen-window expiry as epoch-ms: created_ts + window_seconds (P8.T3).
+
+    ``window_seconds`` is frozen onto pre_trade_log at calc creation (P1.T3);
+    the match window runs from the calc's creation ``timestamp``. Returns None
+    when either input is missing (older calcs may have NULL window_seconds) —
+    the pane then renders no countdown for that row. UTC epoch-ms so the
+    client-side tick compares directly against Date.now() regardless of tz.
+    """
+    if not timestamp_iso or not window_seconds:
+        return None
+    try:
+        dt = datetime.fromisoformat(timestamp_iso)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return int(dt.timestamp() * 1000) + int(window_seconds) * 1000
+    except (ValueError, TypeError):
+        return None
 
 
 @router.get("/cockpit", response_class=HTMLResponse)
@@ -61,6 +82,10 @@ async def frag_cockpit_calcs(request: Request):
     except Exception:
         log.exception("cockpit active-calcs read failed")
         calcs = []
+    # P8.T3: derive the frozen-window expiry per calc for the client-side
+    # countdown (the JS tick reads data-calc-expiry; see cockpit.html).
+    for c in calcs:
+        c["expiry_ms"] = _calc_expiry_ms(c.get("timestamp"), c.get("window_seconds"))
     return templates.TemplateResponse(
         request, "fragments/cockpit/calcs.html",
         _table_ctx(request, calcs=calcs),

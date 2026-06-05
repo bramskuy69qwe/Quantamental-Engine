@@ -123,8 +123,10 @@ class TestPositionsPane:
 # ── Pane: active calcs ────────────────────────────────────────────────────────
 
 
-def _calc(ticker="ETHUSDT", side="long", average=3000.0, status="active"):
-    return {"ticker": ticker, "side": side, "average": average, "status": status}
+def _calc(ticker="ETHUSDT", side="long", average=3000.0, status="active",
+          calc_id="abc123def456", expiry_ms=1893456000000):
+    return {"ticker": ticker, "side": side, "average": average,
+            "status": status, "calc_id": calc_id, "expiry_ms": expiry_ms}
 
 
 class TestCalcsPane:
@@ -148,9 +150,51 @@ class TestCalcsPane:
                        calcs=[_calc(average=0.0)])
         assert "—" in html
 
+    def test_countdown_attr_and_cancel_button(self):
+        # P8.T3: client-side countdown anchor + per-calc cancel button
+        html = _render("fragments/cockpit/calcs.html",
+                       calcs=[_calc(calc_id="CALC42", expiry_ms=1893456000000)])
+        assert 'data-calc-expiry="1893456000000"' in html
+        # cancel -> P1.T4 endpoint, browser confirm, result into shared alert
+        # (needs_link_queue pattern); the row drops out on the 5s poll.
+        assert 'hx-post="/calculator/cancel/CALC42"' in html
+        assert "hx-confirm" in html
+        assert 'hx-target="#ck-calc-alert"' in html
+        assert 'id="ck-calc-alert"' in html
+
+    def test_no_window_renders_empty_expiry(self):
+        # NULL window_seconds -> expiry_ms None -> empty attr (JS renders "—")
+        html = _render("fragments/cockpit/calcs.html",
+                       calcs=[_calc(expiry_ms=None)])
+        assert 'data-calc-expiry=""' in html
+
     def test_empty_renders_empty_state(self):
         html = _render("fragments/cockpit/calcs.html", calcs=[])
         assert "No active calcs" in html
+
+
+class TestCalcExpiryHelper:
+    def test_created_plus_window(self):
+        from api.routes_cockpit import _calc_expiry_ms
+        ms = _calc_expiry_ms("2026-06-01T00:00:00+00:00", 300)
+        created = int(datetime(2026, 6, 1, tzinfo=timezone.utc).timestamp() * 1000)
+        assert ms == created + 300 * 1000
+
+    def test_naive_timestamp_treated_as_utc(self):
+        from api.routes_cockpit import _calc_expiry_ms
+        ms = _calc_expiry_ms("2026-06-01T00:00:00", 60)
+        created = int(datetime(2026, 6, 1, tzinfo=timezone.utc).timestamp() * 1000)
+        assert ms == created + 60 * 1000
+
+    def test_none_when_window_missing_or_zero(self):
+        from api.routes_cockpit import _calc_expiry_ms
+        assert _calc_expiry_ms("2026-06-01T00:00:00+00:00", None) is None
+        assert _calc_expiry_ms("2026-06-01T00:00:00+00:00", 0) is None
+
+    def test_none_on_bad_or_missing_timestamp(self):
+        from api.routes_cockpit import _calc_expiry_ms
+        assert _calc_expiry_ms("not-a-date", 300) is None
+        assert _calc_expiry_ms(None, 300) is None
 
 
 # ── Pane: needs link ──────────────────────────────────────────────────────────
@@ -243,6 +287,14 @@ class TestCockpitPage:
         # 2x2 grid scaffold present
         assert "ck-grid" in src
         assert "grid-template-columns:repeat(2" in src
+
+    def test_countdown_script_present(self):
+        # P8.T3: guarded client-side countdown tick.
+        with open("templates/cockpit.html", encoding="utf-8") as fh:
+            src = fh.read()
+        assert "data-calc-expiry" in src       # the tick targets this attr
+        assert "_ckCalcCountdown" in src        # single-interval guard
+        assert "setInterval(tick, 1000)" in src
 
 
 # ── Routes + nav registration (no TestClient — gotcha #9) ─────────────────────

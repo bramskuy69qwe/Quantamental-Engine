@@ -87,4 +87,36 @@
   </div>
 
 </div>
+
+<script>
+// P8.T3: client-side frozen-window countdown for the Active-Calcs pane.
+// Each row's data-calc-expiry holds the calc's expiry epoch-ms
+// (created_ts + frozen window_seconds, computed server-side). The tick
+// ticks every second over whatever rows are currently in the DOM, so it
+// survives the pane's 5s htmx swaps. Guarded so a boosted-nav re-render
+// can't stack intervals.
+(function(){
+  if (window._ckCalcCountdown) return;
+  window._ckCalcCountdown = true;
+  function render(el){
+    var raw = el.getAttribute('data-calc-expiry');
+    var ms = raw ? parseInt(raw, 10) : NaN;
+    el.classList.remove('text-amber','text-red','text-muted');
+    if (isNaN(ms)) { el.textContent = '—'; el.classList.add('text-muted'); return; }
+    var s = Math.round((ms - Date.now()) / 1000);
+    if (s <= 0) { el.textContent = 'expired'; el.classList.add('text-red'); return; }
+    var m = Math.floor(s / 60), ss = s % 60;
+    el.textContent = m + 'm ' + (ss < 10 ? '0' : '') + ss + 's';
+    if (s <= 60) el.classList.add('text-amber');
+  }
+  function tick(){
+    var nodes = document.querySelectorAll('[data-calc-expiry]');
+    for (var i = 0; i < nodes.length; i++) render(nodes[i]);
+  }
+  setInterval(tick, 1000);
+  // Fill immediately after each pane swap (no 1s blank flash).
+  document.body.addEventListener('htmx:afterSettle', tick);
+  tick();
+})();
+</script>
 {% endblock %}

@@ -1,11 +1,20 @@
-{# Cockpit · Active-calcs pane (P8.T1 scaffold).
-   Live (active|released) calcs for the account. P8.T3 adds the frozen-window
-   countdown timer + per-calc cancel button. #}
+{# Cockpit · Active-calcs pane (P8.T3).
+   Live (active|released) calcs with a client-side frozen-window countdown
+   (data-calc-expiry = created_ts + window_seconds, ticked by the script in
+   cockpit.html) and a per-calc Cancel button (POST /calculator/cancel/{id},
+   P1.T4). Cancel targets the shared #ck-calc-alert (needs_link_queue pattern):
+   the success alert shows immediately and the cancelled calc drops out on the
+   pane's next 5s poll. Non-2xx failures surface via the global htmx toast. #}
 {% from "primitives/empty_state.html" import empty_state %}
 {% if calcs %}
+<div id="ck-calc-alert"></div>
 <table>
   <thead><tr>
-    <th>Symbol</th><th>Side</th><th style="text-align:right;">Entry</th><th>Status</th>
+    <th>Symbol</th><th>Side</th>
+    <th style="text-align:right;">Entry</th>
+    <th>Status</th>
+    <th style="text-align:right;">Window</th>
+    <th></th>
   </tr></thead>
   <tbody>
     {% for c in calcs %}
@@ -14,6 +23,18 @@
       <td class="{{ 'pos-long' if (c.side|lower) == 'long' else 'pos-short' }}">{{ (c.side or '')|upper }}</td>
       <td style="text-align:right;">{{ fmt(c.average, 4) if c.average else '—' }}</td>
       <td><span class="badge {{ 'badge-blue' if c.status == 'active' else 'badge-gray' }}">{{ c.status }}</span></td>
+      <td class="mono" style="text-align:right;font-size:.66rem;">
+        <span class="ck-cd" data-calc-expiry="{{ c.expiry_ms or '' }}">—</span>
+      </td>
+      <td style="text-align:right;">
+        <button class="btn btn-danger btn-sm"
+                hx-post="/calculator/cancel/{{ c.calc_id }}"
+                hx-target="#ck-calc-alert"
+                hx-swap="innerHTML"
+                hx-confirm="Cancel calc for {{ c.ticker }} ({{ (c.side or '')|upper }})?">
+          Cancel
+        </button>
+      </td>
     </tr>
     {% endfor %}
   </tbody>
