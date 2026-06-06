@@ -117,3 +117,63 @@ class TestPollIifeGuards:
     def test_notif_poll_guard_still_present(self):
         # Regression anchor: the originally-guarded IIFE must stay guarded.
         assert "window._notifPoll" in self._base()
+
+
+class TestListenerStackingGuards:
+    """Phase-8 deferred #3c (closed task 307): the same hx-boost re-execution as
+    #3a, but for `document(.body).addEventListener`. Listeners on the PERSISTENT
+    document/body node accumulate one copy per boosted nav (the body node
+    survives the innerHTML swap) — unlike element-scoped listeners, which die
+    with the swapped element. The user-visible one was `htmx:responseError` → N
+    duplicate error toasts + N target-swaps after N navs. Each previously
+    UNguarded listener must now register once behind a window flag. Proximity
+    checks ensure the flag actually wraps its listener (not a decorative name)."""
+
+    def _base(self):
+        with open("templates/base.html", encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_account_added_guarded(self):
+        src = self._base()
+        i = src.index("_acctAddedBound")
+        assert 'addEventListener("account-added"' in src[i:i + 240]
+
+    def test_echarts_dispose_guarded(self):
+        src = self._base()
+        i = src.index("_echartsDisposeBound")
+        assert "htmx:beforeSwap" in src[i:i + 280]
+
+    def test_htmx_error_listeners_guarded(self):
+        # the user-visible duplicate-toast one: BOTH error listeners sit under
+        # one register-once guard (the IIFE ends right after them).
+        src = self._base()
+        i = src.index("_htmxErrBound")
+        seg = src[i:i + 1500]
+        assert "htmx:responseError" in seg and "htmx:sendError" in seg
+
+    def test_steppers_listener_guarded(self):
+        src = self._base()
+        i = src.index("_stepperBound")
+        assert "htmx:afterSettle" in src[i:i + 240]
+
+    def test_dashtab_listener_guarded(self):
+        src = self._base()
+        i = src.index("_dashTabBound")
+        assert "htmx:afterSettle" in src[i:i + 340]
+
+    def test_hptab_listener_guarded(self):
+        src = self._base()
+        i = src.index("_hpTabBound")
+        assert "htmx:afterSettle" in src[i:i + 340]
+
+    def test_known_persistent_listener_guards_all_present(self):
+        # Completeness anchor for the persistent-node LISTENER guards (#3c) + the
+        # pre-existing notif listener guard. (The #3a TIMER guards _connPoll /
+        # _holdTick are setInterval, not listeners — covered by TestPollIifeGuards
+        # above.) A NEW unguarded document(.body).addEventListener added later
+        # won't be covered here — update the guard AND this anchor together.
+        src = self._base()
+        for flag in ("_acctAddedBound", "_echartsDisposeBound", "_htmxErrBound",
+                     "_stepperBound", "_dashTabBound", "_hpTabBound",
+                     "_notifPoll"):
+            assert flag in src, f"missing boost-stacking guard: {flag}"

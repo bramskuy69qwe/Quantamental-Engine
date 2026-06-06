@@ -714,10 +714,16 @@
   </div>
 </div>
 <script>
-document.body.addEventListener("account-added",function(){
-  document.getElementById("add-account-modal").style.display="none";
-  window.location.reload();
-});
+// #3c: register once — hx-boost re-runs body <script>s on every boosted nav,
+// and this listener lives on the PERSISTENT document.body node, so re-running
+// would stack one copy per nav.
+if (!window._acctAddedBound) {
+  window._acctAddedBound = true;
+  document.body.addEventListener("account-added",function(){
+    document.getElementById("add-account-modal").style.display="none";
+    window.location.reload();
+  });
+}
 </script>
 
 <!-- ── Toast container ────────────────────────────────────────────────────── -->
@@ -903,15 +909,20 @@ function editNote(el, id, table){
 
 <script>
 // ── ECharts HTMX lifecycle: auto-dispose before fragment swap ────────────
-document.addEventListener('htmx:beforeSwap', function(evt) {
-  var target = evt.detail.target;
-  if (!target) return;
-  var containers = target.querySelectorAll('[data-echarts]');
-  containers.forEach(function(el) { QE.disposeChart(el); });
-  if (target.hasAttribute && target.hasAttribute('data-echarts')) {
-    QE.disposeChart(target);
-  }
-});
+// #3c: register once — this document listener would otherwise stack one copy
+// per hx-boost nav (the document node persists across the body innerHTML swap).
+if (!window._echartsDisposeBound) {
+  window._echartsDisposeBound = true;
+  document.addEventListener('htmx:beforeSwap', function(evt) {
+    var target = evt.detail.target;
+    if (!target) return;
+    var containers = target.querySelectorAll('[data-echarts]');
+    containers.forEach(function(el) { QE.disposeChart(el); });
+    if (target.hasAttribute && target.hasAttribute('data-echarts')) {
+      QE.disposeChart(target);
+    }
+  });
+}
 </script>
 
 <style>
@@ -955,14 +966,20 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
 // limits — a persistent failure simply re-renders the same error
 // state on each click. The user controls the retry pace.
 (function() {
-  var toast = document.getElementById('htmx-error-toast');
   var hideTimer = null;
   // FE-MED-031 (Task 153): showError accepts either a plain string
   // (legacy) OR a {message, detail} object from friendlyError. Object
   // form renders the two-line layout (friendly prose prominent, dim
   // raw detail). Plain-string back-compat preserved. T134 + downstream
   // tests pin showError() as the entry point — keep this signature.
+  // #3c (audit): re-query #htmx-error-toast EACH call rather than capturing
+  // it once at IIFE scope. The listeners below register once (early-return
+  // guard), but a boosted nav swaps the <body> innerHTML and replaces this
+  // node, so a captured reference goes stale → the global error toast would
+  // silently stop appearing after the first boosted nav. Mirrors paintBadge
+  // in the notif IIFE, which re-queries getElementById for the same reason.
   function showError(msg) {
+    var toast = document.getElementById('htmx-error-toast');
     if (!toast) return;
     if (msg && typeof msg === 'object' && msg.message != null) {
       toast.innerHTML = '<span class="toast-msg">' + _toastEsc(msg.message) + '</span>' +
@@ -1040,6 +1057,13 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
     target.innerHTML = buildErrorFragment(message, retryName);
   }
 
+  // #3c: register the two error listeners ONCE. They live on document.body
+  // (persistent across hx-boost innerHTML swaps), so re-running this IIFE per
+  // boosted nav would stack them — N navs → an error fires N duplicate toasts +
+  // N target-swaps. Nothing below runs per-nav (the IIFE ends right after the
+  // two listeners; the helpers above are harmlessly redefined each run).
+  if (window._htmxErrBound) return;
+  window._htmxErrBound = true;
   // FE-MED-031 (Task 153): route raw HTTP details through friendlyError
   // before user-facing display. Raw "Request failed: 422 /calculator/
   // calculate" was the audit's Session-C example. Status-coded friendly
@@ -1139,11 +1163,17 @@ if ('serviceWorker' in navigator) {
     });
   }
 
-  // Run on initial page load
+  // Run on initial page load (idempotent — the :not([data-stepped]) filter)
   attachSteppers();
 
-  // Re-run after any HTMX swap (catches dynamically loaded fragments)
-  document.body.addEventListener('htmx:afterSettle', attachSteppers);
+  // Re-run after any HTMX swap (catches dynamically loaded fragments).
+  // #3c: register the document.body listener ONCE — attachSteppers() above
+  // still runs per boosted nav, but re-binding the listener each nav would
+  // stack it (the body node persists across the innerHTML swap).
+  if (!window._stepperBound) {
+    window._stepperBound = true;
+    document.body.addEventListener('htmx:afterSettle', attachSteppers);
+  }
 })();
 </script>
 
@@ -1176,13 +1206,17 @@ if ('serviceWorker' in navigator) {
     }
   }
   window.dtab = function(t) { window._dashTab = t; _applyTab(t); };
-  // Re-apply tabs + update counts after any row tbody or shell settles
-  document.body.addEventListener('htmx:afterSettle', function(evt) {
-    if (document.getElementById('dp-positions')) {
-      _applyTab(window._dashTab);
-      _updateCounts();
-    }
-  });
+  // Re-apply tabs + update counts after any row tbody or shell settles.
+  // #3c: register the document.body listener once (hx-boost re-runs this IIFE).
+  if (!window._dashTabBound) {
+    window._dashTabBound = true;
+    document.body.addEventListener('htmx:afterSettle', function(evt) {
+      if (document.getElementById('dp-positions')) {
+        _applyTab(window._dashTab);
+        _updateCounts();
+      }
+    });
+  }
 })();
 </script>
 
@@ -1201,9 +1235,13 @@ if ('serviceWorker' in navigator) {
     });
   }
   window.hpTab = function(t) { window._hpTab = t; _applyHpTab(t); };
-  document.body.addEventListener('htmx:afterSettle', function(evt) {
-    if (document.getElementById('hp-panel-pos')) _applyHpTab(window._hpTab);
-  });
+  // #3c: register the document.body listener once (hx-boost re-runs this IIFE).
+  if (!window._hpTabBound) {
+    window._hpTabBound = true;
+    document.body.addEventListener('htmx:afterSettle', function(evt) {
+      if (document.getElementById('hp-panel-pos')) _applyHpTab(window._hpTab);
+    });
+  }
 })();
 </script>
 
