@@ -1,6 +1,8 @@
 {# Cockpit · Recent-closes pane (P8.T1 scaffold).
-   Latest closed positions (newest exit first). A later Phase-8 task wires the
-   Export-Audit button (P7.T4/T5) onto each row. #}
+   Latest closed positions (newest exit first). The Export-Audit button
+   (P7.T4/T5) is wired on the Position History drawer (position_events.html),
+   keyed by the closed_positions PK — this glance pane stays read-only
+   (Phase-8 deferred #2). #}
 {% from "primitives/empty_state.html" import empty_state %}
 {% if rows %}
 <table>

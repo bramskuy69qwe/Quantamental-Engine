@@ -412,6 +412,11 @@ class TestExportPdf:
         jr = await rx.export_closed_position(cid, fmt="json")
         assert jr.status_code == 200
         assert json.loads(bytes(jr.body))["bundle"]["position_id"] == "POS1"
+        # Phase-8 #2: the JSON path MUST carry attachment disposition too, else
+        # the native-form download button (position_events.html) navigates the
+        # SPA to a raw JSON page instead of downloading. Advisory header — the
+        # json.loads above still works, so programmatic callers are unaffected.
+        assert "attachment" in jr.headers.get("content-disposition", "")
 
         # case-insensitive: ?format=PDF must also yield a PDF
         up = await rx.export_closed_position(cid, fmt="PDF")

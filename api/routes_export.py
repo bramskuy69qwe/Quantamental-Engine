@@ -46,7 +46,15 @@ async def export_closed_position(
             headers={"Content-Disposition":
                      f'attachment; filename="audit_closed_position_{closed_position_id}.pdf"'},
         )
-    return JSONResponse(envelope)
+    # Attachment disposition so the native-form download button (Phase-8 #2,
+    # position_events.html) downloads the bundle instead of navigating the SPA
+    # to a raw JSON page — matches the PDF branch. The header is advisory and
+    # does not affect programmatic ``json.loads(resp.body)`` consumers.
+    return JSONResponse(
+        envelope,
+        headers={"Content-Disposition":
+                 f'attachment; filename="audit_closed_position_{closed_position_id}.json"'},
+    )
 
 
 @router.post("/export/closed_positions")

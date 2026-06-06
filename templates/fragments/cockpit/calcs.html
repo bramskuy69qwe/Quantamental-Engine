@@ -4,7 +4,10 @@
    cockpit.html) and a per-calc Cancel button (POST /calculator/cancel/{id},
    P1.T4). Cancel targets the shared #ck-calc-alert (needs_link_queue pattern):
    the success alert shows immediately and the cancelled calc drops out on the
-   pane's next 5s poll. Non-2xx failures surface via the global htmx toast. #}
+   pane's next 5s poll. The endpoint returns 200 for every outcome with a
+   status-discriminated alert body (P8 deferred #3b), so warning/error outcomes
+   (not_cancellable / race_lost / not_found) swap into #ck-calc-alert too —
+   htmx never swaps non-2xx bodies, so they'd otherwise be swallowed. #}
 {% from "primitives/empty_state.html" import empty_state %}
 {% if calcs %}
 <div id="ck-calc-alert"></div>

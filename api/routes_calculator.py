@@ -376,25 +376,20 @@ async def cancel_calc(request: Request, calc_id: str, reason: str = Form("")):
     Transitions the calc active|released → cancelled_by_operator (with an
     optional reason note) and emits ``calc:cancelled`` — all via the
     ``core.calc_state.transition`` choke-point inside
-    ``core.handlers.cancel_calc_by_operator``. Returns a small htmx
-    fragment + a meaningful HTTP status.
+    ``core.handlers.cancel_calc_by_operator``. Returns a small htmx alert
+    fragment.
 
-    T4 scope is endpoint + transition only — there is NO "Cancel calc"
-    button wired yet (spec §10.1 calculator-tab UI is a later task).
-
-    htmx-display caveat (T219 audit, base.html:996-1008): htmx does NOT
-    swap non-2xx response bodies into the target — the global
-    ``htmx:responseError`` handler shows a GENERIC toast +
-    "Couldn't load this section." EmptyState instead. So the specific
-    404/409/500 bodies below will NOT reach the operator as-is. The
-    status codes are kept because they're semantically honest for any
-    non-htmx caller (tests, scripts). When the cancel button is wired,
-    that task must either (a) return 200 with a status-discriminated
-    body so htmx swaps it, or (b) add per-element
-    ``hx-target-4*`` / ``htmx:beforeSwap`` handling to surface the
-    specific outcome. Same swallow already affects calculate_risk's
-    400 validation bodies — it's a codebase-wide htmx-error pattern,
-    not T219-specific.
+    Wired to the cockpit active-calcs pane's per-calc Cancel button (P8.T3),
+    which swaps this response into ``#ck-calc-alert``. htmx does NOT swap
+    non-2xx response bodies — the global ``htmx:responseError`` handler
+    (base.html) instead shows a generic toast + a "Couldn't load this
+    section." retry fragment, swallowing the specific outcome. So this
+    endpoint returns **200 for every outcome** with a status-discriminated
+    alert body (success / warning / error) — option (a) from the original
+    T219 docstring, chosen now that the button is wired (Phase-8 deferred
+    #3b). The semantic outcome lives in the alert class + text, not the HTTP
+    status. (The same htmx swallow still affects calculate_risk's 400
+    validation bodies — a separate, codebase-wide pattern.)
     """
     from core.handlers import cancel_calc_by_operator
 
@@ -407,24 +402,20 @@ async def cancel_calc(request: Request, calc_id: str, reason: str = Form("")):
         )
     if result == "not_found":
         return HTMLResponse(
-            '<div class="alert alert-error">Calc not found.</div>',
-            status_code=404,
+            '<div class="alert alert-error">Calc not found.</div>'
         )
     if result == "not_cancellable":
         return HTMLResponse(
             '<div class="alert alert-warning">Calc is no longer cancellable '
-            '(already matched, expired, superseded, or cancelled).</div>',
-            status_code=409,
+            '(already matched, expired, superseded, or cancelled).</div>'
         )
     if result == "race_lost":
         return HTMLResponse(
             '<div class="alert alert-warning">Calc state changed during '
-            'cancel — please refresh.</div>',
-            status_code=409,
+            'cancel — please refresh.</div>'
         )
     return HTMLResponse(
-        '<div class="alert alert-error">Cancel failed — see engine logs.</div>',
-        status_code=500,
+        '<div class="alert alert-error">Cancel failed — see engine logs.</div>'
     )
 
 

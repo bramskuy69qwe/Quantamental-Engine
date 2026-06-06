@@ -204,15 +204,25 @@ class TestEndpoint:
         ctx = await _call(monkeypatch, db, pid)
         assert ctx["truncated"] is False
 
+    @pytest.mark.asyncio
+    async def test_position_id_threaded_for_export_button(self, db, monkeypatch):
+        # Phase-8 deferred #2: the drawer needs the closed_positions PK to build
+        # the Export-Audit form action; the endpoint must pass it through even
+        # for a no-calc row (export still works via the closed-row fallback).
+        pid = await _add_position(db, "TPID-EXP")
+        ctx = await _call(monkeypatch, db, pid)
+        assert ctx["position_id"] == pid
+
 
 # ── template render ───────────────────────────────────────────────────────────
 
 
-def _render(events, has_calc, truncated=False, events_cap=500):
+def _render(events, has_calc, truncated=False, events_cap=500, position_id=0):
     from api.helpers import templates           # app Jinja env (fmt/etc. globals)
     return templates.env.get_template(
         "fragments/history/position_events.html"
-    ).render(events=events, has_calc=has_calc, truncated=truncated, events_cap=events_cap)
+    ).render(events=events, has_calc=has_calc, truncated=truncated,
+             events_cap=events_cap, position_id=position_id)
 
 
 def _evt(ts, event_type, payload=None):
@@ -263,6 +273,38 @@ class TestRender:
         ev = [_evt("2026-06-01T10:00:00", "calc_created")]
         assert "older events omitted" in _render(ev, True, truncated=True, events_cap=500)
         assert "older events omitted" not in _render(ev, True)   # default False
+
+
+# ── Export-Audit button (Phase-8 deferred #2 — wires P7.T4/T5 onto the drawer) ──
+
+
+class TestExportButton:
+    """The signed-audit-export endpoints (POST /export/closed_position/{id}?
+    format=json|pdf) get a UI: a native download form in the events drawer.
+    Intent (Rule 8): the form is keyed by the closed_positions PK (so the
+    download hits the right row), offers both formats, and renders for EVERY
+    closed row — including no-calc / legacy ones, since the export has a
+    closed-row-only fallback. A GET <a> or htmx post would be wrong (the
+    endpoint is POST and returns a file)."""
+
+    def test_both_format_buttons_keyed_by_position_id(self):
+        html = _render([], True, position_id=42)
+        assert 'formaction="/export/closed_position/42?format=json"' in html
+        assert 'formaction="/export/closed_position/42?format=pdf"' in html
+        assert 'method="post"' in html            # native POST download, not GET/htmx
+
+    def test_export_renders_even_for_no_calc_legacy_row(self):
+        # no linked calc -> empty-state, but export still offered (closed-row
+        # fallback in build_closed_position_export).
+        html = _render([], False, position_id=7)
+        assert "/export/closed_position/7?format=json" in html
+        assert "pre-dates" in html.lower()        # still the legacy empty-state
+
+    def test_no_export_form_without_position_id(self):
+        # position_id=0 (param default / never-set) must NOT emit a form that
+        # would POST to /export/closed_position/0 (a guaranteed 404).
+        html = _render([], True, position_id=0)
+        assert "/export/closed_position/" not in html
 
 
 # ── wiring ────────────────────────────────────────────────────────────────────

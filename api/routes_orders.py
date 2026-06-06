@@ -316,8 +316,12 @@ async def frag_position_events(request: Request, position_id: int = 0):
 
     return templates.TemplateResponse(
         request, "fragments/history/position_events.html",
+        # position_id is the closed_positions PK — the same key the P7.T4/T5
+        # export endpoint takes. Threaded through so the drawer can render the
+        # Export-Audit buttons (Phase-8 deferred #2).
         _ctx(request, events=events, has_calc=bool(calc_ids),
-             truncated=truncated, events_cap=_POSITION_EVENTS_CAP),
+             truncated=truncated, events_cap=_POSITION_EVENTS_CAP,
+             position_id=position_id),
     )
 
 

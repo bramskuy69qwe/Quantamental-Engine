@@ -775,7 +775,14 @@ document.body.addEventListener("account-added",function(){
 
   updateUI(false);
   pollConnection();
-  setInterval(pollConnection, 5000);
+  // hx-boost re-runs this script on every boosted nav (it swaps the <body>
+  // innerHTML; the body node itself persists). The platform-selector change
+  // listener below MUST re-bind to the fresh DOM each time, but setInterval is
+  // window-scoped and would STACK a new 5s poller per nav. Guard the timer only
+  // (not the whole IIFE) so exactly one poller survives boosted navigation while
+  // the listener still re-binds. Mirrors the P8.T7 notif IIFE guard. (Phase-8
+  // deferred #3a.)
+  if(!window._connPoll){ window._connPoll = true; setInterval(pollConnection, 5000); }
   if(platSel) platSel.addEventListener('change',function(){ updateUI(false); setTimeout(pollConnection,500); });
 })();
 
@@ -1189,6 +1196,12 @@ if ('serviceWorker' in navigator) {
 <!-- Client-side time tick: update hold-time and "ago" labels without backend fetch -->
 <script>
 (function(){
+  // hx-boost re-runs this on every boosted nav; the 1s ticker is window-scoped
+  // and would STACK. One ticker survives all navs and re-queries [data-entry-ts]
+  // each tick, so it picks up freshly-swapped rows. Mirrors the P8.T7 notif IIFE
+  // guard. (Phase-8 deferred #3a.)
+  if(window._holdTick) return;
+  window._holdTick = true;
   function _fmt(s){
     var d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60),ss=s%60;
     var p=[];

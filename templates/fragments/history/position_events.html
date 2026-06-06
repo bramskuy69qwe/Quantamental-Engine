@@ -26,6 +26,23 @@
     <span style="font-size:.58rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--blue);">▾ Trade Events</span>
     <span class="mono" style="font-size:.65rem;color:var(--muted);">{{ events | length }} events</span>
     <span style="font-size:.6rem;color:var(--muted);margin-left:auto;">chronological · this position's calc(s)</span>
+    {# Phase-8 deferred #2: wire the P7.T4/T5 signed audit-export endpoints onto
+       the per-position drawer (spec §10.6 "Export Audit per closed-position row").
+       The endpoint is POST and returns a file (Content-Disposition: attachment),
+       so this is a NATIVE form (download via the browser, page stays put) — NOT
+       htmx (the nav is the only hx-boost region) and NOT a GET <a> (POST-only
+       endpoint). Renders for every closed row INCLUDING no-calc / legacy ones —
+       build_closed_position_export has a closed-row-only fallback. #}
+    {% if position_id %}
+    <form method="post" style="display:inline-flex;gap:4px;margin:0;">
+      <button type="submit" class="btn btn-sm"
+              formaction="/export/closed_position/{{ position_id }}?format=json"
+              title="Download the signed JSON audit bundle for this position">⤓ JSON</button>
+      <button type="submit" class="btn btn-sm"
+              formaction="/export/closed_position/{{ position_id }}?format=pdf"
+              title="Download the signed PDF audit bundle for this position">⤓ PDF</button>
+    </form>
+    {% endif %}
   </div>
 
   {# P8.T9: never imply completeness — query_trade_events returns the newest
