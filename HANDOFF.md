@@ -4,9 +4,9 @@
 **Current branch**: `v2.5/post-rewind-drop-regime-infra` @ `task 303 (Phase 8 holistic audit)` — HEAD `d66d97a`. Tasks 287–303 (all of **Phase 8 T1–T9** + the holistic audit) committed **LOCALLY, NOT pushed** (last push was task 286 `92a700a`; the branch is now far ahead of origin). **Push only when the operator asks.**
 **Tests**: **3437 passed, 7 skipped, 0 failures** (full suite, 2026-06-06; 3402 + task-305's 13 + task-306's 15 P9.T1 + task-307's 7 #3c-guard tests). The old 30-day rolling-window pre-existing failure was FIXED in task 288 (`test_data_cache_dd`). A non-deterministic `PytestUnhandledThreadExceptionWarning` (aiosqlite teardown) is pre-existing + flaky (HANDOFF P6.T6 note) — not a failure.
 
-**Tasks 305 (`8835ddd`) + 306 (`89130a8`) — COMMITTED + PUSHED**; origin at `89130a8`.
+**Tasks 305 (`8835ddd`) + 306 (`89130a8`) + 307 (`9597001`) — COMMITTED + PUSHED**; origin at `9597001`. (307 = Phase-8 deferred #3c listener-stacking guards; JS Node-`--check`-verified.)
 
-**⚠ Task 307 (Phase-8 deferred #3c — listener-stacking guards) is implemented + green but UNCOMMITTED on disk** (pending operator commit). Touches: `templates/base.html`, `tests/test_phase8_deferred.py`, `HANDOFF.md`. JS verified via Node `--check` (0 syntax errors across all 11 non-Jinja script blocks).
+**▶ NEXT = P9.T3 (operator_id propagation).** Operator chose to CHECKPOINT it (the roadmap's biggest task) and execute fresh with full budget — the pre-grep + design are done and captured in the **"★ P9.T3 — EXECUTION-READY SCOPE"** block in the Phase-9 section below. Pick it up there. (This task 308 = that scope doc only.)
 
 ## ★ STATUS (2026-06-06) — 🎉 PHASE 8 (operator UX) COMPLETE + HOLISTICALLY AUDITED; next = Phase 9 (multi-operator) — but ⚠ VERIFY-FIRST whether it's warranted at this deployment
 
@@ -53,11 +53,28 @@ Suite was healthy (192 phase-8 tests green); one real HIGH + several LOW/defensi
 **STILL DEFERRED (so the next session doesn't think P9 is done):**
 - **Hard read-only enforcement** (the full P9.T1 lock) — the banner is advisory only; nothing is actually blocked.
 - **P9.T2 takeover endpoint** — its CORE is already built (`/operator/session/takeover` in `routes_auth.py`); "P9.T2" now reduces to any richer takeover UX + the `operator:*` event emission (topics reserved in `auth_state.py`, NOT emitted).
-- **P9.T3 operator_id propagation** — UNTOUCHED. The seat token is NOT yet stamped onto action rows (calcs/orders/amendments/links/close-reasons all still write `operator_id=None`). This is the standalone-valuable piece.
+- **P9.T3 operator_id propagation** — UNTOUCHED (operator chose to checkpoint + execute fresh, task 308). The seat token is NOT yet stamped onto action rows. **Pre-grep + design are DONE — see the "P9.T3 — EXECUTION-READY SCOPE" block below; pick it up directly.**
 - **P9.T4 idle timeout** — UNTOUCHED. Active `operator_sessions` rows are never cleaned; a closed browser leaves an active row forever, and clearing localStorage makes the same human see a foreign banner on themselves (self-heals via one Take-over click).
 - **Best-effort single-active** — `register`/`register` races (or a takeover with >1 pre-existing active) can leave >1 active row; the next register/takeover converges. The atomic acquire-under-lock is the full P9.T1.
 - **CSRF on takeover** — a local page could POST `/operator/session/takeover`. Benign at localhost single-tenant (no lock to weaponize, no second human); **re-elevate the moment a hard lock lands OR the deployment exposes beyond localhost** (add a same-origin/CSRF check then).
 - **Periodic re-check** — the banner is an on-load check only; it won't raise if a second session opens AFTER your page load.
+
+### ★ P9.T3 — EXECUTION-READY SCOPE (pre-grepped + design settled, task 308, 2026-06-07)
+
+The roadmap's **biggest** task (§14.5 "~6h"). Checkpointed for a fresh session with full budget — the pre-grep + design below are done; execute directly + audit (these are money-path-adjacent inserts; the #3c audit just caught a subtle bug, so audit is mandatory).
+
+**Columns (verified):** `operator_id` exists `DEFAULT NULL` and is currently **unwritten** on exactly THREE action-row tables — `pre_trade_log`, `orders`, `order_amendments`. **No `operator_id` column** on `closed_positions` / `fills` / `positions_calcs` / `calc_match_audit` / manual-link / close-reason rows → those are NOT T3 targets and need **no schema change**. (If a future spec wants operator on manual-link/close-reason, that's a column-add, out of this scope.)
+
+**Design (SETTLED):** add `current_operator_id(db, account_id) -> Optional[str]` to `core/auth_state.py` — returns the ACTIVE `operator_session`'s `operator_id` (via `get_active_operator_session`), best-effort, `None` on no-session/error. Stamp it at write time. **NOT** client-seat-token threading: the WS-driven order/amendment writes have no browser request to carry a token, so the active-session resolver is the only option there, and uniform is cleaner. **Caveats to document in-code:** (a) WS-driven rows get "operator on duty at observation time" (weak but honest); (b) a foreign seat submitting a calc mis-attributes to the active owner — acceptable at single-tenant.
+
+**⚠ HOT-PATH NOTE (decide first):** resolving the active session per WS order/amendment write adds a `get_active_operator_session` DB read on the WS hot path. **Prefer caching** the current operator_id on `app_state` (set on register/takeover in `routes_auth.py`, read O(1) at the write sites) over a per-write DB query. The calc-creation path (not hot) can resolve directly.
+
+**Write sites to stamp (exact):**
+1. **`pre_trade_log` (calc creation — HIGH VALUE, "who created this calc"):** `core/handlers.py::handle_risk_calculated` → `core/db_orders.py::insert_pre_trade_log`. The INSERT does NOT currently carry `operator_id` — add the column + placeholder + thread the resolved id in. Also wire the real id into the `calc:created` event payload (`handlers.py:619`, currently `payload.get("operator_id")` → None today).
+2. **`orders` (WS-driven):** `core/db_orders.py::upsert_order_batch` (~:72) — add `operator_id` to the column/placeholder/`ON CONFLICT` set; resolve at the WS order-arrival site (`order_manager.process_order_update`). Weak attribution.
+3. **`order_amendments` (WS-driven):** replace `None` at `order_manager.py:1179` (the `insert_order_amendment` call) with the resolved id — `insert_order_amendment` ALREADY reads `row.get("operator_id")` (`db_orders.py:1686`), so just pass it. ALSO the two payloads: the `position:amended` event-bus payload (`order_manager.py:1212`) + the `position_amended` trade event (`order_manager.py:1251`).
+
+**Tests:** `tests/test_phase9_t3_operator_id.py` — calc-creation stamps the active session's id; `None` when no active session; amendment + order stamped; best-effort (resolver fault → `None`, write still succeeds); the foreign-seat mis-attribution caveat pinned. **Sequencing:** the calc-creation slice (site 1) is the standalone-valuable headline and could ship alone first if splitting; sites 2-3 are the WS-driven remainder.
 
 ### ⚠ VERIFY-FIRST (original guidance — kept for the remaining T1-full/T3/T4 decisions)
 
