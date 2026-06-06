@@ -240,6 +240,13 @@
     }
     #standalone-banner svg { flex-shrink:0; }
 
+    /* ── Operator-session banner (P9.T1 minimal multi-session signal) ── */
+    #operator-session-banner {
+      display:none; background:#0a1426; border-bottom:1px solid #2a4a8f;
+      padding:5px 12px; font-size:.7rem; color:var(--blue);
+      align-items:center; gap:10px; flex-shrink:0;
+    }
+
     /* ── Toast ── */
     /* FE-MED-031 (Task 153): two-line error toast — friendly prose
        prominent, raw detail dim/smaller. .toast-msg is the operator-
@@ -614,6 +621,13 @@
     <path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 6a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 6zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/>
   </svg>
   <span id="standalone-banner-msg">Standalone mode — P&amp;L and positions are estimated from Binance WS, not broker truth.</span>
+</div>
+
+<!-- ── Operator-session banner (P9.T1 minimal — another browser seat is active) ── -->
+<div id="operator-session-banner">
+  <span id="operator-session-msg">Another session is active on this account — your changes may conflict with theirs.</span>
+  <button class="btn btn-sm" onclick="operatorTakeover()" style="margin-left:auto;">Take over</button>
+  <button class="btn btn-sm" onclick="document.getElementById('operator-session-banner').style.display='none'">Dismiss</button>
 </div>
 
 <!-- ── Add Account Modal ──────────────────────────────────────────────────── -->
@@ -1267,6 +1281,73 @@ if ('serviceWorker' in navigator) {
     .then(function(d){ if (d && typeof d.latest_id === 'number') lastId = d.latest_id; })
     .catch(function(){})
     .finally(function(){ setInterval(function(){ poll(lastId); }, 10000); });
+})();
+</script>
+
+<!-- ── P9.T1 (minimal): per-browser seat session register + takeover banner ──── -->
+<script>
+(function(){
+  // hx-boost re-runs this script on every boosted nav; the register POST + the
+  // window.operatorTakeover binding must happen ONCE per full page load, not
+  // per nav. Guard like the P8.T7 notif IIFE. (Single on-load check — periodic
+  // re-check is a deferred enhancement; idle-timeout cleanup is P9.T4.)
+  if (window._opSeat) return;
+  window._opSeat = true;
+  // Seat identity at single-tenant localhost: a per-browser localStorage UUID.
+  // Two tabs of the SAME browser share it (one seat); a different browser /
+  // device is a distinct seat — the useful grain for "someone else is on this
+  // account". Falls back gracefully when storage is unavailable (private mode).
+  function seatToken(){
+    try {
+      var t = localStorage.getItem('op_seat');
+      if (!t) {
+        t = (window.crypto && crypto.randomUUID)
+              ? crypto.randomUUID()
+              : 'seat-' + Date.now() + '-' + Math.floor(Math.random() * 1e9);
+        localStorage.setItem('op_seat', t);
+      }
+      return t;
+    } catch (e) { return 'seat-nostore'; }
+  }
+  var seat = seatToken();
+  // NB: clearing localStorage (or a fresh private window) mints a NEW seat, so
+  // this human's prior STILL-ACTIVE row reads as foreign → a takeover banner on
+  // yourself. One "Take over" click resolves it (self-healing). Idle-timeout
+  // cleanup of stale active rows is P9.T4.
+  function post(url){
+    return fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+      body: 'operator_id=' + encodeURIComponent(seat),
+    }).then(function(r){ return r.ok ? r.json() : null; });
+  }
+  window.operatorTakeover = function(){
+    post('/operator/session/takeover')
+      .then(function(){ var b=document.getElementById('operator-session-banner'); if(b) b.style.display='none'; })
+      .catch(function(){});
+  };
+  // On load: register this seat. Only a FOREIGN active session raises the
+  // banner (advisory — no hard read-only lock; that's the full P9.T1).
+  post('/operator/session/register')
+    .then(function(d){
+      if (d && d.state === 'foreign') {
+        var b = document.getElementById('operator-session-banner');
+        var m = document.getElementById('operator-session-msg');
+        if (m) {
+          // textContent — NOT innerHTML: foreign_operator_id is a client-minted
+          // seat string and must never be parsed as HTML (XSS). Surface the
+          // since-time + a short seat suffix (spec §12.1 "Operator X is active").
+          var since = d.since_ms ? new Date(d.since_ms).toLocaleString() : null;
+          var who = d.foreign_operator_id
+            ? ' (seat …' + String(d.foreign_operator_id).slice(-6) + ')' : '';
+          m.textContent = 'Another session is active on this account' + who
+            + (since ? ', since ' + since : '')
+            + ' — your changes may conflict with theirs.';
+        }
+        if (b) b.style.display = 'flex';
+      }
+    })
+    .catch(function(){});
 })();
 </script>
 

@@ -2,9 +2,11 @@
 
 **Date**: 2026-06-06
 **Current branch**: `v2.5/post-rewind-drop-regime-infra` @ `task 303 (Phase 8 holistic audit)` — HEAD `d66d97a`. Tasks 287–303 (all of **Phase 8 T1–T9** + the holistic audit) committed **LOCALLY, NOT pushed** (last push was task 286 `92a700a`; the branch is now far ahead of origin). **Push only when the operator asks.**
-**Tests**: **3415 passed, 7 skipped, 0 failures** (full suite, 2026-06-06; was 3402 + task-305's 13 new Phase-8-deferred tests). The old 30-day rolling-window pre-existing failure was FIXED in task 288 (`test_data_cache_dd` — wall-clock-anchored snapshots).
+**Tests**: **3430 passed, 7 skipped, 0 failures** (full suite, 2026-06-06; 3402 + task-305's 13 Phase-8-deferred tests + task-306's 15 P9.T1 tests). The old 30-day rolling-window pre-existing failure was FIXED in task 288 (`test_data_cache_dd` — wall-clock-anchored snapshots).
 
-**⚠ Task 305 (Phase-8 deferred items #2/#3a/#3b) is implemented + audited + green but UNCOMMITTED on disk** (pending operator commit; see the "Phase-8 deferred" section below). Touches: `api/routes_orders.py`, `api/routes_export.py`, `api/routes_calculator.py`, `templates/fragments/history/position_events.html`, `templates/fragments/cockpit/{closes,calcs}.html`, `templates/base.html`, `tests/test_phase8_deferred.py` (new), `tests/test_phase8_position_events.py`, `tests/test_phase7_export.py`, `HANDOFF.md`.
+**Task 305 (Phase-8 deferred #2/#3a/#3b) — COMMITTED + PUSHED** (`8835ddd`; origin up to date). See the "Phase-8 deferred" section below.
+
+**⚠ Task 306 (P9.T1 minimal multi-session banner) is implemented + audited (3 agents) + green but UNCOMMITTED on disk** (pending operator commit; see the "★ NEXT: Phase 9" section). Touches: `core/auth_state.py`, `core/db_auth.py` (doc), `api/routes_auth.py` (new), `api/router.py`, `templates/base.html`, `tests/test_phase9_multi_operator.py` (new), `HANDOFF.md`.
 
 ## ★ STATUS (2026-06-06) — 🎉 PHASE 8 (operator UX) COMPLETE + HOLISTICALLY AUDITED; next = Phase 9 (multi-operator) — but ⚠ VERIFY-FIRST whether it's warranted at this deployment
 
@@ -40,9 +42,26 @@ Suite was healthy (192 phase-8 tests green); one real HIGH + several LOW/defensi
 
 ---
 
-## ★ NEXT: Phase 9 (multi-operator) — ⚠ VERIFY-FIRST: is it warranted at single-tenant localhost?
+## ★ NEXT: Phase 9 (multi-operator) — P9.T1 shipped MINIMAL (task 306); T1-full/T2/T3/T4 remain
 
-**Before scoping ANY Phase-9 code, make the scoping call + surface it to the operator** ([[feedback_verify_first_default]]). Phase 9 is "single-operator-per-account lock + takeover + `operator_id` on all action rows" (plan §9). The deployment is **single-tenant localhost** (CLAUDE.md "Deployment context", Task 163 — HIGH-001 auth closed / N-A). Phase 9 is **NOT** auth/exposure hardening; its value is (a) operator-SESSION consistency / two-tab-clobber prevention, and (b) audit-trail `operator_id` completeness ("who created this calc"). At a single local operator, (a) is low-value; (b) has standalone worth. So the real options are:
+### ✅ P9.T1 — SHIPPED MINIMAL (task 306, 2026-06-06) — advisory multi-session banner, NO hard lock
+
+**Verify-first scoping call (made + operator-confirmed):** the engine has **no auth, no cookies/session middleware, and a single global `app_state.active_account_id`** (two browser tabs share it) — so a "single-operator lock" has no per-seat identity to key on, and at single-tenant localhost its only payoff is one human's two-tab self-clobber (low value). Operator chose the **minimal advisory banner** over the full lock.
+
+**What shipped:** a per-browser **seat token** (localStorage UUID = `operator_id`) + two endpoints in **`api/routes_auth.py` (new)** — `POST /operator/session/register` (no active → start mine = owner; same token active → owner/reuse; different token active → `foreign`, don't start) and `POST /operator/session/takeover` (end the foreign active session → start mine with `takeover_from_session_id`). Logic in **`core/auth_state.py`** (`register_session`/`takeover_session`, on the P0.T2 scaffold CRUD). A dismissible **`#operator-session-banner`** in `base.html` + a **guarded** IIFE (`window._opSeat`, per the #3a lesson) that on load mints the token, registers, and shows the banner only on `foreign` (populated with the foreign seat suffix + since-time via `textContent`). Scoped to the global active account. Tests: `tests/test_phase9_multi_operator.py` (15). Audited by 3 agents — no correctness/security bugs; fixes folded in (banner now consumes the plumbed data; localStorage-clear self-grief + non-atomic-takeover documented).
+
+**STILL DEFERRED (so the next session doesn't think P9 is done):**
+- **Hard read-only enforcement** (the full P9.T1 lock) — the banner is advisory only; nothing is actually blocked.
+- **P9.T2 takeover endpoint** — its CORE is already built (`/operator/session/takeover` in `routes_auth.py`); "P9.T2" now reduces to any richer takeover UX + the `operator:*` event emission (topics reserved in `auth_state.py`, NOT emitted).
+- **P9.T3 operator_id propagation** — UNTOUCHED. The seat token is NOT yet stamped onto action rows (calcs/orders/amendments/links/close-reasons all still write `operator_id=None`). This is the standalone-valuable piece.
+- **P9.T4 idle timeout** — UNTOUCHED. Active `operator_sessions` rows are never cleaned; a closed browser leaves an active row forever, and clearing localStorage makes the same human see a foreign banner on themselves (self-heals via one Take-over click).
+- **Best-effort single-active** — `register`/`register` races (or a takeover with >1 pre-existing active) can leave >1 active row; the next register/takeover converges. The atomic acquire-under-lock is the full P9.T1.
+- **CSRF on takeover** — a local page could POST `/operator/session/takeover`. Benign at localhost single-tenant (no lock to weaponize, no second human); **re-elevate the moment a hard lock lands OR the deployment exposes beyond localhost** (add a same-origin/CSRF check then).
+- **Periodic re-check** — the banner is an on-load check only; it won't raise if a second session opens AFTER your page load.
+
+### ⚠ VERIFY-FIRST (original guidance — kept for the remaining T1-full/T3/T4 decisions)
+
+**Before scoping ANY further Phase-9 code, make the scoping call + surface it to the operator** ([[feedback_verify_first_default]]). Phase 9 is "single-operator-per-account lock + takeover + `operator_id` on all action rows" (plan §9). The deployment is **single-tenant localhost** (CLAUDE.md "Deployment context", Task 163 — HIGH-001 auth closed / N-A). Phase 9 is **NOT** auth/exposure hardening; its value is (a) operator-SESSION consistency / two-tab-clobber prevention, and (b) audit-trail `operator_id` completeness ("who created this calc"). At a single local operator, (a) is low-value; (b) has standalone worth. So the real options are:
 - **Build Phase 9 in full** — only if multi-tab / future multi-seat clobbering is a real concern;
 - **Cherry-pick P9.T3 (`operator_id` propagation)** for audit-trail completeness only, and defer the lock/takeover/timeout (T1/T2/T4);
 - **Defer Phase 9 entirely** and instead close the Phase-8 deferred UI items (export button, `/positions/open`) + the opportunistic hardening backlog (CLAUDE.md "Deployment context": MED-040 SRI, MED-041 CSP, LOW-001 ticker regex — all downgraded-to-opportunistic).
@@ -52,8 +71,8 @@ Suite was healthy (192 phase-8 tests green); one real HIGH + several LOW/defensi
 - `operator_id TEXT DEFAULT NULL` columns are already on `pre_trade_log`, `orders`, `order_amendments` — the **None placeholders** Phases 1–7 stamped (every calc/order/`position_amended` write passes `operator_id=None` today). These are P9.T3's write targets.
 
 **Phase-9 tasks (plan §9 rows 9.1–9.4 / summary P9.T1–T4):**
-- **P9.T1 (bottleneck)** — single-operator lock: on UI load check `operator_sessions` for an active *foreign* session → read-only + takeover prompt. `core/auth_state.py` + frontend.
-- **P9.T2** — takeover endpoint: terminate the prior session, write a new row with `takeover_from_session_id`. `api/routes_auth.py` (new). **Needs T1.**
+- **P9.T1 (bottleneck)** — single-operator lock: on UI load check `operator_sessions` for an active *foreign* session → read-only + takeover prompt. `core/auth_state.py` + frontend. **⚠ MINIMAL version SHIPPED (task 306) as an advisory banner — see the "✅ P9.T1 SHIPPED MINIMAL" block above; the HARD read-only lock is what remains.**
+- **P9.T2** — takeover endpoint: terminate the prior session, write a new row with `takeover_from_session_id`. `api/routes_auth.py` (new). **Needs T1.** **⚠ CORE endpoint SHIPPED (task 306, `POST /operator/session/takeover`); only richer UX + `operator:*` event emission remain.**
 - **P9.T3** — `operator_id` propagation sweep (**the BIGGEST task — pre-grep ALL action-row write sites first**, per CLAUDE.md broad-re-grep discipline): stamp the active session's operator_id on every action-row write (calcs, orders, amendments, manual_links, close_reasons) across `handlers.py`/`order_manager.py`/`ws_manager.py`/`api/routes_*`. **Standalone audit-trail value even without the lock.**
 - **P9.T4** — session timeout: idle auto-terminate after N min (default 30); background job in `auth_state`. Independent.
 

@@ -37,8 +37,11 @@ class AuthMixin:
         a prior active session for the same account (Phase 9 takeover
         flow). Caller is responsible for ending the prior session via
         :meth:`end_operator_session` — this helper does NOT auto-end
-        the displaced session (Phase 9 will wrap both writes in one
-        transaction with the lock-acquire check).
+        the displaced session. (P9.T1-minimal's
+        ``core.auth_state.takeover_session`` does the end-prior +
+        start-new as two separate self-committing writes, NOT one
+        transaction; the atomic acquire under a lock-acquire check is
+        the FULL P9.T1.)
         """
         if start_ts_ms is None:
             start_ts_ms = int(time.time() * 1000)

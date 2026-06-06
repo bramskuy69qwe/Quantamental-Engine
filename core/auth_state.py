@@ -80,3 +80,62 @@ class OperatorSession:
 OPERATOR_SESSION_STARTED_TOPIC = "operator:session_started"
 OPERATOR_SESSION_ENDED_TOPIC   = "operator:session_ended"
 OPERATOR_TAKEOVER_TOPIC        = "operator:takeover"
+
+
+# ── Phase-9 P9.T1 (minimal seat-session register + takeover) ───────────
+#
+# Single-tenant localhost has no auth — an "operator" is a per-browser
+# SEAT token (a localStorage UUID the frontend mints). These two helpers
+# orchestrate the operator_sessions scaffold CRUD (AuthMixin) into the
+# flows the minimal multi-session BANNER needs. There is NO hard lock:
+# the result is advisory (the UI shows a "another session is active —
+# take over?" banner). Single-active-per-account is best-effort — a
+# register/register race can leave two actives, and the next register or
+# takeover converges. Idle-timeout cleanup of stale active rows is P9.T4;
+# event emission on the reserved operator:* topics is deferred to the
+# full P9.T1. ``db`` is the DatabaseManager singleton (AuthMixin).
+
+
+async def register_session(db: Any, account_id: int, operator_id: str) -> Dict[str, Any]:
+    """Report whether this seat owns the account's session, starting one if
+    none is active. Returns one of:
+
+      ``{"state": "owner", "session_id": N}`` — no session was active, so a
+        new row was started for this seat; OR this seat's own row was
+        already active (``"reused": True``) — either way this seat owns it.
+      ``{"state": "foreign", "active_session_id": N, "foreign_operator_id":
+        "...", "since_ms": T}`` — a DIFFERENT seat is active. This seat is
+        NOT registered (no row started); the UI shows the takeover banner,
+        and only an explicit :func:`takeover_session` starts a row here.
+    """
+    active = await db.get_active_operator_session(account_id)
+    if active is None:
+        sid = await db.start_operator_session(account_id, operator_id)
+        return {"state": "owner", "session_id": sid}
+    if active.get("operator_id") == operator_id:
+        return {"state": "owner", "session_id": int(active["id"]), "reused": True}
+    return {
+        "state": "foreign",
+        "active_session_id": int(active["id"]),
+        "foreign_operator_id": active.get("operator_id"),
+        "since_ms": active.get("session_start_ts"),
+    }
+
+
+async def takeover_session(db: Any, account_id: int, operator_id: str) -> Dict[str, Any]:
+    """Displace the foreign active session (if any) and start one for this
+    seat, linked via ``takeover_from_session_id``. Idempotent for the
+    already-owner case (no new row written). Returns
+    ``{"state": "owner", "session_id": N, "took_over_from": prior|None}``.
+    """
+    active = await db.get_active_operator_session(account_id)
+    if active is not None and active.get("operator_id") == operator_id:
+        return {"state": "owner", "session_id": int(active["id"]),
+                "took_over_from": None}
+    prior_id = int(active["id"]) if active is not None else None
+    if prior_id is not None:
+        await db.end_operator_session(prior_id)
+    sid = await db.start_operator_session(
+        account_id, operator_id, takeover_from_session_id=prior_id,
+    )
+    return {"state": "owner", "session_id": sid, "took_over_from": prior_id}
