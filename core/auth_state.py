@@ -196,9 +196,14 @@ def cached_operator_id(account_id: int) -> Optional[str]:
     the ``app_state`` write-through cache (populated by the register /
     takeover endpoints). Returns ``None`` when no seat has registered for
     this account since boot — the WS hot path accepts that (weak,
-    best-effort attribution). Lazy app_state import avoids an import cycle."""
+    best-effort attribution). An empty/falsy cached seat also coerces to
+    ``None`` so this matches :func:`current_operator_id` (which does the
+    same) and never stamps an empty string; today the register/takeover
+    endpoints 400-reject empty seats before the cache write, so this is
+    defense-in-depth for any future cache-writer (e.g. P9.T4). Lazy
+    app_state import avoids an import cycle."""
     try:
         from core.state import app_state
-        return app_state.operator_id_by_account.get(account_id)
+        return app_state.operator_id_by_account.get(account_id) or None
     except Exception:  # noqa: BLE001 — attribution is non-blocking
         return None

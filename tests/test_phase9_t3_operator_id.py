@@ -240,10 +240,15 @@ class TestResolvers:
         assert await current_operator_id(d, ACCOUNT_ID) == "seat-new"
 
     def test_cached_operator_id_reads_app_state_cache(self, monkeypatch):
-        from core.state import app_state
         monkeypatch.setattr(app_state, "operator_id_by_account", {7: "seat-7"})
         assert cached_operator_id(7) == "seat-7"
         assert cached_operator_id(99) is None        # cold for another account
+
+    def test_cached_operator_id_coerces_empty_seat_to_none(self, monkeypatch):
+        # Symmetry with current_operator_id (which does `op if op else None`):
+        # an empty/falsy cached seat must NOT stamp an empty string onto rows.
+        monkeypatch.setattr(app_state, "operator_id_by_account", {7: ""})
+        assert cached_operator_id(7) is None
 
 
 # ── 2. Write-through cache (api/routes_auth) ───────────────────────────
