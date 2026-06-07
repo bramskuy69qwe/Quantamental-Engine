@@ -418,8 +418,9 @@ class OrderManager:
             conn.close()
 
             if parent:
-                from core.order_enrichment import enrich_order
-                await enrich_order(dict(parent), config.DB_PATH)
+                # Route through _enrich_order_best_effort so defect-8's
+                # junction-ensure also fires for a parent that links here.
+                await self._enrich_order_best_effort(dict(parent))
         except Exception:
             log.debug("parent re-enrichment on child arrival skipped", exc_info=True)
 
@@ -428,8 +429,67 @@ class OrderManager:
             import config
             from core.order_enrichment import enrich_order
             await enrich_order(order, config.DB_PATH)
+            # Defect-8 (debug 2026-06-08): if the matcher just linked this order
+            # (observe-path calc_id is set AFTER the opening fill), ensure its
+            # positions_calcs junction exists — the fill-time creation was skipped
+            # because calc_id was NULL then, and nothing else re-creates it.
+            await self._ensure_junction_if_linked(
+                order.get("account_id", 1), order.get("exchange_order_id"),
+            )
         except Exception:
             log.debug("order enrichment skipped", exc_info=True)
+
+    async def _ensure_junction_if_linked(self, account_id: int, eoid: str) -> None:
+        """Defect-8 (debug 2026-06-08): on the observe path the matcher sets an
+        order's calc_id AFTER its opening fill (once the TP/SL bracket arrives and
+        re-enrichment runs). The fill-time _link_position_calc_on_open already
+        returned (calc_id was NULL then), so the positions_calcs junction was
+        never written even though the order links. Re-trigger junction creation
+        here by replaying the order's opening fill into the existing builder.
+
+        Idempotent: skips when the order isn't linked, has no position key, or a
+        junction row for (position_id, calc_id) already exists. Best-effort.
+        """
+        if not eoid:
+            return
+        try:
+            async with self._db._conn.execute(
+                "SELECT calc_id, terminal_position_id FROM orders "
+                "WHERE account_id = ? AND exchange_order_id = ?",
+                (account_id, eoid),
+            ) as cur:
+                orow = await cur.fetchone()
+            if not orow or not orow[0] or not (orow[1] or ""):
+                return  # not linked yet, or no position key yet
+            calc_id, pos_id = orow[0], orow[1]
+            async with self._db._conn.execute(
+                "SELECT 1 FROM positions_calcs "
+                "WHERE position_id = ? AND calc_id = ? AND account_id = ? LIMIT 1",
+                (pos_id, calc_id, account_id),
+            ) as cur:
+                if await cur.fetchone():
+                    return  # junction already exists
+            # Replay the order's opening fill(s): summed qty, earliest ts, tpid.
+            async with self._db._conn.execute(
+                "SELECT COALESCE(MAX(terminal_position_id), ''), MAX(symbol), "
+                "       MAX(direction), SUM(quantity), MAX(price), MIN(timestamp_ms) "
+                "FROM fills WHERE account_id = ? AND exchange_order_id = ? "
+                "  AND is_close = 0",
+                (account_id, eoid),
+            ) as cur:
+                frow = await cur.fetchone()
+            if not frow or not frow[3]:
+                return  # no opening fill yet (zero/NULL summed qty)
+            synth_fill = {
+                "account_id": account_id, "exchange_order_id": eoid,
+                "terminal_position_id": frow[0] or "", "is_close": 0,
+                "symbol": frow[1] or "", "direction": frow[2] or "",
+                "quantity": frow[3], "price": frow[4] or 0.0,
+                "timestamp_ms": frow[5] or 0,
+            }
+            await self._link_position_calc_on_open(account_id, synth_fill)
+        except Exception:
+            log.debug("ensure junction post-link skipped for %s", eoid, exc_info=True)
 
     # ── TP/SL bracket calc_id inheritance (Phase 2.9, spec §4.5) ─────────────
 

@@ -455,3 +455,53 @@ async def test_junction_forms_when_fill_tpid_empty_via_order(db_and_path):
         (tpid,),
     ) as cur:
         assert (await cur.fetchone()) is not None
+
+
+# ── Defect 8: junction (re)created when the matcher links AFTER the fill ──
+
+@pytest.mark.asyncio
+async def test_junction_ensured_when_matcher_links_after_fill(db_and_path):
+    """Defect-8 (debug 2026-06-08): on the observe path the matcher sets calc_id
+    AFTER the opening fill (once the TP/SL bracket arrives), so the fill-time
+    junction creation was skipped (calc_id was NULL then) and nothing re-created
+    it -> order LINKED but positions_calcs empty (the live symptom). The
+    junction must be (re)created once the order is linked."""
+    db, path = db_and_path
+    from core.order_manager import OrderManager
+    om = OrderManager(db)
+    tpid = "binance:ETHUSDT:LONG:1780858800000"
+    await db._conn.execute(
+        "INSERT INTO pre_trade_log "
+        "(calc_id, account_id, ticker, side, status, size, tp_price, sl_price, "
+        " timestamp, eligible) "
+        "VALUES ('C8', 1, 'ETHUSDT', 'long', 'matched', 0.01, 1700.0, 1590.0, "
+        "'2026-06-07T00:00:00+00:00', 1)"
+    )
+    await db.upsert_order_batch([_entry("F8", 1780858800000, symbol="ETHUSDT", position_side="LONG")])
+    # Order is now linked (matcher set calc_id) + carries the minted tpid, and an
+    # opening fill already exists (it arrived BEFORE the link).
+    await db._conn.execute(
+        "UPDATE orders SET terminal_position_id = ?, calc_id = 'C8' "
+        "WHERE exchange_order_id = 'F8' AND account_id = 1",
+        (tpid,),
+    )
+    await db.upsert_fill({
+        "account_id": 1, "exchange_fill_id": "fill-F8", "exchange_order_id": "F8",
+        "symbol": "ETHUSDT", "side": "BUY", "direction": "LONG", "price": 1629.0,
+        "quantity": 0.01, "is_close": 0, "terminal_position_id": tpid,
+        "timestamp_ms": 1780858800000,
+    })
+    await db._conn.commit()
+
+    # Precondition: no junction was formed at fill time (calc_id was NULL then).
+    async with db._conn.execute("SELECT COUNT(*) FROM positions_calcs") as cur:
+        assert (await cur.fetchone())[0] == 0
+
+    # The matcher having linked the order -> the junction must now be ensured.
+    await om._ensure_junction_if_linked(1, "F8")
+
+    async with db._conn.execute(
+        "SELECT calc_id FROM positions_calcs WHERE position_id = ? AND calc_id = 'C8'",
+        (tpid,),
+    ) as cur:
+        assert (await cur.fetchone()) is not None
