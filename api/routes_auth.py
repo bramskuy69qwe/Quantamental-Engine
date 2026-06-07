@@ -1,20 +1,23 @@
-"""Operator-session endpoints — Phase 9 T1 (minimal; plan §9 / spec §12.1).
+"""Operator-session endpoints — Phase 9 (plan §9 / spec §12.1).
 
 Single-tenant localhost has no auth, and the engine has a single global
 active account (``app_state.active_account_id``). An "operator" is therefore
-a per-browser SEAT token (a localStorage UUID the frontend mints). These two
-endpoints back the minimal multi-session BANNER:
+a per-browser SEAT token (a localStorage UUID the frontend mints). These
+endpoints back the multi-session BANNER + idle-timeout:
 
   - ``POST /operator/session/register`` — report whether another seat is
     active on the active account (``state: foreign``) or this seat owns it
-    (``state: owner``); starts a session row when none is active.
+    (``state: owner``); starts a session row when none is active. (P9.T1)
   - ``POST /operator/session/takeover`` — displace the foreign active
-    session and make this seat the owner.
+    session and make this seat the owner. (P9.T2 core)
+  - ``POST /operator/session/heartbeat`` — keep this seat's session alive
+    (bump ``last_seen_ts``) so the idle reaper doesn't end it. (P9.T4)
 
-There is NO hard read-only lock (that's the full P9.T1) and no idle timeout
-(P9.T4). The orchestration lives in :mod:`core.auth_state`; this module is
-the thin HTTP surface (reads the global active account, validates the seat
-token). operator_id propagation onto action rows is P9.T3.
+operator_id propagation onto action rows shipped in P9.T3 (the register /
+takeover / heartbeat handlers write-through the on-duty cache the WS write
+sites read). STILL DEFERRED: the hard read-only LOCK (full P9.T1). The
+orchestration lives in :mod:`core.auth_state`; this module is the thin HTTP
+surface (reads the global active account, validates the seat token).
 """
 from __future__ import annotations
 
@@ -25,7 +28,7 @@ from fastapi.responses import JSONResponse
 
 from core.database import db
 from core.state import app_state
-from core.auth_state import register_session, takeover_session
+from core.auth_state import register_session, takeover_session, heartbeat_session
 
 log = logging.getLogger("routes.auth")
 router = APIRouter()
@@ -73,4 +76,24 @@ async def operator_session_takeover(operator_id: str = Form(...)):
     # operator-on-duty cache (see register handler).
     if result.get("state") == "owner":
         app_state.operator_id_by_account[aid] = seat
+    return JSONResponse(result)
+
+
+@router.post("/operator/session/heartbeat")
+async def operator_session_heartbeat(operator_id: str = Form(...)):
+    """P9.T4: keep this seat's active session alive (bump ``last_seen_ts``) so
+    the idle reaper doesn't end it. The banner IIFE pings this every ~60s
+    while the page is open. A foreign/absent seat is a no-op (no ownership
+    claim — only register/takeover claim)."""
+    seat = _seat(operator_id)
+    if not seat or len(seat) > _MAX_SEAT_LEN:
+        return JSONResponse({"error": "invalid operator_id"}, status_code=400)
+    aid = app_state.active_account_id
+    result = await heartbeat_session(db, aid, seat)
+    # P9.T4: write-through the T3 operator-on-duty cache when this seat is
+    # confirmed the active owner — self-heals the in-memory cache after an
+    # engine restart (the session survived in the DB; the cache did not).
+    if result.get("bumped"):
+        app_state.operator_id_by_account[aid] = seat
+    result["account_id"] = aid
     return JSONResponse(result)

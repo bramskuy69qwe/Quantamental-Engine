@@ -72,6 +72,7 @@ class TestSchema:
         expected = {
             "id", "account_id", "operator_id", "session_start_ts",
             "session_end_ts", "takeover_from_session_id",
+            "last_seen_ts",  # P9.T4 (idle-timeout heartbeat)
         }
         assert set(cols.keys()) == expected
 

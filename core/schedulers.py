@@ -832,6 +832,28 @@ async def _calc_expiry_loop(interval_s: int = 60) -> None:
             log.warning("calc expiry sweep failed", exc_info=True)
 
 
+async def _operator_session_reaper_loop(interval_s: int = 60) -> None:
+    """P9.T4 (plan §9 row 9.4): periodically end idle operator_sessions.
+
+    A closed/asleep browser stops heartbeating (POST /operator/session/
+    heartbeat bumps last_seen_ts every ~60s while open); after
+    OPERATOR_SESSION_IDLE_SEC of silence the reaper ends the row so stale
+    "active" sessions don't linger and the multi-session banner stays
+    accurate. Global (all accounts) + best-effort. reap_idle_sessions also
+    invalidates the T3 operator-on-duty cache for each reaped seat.
+    """
+    from core.auth_state import reap_idle_sessions
+    from core.database import db
+    while True:
+        await asyncio.sleep(interval_s)
+        try:
+            n = await reap_idle_sessions(db)
+            if n:
+                log.info("Operator session reaper: ended %d idle session(s)", n)
+        except Exception:
+            log.warning("operator session reaper failed", exc_info=True)
+
+
 def start_background_tasks() -> None:
     """Spawn all background schedulers. Call from lifespan startup."""
     _spawn(_startup_fetch(),        name="startup_fetch")
@@ -848,3 +870,4 @@ def start_background_tasks() -> None:
     _spawn(_algo_order_sync_loop(),  name="algo_order_sync")
     _spawn(_calc_expiry_loop(),      name="calc_expiry")
     _spawn(_funding_refresh_loop(),  name="funding_refresh")
+    _spawn(_operator_session_reaper_loop(), name="operator_session_reaper")

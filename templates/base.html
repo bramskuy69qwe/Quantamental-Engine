@@ -1327,8 +1327,8 @@ if ('serviceWorker' in navigator) {
 (function(){
   // hx-boost re-runs this script on every boosted nav; the register POST + the
   // window.operatorTakeover binding must happen ONCE per full page load, not
-  // per nav. Guard like the P8.T7 notif IIFE. (Single on-load check — periodic
-  // re-check is a deferred enhancement; idle-timeout cleanup is P9.T4.)
+  // per nav. Guard like the P8.T7 notif IIFE. (On-load check + a P9.T4
+  // heartbeat below; the foreign-banner periodic re-check is still deferred.)
   if (window._opSeat) return;
   window._opSeat = true;
   // Seat identity at single-tenant localhost: a per-browser localStorage UUID.
@@ -1350,8 +1350,8 @@ if ('serviceWorker' in navigator) {
   var seat = seatToken();
   // NB: clearing localStorage (or a fresh private window) mints a NEW seat, so
   // this human's prior STILL-ACTIVE row reads as foreign → a takeover banner on
-  // yourself. One "Take over" click resolves it (self-healing). Idle-timeout
-  // cleanup of stale active rows is P9.T4.
+  // yourself. One "Take over" click resolves it (self-healing); and the P9.T4
+  // reaper ends the abandoned old row once it stops heartbeating.
   function post(url){
     return fetch(url, {
       method: 'POST',
@@ -1386,6 +1386,14 @@ if ('serviceWorker' in navigator) {
       }
     })
     .catch(function(){});
+  // P9.T4: heartbeat every 60s so the server-side idle reaper keeps THIS
+  // seat's session alive while the page is open. A closed/asleep browser
+  // stops heartbeating and is reaped after the idle timeout (default 30min).
+  // The whole IIFE is guarded by window._opSeat (runs once per full load), so
+  // this interval is created once and persists across hx-boost navs — the #3a
+  // timer pattern (no per-nav re-bind, no stacking). Foreign/absent seat → the
+  // endpoint is a no-op (no ownership claim).
+  setInterval(function(){ post('/operator/session/heartbeat'); }, 60000);
 })();
 </script>
 

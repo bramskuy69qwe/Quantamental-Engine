@@ -15,12 +15,16 @@ SHIPPED:
     ``order_amendments.operator_id`` (WS arrival, via
     :func:`cached_operator_id`) — plus the ``calc:created`` /
     ``position:amended`` event payloads.
+  - P9.T4: idle session timeout — the heartbeat
+    (:func:`heartbeat_session`) bumps ``last_seen_ts`` while a page is
+    open; the background reaper (:func:`reap_idle_sessions`, run by
+    ``schedulers._operator_session_reaper_loop``) ends sessions quiet
+    beyond :data:`OPERATOR_SESSION_IDLE_SEC` and invalidates the T3 cache.
 
 STILL DEFERRED (later Phase-9 tasks):
 
   - Single-operator-per-account hard LOCK + read-only mode for
-    non-active operators in the UI (full P9.T1 / P9.T4 UI).
-  - Session timeout + idle cleanup (background job — P9.T4).
+    non-active operators in the UI (full P9.T1 UI).
   - ``operator_id`` on manual-link / manual-close audit rows — those
     tables have NO ``operator_id`` column today, so this is a future
     schema column-add, NOT part of the P9.T3 three-table sweep.
@@ -89,6 +93,12 @@ OPERATOR_SESSION_STARTED_TOPIC = "operator:session_started"
 OPERATOR_SESSION_ENDED_TOPIC   = "operator:session_ended"
 OPERATOR_TAKEOVER_TOPIC        = "operator:takeover"
 
+# P9.T4: a session with no heartbeat for this long is auto-ended by the
+# background reaper (plan §9 row 9.4 "default 30 [min]"). The banner IIFE
+# heartbeats every ~60s while the page is open, so only a closed/asleep
+# browser crosses this threshold.
+OPERATOR_SESSION_IDLE_SEC = 30 * 60
+
 
 # ── Phase-9 P9.T1 (minimal seat-session register + takeover) ───────────
 #
@@ -99,9 +109,10 @@ OPERATOR_TAKEOVER_TOPIC        = "operator:takeover"
 # the result is advisory (the UI shows a "another session is active —
 # take over?" banner). Single-active-per-account is best-effort — a
 # register/register race can leave two actives, and the next register or
-# takeover converges. Idle-timeout cleanup of stale active rows is P9.T4;
-# event emission on the reserved operator:* topics is deferred to the
-# full P9.T1. ``db`` is the DatabaseManager singleton (AuthMixin).
+# takeover converges. Idle-timeout cleanup of stale active rows SHIPPED in
+# P9.T4 (the reaper below); event emission on the reserved operator:*
+# topics is deferred to the full P9.T1. ``db`` is the DatabaseManager
+# singleton (AuthMixin).
 
 
 async def register_session(db: Any, account_id: int, operator_id: str) -> Dict[str, Any]:
@@ -121,6 +132,9 @@ async def register_session(db: Any, account_id: int, operator_id: str) -> Dict[s
         sid = await db.start_operator_session(account_id, operator_id)
         return {"state": "owner", "session_id": sid}
     if active.get("operator_id") == operator_id:
+        # P9.T4: a (re)register is activity — bump last_seen so the idle
+        # reaper keeps this seat's session alive (best-effort; no-op fault).
+        await db.touch_operator_session(int(active["id"]))
         return {"state": "owner", "session_id": int(active["id"]), "reused": True}
     return {
         "state": "foreign",
@@ -171,9 +185,10 @@ async def takeover_session(db: Any, account_id: int, operator_id: str) -> Dict[s
 # (one showing the takeover banner, never registered) that submits a calc
 # mis-attributes to the active owner — acceptable at single-tenant
 # localhost (CLAUDE.md Task 163 deployment context). The cache is keyed
-# by account_id so an account switch can't surface a stale owner, and is
-# only invalidated by a later register/takeover (no logout/idle-timeout
-# in P9.T1/T3 — idle cleanup is P9.T4).
+# by account_id so an account switch can't surface a stale owner. It is
+# invalidated by a later register/takeover (write-through) and by the P9.T4
+# idle reaper (which clears the entry for a reaped seat — see
+# :func:`reap_idle_sessions`).
 
 
 async def current_operator_id(db: Any, account_id: int) -> Optional[str]:
@@ -207,3 +222,60 @@ def cached_operator_id(account_id: int) -> Optional[str]:
         return app_state.operator_id_by_account.get(account_id) or None
     except Exception:  # noqa: BLE001 — attribution is non-blocking
         return None
+
+
+# ── Phase-9 P9.T4 (idle session timeout) ──────────────────────────────
+#
+# A closed/asleep browser leaves an active operator_sessions row forever
+# (HANDOFF P9.T4). The fix: the page heartbeats while open (bumping
+# last_seen_ts), and a background reaper ends sessions that have gone
+# quiet beyond OPERATOR_SESSION_IDLE_SEC. "Idle" is heartbeat-driven (not
+# max-age), so an actively-open page is never reaped.
+
+
+async def heartbeat_session(
+    db: Any, account_id: int, operator_id: str,
+) -> Dict[str, Any]:
+    """P9.T4: if this seat OWNS the account's active session, bump its
+    ``last_seen_ts`` so the idle reaper keeps it alive. A foreign/absent seat
+    is a NO-OP (it must not claim ownership — only register/takeover do that).
+    Returns ``{"ok": True, "bumped": bool}`` (``bumped`` True iff this seat's
+    active session was touched)."""
+    active = await db.get_active_operator_session(account_id)
+    if active and active.get("operator_id") == operator_id:
+        await db.touch_operator_session(int(active["id"]))
+        return {"ok": True, "bumped": True}
+    return {"ok": True, "bumped": False}
+
+
+async def reap_idle_sessions(
+    db: Any, *, idle_sec: Optional[int] = None, now_ms: Optional[int] = None,
+) -> int:
+    """P9.T4 idle reaper (called by the background loop). Ends active sessions
+    idle longer than ``idle_sec`` (default :data:`OPERATOR_SESSION_IDLE_SEC`)
+    across ALL accounts, and invalidates the T3 operator-on-duty cache for
+    each reaped ``(account, seat)`` so WS orders/amendments stop being stamped
+    with a gone operator. Best-effort: returns 0 on any fault. Returns the
+    number of sessions reaped."""
+    if idle_sec is None:
+        idle_sec = OPERATOR_SESSION_IDLE_SEC
+    try:
+        reaped = await db.reap_idle_operator_sessions(
+            idle_ms=int(idle_sec) * 1000, now_ms=now_ms,
+        )
+    except Exception:  # noqa: BLE001 — reaping is non-blocking hygiene
+        return 0
+    if not reaped:
+        return 0
+    # Invalidate the T3 cache for reaped seats (match account AND seat — a
+    # takeover may have already moved the cache to a still-active new owner).
+    try:
+        from core.state import app_state
+        cache = app_state.operator_id_by_account
+        for r in reaped:
+            aid = r.get("account_id")
+            if aid in cache and cache.get(aid) == r.get("operator_id"):
+                cache.pop(aid, None)
+    except Exception:  # noqa: BLE001 — cache invalidation is best-effort
+        pass
+    return len(reaped)

@@ -47,14 +47,16 @@ class AuthMixin:
             start_ts_ms = int(time.time() * 1000)
         sql = (
             "INSERT INTO operator_sessions "
-            "(account_id, operator_id, session_start_ts, "
+            "(account_id, operator_id, session_start_ts, last_seen_ts, "
             " takeover_from_session_id) "
-            "VALUES (?, ?, ?, ?)"
+            "VALUES (?, ?, ?, ?, ?)"
         )
         try:
             cur = await self._conn.execute(
                 sql,
-                (account_id, operator_id, start_ts_ms,
+                # P9.T4: seed last_seen_ts = start so a brand-new session is
+                # treated as just-active by the idle reaper.
+                (account_id, operator_id, start_ts_ms, start_ts_ms,
                  takeover_from_session_id),
             )
             await self._conn.commit()
@@ -89,6 +91,72 @@ class AuthMixin:
         except Exception:
             log.exception("end_operator_session failed")
             return False
+
+    async def touch_operator_session(
+        self,
+        session_id: int,
+        *,
+        last_seen_ms: Optional[int] = None,
+    ) -> bool:
+        """P9.T4: bump ``last_seen_ts`` on an ACTIVE session (the heartbeat
+        signal). No-op on an already-ended row (``session_end_ts IS NULL``
+        guard). Returns True iff a row was updated. Best-effort."""
+        if last_seen_ms is None:
+            last_seen_ms = int(time.time() * 1000)
+        try:
+            cur = await self._conn.execute(
+                "UPDATE operator_sessions SET last_seen_ts = ? "
+                "WHERE id = ? AND session_end_ts IS NULL",
+                (last_seen_ms, session_id),
+            )
+            await self._conn.commit()
+            return (cur.rowcount or 0) > 0
+        except Exception:
+            log.exception("touch_operator_session failed")
+            return False
+
+    async def reap_idle_operator_sessions(
+        self,
+        *,
+        idle_ms: int,
+        now_ms: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """P9.T4: end active sessions idle longer than ``idle_ms``. "Idle" =
+        ``now - COALESCE(last_seen_ts, session_start_ts) > idle_ms`` (the
+        COALESCE reaps pre-T4 rows on their age, since last_seen_ts is NULL
+        there). Global — sweeps every account in one pass. Returns the reaped
+        rows' ``{id, account_id, operator_id}`` so the caller can invalidate
+        any matching operator-on-duty cache entry. Best-effort: returns ``[]``
+        on error."""
+        if now_ms is None:
+            now_ms = int(time.time() * 1000)
+        idle_expr = "(? - COALESCE(last_seen_ts, session_start_ts)) > ?"
+        try:
+            async with self._conn.execute(
+                "SELECT id, account_id, operator_id FROM operator_sessions "
+                "WHERE session_end_ts IS NULL AND " + idle_expr,
+                (now_ms, idle_ms),
+            ) as cur:
+                rows = [dict(r) for r in await cur.fetchall()]
+            if not rows:
+                return []
+            ids = [r["id"] for r in rows]
+            qmarks = ",".join("?" for _ in ids)
+            # Re-check the idle predicate in the UPDATE so a session
+            # heartbeated between the SELECT and here is NOT reaped. The rare
+            # interleave only over-reports in the returned snapshot, which
+            # merely clears a cache entry the next heartbeat repopulates.
+            await self._conn.execute(
+                "UPDATE operator_sessions SET session_end_ts = ? "
+                "WHERE id IN (" + qmarks + ") AND session_end_ts IS NULL "
+                "  AND " + idle_expr,
+                (now_ms, *ids, now_ms, idle_ms),
+            )
+            await self._conn.commit()
+            return rows
+        except Exception:
+            log.exception("reap_idle_operator_sessions failed")
+            return []
 
     async def get_active_operator_session(
         self,

@@ -558,6 +558,7 @@ CREATE TABLE IF NOT EXISTS operator_sessions (
     account_id               INTEGER NOT NULL,
     operator_id              TEXT    NOT NULL,
     session_start_ts         INTEGER NOT NULL,
+    last_seen_ts             INTEGER DEFAULT NULL,  -- P9.T4: last heartbeat; idle reaper COALESCEs to session_start_ts
     session_end_ts           INTEGER DEFAULT NULL,
     takeover_from_session_id INTEGER DEFAULT NULL
 );
@@ -822,6 +823,13 @@ class DatabaseManager(
             # the P0.T5 backfill script stamps legacy fills based on
             # their parent closed_position's freshly-generated UUID.
             "ALTER TABLE fills ADD COLUMN lifecycle_id TEXT DEFAULT NULL",
+            # ── Phase 9 (P9.T4): operator-session idle timeout ──────────
+            # last_seen_ts is bumped by the heartbeat endpoint; the idle
+            # reaper ends active sessions where now - COALESCE(last_seen_ts,
+            # session_start_ts) > timeout. NULL on pre-T4 rows → the
+            # COALESCE falls back to session_start_ts (so a stale pre-T4
+            # active row is reaped on its age, as intended).
+            "ALTER TABLE operator_sessions ADD COLUMN last_seen_ts INTEGER DEFAULT NULL",
         ]:
             try:
                 await self._conn.execute(migration)
