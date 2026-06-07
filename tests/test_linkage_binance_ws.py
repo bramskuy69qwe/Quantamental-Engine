@@ -377,3 +377,36 @@ def test_effective_entry_is_a_price_not_factor(monkeypatch):
     assert res["effective_entry"] == res["est_fill_price"] == 0.2336
     # ...and emphatically NOT the old ~1.0 (1 - est_slippage) factor.
     assert abs(res["effective_entry"] - 1.0) > 0.5
+
+
+# ── Defect 6: observe-path TP/SL child re-enriches its parent entry ──
+
+@pytest.mark.asyncio
+async def test_observe_path_child_reenriches_parent(db_and_path, monkeypatch):
+    """Defect-6 (debug 2026-06-08): when a TP/SL child with NO venue
+    exchange_position_id arrives, the parent entry must be re-enriched (by
+    symbol+position_side) so its tp/sl_trigger_price populate and the matcher
+    can run. Without it, a market entry that fills BEFORE its bracket lands
+    never gets its triggers -> never links. (Found in live verification.)"""
+    db, path = db_and_path
+    import config
+    monkeypatch.setattr(config, "DB_PATH", path)
+    from core.order_manager import OrderManager
+    om = OrderManager(db)
+    ts = 1775300000000
+    entry = _entry("PE1", ts)  # BUY market, exchange_position_id="", position_side="BOTH"
+    tp = _entry("PTP", ts + 1, side="SELL", order_type="take_profit",
+                status="new", stop_price=72000.0, avg_fill_price=0.0, reduce_only=1)
+    sl = _entry("PSL", ts + 2, side="SELL", order_type="stop_loss",
+                status="new", stop_price=68000.0, avg_fill_price=0.0, reduce_only=1)
+    await db.upsert_order_batch([entry, tp, sl])
+
+    # The TP child arrives -> should re-enrich the parent entry via the
+    # (symbol, position_side) fallback (no exchange_position_id).
+    await om._re_enrich_parent_on_child_arrival(1, tp)
+
+    async with db._conn.execute(
+        "SELECT tp_trigger_price, sl_trigger_price FROM orders WHERE exchange_order_id = 'PE1'"
+    ) as cur:
+        row = await cur.fetchone()
+    assert row[0] == 72000.0 and row[1] == 68000.0

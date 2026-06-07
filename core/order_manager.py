@@ -387,17 +387,34 @@ class OrderManager:
             if not order.get("reduce_only") or otype not in self._TPSL_TYPES:
                 return
             pos_id = order.get("exchange_position_id", "")
-            if not pos_id:
-                return
 
             import sqlite3, config
             conn = sqlite3.connect(config.DB_PATH)
             conn.row_factory = sqlite3.Row
-            parent = conn.execute(
-                "SELECT * FROM orders WHERE account_id = ? "
-                "AND exchange_position_id = ? AND reduce_only = 0 LIMIT 1",
-                (account_id, pos_id),
-            ).fetchone()
+            if pos_id:
+                parent = conn.execute(
+                    "SELECT * FROM orders WHERE account_id = ? "
+                    "AND exchange_position_id = ? AND reduce_only = 0 LIMIT 1",
+                    (account_id, pos_id),
+                ).fetchone()
+            else:
+                # Defect-6 (debug 2026-06-08): the observe-only path (Binance
+                # direct) carries no venue exchange_position_id, so the lookup
+                # above can't find the parent. The OLD `if not pos_id: return`
+                # meant an observe-path TP/SL child NEVER re-enriched its entry —
+                # so the entry's tp/sl_trigger_price (and thus the calc matcher)
+                # never ran once the children arrived AFTER the entry's own
+                # enrichment (the common case: market entry fills, then the TP/SL
+                # bracket lands). Resolve the parent by (symbol, position_side):
+                # the most-recent entry (non-reduce_only) order for this position.
+                sym = order.get("symbol", "")
+                pside = str(order.get("position_side") or "")
+                parent = conn.execute(
+                    "SELECT * FROM orders WHERE account_id = ? AND symbol = ? "
+                    "AND position_side = ? AND reduce_only = 0 "
+                    "ORDER BY id DESC LIMIT 1",
+                    (account_id, sym, pside),
+                ).fetchone()
             conn.close()
 
             if parent:
