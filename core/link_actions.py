@@ -190,9 +190,18 @@ async def manual_link_order(account_id: int, order_id: int, calc_id: str) -> str
 
     try:
         from core.trade_event_log import log_trade_event
+        from core.auth_state import current_operator_id
+        # P9 holistic-audit (plan §9.3 "manual_links" operator attribution):
+        # record WHO manually linked, on the event — NOT on orders.operator_id,
+        # which holds the PLACEMENT operator (T3 first-known-wins COALESCE) and
+        # must not be clobbered by the linker. Best-effort (None if no active
+        # session / resolver fault); manual_link is an HTTP operator action,
+        # not a hot path, so the DB resolve is fine.
+        operator_id = await current_operator_id(db, account_id)
         log_trade_event(
             account_id, calc_id, "manual_link_added",
-            {"order_id": order_id, "exchange_order_id": eid},
+            {"order_id": order_id, "exchange_order_id": eid,
+             "operator_id": operator_id},
             source="manual_link",
         )
     except Exception:

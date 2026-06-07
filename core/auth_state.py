@@ -25,9 +25,12 @@ STILL DEFERRED (later Phase-9 tasks):
 
   - Single-operator-per-account hard LOCK + read-only mode for
     non-active operators in the UI (full P9.T1 UI).
-  - ``operator_id`` on manual-link / manual-close audit rows — those
-    tables have NO ``operator_id`` column today, so this is a future
-    schema column-add, NOT part of the P9.T3 three-table sweep.
+  - ``operator_id`` for the manual-CLOSE (close-reason) action —
+    ``closed_positions`` has no ``operator_id`` column, so this is a
+    future schema column-add. (The manual-LINK action IS attributed, on
+    the ``manual_link_added`` trade event — P9 holistic audit; the
+    mark-unplanned downgrade has no event carrier and is deferred. Neither
+    belongs on ``orders.operator_id``, which holds the placement operator.)
 
 Spec reference: docs/design/calc_linkage_spec.md §3.1 (table) + §12.1
 (multi-operator semantics) + §3.6 (state-machine discipline).
@@ -82,12 +85,13 @@ class OperatorSession:
         return self.session_end_ts is None
 
 
-# ── Event topics (reserved for Phase 9 publisher) ──────────────────────
+# ── Event topics (SPECULATIVE reservation — never emitted) ─────────────
 #
-# Phase 9 emits these on the per-account event bus (per spec §9 +
-# Phase 6 hierarchical topic format). Reserved here so callers + tests
-# import from a single canonical location and Phase 9 only needs to
-# wire publishers, not invent topic names.
+# A forward-looking reservation, NOT spec-mandated: the spec §9 event
+# catalogue does NOT list operator:* topics. If a future P9 task wants to
+# publish session lifecycle on the per-account event bus (Phase-6 topic
+# format), these give callers/tests one canonical import. No publisher
+# emits them today and there is no consumer.
 
 OPERATOR_SESSION_STARTED_TOPIC = "operator:session_started"
 OPERATOR_SESSION_ENDED_TOPIC   = "operator:session_ended"
@@ -213,10 +217,11 @@ def cached_operator_id(account_id: int) -> Optional[str]:
     this account since boot — the WS hot path accepts that (weak,
     best-effort attribution). An empty/falsy cached seat also coerces to
     ``None`` so this matches :func:`current_operator_id` (which does the
-    same) and never stamps an empty string; today the register/takeover
+    same) and never stamps an empty string; the register/takeover/heartbeat
     endpoints 400-reject empty seats before the cache write, so this is
-    defense-in-depth for any future cache-writer (e.g. P9.T4). Lazy
-    app_state import avoids an import cycle."""
+    defense-in-depth for the heartbeat cache-writer (P9.T4, which repopulates
+    after a restart) and any future writer. Lazy app_state import avoids an
+    import cycle."""
     try:
         from core.state import app_state
         return app_state.operator_id_by_account.get(account_id) or None
