@@ -80,6 +80,14 @@ def _populate_tp_sl_trigger_prices(order: Dict[str, Any], db_path: str) -> None:
     pos_id = order.get("exchange_position_id", "")
     aid = order.get("account_id", 1)
     if not pos_id:
+        # Defect-2 (debug 2026-06-07): observe-only adapters (Binance one-way
+        # WS) carry NO venue exchange_position_id, so the exact-position child
+        # query below can't group the bracket and the matcher never runs. Fall
+        # back to broker-agnostic bracket detection (symbol + position_side +
+        # time window) to source the child TP/SL trigger prices. No-op when no
+        # protective sibling clusters with the entry (a naked entry) — the
+        # matcher then correctly stays deferred (spec: can't satisfy 6/6).
+        _populate_tp_sl_via_bracket(order, db_path)
         return
 
     conn = sqlite3.connect(db_path)
@@ -112,6 +120,94 @@ def _populate_tp_sl_trigger_prices(order: Dict[str, Any], db_path: str) -> None:
             conn.commit()
     finally:
         conn.close()
+
+
+def _populate_tp_sl_via_bracket(order: Dict[str, Any], db_path: str) -> None:
+    """Defect-2 fallback (debug 2026-06-07): source tp/sl trigger prices via
+    BROKER-AGNOSTIC bracket detection when the entry order has no venue
+    ``exchange_position_id`` (the Binance observe-only path).
+
+    Groups the entry with its TP/SL siblings by (symbol, position_side) + a
+    short time window (``core.bracket_detection.detect_brackets`` with
+    ``link_field=None`` — the venue-agnostic tier), then reads the protective
+    legs' trigger prices, mirroring the exact-position path. No-op when the
+    entry has no protective sibling clustered with it (naked entry).
+    """
+    eid = order.get("exchange_order_id")
+    aid = order.get("account_id", 1)
+    sym = order.get("symbol", "")
+    created = int(order.get("created_at_ms", 0) or 0)
+    if not eid or not sym or not created:
+        return
+
+    from core.bracket_detection import detect_brackets, is_protective_leg, is_entry_leg
+
+    # Candidate window ~= the bracket cluster window so an unrelated EARLIER order
+    # on the same (symbol, position_side) can't become detect_brackets' cohort
+    # anchor and shift its 2s cluster off this entry's real legs (audit MED).
+    LOOKBACK_MS = 2_000
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT exchange_order_id, order_type, position_side, reduce_only, "
+            "       created_at_ms, stop_price, price "
+            "FROM orders WHERE account_id = ? AND symbol = ? "
+            "  AND created_at_ms BETWEEN ? AND ?",
+            (aid, sym, created - LOOKBACK_MS, created + LOOKBACK_MS),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    cands = [
+        {
+            "exchange_order_id": r[0], "order_type": r[1], "position_side": r[2],
+            "reduce_only": r[3], "created_at_ms": r[4],
+            "stop_price": r[5], "price": r[6],
+        }
+        for r in rows
+    ]
+    brackets = detect_brackets(cands, link_field=None)
+    mine = next(
+        (b for b in brackets if any(o["exchange_order_id"] == eid for o in b)),
+        None,
+    )
+    if not mine:
+        return  # no protective sibling clustered with this entry (naked entry)
+
+    # Audit HIGH: in one-way mode every leg shares position_side="BOTH", so the
+    # (symbol, position_side) tier has no direction key — two distinct bracketed
+    # trades on the same symbol within the window can merge into ONE cluster, and
+    # last-wins extraction below would assign the OTHER trade's TP/SL to this
+    # entry (and could false-link it to the other trade's calc). If the cluster
+    # holds more than one entry leg it is ambiguous: bail (triggers stay NULL ->
+    # matcher defers -> NEEDS_MANUAL_REVIEW), which is spec-correct vs guessing.
+    if sum(1 for o in mine if is_entry_leg(o)) > 1:
+        return
+
+    tp_price = None
+    sl_price = None
+    for o in mine:
+        if not is_protective_leg(o):
+            continue
+        trigger = o["stop_price"] if o["stop_price"] else o["price"]
+        child_type = (o["order_type"] or "").lower()
+        if child_type in _TP_TYPES and trigger:
+            tp_price = trigger
+        elif child_type in _SL_TYPES and trigger:
+            sl_price = trigger
+
+    if tp_price is not None or sl_price is not None:
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute(
+                "UPDATE orders SET tp_trigger_price = COALESCE(?, tp_trigger_price), "
+                "sl_trigger_price = COALESCE(?, sl_trigger_price) "
+                "WHERE account_id = ? AND exchange_order_id = ?",
+                (tp_price, sl_price, aid, eid),
+            )
+            conn.commit()
+        finally:
+            conn.close()
 
 
 # ── Internal: calc_id correlation ────────────────────────────────────────────

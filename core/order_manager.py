@@ -1719,6 +1719,23 @@ class OrderManager:
             return
         order_id = orow[0]
         calc_id = orow[1]
+        # Defect-1 (debug 2026-06-07): back-fill the entry order's
+        # terminal_position_id from the (now-minted) position key so
+        # reverse-query / context assembly (get_orders_by_position_id) can find
+        # this order under its position. Idempotent (fills only an empty tpid);
+        # piggybacks on the exchange_order_id row already read above. Runs for
+        # UNLINKED orders too (before the calc_id gate) — the order belongs to
+        # the position regardless of whether a calc was matched.
+        try:
+            await self._db._conn.execute(
+                "UPDATE orders SET terminal_position_id = ? "
+                "WHERE id = ? AND COALESCE(terminal_position_id, '') = ''",
+                (pos_id, order_id),
+            )
+            await self._db._conn.commit()
+        except Exception:
+            log.debug("junction link: order tpid back-fill failed for %s",
+                      eoid, exc_info=True)
         if not calc_id:
             return  # UNPLANNED / unlinked entry — nothing to attribute
 

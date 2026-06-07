@@ -490,3 +490,37 @@ def _synthetic_pos_id(symbol: str, direction: str, entry_time_ms: int) -> str:
     db_orders.py:954 exchange-history backfill convention (``bf:...``).
     Distinguishable as ``rebuilt:`` for traceability."""
     return f"rebuilt:{symbol}:{direction}:{entry_time_ms}"
+
+
+def mint_terminal_position_id(
+    *, source: str, symbol: str, direction: str, entry_ms: int
+) -> str:
+    """Deterministic, BROKER-AGNOSTIC terminal_position_id for a live
+    position whose upstream feed supplies no venue position id (e.g. the
+    Binance one-way observe-only WS path). Debug session 2026-06-07.
+
+    Format ``{venue}:{symbol}:{direction}:{entry_ms}`` mirrors the
+    ``rebuilt:`` / ``bf:`` conventions so a live-minted id sits in the same
+    family and is distinguishable by prefix. The venue prefix is the first
+    token of ``source`` lowercased (``"Binance"`` / ``"binance_ws"`` ->
+    ``"binance"``; ``""`` -> ``"live"``) — NEVER a hardcoded literal, so any
+    adapter without a venue id gets a coherent prefix for free.
+
+    Deterministic: the same (source, symbol, direction, entry_ms) always
+    yields the same id, so WS re-delivery / duplicate ACCOUNT_UPDATE events
+    dedup to one id (NOT uuid4 — the tpid IS the position key). ``entry_ms``
+    MUST be the position's first-open time (stable for the position's life,
+    distinct across a close->reopen on the same slot) to preserve the
+    one-tpid-per-position-instance invariant relied on by
+    ``order_manager._link_position_calc_on_open``.
+
+    SPLIT-BRAIN CAVEAT: the offline rebuild script synthesizes
+    ``rebuilt:{symbol}:{direction}:{first_fill_ms}`` — a DIFFERENT prefix AND a
+    different timestamp basis (first-fill vs ACCOUNT_UPDATE event time) than this
+    live mint. They don't reconcile, but they don't collide either: the rebuild
+    only fills EMPTY tpids (``COALESCE(...,'')=''``) so it skips live-minted rows.
+    Don't re-run rebuild_closed_positions over symbols that already carry live ids
+    expecting it to match them.
+    """
+    prefix = (source or "").strip().lower().replace(":", "_").split("_")[0] or "live"
+    return f"{prefix}:{symbol}:{direction}:{entry_ms}"

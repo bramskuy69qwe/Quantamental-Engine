@@ -386,6 +386,14 @@ async def _create_fill_from_ws(order, raw_msg: dict) -> None:
         return  # No trade ID — not a real fill
 
     sym = o.get("s", "")
+    # NOTE (debug 2026-06-07): in Binance HEDGE mode (this operator's setup — all
+    # live orders carry positionSide LONG/SHORT) this resolves `direction`
+    # correctly, the lookup below finds the position, and the defect-1 minted
+    # terminal_position_id is copied onto the fill. KNOWN LATENT GAP for Binance
+    # ONE-WAY mode: positionSide="BOTH" is truthy, so direction="BOTH" never
+    # matches a LONG/SHORT position -> tpid stays "" -> linkage breaks. Not fixed
+    # here (operator is hedge-mode; a one-way fix needs close-vs-open side
+    # inference + an integration test). Surfaced as a follow-up.
     direction = o.get("ps", "") or ("LONG" if o.get("S") == "BUY" else "SHORT")
     # Match the open position (if any) to populate terminal_position_id. Lets
     # _build_close_row_for_fill use the indexed terminal_position_id path instead

@@ -277,6 +277,15 @@ class DataCache:
                 if key in existing:
                     self._preserve_metadata(p, existing[key])
                 elif not p.entry_timestamp:
+                    # KNOWN GAP (debug 2026-06-07): the WS-incremental path mints a
+                    # terminal_position_id for a new live position, but this SNAPSHOT
+                    # path deliberately does NOT — a REST snapshot has no stable
+                    # first-open timestamp, so a mint here would be non-deterministic
+                    # across restarts. Consequence: a position first seen via REST
+                    # (engine started while it was already open) gets no tpid and
+                    # won't auto-link. Normal flow (engine running -> WS sees the open)
+                    # is covered; backfill_calc_linkage handles historical rows.
+                    # Follow-up: mint here from a venue open-time if reliably available.
                     p.entry_timestamp = datetime.now(timezone.utc).isoformat()
 
             # Detect closed positions
@@ -428,6 +437,7 @@ class DataCache:
         Always accepted (WS is authoritative for real-time updates).
         """
         from core.state import app_state
+        from core.position_grouping import mint_terminal_position_id
 
         if ts_ms == 0:
             ts_ms = int(time.time() * 1000)
@@ -483,6 +493,23 @@ class DataCache:
                     else:
                         # New position
                         mark = app_state.mark_price_cache.get(sym, np.entry_price) or np.entry_price
+                        # Defect-1 (debug 2026-06-07): mint a deterministic,
+                        # broker-agnostic terminal_position_id on the live-open
+                        # path when the adapter supplies no venue position id
+                        # (Binance one-way WS leaves it ""). entry_ms = the
+                        # ACCOUNT_UPDATE event time (ts_ms) = first-open time,
+                        # stable for the position's life. NEVER overwrite a real
+                        # upstream id (Quantower supplies one). This unblocks the
+                        # whole linkage chain (fills/orders/closed_positions/
+                        # positions_calcs all key on this id). Prefix derives
+                        # from config.EXCHANGE_NAME -> "binance:"/"mexc:" etc.
+                        upstream_id = (getattr(np, "position_id", "") or "")
+                        minted_id = upstream_id or mint_terminal_position_id(
+                            source=config.EXCHANGE_NAME,
+                            symbol=sym,
+                            direction=np.side,
+                            entry_ms=ts_ms,
+                        )
                         self._positions.append(PositionInfo(
                             ticker=sym,
                             direction=np.side,
@@ -493,6 +520,7 @@ class DataCache:
                             position_value_usdt=np.size * mark,
                             entry_timestamp=datetime.now(timezone.utc).isoformat(),
                             sector=config.get_sector(sym),
+                            position_id=minted_id,
                         ))
                         new_syms.add(sym)
 
