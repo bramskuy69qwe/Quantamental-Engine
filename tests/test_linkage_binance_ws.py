@@ -216,10 +216,11 @@ async def test_naked_entry_no_bracket_stays_deferred(db_and_path):
 
 @pytest.mark.asyncio
 async def test_ambiguous_multi_entry_cluster_bails(db_and_path):
-    # Audit HIGH guard: two bracketed entries on the same symbol+side within the
-    # window merge into ONE cluster (no direction key in one-way mode; same side
-    # in hedge). The fallback must BAIL (triggers stay NULL -> matcher defers)
-    # rather than assign the OTHER trade's TP/SL to this entry.
+    # Ambiguity guard: two sets of ACTIVE TP/SL for the same (symbol, position_side)
+    # — i.e. >1 distinct active TP (and SL) trigger — must make the fallback BAIL
+    # (triggers stay NULL -> matcher defers) rather than assign the wrong trade's
+    # TP/SL to this entry. (Can't happen with a single open position, but a
+    # stale-active leftover could.)
     db, path = db_and_path
     from core.order_enrichment import enrich_order
     ts = 1775300000000
@@ -346,3 +347,33 @@ async def test_junction_created_with_minted_tpid(db_and_path):
         (tpid,),
     ) as cur:
         assert (await cur.fetchone()) is not None
+
+
+# ── Defect 4: effective_entry is the entry PRICE, not the (1 - slippage) factor ──
+
+def test_effective_entry_is_a_price_not_factor(monkeypatch):
+    """Defect-4 (debug 2026-06-08): risk_engine must write effective_entry as the
+    slippage-adjusted ENTRY PRICE (= est_fill_price) — the value calc_correlation
+    matches an order's fill price against. It previously stored `1 - est_slippage`
+    (~1.0 for any real-priced asset), so the matcher's entry criterion could never
+    pass on the live path -> zero auto-links. This fails if the factor regresses."""
+    from unittest.mock import MagicMock
+    import core.risk_engine as re
+
+    monkeypatch.setattr("core.monitoring.ReadyStateEvaluator",
+                        lambda: MagicMock(evaluate=lambda: (True, "")))
+    monkeypatch.setattr(re, "calculate_atr_coefficient",
+                        lambda sym: (0.5, "normal", 1.0, 1.0))
+    # known (est_slippage, est_fill_price) — fill price is a real ~0.2336 price
+    monkeypatch.setattr(re, "calculate_slippage", lambda *a, **k: (0.001, 0.2336))
+    monkeypatch.setattr(re, "app_state",
+                        MagicMock(params={"individual_risk_per_trade": 0.01}))
+
+    res = re.calculate_position_size(
+        symbol="VELVETUSDT", average=0.234, sl_price=0.230,
+        total_equity=100.0, side="long",
+    )
+    # effective_entry is the slippage-adjusted price, equal to est_fill_price...
+    assert res["effective_entry"] == res["est_fill_price"] == 0.2336
+    # ...and emphatically NOT the old ~1.0 (1 - est_slippage) factor.
+    assert abs(res["effective_entry"] - 1.0) > 0.5

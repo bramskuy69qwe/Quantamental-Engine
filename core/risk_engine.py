@@ -240,7 +240,7 @@ def calculate_position_size(
         "base_size":       0.0,   # USDT notional, pre-slippage
         "est_fill_price":  0.0,
         "est_slippage":    0.0,
-        "effective_entry": 1.0,   # = 1 − est_slippage
+        "effective_entry": 0.0,   # slippage-adjusted entry price (defect-4 fix; was 1−slippage)
         "size":            0.0,   # contracts = est_size / average
         "eligible":        True,
         "ineligible_reason": "",
@@ -327,7 +327,14 @@ def calculate_position_size(
     # Step 5: est_slippage = |est_fill_price − average| / average
     est_slippage, est_fill_price = calculate_slippage(symbol, side, base_size, average)
     result["est_slippage"]    = est_slippage
-    result["effective_entry"] = 1.0 - est_slippage
+    # Debug 2026-06-08 (defect 4): effective_entry is the slippage-adjusted ENTRY
+    # PRICE — what calc_correlation (the calc<->order matcher) and exec_link read
+    # it as. It previously stored the `1 - est_slippage` FACTOR (~1.0 for any
+    # real-priced asset), so the matcher's entry criterion compared the real fill
+    # price (e.g. 0.236) against ~1.0 and could NEVER match -> zero auto-links on
+    # the live path. The factor was never consumed AS a factor (est_size below
+    # uses est_slippage directly), so this is a pure value fix.
+    result["effective_entry"] = est_fill_price
     result["est_fill_price"]  = est_fill_price
 
     # Task 159 (MED-016): catastrophic-book gate. If slippage estimate reaches
