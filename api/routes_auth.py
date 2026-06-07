@@ -50,6 +50,12 @@ async def operator_session_register(operator_id: str = Form(...)):
     aid = app_state.active_account_id
     result = await register_session(db, aid, seat)
     result["account_id"] = aid
+    # P9.T3: write-through the operator-on-duty cache so the WS
+    # order/amendment write sites stamp operator_id O(1) (no per-write DB
+    # read). Only when THIS seat owns the session — a "foreign" result
+    # means a different seat is active, so we must not claim it here.
+    if result.get("state") == "owner":
+        app_state.operator_id_by_account[aid] = seat
     return JSONResponse(result)
 
 
@@ -63,4 +69,8 @@ async def operator_session_takeover(operator_id: str = Form(...)):
     aid = app_state.active_account_id
     result = await takeover_session(db, aid, seat)
     result["account_id"] = aid
+    # P9.T3: takeover always makes this seat the owner — refresh the
+    # operator-on-duty cache (see register handler).
+    if result.get("state") == "owner":
+        app_state.operator_id_by_account[aid] = seat
     return JSONResponse(result)

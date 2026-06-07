@@ -144,7 +144,10 @@ class TestTakeover:
 def _wire(monkeypatch, db, account_id=1):
     import api.routes_auth as ra
     monkeypatch.setattr(ra, "db", db)
-    monkeypatch.setattr(ra, "app_state", SimpleNamespace(active_account_id=account_id))
+    # operator_id_by_account mirrors the real app_state shape — P9.T3 added a
+    # write-through to it on owner-register / takeover.
+    monkeypatch.setattr(ra, "app_state", SimpleNamespace(
+        active_account_id=account_id, operator_id_by_account={}))
     return ra
 
 

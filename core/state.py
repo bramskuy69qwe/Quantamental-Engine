@@ -347,6 +347,15 @@ class AppState:
         # account_registry.set_active().  See property definition below.
         self.active_platform:   str = "standalone"
 
+        # P9.T3: write-through cache of the operator on duty (active seat)
+        # per account — set on operator-session register/takeover
+        # (api/routes_auth), read O(1) at the WS order/amendment write
+        # sites via core.auth_state.cached_operator_id (weak attribution).
+        # Keyed by account_id so an account switch can't surface a stale
+        # owner; intentionally NOT reset on account switch (each account's
+        # entry stays valid for that account). Empty until a seat registers.
+        self.operator_id_by_account: Dict[int, str] = {}
+
     # ── SR-2: single-owner account identity ───────────────────────────────────
 
     @property

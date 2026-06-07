@@ -126,7 +126,7 @@ class TradesMixin:
                     regime_label, regime_multiplier, regime_mode, apply_regime_multiplier,
                     status, window_seconds,
                     planned_size, overridden_size, planned_tp, overridden_tp, planned_sl, overridden_sl,
-                    tp_levels
+                    tp_levels, operator_id
                 ) VALUES (
                     :account_id, :timestamp, :ticker, :average, :side, :one_percent_depth, :individual_risk,
                     :tp_price, :tp_amount_pct, :tp_usdt, :sl_price, :sl_amount_pct, :sl_usdt,
@@ -137,7 +137,7 @@ class TradesMixin:
                     :regime_label, :regime_multiplier, :regime_mode, :apply_regime_multiplier,
                     :status, :window_seconds,
                     :planned_size, :overridden_size, :planned_tp, :overridden_tp, :planned_sl, :overridden_sl,
-                    :tp_levels
+                    :tp_levels, :operator_id
                 )""",
                 {
                     "account_id":        row.get("account_id", 1),
@@ -244,6 +244,9 @@ class TradesMixin:
                         if isinstance(row.get("tp_levels"), (list, dict))
                         else row.get("tp_levels")
                     ),
+                    # P9.T3: who created this calc (active operator session
+                    # seat). NULL when no active session / pre-P9 callers.
+                    "operator_id":               row.get("operator_id"),
                 },
             )
             await self._conn.commit()

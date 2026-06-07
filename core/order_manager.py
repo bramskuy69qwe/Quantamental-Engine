@@ -15,6 +15,7 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
+from core.auth_state import cached_operator_id
 from core.event_bus import event_bus, DOMAIN_CALC, DOMAIN_POSITION, DOMAIN_ORDER
 from core.order_state import validate_transition, ACTIVE_STATES, OrderStatus, resolve_tpsl_direction
 from core.state import app_state, PositionInfo, deviation_badge_level
@@ -209,6 +210,14 @@ class OrderManager:
         the transition was invalid (e.g., filled→new stale replay).
         """
         order.setdefault("account_id", account_id)
+        # P9.T3: stamp the operator on duty (active seat) onto this WS order
+        # arrival for weak audit attribution ("operator on duty at
+        # observation time"). O(1) cache read (no DB on the hot path); None
+        # when no seat has registered since boot — acceptable (best-effort).
+        # setdefault: never clobber an operator_id an upstream caller set.
+        # upsert_order_batch's ON CONFLICT COALESCE preserves the first-known
+        # value across later observations of the same order.
+        order.setdefault("operator_id", cached_operator_id(account_id))
         eid = order.get("exchange_order_id")
 
         prev_order = None
@@ -1159,6 +1168,11 @@ class OrderManager:
         # touches. "" for a pre-fill entry order (no position yet) or a
         # junction-less path — the order_id still links the event row.
         position_id = stored.get("terminal_position_id") or ""
+        # P9.T3: operator on duty (active seat) at amendment-observation time.
+        # O(1) cache read — this is the WS hot path; None when no seat has
+        # registered (acceptable, weak attribution). Resolved once for all
+        # fields changed in this update (an amendment carries one operator).
+        operator_id = cached_operator_id(account_id)
 
         for field, col in self._amendment_field_pairs(otype):
             try:
@@ -1176,7 +1190,7 @@ class OrderManager:
                     "old_value":     old,
                     "new_value":     new,
                     "ts_ms":         ts_ms,
-                    "operator_id":   None,  # Phase 9 (operator session)
+                    "operator_id":   operator_id,  # P9.T3 (active session seat)
                     "deviation_pct": (new - old) / old * 100.0 if old else None,
                     "lifecycle_id":  lifecycle_id,
                 })
@@ -1194,6 +1208,7 @@ class OrderManager:
                         order_id=order_id, calc_id=calc_id,
                         position_id=position_id, field=field,
                         old=old, new=new, ts_ms=ts_ms,
+                        operator_id=operator_id,
                     )
                     # P6.T4 (spec §9 position:amended): the formal event_bus
                     # topic (P4.T4 shipped the trade event; plan §6 row 6.4
@@ -1209,13 +1224,14 @@ class OrderManager:
                             "old":         old,
                             "new":         new,
                             "ts":          ts_ms,
-                            "operator_id": None,  # Phase 9
+                            "operator_id": operator_id,  # P9.T3
                         },
                     )
 
     def _emit_amendment_event(
         self, account_id: int, *, order_id: int, calc_id: Optional[str],
         position_id: str, field: str, old: float, new: float, ts_ms: int,
+        operator_id: Optional[str] = None,
     ) -> None:
         """P4.T4 (spec §9 ``position:amended``): one trade event per persisted
         ``order_amendments`` row.
@@ -1227,7 +1243,8 @@ class OrderManager:
         the seam would duplicate across both ``_apply_order_update`` and
         ``_apply_algo_update``. Payload is the exact spec §9 key set;
         ``position_id`` is ``""`` for a pre-fill entry order and ``operator_id``
-        is Phase 9. The formal §9 in-process ``event_bus`` topic is Phase 6
+        is the active operator seat at observation time (P9.T3; ``None`` when no
+        seat has registered). The formal §9 in-process ``event_bus`` topic is Phase 6
         (plan §6 row 6.4) — same trade-event-now / event_bus-later split as
         ``partial_close`` / ``position_opened``. Best-effort: an emission fault
         never blocks amendment persistence.
@@ -1248,7 +1265,7 @@ class OrderManager:
                 "old":         old,
                 "new":         new,
                 "ts":          ts_ms,
-                "operator_id": None,  # Phase 9 (operator session)
+                "operator_id": operator_id,  # P9.T3 (active session seat)
             }, source="order_manager")
         except Exception:
             log.debug("position_amended event emission failed", exc_info=True)

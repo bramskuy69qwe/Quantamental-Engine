@@ -81,14 +81,14 @@ class OrdersMixin:
                 quantity, filled_qty, avg_fill_price, reduce_only,
                 time_in_force, position_side, exchange_position_id,
                 terminal_position_id, source, created_at_ms, updated_at_ms,
-                last_seen_ms
+                last_seen_ms, operator_id
             ) VALUES (
                 :account_id, :exchange_order_id, :terminal_order_id, :client_order_id,
                 :symbol, :side, :order_type, :status, :price, :stop_price,
                 :quantity, :filled_qty, :avg_fill_price, :reduce_only,
                 :time_in_force, :position_side, :exchange_position_id,
                 :terminal_position_id, :source, :created_at_ms, :updated_at_ms,
-                :last_seen_ms
+                :last_seen_ms, :operator_id
             )
             ON CONFLICT(account_id, exchange_order_id) DO UPDATE SET
                 terminal_order_id   = excluded.terminal_order_id,
@@ -105,7 +105,13 @@ class OrdersMixin:
                 position_side       = excluded.position_side,
                 exchange_position_id = excluded.exchange_position_id,
                 updated_at_ms       = excluded.updated_at_ms,
-                last_seen_ms        = excluded.last_seen_ms
+                last_seen_ms        = excluded.last_seen_ms,
+                -- P9.T3: first-known-operator-wins. COALESCE(existing, new)
+                -- back-fills a NULL (e.g. a REST snapshot that landed first,
+                -- which never stamps operator_id) but never overwrites a
+                -- known operator with NULL or reattributes to a later seat —
+                -- the order is owned by whoever was on duty when first seen.
+                operator_id         = COALESCE(orders.operator_id, excluded.operator_id)
             WHERE excluded.updated_at_ms >= orders.updated_at_ms
                OR orders.updated_at_ms IS NULL
         """
@@ -141,6 +147,11 @@ class OrdersMixin:
                         "created_at_ms":        row.get("created_at_ms", 0),
                         "updated_at_ms":        row.get("updated_at_ms", now_ms),
                         "last_seen_ms":         now_ms,
+                        # P9.T3: operator on duty when the WS arrival path
+                        # stamped it (process_order_update); NULL for REST
+                        # reconciliation / pre-P9 callers. ON CONFLICT
+                        # COALESCE keeps the first-known value.
+                        "operator_id":          row.get("operator_id"),
                     })
             await self._conn.commit()
         except Exception:

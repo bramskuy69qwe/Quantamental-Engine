@@ -532,6 +532,14 @@ async def handle_risk_calculated(payload: Dict[str, Any]) -> None:
         from core.account_config import AccountConfig
         account_config = AccountConfig()
 
+    # P9.T3: stamp who created this calc (the active operator session's
+    # seat). DB-resolved — correct even when the WS cache is cold (right
+    # after a restart, before any browser registers) — because "who
+    # created this calc" is the high-value attribution and calc creation
+    # is not a hot path. Best-effort None on no active session / fault.
+    from core.auth_state import current_operator_id
+    operator_id = await current_operator_id(db, account_id)
+
     # T215 H2: insert new calc FIRST, then supersede priors. Reverse
     # of the T214 order — closes the orphan-risk window where supersede
     # succeeded but insert failed, leaving the old calc 'superseded'
@@ -545,6 +553,7 @@ async def handle_risk_calculated(payload: Dict[str, Any]) -> None:
             **payload,
             "account_id": account_id,
             "window_seconds": account_config.window_seconds,
+            "operator_id": operator_id,
         })
         insert_ok = True
     except Exception as exc:
@@ -616,7 +625,7 @@ async def handle_risk_calculated(payload: Dict[str, Any]) -> None:
                 "window_seconds": account_config.window_seconds,
                 "model_name":     payload.get("model_name", ""),
                 "tags":           payload.get("tags"),
-                "operator_id":    payload.get("operator_id"),  # Phase 9
+                "operator_id":    operator_id,  # P9.T3 (active session seat)
             })
     except Exception:
         log.warning(
