@@ -131,6 +131,9 @@ _PDF_SECTIONS = (
     ("fills",            "FILLS",          ("exchange_fill_id", "price", "quantity", "is_close")),
     ("amendments",       "AMENDMENTS",     ("field", "old_value", "new_value", "ts_ms")),
     ("positions_calcs",  "JUNCTION",       ("calc_id", "contributed_qty", "first_fill_ts")),
+    # P7 follow-up #1: JSON/PDF parity — the matcher decision trace renders in
+    # the human-readable PDF too, not just the signed JSON.
+    ("match_audit",      "MATCH AUDIT",    ("calc_id", "order_id", "criterion", "matched", "winning", "tolerance_used")),
     ("funding_events",   "FUNDING",        ("amount", "ts_ms", "venue_event_id")),
     ("closed_positions", "CLOSED ROWS",    ("exit_time_ms", "realized_pnl", "net_pnl", "exit_reason")),
     ("events",           "EVENT TIMELINE", ("timestamp", "event_type")),

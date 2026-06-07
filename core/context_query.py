@@ -3,7 +3,8 @@
 Assembles the full causal graph for one calc or one trade lifecycle so a
 downstream model (or the audit UI) can fetch the whole chain in one call:
 
-    calc → orders → fills → amendments → junction → position → funding → events
+    calc → orders → fills → amendments → junction → position → funding →
+    events → match_audit (the per-criterion matcher decision trace)
 
 **Cross-DB (spec §12.7).** The calc-linkage tables (pre_trade_log, orders,
 fills, closed_positions, positions_calcs, order_amendments, funding_events)
@@ -188,13 +189,16 @@ async def _aggregate_tail(
     primary_position_id: Optional[str], account_id: Optional[int],
     prefer_open: bool = True,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Optional[str],
-           Optional[Dict[str, Any]], Dict[str, Any], List[Dict[str, Any]]]:
+           Optional[Dict[str, Any]], Dict[str, Any], List[Dict[str, Any]],
+           List[Dict[str, Any]]]:
     """Shared tail for the lifecycle + position aggregate graphs: amendments
     (per contributing calc, merged + time-sorted), funding (per position), the
-    resolved primary position + its deviations, and the cross-DB events.
-    ``prefer_open`` is threaded to :func:`_resolve_position` (False for the
-    signed export → sealed, DB-reproducible). Returns
-    ``(amendments, funding, position_state, position, deviations, events)``."""
+    resolved primary position + its deviations, the cross-DB events, and the
+    per-criterion matcher decision trace (match_audit, per contributing calc,
+    merged + deterministically ordered). ``prefer_open`` is threaded to
+    :func:`_resolve_position` (False for the signed export → sealed,
+    DB-reproducible). Returns ``(amendments, funding, position_state, position,
+    deviations, events, match_audit)``."""
     amendments: List[Dict[str, Any]] = []
     for cid in calc_ids:
         amendments.extend(await db.get_calc_amendments(cid))
@@ -204,10 +208,17 @@ async def _aggregate_tail(
     for pid in position_ids:
         funding.extend(await db.get_position_funding_events(pid))
 
+    # P7 follow-up #1: match_audit per contributing calc (scale-in → >1 calc),
+    # merged + ordered (order_id, calc_id, id) for a stable cross-calc trace.
+    match_audit: List[Dict[str, Any]] = []
+    for cid in calc_ids:
+        match_audit.extend(await db.get_calc_match_audit(cid))
+    match_audit.sort(key=lambda m: (m.get("order_id") or 0, m.get("calc_id") or "", m.get("id") or 0))
+
     state, position, deviations = await _resolve_position(
         db, primary_position_id, prefer_open=prefer_open)
     events = await _events_for(account_id, calc_ids)
-    return amendments, funding, state, position, deviations, events
+    return amendments, funding, state, position, deviations, events, match_audit
 
 
 async def assemble_calc_context(db: Any, calc_id: str) -> Optional[Dict[str, Any]]:
@@ -227,6 +238,10 @@ async def assemble_calc_context(db: Any, calc_id: str) -> Optional[Dict[str, Any
     fills = await db.get_fills_by_calc_id(calc_id)
     amendments = await db.get_calc_amendments(calc_id)
     junction = await db.get_calc_position_links(calc_id)
+    # P7 follow-up #1: the per-criterion matcher decision trace ("why did
+    # this calc match — or fail to match — which order"). Already ordered
+    # (order_id, criterion, id). Empty for a calc no order was scored against.
+    match_audit = await db.get_calc_match_audit(calc_id)
 
     position_ids = _ordered_unique([j.get("position_id") for j in junction])
     funding: List[Dict[str, Any]] = []
@@ -242,6 +257,7 @@ async def assemble_calc_context(db: Any, calc_id: str) -> Optional[Dict[str, Any
         "fills": fills,
         "amendments": amendments,
         "positions_calcs": junction,
+        "match_audit": match_audit,
         "position": position,
         "position_state": state,          # "open" | "closed" | None
         "funding_events": funding,
@@ -282,7 +298,7 @@ async def assemble_lifecycle_context(
     closed_positions = await db.get_closed_positions_by_lifecycle_id(lifecycle_id)
 
     position_ids = _ordered_unique([j.get("position_id") for j in junction])
-    amendments, funding, state, position, deviations, events = await _aggregate_tail(
+    amendments, funding, state, position, deviations, events, match_audit = await _aggregate_tail(
         db, calc_ids=calc_ids, position_ids=position_ids,
         primary_position_id=_primary_position_id(junction), account_id=account_id,
         prefer_open=prefer_open,
@@ -295,6 +311,7 @@ async def assemble_lifecycle_context(
         "fills": fills,
         "amendments": amendments,
         "positions_calcs": junction,
+        "match_audit": match_audit,
         "position": position,
         "position_state": state,          # "open" | "closed" | None
         "closed_positions": closed_positions,
@@ -345,7 +362,7 @@ async def assemble_position_context(
     lifecycle_id = _first(junction, "lifecycle_id") or _first(closed_positions, "lifecycle_id")
     account_id = _first(list(junction) + list(closed_positions) + list(orders), "account_id")
 
-    amendments, funding, state, position, deviations, events = await _aggregate_tail(
+    amendments, funding, state, position, deviations, events, match_audit = await _aggregate_tail(
         db, calc_ids=calc_ids, position_ids=[position_id],
         primary_position_id=position_id, account_id=account_id,
         prefer_open=prefer_open,
@@ -360,6 +377,7 @@ async def assemble_position_context(
         "fills": fills,
         "amendments": amendments,
         "positions_calcs": junction,
+        "match_audit": match_audit,
         "position": position,
         "position_state": state,          # "open" | "closed" | None
         "closed_positions": closed_positions,

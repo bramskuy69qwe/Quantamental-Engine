@@ -45,7 +45,7 @@ class FakeDB:
     same key the real SQL helper does."""
 
     def __init__(self, *, calcs=None, orders=None, fills=None, amendments=None,
-                 junction=None, funding=None, closed=None):
+                 junction=None, funding=None, closed=None, match_audit=None):
         self.calcs = {c["calc_id"]: c for c in (calcs or [])}
         self.orders = orders or []
         self.fills = fills or []
@@ -53,6 +53,7 @@ class FakeDB:
         self.junction = junction or []
         self.funding = funding or []
         self.closed = closed or []
+        self.match_audit = match_audit or []
 
     async def get_pretrade_log_by_calc_id(self, calc_id):
         return self.calcs.get(calc_id)
@@ -77,6 +78,12 @@ class FakeDB:
 
     async def get_calc_position_links(self, calc_id):
         return [j for j in self.junction if j.get("calc_id") == calc_id]
+
+    async def get_calc_match_audit(self, calc_id, order_id=None):
+        rows = [m for m in self.match_audit if m.get("calc_id") == calc_id
+                and (order_id is None or m.get("order_id") == order_id)]
+        return sorted(rows, key=lambda m: (m.get("order_id") or 0,
+                                           m.get("criterion") or "", m.get("id") or 0))
 
     async def get_lifecycle_links(self, lifecycle_id):
         return [j for j in self.junction if j.get("lifecycle_id") == lifecycle_id]
@@ -140,7 +147,7 @@ class TestAssembleCalcContext:
         )
         g = await assemble_calc_context(db, "C1")
         assert set(g) == {"calc", "orders", "fills", "amendments", "positions_calcs",
-                          "position", "position_state", "funding_events",
+                          "match_audit", "position", "position_state", "funding_events",
                           "deviations", "events"}
         assert g["calc"]["calc_id"] == "C1"
         assert len(g["orders"]) == 1 and len(g["fills"]) == 1
@@ -253,6 +260,9 @@ class TestAssembleLifecycleContext:
             closed=[_closed("POS1", lifecycle_id="L1")],
         )
         g = await assemble_lifecycle_context(db, "L1")
+        assert set(g) == {"lifecycle_id", "calcs", "orders", "fills", "amendments",
+                          "positions_calcs", "match_audit", "position", "position_state",
+                          "closed_positions", "funding_events", "deviations", "events"}
         assert g["lifecycle_id"] == "L1"
         assert [c["calc_id"] for c in g["calcs"]] == ["C1", "C2"]
         # amendments merged across calcs, ascending by ts_ms (C1.ts=10 before C2.ts=50)
@@ -288,6 +298,10 @@ class TestAssemblePositionContext:
             closed=[_closed("POS1")],
         )
         g = await assemble_position_context(db, "POS1")
+        assert set(g) == {"position_id", "contributing_calc_ids", "lifecycle_id", "calcs",
+                          "orders", "fills", "amendments", "positions_calcs", "match_audit",
+                          "position", "position_state", "closed_positions", "funding_events",
+                          "deviations", "events"}
         assert g["position_id"] == "POS1"
         assert g["contributing_calc_ids"] == ["C1", "C2"]   # NOT C9 (other position)
         assert g["lifecycle_id"] == "L1"
@@ -417,6 +431,96 @@ class TestJsonSafe:
         import json
         rendered = json.dumps(json_safe({"x": float("inf")}))  # default allow_nan=True
         assert "Infinity" not in rendered and "NaN" not in rendered
+
+
+class TestMatchAudit:
+    """P7 follow-up #1: the per-criterion matcher decision trace (calc_match_audit)
+    is surfaced in EVERY reverse-query graph — calc / lifecycle / position — so
+    the bundle carries WHY a calc matched (or failed), not just the result."""
+
+    @staticmethod
+    def _audit(cid, oid, crit, matched, *, id, winning=False):
+        return {"calc_id": cid, "order_id": oid, "criterion": crit,
+                "matched": matched, "winning": winning, "id": id,
+                "calc_value": "x", "order_value": "y",
+                "tolerance_used": 0.0, "ts_ms": 1000}
+
+    @pytest.mark.asyncio
+    async def test_calc_graph_includes_scoped_match_audit(self, monkeypatch):
+        from core.state import app_state
+        monkeypatch.setattr(app_state, "positions", [])
+        db = FakeDB(
+            calcs=[_calc("C1")],
+            match_audit=[self._audit("C1", 10, "entry", True, id=2),
+                         self._audit("C1", 10, "tp", False, id=1),
+                         self._audit("OTHER", 10, "sl", True, id=3)],  # different calc
+        )
+        g = await assemble_calc_context(db, "C1")
+        assert "match_audit" in g
+        # scoped to C1 (not OTHER); ordered (order_id, criterion, id)
+        assert [(m["criterion"], m["matched"]) for m in g["match_audit"]] == [
+            ("entry", True), ("tp", False)]
+        assert all("winning" in m for m in g["match_audit"])   # winning flag surfaced
+
+    @pytest.mark.asyncio
+    async def test_calc_graph_match_audit_empty_when_none(self, monkeypatch):
+        from core.state import app_state
+        monkeypatch.setattr(app_state, "positions", [])
+        db = FakeDB(calcs=[_calc("C1")])      # no audit rows (e.g. UNPLANNED)
+        g = await assemble_calc_context(db, "C1")
+        assert g["match_audit"] == []
+
+    @pytest.mark.asyncio
+    async def test_lifecycle_graph_merges_match_audit_across_calcs(self, monkeypatch):
+        from core.state import app_state
+        monkeypatch.setattr(app_state, "positions", [])
+        monkeypatch.setattr("core.trade_event_log.query_trade_events", lambda **kw: ([], 0))
+        db = FakeDB(
+            calcs=[_calc("C1"), _calc("C2")],
+            junction=[_jrow("C1", "POS1"), _jrow("C2", "POS1")],
+            match_audit=[self._audit("C2", 20, "entry", True, id=2),
+                         self._audit("C1", 10, "entry", True, id=1)],
+        )
+        g = await assemble_lifecycle_context(db, "L1")
+        # merged across both contributing calcs, ordered (order_id, calc_id, id)
+        assert [(m["calc_id"], m["order_id"]) for m in g["match_audit"]] == [
+            ("C1", 10), ("C2", 20)]
+
+    @pytest.mark.asyncio
+    async def test_lifecycle_match_audit_merge_sorts_by_order_id(self, monkeypatch):
+        # The merge SORTS by order_id — it does not just concatenate per-calc.
+        # Seed order_ids in the REVERSE of fetch order (calcs fetched C1 then C2,
+        # but C1's row has the LATER order_id) so a "no-sort / concat" regression
+        # would yield [C1,C2] while the correct order_id sort yields [C2,C1].
+        from core.state import app_state
+        monkeypatch.setattr(app_state, "positions", [])
+        monkeypatch.setattr("core.trade_event_log.query_trade_events", lambda **kw: ([], 0))
+        db = FakeDB(
+            calcs=[_calc("C1"), _calc("C2")],
+            junction=[_jrow("C1", "POS1"), _jrow("C2", "POS1")],
+            match_audit=[self._audit("C1", 20, "entry", True, id=1),   # C1, later order
+                         self._audit("C2", 10, "entry", True, id=2)],  # C2, earlier order
+        )
+        g = await assemble_lifecycle_context(db, "L1")
+        assert [(m["calc_id"], m["order_id"]) for m in g["match_audit"]] == [
+            ("C2", 10), ("C1", 20)]   # sorted by order_id, NOT fetch/concat order
+
+    @pytest.mark.asyncio
+    async def test_position_graph_match_audit_scoped_to_its_calcs(self, monkeypatch):
+        # match_audit follows the position's contributing calcs — a confounding
+        # calc on a DIFFERENT position must not leak its audit rows in.
+        from core.state import app_state
+        monkeypatch.setattr(app_state, "positions", [])
+        monkeypatch.setattr("core.trade_event_log.query_trade_events", lambda **kw: ([], 0))
+        db = FakeDB(
+            calcs=[_calc("C1"), _calc("C9")],
+            junction=[_jrow("C1", "POS1"), _jrow("C9", "POSOTHER")],
+            closed=[_closed("POS1")],
+            match_audit=[self._audit("C1", 10, "entry", True, id=1),
+                         self._audit("C9", 99, "entry", True, id=2)],  # other position
+        )
+        g = await assemble_position_context(db, "POS1")
+        assert [m["calc_id"] for m in g["match_audit"]] == ["C1"]   # not C9
 
 
 # ── Layer 2: real-DB helper smoke tests (verify the SQL columns/keys/order) ───

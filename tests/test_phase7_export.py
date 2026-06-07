@@ -154,6 +154,29 @@ class TestBuildExport:
         assert b["contributing_calc_ids"] == ["C1"]
         assert b["closed_positions"][0]["entry_px_delta_pct"] == 0.5
         assert b["funding_events"][0]["amount"] == -1.2
+        assert "match_audit" in b          # P7 follow-up #1 (matcher trace section)
+
+    @pytest.mark.asyncio
+    async def test_bundle_includes_match_audit(self, db, monkeypatch):
+        # P7 follow-up #1: the per-criterion matcher decision trace rides the
+        # SIGNED export bundle (the assembler section flows through unchanged).
+        monkeypatch.setattr(config, "EXPORT_SIGNING_KEY", "")
+        cid = await _seed(db)
+        await db._conn.execute(
+            "INSERT INTO calc_match_audit (order_id, calc_id, criterion, calc_value, "
+            "order_value, tolerance_used, matched, ts_ms, winning) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (1, "C1", "entry", "64000", "64010", 0.25, 1, 1000, 1))
+        await db._conn.commit()
+        env = await build_closed_position_export(db, cid)
+        ma = env["bundle"]["match_audit"]
+        assert len(ma) == 1
+        assert ma[0]["calc_id"] == "C1" and ma[0]["criterion"] == "entry"
+        assert ma[0]["matched"] == 1 and ma[0]["winning"] == 1
+        # JSON/PDF parity: the matcher trace also renders in the PDF text.
+        from core.audit_export import _export_text_lines
+        txt = "\n".join(_export_text_lines(env))
+        assert "MATCH AUDIT" in txt and "criterion=entry" in txt
 
     @pytest.mark.asyncio
     async def test_signature_recomputes(self, db, monkeypatch):
