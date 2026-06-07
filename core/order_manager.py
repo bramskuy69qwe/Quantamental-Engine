@@ -1702,9 +1702,9 @@ class OrderManager:
 
         Skips (no attribution possible) when:
           - the fill is a close (only opening fills seed the junction);
-          - ``terminal_position_id`` is empty (reversal-open portion,
-            or the Binance one-way pre-ACCOUNT_UPDATE window — the
-            position key isn't known yet);
+          - ``terminal_position_id`` is empty on BOTH the fill AND the
+            entry order (defect-7 falls back to the order's minted tpid
+            when only the fill's is empty — the fill-before-mint race);
           - the parent order has no ``calc_id`` (UNPLANNED / unlinked —
             nothing to attribute).
 
@@ -1715,16 +1715,14 @@ class OrderManager:
         """
         if fill.get("is_close"):
             return
-        pos_id = fill.get("terminal_position_id", "") or ""
-        if not pos_id:
-            return
         eoid = fill.get("exchange_order_id", "") or ""
         if not eoid:
             return
+        pos_id = fill.get("terminal_position_id", "") or ""
 
         try:
             async with self._db._conn.execute(
-                "SELECT id, calc_id FROM orders "
+                "SELECT id, calc_id, terminal_position_id FROM orders "
                 "WHERE account_id = ? AND exchange_order_id = ?",
                 (account_id, eoid),
             ) as cur:
@@ -1736,6 +1734,18 @@ class OrderManager:
             return
         order_id = orow[0]
         calc_id = orow[1]
+        # Defect-7 (debug 2026-06-08, fill-before-mint race): the OPENING fill
+        # can beat the ACCOUNT_UPDATE that mints the position, so
+        # fill.terminal_position_id is empty even though the ENTRY ORDER carries
+        # the minted id (from the data_cache mint via a later fill, or the
+        # back-fill below). Fall back to the order's tpid so the positions_calcs
+        # junction — and the Position-History drilldown that keys on it — still
+        # forms. Without this, an order links (calc_id/LINKED + calc_match_audit)
+        # but NO junction row is ever written for a race-affected open.
+        if not pos_id:
+            pos_id = orow[2] or ""
+        if not pos_id:
+            return  # neither the fill nor the order has a position key yet
         # Defect-1 (debug 2026-06-07): back-fill the entry order's
         # terminal_position_id from the (now-minted) position key so
         # reverse-query / context assembly (get_orders_by_position_id) can find

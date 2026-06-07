@@ -410,3 +410,48 @@ async def test_observe_path_child_reenriches_parent(db_and_path, monkeypatch):
     ) as cur:
         row = await cur.fetchone()
     assert row[0] == 72000.0 and row[1] == 68000.0
+
+
+# ── Defect 7: junction forms via the order's tpid when the fill's is empty ──
+
+@pytest.mark.asyncio
+async def test_junction_forms_when_fill_tpid_empty_via_order(db_and_path):
+    """Defect-7 (debug 2026-06-08, fill-before-mint race): the opening fill can
+    beat the position mint -> fill.terminal_position_id is empty, but the entry
+    ORDER carries the minted tpid. The positions_calcs junction must still form
+    (using the order's tpid) so the Position-History drilldown lights up. Found
+    in live verification: the order LINKED but the junction stayed empty."""
+    db, path = db_and_path
+    from core.order_manager import OrderManager
+    om = OrderManager(db)
+    tpid = "binance:ETHUSDT:LONG:1780858800000"
+    await db._conn.execute(
+        "INSERT INTO pre_trade_log "
+        "(calc_id, account_id, ticker, side, status, size, tp_price, sl_price, "
+        " timestamp, eligible) "
+        "VALUES ('C7', 1, 'ETHUSDT', 'long', 'matched', 0.01, 1700.0, 1590.0, "
+        "'2026-06-07T00:00:00+00:00', 1)"
+    )
+    await db.upsert_order_batch([_entry("F7", 1780858800000, symbol="ETHUSDT", position_side="LONG")])
+    # The entry order carries the minted tpid + a matched calc_id (set the way
+    # the engine does, separately from upsert_order_batch).
+    await db._conn.execute(
+        "UPDATE orders SET terminal_position_id = ?, calc_id = 'C7' "
+        "WHERE exchange_order_id = 'F7' AND account_id = 1",
+        (tpid,),
+    )
+    await db._conn.commit()
+
+    # The opening fill arrives with an EMPTY tpid (lost the mint race).
+    fill = {
+        "account_id": 1, "exchange_order_id": "F7", "terminal_position_id": "",
+        "is_close": 0, "symbol": "ETHUSDT", "direction": "LONG",
+        "quantity": 0.01, "price": 1629.0, "timestamp_ms": 1780858800000,
+    }
+    await om._link_position_calc_on_open(1, fill)
+
+    async with db._conn.execute(
+        "SELECT calc_id FROM positions_calcs WHERE position_id = ? AND calc_id = 'C7'",
+        (tpid,),
+    ) as cur:
+        assert (await cur.fetchone()) is not None
