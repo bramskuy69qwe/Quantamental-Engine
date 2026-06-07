@@ -1,14 +1,54 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-06-06
-**Current branch**: `v2.5/post-rewind-drop-regime-infra` @ `task 303 (Phase 8 holistic audit)` — HEAD `d66d97a`. Tasks 287–303 (all of **Phase 8 T1–T9** + the holistic audit) committed **LOCALLY, NOT pushed** (last push was task 286 `92a700a`; the branch is now far ahead of origin). **Push only when the operator asks.**
-**Tests**: **3437 passed, 7 skipped, 0 failures** (full suite, 2026-06-06; 3402 + task-305's 13 + task-306's 15 P9.T1 + task-307's 7 #3c-guard tests). The old 30-day rolling-window pre-existing failure was FIXED in task 288 (`test_data_cache_dd`). A non-deterministic `PytestUnhandledThreadExceptionWarning` (aiosqlite teardown) is pre-existing + flaky (HANDOFF P6.T6 note) — not a failure.
+**Date**: 2026-06-07
+**Current branch**: `v2.5/post-rewind-drop-regime-infra` @ `task 313 (Phase-9 holistic audit)` — HEAD `df845de`, **PUSHED to origin** (local == `origin/v2.5/post-rewind-drop-regime-infra`; tasks 309–313 pushed this session). **Push only when the operator asks.**
+**Tests**: **3501 passed, 7 skipped, 0 failures** (full suite, 2026-06-07). The non-deterministic `PytestUnhandledThreadExceptionWarning` (aiosqlite teardown) is pre-existing + flaky — not a failure.
 
-**Tasks 305 (`8835ddd`) + 306 (`89130a8`) + 307 (`9597001`) — COMMITTED + PUSHED**; origin at `9597001`. (307 = Phase-8 deferred #3c listener-stacking guards; JS Node-`--check`-verified.)
+**🎉 CALC-LINKAGE COMPLETE — Phases 0 → 9 all shipped + holistically audited.** Phase 9 (multi-operator) finished this session: T1 advisory banner + T2 takeover-core were task 306; T3 operator_id propagation (309 + audit-fix 310); T4 idle timeout (311); holistic audit (313). Plus P7 deferred #1 — calc_match_audit in reverse-query/export — (312). All pushed.
 
-**▶ NEXT = P9.T3 (operator_id propagation).** Operator chose to CHECKPOINT it (the roadmap's biggest task) and execute fresh with full budget — the pre-grep + design are done and captured in the **"★ P9.T3 — EXECUTION-READY SCOPE"** block in the Phase-9 section below. Pick it up there. (This task 308 = that scope doc only.)
+**▶ NEXT = operator's call.** The calc-linkage program is done; what remains are low-priority deferrals (see "Phase-9 report-only deferrals" + "Calc-linkage deferred backlog" in the STATUS block below). The likely next MAJOR direction is the **regime build** (`v2.5_regime-plan.md` — the operator opened it). ⚠ **VERIFY-FIRST**: this branch is `post-rewind-drop-regime-infra` — regime infra was REWOUND. Before scoping ANY regime work, verify what actually exists on THIS branch (see "Surviving the rewind" below) — the regime-plan's "Build order" shipped-state claims were made on the PRE-rewind branch and may not hold here ([[feedback_verify_first_default]]).
 
-## ★ STATUS (2026-06-06) — 🎉 PHASE 8 (operator UX) COMPLETE + HOLISTICALLY AUDITED; next = Phase 9 (multi-operator) — but ⚠ VERIFY-FIRST whether it's warranted at this deployment
+## ★ STATUS (2026-06-07) — 🎉 PHASE 9 (multi-operator) COMPLETE + HOLISTICALLY AUDITED; calc-linkage Phases 0→9 done + PUSHED
+
+**Phase 9 is fully shipped + holistically audited (task 313). Commits 309–313 are PUSHED to origin (HEAD `df845de`).** Calc-linkage now spans **Phase 0 → 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9.** The deployment is single-tenant **localhost** (CLAUDE.md Task 163; threat model = correctness/observability/recovery, NOT auth/exposure) — which is why Phase 9's exposure-driven half (hard lock, CSRF) was consciously deferred and the value lives in `operator_id` audit-trail completeness.
+
+### Phase-9 build (this session)
+- **P9.T1 (306) — advisory multi-session banner** (minimal; NO hard lock) + per-browser seat token (localStorage UUID = `operator_id`). `api/routes_auth.py` (new), `core/auth_state.py`, guarded banner IIFE in `base.html`. Detail in the HISTORICAL 2026-06-06 block below.
+- **P9.T2 (306) — core takeover endpoint** `POST /operator/session/takeover` (end foreign active → start mine with `takeover_from_session_id`). Richer UX + `operator:*` event emission still deferred.
+- **P9.T3 (309 + audit-fix 310) — operator_id propagation.** Stamps the active operator-session seat onto the THREE action-row tables that carry the column — `pre_trade_log` (calc creation, DB-resolved via `auth_state.current_operator_id` → correct even when the cache is cold), `orders` (WS arrival) + `order_amendments` (WS) (O(1) `cached_operator_id` read of the `app_state.operator_id_by_account` cache, write-through from register/takeover) — plus the `calc:created` / `position:amended` payloads. `orders` ON CONFLICT `COALESCE(orders.operator_id, excluded.operator_id)` = first-known-wins (placement operator, never reattributed). Out of scope (no column): closed_positions/fills/positions_calcs/calc_match_audit. **NB `insert_pre_trade_log` lives in `core/db_trades.py`** (not db_orders.py as the old scope block claimed). 310 = empty-seat→None symmetry one-liner. Tests `tests/test_phase9_t3_operator_id.py` (23).
+- **P9.T4 (311) — idle session timeout.** `operator_sessions.last_seen_ts` (CREATE + duplicate-tolerant ALTER); heartbeat (`POST /operator/session/heartbeat`, 60s ping from the banner IIFE) bumps it; a 60s background reaper (`schedulers._operator_session_reaper_loop` → `auth_state.reap_idle_sessions`, default `OPERATOR_SESSION_IDLE_SEC=30min`) ends quiet sessions AND invalidates the T3 cache for reaped (account, seat). Idle is **heartbeat-driven** (now − COALESCE(last_seen_ts, session_start_ts)), so an actively-open page is never reaped; only a closed/asleep browser is. Tests `tests/test_phase9_t4_session_timeout.py` (29).
+
+### Holistic Phase-9 audit (task 313) — 6 parallel adversaries (cache-coherence / e2e-lifecycle / spec-Q56 / security / test-integrity / consistency)
+**VERDICT: production code COHERENT, no BLOCKER/HIGH.** Agents PROVED (probes, not just reads) that no wrong-operator attribution is possible (the cache only ever holds None or a confirmed-owner seat; reaper invalidation is account+seat double-keyed; the takeover lifecycle is coherent — incl. the deliberate two-columns/two-questions design: `orders.operator_id` = who PLACED [first-known COALESCE], `order_amendments.operator_id` = who AMENDED). Security clean (no SQLi/XSS/crash; CSRF + seat-spoof correctly N-A at localhost). Spec fidelity STRONG.
+**Audit fixes (task 313):**
+- **HIGH (test gap)**: the load-bearing cross-task chain was UNTESTED — the route write-through tests asserted against a throwaway `SimpleNamespace`, never the real `app_state`, so a dropped register/takeover/heartbeat→cache write-through would mis-attribute every post-takeover order yet pass all per-task tests. New **`tests/test_phase9_holistic.py`** drives the REAL chain end-to-end (6 tests).
+- **MED (plan §9.3)**: manual-link operator attribution — recorded WHO linked on the `manual_link_added` trade event, **NOT** on `orders.operator_id` (which holds the placement operator; the auditor's suggested fix was wrong-shaped — re-investigation caught it). `core/link_actions.py`.
+- **LOW (docs)**: reconciled stale in-code docs (`auth_state.py` "future P9.T4" → shipped; the `operator:*` topic constants re-labelled SPECULATIVE — spec §9 lists NO operator events; deferral-note accuracy).
+
+### ⚠ Phase-9 report-only deferrals (single-tenant localhost — LOW value; re-elevate if exposed/multi-seat)
+- **Hard read-only LOCK** + read-only UI for non-active operators (full P9.T1) — the banner is advisory only; nothing is blocked. Verify-first call (operator-confirmed) deferred it as low-value at one local operator.
+- **P9.T2 richer takeover UX + `operator:*` event emission** (the 3 topic constants in `auth_state.py` are a SPECULATIVE reservation, NOT spec-mandated).
+- **operator attribution for close-reason** (needs a `closed_positions.operator_id` column) + **mark-unplanned** (no event carrier).
+- **foreign-banner periodic re-check** (banner is on-load + heartbeat only — won't raise if a second session opens after your load).
+- **unbounded `operator_sessions` growth** — ended rows are never pruned; a retention DELETE in the reaper is a policy call on handoff-audit history.
+- **client-minted forgeable seat** — move to server-mint (HttpOnly) if a second human ever shares an account.
+- **CSRF on the 3 POST endpoints** — N-A at localhost; re-elevate the moment a hard lock lands OR the deployment exposes beyond localhost.
+- Plan **§14.3 task-numbering is stale** (swaps T3/T4); the impl + this HANDOFF follow the §9-row convention (T3=operator_id, T4=timeout).
+
+### P7 deferred #1 CLOSED (task 312) — calc_match_audit in reverse-query + export
+The per-criterion matcher decision trace (WHY a calc matched/failed each criterion of an order) is now a `match_audit` section in all three `core/context_query.py` assemblers (calc/lifecycle/position) + the signed JSON **and** PDF export (audit-fixed JSON/PDF parity). Reused the existing `get_calc_match_audit` read (no new read). Tests in `test_phase7_context.py` + `test_phase7_export.py`.
+
+### Calc-linkage deferred backlog (opportunistic; all low-priority at localhost)
+- **P7 #2** `/positions/open` JSON endpoint (= P8 deferred #1) — speculative, no consumer wired; build when an out-of-process model needs live polling.
+- **P7 #3–6** pagination/caching on reverse-query, cross-language float contract doc, algorithmic signing-downgrade (set `EXPORT_SIGNING_KEY` if exposed), replayable webhook dead-letter — all bounded + deployment-acceptable.
+- Opportunistic hardening (CLAUDE.md Task 163): MED-040 SRI, MED-041 CSP, LOW-001 ticker regex — exposure-driven, N-A at localhost.
+
+### ▶ Likely NEXT major direction — the REGIME BUILD (⚠ verify-first against the rewind)
+`v2.5_regime-plan.md` (operator opened it) is the regime-classifier roadmap: Stage A JSON rule interpreter behind a `classify(signals) -> RegimeResult{label, multiplier}` seam → historical counterfactual re-sizing + a regime analytics/leaderboard sub-section → MultiCharts results converter → Stage B ML behind the same interface. The plan's "Build order" says step 1 (interface + Stage A + dual-P&L) is "CLOSED post-T167" — **but that was on the PRE-rewind branch.** This branch is `post-rewind-drop-regime-infra`; only the load-bearing fixes in the "Surviving the rewind" section below were preserved (e.g. T157 regime columns on `pre_trade_log`, T165 clamps). **VERIFY-FIRST what regime infra actually exists here** (`core/regime/*`? `regime_signals`/`regime_labels` tables? the live-sizing wire in `risk_engine.py`?) before trusting any "shipped" claim in the plan ([[feedback_verify_first_default]]). The build-order's own warning — "this chain has gone stale twice; verify shipped state before scoping" — applies doubly post-rewind.
+
+---
+
+## ★ HISTORICAL STATUS (2026-06-06) — 🎉 PHASE 8 (operator UX) COMPLETE + HOLISTICALLY AUDITED; next = Phase 9 (multi-operator) — but ⚠ VERIFY-FIRST whether it's warranted at this deployment
 
 **Phase 8 (operator UX, plan §8) is fully shipped (tasks 291–302) + holistically audited (303).** The calc-linkage system now has its operator surface: a multi-pane cockpit, a refreshed calculator, the post-arrival decision/close flows, in-app notifications, a config editor, and a per-position event drilldown. Calc-linkage now spans **Phase 0 → 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8**.
 
@@ -42,7 +82,7 @@ Suite was healthy (192 phase-8 tests green); one real HIGH + several LOW/defensi
 
 ---
 
-## ★ NEXT: Phase 9 (multi-operator) — P9.T1 shipped MINIMAL (task 306); T1-full/T2/T3/T4 remain
+## ✅ [SUPERSEDED — Phase 9 COMPLETE; see top STATUS 2026-06-07] Phase 9 (multi-operator) — P9.T1 shipped MINIMAL (task 306); T1-full/T2/T3/T4 remain
 
 ### ✅ P9.T1 — SHIPPED MINIMAL (task 306, 2026-06-06) — advisory multi-session banner, NO hard lock
 
@@ -59,7 +99,7 @@ Suite was healthy (192 phase-8 tests green); one real HIGH + several LOW/defensi
 - **CSRF on takeover** — a local page could POST `/operator/session/takeover`. Benign at localhost single-tenant (no lock to weaponize, no second human); **re-elevate the moment a hard lock lands OR the deployment exposes beyond localhost** (add a same-origin/CSRF check then).
 - **Periodic re-check** — the banner is an on-load check only; it won't raise if a second session opens AFTER your page load.
 
-### ★ P9.T3 — EXECUTION-READY SCOPE (pre-grepped + design settled, task 308, 2026-06-07)
+### ✅ [DONE — shipped as tasks 309/310; scope below is the archived pre-grep] P9.T3 — EXECUTION-READY SCOPE (pre-grepped + design settled, task 308, 2026-06-07)
 
 The roadmap's **biggest** task (§14.5 "~6h"). Checkpointed for a fresh session with full budget — the pre-grep + design below are done; execute directly + audit (these are money-path-adjacent inserts; the #3c audit just caught a subtle bug, so audit is mandatory).
 
