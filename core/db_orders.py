@@ -112,8 +112,23 @@ class OrdersMixin:
                 -- known operator with NULL or reattributes to a later seat —
                 -- the order is owned by whoever was on duty when first seen.
                 operator_id         = COALESCE(orders.operator_id, excluded.operator_id)
-            WHERE excluded.updated_at_ms >= orders.updated_at_ms
-               OR orders.updated_at_ms IS NULL
+            WHERE (excluded.updated_at_ms >= orders.updated_at_ms
+                   OR orders.updated_at_ms IS NULL)
+              -- Debug session 2026-06-07 (orphan-open-orders fix): never let a
+              -- non-terminal status overwrite a terminal one. A late/duplicate
+              -- Binance ORDER_TRADE_UPDATE (X=NEW, carrying cumulative z=qty)
+              -- can arrive AFTER the FILLED event with a monotonic event time,
+              -- pass the time guard above, and clobber status back to 'new' ->
+              -- the order lingers in the open-orders pane forever though it
+              -- fully filled. The SR-1 gate (order_manager.process_order_update)
+              -- cannot catch this: terminal orders are excluded from
+              -- get_active_orders_map, so validate_transition is never invoked.
+              -- Enforce the order_state terminal-has-no-out-edges rule HERE --
+              -- the single chokepoint covering every caller (WS update + REST
+              -- snapshot + algo batch). The parens above are load-bearing:
+              -- without them AND would bind tighter than OR.
+              -- Keep the list in sync with core.order_state.TERMINAL_STATES.
+              AND orders.status NOT IN ('filled', 'canceled', 'expired', 'rejected')
         """
         try:
             async with self._conn.cursor() as cur:

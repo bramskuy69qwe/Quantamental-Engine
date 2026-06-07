@@ -208,6 +208,16 @@ class OrderManager:
 
         Returns True if the order was accepted and persisted, False if
         the transition was invalid (e.g., filled→new stale replay).
+
+        NOTE (debug session 2026-06-07): this gate only validates orders
+        present in get_active_orders_map (status new/partially_filled). A
+        TERMINAL order (filled/canceled/expired/rejected) is NOT in that
+        map, so a late/duplicate WS event that would downgrade it (e.g.
+        filled→new) bypasses this gate entirely. Terminal-downgrade
+        protection is therefore enforced at the DB layer — the
+        upsert_order_batch ON CONFLICT WHERE guard (db_orders.py) — which
+        is the single chokepoint covering this path AND the REST-snapshot /
+        algo-batch paths that call upsert_order_batch directly.
         """
         order.setdefault("account_id", account_id)
         # P9.T3: stamp the operator on duty (active seat) onto this WS order

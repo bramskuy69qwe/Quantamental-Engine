@@ -215,7 +215,17 @@ class TestTransitionEndToEnd:
     @pytest.mark.asyncio
     async def test_OM1_filled_to_new_blocked_e2e(self):
         """OM-1 end-to-end: filled order cannot regress to new via snapshot.
-        Named explicitly for bug-and-fix audit trail."""
+        Named explicitly for bug-and-fix audit trail.
+
+        CAVEAT (debug session 2026-06-07): this MOCKS get_active_orders_map to
+        INCLUDE the filled order, which the real query never does — it filters
+        to status IN ('new','partially_filled') (db_orders.get_active_orders_map).
+        So this proves the gate logic in isolation, NOT the production
+        terminal-downgrade guarantee: in production a filled order is absent
+        from the map, the gate is skipped, and a late WS NEW event reaches the
+        upsert. The real guarantee is the upsert ON CONFLICT WHERE terminal
+        guard, pinned against a real DB in
+        tests/test_order_terminal_status_guard.py."""
         db = _mock_db()
         db.get_active_orders_map = AsyncMock(return_value={
             "ORD-FILLED": {"exchange_order_id": "ORD-FILLED", "status": "filled"}
