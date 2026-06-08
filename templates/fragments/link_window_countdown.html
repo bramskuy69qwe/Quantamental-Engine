@@ -55,6 +55,18 @@
       <span style="color:var(--muted);">— please retry</span>
     </div>
   </div>
+{% elif s == "LINKED" %}
+  {# Auto-link (debug 2026-06-08): the matcher linked this calc to an order
+     (pre_trade_log.status flipped to 'matched'). Terminal — no hx-trigger, so
+     polling stops. Distinct from LINKED_CONFIRMED (operator/exec-link
+     confirmation that bypasses the window check). #}
+  <div id="link-window-countdown" class="card card-p8"
+       style="margin-bottom:6px;border-left:3px solid var(--green);">
+    <div style="display:flex;align-items:center;gap:6px;font-size:.7rem;">
+      <span style="color:var(--green);font-weight:700;">&#10003; LINKED</span>
+      <span style="color:var(--muted);">— matched to an order</span>
+    </div>
+  </div>
 {% elif s == "LINKED_CONFIRMED" %}
   <div id="link-window-countdown" class="card card-p8"
        style="margin-bottom:6px;border-left:3px solid var(--green);">

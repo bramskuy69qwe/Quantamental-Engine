@@ -332,6 +332,9 @@ class TestNormalRaceResolveStillWorks:
         })
         mock_db.get_account_link_window_seconds = AsyncMock(return_value=21600)
         mock_db.has_confirmed_fill_for_calc = AsyncMock(return_value=False)
+        # debug 2026-06-08: countdown now checks calc status for a terminal
+        # LINKED state; 'active' = not-yet-matched -> falls through to LINKABLE.
+        mock_db.get_calc_status = AsyncMock(return_value="active")
         monkeypatch.setattr("core.database.db", mock_db, raising=False)
 
         # Even with an old t0 — once pretrade is in DB, the normal
@@ -355,3 +358,35 @@ class TestNormalRaceResolveStillWorks:
         # back, so likely EXPIRING_SOON or EXPIRED depending on
         # exact timing). The key invariant: PENDING-timeout ERROR
         # is NOT triggered when pretrade exists.
+
+    @pytest.mark.asyncio
+    async def test_matched_calc_renders_terminal_linked(self, monkeypatch):
+        """debug 2026-06-08: once the matcher links the calc (status 'matched'),
+        the countdown shows a terminal LINKED state — not the bare time-window
+        countdown (which an auto-matched calc would otherwise show until expiry,
+        so the operator never sees the link land)."""
+        from api import routes_calculator
+        from unittest.mock import AsyncMock, MagicMock
+        from starlette.requests import Request
+
+        mock_db = MagicMock()
+        mock_db.get_pretrade_timestamp_for_link_window = AsyncMock(return_value={
+            "timestamp": "2026-06-08T05:19:33+00:00",
+            "link_window_seconds_override": None,
+        })
+        mock_db.get_account_link_window_seconds = AsyncMock(return_value=300)
+        mock_db.has_confirmed_fill_for_calc = AsyncMock(return_value=False)
+        mock_db.get_calc_status = AsyncMock(return_value="matched")
+        monkeypatch.setattr("core.database.db", mock_db, raising=False)
+
+        scope = {
+            "type": "http", "method": "GET", "path": "/x",
+            "headers": [], "query_string": b"",
+            "path_params": {"calc_id": "test_calc"},
+        }
+        response = await routes_calculator.calculator_link_window_status(
+            Request(scope), calc_id="test_calc", t0=0,
+        )
+        body = response.body.decode("utf-8")
+        assert "LINKED" in body and "matched to an order" in body
+        assert "hx-trigger" not in body  # terminal — polling stops

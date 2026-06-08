@@ -346,6 +346,23 @@ async def calculator_link_window_status(
             }),
         )
 
+    # Auto-link surfaced (debug 2026-06-08): once the matcher links this calc its
+    # status flips to 'matched'/'linked'. Show a terminal LINKED state instead of
+    # the bare time-window countdown — which an auto-matched calc would otherwise
+    # keep showing ("Linkable for:" → EXPIRED) until the window elapses, so the
+    # operator never sees the link land. (LINKED_CONFIRMED above is a DIFFERENT
+    # signal: an exec-link-confirmed fill, not the matcher's auto-link.)
+    if (await _db.get_calc_status(calc_id=calc_id, account_id=aid)) in ("matched", "linked"):
+        return templates.TemplateResponse(
+            request, "fragments/link_window_countdown.html",
+            _ctx(request, calc_id=calc_id, lw={
+                "status": "LINKED",
+                "effective_window_s": account_window,
+                "remaining_s": 0,
+                "expires_at_ms": None,
+            }),
+        )
+
     pretrade_ts_ms: int | None = None
     if pretrade.get("timestamp"):
         try:

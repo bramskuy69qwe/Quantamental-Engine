@@ -1078,6 +1078,20 @@ class OrdersMixin:
             row = await cur.fetchone()
             return dict(row) if row else None
 
+    async def get_calc_status(self, *, calc_id: str, account_id: int) -> Optional[str]:
+        """Return ``pre_trade_log.status`` for ``calc_id`` (or None). Used by the
+        link-window countdown to surface a terminal LINKED state once the matcher
+        flips the calc to 'matched'/'linked'. Narrow (one column) — cheap per
+        1Hz poll; a public helper so routes don't touch ``_conn`` (Phase-6)."""
+        if not calc_id:
+            return None
+        async with self._conn.execute(
+            "SELECT status FROM pre_trade_log WHERE calc_id=? AND account_id=? LIMIT 1",
+            (calc_id, account_id),
+        ) as cur:
+            row = await cur.fetchone()
+            return row[0] if row else None
+
     async def has_confirmed_fill_for_calc(
         self, *, calc_id: str, account_id: int,
     ) -> bool:
