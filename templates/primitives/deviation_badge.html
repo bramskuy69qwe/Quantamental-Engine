@@ -15,9 +15,16 @@
   The title carries the detail (signed size delta + amendment count). Single
   source of truth for the level → badge mapping.
 #}
-{% macro deviation_badge(level, size_delta_pct=0.0, amendment_count=0) -%}
-{%- set label = {"green": "on-plan", "yellow": "amended", "red": "off-plan"} -%}
-{%- if level in label %}<span class="badge badge-{{ level }}" title="size Δ {{ '%+.1f'|format(size_delta_pct or 0.0) }}% · {{ amendment_count }} amendment{{ '' if amendment_count == 1 else 's' }}">{{ label[level] }}</span>
+{# #1 (debug 2026-06-08): a yellow badge means EITHER an amendment (an
+   order-ledger amendment, or a live TP/SL drift vs the linked calc's plan)
+   OR a size deviation past the yellow threshold. Label them DISTINCTLY so a
+   market-fill size rounding doesn't read as "amended" (operator feedback:
+   "it says amended while I didn't amend anything except the market entry").
+   "amended" only when actually amended; otherwise "off-size". #}
+{% macro deviation_badge(level, size_delta_pct=0.0, amendment_count=0, tpsl_amended=false) -%}
+{%- set _amended = (amendment_count and amendment_count > 0) or tpsl_amended -%}
+{%- set label = {"green": "on-plan", "yellow": ("amended" if _amended else "off-size"), "red": "off-plan"} -%}
+{%- if level in label %}<span class="badge badge-{{ level }}" title="size Δ {{ '%+.1f'|format(size_delta_pct or 0.0) }}% · {{ amendment_count }} amendment{{ '' if amendment_count == 1 else 's' }}{{ ' · TP/SL amended' if tpsl_amended else '' }}">{{ label[level] }}</span>
 {%- elif level %}<span class="badge">{{ level }}</span>
 {%- endif %}
 {%- endmacro %}

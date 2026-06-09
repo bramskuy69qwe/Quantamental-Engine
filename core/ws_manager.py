@@ -652,12 +652,21 @@ def _build_market_streams() -> list[str]:
 
 
 async def _market_stream_loop(attempt: int = 0) -> None:
+    # #3 (debug 2026-06-08): keep _market_ws_task pointing at the CURRENTLY
+    # running loop across self-respawns (the no-streams sleep below + the
+    # reconnect path), so restart_market_streams() (calc ticker switch, #4)
+    # can actually cancel the live loop. Previously these respawns started a
+    # new loop via create_task WITHOUT updating the global, so after any
+    # market-WS reconnect the global tracked a DEAD task: a ticker switch then
+    # cancelled nothing and left the OLD symbol's @depth20 streaming alongside
+    # the new one (operator: "still subscribing to velvetusdt").
+    global _market_ws_task
     ws = app_state.ws_status
     streams = _build_market_streams()
     if not streams:
         ws.add_log("No market streams to subscribe — sleeping 10s.")
         await asyncio.sleep(10)
-        asyncio.create_task(_market_stream_loop(0))
+        _market_ws_task = asyncio.create_task(_market_stream_loop(0))
         return
 
     ws_adapter = _get_ws_adapter()
@@ -703,7 +712,7 @@ async def _market_stream_loop(attempt: int = 0) -> None:
         delay = min(config.WS_RECONNECT_BASE * (2 ** attempt), config.WS_RECONNECT_MAX)
         await asyncio.sleep(delay)
         if not _stopping:
-            asyncio.create_task(_market_stream_loop(attempt + 1))
+            _market_ws_task = asyncio.create_task(_market_stream_loop(attempt + 1))
 
 
 # ── Keepalive for listen key (must ping every 30 min) ────────────────────────
@@ -783,16 +792,33 @@ def set_calculator_symbol(symbol: str) -> None:
     """Set the active calculator symbol and clean up stale caches.
 
     FE-8: evict old symbol's orderbook cache to prevent flicker when
-    switching symbols. WS streams for old symbol keep running until
-    restart_market_streams() fires, so cached data for old symbol
-    would otherwise contaminate the new symbol's display.
+    switching symbols.
+
+    #4 (debug 2026-06-08): also REBUILD the market WS streams when the symbol
+    changes. The calculator symbol is part of the market-stream set
+    (_build_market_streams adds ``{sym}@depth20`` + its ticker), but changing it
+    alone never re-subscribed — restart_market_streams() only fired on POSITION
+    symbol changes (handlers.handle_positions_refreshed). So the WS kept
+    streaming the OLD symbol's depth/ticker indefinitely, repopulating its caches
+    (operator saw BOTH symbols' prices + orderbooks; cmd "still subscribing to
+    velvetusdt"). Schedule the rebuild — this is a sync fn called from sync +
+    async routes — and GATE it on an ACTUAL change so the 1 Hz /api/price poll
+    (same symbol) never thrashes the WS. No-op when no loop is running (tests /
+    very early startup; the next restart_market_streams picks up the new symbol).
     """
     global _calculator_symbol
     new_sym = symbol.upper() if symbol else None
     old_sym = _calculator_symbol
     _calculator_symbol = new_sym
-    if old_sym and old_sym != new_sym:
+    if new_sym == old_sym:
+        return
+    if old_sym:
         app_state.orderbook_cache.pop(old_sym, None)
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return  # no running loop (test / pre-startup) — next restart applies it
+    asyncio.create_task(restart_market_streams())
 
 
 async def restart_market_streams() -> None:

@@ -1597,6 +1597,23 @@ class OrderManager:
         dispatcher."""
         exchange_order_id = fill.get("exchange_order_id", "")
 
+        # ⑨ close-side tpid resolution (debug 2026-06-08): on the observe-only
+        # Binance path a CLOSING fill can reach here with an empty
+        # terminal_position_id — ws_manager copies it from the live position at
+        # fill-creation, but that lookup misses when the ACCOUNT_UPDATE that
+        # REMOVES the position beats the TRADE event (full-close race) or the
+        # snapshot-recovered tpid hadn't been stamped yet. An empty tpid here
+        # strands the closed_positions row, the close events, and the closing
+        # fill's calc/lifecycle attribution (all key on it). Resolve it from the
+        # position being closed (live PositionInfo, else the persisted entry
+        # order's minted tpid) and stamp it onto the fill BEFORE the upsert, so
+        # the persisted row AND every downstream step key on it. Mirrors the
+        # open-side defect-7 fallback; no-op when already populated.
+        if fill.get("is_close") and not (fill.get("terminal_position_id") or ""):
+            resolved = await self._resolve_close_tpid(account_id, fill)
+            if resolved:
+                fill["terminal_position_id"] = resolved
+
         # 1+2. Upsert fill + update parent order in ONE commit
         await self._db.upsert_fill_and_update_order(fill, exchange_order_id)
         # T211 H4: re-fire enrich_order on the parent so the matcher
@@ -1641,6 +1658,37 @@ class OrderManager:
                     self._build_close_row_for_fill(account_id, f)
                 ),
             )
+
+    async def _resolve_close_tpid(
+        self, account_id: int, fill: Dict[str, Any]
+    ) -> str:
+        """⑨ (debug 2026-06-08): resolve the terminal_position_id for a CLOSING
+        fill that arrived without one (observe-only Binance: the WS trade event
+        carries no venue position id, and ws_manager's live-position lookup can
+        miss on the full-close race). Prefers the live ``PositionInfo`` for
+        ``(symbol, direction)`` — the position being closed, which carries the
+        minted/snapshot-recovered tpid — then falls back to the persisted entry
+        order's tpid (``get_open_entry_tpids_by_symbol_side``), which survives
+        the position's removal from the snapshot. Returns "" when neither
+        resolves (genuine one-way / unlinked path — behaviour unchanged)."""
+        symbol = fill.get("symbol", fill.get("ticker", "")) or ""
+        direction = fill.get("direction", "") or ""
+        if not symbol or not direction:
+            return ""
+        # 1) the live position being closed (precise; present during a partial
+        #    close and usually still present at full-close fill time).
+        for p in app_state.positions:
+            if p.ticker == symbol and p.direction == direction and p.position_id:
+                return p.position_id
+        # 2) the persisted entry order's minted tpid (survives the position's
+        #    removal from the snapshot on a full close).
+        try:
+            tpid_by_key = await self._db.get_open_entry_tpids_by_symbol_side(
+                account_id)
+        except Exception:
+            log.debug("close-tpid order fallback read failed", exc_info=True)
+            return ""
+        return tpid_by_key.get((symbol, direction), "")
 
     async def _process_reversal_split(
         self,
@@ -2096,6 +2144,30 @@ class OrderManager:
         yellow/red badge thresholding and TP/SL live deviation are Phase 4.4
         (they need the order-amendment tracking that isn't wired yet).
         """
+        # Unminted-snapshot recovery (debug 2026-06-08): a position first seen
+        # via a REST snapshot (engine started while it was already open) has an
+        # empty position_id — the snapshot path deliberately doesn't mint (no
+        # stable first-open time across restarts; DataCache KNOWN GAP). Without
+        # a tpid it can't match the junction below -> empty Plan badge + lost
+        # linkage in the live view. Recover the tpid from the position's
+        # persisted entry order (which carries the WS-minted id) so the junction
+        # lookup, funding sum, and close-side all see it. Setting it here
+        # self-persists: DataCache._preserve_metadata carries a now-present
+        # position_id across the next snapshot rebuild. GATED on an empty-id
+        # position existing, so the normal WS path (all minted) pays nothing.
+        if any(not p.position_id for p in positions):
+            try:
+                tpid_by_key = await self._db.get_open_entry_tpids_by_symbol_side(
+                    account_id)
+            except Exception:
+                tpid_by_key = {}
+                log.debug("tpid re-derivation read failed", exc_info=True)
+            for pos in positions:
+                if not pos.position_id:
+                    recovered = tpid_by_key.get((pos.ticker, pos.direction))
+                    if recovered:
+                        pos.position_id = recovered
+
         # P5.T7: live unrealized funding — stamped FIRST and INDEPENDENTLY of the
         # junction below, so a junction-read fault (the early returns) can't
         # strand a stale funding value (audit). ONE grouped SUM keyed by
@@ -2117,7 +2189,8 @@ class OrderManager:
             return
         try:
             async with self._db._conn.execute(
-                "SELECT position_id, calc_id, contributed_qty, planned_size "
+                "SELECT position_id, calc_id, contributed_qty, planned_size, "
+                "planned_tp, planned_sl "
                 "FROM positions_calcs WHERE account_id = ? "
                 "ORDER BY first_fill_ts ASC, id ASC",
                 (account_id,),
@@ -2133,17 +2206,25 @@ class OrderManager:
         # first_fill_ts ASC, and dict preserves insertion order, so a calc's
         # first appearance fixes its tie-break rank (earliest first_fill).
         per_pos: Dict[str, Dict[str, Dict[str, Any]]] = {}
-        for pid, cid, qty, planned in rows:
+        for pid, cid, qty, planned, p_tp, p_sl in rows:
             if not pid or not cid:
                 continue
             calcs = per_pos.setdefault(pid, {})
             agg = calcs.get(cid)
             if agg is None:
-                agg = {"qty": 0.0, "planned": None}
+                agg = {"qty": 0.0, "planned": None,
+                       "planned_tp": None, "planned_sl": None}
                 calcs[cid] = agg
             agg["qty"] += (qty or 0.0)
             if agg["planned"] is None and planned:
                 agg["planned"] = planned
+            # #1 (debug 2026-06-08): carry the calc's planned TP/SL snapshot so
+            # the badge below can detect a live TP/SL drift (the Binance
+            # cancel+create amendment the order_amendments ledger never sees).
+            if agg["planned_tp"] is None and p_tp:
+                agg["planned_tp"] = p_tp
+            if agg["planned_sl"] is None and p_sl:
+                agg["planned_sl"] = p_sl
 
         # P4.T3 live deviation badge: batch the amendment tally (ONE grouped
         # query for ALL contributing calcs) + read the account's yellow/red
@@ -2201,6 +2282,7 @@ class OrderManager:
                 pos.contributing_calc_ids = []
                 pos.size_delta_pct = 0.0
                 pos.amendment_count = 0
+                pos.tpsl_amended = False
                 pos.deviation_badge = "red"  # no-calc / UNPLANNED (spec §10.2)
                 continue
             items = list(calcs.items())  # insertion order = first_fill ASC
@@ -2231,13 +2313,79 @@ class OrderManager:
             pos.amendment_count = sum(
                 amend_by_calc.get(cid, 0) for cid in pos.contributing_calc_ids
             )
+            # #1 (debug 2026-06-08): live TP/SL drift. On observe-only Binance an
+            # operator TP/SL amendment is a venue cancel+create (a fresh algo
+            # order), NOT an in-place modify — so detect_and_persist_amendment
+            # never fires and order_amendments stays empty (amendment_count=0).
+            # Detect it DIRECTLY: the position's CURRENT working TP/SL
+            # (individual_tp/sl_price, from the live reduce-only orders) vs the
+            # primary calc's planned snapshot. The matcher required an exact
+            # (1e-8) TP/SL match at link time, so any later divergence beyond a
+            # tiny relative tolerance is a real amendment → "amended" (yellow).
+            # both-present guard skips a calc/position without that leg; a
+            # missing live price (0.0) self-heals on the next refresh once the
+            # working order is observed (same transient model as the count).
+            _p_tp = primary_agg.get("planned_tp")
+            _p_sl = primary_agg.get("planned_sl")
+            _live_tp = pos.individual_tp_price or 0.0
+            _live_sl = pos.individual_sl_price or 0.0
+            # price drift: a planned leg whose live trigger moved beyond tolerance.
+            _tp_drift = bool(_p_tp and _live_tp
+                             and abs(_live_tp - _p_tp) / abs(_p_tp) > 0.001)
+            _sl_drift = bool(_p_sl and _live_sl
+                             and abs(_live_sl - _p_sl) / abs(_p_sl) > 0.001)
+            # #1b (debug 2026-06-09): REMOVAL of a planned protective leg. The
+            # operator canceled a TP/SL the calc planned, leaving the position
+            # OFF-PLAN (e.g. an unprotected position with no stop). The price-drift
+            # check above can't see this (it skips when the live leg is 0), so the
+            # badge wrongly stayed green "on-plan" — operator-flagged as fatal
+            # (a removed stop is more dangerous than a moved one). Gate removal on
+            # the OTHER leg being live, so a fresh open whose bracket orders aren't
+            # observed yet (BOTH 0) is NOT falsely flagged; the brief TP-before-SL
+            # observation window self-heals on the next refresh.
+            _sl_removed = bool(_p_sl and not _live_sl and _live_tp)
+            _tp_removed = bool(_p_tp and not _live_tp and _live_sl)
+            tpsl_amended = bool(
+                _tp_drift or _sl_drift or _sl_removed or _tp_removed
+            )
+            pos.tpsl_amended = tpsl_amended
             pos.deviation_badge = deviation_badge_level(
                 has_calc=True, size_delta_pct=pos.size_delta_pct,
-                amendment_count=pos.amendment_count,
+                amendment_count=pos.amendment_count, tpsl_amended=tpsl_amended,
                 yellow_pct=yellow_pct, red_pct=red_pct,
             )
 
     # ── Position Close ─────────────────────────────────────────────────────
+
+    async def _backfill_open_fill_tpids(
+        self, account_id: int, opens: List[Dict[str, Any]], pos_id: str,
+    ) -> None:
+        """#3/#4 (debug 2026-06-08): stamp the minted terminal_position_id onto
+        this position's OPENING fills, which the observe-only Binance path wrote
+        empty (the position is minted only after the first open completes; the
+        junction-link backfill stamps lifecycle_id but not the tpid). Without it
+        the tpid-keyed open lookup AND the per-position fills/events drilldown
+        miss them. Best-effort, keyed by exchange_fill_id, only where currently
+        empty (idempotent; never reattributes an already-stamped fill). Mirrors
+        the lifecycle_id back-fill in _link_position_calc_on_open."""
+        fids = [
+            f.get("exchange_fill_id") for f in opens
+            if f.get("exchange_fill_id")
+            and not (f.get("terminal_position_id") or "")
+        ]
+        if not fids:
+            return
+        try:
+            for fid in fids:
+                await self._db._conn.execute(
+                    "UPDATE fills SET terminal_position_id = ? "
+                    "WHERE account_id = ? AND exchange_fill_id = ? "
+                    "  AND COALESCE(terminal_position_id, '') = ''",
+                    (pos_id, account_id, fid),
+                )
+            await self._db._conn.commit()
+        except Exception:
+            log.debug("open-fill tpid backfill failed", exc_info=True)
 
     async def _build_close_row_for_fill(
         self, account_id: int, fill: Dict[str, Any], *, force_final: bool = False,
@@ -2275,6 +2423,22 @@ class OrderManager:
                     account_id, pos_id, symbol, direction, is_close=False,
                 )
             else:
+                opens = []
+            # #3/#4 fix (debug 2026-06-08): on the observe-only Binance path the
+            # OPENING fills are written with an EMPTY terminal_position_id (the
+            # position isn't minted until the first open completes), while ⑨ now
+            # stamps the minted tpid on the CLOSING fill. So the strict tpid-keyed
+            # open lookup above MISSES the opens → no entry VWAP → the close row
+            # is never built (the close vanishes from Position History +
+            # Recent-Closes) AND the per-position drilldown is empty. Fall back to
+            # the canonical chronological walk (the same one the empty-pos_id path
+            # uses — contamination-safe per T188) whenever the strict lookup found
+            # nothing, then BACKFILL the resolved opens' tpid so they share the
+            # close row's tpid for the fills/events drilldown. ⑨ REGRESSION: before
+            # ⑨ the closing fill was empty-tpid so this position took the walk
+            # path; ⑨'s stamp diverted it to the broken strict path. Covers linked
+            # AND unlinked (UNPLANNED) positions — the walk needs no calc.
+            if not opens:
                 from core.position_grouping import find_opens_for_position_close_at
                 close_ts = int(fill.get("timestamp_ms", 0) or 0)
                 all_fills = await self._db.get_fills_for_symbol_direction(
@@ -2287,6 +2451,8 @@ class OrderManager:
                     direction=direction,
                     close_ts_ms=close_ts,
                 )
+                if pos_id and opens:
+                    await self._backfill_open_fill_tpids(account_id, opens, pos_id)
             if opens:
                 total_open_qty = sum(f["quantity"] for f in opens)
                 entry_price = (

@@ -477,6 +477,22 @@ async def _startup_fetch():
     except Exception as e:
         log.warning(f"Startup order sync failed: {e}")
 
+    # #2 (debug 2026-06-09): truth-based cleanup of fully-filled orders stuck in
+    # new/partially_filled (a missed venue terminal status update on the
+    # observe-only path leaves filled_qty == quantity but status unchanged). The
+    # time-based staleness loop is plugin-gated, so on Binance-direct nothing
+    # else clears them — they pile up in Open Orders across restarts.
+    try:
+        from core.database import db
+        n = await db.reconcile_filled_orders(app_state.active_account_id)
+        if n:
+            log.info("Startup: reconciled %d fully-filled orders to 'filled'", n)
+            await platform_bridge.order_manager.refresh_cache(
+                app_state.active_account_id,
+            )
+    except Exception as e:
+        log.warning(f"Startup filled-order reconcile failed: {e}")
+
     try:
         await populate_open_position_metadata()
     except Exception as e:
@@ -661,6 +677,20 @@ async def _order_staleness_loop():
 
     while True:
         await asyncio.sleep(60)
+        # #2 (debug 2026-06-09): truth-based filled-order reconcile runs REGARDLESS
+        # of the plugin (the time-based mark_stale below stays plugin-gated, since
+        # it would wrongly cancel a real working stop that simply gets no periodic
+        # WS refresh). Safe — only promotes orders whose filled_qty already
+        # reached quantity to 'filled'. This is the Binance-direct cleanup path.
+        try:
+            n = await db.reconcile_filled_orders(app_state.active_account_id)
+            if n:
+                log.info("Reconciled %d fully-filled orders to 'filled'", n)
+                await platform_bridge.order_manager.refresh_cache(
+                    app_state.active_account_id,
+                )
+        except Exception as e:
+            log.warning("Filled-order reconcile error: %s", e)
         if not platform_bridge.is_connected:
             continue
         try:

@@ -2,7 +2,7 @@
 {% for p in open_positions %}
 {% set net = p.individual_unrealized - p.individual_fees + p.individual_funding_fees %}
 <tr id="pos-row-{{ p.ticker }}-{{ p.direction }}">
-  <td style="color:var(--blue);font-weight:700;">{{ p.ticker }} {{ deviation_badge(p.deviation_badge, p.size_delta_pct, p.amendment_count) }}</td>
+  <td style="color:var(--blue);font-weight:700;">{{ p.ticker }} {{ deviation_badge(p.deviation_badge, p.size_delta_pct, p.amendment_count, p.tpsl_amended) }}</td>
   <td class="{{ 'pos-long' if p.direction=='LONG' else 'pos-short' }}">{{ p.direction }}</td>
   <td style="color:var(--sub);font-size:.68rem;" data-entry-ts="{{ p.entry_timestamp }}">{{ hold_time(p.entry_timestamp) }}</td>
   <td>{{ fmt(p.average, 4) }}</td>

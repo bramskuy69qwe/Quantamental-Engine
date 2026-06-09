@@ -120,6 +120,17 @@ async def frag_cockpit_closes(request: Request):
     except Exception:
         log.exception("cockpit recent-closes read failed")
         rows = []
+    # #2 (debug 2026-06-08): same calc-linkage "Plan" badge as Position History,
+    # so the cockpit's open-positions and recent-closes panes read consistently.
+    # Linked-only (no-calc rows stay "—"); thresholds read ONCE.
+    try:
+        from core.state import stamp_close_deviation_badges
+        from core.account_config import read_account_config_async
+        _cfg = await read_account_config_async(db, app_state.active_account_id)
+        stamp_close_deviation_badges(
+            rows, yellow_pct=_cfg.yellow_deviation_pct, red_pct=_cfg.red_deviation_pct)
+    except Exception:
+        log.debug("cockpit recent-closes badge stamping failed", exc_info=True)
     return templates.TemplateResponse(
         request, "fragments/cockpit/closes.html",
         _table_ctx(request, rows=rows),

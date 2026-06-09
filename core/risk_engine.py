@@ -387,6 +387,22 @@ def check_correlated_limit(
     sector       = config.get_sector(symbol)
     existing     = get_correlated_exposure()
     existing_net = existing.get(sector, 0.0)
+    # #5b (debug 2026-06-08): exclude the operator's EXISTING same-(symbol,side)
+    # position from the sector net. Re-calcing a symbol you already hold would
+    # otherwise DOUBLE-COUNT it — the open position is summed into existing_net
+    # AND the new calc's notional is added on top — blocking a legitimate
+    # re-calc / linkage of a position you're already in. The calc represents the
+    # intended position, not an addition to it. (A genuine scale-in is then
+    # slightly under-counted on the correlated gate; the per-trade size + the
+    # portfolio max_exposure gate still bound it. Operator-confirmed.)
+    norm_dir = "LONG" if side == "long" else "SHORT"
+    for p in app_state.positions:
+        # getattr-guarded: a position without a ticker can't be the symbol being
+        # calc'd, so it's simply not excluded (graceful fall-back to the
+        # pre-#5b count). Real PositionInfo always carries ticker.
+        if getattr(p, "ticker", None) == symbol and getattr(p, "direction", None) == norm_dir:
+            sign = 1.0 if p.direction == "LONG" else -1.0
+            existing_net -= sign * p.position_value_usdt
     new_notional = size * average * (1.0 if side == "long" else -1.0)
     new_net_abs  = abs(existing_net + new_notional)
     return (new_net_abs > max_corr), new_net_abs

@@ -75,7 +75,8 @@ _PRESERVE_FIELDS = (
     # preserved between to avoid a blank-then-repopulate flicker on rebuild).
     "contributing_calc_ids", "size_delta_pct",
     # P4.T3: live deviation badge inputs/level — same refresh+preserve treatment.
-    "amendment_count", "deviation_badge",
+    # #1 (debug 2026-06-08): tpsl_amended joins the badge inputs.
+    "amendment_count", "deviation_badge", "tpsl_amended",
     # P5.T7: live unrealized funding (Σ funding_events for the open position),
     # re-derived each refresh by _enrich_positions_calc_id; preserved between
     # so a snapshot rebuild doesn't flicker it to 0.
@@ -282,10 +283,13 @@ class DataCache:
                     # path deliberately does NOT — a REST snapshot has no stable
                     # first-open timestamp, so a mint here would be non-deterministic
                     # across restarts. Consequence: a position first seen via REST
-                    # (engine started while it was already open) gets no tpid and
-                    # won't auto-link. Normal flow (engine running -> WS sees the open)
-                    # is covered; backfill_calc_linkage handles historical rows.
-                    # Follow-up: mint here from a venue open-time if reliably available.
+                    # (engine started while it was already open) gets no tpid here.
+                    # RECOVERED off-lock (debug 2026-06-08): OrderManager
+                    # ._enrich_positions_calc_id re-derives the tpid from the
+                    # position's persisted entry order (get_open_entry_tpids_by_
+                    # symbol_side) and _preserve_metadata then carries it across
+                    # subsequent rebuilds — so the empty id below is transient, not
+                    # terminal. backfill_calc_linkage handles historical rows.
                     p.entry_timestamp = datetime.now(timezone.utc).isoformat()
 
             # Detect closed positions

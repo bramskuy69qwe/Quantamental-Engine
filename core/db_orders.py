@@ -657,6 +657,28 @@ class OrdersMixin:
         await self._conn.commit()
         return cur.rowcount
 
+    async def reconcile_filled_orders(self, account_id: int) -> int:
+        """#2 (debug 2026-06-09): mark fully-filled orders still stuck in
+        'new'/'partially_filled' as 'filled'. Returns rows affected.
+
+        On the observe-only path the engine can MISS the venue's terminal
+        ORDER_TRADE_UPDATE (status=FILLED) while still recording every TRADE —
+        so ``filled_qty`` reaches ``quantity`` but ``status`` lingers, leaving a
+        long-dead order in the Open Orders view forever (the time-based
+        ``mark_stale_orders`` loop is plugin-gated, so Binance-direct never
+        clears them). This reconcile is TRUTH-based (``filled_qty >= quantity``),
+        NOT time-based, so it can NEVER cancel a genuinely-working order — it only
+        promotes an already-complete order to its correct terminal status."""
+        now_ms = int(time.time() * 1000)
+        cur = await self._conn.execute(
+            "UPDATE orders SET status='filled', updated_at_ms=? "
+            "WHERE account_id=? AND status IN ('new','partially_filled') "
+            "AND quantity > 0 AND filled_qty >= quantity",
+            (now_ms, account_id),
+        )
+        await self._conn.commit()
+        return cur.rowcount
+
     # ── Read methods (paginated) ────────────────────────────────────────────
 
     _ALLOWED_TABLES = {"orders", "fills", "closed_positions"}
@@ -1091,6 +1113,37 @@ class OrdersMixin:
         ) as cur:
             row = await cur.fetchone()
             return row[0] if row else None
+
+    async def get_open_entry_tpids_by_symbol_side(
+        self, account_id: int,
+    ) -> Dict[Tuple[str, str], str]:
+        """Map ``(symbol, position_side)`` -> the most-recent entry order's
+        ``terminal_position_id`` (non-reduce_only orders that carry one).
+
+        Recovers the tpid for a position first seen via a REST snapshot —
+        engine started while it was already open. The snapshot path
+        deliberately does NOT mint (no stable first-open time across
+        restarts; see ``DataCache.apply_position_snapshot`` KNOWN GAP), so
+        such a position has an empty ``position_id`` and can't match the
+        ``positions_calcs`` junction -> empty Plan badge + lost linkage in
+        the live view. Its persisted *entry order* still carries the
+        WS-minted tpid; this lets ``OrderManager._enrich_positions_calc_id``
+        re-derive it off-lock. Most-recent wins (ASC scan, last write) — in
+        hedge mode ``(symbol, side)`` is unique per open position, so the
+        latest entry order matches the currently-open position. Public
+        helper (Phase-6: callers don't touch ``_conn``)."""
+        out: Dict[Tuple[str, str], str] = {}
+        async with self._conn.execute(
+            "SELECT symbol, position_side, terminal_position_id FROM orders "
+            "WHERE account_id=? AND COALESCE(reduce_only,0)=0 "
+            "AND COALESCE(terminal_position_id,'')!='' "
+            "ORDER BY created_at_ms ASC",
+            (account_id,),
+        ) as cur:
+            async for sym, side, tpid in cur:
+                if sym and side and tpid:
+                    out[(sym, side)] = tpid
+        return out
 
     async def has_confirmed_fill_for_calc(
         self, *, calc_id: str, account_id: int,

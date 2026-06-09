@@ -4,10 +4,11 @@
    keyed by the closed_positions PK — this glance pane stays read-only
    (Phase-8 deferred #2). #}
 {% from "primitives/empty_state.html" import empty_state %}
+{% from "primitives/deviation_badge.html" import deviation_badge %}
 {% if rows %}
 <table>
   <thead><tr>
-    <th>Close</th><th>Symbol</th><th>Dir</th>
+    <th>Close</th><th>Symbol</th><th>Dir</th><th>Plan</th>
     <th style="text-align:right;">Net</th><th>Exit</th>
   </tr></thead>
   <tbody>
@@ -16,6 +17,9 @@
       <td class="td-ts">{{ ms_to_local(r.exit_time_ms) }}</td>
       <td class="td-symbol">{{ r.symbol }}</td>
       <td class="{{ 'pos-long' if r.direction == 'LONG' else 'pos-short' }}">{{ r.direction }}</td>
+      {# #2 (debug 2026-06-08): calc-linkage badge — on-plan/amended/off-plan for
+         linked closes, "—" for unlinked/legacy (deviation_badge is "" → skipped). #}
+      <td>{% if r.calc_id %}{{ deviation_badge(r.deviation_badge, r.size_delta_pct, r.cumulative_amendment_count) }}{% else %}<span class="td-sub">—</span>{% endif %}</td>
       <td class="td-bold {{ 'text-green' if (r.net_pnl or 0) > 0 else 'text-red' if (r.net_pnl or 0) < 0 else '' }}"
           style="text-align:right;">{{ fmt(r.net_pnl or 0, 2) }}</td>
       <td class="td-sub" style="font-size:.6rem;">{{ r.exit_reason or '—' }}</td>

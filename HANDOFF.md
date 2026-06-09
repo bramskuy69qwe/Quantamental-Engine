@@ -1,12 +1,82 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-06-07
-**Current branch**: `v2.5/post-rewind-drop-regime-infra` @ `task 313 (Phase-9 holistic audit)` — HEAD `df845de`, **PUSHED to origin** (local == `origin/v2.5/post-rewind-drop-regime-infra`; tasks 309–313 pushed this session). **Push only when the operator asks.**
-**Tests**: **3501 passed, 7 skipped, 0 failures** (full suite, 2026-06-07). The non-deterministic `PytestUnhandledThreadExceptionWarning` (aiosqlite teardown) is pre-existing + flaky — not a failure.
+**Date**: 2026-06-09
+**Branches**:
+- `v2.5/post-rewind-drop-regime-infra` — the live calc-linkage **debug-session fixes are COMMITTED on top of `32c04de` and PUSHED**. Stable line.
+- **`v2.5/correlation-log`** (NEW, forked off that commit) — the **active branch** for the next program: the structured correlation log. **Start here.**
+**Tests**: full suite run before the push (see the commit); +24 new regression tests this session (`tests/test_debug_20260609_followups.py` + linkage/ws/history). Known full-suite flake = the pre-existing aiosqlite `Event loop is closed` teardown race (passes in isolation; NOT a regression).
 
-**🎉 CALC-LINKAGE COMPLETE — Phases 0 → 9 all shipped + holistically audited.** Phase 9 (multi-operator) finished this session: T1 advisory banner + T2 takeover-core were task 306; T3 operator_id propagation (309 + audit-fix 310); T4 idle timeout (311); holistic audit (313). Plus P7 deferred #1 — calc_match_audit in reverse-query/export — (312). All pushed.
+## ⏸ DEBUGGING PAUSED — NEXT: STRUCTURED CORRELATION LOG (plan → build), THEN resume linkage debugging
 
-**▶ NEXT = operator's call.** The calc-linkage program is done; what remains are low-priority deferrals (see "Phase-9 report-only deferrals" + "Calc-linkage deferred backlog" in the STATUS block below). The likely next MAJOR direction is the **regime build** (`v2.5_regime-plan.md` — the operator opened it). ⚠ **VERIFY-FIRST**: this branch is `post-rewind-drop-regime-infra` — regime infra was REWOUND. Before scoping ANY regime work, verify what actually exists on THIS branch (see "Surviving the rewind" below) — the regime-plan's "Build order" shipped-state claims were made on the PRE-rewind branch and may not hold here ([[feedback_verify_first_default]]).
+**Operator directive (2026-06-09): HOLD all calc-linkage debugging until the correlation log is upgraded.** The live debug session stabilized linkage (every reported bug fixed + regression-tested + live-verified through a full open→amend→cancel→close scenario) — but it was whack-a-mole. **Root cause of ~every bug: identity/attribution reconciliation on the observe-only Binance stream is done AD-HOC across ~6 sites** (matcher, close-builder, live-enricher, drilldown, ⑨, bracket inheritance), each with a different rule (strict-tpid / chronological-walk / symbol+window / calc_id) → fixing one site shifts load onto another (⑨ → close-recording regression was the textbook proof). Build observability BEFORE more debugging.
+
+### The agreed plan
+1. **Correlation log FIRST** (this branch) — an observability spine. Design below.
+2. **THEN an attribution reconciler** — ONE module owning fill→position→calc, stamping identity once so the 6 consumers stop re-deriving (the structural cure for whack-a-mole). The log de-risks it (you'll SEE every attribution decision).
+3. **Event-driven decision: NO full rewrite.** The engine is already event-driven at the edges (WS-reactive) + has an `event_bus` for fan-out. "Completely event-driven" makes control flow implicit (WORSE debugging — the current pain) and does NOT fix attribution. Keep: edges reactive, bus for decoupled fan-out (the log subscribes to it), explicit traceable core + one attribution owner. Event sourcing (log = source of truth) DEFERRED — the correlation log gets ~80% of the debuggability for ~20% of the risk.
+
+### Correlation-log design (agreed direction — finalize in `docs/design/correlation_log.md`)
+The engine ALREADY has `event_bus` (pub/sub) + `engine_events` (engine-behavior audit, typed enum) + `trade_events` (trade lifecycle). The GAP is **(1) a correlation id** threading a chain (request → derived actions → response) and **(2) one uniform envelope** across boundaries. EXTEND these, don't add a 4th silo.
+- **corr_id** minted at each entry point (HTTP route / inbound WS message / scheduler tick), carried via Python **`contextvars`** (auto-propagates across `await` within a task — no signature threading).
+- **Uniform envelope** = the operator's taxonomy: `{ts, corr_id, component, peer, direction(in|out|internal), category, payload}`.
+- **Taps at boundaries only**: HTTP in/out, WS message in, venue REST out+return, state mutation, event_bus publish. **The log SUBSCRIBES to `event_bus`** (every bus event logged with its corr_id — this is where "bus for fan-out" earns its keep).
+- **Does NOT**: replace `app_state`; replace `engine_events`/`trade_events`; become the source of truth.
+- **DECISIONS PENDING from operator** (defaults if unspecified): sink = **JSONL file** (vs DB table) · scope = **linkage-domain first** (vs whole-engine) · retention = **daily rotate, keep ~7d**.
+
+### What the debug session shipped (this commit — observe-only Binance / HEDGE; all regression-tested + live-verified)
+- **close-recording** (critical data-loss): ⑨ stamped the closing-fill tpid but opening fills stayed empty → strict open-lookup missed → NO close row. `_build_close_row_for_fill` now falls back to the symbol+direction walk when the strict lookup is empty + backfills opening-fill tpids (`_backfill_open_fill_tpids`). Fixes vanishing closes + empty drilldown.
+- **#1 badge**: "off-size" (size deviation) vs "amended" (ledger amendment OR live TP/SL drift) — distinct labels; detects TP/SL price-drift AND **removal** of a planned protective leg (canceling a stop the calc planned → no longer falsely "on-plan"; operator-flagged as fatal).
+- **#2 stale orders**: `db.reconcile_filled_orders` (TRUTH-based `filled_qty>=quantity` → filled), wired at startup + un-gated in the staleness loop (the time-based `mark_stale_orders` stays plugin-gated — it would wrongly cancel real working stops). Clears the Binance-direct stale pileup.
+- **#3 drilldown**: attribute order-lifecycle events by **symbol + the position's time-window** (they carry no calc_id on the observe-only path); `query_trade_events` gained a `symbol` filter; drilldown unions calc_id ∪ symbol-window.
+- **#2 ticker leak**: `set_calculator_symbol` made unconditional in `/api/price` (was only in the cache-miss fallback → skipped for liquid symbols like BTC); market-stream loop self-respawn now tracks `_market_ws_task` across reconnects.
+- **#4/#5 sizing**: `max_correlated_exposure` 0.5→1.0 (account_params); `check_correlated_limit` excludes the held same-(symbol,side) position (no double-count on re-calc). Dashboard positions table got the missing `<th>Funding</th>` (header/cell alignment).
+- **Recovered data**: rebuilt the 2 lost closes (XAU + BNB) via `e:/tmp/rebuild_missing_closes.py` (dry-run-first; XAU kept its calc link). Both now in Position History.
+
+### Live-scenario verification (all ✓)
+on-plan auto-link (ZEC, 6/6 match) · amend → "amended" (Binance cancel+new detected via drift) · cancel → clean Open Orders · close → row + calc link + 9-event drilldown lifecycle · SL-removal → "amended" (fixed the fatal green-while-unprotected). NB the auto-link needs the eligible calc to exist (with matching SL) BEFORE the order — a calc finalized AFTER the order lands in Needs-Link (the ETH case).
+
+### OPEN follow-ups (DEFERRED per the hold-directive — do AFTER the log)
+1. **Attribution reconciler** (the structural lever above) — the priority after the log.
+2. **Closed-row Plan badge can't show Binance cancel+new amendments** — `order_amendments` stays empty (cancel+new ≠ in-place modify) + no live TP/SL post-close, so a position that WAS amended/removed reads "on-plan" in history. Fix: persist bracket amendments (attribute the reduce-only cancel+new to the position by symbol+side+window → write an `order_amendment`); then live badge AND closed row both reflect it.
+3. (optional) re-match a NEEDS_MANUAL_REVIEW order when a better eligible calc lands within the window (the ETH calc-after-order case).
+4. matcher entry tolerance **0.25%** + hedge-mode-keyed recovery (one-way `BOTH` won't match) — unchanged latent gaps.
+
+### Engine / artifacts
+- **Engine: STOPPED** (was PID 53484). Restart when resuming: `.venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000`. Observe-only — force-kill safe.
+- **Debug artifacts gitignored** (`.gitignore`): `.playwright-mcp/`, root `*.png` screenshots (kept locally, NOT committed).
+- **Recovery script** `e:/tmp/rebuild_missing_closes.py` — one-off, already applied for XAU/BNB; NOT in the repo. Formalize into `scripts/` (dry-run discipline) if reused.
+
+---
+
+## ★ HISTORICAL — debug-session per-defect detail (2026-06-08; superseded by the summary above)
+
+**Context.** Continuation of the live calc-linkage debug (operator trades **Binance-direct, observe-only WS, HEDGE mode** — positionSide LONG/SHORT; engine on real Binance). The earlier part of this session committed **8 defect fixes** (commits `30f4c2e`..`32c04de`, UNPUSHED) that made auto-linkage work end-to-end on the pure-Binance path (mint tpid, bracket sourcing, junction formation, LINKED countdown). Auto-link is **CONFIRMED LIVE**. See `[[project_calc_linkage_binance_ws_broken]]` memory.
+
+**This session fixed 4 display/robustness follow-ups — all code-complete + unit-tested, full suite green:**
+
+1. **#1 — cockpit "Plan" column blank for linked positions** → root cause = **unminted-snapshot gap**: on engine restart an already-open position is re-seeded via REST snapshot with EMPTY `terminal_position_id` (the snapshot path deliberately doesn't mint — no stable first-open time), so `_enrich_positions_calc_id` skipped it (line ~2196 `if not pos.position_id: continue`) → no junction match → blank badge. **Fix:** `_enrich_positions_calc_id` now RE-DERIVES the tpid from the position's persisted entry order (new `db.get_open_entry_tpids_by_symbol_side(account_id)` → `(symbol,position_side)→tpid`, hedge-keyed) when `position_id` is empty; self-persists via `DataCache._preserve_metadata`. Files: `core/order_manager.py`, `core/db_orders.py`, `core/data_cache.py` (KNOWN-GAP comment updated). **LIVE-VERIFIED** ✓ (cockpit shows "on-plan" for XAUUSDT after restart; live-DB dry-run pre-confirmed both open positions recover).
+
+2. **⑨ — close-side tpid race** → a closing fill arriving with empty tpid stranded the `closed_positions` row (`terminal_position_id=""`), close events (`position_id=""`), and calc/lifecycle attribution. **Fix:** `_process_single_fill` resolves the tpid BEFORE the upsert via new `_resolve_close_tpid` (tier-1 live `PositionInfo` for (symbol,direction) → tier-2 entry-order fallback, survives full-close snapshot removal). File: `core/order_manager.py`. Unit-tested; **NOT yet live-verified** (needs an operator close).
+
+3. **#2 — calc linkage invisible in Position History** → added a "Plan" deviation badge (on-plan/amended/off-plan; **"—" for unlinked/legacy** — deliberately NOT red, unlike open positions, so ~150 historical rows don't all light up) to the **Position History table** AND **cockpit Recent-Closes pane**, plus the **linked calc id(s)** (clickable → `/context/calc/{id}`) in the **drilldown drawer**. Shared helper `core.state.stamp_close_deviation_badges`. Files: `api/routes_orders.py`, `api/routes_cockpit.py`, `core/state.py`, `templates/fragments/history/closed_positions_table.html` (colspan 18→19), `templates/fragments/history/position_events.html`, `templates/fragments/cockpit/closes.html`. Unit-tested; **NOT yet live-verified** (needs a fresh linked close).
+
+4. **#4 — calculator ticker-switch WS subscription leak** → switching the calc ticker updated `_calculator_symbol` (which feeds `_build_market_streams`) but NEVER rebuilt the WS (restart only fired on POSITION changes), so the old symbol's `@depth20`/ticker kept streaming (operator saw BOTH symbols' prices+orderbooks; cmd "still subscribing to velvetusdt"). **Fix:** `set_calculator_symbol` now schedules `restart_market_streams()` on an ACTUAL symbol change (gated so the 1 Hz `/api/price` poll doesn't thrash; no-loop guard for sync/startup callers). File: `core/ws_manager.py`. Unit-tested; **NOT yet live-verified** (needs an operator ticker switch).
+
+**Working tree (uncommitted):** modified `api/routes_cockpit.py api/routes_orders.py core/data_cache.py core/db_orders.py core/order_manager.py core/state.py core/ws_manager.py` + 3 templates + `tests/test_linkage_binance_ws.py`; **new** `tests/test_calc_symbol_stream_rebuild.py` (5 tests, #4), `tests/test_linkage_history_plan.py` (14 tests, #2). `test_linkage_binance_ws.py` gained 5 tests (#1 ×2, ⑨ ×3). **Untracked artifacts to triage** (NOT mine to silently drop — [[feedback_untracked_files]]): `.playwright-mcp/`, `bug1-empty-drilldown.png`, `bug2-fixed-open-orders-zero.png`, `bug2-orphan-open-orders.png`, `cockpit-linked-xau-open.png` — Playwright debug screenshots; decide gitignore-vs-commit.
+
+**▶ ENGINE IS RUNNING.** Started by me as background task **`bj3at25kv`** (`.venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000`, PID was 49740, output at `…/tasks/bj3at25kv.output`). It loaded ALL fixes (committed + uncommitted, since they're on disk). `GET / → 200`, Binance WS up, XAUUSDT open+linked. If the next session needs a clean engine, stop it first (`Stop-Process -Id <pid> -Force`; re-resolve the pid via `Get-NetTCPConnection -LocalPort 8000 -State Listen`). Engine is observe-only (no orders) — force-kill is safe.
+
+**▶ IMMEDIATE NEXT STEPS:**
+1. **Live-verify ⑨ / #2 / #4** (the operator drives trades — they invited it: "free to ask me to open/close/amend"). Script: (a) switch calc ticker without Clear → old symbol's price+orderbook stop within ~2s, cmd stops subscribing to old ticker (#4); (b) open a fresh position via calculator (calculate→copy→place) → cockpit Plan badge appears (#1 fresh); (c) close it → Position History row shows the Plan badge + drawer shows the linked calc id + trade-events (#2, ⑨ — also check `closed_positions.terminal_position_id` is non-empty + `calc_id` sealed in the live DB). `#4` can also be self-driven via curl: `GET /api/price/<A>` then `GET /api/price/<B>` and watch `/fragments/ws_status` for a fresh "Market WS connecting" after each switch (the operator REJECTED that probe last turn — ask before re-trying it).
+2. **COMMIT the 4 follow-ups** once the operator OKs (commit message convention: `fix(linkage): …` / `fix(calculator): …`, matching the 7 prior). Then the whole stack (`30f4c2e`..new) is still UNPUSHED — push only when asked.
+3. The 1 flaky teardown test is pre-existing suite-wide noise (CLAUDE.md "Task was destroyed" pattern) — surface, don't chase, unless it blocks.
+
+**GOTCHAS:** matcher entry tolerance is **0.25%** — a market fill >0.25% off the planned average won't LINK (use limit or widen `entry_tolerance_pct`). The snapshot-recovery + close-tpid fallback are **hedge-mode keyed** (`(symbol, position_side)`); a one-way `BOTH` order won't match — documented latent gap, consistent with the other observe-path one-way deferrals.
+
+---
+**[BELOW = pre-debug HISTORICAL handoff; the calc-linkage program was "done" at task 314, then live debugging reopened it. Kept for Phase 0→9 context + the regime-build direction.]**
+
+**🎉 CALC-LINKAGE COMPLETE — Phases 0 → 9 all shipped + holistically audited.** Phase 9 (multi-operator) finished: T1 advisory banner + T2 takeover-core were task 306; T3 operator_id propagation (309 + audit-fix 310); T4 idle timeout (311); holistic audit (313). Plus P7 deferred #1 — calc_match_audit in reverse-query/export — (312). All pushed.
 
 ## ★ STATUS (2026-06-07) — 🎉 PHASE 9 (multi-operator) COMPLETE + HOLISTICALLY AUDITED; calc-linkage Phases 0→9 done + PUSHED
 

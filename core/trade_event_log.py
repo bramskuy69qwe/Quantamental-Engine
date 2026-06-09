@@ -141,13 +141,21 @@ def query_trade_events(
     account_id: int,
     calc_id: Optional[str] = None,
     event_type: Optional[str] = None,
+    symbol: Optional[str] = None,
     since: Optional[str] = None,
     until: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
     data_dir: Optional[str] = None,
 ) -> tuple[list[dict], int]:
-    """Query trade_events rows. Newest first. Returns (rows, total_count)."""
+    """Query trade_events rows. Newest first. Returns (rows, total_count).
+
+    ``symbol`` (#3, debug 2026-06-09) matches the payload's ``symbol`` field
+    (``json_extract``) — the per-position drilldown attributes order-lifecycle
+    events (order_placed / order_filled / order_canceled incl. TP/SL amends /
+    partial_close) by symbol within the position's time-window, because on the
+    observe-only Binance path those events carry no calc_id (market orders link
+    post-fill) and bracket orders carry no calc_id or tpid at all."""
     db_path = _resolve_db_path(account_id, data_dir)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -160,6 +168,9 @@ def query_trade_events(
         if event_type:
             clauses.append("event_type = ?")
             params.append(event_type)
+        if symbol:
+            clauses.append("json_extract(payload_json, '$.symbol') = ?")
+            params.append(symbol)
         if since:
             clauses.append("timestamp >= ?")
             params.append(since)

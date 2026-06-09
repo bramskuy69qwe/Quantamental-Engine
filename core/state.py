@@ -159,28 +159,66 @@ class PositionInfo:
     # a position with no junction key (binance one-way).
     amendment_count:         int   = 0
     deviation_badge:         str   = ""
+    # #1 (debug 2026-06-08): live TP/SL drift vs the linked calc's planned
+    # TP/SL — the observe-only Binance cancel+replace amendment the
+    # order_amendments ledger never sees. Lets the badge label a genuine
+    # "amended" apart from a size-deviation ("off-size") yellow.
+    tpsl_amended:            bool  = False
 
 
 def deviation_badge_level(
     *, has_calc: bool, size_delta_pct: float, amendment_count: int,
-    yellow_pct: float, red_pct: float,
+    yellow_pct: float, red_pct: float, tpsl_amended: bool = False,
 ) -> str:
     """P4.T3 combined live-deviation badge level (spec §10.2 + plan §4.4).
 
     Unifies the spec's semantic badge (green on-plan / yellow amended / red
     no-calc) with the plan's config thresholds:
       - red:    no calc (UNPLANNED) OR |size_delta_pct| >= red_pct (far off plan)
-      - yellow: amended (amendment_count > 0) OR |size_delta_pct| >= yellow_pct
+      - yellow: amended (amendment_count > 0 OR live TP/SL drifted from plan)
+                OR |size_delta_pct| >= yellow_pct
       - green:  linked, on-plan, no amendments
+
+    ``tpsl_amended`` (#1, debug 2026-06-08): a live TP/SL drift signal for the
+    observe-only Binance path, where an operator TP/SL amendment is a venue
+    cancel+create (a fresh algo order) and so never writes an order_amendments
+    row — leaving amendment_count=0. The caller compares the position's current
+    working TP/SL against the linked calc's planned snapshot; True paints
+    "amended" the same as a ledger amendment.
     """
     if not has_calc:
         return "red"
     mag = abs(size_delta_pct or 0.0)
     if mag >= red_pct:
         return "red"
-    if amendment_count > 0 or mag >= yellow_pct:
+    if amendment_count > 0 or tpsl_amended or mag >= yellow_pct:
         return "yellow"
     return "green"
+
+
+def stamp_close_deviation_badges(rows, *, yellow_pct: float, red_pct: float):
+    """#2 (debug 2026-06-08): stamp ``row['deviation_badge']`` on closed-position
+    rows for the Position-History / Recent-Closes "Plan" column.
+
+    A deviation LEVEL (green/yellow/red, via ``deviation_badge_level``) for rows
+    that carry a ``calc_id``; "" for unlinked / legacy rows. The empty string is
+    deliberate and load-bearing: unlike OPEN positions (where no-calc = red
+    UNPLANNED, an actionable signal), flagging the ~150 historical pre-linkage
+    closed rows red would be pure noise — they had no plan, not a violated one.
+    Reuses the SAME level rule as the live open-position path so the two surfaces
+    read consistently. Mutates rows in place and returns them. Shared by the
+    Position-History table route and the cockpit Recent-Closes pane."""
+    for r in rows:
+        if r.get("calc_id"):
+            r["deviation_badge"] = deviation_badge_level(
+                has_calc=True,
+                size_delta_pct=r.get("size_delta_pct") or 0.0,
+                amendment_count=r.get("cumulative_amendment_count") or 0,
+                yellow_pct=yellow_pct, red_pct=red_pct,
+            )
+        else:
+            r["deviation_badge"] = ""
+    return rows
 
 
 @dataclass

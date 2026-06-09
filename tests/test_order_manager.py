@@ -37,6 +37,11 @@ def _mock_db():
     db.upsert_order_batch = AsyncMock()
     db.mark_stale_orders_canceled = AsyncMock(return_value=0)
     db.query_open_orders_all = AsyncMock(return_value=[])
+    # #3/#4 (debug 2026-06-09): _build_close_row_for_fill now falls back to the
+    # symbol+direction walk when the strict tpid open-lookup is empty (observe-only
+    # opening fills carry no tpid). Default to [] so the fallback is a no-op in the
+    # close-guard tests (they exercise the empty-close-fills / zero-qty paths).
+    db.get_fills_for_symbol_direction = AsyncMock(return_value=[])
     return db
 
 

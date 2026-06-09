@@ -363,6 +363,18 @@ async def frag_ws_status(request: Request):
 @router.get("/api/price/{ticker}")
 async def api_price(ticker: str):
     ticker = ticker.upper()
+    # #2 (debug 2026-06-08): the calculator polls this every 1s for the DISPLAYED
+    # ticker, so set_calculator_symbol must run on EVERY poll — not just the
+    # cache-miss fallback below. Otherwise, once the orderbook cache is warm (a
+    # liquid symbol like BTCUSDT, populated within ~2s by the separate
+    # /calculator/refresh poll), the price is served from cache, the fallback
+    # never runs, set_calculator_symbol is skipped, and the market WS is never
+    # rebuilt — so the OLD symbol's @depth20 keeps streaming ("still subscribing
+    # to <old>"). A thinner symbol (slower/empty orderbook fetch) hit the
+    # fallback and worked, which is why the leak looked symbol-specific. The call
+    # is gated internally on an ACTUAL symbol change, so the 1 Hz same-symbol
+    # poll does not thrash the WS.
+    ws_manager.set_calculator_symbol(ticker)
     price = app_state.mark_price_cache.get(ticker, 0)
     if not price:
         ob = app_state.orderbook_cache.get(ticker, {})
@@ -377,7 +389,6 @@ async def api_price(ticker: str):
     if not price:
         try:
             from core.exchange import fetch_orderbook
-            ws_manager.set_calculator_symbol(ticker)
             await fetch_orderbook(ticker)
             ob = app_state.orderbook_cache.get(ticker, {})
             asks = ob.get("asks", [])

@@ -505,3 +505,139 @@ async def test_junction_ensured_when_matcher_links_after_fill(db_and_path):
         (tpid,),
     ) as cur:
         assert (await cur.fetchone()) is not None
+
+
+# ── Unminted-snapshot recovery: re-derive tpid for a snapshot-seeded position ──
+
+@pytest.mark.asyncio
+async def test_snapshot_position_recovers_tpid_and_links(db_and_path):
+    """Unminted-snapshot recovery (debug 2026-06-08): a position first seen via a
+    REST snapshot (engine restarted while it was already open) has an EMPTY
+    position_id — the snapshot path doesn't mint (no stable first-open time). Its
+    entry order still carries the WS-minted tpid and the positions_calcs junction
+    is keyed on it. The live enrichment must re-derive the tpid from the entry
+    order so the position re-acquires its calc linkage (and the cockpit Plan
+    badge) instead of rendering a blank cell. This was the visible bug: XAUUSDT
+    LONG open + linked in the DB, but blank Plan column after a restart."""
+    db, path = db_and_path
+    from core.order_manager import OrderManager
+    from core.state import PositionInfo
+    om = OrderManager(db)
+    tpid = "binance:BTCUSDT:LONG:1775300000000"
+    # Persisted entry order carries the minted tpid (back-filled on open).
+    # position_side="LONG" = hedge mode (the operator's live config); the
+    # recovery keys on (symbol, direction) so a one-way "BOTH" order wouldn't
+    # match — that's the documented latent one-way gap, not this path.
+    await db.upsert_order_batch([_entry("S1", 1775300000000, position_side="LONG")])
+    await db._conn.execute(
+        "UPDATE orders SET terminal_position_id = ? "
+        "WHERE exchange_order_id = 'S1' AND account_id = 1",
+        (tpid,),
+    )
+    # Junction keyed on the minted tpid (formed at open, survives restart).
+    await db._conn.execute(
+        "INSERT INTO positions_calcs "
+        "(account_id, position_id, calc_id, order_id, contributed_qty, planned_size, first_fill_ts) "
+        "VALUES (1, ?, 'CS1', 1, 0.01, 0.01, 1775300000000)",
+        (tpid,),
+    )
+    await db._conn.commit()
+
+    # Snapshot-seeded live position: empty position_id (the bug precondition).
+    pos = PositionInfo(ticker="BTCUSDT", direction="LONG", contract_amount=0.01)
+    assert pos.position_id == ""
+    await om._enrich_positions_calc_id(1, [pos])
+
+    # tpid recovered from the entry order...
+    assert pos.position_id == tpid
+    # ...so the junction links it: calc_id stamped + a real (non-empty) badge.
+    assert pos.calc_id == "CS1"
+    assert pos.deviation_badge != ""   # the visible fix: Plan column no longer blank
+
+
+@pytest.mark.asyncio
+async def test_snapshot_no_entry_order_stays_unlinked(db_and_path):
+    """Negative: a snapshot position with NO recoverable entry order (truly no
+    prior link) keeps its empty position_id and isn't force-linked. Guards the
+    recovery from inventing a tpid for a genuinely unlinked position."""
+    db, path = db_and_path
+    from core.order_manager import OrderManager
+    from core.state import PositionInfo
+    om = OrderManager(db)
+    pos = PositionInfo(ticker="NOPEUSDT", direction="LONG", contract_amount=1.0)
+    await om._enrich_positions_calc_id(1, [pos])
+    assert pos.position_id == ""
+    assert pos.calc_id == ""
+
+
+# ── Follow-up ⑨: close-side tpid resolution (closing fill arrives empty) ──
+
+@pytest.mark.asyncio
+async def test_close_tpid_resolved_from_live_position(db_and_path):
+    """⑨ tier-1 (debug 2026-06-08): a closing fill that arrives with an empty
+    terminal_position_id resolves it from the live PositionInfo being closed
+    (which carries the snapshot-recovered tpid), so the closed_positions row,
+    close events, and calc/lifecycle attribution don't lose position identity."""
+    db, path = db_and_path
+    from core.order_manager import OrderManager
+    from core.state import app_state, PositionInfo
+    om = OrderManager(db)
+    tpid = "binance:ETHUSDT:LONG:1780000000000"
+    saved_dc, saved_pos = app_state._data_cache, app_state._positions_legacy
+    try:
+        app_state._data_cache = None
+        app_state.positions = [PositionInfo(ticker="ETHUSDT", direction="LONG",
+                                            contract_amount=0.01, position_id=tpid)]
+        fill = {"account_id": 1, "symbol": "ETHUSDT", "direction": "LONG",
+                "is_close": 1, "terminal_position_id": ""}
+        assert await om._resolve_close_tpid(1, fill) == tpid
+    finally:
+        app_state._data_cache, app_state._positions_legacy = saved_dc, saved_pos
+
+
+@pytest.mark.asyncio
+async def test_close_tpid_resolved_from_entry_order_when_position_gone(db_and_path):
+    """⑨ tier-2 (full-close race): the ACCOUNT_UPDATE that REMOVES the position
+    beats the TRADE event, so the live position is gone -> fall back to the
+    persisted entry order's minted tpid (which survives the removal)."""
+    db, path = db_and_path
+    from core.order_manager import OrderManager
+    from core.state import app_state
+    om = OrderManager(db)
+    tpid = "binance:ETHUSDT:LONG:1780000000000"
+    await db.upsert_order_batch([_entry("EO9", 1780000000000, symbol="ETHUSDT",
+                                        position_side="LONG")])
+    await db._conn.execute(
+        "UPDATE orders SET terminal_position_id = ? "
+        "WHERE exchange_order_id='EO9' AND account_id=1",
+        (tpid,),
+    )
+    await db._conn.commit()
+    saved_dc, saved_pos = app_state._data_cache, app_state._positions_legacy
+    try:
+        app_state._data_cache = None
+        app_state.positions = []   # position already removed from the snapshot
+        fill = {"account_id": 1, "symbol": "ETHUSDT", "direction": "LONG",
+                "is_close": 1, "terminal_position_id": ""}
+        assert await om._resolve_close_tpid(1, fill) == tpid
+    finally:
+        app_state._data_cache, app_state._positions_legacy = saved_dc, saved_pos
+
+
+@pytest.mark.asyncio
+async def test_close_tpid_unresolvable_returns_empty(db_and_path):
+    """⑨ negative: no live position + no entry order -> "" (genuine one-way /
+    unlinked path unchanged; the resolution never invents a tpid)."""
+    db, path = db_and_path
+    from core.order_manager import OrderManager
+    from core.state import app_state
+    om = OrderManager(db)
+    saved_dc, saved_pos = app_state._data_cache, app_state._positions_legacy
+    try:
+        app_state._data_cache = None
+        app_state.positions = []
+        fill = {"account_id": 1, "symbol": "NOPEUSDT", "direction": "LONG",
+                "is_close": 1, "terminal_position_id": ""}
+        assert await om._resolve_close_tpid(1, fill) == ""
+    finally:
+        app_state._data_cache, app_state._positions_legacy = saved_dc, saved_pos

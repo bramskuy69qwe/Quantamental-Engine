@@ -42,6 +42,10 @@ dist/
 .env.local
 data.backup-*/
 
+# --- Debug-session artifacts (Playwright browser + root screenshots) ---
+.playwright-mcp/
+/*.png
+
 # --- .NET / Quantower plugin build artifacts ---
 # obj/ and bin/ are reproducible from the .csproj source. T156 latent
 # noted these were being tracked and modified silently on every IDE

@@ -25,6 +25,16 @@
   <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
     <span style="font-size:.58rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--blue);">▾ Trade Events</span>
     <span class="mono" style="font-size:.65rem;color:var(--muted);">{{ events | length }} events</span>
+    {# #2 (debug 2026-06-08): surface WHICH calc(s) this closed position linked
+       to — the operator asked the drilldown to "show the linked calc". Short
+       monospace id(s), each linking to the calc-context view. #}
+    {% if calc_ids %}
+    <span style="font-size:.6rem;color:var(--muted);">· linked calc{{ 's' if calc_ids | length > 1 else '' }}:</span>
+    {% for cid in calc_ids %}
+      <a href="/context/calc/{{ cid }}" class="mono badge badge-ok"
+         style="font-size:.58rem;" title="Open calc context {{ cid }}">{{ cid[:8] }}</a>
+    {% endfor %}
+    {% endif %}
     <span style="font-size:.6rem;color:var(--muted);margin-left:auto;">chronological · this position's calc(s)</span>
     {# Phase-8 deferred #2: wire the P7.T4/T5 signed audit-export endpoints onto
        the per-position drawer (spec §10.6 "Export Audit per closed-position row").

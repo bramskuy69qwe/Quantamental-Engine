@@ -134,6 +134,15 @@ async def frag_closed_positions(
         sort_by=sort_by, sort_dir=sort_dir, search=search,
         date_from_ms=_iso_to_ms(date_from), date_to_ms=_iso_to_ms(date_to),
     )
+    # #2 (debug 2026-06-08): surface the calc linkage in Position History — a
+    # "Plan" deviation badge symmetric to the cockpit open-positions column.
+    # Linked-only (no-calc rows stay "—", not red); see
+    # stamp_close_deviation_badges. Config thresholds read ONCE per page.
+    from core.state import stamp_close_deviation_badges
+    from core.account_config import read_account_config_async
+    _cfg = await read_account_config_async(db, app_state.active_account_id)
+    stamp_close_deviation_badges(
+        rows, yellow_pct=_cfg.yellow_deviation_pct, red_pct=_cfg.red_deviation_pct)
     total_pages = max(1, (total + per_page - 1) // per_page)
     return templates.TemplateResponse(
         request, "fragments/history/closed_positions_table.html",
@@ -277,42 +286,82 @@ async def frag_position_events(request: Request, position_id: int = 0):
     calc_ids: list = []
     truncated = False
     if position_id:
+        from datetime import datetime, timezone
         aid = app_state.active_account_id
-        pos = await db.get_closed_position_terminal_key(position_id)
-        tpid = (pos or {}).get("terminal_position_id") or ""
+        row = await db.get_closed_position_by_id(position_id)
+        tpid     = (row or {}).get("terminal_position_id") or ""
+        symbol   = (row or {}).get("symbol") or ""
+        entry_ms = int((row or {}).get("entry_time_ms") or 0)
+        exit_ms  = int((row or {}).get("exit_time_ms") or 0)
+        # Distinct calc_ids in first-fill order (a scale-in position has several
+        # junction rows; one calc may also appear on >1 order).
         if tpid:
-            # Distinct calc_ids in first-fill order (a scale-in position has
-            # several junction rows; one calc may also appear on >1 order).
             seen = set()
             for link in await db.get_position_calc_links(tpid):
                 cid = link.get("calc_id")
                 if cid and cid not in seen:
                     seen.add(cid)
                     calc_ids.append(cid)
-            for cid in calc_ids:
-                rows, total = await asyncio.to_thread(
-                    query_trade_events,
-                    account_id=aid, calc_id=cid, limit=_POSITION_EVENTS_CAP,
-                )
+        # Attribute events by TWO keys, deduped by event id:
+        #   (a) calc_id(s) — calc_created (keys off "ticker", so ONLY this finds
+        #       it), position_opened, position_closed.
+        #   (b) #3 (debug 2026-06-09) symbol + THIS position's lifetime window —
+        #       order_placed / order_filled / order_canceled (incl. the TP/SL
+        #       amends, which on observe-only Binance are a cancel+create of
+        #       bracket orders that carry NO calc_id or tpid) / partial_close.
+        #       Market orders link POST-fill so their fill events are emitted with
+        #       an empty calc_id, and bracket orders are never attributed at all —
+        #       calc_id scoping alone misses the operator's real order lifecycle.
+        #       Bounded to [entry-2m, exit+30s]: order_placed precedes the first
+        #       fill; close-time cancels trail the exit. Tight enough that
+        #       sequential same-symbol trades don't overlap (documented edge: a
+        #       genuinely overlapping same-symbol position could bleed in).
+        by_id: dict = {}
+
+        def _ingest(rows, total):
+            nonlocal truncated
+            if total > len(rows):
                 # No silent caps (CLAUDE.md): query_trade_events returns the
-                # NEWEST _POSITION_EVENTS_CAP rows; if a calc has more, the
-                # OLDEST are dropped. Log it + flag the UI rather than implying
-                # completeness with a partial "N events" count.
-                if total > len(rows):
-                    truncated = True
-                    log.warning(
-                        "position_events: calc %s has %d trade_events; showing "
-                        "newest %d (oldest omitted)", cid, total, len(rows),
-                    )
-                events.extend(rows)
-            # query_trade_events returns newest-first per calc; merge the unioned
-            # rows oldest-first (ISO-8601 timestamps sort lexically == chrono).
-            events.sort(key=lambda e: e.get("timestamp") or "")
-            for e in events:                          # pre-parse for the summary
-                try:
-                    e["_payload"] = _json.loads(e.get("payload_json") or "{}")
-                except (ValueError, TypeError):
-                    e["_payload"] = {}
+                # NEWEST _POSITION_EVENTS_CAP rows; on overflow the OLDEST drop.
+                truncated = True
+                log.warning(
+                    "position_events: %d trade_events exceed cap %d (oldest "
+                    "omitted)", total, _POSITION_EVENTS_CAP,
+                )
+            for e in rows:
+                eid = e.get("id")
+                if eid is not None:
+                    by_id[eid] = e
+
+        for cid in calc_ids:
+            rows, total = await asyncio.to_thread(
+                query_trade_events,
+                account_id=aid, calc_id=cid, limit=_POSITION_EVENTS_CAP,
+            )
+            _ingest(rows, total)
+        if symbol and exit_ms:
+            since = (
+                datetime.fromtimestamp(
+                    max(0, entry_ms - 120_000) / 1000, tz=timezone.utc,
+                ).isoformat()
+                if entry_ms else None
+            )
+            until = datetime.fromtimestamp(
+                (exit_ms + 30_000) / 1000, tz=timezone.utc,
+            ).isoformat()
+            rows, total = await asyncio.to_thread(
+                query_trade_events,
+                account_id=aid, symbol=symbol, since=since, until=until,
+                limit=_POSITION_EVENTS_CAP,
+            )
+            _ingest(rows, total)
+        # Merge oldest-first (ISO-8601 timestamps sort lexically == chrono).
+        events = sorted(by_id.values(), key=lambda e: e.get("timestamp") or "")
+        for e in events:                          # pre-parse for the summary
+            try:
+                e["_payload"] = _json.loads(e.get("payload_json") or "{}")
+            except (ValueError, TypeError):
+                e["_payload"] = {}
 
     return templates.TemplateResponse(
         request, "fragments/history/position_events.html",
@@ -320,6 +369,7 @@ async def frag_position_events(request: Request, position_id: int = 0):
         # export endpoint takes. Threaded through so the drawer can render the
         # Export-Audit buttons (Phase-8 deferred #2).
         _ctx(request, events=events, has_calc=bool(calc_ids),
+             calc_ids=calc_ids,
              truncated=truncated, events_cap=_POSITION_EVENTS_CAP,
              position_id=position_id),
     )
