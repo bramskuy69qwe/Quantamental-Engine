@@ -98,3 +98,58 @@ def _isolate_live_per_account_logs(monkeypatch, tmp_path):
 
     monkeypatch.setattr(tel, "_resolve_db_path", _make_guard(tel._resolve_db_path))
     monkeypatch.setattr(evl, "_resolve_db_path", _make_guard(evl._resolve_db_path))
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _corr_log_session_floor(tmp_path_factory):
+    """SESSION-scoped floor under ``_isolate_correlation_log_dir`` (CL.T0b
+    audit finding 1 — a proven live-dir leak, not hypothetical).
+
+    pytest instantiates higher-scoped fixtures first: a module-scoped
+    ``TestClient`` fixture (e.g. tests/test_routes.py) runs the app
+    lifespan — and therefore ``correlation_log.start()`` — BEFORE any
+    function-scoped patch exists, so the writer thread captured the LIVE
+    ``data/logs/correlation`` dir (the suite created a real day file
+    there, and the startup prune ran against the live dir). This floor
+    guarantees the resolver points at session-tmp from the first moment
+    of the session; the function-scoped fixture below then layers a
+    per-test dir on top (and its monkeypatch teardown restores THIS
+    floor, not the live config value).
+    """
+    import core.correlation_log as _cl
+
+    mp = pytest.MonkeyPatch()
+    floor = tmp_path_factory.mktemp("corr-floor")
+    mp.setattr(_cl, "_resolve_sink_dir", lambda: str(floor / "corr"))
+    yield
+    _cl.close(timeout=2.0)
+    mp.undo()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_correlation_log_dir(monkeypatch, tmp_path):
+    """Guard the live ``data/logs/correlation/`` dir from test writes
+    (CL.T0b, plan task 0.8 / spec §7.6).
+
+    Patches the SINK-DIR RESOLVER on ``core.correlation_log`` — not the
+    env var or ``config.CORR_LOG_DIR`` consumers' import-time copies —
+    mirroring ``_isolate_live_per_account_logs``'s resolver-patch
+    approach. The writer thread re-resolves the dir at start and at every
+    rollover. NB this function-scoped patch does NOT cover writers
+    started by higher-scoped fixtures (module-scoped TestClient lifespans
+    run first) — that hole is closed by ``_corr_log_session_floor``
+    above; this fixture provides the tighter per-test dir + cleanup.
+    Teardown stops a writer the test left running (no thread leak across
+    tests) and drains the module queue (no cross-test envelope leakage
+    into a later test that starts the writer).
+    """
+    import core.correlation_log as _cl
+
+    monkeypatch.setattr(_cl, "_resolve_sink_dir", lambda: str(tmp_path / "corr"))
+    yield
+    _cl.close(timeout=2.0)
+    while True:
+        try:
+            _cl._queue.get_nowait()
+        except Exception:
+            break

@@ -41,7 +41,11 @@ def _clean_spine(monkeypatch):
     monkeypatch.setattr(cl, "_mark_price_sample", 0)
     monkeypatch.setattr(cl, "_sample_counters", {})
     monkeypatch.setattr(cl, "_emit_error_logged", set())
+    monkeypatch.setattr(cl, "_dropping", False)
+    monkeypatch.setattr(cl, "_dropped", 0)
+    monkeypatch.setattr(cl, "_drop_since", "")
     yield
+    cl.close(timeout=2.0)
     _drain()
 
 
@@ -380,3 +384,151 @@ class TestRegistryAndProfiles:
         # _redact recurses into values, so the count is >=1, not exactly 1 —
         # the load-bearing assertion is the 0 above (disabled = no payload work).
         assert calls["n"] >= 1 and len(_drain()) == 1
+
+
+# ── sink: writer thread / file / rotation / bounds (CL.T0b) ──────────────────
+
+def _sink_dir():
+    from pathlib import Path
+    return Path(cl._resolve_sink_dir())  # conftest patches this to a tmp dir
+
+
+def _day_file(date_str=None):
+    return _sink_dir() / f"corr-{date_str or cl._today_utc()}.jsonl"
+
+
+def _read_lines(path):
+    return [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l]
+
+
+def _wait_for(cond, timeout=3.0):
+    import time
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if cond():
+            return True
+        time.sleep(0.02)
+    return False
+
+
+class TestSinkWriter:
+    def test_writer_drains_and_close_flushes_ndjson_in_seq_order(self):
+        with cl.correlation_scope("boot"):
+            for i in range(5):
+                _emit_simple(payload={"i": i})
+        cl.start()
+        cl.close()
+        lines = _read_lines(_day_file())
+        assert [l["payload"]["i"] for l in lines] == [0, 1, 2, 3, 4]
+        seqs = [l["seq"] for l in lines]
+        assert seqs == sorted(seqs)
+
+    def test_restart_same_day_appends_not_truncates(self):
+        _emit_simple(payload={"batch": 1})
+        cl.start()
+        cl.close()
+        _emit_simple(payload={"batch": 2})
+        cl.start()
+        cl.close()
+        batches = [l["payload"]["batch"] for l in _read_lines(_day_file())]
+        assert batches == [1, 2]
+
+    def test_start_idempotent_and_close_without_start_is_noop(self):
+        cl.close()  # never started — no raise
+        cl.start()
+        t1 = cl._writer_thread
+        cl.start()
+        assert cl._writer_thread is t1
+        cl.close()
+        assert cl._writer_thread is None
+
+    def test_start_noop_when_disabled(self, monkeypatch):
+        monkeypatch.setattr(cl, "_enabled", False)
+        cl.start()
+        assert cl._writer_thread is None
+
+    def test_rollover_mid_run_opens_new_dated_file_no_rename(self, monkeypatch):
+        real_today = cl._today_utc()
+        from datetime import datetime, timedelta
+        next_day = (datetime.fromisoformat(real_today) + timedelta(days=1)).strftime("%Y-%m-%d")
+        day = {"v": real_today}
+        monkeypatch.setattr(cl, "_today_utc", lambda: day["v"])
+        cl.start()
+        _emit_simple(payload={"day": 1})
+        assert _wait_for(lambda: _day_file(real_today).exists()
+                         and len(_read_lines(_day_file(real_today))) == 1)
+        # plant an over-retention file: the ROLLOVER prune must delete it
+        stale = _sink_dir() / "corr-2020-01-01.jsonl"
+        stale.write_text("{}\n", encoding="utf-8")
+        day["v"] = next_day  # UTC date rolls
+        _emit_simple(payload={"day": 2})
+        cl.close()
+        assert [l["payload"]["day"] for l in _read_lines(_day_file(real_today))] == [1]
+        assert [l["payload"]["day"] for l in _read_lines(_day_file(next_day))] == [2]
+        assert not stale.exists()  # rollover-path prune (not just startup)
+
+    def test_stale_sentinel_from_previous_generation_is_skipped(self):
+        # audit finding 2: a sentinel left by a timed-out close of an OLD
+        # writer generation must not kill the NEXT writer.
+        cl._queue.put_nowait(object())  # stale foreign sentinel
+        _emit_simple(payload={"alive": True})
+        cl.start()
+        cl.close()
+        lines = _read_lines(_day_file())
+        assert [l["payload"].get("alive") for l in lines] == [True]
+
+    def test_prune_at_start_deletes_only_old_sink_files(self):
+        d = _sink_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        old = d / "corr-2020-01-01.jsonl"
+        old.write_text("{}\n", encoding="utf-8")
+        bystander = d / "corr-garbage.txt"
+        bystander.write_text("keep me", encoding="utf-8")
+        cl.start()
+        cl.close()
+        assert not old.exists()           # older than retention → pruned
+        assert bystander.exists()         # non-matching name → untouched
+        assert _day_file().exists()       # current day file created
+
+    def test_day_cap_marker_once_then_discard(self, monkeypatch):
+        monkeypatch.setattr(cl, "_max_day_bytes", lambda: 300)
+        for i in range(3):
+            _emit_simple(payload={"b1": i})
+        cl.start()
+        # first batch (3 lines ≈ 800B) lands, blows the cap → one marker
+        assert _wait_for(lambda: _day_file().exists()
+                         and len(_read_lines(_day_file())) == 4)
+        for i in range(3):
+            _emit_simple(payload={"b2": i})  # post-cap → discarded
+        cl.close()
+        lines = _read_lines(_day_file())
+        assert len(lines) == 4
+        marker = lines[-1]
+        assert marker["category"] == "overflow"
+        assert marker["payload"]["reason"] == "day_cap"
+        assert not any("b2" in json.dumps(l) for l in lines)
+
+    def test_overflow_drop_count_and_recovery_marker(self, monkeypatch):
+        # no writer running — deterministic queue-side check
+        monkeypatch.setattr(cl, "_max_inflight", lambda: 5)
+        for i in range(8):
+            _emit_simple(payload={"i": i})
+        assert cl._queue.qsize() == 5      # 3 dropped
+        assert cl._dropping and cl._dropped == 3
+        kept = _drain()                    # pressure released
+        assert [e["payload"]["i"] for e in kept] == [0, 1, 2, 3, 4]
+        _emit_simple(payload={"i": 99})    # recovery → marker + line
+        out = _drain()
+        assert len(out) == 2
+        marker, line = out
+        assert marker["category"] == "overflow"
+        assert marker["payload"]["reason"] == "queue_overflow"
+        assert marker["payload"]["dropped"] == 3
+        assert line["payload"]["i"] == 99
+        assert not cl._dropping and cl._dropped == 0
+
+    def test_conftest_guard_redirects_sink_dir_to_tmp(self, tmp_path):
+        import config
+        resolved = cl._resolve_sink_dir()
+        assert str(tmp_path) in resolved
+        assert resolved != config.CORR_LOG_DIR

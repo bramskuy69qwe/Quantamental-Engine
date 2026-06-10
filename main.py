@@ -76,6 +76,13 @@ async def lifespan(app: FastAPI):
     os.makedirs(config.SNAPSHOTS_DIR, exist_ok=True)
     os.makedirs(config.LOGS_DIR, exist_ok=True)
 
+    # ── Correlation-log sink (CL.T0b, spec §6.5) ─────────────────────────────
+    # Started FIRST: zero dependencies on DB/REST/bus, and the module-level
+    # queue already buffers any emits from requests served before startup
+    # completes. Guarded internally by CORR_LOG_ENABLED.
+    from core import correlation_log
+    correlation_log.start()
+
     # ── SQLite init (fast — local file) ──────────────────────────────────────
     await db.initialize()
 
@@ -122,6 +129,9 @@ async def lifespan(app: FastAPI):
     log.info(f"Shutting down {config.PROJECT_NAME}...")
     await event_bus.close()
     await db.close()
+    # Last: flush + stop the correlation-log writer (the explicit call is
+    # the only reliable flush trigger — teardown cancels no bg tasks).
+    correlation_log.close()
 
 
 # ── App ──────────────────────────────────────────────────────────────────────

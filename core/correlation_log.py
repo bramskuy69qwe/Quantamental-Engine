@@ -10,11 +10,16 @@ Design: docs/design/correlation_log_spec.md (rev 2). This module owns:
   and pool-thread contexts (spec §6.1 pipeline order);
 - central secret redaction (spec §7.2 / D10).
 
-CL.T0b adds the sink: the dedicated daemon writer thread draining
-``_queue`` to the date-stamped NDJSON file, rotation/prune/MB-guard/
-overflow, and startup/shutdown wiring. Until then ``emit`` enqueues and
-nothing drains — safe, because no production callers exist before
-Phase 1 (taps land per-phase).
+The sink (CL.T0b) is a dedicated daemon WRITER THREAD — not a coroutine
+(``SimpleQueue.get`` blocks its calling thread; a coroutine drain would
+stall the event loop): blocking ``get(timeout=0.25)`` → ``get_nowait``
+batch drain → buffered append to the date-stamped
+``corr-YYYY-MM-DD.jsonl`` (UTC), flush per batch. Rollover = close+open
+a new dated file, NO rename (Windows-safe, spec §6.3); prune at startup
++ rollover; per-day MB guard; queue overflow = drop + count + recovery
+marker (spec §6.1, D19 — NOT an engine_events row). ``start()`` is
+called from the ``main.py`` lifespan BEFORE ``start_background_tasks``;
+``close()`` from lifespan teardown (sentinel → drain → flush → join).
 
 Import discipline: this module imports ONLY stdlib + ``config``. It will
 be imported by low-level modules (event_bus, adapters, db_orders,
@@ -36,12 +41,14 @@ import itertools
 import json
 import logging
 import math
+import os
 import queue
+import re
 import threading
 import uuid
 from contextlib import contextmanager
 from contextvars import ContextVar
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterator, Optional
 
 import config
@@ -258,8 +265,9 @@ def _sample_pass(category: str) -> bool:
 # ── envelope + emit (spec §4, §6.1) ──────────────────────────────────────────
 
 # Module-level at import (spec §6.5): emits from requests served before
-# startup completes simply buffer until the T0b writer thread drains them.
-_queue: "queue.SimpleQueue[str]" = queue.SimpleQueue()
+# startup completes simply buffer until the writer thread drains them.
+# Items are pre-serialized line strings; None is the shutdown sentinel.
+_queue: queue.SimpleQueue = queue.SimpleQueue()
 _seq = itertools.count(1)  # next() is atomic under the GIL — true emit order
 
 # Envelope fields are small and bounded (~hundreds of bytes); the payload cap
@@ -405,7 +413,7 @@ def emit(
                 "keys": sorted(str(k)[:64] for k in payload)[:50],
             }
             line = json.dumps(envelope, default=str, allow_nan=False)
-        _queue.put_nowait(line)
+        _enqueue(line)
     except Exception:
         # A tap must never stall or crash the engine (D7). Log loudly, once
         # per category, so a broken tap is visible without being fatal.
@@ -423,3 +431,261 @@ def emit(
 def registry() -> Dict[str, str]:
     """A copy of category → group (conformance tests; corr_tail tooling)."""
     return dict(_REGISTRY)
+
+
+# ── sink: overflow guard (spec §6.1, D19) ────────────────────────────────────
+
+def _max_inflight() -> int:
+    return config.CORR_LOG_MAX_INFLIGHT
+
+
+_overflow_lock = threading.Lock()
+_dropping = False
+_dropped = 0
+_drop_since = ""
+
+
+def _meta_line(category: str, payload: Dict[str, Any]) -> str:
+    """A sink self-describing envelope (overflow / day-cap markers)."""
+    envelope = {
+        "ts": _now_iso(),
+        "seq": next(_seq),
+        "corr_id": corr_id_var.get(),
+        "task": _resolve_task(),
+        "account_id": None,
+        "symbol": None,
+        "component": "correlation_log",
+        "peer": "internal",
+        "direction": "internal",
+        "category": category,
+        "payload": payload,
+    }
+    return json.dumps(envelope, default=str, allow_nan=False)
+
+
+def _enqueue(line: str) -> None:
+    """Bounded enqueue: past ``CORR_LOG_MAX_INFLIGHT``, drop + count + ONE
+    rate-limited error log per episode; on recovery below the bound, enqueue
+    a self-describing ``overflow`` marker with the episode's drop count.
+    Normal operation never takes the lock (qsize check only)."""
+    global _dropping, _dropped, _drop_since
+    if _queue.qsize() >= _max_inflight():
+        with _overflow_lock:
+            _dropped += 1
+            if not _dropping:
+                _dropping = True
+                _drop_since = _now_iso()
+                logger.error(
+                    "correlation-log queue overflow (>=%d in flight) — dropping envelopes",
+                    _max_inflight(),
+                )
+        return
+    if _dropping:
+        marker_payload = None
+        with _overflow_lock:
+            if _dropping:
+                marker_payload = {"reason": "queue_overflow", "dropped": _dropped,
+                                  "since": _drop_since, "until": _now_iso()}
+                _dropping = False
+                _dropped = 0
+                _drop_since = ""
+        if marker_payload is not None:
+            _queue.put_nowait(_meta_line(CAT_OVERFLOW, marker_payload))
+    _queue.put_nowait(line)
+
+
+# ── sink: the writer thread (spec §6.1, §6.3, §6.4) ──────────────────────────
+# A dedicated daemon thread, NOT a coroutine: SimpleQueue.get blocks its
+# calling thread, so a coroutine drain would stall the event loop, and a
+# get_nowait+sleep poll cannot implement a batch wakeup. The thread owns the
+# file handle exclusively (no cross-thread handle races).
+
+_FILE_RE = re.compile(r"^corr-(\d{4}-\d{2}-\d{2})\.jsonl$")
+_BATCH_MAX = 1000
+
+_writer_thread: Optional[threading.Thread] = None
+# Lifecycle: start()/close() are serialized by a lock (check-then-act would
+# otherwise allow two writers on one file). The shutdown sentinel is a
+# GENERATION-tagged object recreated by every start(): a stale sentinel left
+# over from a timed-out close() of a PREVIOUS writer generation is skipped,
+# not honored — otherwise the next start()'s fresh thread would consume it
+# and exit immediately (silent dead sink; audit finding 2).
+_lifecycle_lock = threading.Lock()
+_sentinel_gen: object = object()
+
+
+def _resolve_sink_dir() -> str:
+    """The sink directory. A FUNCTION so the test conftest can patch it
+    (mirror of the `_resolve_db_path` guard pattern) — config env reads
+    happen at import, so an env monkeypatch would land too late."""
+    return config.CORR_LOG_DIR
+
+
+def _today_utc() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _retention_days() -> int:
+    return config.CORR_LOG_RETENTION_DAYS
+
+
+def _max_day_bytes() -> int:
+    return config.CORR_LOG_MAX_MB_PER_DAY * 1024 * 1024
+
+
+def _prune(dir_: str) -> None:
+    """Delete corr-*.jsonl older than the retention window. Runs at writer
+    start + rollover (startup covers engine-down-at-rollover, spec §6.3).
+    Only files matching the sink's own date-stamped pattern are touched.
+    Cutoff compares ISO date strings (they sort lexicographically)."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=_retention_days())).strftime("%Y-%m-%d")
+    try:
+        names = os.listdir(dir_)
+    except OSError:
+        return
+    for name in names:
+        m = _FILE_RE.match(name)
+        if m and m.group(1) < cutoff:
+            try:
+                os.remove(os.path.join(dir_, name))
+                logger.info("correlation-log pruned %s (retention %dd)", name, _retention_days())
+            except OSError:
+                logger.warning("correlation-log could not prune %s", name)
+
+
+def _open_day_file(dir_: str, date_str: str):
+    """Open today's file for append; returns (handle, existing_bytes).
+    newline="\\n" suppresses Windows \\n→\\r\\n translation so the byte
+    accounting (len(line) == bytes, ensure_ascii) stays exact."""
+    path = os.path.join(dir_, f"corr-{date_str}.jsonl")
+    existing = os.path.getsize(path) if os.path.exists(path) else 0
+    fh = open(path, "a", encoding="utf-8", newline="\n")
+    return fh, existing
+
+
+def _writer_loop(my_sentinel: object) -> None:
+    """The single writer. ``my_sentinel`` is this generation's shutdown
+    token; sentinel objects from older generations (a timed-out close of a
+    previous writer) are skipped, never honored.
+
+    Pre-capped-at-open (restart into an already-over-cap day file) logs
+    loudly but writes NO new marker — the run that tripped the cap already
+    wrote one; the only marker-less over-cap file requires a crash inside
+    the cap-trip→marker-write window (accepted)."""
+    fh = None
+    try:
+        dir_ = _resolve_sink_dir()
+        os.makedirs(dir_, exist_ok=True)
+        _prune(dir_)
+        date_str = _today_utc()
+        fh, written = _open_day_file(dir_, date_str)
+        capped = written > _max_day_bytes()
+        if capped:
+            logger.error(
+                "correlation-log day file already exceeds CORR_LOG_MAX_MB_PER_DAY "
+                "(%d MB) at open — discarding today's envelopes", config.CORR_LOG_MAX_MB_PER_DAY,
+            )
+
+        def _rotate():
+            nonlocal dir_, date_str, fh, written, capped
+            fh.flush()
+            fh.close()
+            dir_ = _resolve_sink_dir()
+            os.makedirs(dir_, exist_ok=True)
+            _prune(dir_)
+            date_str = _today_utc()
+            fh, written = _open_day_file(dir_, date_str)
+            capped = written > _max_day_bytes()
+
+        stop = False
+        while not stop:
+            try:
+                item = _queue.get(timeout=0.25)
+            except queue.Empty:
+                if _today_utc() != date_str:
+                    _rotate()
+                continue
+            batch = []
+            if isinstance(item, str):
+                batch.append(item)
+            elif item is my_sentinel:
+                stop = True
+            # else: stale sentinel from a previous generation — skip it
+            while len(batch) < _BATCH_MAX and not stop:
+                try:
+                    nxt = _queue.get_nowait()
+                except queue.Empty:
+                    break
+                if isinstance(nxt, str):
+                    batch.append(nxt)
+                elif nxt is my_sentinel:
+                    stop = True
+                # else: stale sentinel — skip, keep draining
+            if _today_utc() != date_str:
+                _rotate()
+            if batch and not capped:
+                data = "\n".join(batch) + "\n"
+                fh.write(data)
+                written += len(data)
+                fh.flush()
+                if written > _max_day_bytes():
+                    # Loud, once, with a final marker line — then discard
+                    # for the rest of the UTC day (spec §6.3, D20).
+                    capped = True
+                    logger.error(
+                        "correlation-log day file exceeded CORR_LOG_MAX_MB_PER_DAY "
+                        "(%d MB) — discarding further envelopes for %s",
+                        config.CORR_LOG_MAX_MB_PER_DAY, date_str,
+                    )
+                    fh.write(_meta_line(CAT_OVERFLOW, {
+                        "reason": "day_cap",
+                        "max_mb": config.CORR_LOG_MAX_MB_PER_DAY,
+                        "bytes_written": written,
+                    }) + "\n")
+                    fh.flush()
+        fh.flush()
+    except Exception:
+        # The engine must never be harmed by its own observability (D7).
+        logger.exception("correlation-log writer thread died — sink disabled for this run")
+    finally:
+        if fh is not None:
+            try:
+                fh.close()
+            except Exception:
+                pass
+
+
+def start() -> None:
+    """Start the writer thread (idempotent; no-op when CORR_LOG_ENABLED=0).
+    Called from the main.py lifespan BEFORE start_background_tasks — the
+    sink has zero dependencies on REST/bus/Binance (spec §6.5)."""
+    global _writer_thread, _sentinel_gen
+    if not _enabled:
+        return
+    with _lifecycle_lock:
+        if _writer_thread is not None and _writer_thread.is_alive():
+            return
+        _sentinel_gen = object()  # new generation — stale sentinels die
+        _writer_thread = threading.Thread(
+            target=_writer_loop, args=(_sentinel_gen,),
+            name="corr-log-writer", daemon=True,
+        )
+        _writer_thread.start()
+
+
+def close(timeout: float = 5.0) -> None:
+    """Flush-and-stop (idempotent): sentinel → writer drains the queue →
+    flush → close → join. The explicit lifespan-teardown call is the only
+    reliable flush trigger — today's teardown cancels no background tasks,
+    so a cancellation-based flush would never run (spec §6.5)."""
+    global _writer_thread
+    with _lifecycle_lock:
+        t = _writer_thread
+        if t is None or not t.is_alive():
+            return
+        _queue.put_nowait(_sentinel_gen)
+        t.join(timeout)
+        if t.is_alive():
+            logger.error("correlation-log writer did not stop within %.1fs", timeout)
+        else:
+            _writer_thread = None

@@ -198,6 +198,21 @@ try:
     CORR_LOG_MARK_PRICE_SAMPLE = int(os.getenv("CORR_LOG_MARK_PRICE_SAMPLE", "0"))
 except ValueError:
     CORR_LOG_MARK_PRICE_SAMPLE = 0
+# Sink-side knobs (CL.T0b): the writer thread, rotation, retention, bounds.
+CORR_LOG_DIR = os.getenv("CORR_LOG_DIR", f"{LOGS_DIR}/correlation")
+try:
+    CORR_LOG_RETENTION_DAYS = max(1, int(os.getenv("CORR_LOG_RETENTION_DAYS", "7")))
+except ValueError:
+    CORR_LOG_RETENTION_DAYS = 7
+try:
+    CORR_LOG_MAX_INFLIGHT = max(1000, int(os.getenv("CORR_LOG_MAX_INFLIGHT", "100000")))
+except ValueError:
+    CORR_LOG_MAX_INFLIGHT = 100000
+try:
+    # per-day file size guard — the runaway-tap backstop (spec D20)
+    CORR_LOG_MAX_MB_PER_DAY = max(1, int(os.getenv("CORR_LOG_MAX_MB_PER_DAY", "512")))
+except ValueError:
+    CORR_LOG_MAX_MB_PER_DAY = 512
 
 REGIME_STALE_MINUTES = 90   # current_regime older than this is treated as stale
 
