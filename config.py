@@ -180,6 +180,25 @@ PLATFORM_TOKEN = os.getenv("PLATFORM_TOKEN", "")
 # deferred until the deployment shape changes.
 EXPORT_SIGNING_KEY = os.getenv("EXPORT_SIGNING_KEY", "")
 
+# ── Correlation log (CL.T0a, docs/design/correlation_log_spec.md §8) ─────────
+# Emit-side knobs only; the sink-side knobs (CORR_LOG_DIR, retention,
+# in-flight bound, per-day MB guard) land with the writer thread (CL.T0b).
+# CORR_LOG_PROFILE is validated inside core/correlation_log.py (unknown
+# value → loud log + fall back to "full" — observability must not take
+# the engine down on a typo'd env var).
+CORR_LOG_ENABLED = os.getenv("CORR_LOG_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off", "")
+CORR_LOG_PROFILE = os.getenv("CORR_LOG_PROFILE", "full")
+try:
+    # clamped: a negative/tiny value would truncate every envelope
+    CORR_LOG_MAX_PAYLOAD_BYTES = max(256, int(os.getenv("CORR_LOG_MAX_PAYLOAD_BYTES", "4096")))
+except ValueError:
+    CORR_LOG_MAX_PAYLOAD_BYTES = 4096
+try:
+    # 0 = ws_mark_price dropped (the default); N>=1 = keep 1-in-N (opt-in).
+    CORR_LOG_MARK_PRICE_SAMPLE = int(os.getenv("CORR_LOG_MARK_PRICE_SAMPLE", "0"))
+except ValueError:
+    CORR_LOG_MARK_PRICE_SAMPLE = 0
+
 REGIME_STALE_MINUTES = 90   # current_regime older than this is treated as stale
 
 # Task 165 (MED-017): mark-price freshness. If the latest WS mark
