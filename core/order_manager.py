@@ -15,6 +15,7 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
+from core import correlation_log
 from core.auth_state import cached_operator_id
 from core.event_bus import event_bus, DOMAIN_CALC, DOMAIN_POSITION, DOMAIN_ORDER
 from core.order_state import validate_transition, ACTIVE_STATES, OrderStatus, resolve_tpsl_direction
@@ -231,20 +232,42 @@ class OrderManager:
         eid = order.get("exchange_order_id")
 
         prev_order = None
+        prev_status = ""
         if eid:
             existing = await self._db.get_active_orders_map(account_id)
             if eid in existing:
                 prev_order = existing[eid]
-                current_status = prev_order.get("status", "")
+                prev_status = prev_order.get("status", "")
                 new_status = order.get("status", "new")
-                if not validate_transition(current_status, new_status):
+                if not validate_transition(prev_status, new_status):
                     log.warning(
                         "SR-1: rejected invalid transition %s→%s for order %s (WS update)",
-                        current_status, new_status, eid,
+                        prev_status, new_status, eid,
                     )
                     return False
 
         await self._db.upsert_order_batch([order])
+        # corr-tap: order_status_applied (CL.T3a, spec §5.5) — the WS source.
+        # ``before`` is "" when the order is not in the active map (first
+        # arrival, or a terminal order outside the SR-1 gate — the DB-layer
+        # ON CONFLICT guard owns terminal-downgrade protection; the paired
+        # db_write line carries the authoritative rowcount). dedup_key uses
+        # the NORMALIZED status/qty (duplicate-apply detection within this
+        # category; the raw frame's key lives on the same corr chain).
+        _status_after = order.get("status", "new")
+        _osa = {
+            "order_id": str(eid) if eid is not None else "",
+            "before":   prev_status,
+            "after":    _status_after,
+            "source":   "ws",
+        }
+        if eid is not None:
+            _osa["dedup_key"] = f"{eid}:{_status_after}:{order.get('quantity')}"
+        correlation_log.emit(
+            "order_manager", "internal", "internal",
+            correlation_log.CAT_ORDER_STATUS_APPLIED, _osa,
+            account_id=account_id, symbol=order.get("symbol"),
+        )
         await self._enrich_order_best_effort(order)
         # When a TP/SL child arrives, re-enrich the parent entry so its
         # tp/sl_trigger_price gets populated and correlation can run.

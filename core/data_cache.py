@@ -24,6 +24,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import config
+from core import correlation_log
 from core.state import PositionInfo
 
 log = logging.getLogger("data_cache")
@@ -261,7 +262,9 @@ class DataCache:
             drift_cfg = await self._read_drift_config()
 
         size_drifts: List[Dict[str, Any]] = []
+        _t_req = time.perf_counter()
         async with self._lock:
+            _t_acq = time.perf_counter()
             accept = force or self._should_accept_position_update(source, ts_ms)
             accept, size_drifts = self._apply_snapshot_wins_inversion(
                 source, incoming, accept, drift_cfg,
@@ -295,9 +298,16 @@ class DataCache:
             # Detect closed positions
             closed_syms: Set[str] = set()
             closed_positions: List[Dict[str, Any]] = []
+            closes_for_tap: List[Tuple[str, str, str]] = []
             for (ticker, direction), old_pos in existing.items():
                 if (ticker, direction) not in new_keys:
                     closed_syms.add(ticker)
+                    # tpid VERBATIM incl. "" — a close detected on a
+                    # tpid-less position is exactly the stranded-identity
+                    # shape the log exists to surface (spec §5.5).
+                    closes_for_tap.append(
+                        (ticker, old_pos.direction, old_pos.position_id or ""),
+                    )
                     closed_positions.append({
                         "ticker":          ticker,
                         "direction":       old_pos.direction,
@@ -316,6 +326,26 @@ class DataCache:
                           if (p.ticker, p.direction) not in existing},
                 changed=True,
             )
+        _t_rel = time.perf_counter()
+
+        # corr-tap: position_snapshot_applied (CL.T3a, spec §5.5). Values are
+        # captured under the lock (mutation snapshot); the emit happens after
+        # release so the tap never extends the critical section. A REJECTED
+        # snapshot (return None above) deliberately emits nothing — the
+        # category records applied mutations.
+        correlation_log.emit(
+            "data_cache", "internal", "internal",
+            correlation_log.CAT_POSITION_SNAPSHOT_APPLIED,
+            {
+                "n_positions":     len(incoming),
+                "trigger":         source.value,
+                "force":           force,
+                "closes_detected": closes_for_tap,
+                "n_new":           len(result.new_syms),
+                "waited_ms":       round((_t_acq - _t_req) * 1000, 2),
+                "held_ms":         round((_t_rel - _t_acq) * 1000, 2),
+            },
+        )
 
         # Outside lock: publish events (publish is just Queue.put — O(1))
         from core.event_bus import CH_TRADE_CLOSED
@@ -450,7 +480,19 @@ class DataCache:
         new_syms: Set[str] = set()
         closed_positions: List[Dict[str, Any]] = []
 
+        # corr-tap: position_incremental_applied (CL.T3a, spec §5.5) — one
+        # envelope per touched (symbol, side), captured under the lock and
+        # emitted after release. Pre-gated: this runs on the WS hot path, so
+        # the per-position capture dicts are only built when the category is
+        # enabled (spec §6.1 pipeline rule).
+        _tap_on = correlation_log.enabled(
+            correlation_log.CAT_POSITION_INCREMENTAL_APPLIED,
+        )
+        pos_taps: List[Dict[str, Any]] = []
+        _t_req = time.perf_counter()
+
         async with self._lock:
+            _t_acq = time.perf_counter()
             # Apply balance updates + advance account version so REST
             # won't overwrite fresher WS balance data within priority window
             if balances:
@@ -471,6 +513,18 @@ class DataCache:
                         # Position closed
                         if key in existing:
                             closed_syms.add(sym)
+                            if _tap_on:
+                                _old = existing[key]
+                                pos_taps.append({
+                                    "symbol":               sym,
+                                    "side":                 np.side,
+                                    "qty_before":           _old.contract_amount,
+                                    "qty_after":            0,
+                                    "closed":               True,
+                                    "terminal_position_id": _old.position_id or "",
+                                    "tpid_present":         bool(_old.position_id),
+                                    "tpid_minted":          False,
+                                })
                             closed_positions.append({
                                 "ticker":          sym,
                                 "direction":       np.side,
@@ -486,6 +540,18 @@ class DataCache:
                     if key in existing:
                         # Update existing position in-place
                         pos = existing[key]
+                        if _tap_on:
+                            # qty_before captured BEFORE the in-place mutation
+                            pos_taps.append({
+                                "symbol":               sym,
+                                "side":                 np.side,
+                                "qty_before":           pos.contract_amount,
+                                "qty_after":            np.size,
+                                "closed":               False,
+                                "terminal_position_id": pos.position_id or "",
+                                "tpid_present":         bool(pos.position_id),
+                                "tpid_minted":          False,
+                            })
                         pos.individual_unrealized = np.unrealized_pnl
                         pos.contract_amount = np.size
                         pos.direction = np.side
@@ -514,6 +580,19 @@ class DataCache:
                             direction=np.side,
                             entry_ms=ts_ms,
                         )
+                        if _tap_on:
+                            # tpid_minted=True makes the mint a VISIBLE racer
+                            # (the fill-mint race, spec §5.5/§4.1).
+                            pos_taps.append({
+                                "symbol":               sym,
+                                "side":                 np.side,
+                                "qty_before":           0,
+                                "qty_after":            np.size,
+                                "closed":               False,
+                                "terminal_position_id": minted_id,
+                                "tpid_present":         bool(upstream_id),
+                                "tpid_minted":          not upstream_id,
+                            })
                         self._positions.append(PositionInfo(
                             ticker=sym,
                             direction=np.side,
@@ -535,6 +614,22 @@ class DataCache:
 
             self._advance_version(source, ts_ms)
             self._recalculate_portfolio()
+        _t_rel = time.perf_counter()
+
+        # corr-tap: position_incremental_applied (CL.T3a) — emitted after the
+        # lock releases; a balances-only frame (no norm_positions) emits no
+        # position envelope (the wsu frame tap already records the frame).
+        if pos_taps:
+            _waited = round((_t_acq - _t_req) * 1000, 2)
+            _held = round((_t_rel - _t_acq) * 1000, 2)
+            for _tp in pos_taps:
+                _tp["waited_ms"] = _waited
+                _tp["held_ms"] = _held
+                correlation_log.emit(
+                    "data_cache", "internal", "internal",
+                    correlation_log.CAT_POSITION_INCREMENTAL_APPLIED,
+                    _tp, symbol=_tp["symbol"],
+                )
 
         # Outside lock: publish events
         from core.event_bus import CH_TRADE_CLOSED
@@ -562,7 +657,25 @@ class DataCache:
         from core.state import app_state
 
         try:
+            pf = app_state.portfolio
+            _before = (pf.dd_state, pf.weekly_pnl_state)
             self._do_recalculate_portfolio(app_state)
+            # corr-tap: portfolio_recalculated (CL.T3a, spec §5.5) — ON
+            # CHANGE ONLY. This runs per mark-price tick (~1/s/symbol via
+            # apply_mark_price), so an unconditional emit would flood; the
+            # dd/weekly state transition is the signal.
+            _after = (pf.dd_state, pf.weekly_pnl_state)
+            if _after != _before:
+                correlation_log.emit(
+                    "data_cache", "internal", "internal",
+                    correlation_log.CAT_PORTFOLIO_RECALCULATED,
+                    {
+                        "dd_state_before":         _before[0],
+                        "dd_state":                _after[0],
+                        "weekly_pnl_state_before": _before[1],
+                        "weekly_pnl_state":        _after[1],
+                    },
+                )
         except Exception as exc:
             log.error("DataCache._recalculate_portfolio failed: %s", exc)
 
@@ -786,11 +899,14 @@ class DataCache:
         if ts_ms == 0:
             ts_ms = int(time.time() * 1000)
 
+        _t_req = time.perf_counter()
         async with self._lock:
+            _t_acq = time.perf_counter()
             if not self._should_accept_account_update(UpdateSource.REST, ts_ms):
                 return False
 
             acc = app_state.account_state
+            _eq_before = acc.total_equity
             acc.total_equity       = na.total_equity
             acc.available_margin   = na.available_margin
             acc.total_unrealized   = na.unrealized_pnl
@@ -809,7 +925,22 @@ class DataCache:
 
             self._advance_account_version(UpdateSource.REST, ts_ms)
             self._recalculate_portfolio()
+            _eq_after = acc.total_equity
+        _t_rel = time.perf_counter()
 
+        # corr-tap: account_update_applied (CL.T3a, spec §5.5). Rejected
+        # updates (return False above) emit nothing — applied mutations only.
+        correlation_log.emit(
+            "data_cache", "internal", "internal",
+            correlation_log.CAT_ACCOUNT_UPDATE_APPLIED,
+            {
+                "source":        "rest",
+                "equity_before": _eq_before,
+                "equity_after":  _eq_after,
+                "waited_ms":     round((_t_acq - _t_req) * 1000, 2),
+                "held_ms":       round((_t_rel - _t_acq) * 1000, 2),
+            },
+        )
         return True
 
     async def apply_account_update_platform(
@@ -827,8 +958,11 @@ class DataCache:
         if ts_ms == 0:
             ts_ms = int(time.time() * 1000)
 
+        _t_req = time.perf_counter()
         async with self._lock:
+            _t_acq = time.perf_counter()
             acc = app_state.account_state
+            _eq_before = acc.total_equity
             acc.balance_usdt       = balance
             acc.total_equity       = total_equity
             acc.total_unrealized   = unrealized_pnl
@@ -838,6 +972,21 @@ class DataCache:
 
             self._advance_account_version(UpdateSource.PLATFORM, ts_ms)
             self._recalculate_portfolio()
+            _eq_after = acc.total_equity
+        _t_rel = time.perf_counter()
+
+        # corr-tap: account_update_applied (CL.T3a, spec §5.5)
+        correlation_log.emit(
+            "data_cache", "internal", "internal",
+            correlation_log.CAT_ACCOUNT_UPDATE_APPLIED,
+            {
+                "source":        "platform",
+                "equity_before": _eq_before,
+                "equity_after":  _eq_after,
+                "waited_ms":     round((_t_acq - _t_req) * 1000, 2),
+                "held_ms":       round((_t_rel - _t_acq) * 1000, 2),
+            },
+        )
 
     async def apply_bod_sow_equity(
         self,

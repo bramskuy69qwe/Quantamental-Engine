@@ -47,6 +47,8 @@ import logging
 from enum import Enum
 from typing import Awaitable, Callable, Dict, Optional, Set
 
+from core import correlation_log
+
 log = logging.getLogger("link_state")
 
 
@@ -227,6 +229,18 @@ async def transition(
     """
     assert_transition(order_id, current_status, target_status)
     await apply_fn()
+    # corr-tap: link_transition (CL.T3a, spec §5.5) — operator-machine path.
+    correlation_log.emit(
+        "link_state", "internal", "internal",
+        correlation_log.CAT_LINK_TRANSITION,
+        {
+            "order_id": order_id,
+            "from":     current_status,
+            "to":       target_status,
+            "reason":   reason,
+            "via":      "transition",
+        },
+    )
     await _emit_link_event(
         order_id, current_status, target_status, reason, event_payload,
     )
@@ -336,6 +350,21 @@ async def auto_classify(
     """
     assert_auto_classify(order_id, target_status)
     await apply_fn()
+    # corr-tap: link_transition (CL.T3a, spec §5.5) — engine-driven path.
+    # ``from`` is None by design: auto_classify assigns from an UNDECIDED
+    # source (NULL first-arrival / UNPLANNED re-run); the apply_fn's own
+    # WHERE guards carry the idempotency.
+    correlation_log.emit(
+        "link_state", "internal", "internal",
+        correlation_log.CAT_LINK_TRANSITION,
+        {
+            "order_id": order_id,
+            "from":     None,
+            "to":       target_status,
+            "reason":   reason,
+            "via":      "auto_classify",
+        },
+    )
     await _emit_link_event(
         order_id, None, target_status, reason, event_payload,
     )

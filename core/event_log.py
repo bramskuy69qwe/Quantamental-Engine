@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Literal, Optional
 
 import config
+from core import correlation_log
 from core.db_router import PER_ACCOUNT_DIR, split_done
 
 log = logging.getLogger("event_log")
@@ -124,6 +125,16 @@ def log_event(
             (account_id, event_type, payload_json, ts, source),
         )
         conn.commit()
+        # corr-tap: db_write (CL.T3a, spec §5.5) — the chain-join into the
+        # typed engine_events audit table. Sync writer, usually invoked via
+        # asyncio.to_thread (context copies, so the corr_id survives).
+        correlation_log.emit(
+            "db", "disk", "internal", correlation_log.CAT_DB_WRITE,
+            {"table": "engine_events", "op": "INSERT", "ok": True,
+             "rowcount": 1, "event_type": event_type,
+             "row_id": cur.lastrowid},
+            account_id=account_id,
+        )
         return cur.lastrowid  # type: ignore[return-value]
     finally:
         conn.close()

@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Literal, Optional
 
 import config
+from core import correlation_log
 from core.db_router import PER_ACCOUNT_DIR, split_done
 
 log = logging.getLogger("trade_event_log")
@@ -113,6 +114,15 @@ def log_trade_event(
                 "symbol=%r, calc_id=%r) — refusing write",
                 entry, exit_p, p.get("symbol", ""), calc_id,
             )
+            # corr-tap: db_write (CL.T3a) — refusal twin, a line not an absence
+            correlation_log.emit(
+                "db", "disk", "internal", correlation_log.CAT_DB_WRITE,
+                {"table": "trade_events", "op": "INSERT", "ok": False,
+                 "rowcount": 0, "reason": "pollution_reject",
+                 "event_type": event_type, "calc_id": calc_id or ""},
+                account_id=account_id,
+                symbol=p.get("symbol", ""),
+            )
             return -1
 
     ts = timestamp or datetime.now(timezone.utc).isoformat()
@@ -128,6 +138,16 @@ def log_trade_event(
             (account_id, calc_id, event_type, payload_json, source, ts),
         )
         conn.commit()
+        # corr-tap: db_write (CL.T3a, spec §5.5) — the chain-join into the
+        # typed trade_events audit table. calc_id VERBATIM incl. "".
+        correlation_log.emit(
+            "db", "disk", "internal", correlation_log.CAT_DB_WRITE,
+            {"table": "trade_events", "op": "INSERT", "ok": True,
+             "rowcount": 1, "event_type": event_type,
+             "calc_id": calc_id or "", "row_id": cur.lastrowid},
+            account_id=account_id,
+            symbol=(payload or {}).get("symbol"),
+        )
         return cur.lastrowid  # type: ignore[return-value]
     finally:
         conn.close()

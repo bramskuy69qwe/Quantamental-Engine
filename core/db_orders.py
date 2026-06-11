@@ -9,6 +9,8 @@ import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+from core import correlation_log
+
 log = logging.getLogger("database")
 
 
@@ -131,6 +133,7 @@ class OrdersMixin:
               AND orders.status NOT IN ('filled', 'canceled', 'expired', 'rejected')
         """
         try:
+            _applied = 0
             async with self._conn.cursor() as cur:
                 for row in rows:
                     await cur.execute(sql, {
@@ -168,9 +171,38 @@ class OrdersMixin:
                         # COALESCE keeps the first-known value.
                         "operator_id":          row.get("operator_id"),
                     })
+                    # per-row rowcount: 1 = insert/update applied, 0 = the
+                    # ON CONFLICT WHERE guard rejected (stale time / terminal
+                    # downgrade). Sum = how many rows actually landed.
+                    if cur.rowcount and cur.rowcount > 0:
+                        _applied += cur.rowcount
             await self._conn.commit()
-        except Exception:
+            # corr-tap: db_write (CL.T3a, spec §5.5). rowcount < n_rows means
+            # the guard rejected some rows — visible, not inferred.
+            if correlation_log.enabled(correlation_log.CAT_DB_WRITE):
+                _ids = [str(r.get("exchange_order_id") or "") for r in rows]
+                correlation_log.emit(
+                    "db", "disk", "internal", correlation_log.CAT_DB_WRITE,
+                    {
+                        "table": "orders", "op": "UPSERT", "ok": True,
+                        "n_rows": len(rows), "rowcount": _applied,
+                        "exchange_order_ids": _ids[:20],
+                        "n_ids_omitted": max(0, len(_ids) - 20),
+                    },
+                    account_id=rows[0].get("account_id", 1),
+                    symbol=rows[0].get("symbol") if len(rows) == 1 else None,
+                )
+        except Exception as e:
             log.exception("upsert_order_batch failed")
+            # corr-tap: db_write failure — the chain must show the write
+            # did NOT land (the "row not written" historical bug class).
+            correlation_log.emit(
+                "db", "disk", "internal", correlation_log.CAT_DB_WRITE,
+                {"table": "orders", "op": "UPSERT", "ok": False,
+                 "n_rows": len(rows), "rowcount": 0,
+                 "error_type": type(e).__name__},
+                account_id=rows[0].get("account_id", 1),
+            )
 
     async def upsert_fill(self, row: Dict[str, Any]) -> None:
         """Insert or update a single fill (deduped by exchange_fill_id)."""
@@ -198,7 +230,7 @@ class OrdersMixin:
                 timestamp_ms         = excluded.timestamp_ms
         """
         try:
-            await self._conn.execute(sql, {
+            cur = await self._conn.execute(sql, {
                 "account_id":           row.get("account_id", 1),
                 "exchange_fill_id":     row.get("exchange_fill_id"),
                 "terminal_fill_id":     row.get("terminal_fill_id", ""),
@@ -219,8 +251,31 @@ class OrdersMixin:
                 "timestamp_ms":         row.get("timestamp_ms", 0),
             })
             await self._conn.commit()
-        except Exception:
+            # corr-tap: db_write (CL.T3a, spec §5.5) — key ids VERBATIM incl. ""
+            correlation_log.emit(
+                "db", "disk", "internal", correlation_log.CAT_DB_WRITE,
+                {
+                    "table": "fills", "op": "UPSERT", "ok": True,
+                    "rowcount": max(0, cur.rowcount or 0),
+                    "exchange_fill_id": str(row.get("exchange_fill_id") or ""),
+                    "exchange_order_id": str(row.get("exchange_order_id") or ""),
+                    "terminal_position_id": row.get("terminal_position_id", "") or "",
+                    "is_close": bool(row.get("is_close", False)),
+                },
+                account_id=row.get("account_id", 1),
+                symbol=row.get("symbol", ""),
+            )
+        except Exception as e:
             log.exception("upsert_fill failed")
+            # corr-tap: db_write (CL.T3a) — failure twin
+            correlation_log.emit(
+                "db", "disk", "internal", correlation_log.CAT_DB_WRITE,
+                {"table": "fills", "op": "UPSERT", "ok": False, "rowcount": 0,
+                 "error_type": type(e).__name__,
+                 "exchange_fill_id": str(row.get("exchange_fill_id") or "")},
+                account_id=row.get("account_id", 1),
+                symbol=row.get("symbol", ""),
+            )
 
     async def insert_closed_position(
         self, row: Dict[str, Any], commit: bool = True,
@@ -265,6 +320,18 @@ class OrdersMixin:
                 "symbol=%r) — refusing write; a real fill never produces "
                 "this combination",
                 entry, qty, exit_p, row.get("symbol", ""),
+            )
+            # corr-tap: db_write (CL.T3a) — a REFUSED close-row write is the
+            # "close row NOT written" historical bug shape; the refusal must
+            # be a line, not an absence.
+            correlation_log.emit(
+                "db", "disk", "internal", correlation_log.CAT_DB_WRITE,
+                {"table": "closed_positions", "op": "REPLACE", "ok": False,
+                 "rowcount": 0, "reason": "pollution_reject",
+                 "terminal_position_id": row.get("terminal_position_id", "") or "",
+                 "calc_id": row.get("calc_id") or ""},
+                account_id=row.get("account_id", 1),
+                symbol=row.get("symbol", ""),
             )
             return
 
@@ -413,7 +480,7 @@ class OrdersMixin:
             )
         """
         try:
-            await self._conn.execute(sql, {
+            cur = await self._conn.execute(sql, {
                 "account_id":           row.get("account_id", 1),
                 "exchange_position_id": row.get("exchange_position_id", ""),
                 "terminal_position_id": row.get("terminal_position_id", ""),
@@ -452,8 +519,34 @@ class OrdersMixin:
             })
             if commit:
                 await self._conn.commit()
-        except Exception:
+            # corr-tap: db_write (CL.T3a, spec §5.5) — THE historical bug
+            # class ("close row NOT written"). Key ids VERBATIM incl. "".
+            correlation_log.emit(
+                "db", "disk", "internal", correlation_log.CAT_DB_WRITE,
+                {
+                    "table": "closed_positions", "op": "REPLACE", "ok": True,
+                    "rowcount": max(0, cur.rowcount or 0),
+                    "terminal_position_id": row.get("terminal_position_id", "") or "",
+                    "calc_id": calc_id or "",
+                    "lifecycle_id": preserved_lifecycle or "",
+                    "exit_time_ms": row.get("exit_time_ms", 0),
+                    "committed": bool(commit),
+                },
+                account_id=row.get("account_id", 1),
+                symbol=row.get("symbol", ""),
+            )
+        except Exception as e:
             log.exception("insert_closed_position failed")
+            # corr-tap: db_write (CL.T3a) — failure twin
+            correlation_log.emit(
+                "db", "disk", "internal", correlation_log.CAT_DB_WRITE,
+                {"table": "closed_positions", "op": "REPLACE", "ok": False,
+                 "rowcount": 0, "error_type": type(e).__name__,
+                 "terminal_position_id": row.get("terminal_position_id", "") or "",
+                 "calc_id": (calc_id or "")},
+                account_id=row.get("account_id", 1),
+                symbol=row.get("symbol", ""),
+            )
             # T191 audit B1: batched-transaction callers (commit=False)
             # need failures to PROPAGATE so the outer transaction can
             # roll back. Default-commit callers retain the historical
@@ -535,7 +628,7 @@ class OrdersMixin:
                 timestamp_ms         = excluded.timestamp_ms
         """
         try:
-            await self._conn.execute(fill_sql, {
+            cur_fill = await self._conn.execute(fill_sql, {
                 "account_id":           row.get("account_id", 1),
                 "exchange_fill_id":     row.get("exchange_fill_id"),
                 "terminal_fill_id":     row.get("terminal_fill_id", ""),
@@ -555,9 +648,10 @@ class OrdersMixin:
                 "source":               row.get("source", ""),
                 "timestamp_ms":         row.get("timestamp_ms", 0),
             })
+            cur_order = None
             if exchange_order_id:
                 now_ms = int(time.time() * 1000)
-                await self._conn.execute(
+                cur_order = await self._conn.execute(
                     """UPDATE orders SET
                         avg_fill_price = CASE
                             WHEN filled_qty = 0 THEN :price
@@ -576,8 +670,76 @@ class OrdersMixin:
                     },
                 )
             await self._conn.commit()
-        except Exception:
+            # corr-tap: db_write ×2 (CL.T3a, spec §5.5) — one per table this
+            # single-commit writer touches; both ride the same corr chain.
+            correlation_log.emit(
+                "db", "disk", "internal", correlation_log.CAT_DB_WRITE,
+                {
+                    "table": "fills", "op": "UPSERT", "ok": True,
+                    "rowcount": max(0, cur_fill.rowcount or 0),
+                    "exchange_fill_id": str(row.get("exchange_fill_id") or ""),
+                    "exchange_order_id": str(row.get("exchange_order_id") or ""),
+                    "terminal_position_id": row.get("terminal_position_id", "") or "",
+                    "is_close": bool(row.get("is_close", False)),
+                },
+                account_id=row.get("account_id", 1),
+                symbol=row.get("symbol", ""),
+            )
+            if cur_order is not None:
+                correlation_log.emit(
+                    "db", "disk", "internal", correlation_log.CAT_DB_WRITE,
+                    {
+                        "table": "orders", "op": "UPDATE", "ok": True,
+                        "rowcount": max(0, cur_order.rowcount or 0),
+                        "exchange_order_id": str(exchange_order_id),
+                        "writer": "fill_qty_rollup",
+                    },
+                    account_id=row.get("account_id", 1),
+                    symbol=row.get("symbol", ""),
+                )
+        except Exception as e:
             log.exception("upsert_fill_and_update_order failed")
+            # corr-tap: db_write (CL.T3a) — failure twin
+            correlation_log.emit(
+                "db", "disk", "internal", correlation_log.CAT_DB_WRITE,
+                {"table": "fills", "op": "UPSERT", "ok": False, "rowcount": 0,
+                 "error_type": type(e).__name__,
+                 "exchange_fill_id": str(row.get("exchange_fill_id") or ""),
+                 "exchange_order_id": str(row.get("exchange_order_id") or ""),
+                 "writer": "upsert_fill_and_update_order"},
+                account_id=row.get("account_id", 1),
+                symbol=row.get("symbol", ""),
+            )
+
+    def _tap_order_status_bulk(
+        self, rows: List[Tuple[Any, Any]], rowcount: int, account_id: int,
+        *, source: str, after: str, via: str = "",
+    ) -> None:
+        """corr-tap: order_status_applied per bulk-flipped order (CL.T3a,
+        spec §5.5). ``rows`` = (exchange_order_id, prior_status) pairs from a
+        pre-UPDATE SELECT under the SAME WHERE clause, emitted only when the
+        UPDATE applied (rowcount > 0). A concurrent writer between the SELECT
+        and the UPDATE can skew len(rows) vs rowcount — both stay visible
+        (count the per-order lines vs the summary line's rowcount), never
+        silently merged. No dedup_key: these flips are timer/snapshot-driven,
+        not frame-driven (key omitted when there is no frame id — T1b rule).
+        """
+        if rowcount <= 0:
+            return
+        for oid, before in rows:
+            payload = {
+                "order_id": str(oid or ""),
+                "before":   before,
+                "after":    after,
+                "source":   source,
+            }
+            if via:
+                payload["via"] = via
+            correlation_log.emit(
+                "db", "internal", "internal",
+                correlation_log.CAT_ORDER_STATUS_APPLIED, payload,
+                account_id=account_id,
+            )
 
     async def mark_stale_orders_canceled(
         self, account_id: int, active_ids: List[str],
@@ -624,15 +786,40 @@ class OrdersMixin:
             if not allow_cancel_all:
                 log.debug("mark_stale_orders_canceled: empty active_ids, skipping")
                 return 0
+            # corr-tap pre-SELECT (gated): same WHERE as the UPDATE below so
+            # the per-order before-status is capturable (the bulk UPDATE
+            # itself only yields a rowcount).
+            _tap_rows: List[Tuple[Any, Any]] = []
+            if correlation_log.enabled(correlation_log.CAT_ORDER_STATUS_APPLIED):
+                async with self._conn.execute(
+                    "SELECT exchange_order_id, status FROM orders "
+                    f"WHERE account_id=? AND status IN ('new','partially_filled'){scope_clause}",
+                    [account_id] + scope_params,
+                ) as _tc:
+                    _tap_rows = [(r[0], r[1]) for r in await _tc.fetchall()]
             cur = await self._conn.execute(
                 "UPDATE orders SET status='canceled', updated_at_ms=? "
                 f"WHERE account_id=? AND status IN ('new','partially_filled'){scope_clause}",
                 [now_ms, account_id] + scope_params,
             )
             await self._conn.commit()
+            # corr-tap: order_status_applied source=stale-mark (CL.T3a)
+            self._tap_order_status_bulk(
+                _tap_rows, cur.rowcount, account_id,
+                source="stale-mark", after="canceled", via="snapshot-cancel-all",
+            )
             return cur.rowcount
 
         placeholders = ",".join("?" for _ in active_ids)
+        _tap_rows = []
+        if correlation_log.enabled(correlation_log.CAT_ORDER_STATUS_APPLIED):
+            async with self._conn.execute(
+                f"SELECT exchange_order_id, status FROM orders "
+                f"WHERE account_id=? AND status IN ('new','partially_filled') "
+                f"AND exchange_order_id NOT IN ({placeholders}){scope_clause}",
+                [account_id] + active_ids + scope_params,
+            ) as _tc:
+                _tap_rows = [(r[0], r[1]) for r in await _tc.fetchall()]
         cur = await self._conn.execute(
             f"UPDATE orders SET status='canceled', updated_at_ms=? "
             f"WHERE account_id=? AND status IN ('new','partially_filled') "
@@ -640,6 +827,11 @@ class OrdersMixin:
             [now_ms, account_id] + active_ids + scope_params,
         )
         await self._conn.commit()
+        # corr-tap: order_status_applied source=stale-mark (CL.T3a)
+        self._tap_order_status_bulk(
+            _tap_rows, cur.rowcount, account_id,
+            source="stale-mark", after="canceled", via="snapshot",
+        )
         return cur.rowcount
 
     async def mark_stale_orders(
@@ -648,6 +840,15 @@ class OrdersMixin:
         """Mark active orders not seen in stale_threshold_ms as canceled."""
         now_ms = int(time.time() * 1000)
         cutoff = now_ms - stale_threshold_ms
+        _tap_rows: List[Tuple[Any, Any]] = []
+        if correlation_log.enabled(correlation_log.CAT_ORDER_STATUS_APPLIED):
+            async with self._conn.execute(
+                "SELECT exchange_order_id, status FROM orders "
+                "WHERE account_id=? AND status IN ('new','partially_filled') "
+                "AND last_seen_ms < ? AND last_seen_ms > 0",
+                (account_id, cutoff),
+            ) as _tc:
+                _tap_rows = [(r[0], r[1]) for r in await _tc.fetchall()]
         cur = await self._conn.execute(
             "UPDATE orders SET status='canceled', updated_at_ms=? "
             "WHERE account_id=? AND status IN ('new','partially_filled') "
@@ -655,6 +856,11 @@ class OrdersMixin:
             (now_ms, account_id, cutoff),
         )
         await self._conn.commit()
+        # corr-tap: order_status_applied source=stale-mark (CL.T3a)
+        self._tap_order_status_bulk(
+            _tap_rows, cur.rowcount, account_id,
+            source="stale-mark", after="canceled", via="time",
+        )
         return cur.rowcount
 
     async def reconcile_filled_orders(self, account_id: int) -> int:
@@ -670,6 +876,15 @@ class OrdersMixin:
         NOT time-based, so it can NEVER cancel a genuinely-working order — it only
         promotes an already-complete order to its correct terminal status."""
         now_ms = int(time.time() * 1000)
+        _tap_rows: List[Tuple[Any, Any]] = []
+        if correlation_log.enabled(correlation_log.CAT_ORDER_STATUS_APPLIED):
+            async with self._conn.execute(
+                "SELECT exchange_order_id, status FROM orders "
+                "WHERE account_id=? AND status IN ('new','partially_filled') "
+                "AND quantity > 0 AND filled_qty >= quantity",
+                (account_id,),
+            ) as _tc:
+                _tap_rows = [(r[0], r[1]) for r in await _tc.fetchall()]
         cur = await self._conn.execute(
             "UPDATE orders SET status='filled', updated_at_ms=? "
             "WHERE account_id=? AND status IN ('new','partially_filled') "
@@ -677,6 +892,35 @@ class OrdersMixin:
             (now_ms, account_id),
         )
         await self._conn.commit()
+        if cur.rowcount and cur.rowcount > 0:
+            # corr-tap: order_status_applied source=reconcile (CL.T3a)
+            self._tap_order_status_bulk(
+                _tap_rows, cur.rowcount, account_id,
+                source="reconcile", after="filled",
+            )
+            # corr-tap: reconcile_promote (CL.T3a, spec §5.5) — each line
+            # doubles as a "venue terminal frame was missed" detector (the
+            # stale-orders historical bug). Emitted ONLY when rows promoted:
+            # the every-60s zero-promotion pass stays silent.
+            _ids = [str(r[0] or "") for r in _tap_rows]
+            correlation_log.emit(
+                "db", "internal", "internal",
+                correlation_log.CAT_RECONCILE_PROMOTE,
+                {
+                    "promoted":      _ids[:20],
+                    "n_ids_omitted": max(0, len(_ids) - 20),
+                    "count":         cur.rowcount,
+                },
+                account_id=account_id,
+            )
+            # corr-tap: db_write (CL.T3a) — reconcile_filled_orders is one of
+            # the named money-path writers.
+            correlation_log.emit(
+                "db", "disk", "internal", correlation_log.CAT_DB_WRITE,
+                {"table": "orders", "op": "UPDATE", "ok": True,
+                 "rowcount": cur.rowcount, "writer": "reconcile_filled_orders"},
+                account_id=account_id,
+            )
         return cur.rowcount
 
     # ── Read methods (paginated) ────────────────────────────────────────────
@@ -1457,11 +1701,18 @@ class OrdersMixin:
         self, row_id: int, mfe: float, mae: float,
     ) -> None:
         """Update MFE/MAE on a specific closed_positions row."""
-        await self._conn.execute(
+        cur = await self._conn.execute(
             "UPDATE closed_positions SET mfe=?, mae=?, backfill_completed=1 WHERE id=?",
             (mfe, mae, row_id),
         )
         await self._conn.commit()
+        # corr-tap: db_write (CL.T3a, spec §5.5) — MFE/MAE backfill writer.
+        correlation_log.emit(
+            "db", "disk", "internal", correlation_log.CAT_DB_WRITE,
+            {"table": "closed_positions", "op": "UPDATE", "ok": True,
+             "rowcount": max(0, cur.rowcount or 0), "row_id": row_id,
+             "writer": "mfe_mae_update"},
+        )
 
     # ── Data consistency ───────────────────────────────────────────────────
 
@@ -1569,7 +1820,7 @@ class OrdersMixin:
                 -- through this per-fill UPSERT.
         """
         try:
-            await self._conn.execute(sql, {
+            cur = await self._conn.execute(sql, {
                 "position_id":     row.get("position_id"),
                 "calc_id":         row.get("calc_id", ""),
                 "order_id":        row.get("order_id"),
@@ -1584,8 +1835,32 @@ class OrdersMixin:
                 "lifecycle_id":    row.get("lifecycle_id"),
             })
             await self._conn.commit()
-        except Exception:
+            # corr-tap: db_write (CL.T3a, spec §5.5) — the junction write
+            # ("junction missing" historical bug). Key ids VERBATIM incl. "".
+            correlation_log.emit(
+                "db", "disk", "internal", correlation_log.CAT_DB_WRITE,
+                {
+                    "table": "positions_calcs", "op": "UPSERT", "ok": True,
+                    "rowcount": max(0, cur.rowcount or 0),
+                    "terminal_position_id": str(row.get("position_id") or ""),
+                    "calc_id": row.get("calc_id", "") or "",
+                    "order_id": row.get("order_id"),
+                    "lifecycle_id": row.get("lifecycle_id") or "",
+                    "contributed_qty": row.get("contributed_qty", 0),
+                },
+                account_id=row.get("account_id", 1),
+            )
+        except Exception as e:
             log.exception("upsert_position_calc_link failed")
+            # corr-tap: db_write (CL.T3a) — failure twin
+            correlation_log.emit(
+                "db", "disk", "internal", correlation_log.CAT_DB_WRITE,
+                {"table": "positions_calcs", "op": "UPSERT", "ok": False,
+                 "rowcount": 0, "error_type": type(e).__name__,
+                 "terminal_position_id": str(row.get("position_id") or ""),
+                 "calc_id": row.get("calc_id", "") or ""},
+                account_id=row.get("account_id", 1),
+            )
 
     async def get_position_calc_links(self, position_id: str) -> List[Dict]:
         """Return all junction rows for one position, ordered by first_fill_ts.
@@ -1920,9 +2195,33 @@ class OrdersMixin:
                 "lifecycle_id":   row.get("lifecycle_id"),
             })
             await self._conn.commit()
+            # corr-tap: db_write (CL.T3a, spec §5.5). rowcount=0 = WS-replay
+            # dedup hit (INSERT OR IGNORE) — duplicate deliveries visible.
+            correlation_log.emit(
+                "db", "disk", "internal", correlation_log.CAT_DB_WRITE,
+                {
+                    "table": "funding_events", "op": "INSERT_OR_IGNORE",
+                    "ok": True, "rowcount": max(0, cur.rowcount or 0),
+                    "terminal_position_id": str(row.get("position_id") or ""),
+                    "calc_id": row.get("calc_id") or "",
+                    "venue_event_id": row.get("venue_event_id", ""),
+                },
+                account_id=row.get("account_id", 1),
+                symbol=row.get("symbol", ""),
+            )
             return (cur.rowcount or 0) > 0
-        except Exception:
+        except Exception as e:
             log.exception("insert_funding_event failed")
+            # corr-tap: db_write (CL.T3a) — failure twin
+            correlation_log.emit(
+                "db", "disk", "internal", correlation_log.CAT_DB_WRITE,
+                {"table": "funding_events", "op": "INSERT_OR_IGNORE",
+                 "ok": False, "rowcount": 0,
+                 "error_type": type(e).__name__,
+                 "venue_event_id": row.get("venue_event_id", "")},
+                account_id=row.get("account_id", 1),
+                symbol=row.get("symbol", ""),
+            )
             return False
 
     async def get_position_funding_events(self, position_id: str) -> List[Dict]:

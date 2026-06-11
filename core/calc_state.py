@@ -39,6 +39,8 @@ import logging
 from enum import Enum
 from typing import Awaitable, Callable, Dict, Optional, Set
 
+from core import correlation_log
+
 log = logging.getLogger("calc_state")
 
 
@@ -253,6 +255,22 @@ async def transition(
 
     # 2. Apply DB UPDATE.
     await apply_fn()
+
+    # corr-tap: calc_transition (CL.T3a, spec §5.5) — fires for EVERY applied
+    # transition at this chokepoint (the bus event below fires only for
+    # catalogued targets). A failed apply_fn (e.g. CalcTransitionRaceLost)
+    # emits nothing: the transition did not apply.
+    correlation_log.emit(
+        "calc_state", "internal", "internal",
+        correlation_log.CAT_CALC_TRANSITION,
+        {
+            "calc_id": calc_id,
+            "from":    current_status,
+            "to":      target_status,
+            "reason":  reason,
+        },
+        account_id=account_id,
+    )
 
     # 3. Emit transition event (if this target has a catalogued event).
     target_enum = CalcStatus(target_status)

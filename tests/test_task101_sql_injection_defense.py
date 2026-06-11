@@ -203,6 +203,38 @@ class TestPaginatedQueryFilterWhitelist:
 
 # ── MED-022: mark_stale_orders_canceled LIKE parameterization ────────────────
 
+def _stale_exec_stub(captured):
+    """aiosqlite-shaped execute stub: the returned object is BOTH awaitable
+    (``cur = await conn.execute(...)`` — the UPDATE path) and an async
+    context manager (``async with conn.execute(...) as cur:`` — the CL.T3a
+    corr-tap pre-SELECT). A bare async-def stub broke the latter (you cannot
+    ``async with`` a coroutine) when CL.T3a added the pre-SELECT; the
+    capture keeps LAST-call semantics, so assertions still see the UPDATE.
+    """
+    cur = AsyncMock()
+    cur.rowcount = 0
+    cur.fetchall = AsyncMock(return_value=[])
+
+    class _Result:
+        def __await__(self):
+            async def _r():
+                return cur
+            return _r().__await__()
+
+        async def __aenter__(self):
+            return cur
+
+        async def __aexit__(self, *exc):
+            return False
+
+    def _exec(sql, params):
+        captured["sql"] = sql
+        captured["params"] = list(params)
+        return _Result()
+
+    return _exec
+
+
 class TestStaleOrdersLikeParameterized:
     """MED-022: scope_clause must use ? placeholder. The pre-fix form
     interpolated the prefix with single-quote literal wrapping, so a single
@@ -236,14 +268,8 @@ class TestStaleOrdersLikeParameterized:
         mixin = OrdersMixin.__new__(OrdersMixin)
         # Mock _conn with execute() that captures the SQL + params
         captured = {}
-        cur = AsyncMock()
-        cur.rowcount = 0
-        async def _exec(sql, params):
-            captured["sql"] = sql
-            captured["params"] = list(params)
-            return cur
         mixin._conn = MagicMock()
-        mixin._conn.execute = _exec
+        mixin._conn.execute = _stale_exec_stub(captured)
         mixin._conn.commit = AsyncMock()
 
         # Injection-shaped prefix: ' OR 1=1 --
@@ -271,14 +297,8 @@ class TestStaleOrdersLikeParameterized:
 
         mixin = OrdersMixin.__new__(OrdersMixin)
         captured = {}
-        cur = AsyncMock()
-        cur.rowcount = 0
-        async def _exec(sql, params):
-            captured["sql"] = sql
-            captured["params"] = list(params)
-            return cur
         mixin._conn = MagicMock()
-        mixin._conn.execute = _exec
+        mixin._conn.execute = _stale_exec_stub(captured)
         mixin._conn.commit = AsyncMock()
 
         injection_prefix = "' OR 1=1 --"
@@ -297,14 +317,8 @@ class TestStaleOrdersLikeParameterized:
 
         mixin = OrdersMixin.__new__(OrdersMixin)
         captured = {}
-        cur = AsyncMock()
-        cur.rowcount = 0
-        async def _exec(sql, params):
-            captured["sql"] = sql
-            captured["params"] = list(params)
-            return cur
         mixin._conn = MagicMock()
-        mixin._conn.execute = _exec
+        mixin._conn.execute = _stale_exec_stub(captured)
         mixin._conn.commit = AsyncMock()
 
         await mixin.mark_stale_orders_canceled(

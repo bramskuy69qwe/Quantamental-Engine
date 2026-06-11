@@ -6,6 +6,8 @@ import sqlite3
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
+from core import correlation_log
+
 log = logging.getLogger("database")
 
 
@@ -250,8 +252,31 @@ class TradesMixin:
                 },
             )
             await self._conn.commit()
+            # corr-tap: db_write (CL.T3a, spec §5.5) — calc creation ("who
+            # wrote this calc row"). calc_id VERBATIM incl. "".
+            correlation_log.emit(
+                "db", "disk", "internal", correlation_log.CAT_DB_WRITE,
+                {
+                    "table": "pre_trade_log", "op": "INSERT", "ok": True,
+                    "rowcount": 1,
+                    "calc_id": row.get("calc_id") or "",
+                    "eligible": bool(row.get("eligible")),
+                    "status": row.get("status", "active"),
+                },
+                account_id=row.get("account_id", 1),
+                symbol=row.get("ticker", ""),
+            )
         except sqlite3.Error as exc:
             log.error("insert_pre_trade_log failed: %r", exc)
+            # corr-tap: db_write (CL.T3a) — failure twin
+            correlation_log.emit(
+                "db", "disk", "internal", correlation_log.CAT_DB_WRITE,
+                {"table": "pre_trade_log", "op": "INSERT", "ok": False,
+                 "rowcount": 0, "error_type": type(exc).__name__,
+                 "calc_id": row.get("calc_id") or ""},
+                account_id=row.get("account_id", 1),
+                symbol=row.get("ticker", ""),
+            )
             try:
                 await self._conn.rollback()
             except Exception:
