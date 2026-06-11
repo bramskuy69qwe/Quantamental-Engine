@@ -487,10 +487,10 @@ pre-grepped sites.
 
 | # | Task | Scope | Effort |
 |---|---|---|---|
-| **CL.T0a** | Spine — contextvar + envelope + **registry/groups/profiles** + `emit` pipeline + redaction | plan 0.1–0.3, 0.5 | S–M |
-| **CL.T0b** | Sink — writer thread + rollover/prune/MB-guard/overflow + config + lifespan wiring + conftest isolation | plan 0.4, 0.6–0.8 | M |
-| **CL.T1a** | HTTP middleware + blanket loop scopes (schedulers, keepalive/fallback, monitoring, webhook, reconciler, boot) | plan 1.1–1.2 | S–M |
-| **CL.T1b** | WS frame taps (Binance user/market + platform + news) + WS lifecycle taps + task naming | plan 1.3–1.6 | M |
+| **CL.T0a** | **SHIPPED `db89ae0`** — Spine — contextvar + envelope + **registry/groups/profiles** + `emit` pipeline + redaction | plan 0.1–0.3, 0.5 | S–M |
+| **CL.T0b** | **SHIPPED `3b7c6ca`** — Sink — writer thread + rollover/prune/MB-guard/overflow + config + lifespan wiring + conftest isolation (incl. the session-scoped floor, audit-driven) | plan 0.4, 0.6–0.8 | M |
+| **CL.T1a** | **SHIPPED `9ad8764`** — HTTP middleware + blanket loop scopes (schedulers, keepalive/fallback, monitoring, webhook, reconciler, boot) | plan 1.1–1.2 | S–M |
+| **CL.T1b** | **SHIPPED `9cb0efe`** — WS frame taps (Binance user/market + platform + news) + WS lifecycle taps + task naming | plan 1.3–1.6 | M |
 | **CL.T2a** | **Bus carry/re-bind + bus taps + the 2-tuple test sweep** — isolated, revertable commit | plan 2a.1–2a.3 | S–M |
 | **CL.T2b** | REST chokepoint + outbound-HTTP taps + webhook-queue carry + pubsub tap | plan 2b.1–2b.4 | M |
 | **CL.T3a** | State/DB/orders taps (sweep): data_cache + transitions + order_status/reconcile_promote + db_write | plan 3.1 | M |
@@ -516,7 +516,31 @@ one commit, green + audited before the next.
   loosely ordered but can interleave.
 - **CL.T4** any time after Phase 1 (dogfood early); **CL.T5** last.
 
-### 9.4 After this program
+### 9.4 Phase-1 holistic audit — filed follow-ups (2026-06-11)
+
+Two-agent holistic audit of Phase 0+1 (`9ad8764` + `9cb0efe` on
+`db89ae0`/`3b7c6ca`): **COHERENT, NO PRODUCTION REGRESSIONS, no
+BLOCKER/HIGH**. Acceptance scorecard 3.5/4 (the leak query is
+component-proven, not scenario-proven — HA-6). Spec-side deviations are
+recorded in spec §15 (E1–E12). Every actionable issue filed here with
+its owner task; none blocks CL.T2a.
+
+| ID | Sev | Issue | Owner |
+|---|---|---|---|
+| HA-1 | MED | REST-fallback plugin ingest (`POST /api/platform/event` → `_dispatch`) mints a `wsp-*` chain INSIDE the request's `http-*` chain — the http pair looks empty, the wsp chain has no visible trigger (the sibling `/api/platform/positions` route already behaves correctly). Fix: move `tick("wsp")` from `_dispatch` to the WS receive loop + update the dispatch test | **CL.T2b** (the REST-boundary task) |
+| HA-2 | MED | Middleware **registration** on `main.app` is unpinned — deleting the decorator darkens the whole HTTP boundary with the suite green. Add: `assert any(m.kwargs.get("dispatch") is main._corr_http_middleware for m in main.app.user_middleware)` | next test-touching task (≤ CL.T2b) |
+| HA-3 | MED | No **registry snapshot test** — a silent re-group (e.g. `platform_fill`→market) drops a money-path category from the `linkage` profile undetected; `register()`'s conflict guard can't see an edit of the original line. Add `assert cl.registry() == {…45…}` | next test-touching task (≤ CL.T2b) |
+| HA-4 | MED | No **session-floor self-test** — the guard against the PROVEN T0b live-dir leak (module-scoped TestClient lifespans) has no asserting observer. Add a module-scoped probe asserting the resolver ≠ `config.CORR_LOG_DIR` before any function-scoped patch | next test-touching task (≤ CL.T2b) |
+| HA-5 | MED-LOW | `_last_streams` no-streams reset is untested (the T1b audit's suggested test never landed) — deleting the reset re-corrupts the rebuild diff silently | next test-touching task |
+| HA-6 | LOW-MED | Composed **leak-scenario test** absent: no test executes the §9 leak predicate against a healthy AND a leaky trace (change+rebuild together vs change-with-suppressed-restart) | CL.T5 (bug-#4 replay) or earlier |
+| HA-7 | LOW | **Taps → live writer** integration has zero direct assertions (all tap tests drain the queue with the writer off). One smoke: drive `_handle_user_event` → `start()`/`close()` → read the day file | CL.T5 or earlier |
+| HA-8 | LOW | Plugin `ohlcv_bar` emits `ws_kline(peer=quantower)` per bar-UPDATE (Binance taps are closed-candle-gated; MEXC parse has no closed-gate, latent) — per-update volume at `full` when the plugin is connected | CL.T5 volume pass (or closed-gate at touch) |
+| HA-9 | LOW | Payload code-gaps vs spec tables (spec §15 footer): `ws_kline` interval+close (close is free at `parsed["candle"][4]`), `ws_connected` duration, news `ws_connect` + disconnect `uptime_s`, `platform_snapshot` counts, `ws_depth` top-of-book | CL.T5 at latest; ws_kline close + news ws_connect near-free at next touch |
+| HA-10 | NIT | PWA endpoints (`/manifest.json`, `/service-worker.js`, `/favicon.ico`) escape the `/static` skip; overflow-RECOVERY marker rides the recovering emitter's chain (day-cap marker is correctly bare); `ws_depth` negative tests can't distinguish gated-off from tap-deleted (needs a positive companion via `_CATEGORY_DEFAULT_OFF` patch); tap-before-apply ordering unpinned; `# corr-tap` anchor style inconsistent at 2 news sites; `ws-news-ping` name + `sch-*` prefixes (beyond reaper/boot) unpinned | opportunistic |
+| HA-11 | INFO | Frame types outside the §5.4 taxonomy mint a chain but emit no envelope (spec §15 E12) — decide a kind-only catch-all | CL.T5 |
+| HA-12 | NOTE | Until CL.T2a, bus-consumer emissions ride the eternal `boot-*` chain (not `""`) — the empty-corr tripwire is blind to this class. Resolved by T2a itself | CL.T2a (by design) |
+
+### 9.5 After this program
 
 The **attribution reconciler** (spec §12) is the next program — a separate
 plan. The correlation log's §5.6 baseline (including SKIPPED lines) is its

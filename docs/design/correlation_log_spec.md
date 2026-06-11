@@ -925,5 +925,37 @@ Out of scope here, but the log is shaped to de-risk it:
 
 ---
 
+## 15. As-built deviations & errata (Phases 0–1, filed 2026-06-11)
+
+Filed from the Phase-1 holistic audit (2 agents) per the deviation
+discipline: every divergence between this spec and the shipped code,
+named in one place so a fresh reader of any section below is not misled.
+Each entry is documented at the code site and in its commit; this table
+is the spec-side record. "§" = the section whose literal text the
+as-built behavior deviates from.
+
+| # | § | As-built deviation | Why |
+|---|---|---|---|
+| E1 | §3.3, D5 | Top-level loop tasks use a **set-only `tick(prefix)`** (no reset) instead of a `correlation_scope` wrap per iteration | loop tasks own their context (next tick overwrites; `create_task` children copy at spawn); avoids re-indenting 18 loop bodies. `correlation_scope` remains the primitive wherever restoration matters (middleware, nesting, queue-consumer re-binds) |
+| E2 | §5.4, §7.3 | `platform_push` is registered in the **market** group (volume-gated, OFF in `linkage`), not lifecycle | it rides the ~1 Hz risk-state fanout when the plugin is connected — market-shaped traffic, not a lifecycle event |
+| E3 | §5.1, §3.2 | The HTTP middleware **skips `/static`** paths entirely | asset noise, not an engine boundary. (PWA endpoints `/manifest.json`, `/service-worker.js`, `/favicon.ico` still emit — filed HA-10) |
+| E4 | §5.4 | The on-connect `request_positions` send to a NEW plugin client bypasses the `platform_push` tap | it is a targeted single-client send; routing through the broadcast chokepoint would change semantics (anchor-commented at the site) |
+| E5 | §5.4b | Platform has **no `ws_connect`/`ws_connected`** — the plugin's own `hello` frame (→ `platform_hello`) signals the connection; the `finally` emits `ws_disconnect` | the engine is the SERVER on this boundary; connect-attempt semantics belong to the client |
+| E6 | §5.4b | Lifecycle envelopes use the **owning module** as `component` (`news_fetcher`, `platform_bridge`) — the section header's `component=ws_manager` applies only to the Binance streams | §4's component semantics ("the subsystem emitting") win over the section header |
+| E7 | §6.1 | The overflow bound reads **`SimpleQueue.qsize()`** (soft bound) instead of a separate tracked counter | simpler, no drift risk; overshoot ≤ #emitting threads is acceptable for a drop-guard |
+| E8 | §6.1 | The writer drains in batches of **`_BATCH_MAX=1000`**, not "until empty" | bounds peak batch memory/write size; the loop re-drains immediately, so behavior converges |
+| E9 | §6.4 | **No `atexit` flush**; the lifespan `close()` is the only flush trigger | atexit would also fire inside pytest exits and interact with daemon-thread teardown; the crash-loss window (≤ ~250 ms + queue depth) is the accepted §6.4 semantics |
+| E10 | §5.8 | A **`meta` group** exists beyond the §5.8 list, holding the sink's self-describing `overflow` category — always on in any non-off profile | the overflow/day-cap markers must survive the `linkage` profile |
+| E11 | §3.3 | A third queue hand-off exists beyond the two listed: the `core/pubsub` subscribe generators feeding SSE | deliberately uncorrelated (§13 — the SSE push tap is deferred; the generators run inside the consuming request's own http scope) |
+| E12 | §3.2 | Frame types outside the §5.4 taxonomy (e.g. `MARGIN_CALL`, unknown platform types) mint a chain but emit **no frame envelope** | the taxonomy defines what is logged; a kind-only catch-all is a CL.T5 decision (filed HA-11) |
+
+Confirmed **code gaps** (spec is right, code owes the fields — filed
+HA-9, due CL.T5 at latest): `ws_kline` payload lacks interval+close;
+`ws_connected` lacks duration-to-connect; news lacks a pre-attempt
+`ws_connect` and `ws_disconnect.uptime_s`; `platform_snapshot` carries
+kind only; `ws_depth` lacks top-of-book.
+
+---
+
 *End of spec. Implementation phasing, tasks, tests, and sequencing in
 [correlation_log_implementation_plan.md](correlation_log_implementation_plan.md).*
