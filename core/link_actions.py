@@ -39,6 +39,7 @@ from dataclasses import asdict
 from typing import Any, Dict, List
 
 import config
+from core import correlation_log
 from core.database import db
 from core.calc_state import (
     CalcStatus,
@@ -75,13 +76,68 @@ async def manual_link_order(account_id: int, order_id: int, calc_id: str) -> str
     attribution (PositionInfo.calc_id, closed_positions primary) for such
     an order relies on the offline rebuild. The order + its opening fills
     carry the calc_id; the junction backfill on late link is a follow-up.
+
+    corr-tap: attr_match_attempt via=manual_link (CL.T3b-entry, spec §5.6
+    — the manual-link path is part of the match-attempt category). Thin
+    wrapper so every invocation emits exactly one envelope (mandate 1),
+    whatever the discriminated outcome or exception.
     """
+    _ctx: Dict[str, Any] = {}
+    outcome = "error"
+    _err = None
+    try:
+        outcome = await _manual_link_order_impl(
+            account_id, order_id, calc_id, _ctx,
+        )
+        return outcome
+    except Exception as e:
+        _err = type(e).__name__
+        raise
+    finally:
+        payload: Dict[str, Any] = {
+            "outcome": ("LINKED" if outcome == "linked"
+                        else "ERROR" if _err else "SKIPPED"),
+            "via": "manual_link",
+            "result": outcome,
+            # identity tuple VERBATIM incl. "" (mandate 2): calc_id is the
+            # operator's REQUESTED calc (existing_calc_id rides along on
+            # the already_linked path)
+            "calc_id": (calc_id or "").strip(),
+            "exchange_order_id": _ctx.get("exchange_order_id", ""),
+            "terminal_position_id": _ctx.get("terminal_position_id", ""),
+            "lifecycle_id": "",
+            "order_id": order_id,
+            # dedup_key (mandate 3): an operator double-click double-submit
+            # is a one-grep find
+            "dedup_key": f"manual:{order_id}:{(calc_id or '').strip()}",
+        }
+        if _err:
+            payload["error_type"] = _err
+        elif outcome != "linked":
+            payload["reason"] = outcome
+        if "existing_calc_id" in _ctx:
+            payload["existing_calc_id"] = _ctx["existing_calc_id"]
+        correlation_log.emit(
+            "link_actions", "internal", "internal",
+            correlation_log.CAT_ATTR_MATCH_ATTEMPT, payload,
+            account_id=account_id,
+        )
+
+
+async def _manual_link_order_impl(
+    account_id: int, order_id: int, calc_id: str, _ctx: Dict[str, Any],
+) -> str:
+    """The manual-link body (see :func:`manual_link_order` for the
+    contract). ``_ctx`` collects identity facts (exchange_order_id, tpid,
+    the pre-existing calc on the already_linked path) for the wrapper's
+    attr_match_attempt envelope."""
     calc_id = (calc_id or "").strip()
     if not calc_id:
         return "missing_calc_id"
 
     async with db._conn.execute(
-        "SELECT link_status, calc_id, exchange_order_id FROM orders "
+        "SELECT link_status, calc_id, exchange_order_id, "
+        "       terminal_position_id FROM orders "
         "WHERE account_id = ? AND id = ?",
         (account_id, order_id),
     ) as cur:
@@ -89,7 +145,10 @@ async def manual_link_order(account_id: int, order_id: int, calc_id: str) -> str
     if row is None:
         return "order_not_found"
     current_link, existing_calc, eid = row[0], row[1], (row[2] or "")
+    _ctx["exchange_order_id"] = eid
+    _ctx["terminal_position_id"] = row[3] or ""
     if existing_calc:
+        _ctx["existing_calc_id"] = existing_calc
         return "already_linked"  # maintains calc_id present ⟺ LINKED
 
     async with db._conn.execute(
@@ -220,15 +279,59 @@ async def mark_order_unplanned(account_id: int, order_id: int) -> str:
 
     Returns: ``marked`` | ``order_not_found`` | ``invalid_transition`` |
     ``race_lost`` | ``error``.
+
+    corr-tap: attr_match_attempt via=mark_unplanned (CL.T3b-entry, spec
+    §5.6) — the operator's "this order has no plan" decision; same
+    wrapper shape as :func:`manual_link_order`.
     """
+    _ctx: Dict[str, Any] = {}
+    outcome = "error"
+    _err = None
+    try:
+        outcome = await _mark_order_unplanned_impl(account_id, order_id, _ctx)
+        return outcome
+    except Exception as e:
+        _err = type(e).__name__
+        raise
+    finally:
+        payload: Dict[str, Any] = {
+            "outcome": ("UNPLANNED" if outcome == "marked"
+                        else "ERROR" if _err else "SKIPPED"),
+            "via": "mark_unplanned",
+            "result": outcome,
+            "calc_id": "",
+            "exchange_order_id": _ctx.get("exchange_order_id", ""),
+            "terminal_position_id": _ctx.get("terminal_position_id", ""),
+            "lifecycle_id": "",
+            "order_id": order_id,
+            "dedup_key": f"manual:{order_id}:unplanned",
+        }
+        if _err:
+            payload["error_type"] = _err
+        elif outcome != "marked":
+            payload["reason"] = outcome
+        correlation_log.emit(
+            "link_actions", "internal", "internal",
+            correlation_log.CAT_ATTR_MATCH_ATTEMPT, payload,
+            account_id=account_id,
+        )
+
+
+async def _mark_order_unplanned_impl(
+    account_id: int, order_id: int, _ctx: Dict[str, Any],
+) -> str:
+    """The mark-unplanned body (see :func:`mark_order_unplanned`)."""
     async with db._conn.execute(
-        "SELECT link_status FROM orders WHERE account_id = ? AND id = ?",
+        "SELECT link_status, exchange_order_id, terminal_position_id "
+        "FROM orders WHERE account_id = ? AND id = ?",
         (account_id, order_id),
     ) as cur:
         row = await cur.fetchone()
     if row is None:
         return "order_not_found"
     current_link = row[0]
+    _ctx["exchange_order_id"] = row[1] or ""
+    _ctx["terminal_position_id"] = row[2] or ""
 
     async def _apply_unplanned() -> None:
         cur2 = await db._conn.execute(

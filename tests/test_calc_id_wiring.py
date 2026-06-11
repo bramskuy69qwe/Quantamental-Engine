@@ -32,6 +32,7 @@ def _make_legacy_db(tmp_path, ptl_rows=None):
         created_at_ms INTEGER DEFAULT 0, updated_at_ms INTEGER DEFAULT 0, last_seen_ms INTEGER DEFAULT 0,
         calc_id TEXT, tp_trigger_price REAL, sl_trigger_price REAL,
         link_status TEXT DEFAULT NULL,
+        lifecycle_id TEXT DEFAULT NULL,
         UNIQUE(account_id, exchange_order_id)
     )""")
     conn.execute("""CREATE TABLE fills (

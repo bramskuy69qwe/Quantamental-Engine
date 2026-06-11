@@ -408,6 +408,10 @@ class OrderManager:
         try:
             otype = (order.get("order_type") or "").lower()
             if not order.get("reduce_only") or otype not in self._TPSL_TYPES:
+                # Domain filter, deliberately NO envelope: this method runs
+                # on EVERY order update; only TP/SL-child arrivals are in
+                # attr_reenrich_trigger's decision domain (spec §5.6 — the
+                # child→parent decision, historical bug #g).
                 return
             pos_id = order.get("exchange_position_id", "")
 
@@ -440,12 +444,56 @@ class OrderManager:
                 ).fetchone()
             conn.close()
 
+            # corr-tap: attr_reenrich_trigger (CL.T3b-entry, spec §5.6) —
+            # the child-arrival → parent-re-enrich decision (historical
+            # bug #g: this inference silently not firing left market
+            # entries permanently uncorrelated).
+            child_eid = str(order.get("exchange_order_id") or "")
+            _rt: Dict[str, Any] = {
+                "outcome": "TRIGGERED" if parent else "SKIPPED",
+                "via": "child_arrival",
+                "child_exchange_order_id": child_eid,
+                "parent_lookup": ("exchange_position_id" if pos_id
+                                  else "symbol_position_side"),
+                "parent_found": bool(parent),
+                "parent_exchange_order_id":
+                    str(parent["exchange_order_id"] or "") if parent else "",
+                "calc_id": (parent["calc_id"] or "") if parent else "",
+                "terminal_position_id":
+                    (parent["terminal_position_id"] or "") if parent else "",
+                "lifecycle_id": "",
+            }
+            if not parent:
+                _rt["reason"] = "no_parent_found"
+            if child_eid:
+                _rt["dedup_key"] = (
+                    f"{child_eid}:{order.get('status') or ''}"
+                    f":{order.get('quantity') or ''}"
+                )
+            correlation_log.emit(
+                "order_manager", "internal", "internal",
+                correlation_log.CAT_ATTR_REENRICH_TRIGGER, _rt,
+                account_id=account_id, symbol=order.get("symbol") or None,
+            )
+
             if parent:
                 # Route through _enrich_order_best_effort so defect-8's
                 # junction-ensure also fires for a parent that links here.
                 await self._enrich_order_best_effort(dict(parent))
-        except Exception:
+        except Exception as e:
             log.debug("parent re-enrichment on child arrival skipped", exc_info=True)
+            # corr-tap: attr_reenrich_trigger — failure twin
+            correlation_log.emit(
+                "order_manager", "internal", "internal",
+                correlation_log.CAT_ATTR_REENRICH_TRIGGER,
+                {"outcome": "ERROR", "via": "child_arrival",
+                 "error_type": type(e).__name__,
+                 "child_exchange_order_id":
+                     str(order.get("exchange_order_id") or ""),
+                 "calc_id": "", "terminal_position_id": "",
+                 "lifecycle_id": ""},
+                account_id=account_id, symbol=order.get("symbol") or None,
+            )
 
     async def _enrich_order_best_effort(self, order: Dict[str, Any]) -> None:
         try:
@@ -473,7 +521,33 @@ class OrderManager:
         Idempotent: skips when the order isn't linked, has no position key, or a
         junction row for (position_id, calc_id) already exists. Best-effort.
         """
+        # corr-tap: attr_junction_form via=post_link_replay (CL.T3b-entry,
+        # spec §5.6) — the "should the junction be replayed?" decision.
+        # On delegation the builder emits its own FORMED/SKIPPED envelope,
+        # so the replay path produces two correlated decision lines.
+        def _tap_replay(outcome: str, reason: Optional[str] = None,
+                        **kw: Any) -> None:
+            payload: Dict[str, Any] = {
+                "outcome": outcome, "via": "post_link_replay",
+                "exchange_order_id": eoid or "",
+                "terminal_position_id": "", "calc_id": "",
+                "lifecycle_id": "", **kw,
+            }
+            if reason:
+                payload["reason"] = reason
+            if eoid:
+                # dedup_key (mandate 3, audit T3bE-4): the triggering
+                # ORDER id is in scope here — a double-replay is the
+                # §4.1 double-process class and must be a one-grep find.
+                payload["dedup_key"] = f"replay:{eoid}"
+            correlation_log.emit(
+                "order_manager", "internal", "internal",
+                correlation_log.CAT_ATTR_JUNCTION_FORM, payload,
+                account_id=account_id,
+            )
+
         if not eoid:
+            _tap_replay("SKIPPED", "no_exchange_order_id")
             return
         try:
             async with self._db._conn.execute(
@@ -482,8 +556,16 @@ class OrderManager:
                 (account_id, eoid),
             ) as cur:
                 orow = await cur.fetchone()
-            if not orow or not orow[0] or not (orow[1] or ""):
-                return  # not linked yet, or no position key yet
+            if not orow:
+                _tap_replay("SKIPPED", "order_row_missing")
+                return
+            if not orow[0]:
+                _tap_replay("SKIPPED", "not_linked",
+                            terminal_position_id=orow[1] or "")
+                return
+            if not (orow[1] or ""):
+                _tap_replay("SKIPPED", "no_position_key", calc_id=orow[0])
+                return
             calc_id, pos_id = orow[0], orow[1]
             async with self._db._conn.execute(
                 "SELECT 1 FROM positions_calcs "
@@ -491,7 +573,9 @@ class OrderManager:
                 (pos_id, calc_id, account_id),
             ) as cur:
                 if await cur.fetchone():
-                    return  # junction already exists
+                    _tap_replay("SKIPPED", "junction_exists",
+                                calc_id=calc_id, terminal_position_id=pos_id)
+                    return
             # Replay the order's opening fill(s): summed qty, earliest ts, tpid.
             async with self._db._conn.execute(
                 "SELECT COALESCE(MAX(terminal_position_id), ''), MAX(symbol), "
@@ -502,7 +586,9 @@ class OrderManager:
             ) as cur:
                 frow = await cur.fetchone()
             if not frow or not frow[3]:
-                return  # no opening fill yet (zero/NULL summed qty)
+                _tap_replay("SKIPPED", "no_opening_fill",
+                            calc_id=calc_id, terminal_position_id=pos_id)
+                return
             synth_fill = {
                 "account_id": account_id, "exchange_order_id": eoid,
                 "terminal_position_id": frow[0] or "", "is_close": 0,
@@ -510,9 +596,12 @@ class OrderManager:
                 "quantity": frow[3], "price": frow[4] or 0.0,
                 "timestamp_ms": frow[5] or 0,
             }
+            _tap_replay("DELEGATED", calc_id=calc_id,
+                        terminal_position_id=pos_id)
             await self._link_position_calc_on_open(account_id, synth_fill)
-        except Exception:
+        except Exception as e:
             log.debug("ensure junction post-link skipped for %s", eoid, exc_info=True)
+            _tap_replay("ERROR", "exception", error_type=type(e).__name__)
 
     # ── TP/SL bracket calc_id inheritance (Phase 2.9, spec §4.5) ─────────────
 
@@ -620,7 +709,24 @@ class OrderManager:
         source). Maintains the invariant "calc_id present ⟺
         link_status=LINKED" (plan §1 acceptance).
         """
+        # corr-tap: attr_bracket_inherit (CL.T3b-entry, spec §5.6 mandate
+        # 1) — one envelope per invocation: per-leg INHERITED lines when
+        # something propagates, else one SKIPPED line with the reason.
+        # This runs per order arrival per symbol, so the SKIPPED lines
+        # are lifecycle-rate (same order of volume as the ws
+        # order_status_applied tap).
+        def _tap_bracket_skip(reason: str) -> None:
+            correlation_log.emit(
+                "order_manager", "internal", "internal",
+                correlation_log.CAT_ATTR_BRACKET_INHERIT,
+                {"outcome": "SKIPPED", "reason": reason, "calc_id": "",
+                 "exchange_order_id": "", "terminal_position_id": "",
+                 "lifecycle_id": ""},
+                account_id=account_id, symbol=symbol or None,
+            )
+
         if not symbol:
+            _tap_bracket_skip("no_symbol")
             return
         try:
             from core.bracket_detection import is_entry_leg, is_protective_leg
@@ -649,17 +755,20 @@ class OrderManager:
                 rows = await cur.fetchall()
             candidates = [dict(zip(cols, r)) for r in rows]
             if not candidates:
+                _tap_bracket_skip("no_recent_orders")
                 return
 
             # Cheap pre-checks: need ≥1 entry-with-calc_id AND ≥1
             # protective-without-calc_id, else there is nothing to inherit.
             if not any(is_entry_leg(o) and o.get("calc_id") for o in candidates):
+                _tap_bracket_skip("no_linked_entry")
                 return
             if not any(is_protective_leg(o) and not o.get("calc_id")
                        for o in candidates):
+                _tap_bracket_skip("no_uninherited_protective")
                 return
 
-            updates: List[Tuple[str, int]] = []
+            updates: List[Tuple[str, int, str, int, str]] = []
             for grp in self._detect_brackets(candidates):
                 # detect_brackets sorts each group by created_at_ms ASC, so
                 # next() = the EARLIEST calc-bearing entry in the cluster.
@@ -688,9 +797,15 @@ class OrderManager:
                 for leg in grp:
                     if leg.get("calc_id") or not is_protective_leg(leg):
                         continue
-                    updates.append((src_calc, leg["id"]))
+                    updates.append((
+                        src_calc, leg["id"],
+                        str(leg.get("exchange_order_id") or ""),
+                        entry["id"],
+                        str(entry.get("exchange_order_id") or ""),
+                    ))
 
             if not updates:
+                _tap_bracket_skip("no_bracket_grouped")
                 return
 
             # P3.T1: route the link_status write through the link_state
@@ -706,13 +821,17 @@ class OrderManager:
             # today (revisit when Phase 6 wires link-status events).
             from core.link_state import LinkStatus, auto_classify
 
-            for src_calc, oid in updates:
-                async def _apply_leg(src_calc=src_calc, oid=oid) -> None:
+            for src_calc, oid, leg_eid, entry_id, entry_eid in updates:
+                _applied = {"n": 0}
+
+                async def _apply_leg(src_calc=src_calc, oid=oid,
+                                     _applied=_applied) -> None:
                     cur = await self._db._conn.execute(
                         "UPDATE orders SET calc_id = ?, link_status = ? "
                         "WHERE id = ? AND calc_id IS NULL",
                         (src_calc, LinkStatus.LINKED.value, oid),
                     )
+                    _applied["n"] = cur.rowcount or 0
                     # P4.T5 audit (SCOPING-001): a protective leg amended BEFORE
                     # this inheritance ran was recorded (P4.T1) with the leg's
                     # then-NULL calc_id. The close-time drift + P4.T2/P4.T3
@@ -729,15 +848,48 @@ class OrderManager:
                 await auto_classify(
                     oid, LinkStatus.LINKED.value, apply_fn=_apply_leg,
                 )
+                # corr-tap: attr_bracket_inherit (CL.T3b-entry, spec §5.6)
+                # — one line per stamped leg. ``applied=False`` = the
+                # WHERE calc_id IS NULL idempotency guard no-oped (the
+                # leg raced/linked since detection) — visible, not
+                # silently merged.
+                _bi: Dict[str, Any] = {
+                    "outcome": "INHERITED",
+                    "applied": _applied["n"] > 0,
+                    "calc_id": src_calc,
+                    "parent_order_id": entry_id,
+                    "parent_exchange_order_id": entry_eid,
+                    "child_order_id": oid,
+                    "child_exchange_order_id": leg_eid,
+                    "terminal_position_id": "",
+                    "lifecycle_id": "",
+                }
+                if leg_eid:
+                    _bi["dedup_key"] = f"{leg_eid}:inherit:{src_calc}"
+                correlation_log.emit(
+                    "order_manager", "internal", "internal",
+                    correlation_log.CAT_ATTR_BRACKET_INHERIT, _bi,
+                    account_id=account_id, symbol=symbol,
+                )
             await self._db._conn.commit()
             log.info(
                 "T2.9 bracket inheritance: stamped calc_id on %d TP/SL leg(s) "
                 "for %s", len(updates), symbol,
             )
-        except Exception:
+        except Exception as e:
             log.debug(
                 "bracket calc_id propagation skipped for %s", symbol,
                 exc_info=True,
+            )
+            # corr-tap: attr_bracket_inherit — failure twin (mandate 1:
+            # the exception path is a line, not an absence)
+            correlation_log.emit(
+                "order_manager", "internal", "internal",
+                correlation_log.CAT_ATTR_BRACKET_INHERIT,
+                {"outcome": "ERROR", "error_type": type(e).__name__,
+                 "calc_id": "", "exchange_order_id": "",
+                 "terminal_position_id": "", "lifecycle_id": ""},
+                account_id=account_id, symbol=symbol or None,
             )
 
     async def _propagate_bracket_calc_id_for_orders(
@@ -810,6 +962,17 @@ class OrderManager:
         Best-effort: failures logged, never raised.
         """
         if not exchange_order_id:
+            # corr-tap: attr_reenrich_trigger (CL.T3b-entry, spec §5.6)
+            correlation_log.emit(
+                "order_manager", "internal", "internal",
+                correlation_log.CAT_ATTR_REENRICH_TRIGGER,
+                {"outcome": "SKIPPED", "via": "fill_arrival",
+                 "reason": "no_exchange_order_id",
+                 "parent_exchange_order_id": "", "parent_found": False,
+                 "calc_id": "", "terminal_position_id": "",
+                 "lifecycle_id": ""},
+                account_id=account_id,
+            )
             return
         try:
             import sqlite3, config
@@ -822,13 +985,47 @@ class OrderManager:
                 (account_id, exchange_order_id),
             ).fetchone()
             conn.close()
+            # corr-tap: attr_reenrich_trigger — the fill-arrival variant
+            # of the child_arrival decision (the MARKET-order re-match
+            # trigger: first run with avg_fill_price populated). Same
+            # decision class as bug #g's site; via= distinguishes.
+            _rt: Dict[str, Any] = {
+                "outcome": "TRIGGERED" if row else "SKIPPED",
+                "via": "fill_arrival",
+                "parent_exchange_order_id": exchange_order_id,
+                "parent_found": bool(row),
+                "calc_id": (row["calc_id"] or "") if row else "",
+                "terminal_position_id":
+                    (row["terminal_position_id"] or "") if row else "",
+                "lifecycle_id": (row["lifecycle_id"] or "") if row else "",
+                "dedup_key": f"{exchange_order_id}:reenrich_fill",
+            }
+            if not row:
+                _rt["reason"] = "parent_not_found_or_reduce_only"
+            correlation_log.emit(
+                "order_manager", "internal", "internal",
+                correlation_log.CAT_ATTR_REENRICH_TRIGGER, _rt,
+                account_id=account_id,
+                symbol=(row["symbol"] if row else None),
+            )
             if row:
                 from core.order_enrichment import enrich_order
                 await enrich_order(dict(row), config.DB_PATH)
-        except Exception:
+        except Exception as e:
             log.debug(
                 "post-fill parent re-enrichment skipped for %s",
                 exchange_order_id, exc_info=True,
+            )
+            # corr-tap: attr_reenrich_trigger — failure twin
+            correlation_log.emit(
+                "order_manager", "internal", "internal",
+                correlation_log.CAT_ATTR_REENRICH_TRIGGER,
+                {"outcome": "ERROR", "via": "fill_arrival",
+                 "error_type": type(e).__name__,
+                 "parent_exchange_order_id": exchange_order_id,
+                 "calc_id": "", "terminal_position_id": "",
+                 "lifecycle_id": ""},
+                account_id=account_id,
             )
 
     def _enrich_fill_best_effort(self, fill: Dict[str, Any]) -> None:
@@ -1844,12 +2041,43 @@ class OrderManager:
         single calc-linkage DB, ``config.DB_PATH``), matching the
         sibling Phase-1 transition sites.
         """
+        # corr-tap: attr_junction_form (CL.T3b-entry, spec §5.6) — one
+        # envelope per invocation, no silent exits (mandate 1). The gates
+        # below ARE the historical silent-skip class: "no_position_key"
+        # is the empty-tpid shape that hid the junction-never-written
+        # bug. ``_ident`` carries the identity tuple VERBATIM incl. ""
+        # (mandate 2) as facts resolve; each emit snapshots it.
+        _ident: Dict[str, Any] = {
+            "exchange_order_id": "", "terminal_position_id": "",
+            "calc_id": "", "lifecycle_id": "",
+        }
+        _fid = str(fill.get("exchange_fill_id") or "")
+
+        def _tap_junction(outcome: str, reason: Optional[str] = None,
+                          **kw: Any) -> None:
+            payload: Dict[str, Any] = {"outcome": outcome, **_ident, **kw}
+            if reason:
+                payload["reason"] = reason
+            if _fid:
+                # dedup_key of the triggering fill (mandate 3): the same
+                # fill replayed through the builder twice = one grep.
+                payload["dedup_key"] = f"junction:{_fid}"
+            correlation_log.emit(
+                "order_manager", "internal", "internal",
+                correlation_log.CAT_ATTR_JUNCTION_FORM, payload,
+                account_id=account_id, symbol=fill.get("symbol") or None,
+            )
+
         if fill.get("is_close"):
+            _tap_junction("SKIPPED", "close_fill")
             return
         eoid = fill.get("exchange_order_id", "") or ""
+        _ident["exchange_order_id"] = eoid
         if not eoid:
+            _tap_junction("SKIPPED", "no_exchange_order_id")
             return
         pos_id = fill.get("terminal_position_id", "") or ""
+        _ident["terminal_position_id"] = pos_id
 
         try:
             async with self._db._conn.execute(
@@ -1858,13 +2086,17 @@ class OrderManager:
                 (account_id, eoid),
             ) as cur:
                 orow = await cur.fetchone()
-        except Exception:
+        except Exception as e:
             log.debug("junction link: order read failed for %s", eoid, exc_info=True)
+            _tap_junction("ERROR", "order_read_failed",
+                          error_type=type(e).__name__)
             return
         if not orow:
+            _tap_junction("SKIPPED", "order_row_missing")
             return
         order_id = orow[0]
         calc_id = orow[1]
+        _ident["calc_id"] = calc_id or ""
         # Defect-7 (debug 2026-06-08, fill-before-mint race): the OPENING fill
         # can beat the ACCOUNT_UPDATE that mints the position, so
         # fill.terminal_position_id is empty even though the ENTRY ORDER carries
@@ -1875,8 +2107,13 @@ class OrderManager:
         # but NO junction row is ever written for a race-affected open.
         if not pos_id:
             pos_id = orow[2] or ""
+            _ident["terminal_position_id"] = pos_id
         if not pos_id:
-            return  # neither the fill nor the order has a position key yet
+            # neither the fill nor the order has a position key yet —
+            # the canonical stranded-identity shape (spec §5.6 reason
+            # vocabulary: no_position_key)
+            _tap_junction("SKIPPED", "no_position_key", order_pk=order_id)
+            return
         # Defect-1 (debug 2026-06-07): back-fill the entry order's
         # terminal_position_id from the (now-minted) position key so
         # reverse-query / context assembly (get_orders_by_position_id) can find
@@ -1895,7 +2132,9 @@ class OrderManager:
             log.debug("junction link: order tpid back-fill failed for %s",
                       eoid, exc_info=True)
         if not calc_id:
-            return  # UNPLANNED / unlinked entry — nothing to attribute
+            # UNPLANNED / unlinked entry — nothing to attribute
+            _tap_junction("SKIPPED", "not_linked", order_pk=order_id)
+            return
 
         # Reuse the position's existing lifecycle_id if a prior fill on
         # this position already established one (multi-fill / scale-in);
@@ -1923,10 +2162,13 @@ class OrderManager:
                 (pos_id, account_id),
             ) as cur:
                 lrow = await cur.fetchone()
-        except Exception:
+        except Exception as e:
             log.debug("junction link: lifecycle lookup failed for %s", pos_id, exc_info=True)
+            _tap_junction("ERROR", "lifecycle_lookup_failed",
+                          error_type=type(e).__name__, order_pk=order_id)
             return
         lifecycle_id = lrow[0] if lrow and lrow[0] else str(uuid.uuid4())
+        _ident["lifecycle_id"] = lifecycle_id
         # P6.T4: the lifecycle mint-vs-reuse signal IS the position-level
         # open-vs-scale-in distinction. No prior lifecycle → this fill OPENS the
         # position. Reuse → the position is already open; whether THIS is a
@@ -1991,7 +2233,7 @@ class OrderManager:
         # snapshot is PRESERVED across later fills of the same triple
         # (snapshot-at-contribution-time). size_delta_pct left NULL —
         # computed at close in T2.5.
-        await self._db.upsert_position_calc_link({
+        _junction_ok = await self._db.upsert_position_calc_link({
             "position_id":     pos_id,
             "calc_id":         calc_id,
             "order_id":        order_id,
@@ -2046,6 +2288,28 @@ class OrderManager:
             "Linked position %s ↔ calc %s (order_id=%s, lifecycle=%s, qty=%.6f)",
             pos_id, calc_id, order_id, lifecycle_id, qty,
         )
+        # The decision line: FORMED only when the junction write actually
+        # landed (audit T3bE-3 — the writer swallows its own failures, and
+        # asserting FORMED on a failed write is the historical "junction
+        # missing" shape this tap exists to expose). The paired db_write
+        # envelope carries the rowcount on the same chain; flow (the
+        # lifecycle backfills above) is unchanged on failure, matching
+        # pre-tap behavior. The mint-vs-reuse signal IS the open-vs-
+        # scale-in distinction (P6.T4).
+        if _junction_ok:
+            _tap_junction(
+                "FORMED", order_pk=order_id,
+                lifecycle_minted=is_first_open,
+                scale_in=calc_new_to_position,
+                contributed_qty=qty,
+            )
+        else:
+            _tap_junction(
+                "ERROR", "junction_write_failed", order_pk=order_id,
+                lifecycle_minted=is_first_open,
+                scale_in=calc_new_to_position,
+                contributed_qty=qty,
+            )
 
         # P6.T4 (spec §9): position lifecycle events on the per-account topic,
         # emitted AFTER the durable junction write. POSITION-level semantics

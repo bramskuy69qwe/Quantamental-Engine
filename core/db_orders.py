@@ -1778,8 +1778,13 @@ class OrdersMixin:
 
     # ── positions_calcs ────────────────────────────────────────────────
 
-    async def upsert_position_calc_link(self, row: Dict[str, Any]) -> None:
+    async def upsert_position_calc_link(self, row: Dict[str, Any]) -> bool:
         """UPSERT a junction row for (position_id, calc_id, order_id).
+
+        Returns ``True`` on success, ``False`` when the write failed (the
+        exception is swallowed here by design — audit T3bE-3 added the
+        return so the junction builder's attr_junction_form decision line
+        can report ERROR instead of asserting FORMED on a failed write).
 
         ``position_id`` is the engine's ``terminal_position_id`` string
         (TEXT) — the universal position identity used across orders/
@@ -1850,6 +1855,7 @@ class OrdersMixin:
                 },
                 account_id=row.get("account_id", 1),
             )
+            return True
         except Exception as e:
             log.exception("upsert_position_calc_link failed")
             # corr-tap: db_write (CL.T3a) — failure twin
@@ -1861,6 +1867,7 @@ class OrdersMixin:
                  "calc_id": row.get("calc_id", "") or ""},
                 account_id=row.get("account_id", 1),
             )
+            return False
 
     async def get_position_calc_links(self, position_id: str) -> List[Dict]:
         """Return all junction rows for one position, ordered by first_fill_ts.

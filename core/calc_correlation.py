@@ -27,6 +27,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from core import correlation_log
+
 log = logging.getLogger("calc_correlation")
 
 
@@ -186,10 +188,128 @@ def correlate_order_to_calc(
     The caller persists ``audit_rows`` via
     ``Database.insert_calc_match_audit_batch`` and triggers the calc
     transition through :func:`core.calc_state.transition`.
+
+    corr-tap: attr_match_attempt (CL.T3b-entry, spec §5.6). This public
+    entry is a thin wrapper around ``_correlate_order_to_calc_impl`` so
+    that EVERY invocation — every decision, every defensive early
+    return, every exception — emits exactly one envelope (mandate 1:
+    no silent exits), structurally guaranteed by the ``finally``.
+    Emission is the only side effect; the matcher stays pure w.r.t.
+    engine state.
     """
+    _trace: Dict[str, Any] = {}
+    _t0 = time.perf_counter()
+    _err: Optional[str] = None
+    result: Optional[MatchResult] = None
+    try:
+        result = _correlate_order_to_calc_impl(
+            order,
+            order_id=order_id,
+            tick_size=tick_size,
+            entry_tolerance_pct=entry_tolerance_pct,
+            window_seconds=window_seconds,
+            clock_skew_tolerance_sec=clock_skew_tolerance_sec,
+            now_ts_ms=now_ts_ms,
+            db_path=db_path,
+            data_dir=data_dir,
+            _trace=_trace,
+        )
+        return result
+    except Exception as e:
+        _err = type(e).__name__
+        raise
+    finally:
+        if _err is not None:
+            outcome, reason = "ERROR", None
+        elif _trace.get("skip"):
+            outcome, reason = "SKIPPED", _trace["skip"]
+        elif result is not None and result.link_status == LINK_STATUS_LINKED:
+            outcome, reason = "LINKED", None
+        elif (result is not None
+              and result.link_status == LINK_STATUS_NEEDS_MANUAL_REVIEW):
+            outcome, reason = "NEEDS_MANUAL_REVIEW", "no_full_match"
+        else:
+            outcome, reason = "UNPLANNED", "no_candidates_in_window"
+        # Per-candidate failed-criteria summary, derived from the audit
+        # rows (one line must read "calc X failed [tp, sl]" — the
+        # per-criterion trace the manual-review queue persists in full).
+        cands: List[Dict[str, Any]] = []
+        if result is not None and result.audit_rows:
+            failed_by_calc: Dict[str, List[str]] = {}
+            for r in result.audit_rows:
+                failed_by_calc.setdefault(r["calc_id"], [])
+                if not r["matched"]:
+                    failed_by_calc[r["calc_id"]].append(r["criterion"])
+            cands = [{"calc_id": c, "failed": f}
+                     for c, f in failed_by_calc.items()]
+        eid = str(order.get("exchange_order_id") or "")
+        payload: Dict[str, Any] = {
+            "outcome": outcome,
+            # identity tuple VERBATIM incl. "" (mandate 2)
+            "calc_id": (result.calc_id if result and result.calc_id else ""),
+            "exchange_order_id": eid,
+            "terminal_position_id": str(order.get("terminal_position_id") or ""),
+            "lifecycle_id": str(order.get("lifecycle_id") or ""),
+            "order_id": order_id,
+            "candidates": cands[:20],
+            "n_candidates": len(cands),
+            "n_prefilter_rows": _trace.get("n_prefilter_rows"),
+            "tolerances": {
+                "entry_pct": entry_tolerance_pct,
+                "tick_size": tick_size,
+                "window_s": window_seconds,
+                "skew_s": clock_skew_tolerance_sec,
+            },
+            "is_market": (order.get("order_type") or "").lower() == "market",
+            "duration_ms": round((time.perf_counter() - _t0) * 1000, 2),
+        }
+        if reason:
+            payload["reason"] = reason
+        if _err is not None:
+            payload["error_type"] = _err
+        if len(cands) > 20:
+            payload["n_candidates_omitted"] = len(cands) - 20
+        if eid:
+            # dedup_key of the triggering order (mandate 3) — same
+            # NORMALIZED convention as order_status_applied (T3a): a
+            # re-run on the SAME order state (the double-process bug) is
+            # a one-grep find; a legitimate re-run after a state change
+            # gets a fresh key.
+            payload["dedup_key"] = (
+                f"{eid}:{order.get('status') or ''}:{order.get('quantity') or ''}"
+            )
+        correlation_log.emit(
+            "calc_correlation", "internal", "internal",
+            correlation_log.CAT_ATTR_MATCH_ATTEMPT, payload,
+            account_id=order.get("account_id", 1),
+            symbol=order.get("symbol") or None,
+        )
+
+
+def _correlate_order_to_calc_impl(
+    order: Dict[str, Any],
+    *,
+    order_id: int,
+    tick_size: float,
+    entry_tolerance_pct: float,
+    window_seconds: int,
+    clock_skew_tolerance_sec: int,
+    now_ts_ms: Optional[int],
+    db_path: Optional[str],
+    data_dir: Optional[str],
+    _trace: Dict[str, Any],
+) -> MatchResult:
+    """The matcher body (see :func:`correlate_order_to_calc` for the full
+    contract). ``_trace`` collects the skip reason / prefilter stats the
+    wrapper's attr_match_attempt envelope reports — every defensive
+    early return below sets ``_trace["skip"]`` so the envelope can
+    distinguish "decided UNPLANNED on zero candidates" from "could not
+    evaluate" (the two were indistinguishable from the returned
+    MatchResult alone — both UNPLANNED with no audit rows)."""
     ticker = order.get("symbol", "")
     side_raw = order.get("side", "")
     if not ticker or not side_raw:
+        _trace["skip"] = "no_ticker_or_side"
         return MatchResult(None, LINK_STATUS_UNPLANNED)
     side_canonical = _norm_side(side_raw)
 
@@ -203,6 +323,7 @@ def correlate_order_to_calc(
         # belt-and-suspenders. Returning UNPLANNED with no audit rows
         # signals "matcher hasn't run yet" rather than "matcher decided
         # zero candidates".
+        _trace["skip"] = "no_tp_sl_on_order"
         return MatchResult(None, LINK_STATUS_UNPLANNED)
 
     # Entry source differs by order type (spec §4.1):
@@ -215,6 +336,7 @@ def correlate_order_to_calc(
     if not entry_source:
         # Defensive: a market order with no fill yet should be deferred
         # by the caller. If we got here, fail closed.
+        _trace["skip"] = "no_entry_source"
         return MatchResult(None, LINK_STATUS_UNPLANNED)
 
     # Resolve DB path
@@ -224,6 +346,7 @@ def correlate_order_to_calc(
             account_id = order.get("account_id", 1)
             db_path = _resolve_db_path(account_id, data_dir)
         except Exception:
+            _trace["skip"] = "db_path_unresolved"
             return MatchResult(None, LINK_STATUS_UNPLANNED)
 
     account_id = order.get("account_id", 1)
@@ -272,7 +395,9 @@ def correlate_order_to_calc(
         conn.close()
     except Exception:
         log.warning("calc correlation query failed", exc_info=True)
+        _trace["skip"] = "query_failed"
         return MatchResult(None, LINK_STATUS_UNPLANNED)
+    _trace["n_prefilter_rows"] = len(rows)
 
     # Per-criterion evaluation — for every candidate that passes the
     # in-window gate, record one audit row per criterion. Tolerances

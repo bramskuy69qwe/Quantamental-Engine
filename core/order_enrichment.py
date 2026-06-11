@@ -20,6 +20,8 @@ import logging
 import sqlite3
 from typing import Any, Dict, List, Optional, Tuple
 
+from core import correlation_log
+
 log = logging.getLogger("order_enrichment")
 
 _SL_TYPES = frozenset({"stop_loss", "stop_market", "stop_loss_limit"})
@@ -202,6 +204,41 @@ def _populate_tp_sl_via_bracket(order: Dict[str, Any], db_path: str) -> None:
 # ── Internal: calc_id correlation ────────────────────────────────────────────
 
 
+def _tap_match_skip(
+    order: Dict[str, Any], reason: str,
+    *, order_pk: Optional[int] = None, extra: Optional[Dict[str, Any]] = None,
+) -> None:
+    """corr-tap: attr_match_attempt SKIPPED (CL.T3b-entry, spec §5.6
+    mandate 1). ``_try_correlate``'s pre-matcher gates ARE the historical
+    silent-skip class — each early return is a line. When the matcher
+    runs, its own wrapper (``calc_correlation.correlate_order_to_calc``)
+    emits the decision envelope instead, so every ``_try_correlate``
+    invocation produces exactly one attr_match_attempt either way."""
+    eid = str(order.get("exchange_order_id") or "")
+    payload: Dict[str, Any] = {
+        "outcome": "SKIPPED",
+        "reason": reason,
+        # identity tuple VERBATIM incl. "" (mandate 2)
+        "calc_id": "",
+        "exchange_order_id": eid,
+        "terminal_position_id": str(order.get("terminal_position_id") or ""),
+        "lifecycle_id": str(order.get("lifecycle_id") or ""),
+        "order_id": order_pk,
+    }
+    if extra:
+        payload.update(extra)
+    if eid:
+        payload["dedup_key"] = (
+            f"{eid}:{order.get('status') or ''}:{order.get('quantity') or ''}"
+        )
+    correlation_log.emit(
+        "order_enrichment", "internal", "internal",
+        correlation_log.CAT_ATTR_MATCH_ATTEMPT, payload,
+        account_id=order.get("account_id", 1),
+        symbol=order.get("symbol") or None,
+    )
+
+
 async def _try_correlate(order: Dict[str, Any], db_path: str) -> None:
     """Strict 6/6 matcher (LIMIT + MARKET) per spec §4.
 
@@ -218,33 +255,53 @@ async def _try_correlate(order: Dict[str, Any], db_path: str) -> None:
     """
     order_type = (order.get("order_type") or "").lower()
     if order_type in _CLOSE_TYPES or order.get("reduce_only"):
+        _tap_match_skip(order, "close_type_or_reduce_only")
         return
 
     eid = order.get("exchange_order_id")
     aid = order.get("account_id", 1)
     if not eid:
+        _tap_match_skip(order, "no_exchange_order_id")
         return
 
     # Read current order state — trigger prices may have just been
     # populated, and the matcher needs the orders.id PK + created_at_ms
     # timestamp.
-    conn = sqlite3.connect(db_path, timeout=10.0)
-    conn.row_factory = sqlite3.Row
     try:
-        row = conn.execute(
-            "SELECT id, calc_id, link_status, "
-            "       tp_trigger_price, sl_trigger_price, "
-            "       price, avg_fill_price, created_at_ms "
-            "FROM orders WHERE account_id = ? AND exchange_order_id = ?",
-            (aid, eid),
-        ).fetchone()
-    finally:
-        conn.close()
+        conn = sqlite3.connect(db_path, timeout=10.0)
+        conn.row_factory = sqlite3.Row
+        try:
+            row = conn.execute(
+                "SELECT id, calc_id, link_status, "
+                "       tp_trigger_price, sl_trigger_price, "
+                "       price, avg_fill_price, created_at_ms, "
+                "       terminal_position_id, lifecycle_id "
+                "FROM orders WHERE account_id = ? AND exchange_order_id = ?",
+                (aid, eid),
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception as e:
+        # corr-tap: attr_match_attempt ERROR (audit T3bE-2) — this SELECT
+        # can raise under writer contention (the T212-M2 busy-wait path)
+        # or on an unmigrated schema; pre-tap that was a SILENT matcher
+        # exit (the exact class this category exists to close). The
+        # matcher skips loudly and the caller's best-effort contract
+        # holds (no raise past here).
+        log.warning("matcher order-state read failed for %s", eid, exc_info=True)
+        _tap_match_skip(order, "order_read_failed",
+                        extra={"outcome": "ERROR",
+                               "error_type": type(e).__name__})
+        return
 
     if not row:
+        _tap_match_skip(order, "order_row_missing")
         return
     if row["calc_id"]:
-        return  # already correlated — matcher is idempotent at this gate
+        # already correlated — matcher is idempotent at this gate
+        _tap_match_skip(order, "already_correlated", order_pk=row["id"],
+                        extra={"calc_id": row["calc_id"]})
+        return
     # T211 H3: if a prior matcher invocation already decided
     # NEEDS_MANUAL_REVIEW, don't re-run on subsequent WS updates. The
     # decision sticks until the operator manually links (Phase 3) or
@@ -254,15 +311,23 @@ async def _try_correlate(order: Dict[str, Any], db_path: str) -> None:
     # to re-run — newly-arriving calcs might bring it into LINKED, and
     # UNPLANNED carries no audit rows so re-runs are cheap.
     if row["link_status"] == "NEEDS_MANUAL_REVIEW":
+        _tap_match_skip(order, "manual_review_sticky", order_pk=row["id"])
         return
     if not row["tp_trigger_price"] or not row["sl_trigger_price"]:
-        return  # need both trigger prices
+        # need both trigger prices
+        _tap_match_skip(
+            order, "missing_trigger_prices", order_pk=row["id"],
+            extra={"has_tp": bool(row["tp_trigger_price"]),
+                   "has_sl": bool(row["sl_trigger_price"])},
+        )
+        return
 
     is_market = order_type == "market"
     if is_market and not (row["avg_fill_price"] or 0):
         # Spec §4.1: MARKET 6/6 includes entry-vs-fill comparison.
         # Without a fill price yet, the matcher can't evaluate entry —
         # defer until the fill arrives and re-enrichment runs.
+        _tap_match_skip(order, "market_awaiting_fill", order_pk=row["id"])
         return
 
     entry_tol, window_sec, skew = _read_account_config(db_path, aid)
@@ -277,6 +342,14 @@ async def _try_correlate(order: Dict[str, Any], db_path: str) -> None:
         "tp_trigger_price":  row["tp_trigger_price"],
         "sl_trigger_price":  row["sl_trigger_price"],
         "created_at_ms":     row["created_at_ms"],
+        # CL.T3b-entry: identity-tuple + dedup-key fields for the
+        # matcher's attr_match_attempt envelope (spec §5.6 mandates
+        # 2/3). The matcher's criteria ignore these keys.
+        "exchange_order_id":    eid,
+        "terminal_position_id": row["terminal_position_id"] or "",
+        "lifecycle_id":         row["lifecycle_id"] or "",
+        "status":               order.get("status"),
+        "quantity":             order.get("quantity"),
     }
 
     tick_size = _get_tick_size(order.get("symbol", ""), row["price"])

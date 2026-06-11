@@ -37,6 +37,8 @@ def _make_db(tmp_path, ptl_rows=None):
             avg_fill_price REAL DEFAULT 0,
             created_at_ms INTEGER DEFAULT 0, updated_at_ms INTEGER DEFAULT 0,
             last_seen_ms INTEGER DEFAULT 0,
+            terminal_position_id TEXT DEFAULT '',
+            lifecycle_id TEXT DEFAULT NULL,
             UNIQUE(account_id, exchange_order_id)
         );
 
