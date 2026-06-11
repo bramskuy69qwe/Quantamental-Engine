@@ -198,8 +198,10 @@ class MonitoringService:
     # ── Main loop ───────────────────────────────────────────────────────────
 
     async def run(self) -> None:
+        from core import correlation_log
         log.info("MonitoringService started (9 checks)")
         while True:
+            correlation_log.tick("sch-monitoring")  # corr-tap: entry scope (CL.T1a)
             await asyncio.sleep(_CHECK_INTERVAL)
             self._cycle_count += 1
             # Original 3 checks (every cycle)

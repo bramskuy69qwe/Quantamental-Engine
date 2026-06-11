@@ -146,7 +146,15 @@ def _isolate_correlation_log_dir(monkeypatch, tmp_path):
     import core.correlation_log as _cl
 
     monkeypatch.setattr(_cl, "_resolve_sink_dir", lambda: str(tmp_path / "corr"))
+    # Fresh corr context per test: tick() is deliberately set-only (loop
+    # tasks own their context in production), so a test that ticks in the
+    # pytest main thread would otherwise leak its corr_id into later tests.
+    token = _cl.corr_id_var.set("")
     yield
+    try:
+        _cl.corr_id_var.reset(token)
+    except ValueError:
+        pass  # reset in a different context (async test runners) — benign
     _cl.close(timeout=2.0)
     while True:
         try:

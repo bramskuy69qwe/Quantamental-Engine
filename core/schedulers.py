@@ -23,6 +23,7 @@ from core.exchange import (
     fetch_bod_sow_equity, fetch_exchange_trade_history,
     populate_open_position_metadata,
 )
+from core import correlation_log
 from core import ws_manager
 from core.data_logger import take_daily_snapshot, take_monthly_snapshot, export_all_to_excel
 from core.event_bus import event_bus, CH_TRADE_CLOSED
@@ -78,6 +79,7 @@ async def _reconcile_closed_positions_periodic(
     eventually recover without requiring an engine restart.
     """
     while True:
+        correlation_log.tick("sch-reconcile_closed")  # corr-tap: entry scope (CL.T1a)
         await asyncio.sleep(interval_s)
         try:
             await reconciler._reconcile_closed_positions()
@@ -94,6 +96,7 @@ async def _reconcile_closed_positions_periodic(
 async def _bod_scheduler():
     """Wake at midnight (account TZ) to run BOD resets and snapshots."""
     while True:
+        correlation_log.tick("sch-bod")  # corr-tap: entry scope (CL.T1a)
         now = now_in_account_tz(app_state.active_account_id)
         # Sleep until next midnight local
         midnight = now.replace(hour=0, minute=0, second=5, microsecond=0)
@@ -117,6 +120,7 @@ async def _bod_scheduler():
 async def _auto_export_scheduler():
     """Periodic DB->XLSX export."""
     while True:
+        correlation_log.tick("sch-auto_export")  # corr-tap: entry scope (CL.T1a)
         hours = app_state.params.get("auto_export_hours", 24)
         await asyncio.sleep(hours * 3600)
         try:
@@ -141,6 +145,7 @@ async def _account_refresh_loop():
     Guards against overlap if a single refresh takes longer than the interval."""
     global _account_refresh_in_flight
     while True:
+        correlation_log.tick("sch-account_refresh")  # corr-tap: entry scope (CL.T1a)
         # WS handles real-time position/mark price updates.
         # REST is just a safety net: 30s when WS healthy, 5s when WS down.
         # RL-1: degraded interval raised from 5s to 15s to avoid 429 cascade
@@ -293,6 +298,7 @@ async def _ping_loop():
     """Measure REST round-trip latency every 10 seconds.
     Skipped when the Quantower plugin is connected — avoids hammering Binance REST."""
     while True:
+        correlation_log.tick("sch-ping")  # corr-tap: entry scope (CL.T1a)
         # RL-1: raised from 1s to 10s (was 60 req/min, now 6 req/min)
         await asyncio.sleep(10)
         if platform_bridge.is_connected:
@@ -312,6 +318,7 @@ async def _history_refresh_loop():
     """Refresh BOD/SOW equity and exchange trade history every 5 minutes.
     Skipped when the Quantower plugin is connected."""
     while True:
+        correlation_log.tick("sch-history_refresh")  # corr-tap: entry scope (CL.T1a)
         await asyncio.sleep(300)
         if platform_bridge.is_connected:
             continue
@@ -378,6 +385,7 @@ async def _startup_fetch():
     the server accepts connections immediately.  Sets app_state.is_initializing
     = False when done — the /api/ready endpoint watches this flag.
     """
+    correlation_log.tick("boot")  # corr-tap: entry scope (CL.T1a) — whole startup fetch is one chain
     try:
         await event_bus.connect()
         event_bus.subscribe("risk:account_updated",     handle_account_updated)
@@ -577,6 +585,7 @@ async def _regime_refresh_loop():
     _state = {"last_tradfi": 0.0, "last_crypto": 0.0}
 
     while True:
+        correlation_log.tick("sch-regime_refresh")  # corr-tap: entry scope (CL.T1a)
         await asyncio.sleep(10 * 60)  # re-classify every 10 minutes
 
         now = datetime.now(timezone.utc).timestamp()
@@ -644,6 +653,7 @@ async def _news_refresh_loop():
     last_calendar_ts = 0.0
 
     while True:
+        correlation_log.tick("sch-news_refresh")  # corr-tap: entry scope (CL.T1a)
         try:
             await fetcher.fetch_news(category="general")
         except Exception as e:
@@ -676,6 +686,7 @@ async def _order_staleness_loop():
     from core.database import db
 
     while True:
+        correlation_log.tick("sch-order_staleness")  # corr-tap: entry scope (CL.T1a)
         await asyncio.sleep(60)
         # #2 (debug 2026-06-09): truth-based filled-order reconcile runs REGARDLESS
         # of the plugin (the time-based mark_stale below stays plugin-gated, since
@@ -719,6 +730,7 @@ async def _algo_order_sync_loop():
     """
     await asyncio.sleep(5)  # initial delay for engine bootstrap
     while True:
+        correlation_log.tick("sch-algo_order_sync")  # corr-tap: entry scope (CL.T1a)
         try:
             from core.exchange import _get_adapter
             adapter = _get_adapter()
@@ -804,6 +816,7 @@ async def _funding_refresh_loop(interval_s: int = 300):
     await asyncio.sleep(7)  # initial delay for engine bootstrap
     last_seen_ms = 0
     while True:
+        correlation_log.tick("sch-funding_refresh")  # corr-tap: entry scope (CL.T1a)
         try:
             adapter = _get_adapter()
             if not hasattr(adapter, "fetch_income"):
@@ -855,6 +868,7 @@ async def _calc_expiry_loop(interval_s: int = 60) -> None:
     """
     from core.handlers import sweep_expired_calcs
     while True:
+        correlation_log.tick("sch-calc_expiry")  # corr-tap: entry scope (CL.T1a)
         await asyncio.sleep(interval_s)
         try:
             await sweep_expired_calcs(app_state.active_account_id)
@@ -875,6 +889,7 @@ async def _operator_session_reaper_loop(interval_s: int = 60) -> None:
     from core.auth_state import reap_idle_sessions
     from core.database import db
     while True:
+        correlation_log.tick("sch-operator_session_reaper")  # corr-tap: entry scope (CL.T1a)
         await asyncio.sleep(interval_s)
         try:
             n = await reap_idle_sessions(db)

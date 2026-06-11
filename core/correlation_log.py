@@ -70,6 +70,18 @@ def current_corr_id() -> str:
     return corr_id_var.get()
 
 
+def tick(prefix: str) -> str:
+    """Per-iteration chain id for TOP-LEVEL loop tasks (CL.T1a): set-only,
+    no reset — the loop task owns its context, the next tick overwrites,
+    and ``create_task``'d children copy the current value at spawn. This
+    avoids re-indenting every loop body under a ``with`` block. Use
+    ``correlation_scope`` wherever restoration matters (HTTP middleware,
+    nested scopes, queue-consumer re-binds)."""
+    cid = mint(prefix)
+    corr_id_var.set(cid)
+    return cid
+
+
 @contextmanager
 def correlation_scope(prefix: str = "", *, corr_id: Optional[str] = None) -> Iterator[str]:
     """Bind a chain id for the duration of the block (mint+reset symmetric).

@@ -20,6 +20,7 @@ from typing import Optional
 import websockets
 
 import config
+from core import correlation_log
 from core.adapters.errors import RateLimitError
 from core.state import app_state
 from core.event_bus import event_bus
@@ -719,6 +720,7 @@ async def _market_stream_loop(attempt: int = 0) -> None:
 
 async def _keepalive_loop() -> None:
     while True:
+        correlation_log.tick("sch-keepalive")  # corr-tap: entry scope (CL.T1a)
         await asyncio.sleep(25 * 60)   # 25 minutes
         if _listen_key:
             try:
@@ -736,6 +738,7 @@ async def _keepalive_loop() -> None:
 async def _fallback_loop() -> None:
     """Poll REST API when WS is stale for > WS_FALLBACK_TIMEOUT seconds."""
     while True:
+        correlation_log.tick("sch-ws_fallback")  # corr-tap: entry scope (CL.T1a)
         # RL-1: raised from 5s to 15s to reduce REST pressure during WS outage
         await asyncio.sleep(15)
         ws = app_state.ws_status

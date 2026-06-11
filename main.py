@@ -18,6 +18,7 @@ except ImportError:
 
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -141,6 +142,72 @@ app = FastAPI(
     version="2.1.0",
     lifespan=lifespan,
 )
+
+
+# ── Correlation-log HTTP entry point (CL.T1a, spec §3.2 + §5.1) ──────────────
+
+async def _sse_close_tap(orig_iterator, cid: str, path: str, status: int, start: float):
+    """SSE/streaming responses: http_response fires at stream CLOSE with the
+    total duration (spec §5.1) — a multi-hour duration_ms on a /stream/*
+    route is normal. The generator runs outside the middleware's scope, so
+    the corr_id is re-bound explicitly."""
+    from core import correlation_log
+    try:
+        async for chunk in orig_iterator:
+            yield chunk
+    finally:
+        with correlation_log.correlation_scope(corr_id=cid):
+            # corr-tap: http_response (streaming)
+            correlation_log.emit(
+                "http", "operator", "out", correlation_log.CAT_HTTP_RESPONSE,
+                {"status": status, "path": path, "streaming": True,
+                 "duration_ms": round((time.perf_counter() - start) * 1000, 2)},
+            )
+
+
+@app.middleware("http")
+async def _corr_http_middleware(request, call_next):
+    """Mint one corr_id per HTTP request; tap request-in + response-out.
+
+    NB FastAPI HTTP middleware does NOT run for WebSocket scope — the
+    platform WS entry point mints its own (spec §3.2, CL.T1b). /static
+    asset fetches are skipped (UI noise, not an engine boundary)."""
+    from core import correlation_log
+    path = request.url.path
+    if path.startswith("/static"):
+        return await call_next(request)
+    with correlation_log.correlation_scope("http") as cid:
+        start = time.perf_counter()
+        # corr-tap: http_request
+        correlation_log.emit(
+            "http", "operator", "in", correlation_log.CAT_HTTP_REQUEST,
+            {"method": request.method, "path": path,
+             "query": dict(request.query_params),
+             "client": request.client.host if request.client else None,
+             "content_length": request.headers.get("content-length")},
+        )
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            # corr-tap: http_response (unhandled exception path)
+            correlation_log.emit(
+                "http", "operator", "out", correlation_log.CAT_HTTP_RESPONSE,
+                {"status": 500, "path": path, "error_type": type(exc).__name__,
+                 "duration_ms": round((time.perf_counter() - start) * 1000, 2)},
+            )
+            raise
+        if "text/event-stream" in response.headers.get("content-type", ""):
+            response.body_iterator = _sse_close_tap(
+                response.body_iterator, cid, path, response.status_code, start)
+            return response
+        # corr-tap: http_response
+        correlation_log.emit(
+            "http", "operator", "out", correlation_log.CAT_HTTP_RESPONSE,
+            {"status": response.status_code, "path": path,
+             "duration_ms": round((time.perf_counter() - start) * 1000, 2),
+             "content_length": response.headers.get("content-length")},
+        )
+        return response
 
 # Static files (CSS, JS — served from /static)
 if os.path.exists("static"):

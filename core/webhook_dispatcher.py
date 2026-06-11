@@ -100,6 +100,11 @@ class WebhookDispatcher:
                 account_id, payload = await self._queue.get()
             except asyncio.CancelledError:
                 break
+            # corr-tap: entry scope (CL.T1a) — per-JOB tick; CL.T2b replaces
+            # this with a re-bind to the corr_id carried in the queued item
+            # (spec §3.3 hand-off #2) so the POST joins the close's chain.
+            from core import correlation_log
+            correlation_log.tick("sch-webhook")
             try:
                 await self._dispatch_one(account_id, payload)
             except asyncio.CancelledError:
