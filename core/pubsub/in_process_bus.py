@@ -15,6 +15,8 @@ import fnmatch
 import logging
 from typing import Any, AsyncIterator, Dict, Set
 
+from core import correlation_log
+
 log = logging.getLogger("pubsub.inprocess")
 
 _QUEUE_MAX = 100
@@ -29,6 +31,14 @@ class InProcessBus:
 
     async def publish(self, channel: str, payload: Dict[str, Any]) -> None:
         """Publish to all matching subscribers. Never blocks."""
+        # corr-tap: pubsub_publish (CL.T2b, spec §5.7) — market-grouped
+        # (fires per recalc cycle; volume-gated, OFF in linkage)
+        _sym = payload.get("symbol") if isinstance(payload, dict) else None
+        correlation_log.emit(
+            "pubsub", "internal", "internal", correlation_log.CAT_PUBSUB_PUBLISH,
+            {"channel": channel, "backend": "inproc"},
+            symbol=_sym if isinstance(_sym, str) else None,
+        )
         from core.pubsub.channels import extract_event_type
         enriched = {**payload, "_channel_suffix": extract_event_type(channel)}
         async with self._lock:

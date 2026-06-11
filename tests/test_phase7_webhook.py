@@ -75,7 +75,7 @@ class TestWiring:
     async def test_make_handler_enqueues(self):
         d = WebhookDispatcher(db=None)
         await d.make_handler(3)({"position_id": "P"})
-        account_id, payload = d._queue.get_nowait()
+        account_id, payload, *_ = d._queue.get_nowait()  # CL.T2b: 3-tuple item
         assert account_id == 3
         assert payload == {"position_id": "P"}
 
@@ -352,7 +352,7 @@ class TestEventBusComposition:
                 pass
         drained = []
         while not d._queue.empty():
-            aid, payload = d._queue.get_nowait()
+            aid, payload, *_ = d._queue.get_nowait()  # CL.T2b: 3-tuple item
             drained.append((aid, payload["position_id"]))
         # each (account_id, payload) pairs its OWN account: {(2,P2),(5,P5)} — a
         # late-binding bug would give {(5,P2),(5,P5)}.

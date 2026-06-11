@@ -66,6 +66,14 @@ class RedisBus:
 
     async def publish(self, channel: str, payload: Dict[str, Any]) -> None:
         """Publish a message to a Redis channel. Best-effort."""
+        # corr-tap: pubsub_publish (CL.T2b, spec §5.7)
+        from core import correlation_log
+        _sym = payload.get("symbol") if isinstance(payload, dict) else None
+        correlation_log.emit(
+            "pubsub", "internal", "internal", correlation_log.CAT_PUBSUB_PUBLISH,
+            {"channel": channel, "backend": "redis"},
+            symbol=_sym if isinstance(_sym, str) else None,
+        )
         try:
             await self._ensure_connection()
             msg = json.dumps(payload, default=_json_default)

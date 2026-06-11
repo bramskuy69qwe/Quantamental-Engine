@@ -15,12 +15,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
 
 import config
+from core import correlation_log
 from core.database import db
 
 log = logging.getLogger("news_fetcher")
@@ -52,17 +54,38 @@ class FinnhubFetcher:
             return 0
         url = f"{self.BASE_URL}/news"
         params = {"category": category, "token": self.api_key}
+        # corr-tap: http_out_call / http_out_return (CL.T2b, spec §5.3b) —
+        # endpoint name only; params carry the API token, never logged
+        _t0 = time.perf_counter()
+        correlation_log.emit("news_fetcher", "finnhub", "out",
+                             correlation_log.CAT_HTTP_OUT_CALL,
+                             {"endpoint": "news", "category": category})
         try:
             async with httpx.AsyncClient(timeout=20) as client:
                 resp = await client.get(url, params=params)
                 resp.raise_for_status()
                 items = resp.json() or []
         except httpx.HTTPStatusError as e:
+            correlation_log.emit("news_fetcher", "finnhub", "in",
+                                 correlation_log.CAT_HTTP_OUT_RETURN,
+                                 {"endpoint": "news", "ok": False,
+                                  "status": e.response.status_code,
+                                  "error_type": type(e).__name__,
+                                  "duration_ms": round((time.perf_counter() - _t0) * 1000, 2)})
             log.error("Finnhub news HTTP %s: %s", e.response.status_code, e)
             return 0
         except Exception as e:
+            correlation_log.emit("news_fetcher", "finnhub", "in",
+                                 correlation_log.CAT_HTTP_OUT_RETURN,
+                                 {"endpoint": "news", "ok": False,
+                                  "error_type": type(e).__name__,
+                                  "duration_ms": round((time.perf_counter() - _t0) * 1000, 2)})
             log.error("Finnhub news fetch failed: %s", e)
             return 0
+        correlation_log.emit("news_fetcher", "finnhub", "in",
+                             correlation_log.CAT_HTTP_OUT_RETURN,
+                             {"endpoint": "news", "ok": True, "n_items": len(items),
+                              "duration_ms": round((time.perf_counter() - _t0) * 1000, 2)})
 
         rows: List[Dict[str, Any]] = []
         for it in items:
@@ -98,17 +121,37 @@ class FinnhubFetcher:
             return 0
         url = f"{self.BASE_URL}/calendar/economic"
         params = {"from": from_date, "to": to_date, "token": self.api_key}
+        # corr-tap: http_out_call / http_out_return (CL.T2b, spec §5.3b)
+        _t0 = time.perf_counter()
+        correlation_log.emit("news_fetcher", "finnhub", "out",
+                             correlation_log.CAT_HTTP_OUT_CALL,
+                             {"endpoint": "calendar"})
         try:
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.get(url, params=params)
                 resp.raise_for_status()
                 payload = resp.json() or {}
         except httpx.HTTPStatusError as e:
+            correlation_log.emit("news_fetcher", "finnhub", "in",
+                                 correlation_log.CAT_HTTP_OUT_RETURN,
+                                 {"endpoint": "calendar", "ok": False,
+                                  "status": e.response.status_code,
+                                  "error_type": type(e).__name__,
+                                  "duration_ms": round((time.perf_counter() - _t0) * 1000, 2)})
             log.error("Finnhub calendar HTTP %s: %s", e.response.status_code, e)
             return 0
         except Exception as e:
+            correlation_log.emit("news_fetcher", "finnhub", "in",
+                                 correlation_log.CAT_HTTP_OUT_RETURN,
+                                 {"endpoint": "calendar", "ok": False,
+                                  "error_type": type(e).__name__,
+                                  "duration_ms": round((time.perf_counter() - _t0) * 1000, 2)})
             log.error("Finnhub calendar fetch failed: %s", e)
             return 0
+        correlation_log.emit("news_fetcher", "finnhub", "in",
+                             correlation_log.CAT_HTTP_OUT_RETURN,
+                             {"endpoint": "calendar", "ok": True,
+                              "duration_ms": round((time.perf_counter() - _t0) * 1000, 2)})
 
         events = (payload.get("economicCalendar") or
                   payload.get("calendar") or

@@ -294,6 +294,50 @@ class TestRegistryAndProfiles:
         attr = [c for c, g in cl.registry().items() if g == cl.GROUP_ATTR]
         assert len(attr) == 9
 
+    def test_registry_snapshot_ha3(self):
+        """HA-3: a silent re-group (editing a register() line) would move a
+        category in/out of the linkage profile with the suite green — the
+        register() conflict guard only sees a SECOND registration. Any
+        re-group must be a conscious two-file edit (code + this snapshot)."""
+        assert cl.registry() == {
+            # http
+            "http_request": "http", "http_response": "http",
+            # bus
+            "bus_publish": "bus", "bus_deliver": "bus",
+            # outbound
+            "rest_call": "outbound", "rest_return": "outbound",
+            "http_out_call": "outbound", "http_out_return": "outbound",
+            # lifecycle frames
+            "ws_account_update": "lifecycle", "ws_order_update": "lifecycle",
+            "ws_algo_update": "lifecycle", "platform_fill": "lifecycle",
+            "platform_snapshot": "lifecycle", "platform_hello": "lifecycle",
+            # market (volume-gated; OFF in linkage)
+            "platform_push": "market", "ws_news": "market",
+            "ws_kline": "market", "ws_depth": "market",
+            "ws_mark_price": "market", "pubsub_publish": "market",
+            # ws_lifecycle
+            "ws_connect": "ws_lifecycle", "ws_connected": "ws_lifecycle",
+            "ws_disconnect": "ws_lifecycle", "ws_stream_rebuild": "ws_lifecycle",
+            "calc_symbol_change": "ws_lifecycle",
+            "ws_listenkey_keepalive": "ws_lifecycle",
+            # state
+            "position_snapshot_applied": "state",
+            "position_incremental_applied": "state",
+            "account_update_applied": "state", "portfolio_recalculated": "state",
+            "calc_transition": "state", "link_transition": "state",
+            "order_status_applied": "state", "reconcile_promote": "state",
+            # db
+            "db_write": "db",
+            # attr (the nine)
+            "attr_match_attempt": "attr", "attr_tpid_resolve": "attr",
+            "attr_close_build": "attr", "attr_bracket_inherit": "attr",
+            "attr_reenrich_trigger": "attr", "attr_junction_form": "attr",
+            "attr_enrich": "attr", "attr_drift_check": "attr",
+            "attr_funding_assign": "attr",
+            # meta
+            "overflow": "meta",
+        }
+
     def test_unknown_category_raises_loudly(self):
         with pytest.raises(ValueError, match="unregistered"):
             cl.enabled("attr_typo_category")

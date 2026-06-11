@@ -229,6 +229,11 @@ class PlatformBridge:
                     msg = json.loads(raw)
                 except json.JSONDecodeError:
                     continue
+                # corr-tap: entry point — one chain per inbound platform WS
+                # frame (spec §3.2 wsp-*; platform fills feed process_fill,
+                # the money path). Minted HERE, not in _dispatch (HA-1).
+                from core import correlation_log as cl
+                cl.tick("wsp")
                 await self._dispatch(msg)
         except Exception:
             pass
@@ -287,10 +292,10 @@ class PlatformBridge:
 
     async def _dispatch(self, msg: dict) -> None:
         event_type = msg.get("type", "")
-        # corr-tap: entry point — one chain per inbound platform frame
-        # (spec §3.2 wsp-*; platform fills feed process_fill, the money path)
-        from core import correlation_log as cl
-        cl.tick("wsp")
+        # HA-1 (CL.T2b): _dispatch no longer mints — the WS receive loop in
+        # handle_ws mints wsp-* per frame; the REST fallback
+        # (/api/platform/event) INHERITS its request's http-* chain instead
+        # of splitting it. The frame envelope below rides the ambient chain.
         self._tap_platform_frame(event_type, msg)
         if event_type == "fill":
             await self._handle_fill(msg)

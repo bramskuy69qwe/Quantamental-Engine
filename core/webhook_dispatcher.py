@@ -34,10 +34,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any, Dict, List
+from urllib.parse import urlparse
 
 import httpx
 
+from core import correlation_log
 from core.account_config import read_account_config_async
 from core.context_query import json_safe
 from core.event_bus import DOMAIN_POSITION, ch_engine
@@ -77,7 +80,11 @@ class WebhookDispatcher:
         payload carries no account_id (it's in the topic), hence the closure."""
         async def _handler(payload: Dict[str, Any]) -> None:
             try:
-                self._queue.put_nowait((account_id, payload))
+                # CL.T2b (spec §3.3 hand-off #2): carry the corr_id — the bus
+                # dispatch re-bound the ORIGINATING close's chain around this
+                # handler; the worker re-binds it again so the POST joins it.
+                self._queue.put_nowait(
+                    (account_id, payload, correlation_log.current_corr_id()))
             except Exception:
                 log.debug("webhook enqueue failed account=%s", account_id, exc_info=True)
         return _handler
@@ -97,16 +104,16 @@ class WebhookDispatcher:
         Spawned in schedulers startup; cancelled on shutdown."""
         while True:
             try:
-                account_id, payload = await self._queue.get()
+                account_id, payload, corr_id = await self._queue.get()
             except asyncio.CancelledError:
                 break
-            # corr-tap: entry scope (CL.T1a) — per-JOB tick; CL.T2b replaces
-            # this with a re-bind to the corr_id carried in the queued item
-            # (spec §3.3 hand-off #2) so the POST joins the close's chain.
-            from core import correlation_log
-            correlation_log.tick("sch-webhook")
             try:
-                await self._dispatch_one(account_id, payload)
+                # corr-tap: queue hand-off #2 (CL.T2b, spec §3.3/§6.2) — the
+                # worker re-binds the corr carried from the bus handler, so
+                # the outbound POST joins the originating close's chain
+                # (replaces the CL.T1a per-job tick).
+                with correlation_log.correlation_scope(corr_id=corr_id):
+                    await self._dispatch_one(account_id, payload)
             except asyncio.CancelledError:
                 break
             except Exception:
@@ -126,12 +133,37 @@ class WebhookDispatcher:
         body = json_safe({"event": "position_closed", "payload": payload})
         backoff = self._initial_backoff_s
         last_err: Any = None
+        # hostname only — a webhook URL may carry tokens in path/query AND
+        # basic-auth userinfo in the authority (user:tok@host); netloc would
+        # leak the latter (audit T2b-1, spec §7.2)
+        host = urlparse(cfg.webhook_url).hostname or ""
         for attempt in range(1, self._max_attempts + 1):
+            _t0 = time.perf_counter()
+            # corr-tap: http_out_call / http_out_return (CL.T2b, spec §5.3b)
+            correlation_log.emit(
+                "webhook_dispatcher", "subscriber", "out",
+                correlation_log.CAT_HTTP_OUT_CALL,
+                {"host": host, "event": "position_closed", "attempt": attempt},
+            )
             try:
                 await self._post(cfg.webhook_url, body)
+                correlation_log.emit(
+                    "webhook_dispatcher", "subscriber", "in",
+                    correlation_log.CAT_HTTP_OUT_RETURN,
+                    {"host": host, "ok": True, "attempt": attempt,
+                     "duration_ms": round((time.perf_counter() - _t0) * 1000, 2)},
+                )
                 return  # delivered
             except Exception as e:
                 last_err = e
+                correlation_log.emit(
+                    "webhook_dispatcher", "subscriber", "in",
+                    correlation_log.CAT_HTTP_OUT_RETURN,
+                    {"host": host, "ok": False, "attempt": attempt,
+                     "error_type": type(e).__name__,
+                     "status": getattr(getattr(e, "response", None), "status_code", None),
+                     "duration_ms": round((time.perf_counter() - _t0) * 1000, 2)},
+                )
                 log.warning(
                     "webhook POST failed (attempt %d/%d) account=%s: %s",
                     attempt, self._max_attempts, account_id, e,

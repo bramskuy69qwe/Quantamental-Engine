@@ -92,6 +92,15 @@ def client():
 
 
 class TestHttpMiddleware:
+    def test_middleware_is_registered_on_the_real_app_ha2(self):
+        # HA-2: deleting the decorator would darken the whole HTTP boundary
+        # while every function-level test stays green — pin the registration.
+        import main
+        assert any(
+            m.kwargs.get("dispatch") is main._corr_http_middleware
+            for m in main.app.user_middleware
+        ), "correlation middleware not registered on main.app"
+
     def test_request_response_pair_share_one_http_corr_id(self, client):
         r = client.get("/", follow_redirects=False)
         assert r.status_code == 200
@@ -237,9 +246,14 @@ class TestLoopTickScopes:
             "funding_refresh": sched._funding_refresh_loop,
             "operator_session_reaper": sched._operator_session_reaper_loop,
             # spawned inside _startup_fetch:
-            "webhook_dispatcher": webhook_dispatcher.WebhookDispatcher.run,
             "reconciler_closed_positions_periodic": sched._reconcile_closed_positions_periodic,
         }
+        # CL.T2b: the webhook worker upgraded from a per-job tick to the
+        # carried-corr RE-BIND (spec §3.3 hand-off #2) — assert the rebind
+        # form instead of a tick
+        webhook_src = inspect.getsource(webhook_dispatcher.WebhookDispatcher.run)
+        assert "correlation_scope(corr_id=" in webhook_src, \
+            "webhook worker lost its hand-off re-bind"
         exempt = {
             # one-shot spawned from _startup_fetch's body: create_task copies
             # context, so it inherits the boot chain — no own tick needed.
@@ -249,6 +263,9 @@ class TestLoopTickScopes:
             "event_bus",
             # per-FRAME minting (wsn-*) lands with the WS frame taps (CL.T1b).
             "bwe_ws",
+            # per-JOB carried-corr re-bind (CL.T2b hand-off #2), asserted
+            # separately above — a tick here would fight the re-bind.
+            "webhook_dispatcher",
         }
         for name, fn in covered.items():
             src = inspect.getsource(fn)

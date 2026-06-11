@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, Optional
 
@@ -15,6 +16,7 @@ import re as _re
 
 import ccxt
 
+from core import correlation_log
 from core.adapters.errors import (
     RateLimitError, AuthenticationError, ConnectionError,
     ValidationError, ExchangeError,
@@ -127,39 +129,76 @@ class BaseExchangeAdapter:
                     endpoint, effective_priority,
                 )
 
+        # corr-tap: rest_call / rest_return (CL.T2b, spec §5.3). Emitted on
+        # the LOOP side only — run_in_executor does NOT propagate contextvars
+        # (spec §3.3 thread rule), so a tap inside the callable would read "".
+        # A scope-less caller gets a one-shot rest-* binding so the out/return
+        # pair still correlates with each other; reaching that fallback is
+        # itself a missing-entry-scope finding (spec §3.2).
+        _tok = None
+        if not correlation_log.current_corr_id():
+            _tok = correlation_log.corr_id_var.set(correlation_log.mint("rest"))
+        _peer = self.exchange_id or "venue"
+        _t0 = time.perf_counter()
+        correlation_log.emit(
+            f"adapters.{_peer}", _peer, "out", correlation_log.CAT_REST_CALL,
+            {"endpoint": endpoint, "n_args": len(args),
+             "priority": effective_priority},
+        )
+
         loop = asyncio.get_event_loop()
         try:
-            if args:
-                result_val = await loop.run_in_executor(_REST_POOL, fn, *args)
-            else:
-                result_val = await loop.run_in_executor(_REST_POOL, fn)
-            # HIGH-014 (Task 99): reconcile tracker with server-side truth from
-            # response headers (X-MBX-USED-WEIGHT-1M on Binance, etc.). The
-            # estimate-only tracker drifts otherwise. Reconciliation is best-
-            # effort — a parse failure must not corrupt the successful result.
-            if tracker is not None:
-                try:
-                    self._reconcile_from_response(endpoint, tracker)
-                except Exception:
-                    log.exception(
-                        "weight tracker reconciliation failed for %s; "
-                        "tracker estimate may drift from server",
-                        endpoint,
-                    )
-            return result_val
-        except (ccxt.RateLimitExceeded, ccxt.DDoSProtection) as e:
-            # Parse "banned until <epoch_ms>" for precise retry hint
-            match = _re.search(r"banned until (\d+)", str(e))
-            retry_ms = int(match.group(1)) if match else None
-            raise RateLimitError(str(e), retry_after_ms=retry_ms) from e
-        except ccxt.AuthenticationError as e:
-            raise AuthenticationError(str(e)) from e
-        except (ccxt.NetworkError, ccxt.RequestTimeout) as e:
-            raise ConnectionError(str(e)) from e
-        except (ccxt.InvalidOrder, ccxt.InsufficientFunds) as e:
-            raise ValidationError(str(e)) from e
-        except (ccxt.ExchangeError, ccxt.ExchangeNotAvailable) as e:
-            raise ExchangeError(str(e)) from e
+            try:
+                if args:
+                    result_val = await loop.run_in_executor(_REST_POOL, fn, *args)
+                else:
+                    result_val = await loop.run_in_executor(_REST_POOL, fn)
+                # HIGH-014 (Task 99): reconcile tracker with server-side truth from
+                # response headers (X-MBX-USED-WEIGHT-1M on Binance, etc.). The
+                # estimate-only tracker drifts otherwise. Reconciliation is best-
+                # effort — a parse failure must not corrupt the successful result.
+                if tracker is not None:
+                    try:
+                        self._reconcile_from_response(endpoint, tracker)
+                    except Exception:
+                        log.exception(
+                            "weight tracker reconciliation failed for %s; "
+                            "tracker estimate may drift from server",
+                            endpoint,
+                        )
+                correlation_log.emit(
+                    f"adapters.{_peer}", _peer, "in", correlation_log.CAT_REST_RETURN,
+                    {"endpoint": endpoint, "ok": True,
+                     "duration_ms": round((time.perf_counter() - _t0) * 1000, 2),
+                     "result": type(result_val).__name__,
+                     "n": len(result_val) if isinstance(result_val, (list, tuple, dict)) else None},
+                )
+                return result_val
+            except (ccxt.RateLimitExceeded, ccxt.DDoSProtection) as e:
+                # Parse "banned until <epoch_ms>" for precise retry hint
+                match = _re.search(r"banned until (\d+)", str(e))
+                retry_ms = int(match.group(1)) if match else None
+                raise RateLimitError(str(e), retry_after_ms=retry_ms) from e
+            except ccxt.AuthenticationError as e:
+                raise AuthenticationError(str(e)) from e
+            except (ccxt.NetworkError, ccxt.RequestTimeout) as e:
+                raise ConnectionError(str(e)) from e
+            except (ccxt.InvalidOrder, ccxt.InsufficientFunds) as e:
+                raise ValidationError(str(e)) from e
+            except (ccxt.ExchangeError, ccxt.ExchangeNotAvailable) as e:
+                raise ExchangeError(str(e)) from e
+        except Exception as e:
+            # taps the TRANSLATED exception (the engine-facing error type)
+            correlation_log.emit(
+                f"adapters.{_peer}", _peer, "in", correlation_log.CAT_REST_RETURN,
+                {"endpoint": endpoint, "ok": False,
+                 "error_type": type(e).__name__,
+                 "duration_ms": round((time.perf_counter() - _t0) * 1000, 2)},
+            )
+            raise
+        finally:
+            if _tok is not None:
+                correlation_log.corr_id_var.reset(_tok)
 
     def _reconcile_from_response(self, endpoint: str, tracker) -> None:
         """Reconcile tracker from exchange response headers (HIGH-014).

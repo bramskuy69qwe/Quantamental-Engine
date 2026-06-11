@@ -95,17 +95,39 @@ class RegimeFetcher:
                     continue
             return rows
 
+        # corr-tap: http_out_call / http_out_return (CL.T2b, spec §5.3b) —
+        # CALLER-side tap; yfinance's internal HTTP stack is a §13 accepted
+        # gap, and run_in_executor would not carry the contextvar anyway.
+        from core import correlation_log
+        _t0 = time.perf_counter()
+        correlation_log.emit("regime_fetcher", "yahoo", "out",
+                             correlation_log.CAT_HTTP_OUT_CALL,
+                             {"ticker": "^VIX"})
         try:
             rows = await asyncio.get_event_loop().run_in_executor(None, _download)
         except ModuleNotFoundError as e:
+            correlation_log.emit("regime_fetcher", "yahoo", "in",
+                                 correlation_log.CAT_HTTP_OUT_RETURN,
+                                 {"ticker": "^VIX", "ok": False,
+                                  "error_type": type(e).__name__,
+                                  "duration_ms": round((time.perf_counter() - _t0) * 1000, 2)})
             msg = "yfinance not installed — run: pip install \"yfinance>=0.2.36\""
             log.error("VIX: %s (%s)", msg, e)
             await _progress(progress_cb, 100, f"VIX: {msg}")
             return 0
         except Exception as e:
+            correlation_log.emit("regime_fetcher", "yahoo", "in",
+                                 correlation_log.CAT_HTTP_OUT_RETURN,
+                                 {"ticker": "^VIX", "ok": False,
+                                  "error_type": type(e).__name__,
+                                  "duration_ms": round((time.perf_counter() - _t0) * 1000, 2)})
             log.error("VIX download error: %s", e)
             await _progress(progress_cb, 100, f"VIX: error — {e}")
             return 0
+        correlation_log.emit("regime_fetcher", "yahoo", "in",
+                             correlation_log.CAT_HTTP_OUT_RETURN,
+                             {"ticker": "^VIX", "ok": True, "n_rows": len(rows),
+                              "duration_ms": round((time.perf_counter() - _t0) * 1000, 2)})
 
         if not rows:
             log.warning("No VIX data returned for %s to %s", since_date, until_date)
@@ -145,10 +167,35 @@ class RegimeFetcher:
             "observation_end": until_date,
         }
 
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.get(url, params=params)
-            resp.raise_for_status()
-            data = resp.json()
+        # corr-tap: http_out_call / http_out_return (CL.T2b, spec §5.3b) —
+        # series id only; params carry the API key, never logged
+        from core import correlation_log
+        _t0 = time.perf_counter()
+        correlation_log.emit("regime_fetcher", "fred", "out",
+                             correlation_log.CAT_HTTP_OUT_CALL,
+                             {"series": series_id})
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.get(url, params=params)
+                resp.raise_for_status()
+                data = resp.json()
+        except Exception as e:
+            correlation_log.emit("regime_fetcher", "fred", "in",
+                                 correlation_log.CAT_HTTP_OUT_RETURN,
+                                 {"series": series_id, "ok": False,
+                                  "error_type": type(e).__name__,
+                                  "status": getattr(getattr(e, "response", None), "status_code", None),
+                                  "duration_ms": round((time.perf_counter() - _t0) * 1000, 2)})
+            raise  # preserve the pre-tap behavior: propagate to the backfill caller
+        # arg construction is OUTSIDE emit's never-raises guard — harden so a
+        # schema-drifted FRED response (non-dict / non-list observations)
+        # cannot crash past the T163 validation below (audit T2b-2)
+        _obs = data.get("observations") if isinstance(data, dict) else None
+        correlation_log.emit("regime_fetcher", "fred", "in",
+                             correlation_log.CAT_HTTP_OUT_RETURN,
+                             {"series": series_id, "ok": True,
+                              "n_observations": len(_obs) if isinstance(_obs, list) else None,
+                              "duration_ms": round((time.perf_counter() - _t0) * 1000, 2)})
 
         # Task 163 (MED-030): validate FRED response structure.
         # The pre-T163 `data.get("observations", [])` silently swallowed

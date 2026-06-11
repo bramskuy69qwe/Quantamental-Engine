@@ -197,20 +197,49 @@ class TestPlatformFrames:
         monkeypatch.setattr(cl, "_profile", "linkage")
         assert not cl.enabled(cl.CAT_PLATFORM_PUSH)
 
-    def test_dispatch_mints_wsp_chain_into_the_fill_money_path(self, bridge, monkeypatch):
-        # plan 1.4: platform fills feed process_fill — the money path must
-        # see the frame's chain (stubbed at the bridge's fill handler)
+    def test_dispatch_inherits_ambient_chain_ha1(self, bridge, monkeypatch):
+        # HA-1 (CL.T2b): _dispatch no longer mints — the REST fallback
+        # (/api/platform/event) inherits its request's http-* chain, so a
+        # REST-POSTed fill's money path joins the http pair instead of
+        # splitting into a trigger-less wsp chain.
         seen = []
 
         async def fake_fill(msg):
             seen.append(cl.current_corr_id())
 
         monkeypatch.setattr(bridge, "_handle_fill", fake_fill)
-        asyncio.run(bridge._dispatch({"type": "fill", "symbol": "XAUUSDT",
-                                      "trade_id": "T-9"}))
-        assert len(seen) == 1 and seen[0].startswith("wsp-")
+        with cl.correlation_scope("http") as cid:
+            asyncio.run(bridge._dispatch({"type": "fill", "symbol": "XAUUSDT",
+                                          "trade_id": "T-9"}))
+        assert seen == [cid]  # inherited, NOT a fresh wsp-*
         (env,) = [e for e in _drain() if e["category"] == "platform_fill"]
-        assert env["corr_id"] == seen[0]
+        assert env["corr_id"] == cid
+
+    def test_handle_ws_receive_loop_mints_wsp_per_frame(self, bridge, monkeypatch):
+        # the WS path still mints (HA-1 moved the mint to the receive loop)
+        seen = []
+
+        async def fake_dispatch(msg):
+            seen.append((msg["type"], cl.current_corr_id()))
+
+        class FakeWS:
+            async def accept(self):
+                return None
+
+            async def send_text(self, text):
+                return None
+
+            async def iter_text(self):
+                yield json.dumps({"type": "heartbeat"})
+                yield json.dumps({"type": "hello"})
+
+        monkeypatch.setattr(bridge, "_dispatch", fake_dispatch)
+        asyncio.run(bridge.handle_ws(FakeWS()))
+        _drain()  # discard push/disconnect envelopes — minting is the assert
+        assert [t for t, _ in seen] == ["heartbeat", "hello"]
+        corrs = [c for _, c in seen]
+        assert all(c.startswith("wsp-") for c in corrs)
+        assert corrs[0] != corrs[1]  # fresh chain per frame
 
 
 # ── BWE news frames (wsn-*) ──────────────────────────────────────────────────
@@ -298,6 +327,20 @@ class TestWsLifecycle:
         assert p["trigger"] == "calc_symbol_change"
         assert p["added"] == ["bbbusdt@kline_5m"]
         assert p["removed"] == ["aaausdt@depth20"]
+
+    def test_no_streams_branch_resets_last_streams_ha5(self, monkeypatch):
+        # HA-5: without the reset, a flat interlude leaves _last_streams
+        # stale and the next rebuild diff reports phantom 'removed' entries
+        monkeypatch.setattr(wsm, "_build_market_streams", lambda: [])
+        monkeypatch.setattr(wsm, "_last_streams", ["ghost@kline_5m"])
+
+        async def boom(_secs):
+            raise SystemExit  # exit the loop right after the reset
+
+        monkeypatch.setattr(asyncio, "sleep", boom)
+        with pytest.raises(SystemExit):
+            asyncio.run(wsm._market_stream_loop())
+        assert wsm._last_streams == []
 
     def test_connect_lifecycle_taps_present_in_socket_paths(self):
         """The connect/connected/disconnect emits live inside real-socket
