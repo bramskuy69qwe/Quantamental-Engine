@@ -110,7 +110,7 @@ def _drain_events(channel_filter: str | None = None) -> List[tuple]:
     from core.event_bus import event_bus
     events = []
     while not event_bus._queue.empty():
-        events.append(event_bus._queue.get_nowait())
+        events.append(event_bus._queue.get_nowait()[:2])  # CL.T2a: item is (ch, payload, corr_id)
     if channel_filter:
         # P6.T3: calc:* events ride engine:account:{id}:calc:{event}; match by
         # the calc:{event} suffix ONLY (no flat fallback → a flat-topic

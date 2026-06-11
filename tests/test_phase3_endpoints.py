@@ -176,7 +176,7 @@ class TestManualLink:
         # per-account topic engine:account:{id}:calc:linked).
         events = []
         while not event_bus._queue.empty():
-            events.append(event_bus._queue.get_nowait())
+            events.append(event_bus._queue.get_nowait()[:2])  # CL.T2a: item is (ch, payload, corr_id)
         assert any(c.endswith(":calc:linked") for c, _ in events)
 
     @pytest.mark.asyncio

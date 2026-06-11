@@ -79,7 +79,7 @@ def _drain(channel: str | None = None) -> List[tuple]:
     from core.event_bus import event_bus
     evs = []
     while not event_bus._queue.empty():
-        evs.append(event_bus._queue.get_nowait())
+        evs.append(event_bus._queue.get_nowait()[:2])  # CL.T2a: item is (ch, payload, corr_id)
     # P6.T3: calc:* events ride engine:account:{id}:calc:{event}; match by the
     # calc:{event} suffix ONLY (no flat fallback → a flat-topic regression FAILS
     # the test, Rule 8). Full per-account topic asserted in test_state_machines.

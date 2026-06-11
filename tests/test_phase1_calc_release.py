@@ -173,7 +173,7 @@ class TestReleaseOnOperatorCancel:
 
         events = []
         while not event_bus._queue.empty():
-            events.append(event_bus._queue.get_nowait())
+            events.append(event_bus._queue.get_nowait()[:2])  # CL.T2a: item is (ch, payload, corr_id)
         cancelled = [
             (c, p) for c, p in events
             if c == "engine:account:1:calc:order_cancelled"
@@ -202,7 +202,7 @@ class TestReleaseOnOperatorCancel:
         )
 
         events = [
-            c for c, _ in (
+            c for c, *_ in (
                 event_bus._queue.get_nowait()
                 for _ in range(event_bus._queue.qsize())
             )

@@ -1035,7 +1035,7 @@ class TestPositionClosedEvent:
 
         events = []
         while not event_bus._queue.empty():
-            events.append(event_bus._queue.get_nowait())
+            events.append(event_bus._queue.get_nowait()[:2])  # CL.T2a: item is (ch, payload, corr_id)
         # compat shim: the flat event is still emitted for the reconciler.
         assert any(c == "risk:position_closed" for c, _ in events)
         closed = [(c, p) for c, p in events if c == "engine:account:1:position:closed"]
@@ -1090,7 +1090,7 @@ class TestPositionClosedEvent:
 
         events = []
         while not event_bus._queue.empty():
-            events.append(event_bus._queue.get_nowait())
+            events.append(event_bus._queue.get_nowait()[:2])  # CL.T2a: item is (ch, payload, corr_id)
         assert not any(c.endswith(":position:closed") for c, _ in events)
 
     @pytest.mark.asyncio
@@ -1114,7 +1114,7 @@ class TestPositionClosedEvent:
         await om._build_close_row_for_fill(ACCOUNT_ID, _close_fill_cp("XO", "POS-9", 2000))
         events = []
         while not event_bus._queue.empty():
-            events.append(event_bus._queue.get_nowait())
+            events.append(event_bus._queue.get_nowait()[:2])  # CL.T2a: item is (ch, payload, corr_id)
         assert not any(c.endswith(":position:closed") for c, _ in events)
 
 
@@ -1149,7 +1149,7 @@ class TestPositionLiquidatedEvent:
 
         events = []
         while not event_bus._queue.empty():
-            events.append(event_bus._queue.get_nowait())
+            events.append(event_bus._queue.get_nowait()[:2])  # CL.T2a: item is (ch, payload, corr_id)
         liq = [(c, p) for c, p in events if c == "engine:account:1:position:liquidated"]
         assert len(liq) == 1, f"expected 1 position:liquidated, got {[c for c, _ in events]!r}"
         _, p = liq[0]
@@ -1178,7 +1178,7 @@ class TestPositionLiquidatedEvent:
         assert row["liquidation_px"] is None
         events = []
         while not event_bus._queue.empty():
-            events.append(event_bus._queue.get_nowait())
+            events.append(event_bus._queue.get_nowait()[:2])  # CL.T2a: item is (ch, payload, corr_id)
         assert not any(c.endswith(":position:liquidated") for c, _ in events)
 
     @pytest.mark.asyncio
@@ -1206,8 +1206,8 @@ class TestPositionLiquidatedEvent:
         assert partial["exit_reason"] == "TP_PLANNED"
         assert final["exit_reason"] == "LIQUIDATION"
         assert any(c == "engine:account:1:position:liquidated"
-                   for c, _ in (event_bus._queue.get_nowait()
-                                for _ in range(event_bus._queue.qsize())))
+                   for c, *_ in (event_bus._queue.get_nowait()
+                                 for _ in range(event_bus._queue.qsize())))
 
     @pytest.mark.asyncio
     async def test_partial_liquidation_emits_no_event(self, db, om):
@@ -1230,7 +1230,7 @@ class TestPositionLiquidatedEvent:
         assert row["exit_reason"] == "LIQUIDATION"   # per-order classified
         events = []
         while not event_bus._queue.empty():
-            events.append(event_bus._queue.get_nowait())
+            events.append(event_bus._queue.get_nowait()[:2])  # CL.T2a: item is (ch, payload, corr_id)
         assert not any(c.endswith(":position:liquidated") for c, _ in events)
 
     @pytest.mark.asyncio
@@ -1258,7 +1258,7 @@ class TestPositionLiquidatedEvent:
         final = await _closed_row_cp(db, "POS-5", 3000)
         assert final["exit_reason"] == "LIQUIDATION"          # liq dominates
         assert final["liquidation_px"] == pytest.approx(49000.0)  # liq fill, not 53000
-        liq = [(c, p) for c, p in (event_bus._queue.get_nowait()
+        liq = [(c, p) for c, p, *_ in (event_bus._queue.get_nowait()
                                    for _ in range(event_bus._queue.qsize()))
                if c == "engine:account:1:position:liquidated"]
         assert len(liq) == 1

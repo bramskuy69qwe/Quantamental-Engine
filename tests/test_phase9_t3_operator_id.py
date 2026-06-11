@@ -134,7 +134,7 @@ def _drain_bus():
     from core.event_bus import event_bus
     out = []
     while not event_bus._queue.empty():
-        out.append(event_bus._queue.get_nowait())
+        out.append(event_bus._queue.get_nowait()[:2])  # CL.T2a: item is (ch, payload, corr_id)
     return out
 
 

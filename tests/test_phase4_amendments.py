@@ -512,7 +512,7 @@ class TestPositionAmendedEventBus:
             ACCOUNT_ID, _incoming("O-1", price=50100.0, quantity=1.0, updated_at_ms=777))
         events = []
         while not event_bus._queue.empty():
-            events.append(event_bus._queue.get_nowait())
+            events.append(event_bus._queue.get_nowait()[:2])  # CL.T2a: item is (ch, payload, corr_id)
         amended = [(c, p) for c, p in events if c == "engine:account:1:position:amended"]
         assert len(amended) == 1, f"expected 1 position:amended, got {events!r}"
         _, p = amended[0]
@@ -541,5 +541,5 @@ class TestPositionAmendedEventBus:
             ACCOUNT_ID, _incoming("O-1", price=50100.0, quantity=1.0))
         events = []
         while not event_bus._queue.empty():
-            events.append(event_bus._queue.get_nowait())
+            events.append(event_bus._queue.get_nowait()[:2])  # CL.T2a: item is (ch, payload, corr_id)
         assert not any(c.endswith(":position:amended") for c, _ in events)

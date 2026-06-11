@@ -77,7 +77,7 @@ def _drain(channel: str | None = None) -> List[tuple]:
     from core.event_bus import event_bus
     evs = []
     while not event_bus._queue.empty():
-        evs.append(event_bus._queue.get_nowait())
+        evs.append(event_bus._queue.get_nowait()[:2])  # CL.T2a: item is (ch, payload, corr_id)
     # P6.T3: calc:* events ride the per-account topic
     # engine:account:{id}:calc:{event}; match by the calc:{event} suffix ONLY
     # (no flat-topic fallback — so a regression back to the flat "calc:{event}"

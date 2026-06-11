@@ -584,7 +584,7 @@ class TestEnrichOrderIntegration:
 
         events: List[tuple] = []
         while not event_bus._queue.empty():
-            events.append(event_bus._queue.get_nowait())
+            events.append(event_bus._queue.get_nowait()[:2])  # CL.T2a: item is (ch, payload, corr_id)
         # P6.T3: calc:linked now rides engine:account:{id}:calc:linked.
         calc_linked = [(c, p) for c, p in events if c.endswith(":calc:linked")]
 

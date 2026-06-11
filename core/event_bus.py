@@ -37,9 +37,30 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any, Awaitable, Callable, Dict, List
 
+from core import correlation_log
+
 log = logging.getLogger("event_bus")
+
+# CL.T2a (spec §6.2, D6): the queued item is (channel, payload, corr_id) —
+# the publisher's chain id is captured at enqueue and RE-BOUND by the
+# dispatch loop before handlers run, because the bus consumer is a separate
+# task that contextvars cannot cross. Subscribers (and their create_task
+# children) therefore inherit the ORIGINATING chain. This is deliberately a
+# small, isolated diff (its own commit) so it stays independently revertable.
+
+# The pivot fields a bus_publish summary carries (spec §5.2 payload-summary:
+# enough to join the chain to trade entities without duplicating payloads).
+_SUMMARY_KEYS = ("calc_id", "position_id", "terminal_position_id",
+                 "lifecycle_id", "order_id", "symbol")
+
+
+def _payload_summary(payload: Dict[str, Any]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {k: payload[k] for k in _SUMMARY_KEYS if k in payload}
+    out["n_keys"] = len(payload)
+    return out
 
 # Canonical channel names (identical to old redis_bus — no callsite changes needed)
 CH_ACCOUNT_UPDATED     = "risk:account_updated"
@@ -92,8 +113,10 @@ class EventBus:
     """
     In-process pub/sub event bus backed by asyncio.Queue.
 
-    publish() enqueues (channel, payload); run() drains the queue
-    and dispatches to registered handlers. No external process needed.
+    publish() enqueues (channel, payload, corr_id) — the publisher's
+    correlation-chain id, re-bound by run() around dispatch (CL.T2a, spec
+    §6.2); run() drains the queue and dispatches to registered handlers.
+    No external process needed.
     """
 
     def __init__(self) -> None:
@@ -132,9 +155,34 @@ class EventBus:
         if handler not in self._global_handlers:
             self._global_handlers.append(handler)
 
+    def _n_subscribers(self, channel: str) -> int:
+        return len(self._handlers.get(channel, [])) + len(self._global_handlers)
+
+    def _tap_publish(self, channel: str, payload: Any) -> None:
+        # corr-tap: bus_publish (spec §5.2) — publisher's context, fired AFTER
+        # a successful enqueue ("published" = enqueued; no phantom envelope if
+        # the put path ever fails). Guarded: a tap must never break publish's
+        # never-raises contract, even on a contract-violating non-dict payload.
+        try:
+            is_dict = isinstance(payload, dict)
+            sym = payload.get("symbol") if is_dict else None
+            correlation_log.emit(
+                "event_bus", "event_bus", "internal", correlation_log.CAT_BUS_PUBLISH,
+                {"channel": channel,
+                 "summary": _payload_summary(payload) if is_dict else {"n_keys": -1},
+                 "n_subscribers": self._n_subscribers(channel)},
+                symbol=sym if isinstance(sym, str) else None,
+            )
+        except Exception:
+            log.debug("bus_publish tap failed for %r", channel, exc_info=True)
+
     async def publish(self, channel: str, payload: Dict[str, Any]) -> None:
-        """Enqueue an event for dispatch. Never raises."""
-        await self._queue.put((channel, payload))
+        """Enqueue an event for dispatch. Never raises.
+
+        CL.T2a: captures the publisher's corr_id with the queued item so the
+        dispatch loop can re-bind it (spec §6.2)."""
+        await self._queue.put((channel, payload, correlation_log.current_corr_id()))
+        self._tap_publish(channel, payload)
 
     async def publish_engine(
         self, account_id: int, domain: str, event: str,
@@ -169,33 +217,68 @@ class EventBus:
         Best-effort: a put failure is swallowed so it never breaks the hot path.
         """
         try:
-            self._queue.put_nowait((ch_engine(account_id, domain, event), payload))
+            channel = ch_engine(account_id, domain, event)
+            # sync-in-task on the loop thread → contextvar capture works here
+            self._queue.put_nowait((channel, payload, correlation_log.current_corr_id()))
+            self._tap_publish(channel, payload)  # after the enqueue succeeded
         except Exception:
             log.debug(
                 "publish_engine_nowait enqueue failed for %s:%s:%s",
                 account_id, domain, event, exc_info=True,
             )
 
+    @staticmethod
+    def _handler_name(handler: Any) -> str:
+        return getattr(handler, "__qualname__", None) or repr(handler)
+
+    def _tap_deliver(self, channel: str, handler: Any, ok: bool,
+                     err: str, t0: float) -> None:
+        # corr-tap: bus_deliver (spec §5.2) — emitted by the INSTRUMENTED
+        # dispatch path, one envelope per handler invocation (only the loop
+        # can see which handler ran, its outcome, and its duration — a
+        # subscribe_all catch-all cannot). Runs under the re-bound publisher
+        # corr_id when invoked via run().
+        payload: Dict[str, Any] = {
+            "channel": channel, "handler": self._handler_name(handler),
+            "ok": ok, "duration_ms": round((time.perf_counter() - t0) * 1000, 2),
+        }
+        if err:
+            payload["error_type"] = err
+        correlation_log.emit("event_bus", "event_bus", "internal",
+                             correlation_log.CAT_BUS_DELIVER, payload)
+
     async def _dispatch(self, channel: str, payload: Dict[str, Any]) -> None:
         for handler in self._handlers.get(channel, []):
+            t0 = time.perf_counter()
             try:
                 await handler(payload)
+                self._tap_deliver(channel, handler, True, "", t0)
             except Exception as exc:
+                self._tap_deliver(channel, handler, False, type(exc).__name__, t0)
                 log.error("Handler error on channel %r: %s", channel, exc)
         # P8.T7: catch-all handlers (channel + payload), after the exact-match
         # ones. Isolated so one global handler's error can't break the others.
         for ghandler in self._global_handlers:
+            t0 = time.perf_counter()
             try:
                 await ghandler(channel, payload)
+                self._tap_deliver(channel, ghandler, True, "", t0)
             except Exception as exc:
+                self._tap_deliver(channel, ghandler, False, type(exc).__name__, t0)
                 log.error("Global handler error on channel %r: %s", channel, exc)
 
     async def run(self) -> None:
-        """Long-running coroutine: drain the queue and dispatch events."""
+        """Long-running coroutine: drain the queue and dispatch events.
+
+        CL.T2a: re-binds the PUBLISHER's corr_id around each event's dispatch
+        (correlation_scope resets in finally — a handler error cannot leak the
+        binding into the next event). Handlers and their create_task children
+        therefore inherit the originating chain (spec §6.2)."""
         while True:
             try:
-                channel, payload = await self._queue.get()
-                await self._dispatch(channel, payload)
+                channel, payload, corr_id = await self._queue.get()
+                with correlation_log.correlation_scope(corr_id=corr_id):
+                    await self._dispatch(channel, payload)
                 self._queue.task_done()
             except asyncio.CancelledError:
                 break

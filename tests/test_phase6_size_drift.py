@@ -61,7 +61,7 @@ def _async_cfg(*, on, tol=0.5):
 def _drain(dc):
     out = []
     while not dc._event_bus._queue.empty():
-        out.append(dc._event_bus._queue.get_nowait())
+        out.append(dc._event_bus._queue.get_nowait()[:2])  # CL.T2a: 3-tuple item
     return out
 
 

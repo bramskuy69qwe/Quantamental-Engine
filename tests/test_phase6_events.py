@@ -37,7 +37,7 @@ from core.event_bus import (  # noqa: E402
 
 async def _drain_one(bus: EventBus):
     """Pull and dispatch exactly one queued event (avoids run()'s infinite loop)."""
-    channel, payload = await bus._queue.get()
+    channel, payload, *_ = await bus._queue.get()  # CL.T2a: 3-tuple item
     await bus._dispatch(channel, payload)
     bus._queue.task_done()
     return channel, payload
