@@ -925,18 +925,20 @@ Out of scope here, but the log is shaped to de-risk it:
 
 ---
 
-## 15. As-built deviations & errata (Phases 0–1, filed 2026-06-11)
+## 15. As-built deviations & errata (Phases 0–2, filed 2026-06-11)
 
-Filed from the Phase-1 holistic audit (2 agents) per the deviation
-discipline: every divergence between this spec and the shipped code,
-named in one place so a fresh reader of any section below is not misled.
+Filed from the Phase-1 and Phase-2 holistic audits (2 agents each) per
+the deviation discipline: every divergence between this spec and the
+shipped code, named in one place so a fresh reader of any section below
+is not misled. E1–E12 = Phase-1 filing; E13–E18 = Phase-2 filing
+(CL.T2a `a6d839d` + CL.T2b `c421747`).
 Each entry is documented at the code site and in its commit; this table
 is the spec-side record. "§" = the section whose literal text the
 as-built behavior deviates from.
 
 | # | § | As-built deviation | Why |
 |---|---|---|---|
-| E1 | §3.3, D5 | Top-level loop tasks use a **set-only `tick(prefix)`** (no reset) instead of a `correlation_scope` wrap per iteration | loop tasks own their context (next tick overwrites; `create_task` children copy at spawn); avoids re-indenting 18 loop bodies. `correlation_scope` remains the primitive wherever restoration matters (middleware, nesting, queue-consumer re-binds) |
+| E1 | §3.3, D5 | Top-level loop tasks use a **set-only `tick(prefix)`** (no reset) instead of a `correlation_scope` wrap per iteration | loop tasks own their context (next tick overwrites; `create_task` children copy at spawn); avoids re-indenting 18 loop bodies. `correlation_scope` remains the primitive wherever restoration matters (middleware, nesting, queue-consumer re-binds). **CL.T2b moved the webhook worker out of this class**: its T1a per-job tick became a carried-corr `correlation_scope` re-bind (queue hand-off #2); the loop-completeness test lists it as exempt-with-rebind-assert |
 | E2 | §5.4, §7.3 | `platform_push` is registered in the **market** group (volume-gated, OFF in `linkage`), not lifecycle | it rides the ~1 Hz risk-state fanout when the plugin is connected — market-shaped traffic, not a lifecycle event |
 | E3 | §5.1, §3.2 | The HTTP middleware **skips `/static`** paths entirely | asset noise, not an engine boundary. (PWA endpoints `/manifest.json`, `/service-worker.js`, `/favicon.ico` still emit — filed HA-10) |
 | E4 | §5.4 | The on-connect `request_positions` send to a NEW plugin client bypasses the `platform_push` tap | it is a targeted single-client send; routing through the broadcast chokepoint would change semantics (anchor-commented at the site) |
@@ -948,12 +950,20 @@ as-built behavior deviates from.
 | E10 | §5.8 | A **`meta` group** exists beyond the §5.8 list, holding the sink's self-describing `overflow` category — always on in any non-off profile | the overflow/day-cap markers must survive the `linkage` profile |
 | E11 | §3.3 | A third queue hand-off exists beyond the two listed: the `core/pubsub` subscribe generators feeding SSE | deliberately uncorrelated (§13 — the SSE push tap is deferred; the generators run inside the consuming request's own http scope) |
 | E12 | §3.2 | Frame types outside the §5.4 taxonomy (e.g. `MARGIN_CALL`, unknown platform types) mint a chain but emit **no frame envelope** | the taxonomy defines what is logged; a kind-only catch-all is a CL.T5 decision (filed HA-11) |
+| E13 | §7.3 | The `linkage` profile excludes the **entire `outbound` group** — venue REST AND the webhook `http_out_*` POST taps (the terminal hop of the flagship close→bus→queue→POST chain emits nothing under `linkage`). §7.3's gloss "market/outbound-news OFF" names a group that does not exist — §5.8 has one `outbound` group, and `http` is also excluded | the profile's group list itself matches the code; only the gloss under-describes. The corr **carry** (webhook queue 3-tuple) is profile-independent — only the envelopes are absent. Default profile is `full`. Whether the low-volume/high-linkage-value webhook taps deserve a linkage-visible group is a CL.T5 decision (HA-13) |
+| E14 | §7.3 | `pubsub_publish` is **group-gated only** (market group → OFF in `linkage`); §7.3's "pubsub_publish sampled" is not yet true — at `full` every hit is kept | sampling deferred to the CL.T5 volume pass (plan 5.1); `_sample_rate` is generalized and ready (HA-14). Bounded meanwhile by the per-day MB guard |
+| E15 | §5.3, §5.3b | Out/return tap pairs are **Exception-scoped**: task cancellation emits the out-tap but never the return-tap (REST, webhook, Finnhub, FRED alike) — an unmatched pair at shutdown/cancel | `CancelledError` is `BaseException`-derived; catching it to tap would interfere with cancellation semantics. Bindings still reset (`finally`/`with`) — no corr leak. Pair-join readers must tolerate unmatched out-taps |
+| E16 | §5.7 | `pubsub_publish` taps the publish **attempt** on BOTH backends — InProcess pre-fan-out, Redis pre-connection — diverging from the bus's published==enqueued convention (CL.T2a) | InProcess has no realistic post-tap failure (per-subscriber `QueueFull` is a deliberate drop); the deployment runs `inprocess`, so the Redis pre-connection divergence is moot unless that backend is enabled |
+| E17 | §5.3 | The adapter weight-tracker sits **outside** the REST tap pair: a budget-**blocked** call raises before `rest_call` (the call is invisible to the log) and a **throttle** delay runs before the tap (`rest_call.ts` is post-throttle; `duration_ms` measures executor time only) | accepted as-built: the block is loud in the engine log, and throttle latency is visible as a trigger→`rest_call` ts gap. A call-less `rest_return{blocked:true}` is a CL.T5 option |
+| E18 | — | Import-style inconsistency: function-level `from core import correlation_log` at ~12 sites across `platform_bridge`/`news_fetcher`/`monitoring` (T1b-era) + `regime_fetcher`/`pubsub/bus.py` (T2b) vs module-level imports elsewhere — `news_fetcher.py` carries both styles in one file | no import cycle forces either style; unify to module-level opportunistically at next touch of each file |
 
 Confirmed **code gaps** (spec is right, code owes the fields — filed
 HA-9, due CL.T5 at latest): `ws_kline` payload lacks interval+close;
 `ws_connected` lacks duration-to-connect; news lacks a pre-attempt
 `ws_connect` and `ws_disconnect.uptime_s`; `platform_snapshot` carries
-kind only; `ws_depth` lacks top-of-book.
+kind only; `ws_depth` lacks top-of-book. **Phase-2 add (T2b)**: the
+Finnhub calendar success envelope lacks `n_items` (the news endpoint
+has it).
 
 ---
 

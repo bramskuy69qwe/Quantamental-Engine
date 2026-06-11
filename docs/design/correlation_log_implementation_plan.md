@@ -491,8 +491,8 @@ pre-grepped sites.
 | **CL.T0b** | **SHIPPED `3b7c6ca`** — Sink — writer thread + rollover/prune/MB-guard/overflow + config + lifespan wiring + conftest isolation (incl. the session-scoped floor, audit-driven) | plan 0.4, 0.6–0.8 | M |
 | **CL.T1a** | **SHIPPED `9ad8764`** — HTTP middleware + blanket loop scopes (schedulers, keepalive/fallback, monitoring, webhook, reconciler, boot) | plan 1.1–1.2 | S–M |
 | **CL.T1b** | **SHIPPED `9cb0efe`** — WS frame taps (Binance user/market + platform + news) + WS lifecycle taps + task naming | plan 1.3–1.6 | M |
-| **CL.T2a** | **Bus carry/re-bind + bus taps + the 2-tuple test sweep** — isolated, revertable commit | plan 2a.1–2a.3 | S–M |
-| **CL.T2b** | REST chokepoint + outbound-HTTP taps + webhook-queue carry + pubsub tap | plan 2b.1–2b.4 | M |
+| **CL.T2a** | **SHIPPED `a6d839d`** — Bus carry/re-bind + bus taps + the 2-tuple test sweep — isolated, revertable commit | plan 2a.1–2a.3 | S–M |
+| **CL.T2b** | **SHIPPED `c421747`** — REST chokepoint + outbound-HTTP taps + webhook-queue carry + pubsub tap + the HA-1..5 closures | plan 2b.1–2b.4 | M |
 | **CL.T3a** | State/DB/orders taps (sweep): data_cache + transitions + order_status/reconcile_promote + db_write | plan 3.1 | M |
 | **CL.T3b-entry** | Attribution entry side: match (calc_correlation/order_enrichment) + bracket + junction + reenrich | plan 3.2 | M |
 | **CL.T3b-close** | Attribution close side: tpid_resolve + close_build + enrich + drift_check | plan 3.3 | M |
@@ -516,9 +516,9 @@ one commit, green + audited before the next.
   loosely ordered but can interleave.
 - **CL.T4** any time after Phase 1 (dogfood early); **CL.T5** last.
 
-### 9.4 Phase-1 holistic audit — filed follow-ups (2026-06-11)
+### 9.4 Holistic-audit ledger — filed follow-ups (Phases 1–2, 2026-06-11)
 
-Two-agent holistic audit of Phase 0+1 (`9ad8764` + `9cb0efe` on
+**Phase-1 audit.** Two-agent holistic audit of Phase 0+1 (`9ad8764` + `9cb0efe` on
 `db89ae0`/`3b7c6ca`): **COHERENT, NO PRODUCTION REGRESSIONS, no
 BLOCKER/HIGH**. Acceptance scorecard 3.5/4 (the leak query is
 component-proven, not scenario-proven — HA-6). Spec-side deviations are
@@ -527,18 +527,49 @@ its owner task; none blocks CL.T2a.
 
 | ID | Sev | Issue | Owner |
 |---|---|---|---|
-| HA-1 | MED | REST-fallback plugin ingest (`POST /api/platform/event` → `_dispatch`) mints a `wsp-*` chain INSIDE the request's `http-*` chain — the http pair looks empty, the wsp chain has no visible trigger (the sibling `/api/platform/positions` route already behaves correctly). Fix: move `tick("wsp")` from `_dispatch` to the WS receive loop + update the dispatch test | **CL.T2b** (the REST-boundary task) |
-| HA-2 | MED | Middleware **registration** on `main.app` is unpinned — deleting the decorator darkens the whole HTTP boundary with the suite green. Add: `assert any(m.kwargs.get("dispatch") is main._corr_http_middleware for m in main.app.user_middleware)` | next test-touching task (≤ CL.T2b) |
-| HA-3 | MED | No **registry snapshot test** — a silent re-group (e.g. `platform_fill`→market) drops a money-path category from the `linkage` profile undetected; `register()`'s conflict guard can't see an edit of the original line. Add `assert cl.registry() == {…45…}` | next test-touching task (≤ CL.T2b) |
-| HA-4 | MED | No **session-floor self-test** — the guard against the PROVEN T0b live-dir leak (module-scoped TestClient lifespans) has no asserting observer. Add a module-scoped probe asserting the resolver ≠ `config.CORR_LOG_DIR` before any function-scoped patch | next test-touching task (≤ CL.T2b) |
-| HA-5 | MED-LOW | `_last_streams` no-streams reset is untested (the T1b audit's suggested test never landed) — deleting the reset re-corrupts the rebuild diff silently | next test-touching task |
+| HA-1 | MED | REST-fallback plugin ingest (`POST /api/platform/event` → `_dispatch`) mints a `wsp-*` chain INSIDE the request's `http-*` chain — the http pair looks empty, the wsp chain has no visible trigger (the sibling `/api/platform/positions` route already behaves correctly). Fix: move `tick("wsp")` from `_dispatch` to the WS receive loop + update the dispatch test | **CLOSED — CL.T2b `c421747`** (mint moved to the `handle_ws` receive loop; dispatch-inherits + receive-loop-mints both tested) |
+| HA-2 | MED | Middleware **registration** on `main.app` is unpinned — deleting the decorator darkens the whole HTTP boundary with the suite green. Add: `assert any(m.kwargs.get("dispatch") is main._corr_http_middleware for m in main.app.user_middleware)` | **CLOSED — CL.T2b `c421747`** |
+| HA-3 | MED | No **registry snapshot test** — a silent re-group (e.g. `platform_fill`→market) drops a money-path category from the `linkage` profile undetected; `register()`'s conflict guard can't see an edit of the original line. Add `assert cl.registry() == {…45…}` | **CLOSED — CL.T2b `c421747`** (45-entry category→group snapshot — pins groups, not just names) |
+| HA-4 | MED | No **session-floor self-test** — the guard against the PROVEN T0b live-dir leak (module-scoped TestClient lifespans) has no asserting observer. Add a module-scoped probe asserting the resolver ≠ `config.CORR_LOG_DIR` before any function-scoped patch | **CLOSED — CL.T2b `c421747`** (`tests/test_correlation_log_floor.py` — non-vacuous: instantiates before the function-scoped autouse patch) |
+| HA-5 | MED-LOW | `_last_streams` no-streams reset is untested (the T1b audit's suggested test never landed) — deleting the reset re-corrupts the rebuild diff silently | **CLOSED — CL.T2b `c421747`** (mutation-effective) |
 | HA-6 | LOW-MED | Composed **leak-scenario test** absent: no test executes the §9 leak predicate against a healthy AND a leaky trace (change+rebuild together vs change-with-suppressed-restart) | CL.T5 (bug-#4 replay) or earlier |
 | HA-7 | LOW | **Taps → live writer** integration has zero direct assertions (all tap tests drain the queue with the writer off). One smoke: drive `_handle_user_event` → `start()`/`close()` → read the day file | CL.T5 or earlier |
 | HA-8 | LOW | Plugin `ohlcv_bar` emits `ws_kline(peer=quantower)` per bar-UPDATE (Binance taps are closed-candle-gated; MEXC parse has no closed-gate, latent) — per-update volume at `full` when the plugin is connected | CL.T5 volume pass (or closed-gate at touch) |
-| HA-9 | LOW | Payload code-gaps vs spec tables (spec §15 footer): `ws_kline` interval+close (close is free at `parsed["candle"][4]`), `ws_connected` duration, news `ws_connect` + disconnect `uptime_s`, `platform_snapshot` counts, `ws_depth` top-of-book | CL.T5 at latest; ws_kline close + news ws_connect near-free at next touch |
+| HA-9 | LOW | Payload code-gaps vs spec tables (spec §15 footer): `ws_kline` interval+close (close is free at `parsed["candle"][4]`), `ws_connected` duration, news `ws_connect` + disconnect `uptime_s`, `platform_snapshot` counts, `ws_depth` top-of-book; **Finnhub calendar success lacks `n_items` (T2b add, Phase-2 audit)** | CL.T5 at latest; ws_kline close + news ws_connect near-free at next touch |
 | HA-10 | NIT | PWA endpoints (`/manifest.json`, `/service-worker.js`, `/favicon.ico`) escape the `/static` skip; overflow-RECOVERY marker rides the recovering emitter's chain (day-cap marker is correctly bare); `ws_depth` negative tests can't distinguish gated-off from tap-deleted (needs a positive companion via `_CATEGORY_DEFAULT_OFF` patch); tap-before-apply ordering unpinned; `# corr-tap` anchor style inconsistent at 2 news sites; `ws-news-ping` name + `sch-*` prefixes (beyond reaper/boot) unpinned | opportunistic |
 | HA-11 | INFO | Frame types outside the §5.4 taxonomy mint a chain but emit no envelope (spec §15 E12) — decide a kind-only catch-all | CL.T5 |
-| HA-12 | NOTE | Until CL.T2a, bus-consumer emissions ride the eternal `boot-*` chain (not `""`) — the empty-corr tripwire is blind to this class. Resolved by T2a itself | CL.T2a (by design) |
+| HA-12 | NOTE | Until CL.T2a, bus-consumer emissions ride the eternal `boot-*` chain (not `""`) — the empty-corr tripwire is blind to this class. Resolved by T2a itself | **RESOLVED — CL.T2a `a6d839d`** (carry/re-bind) |
+
+**Phase-2 audit (CL.T2a `a6d839d` + CL.T2b `c421747`, filed
+2026-06-11).** Two-agent holistic audit (code lens / docs+tests lens)
+of both tasks as ONE unit: **COHERENT, NO BLOCKER/HIGH, no production
+regressions.** The flagship chain was proven by a composition probe no
+shipped test performs — real `EventBus` + real `WebhookDispatcher` +
+real `BaseExchangeAdapter._run` across all three task boundaries,
+19/19 checks: close→bus→queue→POST chain survival,
+REST-inside-a-bus-handler carrying the publisher's chain (real path:
+`reconciler.on_position_closed` → `exchange_market` → adapter `_run`),
+retry-after-backoff, empty-corr carry, worker no-leak between jobs,
+concurrent `rest-*` fallback isolation. The ccxt translation re-indent
+verified byte-identical (`git diff -w`); the T2a sweep re-verified
+complete repo-wide at HEAD (zero 2-tuple unpacks, incl. tests added
+after the sweep); HA-1..5 closures + the HA-12 resolution verified
+real (mutation-effectiveness checked per test). Spec-side deviations
+filed as §15 E13–E18 + the E1 supplement. None of the below blocks
+CL.T3a.
+
+| ID | Sev | Issue | Owner |
+|---|---|---|---|
+| HA-13 | MED | The `linkage` profile drops the **entire `outbound` group** — incl. the webhook `http_out_*` taps, the terminal hop of the flagship close→bus→queue→POST chain (spec §15 E13; §7.3's "outbound-news" gloss named a non-existent group). Carry is profile-independent — only the envelopes are absent; default profile `full` unaffected. Decide: re-group the webhook taps (low-volume, high linkage value) into a linkage-visible group vs accept | CL.T5 (volume pass) |
+| HA-14 | LOW | `pubsub_publish` ships group-gated only — NOT sampled at `full` despite spec §7.3 (E14); the dominant single category at `full`, bounded only by the day-MB guard; `_sample_rate` hook is generalized and ready | CL.T5 (plan 5.1) |
+| HA-15 | LOW | REST-envelope secret-absence is unpinned: `TestRestChokepoint` (adapter built with keys `"k"`/`"s"`) asserts nothing about key/signature absence — the plan-2b "no API key in any envelope" bullet is pinned for webhook/Finnhub/FRED only. Surviving mutation: adding raw `args` to the `rest_call` payload passes the suite (redaction is key-based; bare-string secrets in a positional list pass through — the documented `_redact` limit). Code is clean today; test debt | next test-touching task (≤ CL.T5) |
+| HA-16 | LOW | yahoo/VIX taps are source-pinned only — the placement assert (`"run_in_executor" in src`) is vacuous for placement because `_download` is nested inside `fetch_vix`: moving the emits INSIDE the executor callable (§3.3 thread-rule violation → `corr_id=""`) survives the suite. FRED has behavioral tests; yahoo has none | CL.T5 or next touch (stubbed-yfinance behavioral test) |
+| HA-17 | LOW | No single test drives close-publish→bus→queue→POST on one corr_id: the T2b "2-hop test" simulates the bus hop with a bare `correlation_scope`, and `test_phase7_webhook`'s bus-composition test asserts no corr. The property holds compositionally (T2a pins bus re-bind for any handler; the 2-hop test pins handler→POST) and was proven by the audit probe — but no in-suite test composes it | CL.T3*/T5 scenario replay composes it naturally (or +5 lines to the phase7 composition test) |
+| HA-18 | NIT | `bus_publish` tap-AFTER-enqueue ordering is unpinned (swapping the tap above `put` would pass the suite — phantom envelope on enqueue failure); practically unreachable today: the unbounded loop-side `put` never raises | accept / pin at next touch |
+| HA-19 | NIT | `_tap_deliver` is unguarded (vs `_tap_publish` guarded): a raise via `repr(handler)` on a pathological handler would skip the event's remaining handlers + `task_done`. Theoretical-only for plain function/method handlers | accept / wrap at next touch |
+| HA-20 | NIT | All per-account webhook bus handlers share one `bus_deliver` qualname (`WebhookDispatcher.make_handler.<locals>._handler`); the account is recoverable from the channel string in the same envelope | accept (forensics note) |
+| HA-21 | NIT | `fetch_news` success-tap arg construction is unhardened (asymmetric with the FRED T2b-2 hardening): every `items` shape that makes `len()` raise also crashed pre-T2b three lines later — no caller-visible behavior change | opportunistic at next touch |
+| HA-22 | NOTE | Commit-claim arithmetic, for the record: T2a "15 files' bus-queue drains normalized" = **14** pre-existing files + the NEW bus-test file; T2b "boundaries (12)" = **11** collected. The sweep itself is complete repo-wide at HEAD | record-only (this filing) |
 
 ### 9.5 After this program
 
