@@ -36,7 +36,9 @@ async def test_change_schedules_restart(monkeypatch):
     import core.ws_manager as wm
     called = []
 
-    async def fake_restart():
+    # CL.T1b: restart_market_streams gained trigger= (defaulted) for the
+    # ws_stream_rebuild tap — stubs must accept it.
+    async def fake_restart(trigger="position_change"):
         called.append(True)
 
     monkeypatch.setattr(wm, "restart_market_streams", fake_restart)
@@ -52,7 +54,7 @@ async def test_same_symbol_no_restart(monkeypatch):
     import core.ws_manager as wm
     called = []
 
-    async def fake_restart():
+    async def fake_restart(trigger="position_change"):
         called.append(True)
 
     monkeypatch.setattr(wm, "restart_market_streams", fake_restart)
@@ -67,7 +69,7 @@ async def test_old_orderbook_evicted_on_change(monkeypatch):
     import core.ws_manager as wm
     from core.state import app_state
 
-    async def fake_restart():
+    async def fake_restart(trigger="position_change"):
         pass
 
     monkeypatch.setattr(wm, "restart_market_streams", fake_restart)

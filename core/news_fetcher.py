@@ -194,8 +194,12 @@ class BweWsConsumer:
                     },
                 ) as ws:
                     log.info("BWE WS: connected to %s", self.url)
+                    # corr-tap: ws_connected (stream=news, spec §5.4b)
+                    from core import correlation_log as cl
+                    cl.emit("news_fetcher", "bwenews", "internal",
+                            cl.CAT_WS_CONNECTED, {"stream": "news"})
                     backoff = 5
-                    ping_task = asyncio.create_task(self._ping_loop(ws))
+                    ping_task = asyncio.create_task(self._ping_loop(ws), name="ws-news-ping")
                     try:
                         async for raw in ws:
                             try:
@@ -212,8 +216,16 @@ class BweWsConsumer:
                     websockets.exceptions.ConnectionClosedOK,
                     OSError) as e:
                 log.warning("BWE WS: disconnected (%s) — reconnecting in %ds", e, backoff)
+                from core import correlation_log as cl
+                cl.emit("news_fetcher", "bwenews", "internal",
+                        cl.CAT_WS_DISCONNECT,
+                        {"stream": "news", "reason": str(e)[:200]})
             except Exception as e:
                 log.error("BWE WS: unexpected error: %s", e)
+                from core import correlation_log as cl
+                cl.emit("news_fetcher", "bwenews", "internal",
+                        cl.CAT_WS_DISCONNECT,
+                        {"stream": "news", "reason": str(e)[:200]})
             if self._stop:
                 break
             await asyncio.sleep(backoff)
@@ -245,6 +257,11 @@ class BweWsConsumer:
         except json.JSONDecodeError:
             return
 
+        # corr-tap: entry point — one chain per news frame (spec §3.2 wsn-*),
+        # minted BEFORE the db write so persistence taps (CL.T3a) inherit it
+        from core import correlation_log as cl
+        cl.tick("wsn")
+
         # BWE message shape: {news_title, source_name, coins_included, url, timestamp}
         ts_raw   = msg.get("timestamp") or msg.get("time") or msg.get("created_at")
         published = _to_iso_utc(ts_raw) or datetime.now(timezone.utc).isoformat()
@@ -254,6 +271,11 @@ class BweWsConsumer:
         ext_id = (str(msg.get("id"))
                   if msg.get("id") is not None
                   else f"{published}|{hash(headline) & 0xFFFFFFFF:08x}")
+
+        # corr-tap: ws_news (spec §5.4; market-grouped → OFF in linkage)
+        cl.emit("news_fetcher", "bwenews", "in", cl.CAT_WS_NEWS,
+                {"external_id": ext_id, "source": "bwe",
+                 "dedup_key": f"bwe:{ext_id}"})
 
         await db.upsert_news_items([{
             "source":       "bwe",

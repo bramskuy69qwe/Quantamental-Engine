@@ -212,6 +212,9 @@ class PlatformBridge:
         log.info("PlatformBridge: plugin connected (total=%d)", len(self._ws_clients))
 
         # On first connection: request a position snapshot for immediate reconciliation
+        # corr-tap accepted gap: this targeted single-client send deliberately
+        # bypasses the platform_push tap — _send_to_clients broadcasts to ALL
+        # clients, which would change semantics here (audit T1b-6).
         try:
             await websocket.send_text(json.dumps({"type": "request_positions"}))
         except Exception:
@@ -232,6 +235,12 @@ class PlatformBridge:
         finally:
             self._ws_clients.discard(websocket)
             remaining = len(self._ws_clients)
+            # corr-tap: ws_disconnect (stream=platform; connect is signalled
+            # by the plugin's own hello frame → platform_hello)
+            from core import correlation_log as cl
+            cl.emit("platform_bridge", "quantower", "internal",
+                    cl.CAT_WS_DISCONNECT,
+                    {"stream": "platform", "remaining_clients": remaining})
             if remaining == 0:
                 log.info(
                     "PlatformBridge: last plugin client disconnected — "
@@ -242,8 +251,47 @@ class PlatformBridge:
 
     # ── Message dispatch ──────────────────────────────────────────────────────
 
+    def _tap_platform_frame(self, event_type: str, msg: dict) -> None:
+        """corr-tap: platform_fill / platform_snapshot / platform_hello +
+        plugin market data under the market categories (CL.T1b, spec §5.4).
+        Market-shaped plugin frames (ohlcv_bar / mark_price / depth_snapshot)
+        reuse ws_kline / ws_mark_price / ws_depth with peer=quantower so the
+        SAME volume gating applies (depth OFF, mark sampled — a plugin
+        streaming 1/s must not flood the lifecycle group)."""
+        from core import correlation_log as cl
+        sym = msg.get("symbol")
+        if event_type in ("fill", "historical_fill"):
+            cl.emit("platform_bridge", "quantower", "in", cl.CAT_PLATFORM_FILL,
+                    {"side": msg.get("side"), "qty": msg.get("quantity"),
+                     "price": msg.get("price"), "trade_id": msg.get("trade_id"),
+                     "historical": event_type == "historical_fill",
+                     "dedup_key": f"qt:{msg.get('trade_id')}"},
+                    symbol=sym)
+        elif event_type == "hello":
+            cl.emit("platform_bridge", "quantower", "in", cl.CAT_PLATFORM_HELLO,
+                    {"platform": msg.get("platform"), "account": msg.get("account")})
+        elif event_type in ("position_snapshot", "account_state",
+                            "order_snapshot", "orders_changed"):
+            cl.emit("platform_bridge", "quantower", "in", cl.CAT_PLATFORM_SNAPSHOT,
+                    {"kind": event_type}, symbol=sym)
+        elif event_type == "ohlcv_bar":
+            cl.emit("platform_bridge", "quantower", "in", cl.CAT_WS_KLINE,
+                    {}, symbol=sym)
+        elif event_type == "mark_price":
+            cl.emit("platform_bridge", "quantower", "in", cl.CAT_WS_MARK_PRICE,
+                    {"mark": msg.get("price")}, symbol=sym)
+        elif event_type == "depth_snapshot":
+            cl.emit("platform_bridge", "quantower", "in", cl.CAT_WS_DEPTH,
+                    {}, symbol=sym)
+        # heartbeat / unknown: no envelope
+
     async def _dispatch(self, msg: dict) -> None:
         event_type = msg.get("type", "")
+        # corr-tap: entry point — one chain per inbound platform frame
+        # (spec §3.2 wsp-*; platform fills feed process_fill, the money path)
+        from core import correlation_log as cl
+        cl.tick("wsp")
+        self._tap_platform_frame(event_type, msg)
         if event_type == "fill":
             await self._handle_fill(msg)
         elif event_type == "position_snapshot":
@@ -742,6 +790,11 @@ class PlatformBridge:
         """Send a JSON message to all connected plugin clients."""
         if not self._ws_clients:
             return
+        # corr-tap: platform_push (out, spec §5.4 mirror category;
+        # market-grouped — volume-gated, see correlation_log registry note)
+        from core import correlation_log as cl
+        cl.emit("platform_bridge", "quantower", "out", cl.CAT_PLATFORM_PUSH,
+                {"kind": payload.get("type")}, symbol=payload.get("symbol"))
         text = json.dumps(payload)
         dead: Set[Any] = set()
         for ws in list(self._ws_clients):
@@ -777,6 +830,11 @@ class PlatformBridge:
         Called from handlers after account updates."""
         if not self._ws_clients:
             return
+        # corr-tap: platform_push (risk-state fanout, ~1 Hz when connected —
+        # market-grouped so the linkage profile drops it)
+        from core import correlation_log as cl
+        cl.emit("platform_bridge", "quantower", "out", cl.CAT_PLATFORM_PUSH,
+                {"kind": "risk_state"})
         payload = json.dumps(self.get_state_json())
         dead: Set[Any] = set()
         for ws in list(self._ws_clients):

@@ -155,7 +155,11 @@ CAT_WS_ALGO_UPDATE = register("ws_algo_update", GROUP_LIFECYCLE)
 CAT_PLATFORM_FILL = register("platform_fill", GROUP_LIFECYCLE)
 CAT_PLATFORM_SNAPSHOT = register("platform_snapshot", GROUP_LIFECYCLE)
 CAT_PLATFORM_HELLO = register("platform_hello", GROUP_LIFECYCLE)
-CAT_PLATFORM_PUSH = register("platform_push", GROUP_LIFECYCLE)
+# platform_push rides the ~1 Hz risk-state fanout when the plugin is
+# connected — market-grouped (volume-gated, OFF in `linkage`) rather than
+# lifecycle, deviating from the spec §5.4 table's placement: a 1 Hz state
+# push is market-shaped traffic, not a lifecycle event (CL.T1b).
+CAT_PLATFORM_PUSH = register("platform_push", GROUP_MARKET)
 CAT_WS_NEWS = register("ws_news", GROUP_MARKET)
 CAT_WS_KLINE = register("ws_kline", GROUP_MARKET)
 CAT_WS_DEPTH = register("ws_depth", GROUP_MARKET)

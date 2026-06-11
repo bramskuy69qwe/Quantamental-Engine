@@ -100,10 +100,42 @@ async def _apply_account_update(msg: dict) -> None:
     if not norm_positions:
         return
     if result.closed_syms or result.new_syms:
-        asyncio.create_task(restart_market_streams())
+        asyncio.create_task(restart_market_streams(trigger="position_change"),
+                            name="ws-restart")
     for sym in result.new_syms:
-        asyncio.create_task(_on_new_position(sym))
+        asyncio.create_task(_on_new_position(sym), name="ws-new-position")
     # recalculate_portfolio() now called inside DataCache.apply_position_update_incremental()
+
+
+def _tap_user_frame(ev: str, msg: dict) -> None:
+    """corr-tap: ws_account_update / ws_order_update / ws_algo_update (CL.T1b,
+    spec §5.4). Field extraction is Binance-raw best-effort (the live path);
+    other adapters' frames emit with null fields rather than nothing."""
+    if ev == "ACCOUNT_UPDATE":
+        a = msg.get("a", {}) if isinstance(msg.get("a"), dict) else {}
+        correlation_log.emit(
+            "ws_manager", "binance", "in", correlation_log.CAT_WS_ACCOUNT_UPDATE,
+            {"reason": a.get("m"), "n_balances": len(a.get("B") or []),
+             "n_positions": len(a.get("P") or [])},
+        )
+    elif ev in ("ORDER_TRADE_UPDATE", "ALGO_UPDATE"):
+        o = msg.get("o", {}) if isinstance(msg.get("o"), dict) else {}
+        is_order = ev == "ORDER_TRADE_UPDATE"
+        cat = (correlation_log.CAT_WS_ORDER_UPDATE if is_order
+               else correlation_log.CAT_WS_ALGO_UPDATE)
+        # Binance algo frames key their id as "aid", not "i" (audit T1b-1).
+        oid = o.get("i") if is_order else o.get("aid")
+        payload = {"order_id": oid, "status": o.get("X"), "side": o.get("S"),
+                   "qty": o.get("q"), "price": o.get("p"), "filled": o.get("z"),
+                   "exec_type": o.get("x"), "algo_type": o.get("at")}
+        # dedup_key ONLY when the id resolved: a degenerate "None:X:q" key
+        # would collide across DISTINCT frames — false duplicates corrupt
+        # the §4.1 uniq -d mechanism, worse than no key at all.
+        if oid is not None:
+            payload["dedup_key"] = f"{oid}:{o.get('X')}:{o.get('q')}"
+        correlation_log.emit(
+            "ws_manager", "binance", "in", cat, payload, symbol=o.get("s"),
+        )
 
 
 async def _handle_user_event(msg: dict) -> None:
@@ -111,6 +143,11 @@ async def _handle_user_event(msg: dict) -> None:
     ws_adapter = _get_ws_adapter()
     ev = ws_adapter.get_event_type(msg) if ws_adapter else msg.get("e", "")
     ws = app_state.ws_status
+
+    # corr-tap: entry point — one chain per inbound user-data frame
+    # (spec §3.2 wsu-*); everything this frame causes inherits it.
+    correlation_log.tick("wsu")
+    _tap_user_frame(ev, msg)
 
     # Real-time latency: (local_now + clock_offset) - exchange_event_time
     from core import time_sync
@@ -202,7 +239,7 @@ async def _apply_order_update(msg: dict, ws_adapter) -> None:
             await _create_fill_from_ws(order, msg)
         except Exception as e:
             log.warning("WS fill creation failed: %s", e)
-        asyncio.create_task(_refresh_positions_after_fill())
+        asyncio.create_task(_refresh_positions_after_fill(), name="ws-fill-refresh")
 
     # ── SR-1: Persist order via OrderManager (validates transition + timestamp)
     try:
@@ -482,7 +519,7 @@ async def _user_data_loop(listen_key: str, attempt: int = 0) -> None:
             app_state.ws_status.add_log("User-data WS: plugin connected — standing by (30s)")
             await asyncio.sleep(30)
             if not _stopping:
-                asyncio.create_task(_user_data_loop(listen_key, 0))
+                asyncio.create_task(_user_data_loop(listen_key, 0), name="ws-user")
             return
     except Exception:
         pass
@@ -491,6 +528,11 @@ async def _user_data_loop(listen_key: str, attempt: int = 0) -> None:
     url = ws_adapter.build_user_stream_url(listen_key) if ws_adapter else f"{config.FSTREAM_WS}/{listen_key}"
     ws  = app_state.ws_status
     ws.add_log(f"User-data WS connecting (attempt {attempt+1})")
+    # corr-tap: ws_connect (spec §5.4b)
+    correlation_log.emit("ws_manager", "binance", "internal",
+                         correlation_log.CAT_WS_CONNECT,
+                         {"stream": "user", "attempt": attempt + 1})
+    _connected_at = None
 
     try:
         async with websockets.connect(
@@ -502,6 +544,11 @@ async def _user_data_loop(listen_key: str, attempt: int = 0) -> None:
             ws.reconnect_attempts = 0
             ws.using_fallback = False
             ws.add_log("User-data WS connected.")
+            _connected_at = time.monotonic()
+            # corr-tap: ws_connected
+            correlation_log.emit("ws_manager", "binance", "internal",
+                                 correlation_log.CAT_WS_CONNECTED,
+                                 {"stream": "user"})
 
             # BY-WS-1: post-connect auth + topic subscription for exchanges
             # that require it (Bybit V5). Binance uses listen-key URL auth
@@ -587,6 +634,12 @@ async def _user_data_loop(listen_key: str, attempt: int = 0) -> None:
     except Exception as exc:
         ws.connected = False
         ws.add_log(f"User-data WS disconnected: {exc}")
+        # corr-tap: ws_disconnect (spec §5.4b)
+        correlation_log.emit(
+            "ws_manager", "binance", "internal", correlation_log.CAT_WS_DISCONNECT,
+            {"stream": "user", "reason": str(exc)[:200],
+             "uptime_s": round(time.monotonic() - _connected_at, 1) if _connected_at else None},
+        )
         await _reconnect_user(attempt)
 
 
@@ -624,10 +677,34 @@ async def _reconnect_user(attempt: int) -> None:
         ws.add_log("Reconnect aborted — no valid listen key or stop requested.")
         return
 
-    asyncio.create_task(_user_data_loop(_listen_key, attempt + 1))
+    asyncio.create_task(_user_data_loop(_listen_key, attempt + 1), name="ws-user")
 
 
 # ── Market data stream (klines + book) ───────────────────────────────────────
+
+# The stream list the CURRENT market WS subscribed with — the "old" side of
+# the ws_stream_rebuild diff (spec §5.4b: the subscription-leak query needs
+# old→new, and the rebuild runs after module state already changed).
+_last_streams: list[str] = []
+
+
+def _tap_market_frame(ev: str, parsed: dict) -> None:
+    """corr-tap: ws_kline / ws_depth / ws_mark_price (CL.T1b, spec §5.4 —
+    volume-gated by the registry: depth OFF, mark-price sampled-opt-in)."""
+    if ev == "kline":
+        correlation_log.emit("ws_manager", "binance", "in",
+                             correlation_log.CAT_WS_KLINE, {},
+                             symbol=parsed.get("symbol"))
+    elif ev == "depthUpdate":
+        correlation_log.emit("ws_manager", "binance", "in",
+                             correlation_log.CAT_WS_DEPTH, {},
+                             symbol=parsed.get("symbol"))
+    elif ev == "markPriceUpdate":
+        correlation_log.emit("ws_manager", "binance", "in",
+                             correlation_log.CAT_WS_MARK_PRICE,
+                             {"mark": parsed.get("mark_price")},
+                             symbol=parsed.get("symbol"))
+
 
 def _build_market_streams() -> list[str]:
     """Build the combined stream list for all active position symbols + calculator."""
@@ -661,18 +738,27 @@ async def _market_stream_loop(attempt: int = 0) -> None:
     # market-WS reconnect the global tracked a DEAD task: a ticker switch then
     # cancelled nothing and left the OLD symbol's @depth20 streaming alongside
     # the new one (operator: "still subscribing to velvetusdt").
-    global _market_ws_task
+    global _market_ws_task, _last_streams
     ws = app_state.ws_status
     streams = _build_market_streams()
     if not streams:
         ws.add_log("No market streams to subscribe — sleeping 10s.")
+        _last_streams = []  # nothing subscribed — keep the rebuild diff honest
         await asyncio.sleep(10)
-        _market_ws_task = asyncio.create_task(_market_stream_loop(0))
+        _market_ws_task = asyncio.create_task(_market_stream_loop(0), name="ws-market")
         return
 
     ws_adapter = _get_ws_adapter()
     url = ws_adapter.build_market_stream_url(streams) if ws_adapter else f"{config.FSTREAM_COMB}?streams=" + "/".join(streams)
     ws.add_log(f"Market WS connecting ({len(streams)} streams, attempt {attempt+1})")
+    # corr-tap: ws_connect — the FULL stream list is the §5.4b leak query's
+    # ground truth ("a ws_connect whose list still contains the old symbol")
+    correlation_log.emit("ws_manager", "binance", "internal",
+                         correlation_log.CAT_WS_CONNECT,
+                         {"stream": "market", "attempt": attempt + 1,
+                          "streams": streams})
+    _last_streams = list(streams)
+    _connected_at = None
 
     try:
         async with websockets.connect(
@@ -681,6 +767,11 @@ async def _market_stream_loop(attempt: int = 0) -> None:
             ping_timeout=30,
         ) as sock:
             ws.add_log("Market WS connected.")
+            _connected_at = time.monotonic()
+            # corr-tap: ws_connected
+            correlation_log.emit("ws_manager", "binance", "internal",
+                                 correlation_log.CAT_WS_CONNECTED,
+                                 {"stream": "market", "n_streams": len(streams)})
             async for raw in sock:
                 try:
                     msg_outer = json.loads(raw)
@@ -692,17 +783,23 @@ async def _market_stream_loop(attempt: int = 0) -> None:
                     if evt_ms:
                         offset = time_sync.get_offset_ms(_exchange_id())
                         ws.latency_ms = round((time.time() * 1000 + offset) - evt_ms, 1)
+                    # corr-tap: entry point — one chain per market frame
+                    # (spec §3.2 wsm-*; categories volume-gated in emit)
+                    correlation_log.tick("wsm")
                     if ev == "kline":
                         parsed = ws_adapter.parse_kline(msg) if ws_adapter else None
                         if parsed:
+                            _tap_market_frame(ev, parsed)
                             app_state._data_cache.apply_kline(parsed["symbol"], parsed["candle"])
                     elif ev == "depthUpdate":
                         parsed = ws_adapter.parse_depth(msg) if ws_adapter else None
                         if parsed:
+                            _tap_market_frame(ev, parsed)
                             app_state._data_cache.apply_depth(parsed["symbol"], parsed["bids"], parsed["asks"])
                     elif ev == "markPriceUpdate":
                         parsed = ws_adapter.parse_mark_price(msg) if ws_adapter else None
                         if parsed:
+                            _tap_market_frame(ev, parsed)
                             app_state._data_cache.apply_mark_price(parsed["symbol"], parsed["mark_price"])
                 except Exception as exc:
                     log.warning("Market WS message error: %s", exc)
@@ -710,10 +807,16 @@ async def _market_stream_loop(attempt: int = 0) -> None:
 
     except Exception as exc:
         ws.add_log(f"Market WS disconnected: {exc}")
+        # corr-tap: ws_disconnect (spec §5.4b)
+        correlation_log.emit(
+            "ws_manager", "binance", "internal", correlation_log.CAT_WS_DISCONNECT,
+            {"stream": "market", "reason": str(exc)[:200],
+             "uptime_s": round(time.monotonic() - _connected_at, 1) if _connected_at else None},
+        )
         delay = min(config.WS_RECONNECT_BASE * (2 ** attempt), config.WS_RECONNECT_MAX)
         await asyncio.sleep(delay)
         if not _stopping:
-            _market_ws_task = asyncio.create_task(_market_stream_loop(attempt + 1))
+            _market_ws_task = asyncio.create_task(_market_stream_loop(attempt + 1), name="ws-market")
 
 
 # ── Keepalive for listen key (must ping every 30 min) ────────────────────────
@@ -726,11 +829,21 @@ async def _keepalive_loop() -> None:
             try:
                 await keepalive_listen_key(_listen_key)
                 app_state.ws_status.add_log("Listen key refreshed.")
+                # corr-tap: ws_listenkey_keepalive (spec §5.4b)
+                correlation_log.emit("ws_manager", "binance", "internal",
+                                     correlation_log.CAT_WS_LISTENKEY_KEEPALIVE,
+                                     {"ok": True})
             except RateLimitError as e:
                 handle_rate_limit_error(e)
                 log.warning("Rate limit hit in keepalive_loop: %s", e)
+                correlation_log.emit("ws_manager", "binance", "internal",
+                                     correlation_log.CAT_WS_LISTENKEY_KEEPALIVE,
+                                     {"ok": False, "error": "rate_limit"})
             except Exception as e:
                 app_state.ws_status.add_log(f"Listen key refresh failed: {e}")
+                correlation_log.emit("ws_manager", "binance", "internal",
+                                     correlation_log.CAT_WS_LISTENKEY_KEEPALIVE,
+                                     {"ok": False, "error": str(e)[:200]})
 
 
 # ── REST fallback polling ─────────────────────────────────────────────────────
@@ -783,10 +896,12 @@ async def start(listen_key: str) -> None:
     _stopping = False
     _listen_key = listen_key
 
-    _user_ws_task   = asyncio.create_task(_user_data_loop(listen_key))
-    _market_ws_task = asyncio.create_task(_market_stream_loop())
-    _keepalive_task = asyncio.create_task(_keepalive_loop())
-    _fallback_task  = asyncio.create_task(_fallback_loop())
+    # Named tasks (CL.T1b, spec §4 `task` field): one logical stream keeps a
+    # stable, lineage-readable name across reconnect respawns.
+    _user_ws_task   = asyncio.create_task(_user_data_loop(listen_key), name="ws-user")
+    _market_ws_task = asyncio.create_task(_market_stream_loop(), name="ws-market")
+    _keepalive_task = asyncio.create_task(_keepalive_loop(), name="ws-keepalive")
+    _fallback_task  = asyncio.create_task(_fallback_loop(), name="ws-fallback")
 
     app_state.ws_status.add_log("WebSocket manager started.")
 
@@ -819,16 +934,40 @@ def set_calculator_symbol(symbol: str) -> None:
         app_state.orderbook_cache.pop(old_sym, None)
     try:
         asyncio.get_running_loop()
+        restart_scheduled = True
     except RuntimeError:
+        restart_scheduled = False
+    # corr-tap: calc_symbol_change (spec §5.4b — the leak query's trigger
+    # side: a calc_symbol_change with no later ws_stream_rebuild is the bug)
+    correlation_log.emit("ws_manager", "internal", "internal",
+                         correlation_log.CAT_CALC_SYMBOL_CHANGE,
+                         {"old": old_sym, "new": new_sym,
+                          "restart_scheduled": restart_scheduled},
+                         symbol=new_sym)
+    if not restart_scheduled:
         return  # no running loop (test / pre-startup) — next restart applies it
-    asyncio.create_task(restart_market_streams())
+    asyncio.create_task(restart_market_streams(trigger="calc_symbol_change"),
+                        name="ws-restart")
 
 
-async def restart_market_streams() -> None:
+async def restart_market_streams(trigger: str = "position_change") -> None:
     global _market_ws_task
+    # corr-tap: ws_stream_rebuild — old→new diff (spec §5.4b). `old` is what
+    # the current WS actually subscribed with (_last_streams); `new` reflects
+    # the already-mutated module state this rebuild will apply.
+    new_streams = _build_market_streams()
+    correlation_log.emit(
+        "ws_manager", "internal", "internal",
+        correlation_log.CAT_WS_STREAM_REBUILD,
+        {"trigger": trigger,
+         "old_streams": list(_last_streams),
+         "new_streams": new_streams,
+         "added": sorted(set(new_streams) - set(_last_streams)),
+         "removed": sorted(set(_last_streams) - set(new_streams))},
+    )
     if _market_ws_task and not _market_ws_task.done():
         _market_ws_task.cancel()
-    _market_ws_task = asyncio.create_task(_market_stream_loop())
+    _market_ws_task = asyncio.create_task(_market_stream_loop(), name="ws-market")
 
 
 async def stop() -> None:
