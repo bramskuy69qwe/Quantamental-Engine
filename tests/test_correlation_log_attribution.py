@@ -1582,6 +1582,494 @@ class TestEnrichAndDrift:
         assert p["error_type"] == "OperationalError"
 
 
+# ════ CL.T3c — funding attribution + the §4.1 race / duplicate fixtures ═════
+
+@pytest.fixture
+def _restore_app_state_full():
+    """Snapshot/restore positions + account + portfolio (the race and
+    narrative fixtures drive real data_cache applies)."""
+    from core.state import app_state
+    pos_snap = list(app_state.positions)
+    acc_snap = dict(app_state.account_state.__dict__)
+    pf_snap = dict(app_state.portfolio.__dict__)
+    app_state.positions = []
+    yield app_state
+    app_state.positions = pos_snap
+    app_state.account_state.__dict__.update(acc_snap)
+    app_state.portfolio.__dict__.update(pf_snap)
+
+
+class _StubBus:
+    async def publish(self, *a, **k):
+        pass
+
+    async def publish_engine(self, *a, **k):
+        pass
+
+    def publish_engine_nowait(self, *a, **k):
+        pass
+
+
+class TestFundingAssign:
+    def _income(self, **kw):
+        base = {"symbol": "BTCUSDT", "incomeType": "FUNDING_FEE",
+                "income": "-0.5", "time": 1000}
+        base.update(kw)
+        return base
+
+    async def _resolver(self, account_id, tpid):
+        return ("CALC-1", "LC-1")
+
+    def test_open_path_assigned_then_repoll_dedup_same_key(self, tmp_path):
+        from core.funding_handler import handle_funding_incomes
+
+        async def main():
+            db = await _mk_db(tmp_path)
+            try:
+                _drain()
+                kw = dict(
+                    account_id=1, incomes=[self._income()],
+                    positions=[_pos_info(tpid="POS-1")], db=db,
+                    primary_calc_resolver=self._resolver,
+                )
+                c1 = await handle_funding_incomes(**kw)
+                first = _drain()
+                c2 = await handle_funding_incomes(**kw)   # re-poll
+                second = _drain()
+                return c1, first, c2, second
+            finally:
+                await db.close()
+
+        c1, first, c2, second = asyncio.run(main())
+        assert c1["written"] == 1 and c2["deduped"] == 1
+        f1 = _by_cat(first, "attr_funding_assign")
+        assert len(f1) == 1
+        p1 = f1[0]["payload"]
+        assert p1["outcome"] == "ASSIGNED"
+        assert p1["resolution_path"] == "open_position"
+        assert p1["inserted"] is True
+        assert p1["terminal_position_id"] == "POS-1"
+        assert p1["calc_id"] == "CALC-1" and p1["lifecycle_id"] == "LC-1"
+        assert p1["dedup_key"] == "binance:funding:1:BTCUSDT:1000"
+        # the re-poll re-emits the SAME dedup_key with inserted:false —
+        # the §4.1 one-grep duplicate mechanic
+        p2 = _by_cat(second, "attr_funding_assign")[0]["payload"]
+        assert p2["inserted"] is False
+        assert p2["dedup_key"] == p1["dedup_key"]
+
+    def test_closed_window_path_queues_reconcile(self, tmp_path):
+        from core.funding_handler import handle_funding_incomes
+
+        async def main():
+            db = await _mk_db(tmp_path)
+            try:
+                await db.insert_closed_position({
+                    "account_id": 1, "symbol": "BTCUSDT",
+                    "direction": "LONG", "quantity": 1.0,
+                    "entry_price": 100.0, "exit_price": 110.0,
+                    "entry_time_ms": 500, "exit_time_ms": 1500,
+                    "terminal_position_id": "POS-C", "calc_id": "CALC-C",
+                    "lifecycle_id": "LC-C",
+                })
+                _drain()
+                counts = await handle_funding_incomes(
+                    account_id=1, incomes=[self._income()],
+                    positions=[], db=db,
+                    primary_calc_resolver=self._resolver,
+                )
+                return counts, _drain()
+            finally:
+                await db.close()
+
+        counts, envs = asyncio.run(main())
+        assert counts["written"] == 1 and counts["orphan"] == 0
+        p = _by_cat(envs, "attr_funding_assign")[0]["payload"]
+        assert p["outcome"] == "ASSIGNED"
+        assert p["resolution_path"] == "closed_window"
+        assert p["reconcile_queued"] is True
+        assert p["terminal_position_id"] == "POS-C"
+        assert p["calc_id"] == "CALC-C" and p["lifecycle_id"] == "LC-C"
+
+    def test_orphan_is_a_decision_line(self, tmp_path):
+        from core.funding_handler import handle_funding_incomes
+
+        async def main():
+            db = await _mk_db(tmp_path)
+            try:
+                _drain()
+                counts = await handle_funding_incomes(
+                    account_id=1, incomes=[self._income()],
+                    positions=[], db=db,
+                    primary_calc_resolver=self._resolver,
+                )
+                return counts, _drain()
+            finally:
+                await db.close()
+
+        counts, envs = asyncio.run(main())
+        assert counts["orphan"] == 1 and counts["written"] == 0
+        fa = _by_cat(envs, "attr_funding_assign")
+        assert len(fa) == 1
+        p = fa[0]["payload"]
+        assert p["outcome"] == "ORPHAN"
+        assert p["reason"] == "no_open_or_closed_position"
+        assert p["resolution_path"] == "orphan"
+        # identity tuple verbatim "" (mandate 2) — all four fields
+        assert p["terminal_position_id"] == "" and p["calc_id"] == ""
+        assert p["lifecycle_id"] == "" and p["exchange_order_id"] == ""
+        # mandate 3 on the orphan line too (audit T3c-2)
+        assert p["dedup_key"] == "binance:funding:1:BTCUSDT:1000"
+        assert p["venue_event_id"] == p["dedup_key"]
+
+    def test_resolver_fault_flagged_row_still_written(self, tmp_path):
+        from core.funding_handler import handle_funding_incomes
+
+        async def _bad_resolver(account_id, tpid):
+            raise RuntimeError("junction down")
+
+        async def main():
+            db = await _mk_db(tmp_path)
+            try:
+                _drain()
+                counts = await handle_funding_incomes(
+                    account_id=1,
+                    # two settlements on the SAME faulted tpid — the flag
+                    # must persist past the resolver cache (audit T3c-1)
+                    incomes=[self._income(),
+                             self._income(time=2000)],
+                    positions=[_pos_info(tpid="POS-1")], db=db,
+                    primary_calc_resolver=_bad_resolver,
+                )
+                return counts, _drain()
+            finally:
+                await db.close()
+
+        counts, envs = asyncio.run(main())
+        assert counts["written"] == 2  # the fault must not drop the rows
+        fa = _by_cat(envs, "attr_funding_assign")
+        assert len(fa) == 2
+        for e in fa:
+            p = e["payload"]
+            assert p["outcome"] == "ASSIGNED"
+            assert p["resolver_fault"] is True
+            assert p["calc_id"] == "" and p["lifecycle_id"] == ""  # verbatim
+
+    def test_batch_abort_error_twin_reraises(self, tmp_path):
+        from core.funding_handler import handle_funding_incomes
+
+        async def main():
+            db = await _mk_db(tmp_path)
+            try:
+                async def _boom(*a, **k):
+                    raise RuntimeError("reader down")
+
+                db.find_closed_position_for_funding = _boom
+                _drain()
+                raised = False
+                try:
+                    await handle_funding_incomes(
+                        account_id=1, incomes=[self._income()],
+                        positions=[], db=db,
+                        primary_calc_resolver=self._resolver,
+                    )
+                except RuntimeError:
+                    raised = True
+                return raised, _drain()
+            finally:
+                await db.close()
+
+        raised, envs = asyncio.run(main())
+        assert raised is True  # caller-visible behavior unchanged
+        p = _by_cat(envs, "attr_funding_assign")[0]["payload"]
+        assert p["outcome"] == "ERROR" and p["reason"] == "batch_aborted"
+        assert p["error_type"] == "RuntimeError"
+
+    def test_non_funding_rows_domain_filtered(self, tmp_path):
+        from core.funding_handler import handle_funding_incomes
+
+        async def main():
+            db = await _mk_db(tmp_path)
+            try:
+                _drain()
+                await handle_funding_incomes(
+                    account_id=1,
+                    incomes=[self._income(incomeType="REALIZED_PNL")],
+                    positions=[], db=db,
+                    primary_calc_resolver=self._resolver,
+                )
+                return _drain()
+            finally:
+                await db.close()
+
+        envs = asyncio.run(main())
+        assert _by_cat(envs, "attr_funding_assign") == []
+
+
+class TestRaceFixture:
+    def test_race_reconstructable_from_the_log_alone(
+        self, tmp_path, _restore_app_state_full,
+    ):
+        """Spec §4.1: a WS close chain interleaved with a snapshot-refresh
+        chain on the same position — (ts,seq) proves order, distinct
+        ``task`` proves concurrency, and the tier shows the fallback fired
+        BECAUSE the live position vanished (the ⑨ close-tpid race)."""
+        async def main():
+            db = await _mk_db(tmp_path)
+            try:
+                from core.data_cache import DataCache, UpdateSource
+                from core.order_manager import OrderManager
+                from core.state import app_state
+
+                om = OrderManager(db)
+                cache = DataCache(_StubBus())
+                pos = _pos_info(tpid="POS-9")
+                cache._positions = [pos]
+                app_state.positions = [pos]
+                # tier-2 source: the persisted entry order
+                await db.upsert_order_batch([{
+                    "account_id": 1, "exchange_order_id": "E-RACE",
+                    "symbol": "BTCUSDT", "status": "filled",
+                    "order_type": "limit", "quantity": 1.0,
+                    "filled_qty": 1.0, "reduce_only": 0,
+                    "position_side": "LONG",
+                    "terminal_position_id": "POS-9",
+                    "created_at_ms": 1000, "updated_at_ms": 1000,
+                }])
+                _drain()
+
+                gate = asyncio.Event()
+
+                async def ws_chain():
+                    with cl.correlation_scope("wsu"):
+                        await gate.wait()   # the snapshot lands FIRST
+                        return await om._resolve_close_tpid(1, {
+                            "symbol": "BTCUSDT", "direction": "LONG",
+                            "exchange_fill_id": "F-RACE",
+                            "exchange_order_id": "E-RACE",
+                        })
+
+                async def sched_chain():
+                    with cl.correlation_scope("sch-account_refresh"):
+                        await cache.apply_position_snapshot(
+                            UpdateSource.PLATFORM, [], force=True,
+                        )
+                        # in production app_state.positions IS the cache's
+                        # list; mirror the wipe for the locally-built cache
+                        app_state.positions = []
+                        gate.set()
+
+                t_ws = asyncio.create_task(ws_chain(), name="ws-user")
+                t_sched = asyncio.create_task(sched_chain(), name="sch-refresh")
+                got, _ = await asyncio.gather(t_ws, t_sched)
+                return got, _drain()
+            finally:
+                await db.close()
+
+        got, envs = asyncio.run(main())
+        assert got == "POS-9"  # tier-2 rescued the close
+        snap = _by_cat(envs, "position_snapshot_applied")[0]
+        res = _by_cat(envs, "attr_tpid_resolve")[0]
+        # two chains…
+        assert snap["corr_id"].startswith("sch-")
+        assert res["corr_id"].startswith("wsu-")
+        # …on two concurrent workers…
+        assert snap["task"] == "sch-refresh" and res["task"] == "ws-user"
+        # …with true order: the wipe happened BEFORE the resolve…
+        assert snap["seq"] < res["seq"]
+        # …which is WHY the fallback tier fired (the §4.1 walkthrough)
+        assert snap["payload"]["closes_detected"] == [["BTCUSDT", "LONG", "POS-9"]]
+        assert res["payload"]["tier"] == "entry_order_fallback"
+
+
+class TestDuplicateFixture:
+    def _frame(self):
+        return {"e": "ORDER_TRADE_UPDATE", "E": 0,
+                "o": {"i": 9911, "X": "NEW", "S": "BUY", "q": "1",
+                      "p": "100", "z": "0", "s": "BTCUSDT", "x": "NEW"}}
+
+    def test_redelivered_frame_is_two_lines_one_grep(self, monkeypatch):
+        """Split (a) — corr-log acceptance: the same venue frame delivered
+        twice = two ws_order_update lines sharing one dedup_key; the
+        §4.1 `uniq -d` mechanic finds it."""
+        from types import SimpleNamespace
+        from collections import Counter
+        import core.ws_manager as wsm
+
+        async def _noop(*a, **k):
+            pass
+
+        monkeypatch.setattr(wsm, "event_bus",
+                            SimpleNamespace(publish=_noop))
+        monkeypatch.setattr(wsm, "_apply_account_update", _noop)
+        monkeypatch.setattr(wsm, "_apply_order_update", _noop)
+        monkeypatch.setattr(wsm, "_apply_algo_update", _noop)
+        asyncio.run(wsm._handle_user_event(self._frame()))
+        asyncio.run(wsm._handle_user_event(self._frame()))
+        envs = _by_cat(_drain(), "ws_order_update")
+        assert len(envs) == 2
+        keys = [e["payload"]["dedup_key"] for e in envs]
+        assert keys == ["9911:NEW:1", "9911:NEW:1"]
+        # distinct chains (each frame mints its own) — the duplicate is
+        # found by KEY, not by corr_id
+        assert envs[0]["corr_id"] != envs[1]["corr_id"]
+        dups = [k for k, n in Counter(keys).items() if n > 1]
+        assert dups == ["9911:NEW:1"]
+
+    def test_engine_decides_once_for_a_redelivered_update(self):
+        """Split (b) — the exactly-one-decision invariant is the ENGINE's,
+        not the log's: verify it HOLDS today (the SR-1 gate rejects the
+        new→new self-transition on redelivery → exactly one
+        order_status_applied line per key)."""
+        from core.order_manager import OrderManager
+
+        state = {"active": {}}
+
+        class _Db:
+            async def get_active_orders_map(self, account_id):
+                return state["active"]
+
+            async def upsert_order_batch(self, rows):
+                pass
+
+        om = OrderManager(_Db())
+
+        async def _anoop(*a, **k):
+            pass
+
+        def _noop(*a, **k):
+            pass
+
+        om._enrich_order_best_effort = _anoop
+        om._re_enrich_parent_on_child_arrival = _anoop
+        om._propagate_bracket_calc_id = _anoop
+        om._detect_duplicate_orders = _anoop
+        om._release_calc_on_operator_cancel = _anoop
+        om.refresh_cache = _anoop
+        om._emit_order_events = _noop
+        om._publish_order_update = _noop
+
+        order = {"exchange_order_id": "E-DUP", "status": "new",
+                 "symbol": "BTCUSDT", "quantity": 1.0}
+
+        async def main():
+            ok1 = await om.process_order_update(1, dict(order))
+            # the order is now active — redeliver the SAME update
+            state["active"] = {"E-DUP": {"status": "new"}}
+            ok2 = await om.process_order_update(1, dict(order))
+            return ok1, ok2
+
+        ok1, ok2 = asyncio.run(main())
+        assert ok1 is True and ok2 is False  # SR-1 rejected the replay
+        osa = _by_cat(_drain(), "order_status_applied")
+        assert len(osa) == 1  # the invariant HOLDS — exactly one decision
+        assert osa[0]["payload"]["dedup_key"] == "E-DUP:new:1.0"
+
+
+class TestOneChainNarrative:
+    def test_full_lifecycle_on_one_corr_chain_in_seq_order(
+        self, tmp_path, _restore_app_state_full,
+    ):
+        """Replay wiring (plan 3.4 / spec §10.1 shape): match → junction →
+        tpid-resolve → close-build on ONE corr chain, seq-ordered, with
+        the paired db_writes — the attribution narrative end to end."""
+        async def main():
+            db = await _mk_db(tmp_path)
+            db_file = str(tmp_path / "t3b.db")  # _mk_db's file
+            try:
+                from core.order_enrichment import _try_correlate
+                from core.order_manager import OrderManager
+
+                om = OrderManager(db)
+                now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+                await db.upsert_order_batch([{
+                    "account_id": 1, "exchange_order_id": "E-1",
+                    "symbol": "BTCUSDT", "status": "filled",
+                    "order_type": "limit", "quantity": 1.0,
+                    "filled_qty": 1.0, "reduce_only": 0,
+                    "position_side": "LONG", "price": 100.0,
+                    "terminal_position_id": "POS-N",
+                    "created_at_ms": now_ms, "updated_at_ms": now_ms,
+                }])
+                await db._conn.execute(
+                    "UPDATE orders SET tp_trigger_price=110.0,"
+                    " sl_trigger_price=95.0 WHERE exchange_order_id='E-1'",
+                )
+                await db.insert_pre_trade_log({
+                    "account_id": 1, "ticker": "BTCUSDT", "side": "long",
+                    "calc_id": "CALC-N", "effective_entry": 100.0,
+                    "tp_price": 110.0, "sl_price": 95.0,
+                    "timestamp": _now_iso(), "eligible": True,
+                })
+                await db._conn.commit()
+                _drain()
+
+                with cl.correlation_scope("wsu") as cid:
+                    await _try_correlate({
+                        "account_id": 1, "exchange_order_id": "E-1",
+                        "order_type": "limit", "symbol": "BTCUSDT",
+                        "side": "BUY", "status": "filled", "quantity": 1.0,
+                    }, db_file)
+                    open_fill = {
+                        "account_id": 1, "exchange_order_id": "E-1",
+                        "terminal_position_id": "POS-N", "is_close": 0,
+                        "symbol": "BTCUSDT", "direction": "LONG",
+                        "quantity": 1.0, "price": 100.0,
+                        "timestamp_ms": now_ms,
+                        "exchange_fill_id": "F-N1",
+                    }
+                    await db.upsert_fill(dict(open_fill))
+                    await om._link_position_calc_on_open(1, open_fill)
+                    resolved = await om._resolve_close_tpid(1, {
+                        "symbol": "BTCUSDT", "direction": "LONG",
+                        "exchange_fill_id": "F-N2",
+                        "exchange_order_id": "E-2",
+                    })
+                    close = {
+                        "account_id": 1, "exchange_fill_id": "F-N2",
+                        "exchange_order_id": "E-2", "symbol": "BTCUSDT",
+                        "direction": "LONG", "price": 110.0,
+                        "quantity": 1.0, "is_close": 1,
+                        "timestamp_ms": now_ms + 1000,
+                        "terminal_position_id": resolved,
+                        "realized_pnl": 10.0,
+                    }
+                    await db.upsert_fill(dict(close))
+                    await om._build_close_row_for_fill(1, close)
+                return cid, resolved, _drain()
+            finally:
+                await db.close()
+
+        cid, resolved, envs = asyncio.run(main())
+        assert resolved == "POS-N"
+        match = _by_cat(envs, "attr_match_attempt")
+        junction = [e for e in _by_cat(envs, "attr_junction_form")
+                    if e["payload"]["outcome"] == "FORMED"]
+        tpid_res = [e for e in _by_cat(envs, "attr_tpid_resolve")
+                    if e["payload"].get("via") == "close_fill"]
+        close_b = _by_cat(envs, "attr_close_build")
+        assert len(match) == 1 and match[0]["payload"]["outcome"] == "LINKED"
+        assert match[0]["payload"]["calc_id"] == "CALC-N"
+        assert len(junction) == 1
+        assert junction[0]["payload"]["calc_id"] == "CALC-N"
+        assert len(tpid_res) == 1
+        assert tpid_res[0]["payload"]["outcome"] == "RESOLVED"
+        assert len(close_b) == 1
+        assert close_b[0]["payload"]["outcome"] == "WRITTEN"
+        assert close_b[0]["payload"]["calc_id"] == "CALC-N"
+        # ONE chain end to end…
+        for e in (match[0], junction[0], tpid_res[0], close_b[0]):
+            assert e["corr_id"] == cid
+        # …in true causal order (the §4.1 seq mandate)
+        assert (match[0]["seq"] < junction[0]["seq"]
+                < tpid_res[0]["seq"] < close_b[0]["seq"])
+        # the chain's writes are visible too ("what rows did this chain
+        # write?") — junction + closed_positions on the same corr
+        chain_writes = {e["payload"]["table"]
+                        for e in _by_cat(envs, "db_write")
+                        if e["corr_id"] == cid}
+        assert {"positions_calcs", "closed_positions"} <= chain_writes
+
+
 # ── registry conformance ─────────────────────────────────────────────────────
 
 class TestT3bEntryRegistryConformance:
@@ -1590,5 +2078,7 @@ class TestT3bEntryRegistryConformance:
         for cat in ("attr_match_attempt", "attr_bracket_inherit",
                     "attr_junction_form", "attr_reenrich_trigger",
                     "attr_tpid_resolve", "attr_close_build",
-                    "attr_enrich", "attr_drift_check"):
+                    "attr_enrich", "attr_drift_check",
+                    "attr_funding_assign"):
+            # all NINE §5.6 categories are live as of CL.T3c
             assert reg[cat] == "attr"
