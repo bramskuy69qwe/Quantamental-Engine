@@ -1,57 +1,67 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-06-11
-**Branch**: **`v2.5/correlation-log`** @ `c421747` — **9 commits UNPUSHED** on top of the pushed `b9e371e` (the stable linkage line). Working tree CLEAN.
-**Tests**: full suite **3681 passed / 7 skipped** (run SOLO — see gotchas). Only pre-existing noise: the aiosqlite `Event loop is closed` teardown warning.
-**Engine**: STOPPED (never started this session). Restart: `.venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000`. Observe-only — force-kill safe.
+**Date**: 2026-06-13
+**Branch**: **`v2.5/correlation-log`** @ `c408780` — **16 commits UNPUSHED** on top of the pushed `b9e371e` (the stable linkage line). Working tree CLEAN.
+**Tests**: full suite **3771 passed / 7 skipped** (run SOLO — see gotchas). Only pre-existing noise: the aiosqlite `Event loop is closed` teardown warning.
+**Engine**: STOPPED (never started these sessions). Restart: `.venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000`. Observe-only — force-kill safe.
 
 ## ▶ NEXT SESSION MANDATE (operator-directed, in this order)
 
-1. **HOLISTIC PHASE-2 AUDIT FIRST** — audit CL.T2a (`a6d839d`) + CL.T2b (`c421747`) as ONE unit, mirroring the Phase-1 holistic audit (whose filing is commit `b757d94`): 2 parallel adversarial agents — (A) code lens: cross-task chain coherence + production regressions; (B) docs/tests lens: spec/plan fidelity + mutation-style test integrity — then **FILE findings as a docs-only commit** (extend spec §15 errata + plan §9.4 ledger). The per-task audits already ran (both FIX-THEN-SHIP, fixes folded pre-commit); the holistic pass hunts what they couldn't see ACROSS the seam, e.g.: bus re-bind (T2a) × webhook re-bind (T2b) interaction; REST taps firing under bus-delivered handlers (end-to-end chain: close frame→bus→webhook→POST, and wsu frame→handler→REST); the new outbound/bus categories' profile coverage; the 15-file T2a sweep vs any tests added since.
-   **Three KNOWN as-built items already queued for the §15 errata** (surfaced by the T2b audit, deliberately deferred to this filing): (a) a tracker weight-budget block raises BEFORE the `rest_call` tap — a budget-blocked call is invisible to the log (accept + document, or add a call-less `rest_return{blocked:true}`); (b) RedisBus's `pubsub_publish` taps the ATTEMPT (pre-connection) — diverges from T2a's published==enqueued convention (deployment runs `inprocess`, impact ≈0); (c) import-style inconsistency — function-level `from core import correlation_log` in `regime_fetcher.py`/`pubsub/bus.py` vs module-level elsewhere (no cycle either way; unify opportunistically).
-2. **THEN CL.T3a** (after operator OK — ONE task per turn, see operating rules): the internal-taps sweep. Pre-scoped below.
-3. **THEN CL.T3b-entry → T3b-close → T3c** — the attribution-decision taps, **the program's payoff** — each its own gated task.
+1. **CL.T4 — the reader** (after operator go; ONE task per turn): `scripts/corr_tail.py` — filter by corr_id / calc_id / symbol / category / time-window; pretty-print one chain in `seq` order; `--follow`; `--interleave <from> <to>` (race forensics); `--dups` (dedup_keys seen >1×); MUST tolerate unknown envelope fields — plus the jq cookbook doc (plan 4.1–4.2; the optional admin route 4.3 stays deferred). **The filings pre-loaded a BINDING cookbook-requirements queue**:
+   - **E23**: the identity field is **`terminal_position_id`** — the spec §5.6/§9 `tpid` shorthand does NOT exist in envelopes; every recipe/filter must use the real key.
+   - **HA-32**: dedup tag-styles are heterogeneous (`{fid}:tpid_resolve`, `close:{fid}`, `junction:{fid}`, `replay:{eoid}`, `manual:{oid}:{calc}`, `{eid}:inherit:{calc}`, `{eid}:{status}:{qty}`, funding `venue_event_id`) — `--dups` must not assume one shape; the landed-close-row predicate is `payload.row_written`, NOT `outcome=="WRITTEN"` (post-persist exceptions read ERROR with row_written:true).
+   - **HA-33**: funding re-polls are routine benign dedup-key repeats (`inserted:false` disambiguates) — `--dups` needs the caveat or a default exclusion.
+   - **HA-34**: terminal-replay duplicates bypass SR-1 by design — discriminated by the paired db_write `rowcount=0`.
+   - **HA-38**: a cancelled deferred close-build reads `ERROR/build_incomplete` — a line, not a bug.
+2. **THEN CL.T5 — the program close-out** (LAST task; own gated turn; plan 5.1–5.4): volume pass (**HA-13** linkage-vs-outbound regroup decision; **HA-14** pubsub sampling; **HA-23** closes_detected cap; **HA-24** platform 5 Hz; **HA-28** the bracket-SKIP + per-update `junction_exists` replay lines — the largest nothing-to-do generators); the falsifiable perf gate (p95 <5%, `perf` marker, excluded from default suite); the **8-bug replay gate** (spec §10.10 — MUST add the amend + cancel legs acceptance #1 is missing, and exercise the HA-35/HA-40 envelope-less seams); the holistic audit + final §15/§9.4 reconciliation. Open ledger going in: HA-6..11 (P1), HA-13..22 minus closures (P2), HA-23..42 (P3) — full detail plan §9.4.
+3. **AFTER the program**: the **attribution reconciler** (spec §12) is the next PROGRAM — separate plan/spec first. **HA-42** (latent pre-existing double-junction corridor: a mid-fill market-link replay double-counts `contributed_qty`; the new dedup keys make it one-grep findable) is filed as its first input, alongside the §5.6 baseline diff method (spec §12).
 
-## Operating rules (operator-set 2026-06-11 — binding)
+## Operating rules (operator-set — binding)
 
-- **ONE task → green + audited + commit → STOP** and wait for the operator's explicit "continue/proceed" before the next task ([[feedback_one_task_then_wait]] memory). A standing "proceed" covers ONE task, not the list.
-- **Independent-agent audit before each task's commit** (it caught real bugs on every task so far); fold blocking fixes pre-commit.
-- **Run the gate full-suite SOLO** — two concurrent pytest runs in this workspace contend (DB/CPU) and produce pytest-timeout artifacts (happened twice; audit-time-artifact discipline applies — re-verify before chasing).
-- Commit conventions: `feat(correlation-log): …` / `docs(correlation-log): …`; name deviations "X instead of Y because Z".
+- **ONE task → green + audited + commit → STOP** and wait for the operator's explicit "continue/proceed" ([[feedback_one_task_then_wait]]). A standing "proceed" covers ONE task, not the list.
+- **Independent-agent audit before each task's commit** — it caught real issues on EVERY task (incl. a BLOCKER on T3b-entry: a widened SELECT broke two hand-rolled test fixtures the targeted slice missed); fold blocking fixes pre-commit.
+- **Run the gate full-suite SOLO** — concurrent pytest runs contend (DB/CPU) → timeout artifacts (audit-time-artifact discipline: re-verify before chasing).
+- **Keep audit-agent briefs LEAN** — two big holistic-audit agents died to session limits (~160 tool calls lost; SendMessage is NOT available in this environment to recover a cut-off agent). Cap the charge list, set an explicit tool-call budget in the brief, run heavy agents in background, and demand the report even if abbreviated.
+- Commit conventions: `feat(correlation-log): …` / `docs(correlation-log): …`; deviations named "X instead of Y because Z". Holistic filings are docs-only commits (b757d94/fed5ac0/c408780 precedent — no full-suite gate needed).
 
-## Correlation-log program state — Phases 0+1+2 COMPLETE (of the 12-task plan)
+## Correlation-log program state — Phases 0–3 of 5 COMPLETE (10 of 12 tasks; all NINE §5.6 attribution categories LIVE)
 
 | Commit | Task | Content |
 |---|---|---|
 | `8ccd90b` | docs | spec rev 2 + implementation plan (4-agent design audit) |
 | `db89ae0` | CL.T0a | spine: corr_id contextvar, envelope, 45-category registry→derived profiles, emit pipeline, redaction |
-| `3b7c6ca` | CL.T0b | sink: writer THREAD, daily rotation (no rename), prune, MB-guard, overflow; conftest session-floor (fixed a PROVEN live-dir-leak BLOCKER) |
+| `3b7c6ca` | CL.T0b | sink: writer THREAD, daily rotation (no rename), prune, MB-guard, overflow; conftest session-floor |
 | `9ad8764` | CL.T1a | HTTP middleware (SSE close-tap, /static skip) + set-only `tick()` on all 18 loop bodies |
-| `9cb0efe` | CL.T1b | per-frame mints wsu/wsm/wsp/wsn + §5.4 frame taps w/ dedup_keys + §5.4b WS-lifecycle taps (the ticker-leak bug is now one query) + all ws tasks named |
-| `b757d94` | docs | Phase-1 holistic audit FILED: spec §15 errata E1–E12 + plan §9.4 ledger HA-1..12 + SHIPPED annotations |
-| `a6d839d` | CL.T2a | bus queue item → (channel, payload, corr_id); run() re-binds the publisher's chain per event (finally-reset); bus_publish/bus_deliver from the INSTRUMENTED dispatch; 15-file test sweep |
-| `c421747` | CL.T2b | REST chokepoint taps (loop-side, rest-* fallback), webhook hand-off #2 (close→bus→queue→POST = ONE chain; hostname-only after a userinfo-leak must-fix), Finnhub/FRED/yahoo taps, pubsub_publish, HA-1 (wsp mint → WS receive loop) + HA-2..5 hardening tests |
+| `9cb0efe` | CL.T1b | per-frame mints wsu/wsm/wsp/wsn + §5.4 frame taps w/ dedup_keys + §5.4b WS-lifecycle taps + ws tasks named |
+| `b757d94` | docs | Phase-1 holistic audit FILED: spec §15 E1–E12 + plan §9.4 HA-1..12 |
+| `a6d839d` | CL.T2a | bus queue carries + re-binds the publisher's corr_id; bus_publish/bus_deliver from the instrumented dispatch; 15-file sweep |
+| `c421747` | CL.T2b | REST chokepoint taps, webhook hand-off #2 (close→bus→queue→POST = ONE chain), Finnhub/FRED/yahoo/pubsub taps, HA-1..5 |
+| `fed5ac0` | docs | Phase-2 holistic audit FILED: E13–E18 + HA-13..22 (MED HA-13: `linkage` profile drops the whole outbound group) |
+| `3646a4d` | CL.T3a | spec §5.5 sweep: data_cache applies (closes_detected list, tpid_minted flags, waited/held_ms, portfolio on-change), calc/link transition taps, order_status_applied ws/reconcile/stale-mark, reconcile_promote, db_write at 12 writers w/ failure twins ("row not written" = a line) |
+| `331f00c` | CL.T3b-entry | attr_match_attempt (matcher wrapper+trace — query_failed no longer ambiguous w/ UNPLANNED; 7 gate skips; manual paths), attr_junction_form (no_position_key = the historical empty-tpid shape + post_link_replay), attr_bracket_inherit (applied:false visible), attr_reenrich_trigger (child+fill arrival) |
+| `b35389a` | CL.T3b-close | attr_tpid_resolve (tiers: live_position/entry_order_fallback + snapshot_recovery), attr_close_build (strict→walk→backfill→row_written on ONE line; insert_closed_position→ok bool), attr_enrich + attr_drift_check (on-change memo, PRUNE ON ENTRY; bug #h = one line) |
+| `fd5b56e` | CL.T3c | attr_funding_assign (open/closed/orphan paths) + §4.1 race fixture (two named tasks, reconstructable from envelopes alone) + duplicate fixture (split: log accepts 2 lines / ENGINE invariant verified HOLDS) + one-chain narrative — FIRST SHIP-verdict audit (differential probe) |
+| `c408780` | docs | Phase-3 holistic audit FILED: E19–E28 + HA-23..42 + §9.2 shas; disabled-parity PASS (24 env on / 0 off, identical DB); scenario envelope counts (linked routine update=7, first-link~10, child~14, open fill~12, close ~9+8) |
 
-**Where things live**: `core/correlation_log.py` (registry/_PROFILES/emit/sink — the spine); taps across `main.py`, `core/{ws_manager,platform_bridge,news_fetcher,event_bus,webhook_dispatcher,regime_fetcher,schedulers,monitoring}.py`, `core/adapters/base.py`, `core/pubsub/*`; conftest has THREE correlation fixtures (`_corr_log_session_floor` SESSION-scoped + `_isolate_correlation_log_dir` + its per-test corr reset); tests = `tests/test_correlation_log_{spine,entrypoints,ws,bus,boundaries,floor}.py` (~160 tests). Governing docs: `docs/design/correlation_log_spec.md` (rev 2 + §15 as-built errata) + `docs/design/correlation_log_implementation_plan.md` (§9.2 task table w/ SHIPPED shas, §9.4 filed ledger).
+**Where things live**: `core/correlation_log.py` (registry/_PROFILES/emit/sink — the spine; 45 categories, snapshot-pinned). Taps: `main.py`, `core/{ws_manager,platform_bridge,news_fetcher,event_bus,webhook_dispatcher,regime_fetcher,schedulers,monitoring,data_cache,calc_state,link_state,order_manager,order_enrichment,calc_correlation,link_actions,db_orders,db_trades,event_log,trade_event_log,funding_handler}.py`, `core/adapters/base.py`, `core/pubsub/*`. Conftest: `_corr_log_session_floor` (SESSION) + `_isolate_correlation_log_dir` + per-test corr reset. Tests: `tests/test_correlation_log_{spine,entrypoints,ws,bus,boundaries,floor,state,attribution}.py` (~250 corr tests; state=34, attribution=56). Governing docs: `docs/design/correlation_log_spec.md` (§15 errata E1–E28) + `docs/design/correlation_log_implementation_plan.md` (§9.2 SHIPPED shas, §9.4 ledger HA-1..42).
 
-**Filed follow-ups still OPEN** (plan §9.4): HA-6 composed leak-scenario test, HA-7 taps→live-writer smoke (both ≤CL.T5), HA-8 plugin `ohlcv_bar` not closed-candle-gated, HA-9 payload fills (ws_kline close/interval, ws_connected duration, news ws_connect, platform_snapshot counts), HA-10 NITs (PWA-endpoint skip, recovery-marker chain, ws_depth positive companion, anchor style), HA-11 exotic-frame catch-all (all CL.T5). HA-1..5 + HA-12 are CLOSED (T2a/T2b).
+**Open ledger highlights** (full detail plan §9.4; everything owned by CL.T4/T5 or later): the CL.T4 cookbook queue above; CL.T5 volume (HA-13/14/23/24/28), test-debt pins (HA-15/16/33/37), payload nits (HA-9/26/27/29), envelope-less seams (HA-35 post-LINKED write failure, HA-40 close-fill stamp + family, HA-41 audit-log writer twins), HA-6/7 (leak-scenario + live-writer smoke), HA-31 disabled-cost pre-gates; ENGINE follow-up HA-42 (reconciler input, out of log scope).
 
-## CL.T3a — pre-scoped (build AFTER the Phase-2 audit + operator OK)
+## Gotchas / environment (hard-won across the program)
 
-Sweep-shaped internal taps (spec §5.5 + §4.1 mandates): `core/data_cache.py` apply_* chokepoints — `position_snapshot_applied` (**closes_detected as a (symbol, side, tpid) LIST**, not a count), `position_incremental_applied` (**tpid + tpid_minted/tpid_present flags** — makes the mint a visible racer), `account_update_applied`, `portfolio_recalculated` (on dd/weekly-state CHANGE only); `waited_ms`/`held_ms` ONLY on the async lock-acquiring paths (the sync mark/kline/depth mutators have no lock); `calc_state.transition` + `link_state` chokepoint taps; `order_status_applied` (status before→after, **source ws|reconcile|stale-mark**, dedup_key) + `reconcile_promote` (the stale-orders detector — `db.reconcile_filled_orders` callers in `schedulers.py`); **`db_write`** (table, op, key ids VERBATIM incl. `""`, rowcount) at the ~10 money-path writers: `upsert_order_batch`, `upsert_fill`, `upsert_fill_and_update_order`, `insert_closed_position`, the `positions_calcs` upsert, `insert_funding_event`, `insert_pre_trade_log`, MFE/MAE updates, `reconcile_filled_orders`, backfills.
-Then **T3b-entry**: `attr_match_attempt` at `core/calc_correlation.py::correlate_order_to_calc` via `core/order_enrichment.py::_try_correlate` (**NOT order_manager** — the design audit corrected the site) + `attr_bracket_inherit` / `attr_junction_form` / `attr_reenrich_trigger`; **T3b-close**: `attr_tpid_resolve` (tier named) / `attr_close_build` (**strict_key, opens_found_strict/walk, open_fill_tpids {empty,populated}** — root cause on one screen) / `attr_enrich` (on-change gated) / `attr_drift_check` (planned vs live TP/SL + removed flags + badge transition); **T3c**: `attr_funding_assign` + the race & duplicate scenario fixtures. ALL attribution taps carry the spec §5.6 mandates: one envelope per invocation incl. `outcome=SKIPPED`+reason, identity tuple verbatim incl. `""`, dedup_key.
-
-## Gotchas / environment (this session's hard-won)
-
-- **LOW-023**: the engine app tolerates exactly ONE in-process `with TestClient(main.app)` lifespan per pytest process (`test_routes.py` owns it; the bus queue binds to the first portal loop). Middleware tests mount the real middleware fn on a tiny lifespan-free app — never add a second real-app TestClient.
-- `tick()` is SET-ONLY (loop tasks own their context); the conftest per-test corr reset exists because a test ticking in the pytest main thread would otherwise leak into later tests.
-- The 0-byte `data/logs/correlation/corr-2026-06-10.jsonl` is a pre-floor-fix test artifact deliberately LEFT in place (operator no-delete rule; it is a legitimate day-file path anyway). Suites must leave the live dir byte-identical — the background gate runs print a LIVE DIR check.
-- Binance ALGO frames key their id as `aid` (not `i`); dedup_keys are OMITTED when the id is missing (degenerate None-keys would false-match).
-- Memory: `project_correlation_log_design.md` carries full per-task state + audit history; `feedback_one_task_then_wait`, `feedback_audit_each_task`, and `feedback_workflow_dies_on_idle` (use direct parallel Agents, not the Workflow orchestrator) are binding.
+- **LOW-023**: the engine app tolerates exactly ONE in-process `with TestClient(main.app)` lifespan per pytest process (`test_routes.py` owns it). Middleware tests mount the real middleware fn on a tiny lifespan-free app — never add a second real-app TestClient.
+- `tick()` is SET-ONLY (loop tasks own their context); conftest resets corr per test.
+- The 0-byte `data/logs/correlation/corr-2026-06-10.jsonl` is a pre-floor-fix artifact deliberately LEFT in place (operator no-delete rule). Suites must leave the live dir byte-identical — snapshot before/after every gate run.
+- Binance ALGO frames key their id as `aid` (not `i`); dedup_keys are OMITTED when the id is missing.
+- **Hand-rolled `orders`-table test fixtures must carry `terminal_position_id` + `lifecycle_id`** — the matcher's widened SELECT reads them (the T3b-entry BLOCKER: `test_production_parity` + `test_calc_id_wiring` broke; both fixed).
+- **DB `execute` stubs must be dual awaitable/async-CM** — the T3a corr-tap pre-SELECTs consume cursors via `async with conn.execute(...)`; a bare async-def stub breaks (the task101 sweep has the reference fake, `_stale_exec_stub`).
+- The enrich/drift on-change memo (`om._attr_enrich_memo`) PRUNES ON ENTRY; tests that reuse one OrderManager across passes rely on it.
+- Throwaway probe/commit-msg artifacts live in `e:/tmp` (`cl_parity_probe.py` — the re-runnable disabled-parity proof — plus per-audit probes + commit-message files); not in the repo, regenerable.
+- Memory: `project_correlation_log_design.md` carries the full per-task state + audit history; `feedback_one_task_then_wait`, `feedback_audit_each_task`, `feedback_workflow_dies_on_idle` (direct parallel Agents, not the Workflow orchestrator) are binding.
 
 ---
 
-## ★ HISTORICAL (2026-06-09) — the directive that started this program: DEBUGGING PAUSED → CORRELATION LOG (now Phases 0-2 SHIPPED, see top), then the attribution reconciler, THEN resume linkage debugging
+## ★ HISTORICAL (2026-06-09) — the directive that started this program: DEBUGGING PAUSED → CORRELATION LOG (now Phases 0-3 SHIPPED, see top), then the attribution reconciler, THEN resume linkage debugging
 
 **Operator directive (2026-06-09): HOLD all calc-linkage debugging until the correlation log is upgraded.** The live debug session stabilized linkage (every reported bug fixed + regression-tested + live-verified through a full open→amend→cancel→close scenario) — but it was whack-a-mole. **Root cause of ~every bug: identity/attribution reconciliation on the observe-only Binance stream is done AD-HOC across ~6 sites** (matcher, close-builder, live-enricher, drilldown, ⑨, bracket inheritance), each with a different rule (strict-tpid / chronological-walk / symbol+window / calc_id) → fixing one site shifts load onto another (⑨ → close-recording regression was the textbook proof). Build observability BEFORE more debugging.
 
