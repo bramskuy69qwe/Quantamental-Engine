@@ -493,10 +493,10 @@ pre-grepped sites.
 | **CL.T1b** | **SHIPPED `9cb0efe`** — WS frame taps (Binance user/market + platform + news) + WS lifecycle taps + task naming | plan 1.3–1.6 | M |
 | **CL.T2a** | **SHIPPED `a6d839d`** — Bus carry/re-bind + bus taps + the 2-tuple test sweep — isolated, revertable commit | plan 2a.1–2a.3 | S–M |
 | **CL.T2b** | **SHIPPED `c421747`** — REST chokepoint + outbound-HTTP taps + webhook-queue carry + pubsub tap + the HA-1..5 closures | plan 2b.1–2b.4 | M |
-| **CL.T3a** | State/DB/orders taps (sweep): data_cache + transitions + order_status/reconcile_promote + db_write | plan 3.1 | M |
-| **CL.T3b-entry** | Attribution entry side: match (calc_correlation/order_enrichment) + bracket + junction + reenrich | plan 3.2 | M |
-| **CL.T3b-close** | Attribution close side: tpid_resolve + close_build + enrich + drift_check | plan 3.3 | M |
-| **CL.T3c** | Funding attribution + race/duplicate fixtures + scenario replay wiring | plan 3.4 | S–M |
+| **CL.T3a** | **SHIPPED `3646a4d`** — State/DB/orders taps (sweep): data_cache + transitions + order_status/reconcile_promote + db_write (12 writers incl. the audit-fold log_event/log_trade_event) | plan 3.1 | M |
+| **CL.T3b-entry** | **SHIPPED `331f00c`** — Attribution entry side: match (calc_correlation/order_enrichment) + bracket + junction + reenrich | plan 3.2 | M |
+| **CL.T3b-close** | **SHIPPED `b35389a`** — Attribution close side: tpid_resolve + close_build + enrich + drift_check (on-change memo) | plan 3.3 | M |
+| **CL.T3c** | **SHIPPED `fd5b56e`** — Funding attribution + race/duplicate fixtures + the one-chain narrative (named deviation: replay wiring shipped self-contained, not by editing the live-debug fixture files — per-bug envelope asserts are CL.T5 5.3's job) | plan 3.4 | S–M |
 | **CL.T4** | Reader — `corr_tail.py` + jq cookbook (may start after Phase 1) | plan 4.1–4.2 | S |
 | **CL.T5** | Volume tuning + perf gate + **8-bug replay gate** + holistic audit + fixes | plan 5.1–5.4 | M |
 
@@ -516,7 +516,7 @@ one commit, green + audited before the next.
   loosely ordered but can interleave.
 - **CL.T4** any time after Phase 1 (dogfood early); **CL.T5** last.
 
-### 9.4 Holistic-audit ledger — filed follow-ups (Phases 1–2, 2026-06-11)
+### 9.4 Holistic-audit ledger — filed follow-ups (Phases 1–3)
 
 **Phase-1 audit.** Two-agent holistic audit of Phase 0+1 (`9ad8764` + `9cb0efe` on
 `db89ae0`/`3b7c6ca`): **COHERENT, NO PRODUCTION REGRESSIONS, no
@@ -562,14 +562,73 @@ CL.T3a.
 |---|---|---|---|
 | HA-13 | MED | The `linkage` profile drops the **entire `outbound` group** — incl. the webhook `http_out_*` taps, the terminal hop of the flagship close→bus→queue→POST chain (spec §15 E13; §7.3's "outbound-news" gloss named a non-existent group). Carry is profile-independent — only the envelopes are absent; default profile `full` unaffected. Decide: re-group the webhook taps (low-volume, high linkage value) into a linkage-visible group vs accept | CL.T5 (volume pass) |
 | HA-14 | LOW | `pubsub_publish` ships group-gated only — NOT sampled at `full` despite spec §7.3 (E14); the dominant single category at `full`, bounded only by the day-MB guard; `_sample_rate` hook is generalized and ready | CL.T5 (plan 5.1) |
-| HA-15 | LOW | REST-envelope secret-absence is unpinned: `TestRestChokepoint` (adapter built with keys `"k"`/`"s"`) asserts nothing about key/signature absence — the plan-2b "no API key in any envelope" bullet is pinned for webhook/Finnhub/FRED only. Surviving mutation: adding raw `args` to the `rest_call` payload passes the suite (redaction is key-based; bare-string secrets in a positional list pass through — the documented `_redact` limit). Code is clean today; test debt | next test-touching task (≤ CL.T5) |
+| HA-15 | LOW | REST-envelope secret-absence is unpinned: `TestRestChokepoint` (adapter built with keys `"k"`/`"s"`) asserts nothing about key/signature absence — the plan-2b "no API key in any envelope" bullet is pinned for webhook/Finnhub/FRED only. Surviving mutation: adding raw `args` to the `rest_call` payload passes the suite (redaction is key-based; bare-string secrets in a positional list pass through — the documented `_redact` limit). Code is clean today; test debt | CL.T5 (the "next test-touching task" clause decayed — four test-touching tasks passed without it; P3 filing) |
 | HA-16 | LOW | yahoo/VIX taps are source-pinned only — the placement assert (`"run_in_executor" in src`) is vacuous for placement because `_download` is nested inside `fetch_vix`: moving the emits INSIDE the executor callable (§3.3 thread-rule violation → `corr_id=""`) survives the suite. FRED has behavioral tests; yahoo has none | CL.T5 or next touch (stubbed-yfinance behavioral test) |
-| HA-17 | LOW | No single test drives close-publish→bus→queue→POST on one corr_id: the T2b "2-hop test" simulates the bus hop with a bare `correlation_scope`, and `test_phase7_webhook`'s bus-composition test asserts no corr. The property holds compositionally (T2a pins bus re-bind for any handler; the 2-hop test pins handler→POST) and was proven by the audit probe — but no in-suite test composes it | CL.T3*/T5 scenario replay composes it naturally (or +5 lines to the phase7 composition test) |
+| HA-17 | LOW | No single test drives close-publish→bus→queue→POST on one corr_id: the T2b "2-hop test" simulates the bus hop with a bare `correlation_scope`, and `test_phase7_webhook`'s bus-composition test asserts no corr. The property holds compositionally (T2a pins bus re-bind for any handler; the 2-hop test pins handler→POST) and was proven by the audit probe — but no in-suite test composes it. **P3 extension**: the Phase-3 narrative/race fixtures likewise open bare `correlation_scope`s — no Phase-3 test drives a BUS delivery into an attr/state tap either; frame→bus→attr remains composition-proven only | CL.T5 scenario replay composes it naturally (or +5 lines to the phase7 composition test) |
 | HA-18 | NIT | `bus_publish` tap-AFTER-enqueue ordering is unpinned (swapping the tap above `put` would pass the suite — phantom envelope on enqueue failure); practically unreachable today: the unbounded loop-side `put` never raises | accept / pin at next touch |
 | HA-19 | NIT | `_tap_deliver` is unguarded (vs `_tap_publish` guarded): a raise via `repr(handler)` on a pathological handler would skip the event's remaining handlers + `task_done`. Theoretical-only for plain function/method handlers | accept / wrap at next touch |
 | HA-20 | NIT | All per-account webhook bus handlers share one `bus_deliver` qualname (`WebhookDispatcher.make_handler.<locals>._handler`); the account is recoverable from the channel string in the same envelope | accept (forensics note) |
 | HA-21 | NIT | `fetch_news` success-tap arg construction is unhardened (asymmetric with the FRED T2b-2 hardening): every `items` shape that makes `len()` raise also crashed pre-T2b three lines later — no caller-visible behavior change | opportunistic at next touch |
 | HA-22 | NOTE | Commit-claim arithmetic, for the record: T2a "15 files' bus-queue drains normalized" = **14** pre-existing files + the NEW bus-test file; T2b "boundaries (12)" = **11** collected. The sweep itself is complete repo-wide at HEAD | record-only (this filing) |
+
+**Phase-3 audit (CL.T3a `3646a4d` + T3b-entry `331f00c` + T3b-close
+`b35389a` + T3c `fd5b56e`, filed 2026-06-12).** Two-agent holistic
+audit (docs/tests lens full; code lens re-run lean after two
+session-limit kills) of the four tasks as ONE unit: **COHERENT, NO
+BLOCKER/HIGH, no production regressions.** All 12 per-task audit folds
+verified real + mutation-effective at HEAD; the task101 stub sweep and
+both fixture-schema fixes verified correct; no Phase-3 emit site
+inside an executor callable; registry untouched (45 — zero additions,
+all pre-registered at T0a; 9/9 attr categories live); suite arithmetic
+3681→3715→3747→3761→3771 (+34/+32/+14/+10) coheres; 90 Phase-3 tests
+green standalone. Plan-fidelity: tasks 3.1–3.4 SHIPPED at the
+corrected sites; acceptance #2 (nine categories) and #3 (db_write
+answers what-rows) MET; acceptance #1 PARTIAL — open→close replays on
+one chain exist, but **no replay exercises an amend or cancel leg**
+and the narrative contains no in-replay SKIPPED line (the class-wide
+skip pins are unit-level) → closes at CL.T5 5.3. The historical
+silent-skip bugs (b)/(d)/(g) are each literally pinned as SKIPPED
+lines. No HA-1..22 item was closed by Phase 3 (HA-6/HA-7 confirmed
+still open). Spec-side deviations filed as §15 E19–E28 + the footer
+adds; highest-value NEW findings: E23 (the spec's canonical
+stranded-row query uses a key that doesn't exist in the envelopes),
+HA-35 (an envelope-less post-LINKED write-failure seam), HA-36 (an
+untapped funding-rollup writer), HA-40 (the close-fill attribution
+stamp is an envelope-less §5.6-class decision the spec table never
+listed), HA-42 (a latent pre-existing double-junction engine corridor
+the new dedup keys make one-grep findable — reconciler-program input).
+**Scenario envelope counts at `full`** (code-lens tables): a routine
+update of a linked order = 7 envelopes (3 of them attr nothing-to-do
+lines — the per-update `junction_exists` replay line is the largest
+single contributor); first-link ~10; TP/SL child arrival ~14; opening
+fill ~12; closing fill ~9 + deferred close-build ~8. **Disabled-mode
+parity probe: PASS** (a representative order→fill→close flow: 24
+envelopes enabled / 0 disabled, identical
+orders/fills/closed_positions/positions_calcs end-state). None of the
+below blocks CL.T4.
+
+| ID | Sev | Issue | Owner |
+|---|---|---|---|
+| HA-23 | MED-LOW | `closes_detected` is unbounded vs the §7.4 4 KB whole-payload cap — at ~75+ simultaneous closes the WHOLE snapshot payload truncates to the `_truncated` summary, losing the per-close tpids (the §4.1 walkthrough's load-bearing field). Cap/split with `n_omitted` like the `ids[:20]` convention | CL.T5 volume pass (T3a-3) |
+| HA-24 | LOW | Platform `account_update_applied` is ungated at the plugin's ~5 Hz (per-frame emit at `full`; the plugin is not connected at this deployment) | CL.T5 volume pass (T3a-7) |
+| HA-25 | NOTE | Accepted T3a residue, for the record: the ws `order_status_applied` emits on guard-rejected writes (intent vs application — the paired db_write rowcount=0 is the truth); the bulk stale/reconcile pre-SELECT-vs-UPDATE skew window (line-set vs count can diverge under concurrent writers; self-visible as count≠lines) | record-only |
+| HA-26 | LOW | Two-party envelopes (reenrich child/fill, bracket INHERITED) carry `parent_`/`child_exchange_order_id` but no bare `exchange_order_id` key — uniform mandate-2 queries miss them | CL.T5 (T3bE-6) |
+| HA-27 | LOW | Manual-path handled-"error" maps to SKIPPED (`reason=result`), not ERROR; manual + enrich/drift envelopes hardcode `lifecycle_id=""` (their reads don't select it — one extra column at next touch) | CL.T5 (T3bE-7 + T3bC-7) |
+| HA-28 | MED-LOW | The periodic order-snapshot loops drive `_propagate_bracket_calc_id` per symbol per pass → steady bracket SKIPPED lines (~17 MB/day @ 5 symbols) — a §7.3 on-change-dedup candidate; the envelope also lacks a `via=order_arrival\|snapshot` discriminator to even measure the split (HA-29b). **P3 code-lens add**: the per-update `attr_junction_form via=post_link_replay SKIPPED junction_exists` line is the same class and the LARGEST single nothing-to-do generator (every routine update of a linked order) — fold into the same on-change-dedup decision | CL.T5 volume pass (T3bE-8) |
+| HA-29 | NIT | Payload nits (T3bE-10 concretized + P3 adds): (a) bracket INHERITED lacks the "inheritance path"/detection tier; (b) bracket SKIPPED lines carry no triggering-order dedup_key and no `via=`; (c) reenrich lacks the literal `position_side`; (d) the MFE/MAE db_write is `row_id`-only; (e) the funding ERROR twin lacks `dedup_key` though the aborting row is in scope; (f) the `{eoid}:reenrich_fill` dedup tag vs the normalized-triple convention; (g) the `junction_write_failed` ERROR lacks `error_type` — the single remaining attr-ERROR site without it (the paired db_write twin one line away carries the cause) | opportunistic / CL.T5 |
+| HA-30 | NIT | Anchor style: `corr-tap:` lives inside DOCSTRINGS (no `#`) at the matcher + both link_actions taps — the §5.8 `# corr-tap:` grep misses 3 of the highest-value sites | opportunistic (HA-10 fold; T3bE-11) |
+| HA-31 | NIT-LOW | Disabled-mode cost: the matcher and close_build `finally` blocks build their payloads without an `enabled()` pre-gate (same class: the funding envelope dicts) — §7.7's "disabled ≈ 1 µs" doesn't hold for these categories; no test pins the disabled-cost contract | CL.T5 perf pass (T3bE-12) |
+| HA-32 | NOTE | Accepted T3b-close residue → the CL.T4 cookbook: dedup tag-styles are heterogeneous (`{fid}:tpid_resolve`, `close:{fid}`, `junction:{fid}`, `replay:{eoid}`, `manual:{oid}:{calc}`, `{eid}:inherit:{calc}`, `{eid}:{status}:{qty}`, `venue_event_id`) — readers must not assume one shape; post-persist exceptions read `outcome=ERROR` with `row_written:true` (the landed-row predicate is `payload.row_written`); the `__dict__.setdefault` enrich-memo pattern | CL.T4 cookbook + record (T3bC-5/6/8) |
+| HA-33 | LOW | Funding follow-ups: `reconcile_queued:false` (open path) + `n_rows_processed` (batch-abort) pins absent; cookbook caveat that funding re-polls are routine benign dedup-key repeats (`inserted:false` disambiguates `--dups` output); the close+reopen mis-attribution edge's log heuristic = `open_position` with stale `ts_ms` (diagnosable; single-line certainty would need an entry-ts read the handler deliberately avoids) | CL.T4 cookbook + CL.T5 pins (T3c) |
+| HA-34 | NOTE | TERMINAL replays (`filled→filled`) bypass SR-1 BY DESIGN and are decided by the DB ON-CONFLICT guard — the discriminator is the paired db_write `rowcount=0`; outside the duplicate-fixture's tested class (which pins the non-terminal `new→new` SR-1 path) | CL.T4 cookbook; CL.T5 replay gate may pin (T3c) |
+| HA-35 | LOW-MED | **Post-decision link-write failure is envelope-less**: the matcher emits LINKED, then the actual `orders.calc_id`/`link_status` stamp is an UNTAPPED raw sqlite3 UPDATE (`order_enrichment._update_orders_sync`, not in the named-10) inside `auto_classify`'s apply_fn; if it raises there is no link_transition (emit is post-apply), no db_write, no ERROR twin — and `_enrich_order_best_effort` swallows. The chain reads LINKED while the DB has no link — the historical "decision recorded, write missing" class. Today's detection = join absence (a LINKED match with no following link_transition). Candidates: an ERROR twin at the write step, or a db_write tap on the stamp | CL.T5 (the 8-bug replay gate exercises this seam) — NEW (P3B-2) |
+| HA-36 | LOW | `reconcile_closed_position_funding` (the deferred-funding rollup UPDATE of `closed_positions.funding_fees`/`net_pnl`; called from the funding poll AND at close) is not a tapped writer — "what rows did this chain write" has a hole on the funding-rollup UPDATE. Spec's named-10 doesn't include it either, so code matches spec — a scope decision, not drift | CL.T5 decision (add to named writers or accept+document) — NEW (P3B-3) |
+| HA-37 | NIT | Test-integrity: the drift gate-sig's flag members are unpinned (no flag-flip-with-same-badge case → a `(badge,)`-only sig survives the suite); no generic "every attr envelope carries the 4-key identity tuple" conformance test (single-key deletions on low-assert envelopes survive). Pin one flag-flip; add a drain-time attr-envelope validator | CL.T5 test pass — NEW (P3B-4) |
+| HA-38 | NOTE | Cancellation vs mandate 1 (E15's internal sibling): the attr taps' `except Exception` doesn't see `CancelledError` — most emit nothing on cancellation; close_build's `finally` DOES emit but labels it `ERROR/build_incomplete` (reachable: the deferred close-build task cancelled at shutdown). A line, not an absence — but mislabeled; accepted per the E15 precedent | record + CL.T4 cookbook — NEW (P3B-11) |
+| HA-39 | NOTE | Claim arithmetic, for the record (HA-22 sibling): tapped money-path writers = **11 functions** (12 success-path table lines — `upsert_fill_and_update_order` emits one per table); the suite chain 3681→3715→3747→3761→3771 (+34/+32/+14/+10) verified; file counts 34 (state) + 56 (attribution) = 90 collected | record-only (this filing) |
+| HA-40 | MED | **The closing-fill attribution stamp is envelope-less**: `_stamp_closing_fill_attribution` (the T2.2 primary-calc/lifecycle inheritance onto the closing fill — a §5.6-CLASS decision the spec table never listed) emits no attr line on stamp / no-junction-skip / failure, and its raw `fills` UPDATE has no db_write tap. Same family (untapped decisions/writers on the attribution paths): `enrich_fill`'s fills calc_id/fill_type/slippage UPDATEs, the lifecycle backfill UPDATEs in the junction builder, `_populate_tp_sl_*`'s orders UPDATE, the `calc_match_audit` batch INSERT. A spec-scope gap, not implementation drift — fold the remediation with HA-35's | CL.T5 (one batch with HA-35; reconciler-program input) — NEW (P3A-1) |
+| HA-41 | LOW | `log_event`/`log_trade_event` db_write taps are success-side only: an INSERT/connect failure raises out with NO ok:false twin and every caller swallows at debug — engine_events/trade_events write failures are envelope-less (the money tables got both twins in T3a; these two got success + the pollution-reject twin) | CL.T5 (the T3a twin pattern) — NEW (P3A-2) |
+| HA-42 | LOW | **Latent ENGINE defect surfaced by the audit's envelope-table construction** (pre-existing defect-8 replay logic, NOT introduced by Phase 3): if the matcher first links a MARKET parent during fill-N's (N≥2) `_reenrich_parent_after_fill` and fill #1 already backfilled the order's tpid, `_ensure_junction_if_linked` DELEGATEs a synthetic fill summing ALL opening fills (incl. the in-flight one, already upserted) and the same fill's `_link_position_calc_on_open` then UPSERTs it AGAIN → `contributed_qty` over-counts (f1+2·f2) + two FORMED envelopes + two positions_calcs db_writes on one chain. The new dedup keys (`junction:{fid}` + `replay:{eoid}`) make it a one-grep find — the tap working as designed. Fix shape: exclude the in-flight fill from the synthetic SUM, or skip the replay when invoked mid-fill | engine follow-up (reconciler-program input; out of the log program's scope) — NEW (P3A-3, code-read derivation) |
 
 ### 9.5 After this program
 

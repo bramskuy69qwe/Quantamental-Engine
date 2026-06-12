@@ -925,13 +925,15 @@ Out of scope here, but the log is shaped to de-risk it:
 
 ---
 
-## 15. As-built deviations & errata (Phases 0–2, filed 2026-06-11)
+## 15. As-built deviations & errata (Phases 0–3)
 
-Filed from the Phase-1 and Phase-2 holistic audits (2 agents each) per
-the deviation discipline: every divergence between this spec and the
+Filed from the Phase-1/2/3 holistic audits (2 agents each) per the
+deviation discipline: every divergence between this spec and the
 shipped code, named in one place so a fresh reader of any section below
-is not misled. E1–E12 = Phase-1 filing; E13–E18 = Phase-2 filing
-(CL.T2a `a6d839d` + CL.T2b `c421747`).
+is not misled. E1–E12 = Phase-1 filing (2026-06-11); E13–E18 = Phase-2
+filing (2026-06-11, CL.T2a+T2b); E19–E28 = Phase-3 filing (2026-06-12,
+CL.T3a `3646a4d` + CL.T3b-entry `331f00c` + CL.T3b-close `b35389a` +
+CL.T3c `fd5b56e`).
 Each entry is documented at the code site and in its commit; this table
 is the spec-side record. "§" = the section whose literal text the
 as-built behavior deviates from.
@@ -955,7 +957,17 @@ as-built behavior deviates from.
 | E15 | §5.3, §5.3b | Out/return tap pairs are **Exception-scoped**: task cancellation emits the out-tap but never the return-tap (REST, webhook, Finnhub, FRED alike) — an unmatched pair at shutdown/cancel | `CancelledError` is `BaseException`-derived; catching it to tap would interfere with cancellation semantics. Bindings still reset (`finally`/`with`) — no corr leak. Pair-join readers must tolerate unmatched out-taps |
 | E16 | §5.7 | `pubsub_publish` taps the publish **attempt** on BOTH backends — InProcess pre-fan-out, Redis pre-connection — diverging from the bus's published==enqueued convention (CL.T2a) | InProcess has no realistic post-tap failure (per-subscriber `QueueFull` is a deliberate drop); the deployment runs `inprocess`, so the Redis pre-connection divergence is moot unless that backend is enabled |
 | E17 | §5.3 | The adapter weight-tracker sits **outside** the REST tap pair: a budget-**blocked** call raises before `rest_call` (the call is invisible to the log) and a **throttle** delay runs before the tap (`rest_call.ts` is post-throttle; `duration_ms` measures executor time only) | accepted as-built: the block is loud in the engine log, and throttle latency is visible as a trigger→`rest_call` ts gap. A call-less `rest_return{blocked:true}` is a CL.T5 option |
-| E18 | — | Import-style inconsistency: function-level `from core import correlation_log` at ~12 sites across `platform_bridge`/`news_fetcher`/`monitoring` (T1b-era) + `regime_fetcher`/`pubsub/bus.py` (T2b) vs module-level imports elsewhere — `news_fetcher.py` carries both styles in one file | no import cycle forces either style; unify to module-level opportunistically at next touch of each file |
+| E18 | — | Import-style inconsistency: function-level `from core import correlation_log` at ~12 sites across `platform_bridge`/`news_fetcher`/`monitoring` (T1b-era) + `regime_fetcher`/`pubsub/bus.py` (T2b) vs module-level imports elsewhere — `news_fetcher.py` carries both styles in one file | no import cycle forces either style; unify to module-level opportunistically at next touch of each file (all 12 Phase-3-touched modules import module-level) |
+| E19 | §5.5 | `reconcile_promote` ships `component="db"` (alongside its per-order `order_status_applied` feeder), not the table's `reconciler`/`scheduler` | E6 owning-module convention: the promoted ids are only knowable at the db chokepoint (`reconcile_filled_orders`); callers receive only a count |
+| E20 | §5.5, §4.1 | **REJECTED applies emit nothing** — the WS-priority snapshot reject, the account-update reject, the SR-1 order-gate reject, and raced/illegal calc/link transitions | the §5.5 categories record APPLIED mutations; rejection visibility is a CL.T5 decision if the replay gate wants it (pinned by emitting-nothing tests) |
+| E21 | §5.5 | `order_status_applied.dedup_key` uses **NORMALIZED** status/qty (not the raw frame's `X`/`q`); the ws line records the gate-passed INTENT — the paired `db_write` rowcount carries application truth; bulk reconcile/stale lines omit dedup_key (no triggering frame — the T1b omission rule) | same-category duplicate detection; the raw-frame key rides the same chain (`ws_order_update`); per-row results from the batch API would change a money-path signature |
+| E22 | §5.5 | Named-writer scope: `mark_stale_*` emit `order_status_applied` only (not `db_write`); legacy `update_order_from_fill` (zero production callers) and `apply_bod_sow_equity` (baseline anchors, not a rest/platform source) untapped; backfills covered via delegation to `upsert_fill`/`insert_closed_position`; the MFE/MAE tap is success-only (no swallowed-failure path exists to twin) | the "~10 chokepoints" is a named list, not a blanket |
+| E23 | §5.6 m2, §9 | The identity field ships as **`terminal_position_id`** everywhere — never the spec's `tpid` shorthand; the §5.6/§9 canonical stranded-row query `select(.payload.tpid=="")` must read `.payload.terminal_position_id` | one key name across DB columns, app state, and envelopes (§5.5's own table already uses the long name; the §5.6/§9 shorthand drifted). The CL.T4 cookbook must ship the real key |
+| E24 | §5.6 | `attr_match_attempt` ships a per-candidate **failed-criteria summary** (capped 20 + `n_candidates_omitted`) instead of the inline full per-criterion trace — the full rows persist to `calc_match_audit` on the same chain; the manual operator paths reuse the discriminated result strings as SKIPPED reasons | bounded envelope; the audit table is the system of record for criteria |
+| E25 | §5.6 | `_ensure_junction_if_linked` is tapped as `attr_junction_form` `via=post_link_replay` (the table groups it under `attr_reenrich_trigger`); `attr_reenrich_trigger` gained a `via=fill_arrival` site (`_reenrich_parent_after_fill` — the MARKET re-match trigger, bug #g's sibling); the non-child early return is a **domain filter** (no envelope) | the replay decision is junction-shaped; `via=` keeps both queryable either way |
+| E26 | §5.6 | `attr_tpid_resolve`'s tiers are `live_position`/`entry_order_fallback` (+ `via=snapshot_recovery`, `tier=entry_order`); the table's strict/walk tiers live in `attr_close_build`'s own fields (`strict_key`/`opens_found_strict`/`walk_used` — the §4.1 walkthrough splits them the same way) | one category per decision site; close_build owns the strict/walk open-lookup |
+| E27 | §5.6 m3, §7.3 | enrich/drift lines omit dedup_key (refresh-driven, no triggering frame) and gate per (position, outcome/badge+flags) **instance memo** with ERROR taps ungated (repetition is the signal); enrich/drift + manual-path envelopes carry `lifecycle_id=""` — their reads don't select it | the §7.3 on-change mandate; honest verbatim-empty until the column is read (one extra column at next touch — HA-27) |
+| E28 | §5.6, §7.3 | `attr_funding_assign` is **mandate-1-over-gating**: a re-polled settlement re-emits the SAME dedup_key (= `venue_event_id`) with `inserted:false` (~130 KB/day/funded-symbol, bounded); `inserted:false` conflates dedup with a swallowed write failure BY DESIGN — the paired `db_write` twin distinguishes; non-FUNDING income rows are a domain filter | every settlement decision is a line; the key repeat IS the §4.1 duplicate mechanism |
 
 Confirmed **code gaps** (spec is right, code owes the fields — filed
 HA-9, due CL.T5 at latest): `ws_kline` payload lacks interval+close;
@@ -963,7 +975,11 @@ HA-9, due CL.T5 at latest): `ws_kline` payload lacks interval+close;
 `ws_connect` and `ws_disconnect.uptime_s`; `platform_snapshot` carries
 kind only; `ws_depth` lacks top-of-book. **Phase-2 add (T2b)**: the
 Finnhub calendar success envelope lacks `n_items` (the news endpoint
-has it).
+has it). **Phase-3 adds (T3a–T3c, filed HA-29)**: bracket INHERITED
+lacks the table's "inheritance path" (which detection tier grouped);
+the reenrich payload carries the lookup strategy but not the literal
+`position_side`; the MFE/MAE `db_write` carries `row_id` only (none of
+the key ids).
 
 ---
 
