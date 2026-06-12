@@ -1893,22 +1893,65 @@ class OrderManager:
         resolves (genuine one-way / unlinked path — behaviour unchanged)."""
         symbol = fill.get("symbol", fill.get("ticker", "")) or ""
         direction = fill.get("direction", "") or ""
+
+        # corr-tap: attr_tpid_resolve (CL.T3b-close, spec §5.6) — one
+        # envelope per invocation, tier NAMED. The ⑨ close-tpid race is
+        # exactly "which tier fired and why" — the §4.1 walkthrough's
+        # seq-4474 line.
+        _fid = str(fill.get("exchange_fill_id") or "")
+
+        def _tap_resolve(outcome: str, tier: str = "", reason: str = "",
+                         tpid: str = "", error_type: str = "") -> None:
+            payload: Dict[str, Any] = {
+                "outcome": outcome,
+                "via": "close_fill",
+                "symbol": symbol, "direction": direction,
+                "terminal_position_id": tpid,
+                "calc_id": "", "lifecycle_id": "",
+                "exchange_order_id": str(fill.get("exchange_order_id") or ""),
+            }
+            if tier:
+                payload["tier"] = tier
+            if reason:
+                payload["reason"] = reason
+            if error_type:
+                payload["error_type"] = error_type
+            if _fid:
+                payload["dedup_key"] = f"{_fid}:tpid_resolve"
+            correlation_log.emit(
+                "order_manager", "internal", "internal",
+                correlation_log.CAT_ATTR_TPID_RESOLVE, payload,
+                account_id=account_id, symbol=symbol or None,
+            )
+
         if not symbol or not direction:
+            _tap_resolve("SKIPPED", reason="no_symbol_or_direction")
             return ""
         # 1) the live position being closed (precise; present during a partial
         #    close and usually still present at full-close fill time).
         for p in app_state.positions:
             if p.ticker == symbol and p.direction == direction and p.position_id:
+                _tap_resolve("RESOLVED", tier="live_position",
+                             tpid=p.position_id)
                 return p.position_id
         # 2) the persisted entry order's minted tpid (survives the position's
         #    removal from the snapshot on a full close).
         try:
             tpid_by_key = await self._db.get_open_entry_tpids_by_symbol_side(
                 account_id)
-        except Exception:
+        except Exception as e:
             log.debug("close-tpid order fallback read failed", exc_info=True)
+            _tap_resolve("ERROR", tier="entry_order_fallback",
+                         reason="fallback_read_failed",
+                         error_type=type(e).__name__)
             return ""
-        return tpid_by_key.get((symbol, direction), "")
+        resolved = tpid_by_key.get((symbol, direction), "")
+        if resolved:
+            _tap_resolve("RESOLVED", tier="entry_order_fallback", tpid=resolved)
+        else:
+            # the genuine miss — the stranded-close shape stays a LINE
+            _tap_resolve("UNRESOLVED", reason="no_match")
+        return resolved
 
     async def _process_reversal_split(
         self,
@@ -2431,6 +2474,42 @@ class OrderManager:
         yellow/red badge thresholding and TP/SL live deviation are Phase 4.4
         (they need the order-amendment tracking that isn't wired yet).
         """
+        # corr-tap: attr_enrich + attr_drift_check + attr_tpid_resolve
+        # (CL.T3b-close, spec §5.6). These refresh-driven taps are
+        # ON-CHANGE GATED (spec §7.3): this method runs per WS order
+        # update, so each (position, outcome) emits on first stamp +
+        # transition only, via the instance memo below. ERROR taps stay
+        # ungated — if the DB is down, the repetition IS the signal.
+        _memo: Dict[Any, Any] = self.__dict__.setdefault(
+            "_attr_enrich_memo", {})
+
+        def _emit_on_change(key: Any, sig: Any, category: str,
+                            payload: Dict[str, Any],
+                            symbol: Optional[str] = None) -> None:
+            if _memo.get(key) == sig:
+                return
+            _memo[key] = sig
+            correlation_log.emit(
+                "order_manager", "internal", "internal", category, payload,
+                account_id=account_id, symbol=symbol,
+            )
+
+        # memo hygiene — PRUNE ON ENTRY (audit T3bC-2: a tail cleanup is
+        # unreachable on the early-return paths, so a flat interim would
+        # gate-suppress a same-(ticker,direction) reopen's first stamp).
+        # Pruning against the CURRENT positions list at the start covers
+        # every exit path: a vanished position's keys are gone before any
+        # emit decision for its successor, and a flat pass clears the map.
+        _live_keys: set = set()
+        for p in positions:
+            kid = p.position_id or f"{p.ticker}:{p.direction}"
+            _live_keys.add(("enrich", kid))
+            _live_keys.add(("drift", kid))
+            _live_keys.add(("recover", p.ticker, p.direction))
+        for k in list(_memo):
+            if k not in _live_keys:
+                del _memo[k]
+
         # Unminted-snapshot recovery (debug 2026-06-08): a position first seen
         # via a REST snapshot (engine started while it was already open) has an
         # empty position_id — the snapshot path deliberately doesn't mint (no
@@ -2442,18 +2521,55 @@ class OrderManager:
         # self-persists: DataCache._preserve_metadata carries a now-present
         # position_id across the next snapshot rebuild. GATED on an empty-id
         # position existing, so the normal WS path (all minted) pays nothing.
+        _recovered_now: set = set()
         if any(not p.position_id for p in positions):
             try:
                 tpid_by_key = await self._db.get_open_entry_tpids_by_symbol_side(
                     account_id)
-            except Exception:
+            except Exception as e:
                 tpid_by_key = {}
                 log.debug("tpid re-derivation read failed", exc_info=True)
+                # corr-tap: attr_tpid_resolve ERROR (snapshot-recovery side)
+                correlation_log.emit(
+                    "order_manager", "internal", "internal",
+                    correlation_log.CAT_ATTR_TPID_RESOLVE,
+                    {"outcome": "ERROR", "via": "snapshot_recovery",
+                     "reason": "recovery_read_failed",
+                     "error_type": type(e).__name__,
+                     "terminal_position_id": "", "calc_id": "",
+                     "lifecycle_id": "", "exchange_order_id": ""},
+                    account_id=account_id,
+                )
             for pos in positions:
                 if not pos.position_id:
                     recovered = tpid_by_key.get((pos.ticker, pos.direction))
                     if recovered:
                         pos.position_id = recovered
+                        _recovered_now.add(recovered)
+                    # corr-tap: attr_tpid_resolve via=snapshot_recovery —
+                    # the historical unminted-snapshot bug (#1) as a line;
+                    # gated so an unrecoverable position doesn't repeat
+                    # per refresh.
+                    _rk = ("recover", pos.ticker, pos.direction)
+                    _rsig = ("RESOLVED", recovered) if recovered else (
+                        "UNRESOLVED",)
+                    _rp: Dict[str, Any] = {
+                        "outcome": "RESOLVED" if recovered else "UNRESOLVED",
+                        "via": "snapshot_recovery",
+                        "symbol": pos.ticker, "direction": pos.direction,
+                        "terminal_position_id": recovered or "",
+                        "calc_id": "", "lifecycle_id": "",
+                        "exchange_order_id": "",
+                    }
+                    if recovered:
+                        _rp["tier"] = "entry_order"
+                    else:
+                        _rp["reason"] = "no_match"
+                    _emit_on_change(
+                        _rk, _rsig,
+                        correlation_log.CAT_ATTR_TPID_RESOLVE, _rp,
+                        symbol=pos.ticker,
+                    )
 
         # P5.T7: live unrealized funding — stamped FIRST and INDEPENDENTLY of the
         # junction below, so a junction-read fault (the early returns) can't
@@ -2473,6 +2589,18 @@ class OrderManager:
                         _p.position_id, 0.0)
 
         if not any(p.position_id for p in positions):
+            # every position lacks a key — each is a (gated) SKIPPED line,
+            # not an absence (the no_position_key historical shape)
+            for pos in positions:
+                _emit_on_change(
+                    ("enrich", f"{pos.ticker}:{pos.direction}"),
+                    ("SKIPPED", "no_position_key"),
+                    correlation_log.CAT_ATTR_ENRICH,
+                    {"outcome": "SKIPPED", "reason": "no_position_key",
+                     "terminal_position_id": "", "calc_id": "",
+                     "lifecycle_id": "", "exchange_order_id": ""},
+                    symbol=pos.ticker,
+                )
             return
         try:
             async with self._db._conn.execute(
@@ -2483,9 +2611,19 @@ class OrderManager:
                 (account_id,),
             ) as cur:
                 rows = await cur.fetchall()
-        except Exception:
+        except Exception as e:
             # Read failed — leave fields untouched (don't clear on error).
             log.debug("calc_id enrichment: junction read failed", exc_info=True)
+            # corr-tap: attr_enrich ERROR (ungated — rare; repetition = signal)
+            correlation_log.emit(
+                "order_manager", "internal", "internal",
+                correlation_log.CAT_ATTR_ENRICH,
+                {"outcome": "ERROR", "reason": "junction_read_failed",
+                 "error_type": type(e).__name__,
+                 "terminal_position_id": "", "calc_id": "",
+                 "lifecycle_id": "", "exchange_order_id": ""},
+                account_id=account_id,
+            )
             return
         # Aggregate per (position, calc): sum contributed_qty (a calc may
         # place >1 order on a position → multiple junction rows) and carry
@@ -2562,7 +2700,17 @@ class OrderManager:
             # (individual_funding_fees already stamped above, before the early
             # returns — independent of the junction.)
             if not pos.position_id:
-                continue  # binance one-way / pre-snapshot — no junction key
+                # binance one-way / pre-snapshot — no junction key
+                _emit_on_change(
+                    ("enrich", f"{pos.ticker}:{pos.direction}"),
+                    ("SKIPPED", "no_position_key"),
+                    correlation_log.CAT_ATTR_ENRICH,
+                    {"outcome": "SKIPPED", "reason": "no_position_key",
+                     "terminal_position_id": "", "calc_id": "",
+                     "lifecycle_id": "", "exchange_order_id": ""},
+                    symbol=pos.ticker,
+                )
+                continue
             calcs = per_pos.get(pos.position_id)
             if not calcs:
                 pos.calc_id = ""
@@ -2571,6 +2719,26 @@ class OrderManager:
                 pos.amendment_count = 0
                 pos.tpsl_amended = False
                 pos.deviation_badge = "red"  # no-calc / UNPLANNED (spec §10.2)
+                _rec = pos.position_id in _recovered_now
+                _ep: Dict[str, Any] = {
+                    "outcome": "CLEARED", "reason": "no_junction",
+                    "terminal_position_id": pos.position_id,
+                    "calc_id": "", "lifecycle_id": "",
+                    "exchange_order_id": "",
+                    "badge": "red", "recovered": _rec,
+                }
+                if _rec:
+                    _ep["recovery_source"] = "entry_order"
+                # sig EXCLUDES the recovered flag (audit T3bC-1: it is True
+                # only on the recovery pass, so including it would re-emit a
+                # misleading "recovered:false" flip-back next pass; the
+                # first-stamp line carries the recovery truth)
+                _emit_on_change(
+                    ("enrich", pos.position_id),
+                    ("CLEARED", "", "red"),
+                    correlation_log.CAT_ATTR_ENRICH, _ep,
+                    symbol=pos.ticker,
+                )
                 continue
             items = list(calcs.items())  # insertion order = first_fill ASC
             # Primary via the SHARED selector (largest summed contributed_qty
@@ -2642,11 +2810,68 @@ class OrderManager:
                 yellow_pct=yellow_pct, red_pct=red_pct,
             )
 
+            # corr-tap: attr_drift_check (CL.T3b-close, spec §5.6) — the
+            # SL-removal badge bug (#h) becomes its own line: "planned_sl=X,
+            # live_sl=0, sl_removed=…, badge=…" shows a wrong verdict in its
+            # own output. Gated on the (badge, drift/removal flags) tuple —
+            # badge TRANSITION + first stamp (§7.3); badge_before reads the
+            # memo's previous tuple.
+            _dkey = ("drift", pos.position_id)
+            _prev = _memo.get(_dkey)
+            _badge_before = _prev[0] if isinstance(_prev, tuple) else None
+            _emit_on_change(
+                _dkey,
+                (pos.deviation_badge, _tp_drift, _sl_drift,
+                 _tp_removed, _sl_removed),
+                correlation_log.CAT_ATTR_DRIFT_CHECK,
+                {
+                    "outcome": "CHECKED",
+                    "planned_tp": _p_tp, "planned_sl": _p_sl,
+                    "live_tp": _live_tp, "live_sl": _live_sl,
+                    "tp_drift": _tp_drift, "sl_drift": _sl_drift,
+                    "tp_removed": _tp_removed, "sl_removed": _sl_removed,
+                    "tpsl_amended": tpsl_amended,
+                    "badge_before": _badge_before,
+                    "badge": pos.deviation_badge,
+                    "terminal_position_id": pos.position_id,
+                    "calc_id": primary_cid, "lifecycle_id": "",
+                    "exchange_order_id": "",
+                },
+                symbol=pos.ticker,
+            )
+
+            # corr-tap: attr_enrich (CL.T3b-close, spec §5.6) — the stamped
+            # outcome; gated per (position, outcome) (§7.3).
+            _rec = pos.position_id in _recovered_now
+            _ep2: Dict[str, Any] = {
+                "outcome": "STAMPED",
+                "terminal_position_id": pos.position_id,
+                "calc_id": primary_cid,
+                "lifecycle_id": "",
+                "exchange_order_id": "",
+                "n_contributing": len(pos.contributing_calc_ids),
+                "size_delta_pct": round(pos.size_delta_pct, 4),
+                "amendment_count": pos.amendment_count,
+                "badge": pos.deviation_badge,
+                "recovered": _rec,
+            }
+            if _rec:
+                _ep2["recovery_source"] = "entry_order"
+            # sig EXCLUDES the recovered flag (audit T3bC-1 — see the
+            # CLEARED branch note)
+            _emit_on_change(
+                ("enrich", pos.position_id),
+                ("STAMPED", primary_cid, pos.deviation_badge,
+                 len(pos.contributing_calc_ids)),
+                correlation_log.CAT_ATTR_ENRICH, _ep2,
+                symbol=pos.ticker,
+            )
+
     # ── Position Close ─────────────────────────────────────────────────────
 
     async def _backfill_open_fill_tpids(
         self, account_id: int, opens: List[Dict[str, Any]], pos_id: str,
-    ) -> None:
+    ) -> int:
         """#3/#4 (debug 2026-06-08): stamp the minted terminal_position_id onto
         this position's OPENING fills, which the observe-only Binance path wrote
         empty (the position is minted only after the first open completes; the
@@ -2661,7 +2886,7 @@ class OrderManager:
             and not (f.get("terminal_position_id") or "")
         ]
         if not fids:
-            return
+            return 0
         try:
             for fid in fids:
                 await self._db._conn.execute(
@@ -2671,8 +2896,10 @@ class OrderManager:
                     (pos_id, account_id, fid),
                 )
             await self._db._conn.commit()
+            return len(fids)
         except Exception:
             log.debug("open-fill tpid backfill failed", exc_info=True)
+            return 0
 
     async def _build_close_row_for_fill(
         self, account_id: int, fill: Dict[str, Any], *, force_final: bool = False,
@@ -2693,10 +2920,17 @@ class OrderManager:
         position-disappearance safety net (``build_final_close_row``), which
         knows the position is gone, so its row is unconditionally final.
         """
+        # corr-tap: attr_close_build (CL.T3b-close, spec §5.6) — ONE envelope
+        # per invocation via the finally below; ``_trace`` accumulates the
+        # decision narrative so the historical close-recording bug class is
+        # root-causable on one screen: "strict key POS-9 → 0 rows; walk →
+        # 2 rows, both tpid-empty; backfilled 2; row written".
+        _trace: Dict[str, Any] = {"walk_used": False, "backfilled": 0}
         try:
             pos_id    = fill.get("terminal_position_id", "")
             symbol    = fill.get("symbol", fill.get("ticker", ""))
             direction = fill.get("direction", "")
+            _trace["strict_key"] = pos_id or ""
 
             # ── Opening fills → VWAP entry price ────────────────────────
             # Phase 0.0.5 (T188 / T178 Layer 3 fix): get_position_fills is
@@ -2711,6 +2945,7 @@ class OrderManager:
                 )
             else:
                 opens = []
+            _trace["opens_found_strict"] = len(opens)
             # #3/#4 fix (debug 2026-06-08): on the observe-only Binance path the
             # OPENING fills are written with an EMPTY terminal_position_id (the
             # position isn't minted until the first open completes), while ⑨ now
@@ -2738,8 +2973,23 @@ class OrderManager:
                     direction=direction,
                     close_ts_ms=close_ts,
                 )
+                _trace["walk_used"] = True
+                _trace["opens_found_walk"] = len(opens)
                 if pos_id and opens:
-                    await self._backfill_open_fill_tpids(account_id, opens, pos_id)
+                    _trace["backfilled"] = await self._backfill_open_fill_tpids(
+                        account_id, opens, pos_id,
+                    )
+            # tpids AS FOUND (the backfill above updates the DB rows, not
+            # these dicts) — "both tpid-empty" is the root-cause signal.
+            _trace["open_fill_tpids"] = {
+                "empty": sum(
+                    1 for f in opens
+                    if not (f.get("terminal_position_id") or "")
+                ),
+                "populated": sum(
+                    1 for f in opens if f.get("terminal_position_id")
+                ),
+            }
             if opens:
                 total_open_qty = sum(f["quantity"] for f in opens)
                 entry_price = (
@@ -2756,6 +3006,9 @@ class OrderManager:
                 entry_price    = pos.average if pos else 0.0
                 entry_time     = 0
                 total_open_qty = 0.0
+            _trace["entry_source"] = (
+                "opens_vwap" if opens else "position_average_fallback"
+            )
 
             # ── Closing fills from same order (group partial fills) ─────
             exchange_order_id = fill.get("exchange_order_id", "")
@@ -2769,7 +3022,9 @@ class OrderManager:
 
             if not close_fills:
                 log.warning("No closing fills for %s %s — skipping", symbol, direction)
+                _trace["skip"] = "no_closing_fills"
                 return
+            _trace["n_close_fills"] = len(close_fills)
 
             total_close_qty = sum(f["quantity"] for f in close_fills)
             exit_price = (
@@ -2847,6 +3102,8 @@ class OrderManager:
                 exit_reason = await self._classify_final_exit_reason(
                     account_id, pos_id, fallback=exit_reason,
                 )
+            _trace["is_final"] = is_final
+            _trace["exit_reason"] = exit_reason
 
             # P6.T7: liquidation_px = the realized LIQUIDATION-fill VWAP (NOT
             # this close row's exit_price). _classify_final_exit_reason sets
@@ -2890,6 +3147,8 @@ class OrderManager:
                     if f.get("calc_id"):
                         close_calc_id = f["calc_id"]
                         break
+            _trace["calc_id"] = close_calc_id or ""
+            _trace["lifecycle_id"] = close_lifecycle_id or ""
 
             # ── T2.5: close-time deltas vs the most-contributing calc ───
             # Spec §3.2 delta-basis rule. Best-effort (try/except → {}),
@@ -3001,7 +3260,8 @@ class OrderManager:
 
             # ── Persist ─────────────────────────────────────────────────
             net_pnl = realized_pnl - total_fees + funding_fees
-            await self._db.insert_closed_position({
+            _trace["close_row_is_new"] = close_row_is_new
+            _trace["row_written"] = bool(await self._db.insert_closed_position({
                 "account_id":           account_id,
                 "exchange_position_id": fill.get("exchange_position_id", ""),
                 "terminal_position_id": pos_id,
@@ -3030,7 +3290,7 @@ class OrderManager:
                 "liquidation_px":       liquidation_px,
                 **shortfall,
                 **deltas,
-            })
+            }))
 
             await event_bus.publish("risk:position_closed", {
                 "symbol": symbol, "direction": direction,
@@ -3158,6 +3418,7 @@ class OrderManager:
                 symbol, direction, total_close_qty, realized_pnl, exit_reason,
             )
         except Exception as e:
+            _trace["error_type"] = type(e).__name__
             log.exception(
                 "_build_close_row_for_fill failed for %s",
                 fill.get("symbol", "?"),
@@ -3187,6 +3448,55 @@ class OrderManager:
                 )
             except Exception:
                 log.debug("close_row_build_failed event emission failed", exc_info=True)
+        finally:
+            # corr-tap: attr_close_build (CL.T3b-close, spec §5.6 mandate 1)
+            # — exactly one envelope per invocation, whatever path exited.
+            _fid = str(fill.get("exchange_fill_id") or "")
+            if "error_type" in _trace:
+                _outcome, _reason = "ERROR", None
+            elif _trace.get("skip"):
+                _outcome, _reason = "SKIPPED", _trace["skip"]
+            elif _trace.get("row_written"):
+                _outcome, _reason = "WRITTEN", None
+            elif "row_written" in _trace:
+                # the insert reported False (pollution-reject or swallowed
+                # write failure) — the historical "close row NOT written"
+                _outcome, _reason = "ERROR", "row_write_failed"
+            else:
+                _outcome, _reason = "ERROR", "build_incomplete"
+            _cb: Dict[str, Any] = {
+                "outcome": _outcome,
+                "strict_key": _trace.get("strict_key", ""),
+                "opens_found_strict": _trace.get("opens_found_strict"),
+                "walk_used": _trace.get("walk_used", False),
+                "opens_found_walk": _trace.get("opens_found_walk"),
+                "open_fill_tpids": _trace.get("open_fill_tpids"),
+                "backfilled": _trace.get("backfilled", 0),
+                "entry_source": _trace.get("entry_source"),
+                "n_close_fills": _trace.get("n_close_fills"),
+                "is_final": _trace.get("is_final"),
+                "force_final": force_final,
+                "exit_reason": _trace.get("exit_reason"),
+                "row_written": bool(_trace.get("row_written", False)),
+                "close_row_is_new": _trace.get("close_row_is_new"),
+                # identity tuple VERBATIM incl. "" (mandate 2)
+                "terminal_position_id": _trace.get("strict_key", ""),
+                "calc_id": _trace.get("calc_id", ""),
+                "lifecycle_id": _trace.get("lifecycle_id", ""),
+                "exchange_order_id": str(fill.get("exchange_order_id") or ""),
+            }
+            if _reason:
+                _cb["reason"] = _reason
+            if "error_type" in _trace:
+                _cb["error_type"] = _trace["error_type"]
+            if _fid:
+                _cb["dedup_key"] = f"close:{_fid}"
+            correlation_log.emit(
+                "order_manager", "internal", "internal",
+                correlation_log.CAT_ATTR_CLOSE_BUILD, _cb,
+                account_id=account_id,
+                symbol=fill.get("symbol", fill.get("ticker", "")) or None,
+            )
 
     async def build_final_close_row(self, prev: PositionInfo) -> None:
         """Safety net: when position fully disappears, check for unrecorded

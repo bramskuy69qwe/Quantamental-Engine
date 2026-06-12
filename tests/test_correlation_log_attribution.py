@@ -1125,11 +1125,470 @@ class TestAuditFoldPins:
         assert p["error_type"] == "OperationalError"
 
 
+# ════ CL.T3b-close — the close-side categories (spec §5.6) ══════════════════
+
+def _pos_info(ticker="BTCUSDT", direction="LONG", tpid="POS-1", **kw):
+    from core.state import PositionInfo
+    base = dict(
+        ticker=ticker, direction=direction, contract_amount=1.0,
+        average=100.0, fair_price=100.0, individual_unrealized=0.0,
+        position_value_usdt=100.0,
+        entry_timestamp="2026-06-12T00:00:00+00:00",
+        sector="", position_id=tpid,
+    )
+    base.update(kw)
+    return PositionInfo(**base)
+
+
+@pytest.fixture
+def _restore_positions():
+    from core.state import app_state
+    snap = list(app_state.positions)
+    app_state.positions = []
+    yield app_state
+    app_state.positions = snap
+
+
+class TestTpidResolve:
+    def _fill(self, **kw):
+        base = {"symbol": "BTCUSDT", "direction": "LONG",
+                "exchange_fill_id": "F-9", "exchange_order_id": "E-9"}
+        base.update(kw)
+        return base
+
+    def test_tier1_live_position(self, _restore_positions):
+        from core.order_manager import OrderManager
+
+        app_state = _restore_positions
+        app_state.positions = [_pos_info(tpid="POS-1")]
+        om = OrderManager(db=None)
+        got = asyncio.run(om._resolve_close_tpid(1, self._fill()))
+        assert got == "POS-1"
+        envs = _by_cat(_drain(), "attr_tpid_resolve")
+        assert len(envs) == 1  # mandate 1: one envelope per invocation
+        p = envs[0]["payload"]
+        assert p["outcome"] == "RESOLVED" and p["tier"] == "live_position"
+        assert p["terminal_position_id"] == "POS-1"
+        assert p["via"] == "close_fill"
+        assert p["dedup_key"] == "F-9:tpid_resolve"
+
+    def test_tier2_entry_order_fallback(self, _restore_positions):
+        from core.order_manager import OrderManager
+
+        class _Db:
+            async def get_open_entry_tpids_by_symbol_side(self, account_id):
+                return {("BTCUSDT", "LONG"): "POS-2"}
+
+        om = OrderManager(_Db())
+        got = asyncio.run(om._resolve_close_tpid(1, self._fill()))
+        assert got == "POS-2"
+        p = _by_cat(_drain(), "attr_tpid_resolve")[0]["payload"]
+        assert p["outcome"] == "RESOLVED"
+        assert p["tier"] == "entry_order_fallback"
+
+    def test_unresolved_no_match_is_a_line(self, _restore_positions):
+        from core.order_manager import OrderManager
+
+        class _Db:
+            async def get_open_entry_tpids_by_symbol_side(self, account_id):
+                return {}
+
+        om = OrderManager(_Db())
+        got = asyncio.run(om._resolve_close_tpid(1, self._fill()))
+        assert got == ""
+        p = _by_cat(_drain(), "attr_tpid_resolve")[0]["payload"]
+        assert p["outcome"] == "UNRESOLVED" and p["reason"] == "no_match"
+        assert p["terminal_position_id"] == ""  # verbatim — stranded shape
+
+    def test_fallback_read_error_twin(self, _restore_positions):
+        from core.order_manager import OrderManager
+
+        class _Db:
+            async def get_open_entry_tpids_by_symbol_side(self, account_id):
+                raise RuntimeError("db down")
+
+        om = OrderManager(_Db())
+        got = asyncio.run(om._resolve_close_tpid(1, self._fill()))
+        assert got == ""
+        p = _by_cat(_drain(), "attr_tpid_resolve")[0]["payload"]
+        assert p["outcome"] == "ERROR"
+        assert p["reason"] == "fallback_read_failed"
+        assert p["error_type"] == "RuntimeError"  # audit T3bC-4
+
+    def test_skip_no_symbol_or_direction(self, _restore_positions):
+        from core.order_manager import OrderManager
+
+        om = OrderManager(db=None)
+        got = asyncio.run(
+            om._resolve_close_tpid(1, {"symbol": "", "direction": ""}),
+        )
+        assert got == ""
+        p = _by_cat(_drain(), "attr_tpid_resolve")[0]["payload"]
+        assert p["outcome"] == "SKIPPED"
+        assert p["reason"] == "no_symbol_or_direction"
+
+
+class TestCloseBuild:
+    def test_strict_miss_walk_backfill_written_on_one_line(
+        self, tmp_path, _restore_positions,
+    ):
+        """The ⑨-shape headline: closing fill carries the tpid, opening
+        fills were written empty — strict misses, the walk finds them,
+        the backfill stamps them, the row lands. Root cause on ONE line."""
+        async def main():
+            db = await _mk_db(tmp_path)
+            try:
+                from core.order_manager import OrderManager
+                om = OrderManager(db)
+                await db.upsert_fill({
+                    "account_id": 1, "exchange_fill_id": "F-OPEN",
+                    "exchange_order_id": "E-OPEN", "symbol": "BTCUSDT",
+                    "direction": "LONG", "price": 100.0, "quantity": 1.0,
+                    "is_close": 0, "timestamp_ms": 1000,
+                    "terminal_position_id": "",
+                })
+                close = {
+                    "account_id": 1, "exchange_fill_id": "F-CLOSE",
+                    "exchange_order_id": "E-CLOSE", "symbol": "BTCUSDT",
+                    "direction": "LONG", "price": 110.0, "quantity": 1.0,
+                    "is_close": 1, "timestamp_ms": 2000,
+                    "terminal_position_id": "POS-9", "realized_pnl": 10.0,
+                }
+                await db.upsert_fill(dict(close))
+                _drain()
+                await om._build_close_row_for_fill(1, close)
+                envs = _drain()
+                async with db._conn.execute(
+                    "SELECT COUNT(*) FROM closed_positions "
+                    "WHERE terminal_position_id='POS-9'",
+                ) as cur:
+                    n_rows = (await cur.fetchone())[0]
+                async with db._conn.execute(
+                    "SELECT terminal_position_id FROM fills "
+                    "WHERE exchange_fill_id='F-OPEN'",
+                ) as cur:
+                    open_tpid = (await cur.fetchone())[0]
+                return envs, n_rows, open_tpid
+            finally:
+                await db.close()
+
+        envs, n_rows, open_tpid = asyncio.run(main())
+        assert n_rows == 1
+        assert open_tpid == "POS-9"  # the backfill landed
+        cb = _by_cat(envs, "attr_close_build")
+        assert len(cb) == 1  # mandate 1: one envelope per invocation
+        p = cb[0]["payload"]
+        assert p["outcome"] == "WRITTEN" and p["row_written"] is True
+        assert p["strict_key"] == "POS-9"
+        assert p["opens_found_strict"] == 0
+        assert p["walk_used"] is True
+        assert p["opens_found_walk"] == 1
+        assert p["open_fill_tpids"] == {"empty": 1, "populated": 0}
+        assert p["backfilled"] == 1
+        assert p["entry_source"] == "opens_vwap"
+        assert p["is_final"] is True
+        assert p["dedup_key"] == "close:F-CLOSE"
+        # the paired db_write for closed_positions rides the same drain
+        w = [e for e in _by_cat(envs, "db_write")
+             if e["payload"]["table"] == "closed_positions"]
+        assert len(w) == 1 and w[0]["payload"]["ok"] is True
+
+    def test_no_closing_fills_is_a_skipped_line(
+        self, tmp_path, _restore_positions,
+    ):
+        async def main():
+            db = await _mk_db(tmp_path)
+            try:
+                from core.order_manager import OrderManager
+                om = OrderManager(db)
+                _drain()
+                await om._build_close_row_for_fill(1, {
+                    "account_id": 1, "exchange_fill_id": "F-X",
+                    "exchange_order_id": "E-NONE", "symbol": "BTCUSDT",
+                    "direction": "LONG", "terminal_position_id": "POS-X",
+                    "timestamp_ms": 2000,
+                })
+                return _drain()
+            finally:
+                await db.close()
+
+        envs = asyncio.run(main())
+        cb = _by_cat(envs, "attr_close_build")
+        assert len(cb) == 1
+        p = cb[0]["payload"]
+        assert p["outcome"] == "SKIPPED"
+        assert p["reason"] == "no_closing_fills"
+        assert p["walk_used"] is True and p["opens_found_walk"] == 0
+
+    def test_build_exception_is_an_error_line_and_swallowed(
+        self, tmp_path, _restore_positions,
+    ):
+        async def main():
+            db = await _mk_db(tmp_path)
+            try:
+                from core.order_manager import OrderManager
+                om = OrderManager(db)
+
+                async def _boom(*a, **k):
+                    raise RuntimeError("reader down")
+
+                db.get_position_fills = _boom
+                _drain()
+                # must NOT raise (the builder's swallow contract holds)
+                await om._build_close_row_for_fill(1, {
+                    "account_id": 1, "exchange_fill_id": "F-E",
+                    "exchange_order_id": "E-E", "symbol": "BTCUSDT",
+                    "direction": "LONG", "terminal_position_id": "POS-E",
+                    "timestamp_ms": 2000,
+                })
+                return _drain()
+            finally:
+                await db.close()
+
+        envs = asyncio.run(main())
+        cb = _by_cat(envs, "attr_close_build")
+        assert len(cb) == 1
+        p = cb[0]["payload"]
+        assert p["outcome"] == "ERROR"
+        assert p["error_type"] == "RuntimeError"
+        assert p["strict_key"] == "POS-E"
+
+    def test_row_write_failure_is_error_not_written(
+        self, tmp_path, _restore_positions,
+    ):
+        async def main():
+            db = await _mk_db(tmp_path)
+            try:
+                from core.order_manager import OrderManager
+                om = OrderManager(db)
+                close = {
+                    "account_id": 1, "exchange_fill_id": "F-C2",
+                    "exchange_order_id": "E-C2", "symbol": "BTCUSDT",
+                    "direction": "LONG", "price": 110.0, "quantity": 1.0,
+                    "is_close": 1, "timestamp_ms": 2000,
+                    "terminal_position_id": "POS-W",
+                }
+                await db.upsert_fill(dict(close))
+
+                async def _fail(row, commit=True):
+                    return False
+
+                db.insert_closed_position = _fail
+                _drain()
+                await om._build_close_row_for_fill(1, close)
+                return _drain()
+            finally:
+                await db.close()
+
+        envs = asyncio.run(main())
+        p = _by_cat(envs, "attr_close_build")[0]["payload"]
+        assert p["outcome"] == "ERROR"
+        assert p["reason"] == "row_write_failed"
+        assert p["row_written"] is False
+
+
+class TestEnrichAndDrift:
+    def test_no_position_key_skip_is_gated(self, tmp_path):
+        async def main():
+            db = await _mk_db(tmp_path)
+            try:
+                from core.order_manager import OrderManager
+                om = OrderManager(db)
+                pos = _pos_info(tpid="")
+                _drain()
+                await om._enrich_positions_calc_id(1, [pos])
+                first = _drain()
+                await om._enrich_positions_calc_id(1, [pos])
+                second = _drain()
+                return first, second
+            finally:
+                await db.close()
+
+        first, second = asyncio.run(main())
+        skip = _by_cat(first, "attr_enrich")
+        assert len(skip) == 1
+        assert skip[0]["payload"]["reason"] == "no_position_key"
+        recover = _by_cat(first, "attr_tpid_resolve")
+        assert len(recover) == 1
+        assert recover[0]["payload"]["outcome"] == "UNRESOLVED"
+        assert recover[0]["payload"]["via"] == "snapshot_recovery"
+        # §7.3 on-change gate: the second identical pass is SILENT
+        assert _by_cat(second, "attr_enrich") == []
+        assert _by_cat(second, "attr_tpid_resolve") == []
+
+    def test_snapshot_recovery_resolves_and_clears(self, tmp_path):
+        async def main():
+            db = await _mk_db(tmp_path)
+            try:
+                from core.order_manager import OrderManager
+                om = OrderManager(db)
+                await db.upsert_order_batch([{
+                    "account_id": 1, "exchange_order_id": "E-ENT",
+                    "symbol": "BTCUSDT", "status": "filled",
+                    "order_type": "limit", "quantity": 1.0,
+                    "filled_qty": 1.0, "reduce_only": 0,
+                    "position_side": "LONG",
+                    "terminal_position_id": "POS-7",
+                    "created_at_ms": 1000, "updated_at_ms": 1000,
+                }])
+                pos = _pos_info(tpid="")
+                _drain()
+                await om._enrich_positions_calc_id(1, [pos])
+                first = _drain()
+                # audit T3bC-1: the recovered flag flips False next pass —
+                # the sig must EXCLUDE it, so an unchanged outcome is silent
+                await om._enrich_positions_calc_id(1, [pos])
+                second = _drain()
+                return pos.position_id, first, second
+            finally:
+                await db.close()
+
+        tpid, envs, second = asyncio.run(main())
+        assert tpid == "POS-7"  # the #1 unminted-snapshot recovery
+        assert _by_cat(second, "attr_enrich") == []
+        assert _by_cat(second, "attr_tpid_resolve") == []
+        rec = _by_cat(envs, "attr_tpid_resolve")
+        assert len(rec) == 1
+        p = rec[0]["payload"]
+        assert p["outcome"] == "RESOLVED" and p["via"] == "snapshot_recovery"
+        assert p["tier"] == "entry_order"
+        assert p["terminal_position_id"] == "POS-7"
+        en = _by_cat(envs, "attr_enrich")
+        assert len(en) == 1
+        pe = en[0]["payload"]
+        assert pe["outcome"] == "CLEARED" and pe["reason"] == "no_junction"
+        assert pe["recovered"] is True
+        assert pe["recovery_source"] == "entry_order"
+        assert pe["badge"] == "red"
+
+    def test_stamped_then_sl_removal_badge_transition(self, tmp_path):
+        """Historical bug #h on one line: planned_sl present, live_sl=0,
+        sl_removed flag + badge green→yellow — then gated silence."""
+        async def main():
+            db = await _mk_db(tmp_path)
+            try:
+                from core.order_manager import OrderManager
+                om = OrderManager(db)
+                await db.upsert_position_calc_link({
+                    "position_id": "POS-1", "calc_id": "CALC-1",
+                    "order_id": 1, "account_id": 1,
+                    "contributed_qty": 1.0, "first_fill_ts": 1,
+                    "last_fill_ts": 1, "planned_size": 1.0,
+                    "planned_tp": 110.0, "planned_sl": 95.0,
+                })
+                pos = _pos_info(
+                    tpid="POS-1",
+                    individual_tp_price=110.0, individual_sl_price=95.0,
+                )
+                _drain()
+                await om._enrich_positions_calc_id(1, [pos])
+                first = _drain()
+                pos.individual_sl_price = 0.0   # the operator pulled the stop
+                await om._enrich_positions_calc_id(1, [pos])
+                second = _drain()
+                await om._enrich_positions_calc_id(1, [pos])
+                third = _drain()
+                return first, second, third, pos
+            finally:
+                await db.close()
+
+        first, second, third, pos = asyncio.run(main())
+        en1 = _by_cat(first, "attr_enrich")
+        assert len(en1) == 1
+        assert en1[0]["payload"]["outcome"] == "STAMPED"
+        assert en1[0]["payload"]["calc_id"] == "CALC-1"
+        assert en1[0]["payload"]["badge"] == "green"
+        d1 = _by_cat(first, "attr_drift_check")
+        assert len(d1) == 1
+        p1 = d1[0]["payload"]
+        assert p1["badge_before"] is None and p1["badge"] == "green"
+        assert p1["sl_removed"] is False
+        # SL pulled → drift transition line (bug #h's exact shape)
+        d2 = _by_cat(second, "attr_drift_check")
+        assert len(d2) == 1
+        p2 = d2[0]["payload"]
+        assert p2["planned_sl"] == 95.0 and p2["live_sl"] == 0.0
+        assert p2["sl_removed"] is True
+        assert p2["badge_before"] == "green" and p2["badge"] == "yellow"
+        assert pos.deviation_badge == "yellow"
+        # audit T3bC-3c: the badge change also re-emits the enrich STAMPED
+        # line (badge is in the enrich sig)
+        en2 = _by_cat(second, "attr_enrich")
+        assert len(en2) == 1
+        assert en2[0]["payload"]["outcome"] == "STAMPED"
+        assert en2[0]["payload"]["badge"] == "yellow"
+        # unchanged state → gated silence
+        assert _by_cat(third, "attr_drift_check") == []
+        assert _by_cat(third, "attr_enrich") == []
+
+    def test_flat_interim_reopen_gets_fresh_first_stamp(self, tmp_path):
+        """Audit T3bC-2: the memo prunes ON ENTRY, so a flat pass clears
+        it and a same-(ticker,direction) reopen re-emits its first stamp
+        (the tail cleanup was unreachable on the early-return paths)."""
+        async def main():
+            db = await _mk_db(tmp_path)
+            try:
+                from core.order_manager import OrderManager
+                om = OrderManager(db)
+                _drain()
+                await om._enrich_positions_calc_id(1, [_pos_info(tpid="")])
+                first = _drain()
+                await om._enrich_positions_calc_id(1, [])   # flat interim
+                await om._enrich_positions_calc_id(1, [_pos_info(tpid="")])
+                reopen = _drain()
+                return first, reopen
+            finally:
+                await db.close()
+
+        first, reopen = asyncio.run(main())
+        assert len(_by_cat(first, "attr_enrich")) == 1
+        re_en = _by_cat(reopen, "attr_enrich")
+        assert len(re_en) == 1  # fresh first stamp, not gate-suppressed
+        assert re_en[0]["payload"]["reason"] == "no_position_key"
+
+    def test_junction_read_failure_error_twin(self, tmp_path):
+        import sqlite3 as _s
+
+        async def main():
+            db = await _mk_db(tmp_path)
+            try:
+                from core.order_manager import OrderManager
+                om = OrderManager(db)
+                orig = db._conn.execute
+
+                def _boom(sql, *a, **k):
+                    if "FROM positions_calcs WHERE account_id" in sql:
+                        raise _s.OperationalError("locked")
+                    return orig(sql, *a, **k)
+
+                db._conn.execute = _boom
+                _drain()
+                try:
+                    await om._enrich_positions_calc_id(
+                        1, [_pos_info(tpid="POS-1")],
+                    )
+                finally:
+                    db._conn.execute = orig
+                return _drain()
+            finally:
+                await db.close()
+
+        envs = asyncio.run(main())
+        en = _by_cat(envs, "attr_enrich")
+        assert len(en) == 1
+        p = en[0]["payload"]
+        assert p["outcome"] == "ERROR"
+        assert p["reason"] == "junction_read_failed"
+        assert p["error_type"] == "OperationalError"
+
+
 # ── registry conformance ─────────────────────────────────────────────────────
 
 class TestT3bEntryRegistryConformance:
     def test_entry_side_categories_in_attr_group(self):
         reg = cl.registry()
         for cat in ("attr_match_attempt", "attr_bracket_inherit",
-                    "attr_junction_form", "attr_reenrich_trigger"):
+                    "attr_junction_form", "attr_reenrich_trigger",
+                    "attr_tpid_resolve", "attr_close_build",
+                    "attr_enrich", "attr_drift_check"):
             assert reg[cat] == "attr"

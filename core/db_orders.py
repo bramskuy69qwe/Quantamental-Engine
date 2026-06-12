@@ -279,8 +279,15 @@ class OrdersMixin:
 
     async def insert_closed_position(
         self, row: Dict[str, Any], commit: bool = True,
-    ) -> None:
+    ) -> bool:
         """Insert a closed_positions row (deduped by position_id + exit_time).
+
+        Returns ``True`` when the row landed, ``False`` on the
+        pollution-reject and on a swallowed write failure (the
+        ``commit=True`` path) — CL.T3b-close: the close builder's
+        attr_close_build decision line reports "row written?" from this
+        (the same ok-return pattern audit T3bE-3 added to the junction
+        writer). The ``commit=False`` re-raise contract is unchanged.
 
         Uses REPLACE so a re-computed close row (e.g. after late fill) wins
         over the earlier version rather than being silently dropped.
@@ -333,7 +340,7 @@ class OrdersMixin:
                 account_id=row.get("account_id", 1),
                 symbol=row.get("symbol", ""),
             )
-            return
+            return False
 
         # Resolve tp_price/sl_price from pre_trade_log if not explicitly provided.
         # T234 note: calc_id is bound UNCONDITIONALLY below (not carried
@@ -535,6 +542,7 @@ class OrdersMixin:
                 account_id=row.get("account_id", 1),
                 symbol=row.get("symbol", ""),
             )
+            return True
         except Exception as e:
             log.exception("insert_closed_position failed")
             # corr-tap: db_write (CL.T3a) — failure twin
@@ -554,6 +562,7 @@ class OrdersMixin:
             # fails doesn't crash the WS event loop.
             if not commit:
                 raise
+            return False
 
     async def update_order_from_fill(
         self, exchange_order_id: str, fill: Dict[str, Any]
