@@ -283,7 +283,8 @@ anything (the bus handler is where it's captured).
 DB writers** (`db_write` — "what rows did this chain write?" is the HANDOFF
 bug class), the **orders-table status surface** (`order_status_applied`,
 `reconcile_promote` — the stale-orders bug class), and the **nine §5.6
-attribution categories** with the three mandates (SKIPPED/ERROR outcomes,
+attribution categories** (TEN as-built — CL.T5 added `attr_close_stamp`;
+spec §15 E30) with the three mandates (SKIPPED/ERROR outcomes,
 verbatim identity tuple incl. `""`, dedup_key).
 
 **Dependencies**: Phase 1 **+ Phase 2a** (rev-2 correction: calc transitions
@@ -338,7 +339,7 @@ cannot pass. Phase 2b is NOT required.)
 - For a replayed open→amend→cancel→close scenario, the log shows the
   complete attribution narrative on one corr_id chain per inbound frame,
   each decision with inputs + rule + outcome — **including the skips**.
-- All nine §5.6 categories fire at their (corrected) sites; `db_write`
+- All §5.6 categories (ten as-built — `attr_close_stamp`/E30) fire at their (corrected) sites; `db_write`
   answers "what rows did this chain write".
 - This is the baseline the reconciler (next program) will be diffed against.
 
@@ -529,7 +530,7 @@ its owner task; none blocks CL.T2a.
 |---|---|---|---|
 | HA-1 | MED | REST-fallback plugin ingest (`POST /api/platform/event` → `_dispatch`) mints a `wsp-*` chain INSIDE the request's `http-*` chain — the http pair looks empty, the wsp chain has no visible trigger (the sibling `/api/platform/positions` route already behaves correctly). Fix: move `tick("wsp")` from `_dispatch` to the WS receive loop + update the dispatch test | **CLOSED — CL.T2b `c421747`** (mint moved to the `handle_ws` receive loop; dispatch-inherits + receive-loop-mints both tested) |
 | HA-2 | MED | Middleware **registration** on `main.app` is unpinned — deleting the decorator darkens the whole HTTP boundary with the suite green. Add: `assert any(m.kwargs.get("dispatch") is main._corr_http_middleware for m in main.app.user_middleware)` | **CLOSED — CL.T2b `c421747`** |
-| HA-3 | MED | No **registry snapshot test** — a silent re-group (e.g. `platform_fill`→market) drops a money-path category from the `linkage` profile undetected; `register()`'s conflict guard can't see an edit of the original line. Add `assert cl.registry() == {…45…}` | **CLOSED — CL.T2b `c421747`** (45-entry category→group snapshot — pins groups, not just names) |
+| HA-3 | MED | No **registry snapshot test** — a silent re-group (e.g. `platform_fill`→market) drops a money-path category from the `linkage` profile undetected; `register()`'s conflict guard can't see an edit of the original line. Add `assert cl.registry() == {…45…}` | **CLOSED — CL.T2b `c421747`** (category→group snapshot — pins groups, not just names; the snapshot grew 45→**46** at CL.T5 with `attr_close_stamp`/HA-40) |
 | HA-4 | MED | No **session-floor self-test** — the guard against the PROVEN T0b live-dir leak (module-scoped TestClient lifespans) has no asserting observer. Add a module-scoped probe asserting the resolver ≠ `config.CORR_LOG_DIR` before any function-scoped patch | **CLOSED — CL.T2b `c421747`** (`tests/test_correlation_log_floor.py` — non-vacuous: instantiates before the function-scoped autouse patch) |
 | HA-5 | MED-LOW | `_last_streams` no-streams reset is untested (the T1b audit's suggested test never landed) — deleting the reset re-corrupts the rebuild diff silently | **CLOSED — CL.T2b `c421747`** (mutation-effective) |
 | HA-6 | LOW-MED | Composed **leak-scenario test** absent: no test executes the §9 leak predicate against a healthy AND a leaky trace (change+rebuild together vs change-with-suppressed-restart) | CL.T5 (bug-#4 replay) or earlier |

@@ -485,7 +485,8 @@ with its inputs, the rule applied, and the outcome.
 | `attr_drift_check` | the live TP/SL drift + removal check inside enrichment (**new in rev 2** — without it the SL-removal badge bug, historical #h, is invisible: the wrong verdict gets recorded self-consistently) | **planned_tp/sl, live_tp/sl, tp_drift/sl_drift, tp_removed/sl_removed flags, badge before→after** — emitted on badge *transition* + first stamp. One line shows "planned_sl=2310, live_sl=0, sl_removed=false, badge=green": the buggy guard visible in its own output |
 | `attr_funding_assign` | `core/funding_handler.py` (**new in rev 2** — genuine identity attribution: open-position-cache hit vs closed-window fallback vs orphan; primary-calc resolution; has a documented close+reopen mis-attribution edge) | income row id (dedup `venue_event_id`), resolution path, tpid/calc assigned or orphan |
 
-Nine categories. After the reconciler ships, these taps move to the single
+Nine categories (**TEN as-built** — CL.T5 added `attr_close_stamp`, §15
+E30). After the reconciler ships, these taps move to the single
 owner and collapse toward one `attr_decide` — the log will *prove* the
 consolidation is faithful (same decisions, one site; §12).
 
@@ -823,7 +824,8 @@ read-only admin route (`GET /admin/correlation?corr_id=...`) stays deferred
 2. **Any** bus publish produces a `bus_publish` + one `bus_deliver` per
    handler, all carrying the **publisher's** corr_id (the task-boundary
    hand-off works) — verified structurally, not against a pinned topic list.
-3. All **nine** §5.6 attribution categories fire at their sites with
+3. All §5.6 attribution categories (nine as-designed; **ten as-built** —
+   §15 E30) fire at their sites with
    inputs + rule + outcome — **including `outcome=SKIPPED` on every
    early-return path** (one envelope per invocation, no silent exits).
 4. No secret (API key, signature, listen-key, auth header) ever appears in
@@ -912,7 +914,7 @@ Out of scope here, but the log is shaped to de-risk it:
 | D6 | **Every queue hand-off** carries + re-binds corr_id (bus AND webhook queue; rule, not a one-off) | contextvars can't cross consumer tasks; rev 2 corrected the "one explicit hand-off" overclaim (§3.3, §6.2) |
 | D7 | Non-blocking emit + dedicated writer thread | the log taps the hot WS path; must never stall ingestion/dispatch (§6.1, §7.7) |
 | D8 | `category` = free string **backed by a registry with groups**; profiles derive from groups; conformance-tested | taps grow without enum coupling, but rev 2 adds the drift defense rev 1 lacked (§5.8) |
-| D9 | Attribution-decision taps (§5.6, nine categories) are the priority | they make the whack-a-mole sites visible and de-risk the reconciler (§12) |
+| D9 | Attribution-decision taps (§5.6, nine as-designed / **ten as-built** — §15 E30) are the priority | they make the whack-a-mole sites visible and de-risk the reconciler (§12) |
 | D10 | Mandatory secret redaction in the sink | plaintext artifact; non-negotiable even at localhost (§7.2) |
 | D11 | Reuse `json_safe()`; cap payloads (no silent drop) | non-finite-float safety + bounded lines without losing the fact (§7.4) |
 | D12 | Volume control is mandatory at whole-engine scope; refresh-driven attr taps are on-change gated | market-data + per-recalc pubsub would otherwise bury the signal (§7.3) |
@@ -978,7 +980,9 @@ as-built behavior deviates from.
 | E34 | §5.5, §7.3 | **HA-24 ACCEPTED**: platform `account_update_applied` stays per-frame (~5 Hz when the Quantower plugin streams), NOT gated/sampled | the plugin is **not connected at this deployment** (Binance-direct); the per-frame cost is latent and bounded by the per-day MB guard; gating a STATE-group category per-source adds complexity for an inactive path (CLAUDE.md "don't build speculative"). Re-elevate when the Quantower plugin is wired |
 
 Confirmed **code gaps** (spec is right, code owes the fields — filed
-HA-9, due CL.T5 at latest): `ws_kline` payload lacks interval+close;
+HA-9; **DOWNGRADED to opportunistic at CL.T5** — payload-FIELD-completeness
+nits, not diagnostic-capability gaps; the 8-bug replay + acceptance pass
+without them; see plan §9.4): `ws_kline` payload lacks interval+close;
 `ws_connected` lacks duration-to-connect; news lacks a pre-attempt
 `ws_connect` and `ws_disconnect.uptime_s`; `platform_snapshot` carries
 kind only; `ws_depth` lacks top-of-book. **Phase-2 add (T2b)**: the
