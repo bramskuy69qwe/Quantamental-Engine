@@ -1,6 +1,6 @@
 # Correlation Log — Consolidated Spec
 
-**Status**: design rev 2 — audited (4 adversarial agents, 2026-06-10), pending implementation
+**Status**: **IMPLEMENTED — program COMPLETE (Phases 0–5, 2026-06-14)**; design rev 2 audited (4 adversarial agents, 2026-06-10). As-built deviations in §15 (E1–E34).
 **Created**: 2026-06-10
 **Branch**: `v2.5/correlation-log`
 **Scope**: an observability spine — a uniform, correlation-id-threaded event
@@ -691,8 +691,9 @@ is buried.
 - Defaults: `ws_depth` **OFF**; `ws_mark_price` **OFF** (enable via
   `CORR_LOG_MARK_PRICE_SAMPLE=N` for 1-in-N; rev 2 resolves the rev-1
   sampled-vs-off contradiction: **off is the default**, sampling is the
-  opt-in); `ws_kline` ON (low rate); `pubsub_publish` sampled; everything
-  else ON.
+  opt-in); `ws_kline` ON (low rate); `pubsub_publish` **sampled
+  keep-1-in-10** (CL.T5/HA-14 — `CORR_LOG_PUBSUB_SAMPLE`, set to 1 to keep
+  all); everything else ON.
 - **Refresh-driven internal taps are on-change gated**: `attr_enrich` /
   `attr_drift_check` run per position per WS order update — they emit on
   outcome/badge *transition* + first stamp, with a per-(position, outcome)
@@ -758,6 +759,7 @@ for numerics):
 | `CORR_LOG_DIR` | `{DATA_DIR}/logs/correlation` | sink directory |
 | `CORR_LOG_RETENTION_DAYS` | `7` | prune files older than this |
 | `CORR_LOG_MARK_PRICE_SAMPLE` | `0` (off) | 1-in-N sampling for `ws_mark_price` (0 = drop; off is the default, sampling is opt-in) |
+| `CORR_LOG_PUBSUB_SAMPLE` | `10` | keep-1-in-N sampling for `pubsub_publish` (CL.T5/HA-14; the dominant `full`-profile category). 1 = keep every publish; clamped ≥1 |
 | `CORR_LOG_MAX_PAYLOAD_BYTES` | `4096` | payload size cap |
 | `CORR_LOG_MAX_INFLIGHT` | `100000` | backpressure bound before drop+count |
 | `CORR_LOG_MAX_MB_PER_DAY` | `512` | per-day file size guard (runaway-tap backstop) |
@@ -933,7 +935,7 @@ shipped code, named in one place so a fresh reader of any section below
 is not misled. E1–E12 = Phase-1 filing (2026-06-11); E13–E18 = Phase-2
 filing (2026-06-11, CL.T2a+T2b); E19–E28 = Phase-3 filing (2026-06-12,
 CL.T3a `3646a4d` + CL.T3b-entry `331f00c` + CL.T3b-close `b35389a` +
-CL.T3c `fd5b56e`).
+CL.T3c `fd5b56e`); E29–E34 = Phase-5 close-out (2026-06-14, CL.T5).
 Each entry is documented at the code site and in its commit; this table
 is the spec-side record. "§" = the section whose literal text the
 as-built behavior deviates from.
@@ -953,7 +955,7 @@ as-built behavior deviates from.
 | E11 | §3.3 | A third queue hand-off exists beyond the two listed: the `core/pubsub` subscribe generators feeding SSE | deliberately uncorrelated (§13 — the SSE push tap is deferred; the generators run inside the consuming request's own http scope) |
 | E12 | §3.2 | Frame types outside the §5.4 taxonomy (e.g. `MARGIN_CALL`, unknown platform types) mint a chain but emit **no frame envelope** | the taxonomy defines what is logged; a kind-only catch-all is a CL.T5 decision (filed HA-11) |
 | E13 | §7.3 | The `linkage` profile excludes the **entire `outbound` group** — venue REST AND the webhook `http_out_*` POST taps (the terminal hop of the flagship close→bus→queue→POST chain emits nothing under `linkage`). §7.3's gloss "market/outbound-news OFF" names a group that does not exist — §5.8 has one `outbound` group, and `http` is also excluded | the profile's group list itself matches the code; only the gloss under-describes. The corr **carry** (webhook queue 3-tuple) is profile-independent — only the envelopes are absent. Default profile is `full`. Whether the low-volume/high-linkage-value webhook taps deserve a linkage-visible group is a CL.T5 decision (HA-13) |
-| E14 | §7.3 | `pubsub_publish` is **group-gated only** (market group → OFF in `linkage`); §7.3's "pubsub_publish sampled" is not yet true — at `full` every hit is kept | sampling deferred to the CL.T5 volume pass (plan 5.1); `_sample_rate` is generalized and ready (HA-14). Bounded meanwhile by the per-day MB guard |
+| E14 | §7.3 | ~~`pubsub_publish` is **group-gated only**~~ **RESOLVED (CL.T5, E32)**: `pubsub_publish` is now sampled (keep-1-in-`CORR_LOG_PUBSUB_SAMPLE`, default 10) via `_sample_rate` — §7.3's "pubsub_publish sampled" now holds | was deferred to the CL.T5 volume pass (HA-14); shipped there |
 | E15 | §5.3, §5.3b | Out/return tap pairs are **Exception-scoped**: task cancellation emits the out-tap but never the return-tap (REST, webhook, Finnhub, FRED alike) — an unmatched pair at shutdown/cancel | `CancelledError` is `BaseException`-derived; catching it to tap would interfere with cancellation semantics. Bindings still reset (`finally`/`with`) — no corr leak. Pair-join readers must tolerate unmatched out-taps |
 | E16 | §5.7 | `pubsub_publish` taps the publish **attempt** on BOTH backends — InProcess pre-fan-out, Redis pre-connection — diverging from the bus's published==enqueued convention (CL.T2a) | InProcess has no realistic post-tap failure (per-subscriber `QueueFull` is a deliberate drop); the deployment runs `inprocess`, so the Redis pre-connection divergence is moot unless that backend is enabled |
 | E17 | §5.3 | The adapter weight-tracker sits **outside** the REST tap pair: a budget-**blocked** call raises before `rest_call` (the call is invisible to the log) and a **throttle** delay runs before the tap (`rest_call.ts` is post-throttle; `duration_ms` measures executor time only) | accepted as-built: the block is loud in the engine log, and throttle latency is visible as a trigger→`rest_call` ts gap. A call-less `rest_return{blocked:true}` is a CL.T5 option |
@@ -968,6 +970,12 @@ as-built behavior deviates from.
 | E26 | §5.6 | `attr_tpid_resolve`'s tiers are `live_position`/`entry_order_fallback` (+ `via=snapshot_recovery`, `tier=entry_order`); the table's strict/walk tiers live in `attr_close_build`'s own fields (`strict_key`/`opens_found_strict`/`walk_used` — the §4.1 walkthrough splits them the same way) | one category per decision site; close_build owns the strict/walk open-lookup |
 | E27 | §5.6 m3, §7.3 | enrich/drift lines omit dedup_key (refresh-driven, no triggering frame) and gate per (position, outcome/badge+flags) **instance memo** with ERROR taps ungated (repetition is the signal); enrich/drift + manual-path envelopes carry `lifecycle_id=""` — their reads don't select it | the §7.3 on-change mandate; honest verbatim-empty until the column is read (one extra column at next touch — HA-27) |
 | E28 | §5.6, §7.3 | `attr_funding_assign` is **mandate-1-over-gating**: a re-polled settlement re-emits the SAME dedup_key (= `venue_event_id`) with `inserted:false` (~130 KB/day/funded-symbol, bounded); `inserted:false` conflates dedup with a swallowed write failure BY DESIGN — the paired `db_write` twin distinguishes; non-FUNDING income rows are a domain filter | every settlement decision is a line; the key repeat IS the §4.1 duplicate mechanism |
+| E29 | §7.7, §10#5 | The perf gate measures **p50 + median-of-rounds at a feasible N**, not the literal "p95 over N=10k". The real frame→state-apply is ~9 ms/call (dominated by `_recalculate_portfolio`, NOT the log), so N=10k×2 arms ≈ 180 s would blow `@pytest.mark.timeout(60)`; and a 10k wall-clock p95 is OS-scheduler-jitter on the tail (~8% swing) while the systematic emit overhead is ~3.5% — the median p50 isolates it. The per-emit p95<50µs §7.7 budget IS measured literally (N=10k) | p50 because the p95 tail is jitter not emit cost; feasible-N because the literal N blows the timeout; acceptance #5 is met-by-substitution. `tests/test_correlation_log_perf.py` (`perf` marker, excluded from the default run) |
+| E30 | §5.6, §10#3, D9 | There are **TEN** attribution categories, not nine: CL.T5 added `attr_close_stamp` (HA-40) for `_stamp_closing_fill_attribution` — the closing-fill primary-calc/lifecycle inheritance, a §5.6-class decision the original table never listed. §5.6/§10#3/D9's "nine" predate it | a real distinct decision; the reconciler folds all `attr_*` into one owner regardless |
+| E31 | §5.5, §5.6 | HA-40's `fills` UPDATE is covered by the **`attr_close_stamp` decision tap** (ASSIGNED carries the row's new calc_id/lifecycle_id; ERROR twins the failure), NOT a `db_write` twin — diverging from E22's named-writer convention | it IS a §5.6 attribution decision, not a bare write; the decision line answers both "was it stamped" and "did it fail" |
+| E32 | §7.3, §8 | `pubsub_publish` is now **sampled** (keep-1-in-`CORR_LOG_PUBSUB_SAMPLE`, default **10**) — this changes the **default `full`-profile behavior**: a `pubsub_publish` grep now shows ~1-in-10. Set `CORR_LOG_PUBSUB_SAMPLE=1` to keep every publish (the SSE-debug setting); `linkage` drops the whole market group regardless | the dominant single category at `full` (per-recalc SSE fan-out); §7.3 mandated sampling; default 10 = an order-of-magnitude cut retaining representative coverage (HA-14). Resolves E14 |
+| E33 | §7.3 | **HA-13 ACCEPTED**: the `linkage` profile keeps dropping the whole `outbound` group (incl. the webhook `http_out_*` POST). NOT re-grouped | the webhook POST is a downstream NOTIFICATION, not a linkage decision (the linkage decision surface — attr/state/db/bus/ws_lifecycle — is fully retained); `http_out_*` is a generic category shared with Finnhub/FRED, so re-grouping would pull venue-REST/news noise into `linkage` or require splitting the category — disproportionate at single-tenant localhost where the default profile is `full` (everything visible). Re-elevate if linkage-profile webhook visibility is needed |
+| E34 | §5.5, §7.3 | **HA-24 ACCEPTED**: platform `account_update_applied` stays per-frame (~5 Hz when the Quantower plugin streams), NOT gated/sampled | the plugin is **not connected at this deployment** (Binance-direct); the per-frame cost is latent and bounded by the per-day MB guard; gating a STATE-group category per-source adds complexity for an inactive path (CLAUDE.md "don't build speculative"). Re-elevate when the Quantower plugin is wired |
 
 Confirmed **code gaps** (spec is right, code owes the fields — filed
 HA-9, due CL.T5 at latest): `ws_kline` payload lacks interval+close;

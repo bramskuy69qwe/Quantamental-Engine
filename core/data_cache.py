@@ -333,17 +333,27 @@ class DataCache:
         # release so the tap never extends the critical section. A REJECTED
         # snapshot (return None above) deliberately emits nothing — the
         # category records applied mutations.
+        # HA-23 (CL.T5): cap the closes_detected list so a mass-close
+        # snapshot (75+ simultaneous closes) can't push the WHOLE payload
+        # past the §7.4 4 KB cap — which would truncate it to the
+        # `_truncated` summary and lose EVERY field (n_positions,
+        # waited_ms, AND the per-close tpids the §4.1 walkthrough needs).
+        # Capped list + n_closes (total) + n_closes_omitted: no silent
+        # cap (CLAUDE.md), the count is always honest.
+        _CLOSES_TAP_CAP = 20
         correlation_log.emit(
             "data_cache", "internal", "internal",
             correlation_log.CAT_POSITION_SNAPSHOT_APPLIED,
             {
-                "n_positions":     len(incoming),
-                "trigger":         source.value,
-                "force":           force,
-                "closes_detected": closes_for_tap,
-                "n_new":           len(result.new_syms),
-                "waited_ms":       round((_t_acq - _t_req) * 1000, 2),
-                "held_ms":         round((_t_rel - _t_acq) * 1000, 2),
+                "n_positions":      len(incoming),
+                "trigger":          source.value,
+                "force":            force,
+                "closes_detected":  closes_for_tap[:_CLOSES_TAP_CAP],
+                "n_closes":         len(closes_for_tap),
+                "n_closes_omitted": max(0, len(closes_for_tap) - _CLOSES_TAP_CAP),
+                "n_new":            len(result.new_syms),
+                "waited_ms":        round((_t_acq - _t_req) * 1000, 2),
+                "held_ms":          round((_t_rel - _t_acq) * 1000, 2),
             },
         )
 

@@ -136,6 +136,20 @@ def log_event(
             account_id=account_id,
         )
         return cur.lastrowid  # type: ignore[return-value]
+    except Exception as e:
+        # corr-tap: db_write FAILURE twin (CL.T5, HA-41) — the INSERT/connect
+        # was success-side only; every caller swallows at debug, so an
+        # engine_events write failure was envelope-less. The ok:false twin
+        # (the T3a money-table pattern) makes "what rows did this chain
+        # write" honest here too. Re-raise: the swallow stays the caller's.
+        correlation_log.emit(
+            "db", "disk", "internal", correlation_log.CAT_DB_WRITE,
+            {"table": "engine_events", "op": "INSERT", "ok": False,
+             "rowcount": 0, "event_type": event_type,
+             "error_type": type(e).__name__},
+            account_id=account_id,
+        )
+        raise
     finally:
         conn.close()
 

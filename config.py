@@ -198,6 +198,18 @@ try:
     CORR_LOG_MARK_PRICE_SAMPLE = int(os.getenv("CORR_LOG_MARK_PRICE_SAMPLE", "0"))
 except ValueError:
     CORR_LOG_MARK_PRICE_SAMPLE = 0
+try:
+    # pubsub_publish is the dominant single category at the `full` profile
+    # (per-recalc fan-out across ~6 SSE channels). Keep 1-in-N (spec §7.3
+    # "pubsub sampled"; CL.T5 volume pass / HA-14). Default 10 = an
+    # order-of-magnitude cut while retaining representative coverage;
+    # 1 = keep every publish (set this when debugging the SSE path itself).
+    # Clamped >=1 (0 would divide-by-nothing in the keep-1-in-N counter;
+    # to silence pubsub entirely use CORR_LOG_PROFILE=linkage, which drops
+    # the whole market group).
+    CORR_LOG_PUBSUB_SAMPLE = max(1, int(os.getenv("CORR_LOG_PUBSUB_SAMPLE", "10")))
+except ValueError:
+    CORR_LOG_PUBSUB_SAMPLE = 10
 # Sink-side knobs (CL.T0b): the writer thread, rotation, retention, bounds.
 CORR_LOG_DIR = os.getenv("CORR_LOG_DIR", f"{LOGS_DIR}/correlation")
 try:

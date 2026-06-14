@@ -290,9 +290,12 @@ class TestRegistryAndProfiles:
                  cl.GROUP_DB, cl.GROUP_META}
         assert set(reg.values()) <= valid
 
-    def test_nine_attr_categories_registered(self):
+    def test_ten_attr_categories_registered(self):
+        # CL.T5 (HA-40) added attr_close_stamp — the 10th. The spec §5.6
+        # table named nine; the closing-fill primary-calc inheritance was a
+        # §5.6-class decision it never listed.
         attr = [c for c, g in cl.registry().items() if g == cl.GROUP_ATTR]
-        assert len(attr) == 9
+        assert len(attr) == 10
 
     def test_registry_snapshot_ha3(self):
         """HA-3: a silent re-group (editing a register() line) would move a
@@ -328,12 +331,12 @@ class TestRegistryAndProfiles:
             "order_status_applied": "state", "reconcile_promote": "state",
             # db
             "db_write": "db",
-            # attr (the nine)
+            # attr (the nine + CL.T5 HA-40's attr_close_stamp = ten)
             "attr_match_attempt": "attr", "attr_tpid_resolve": "attr",
             "attr_close_build": "attr", "attr_bracket_inherit": "attr",
             "attr_reenrich_trigger": "attr", "attr_junction_form": "attr",
             "attr_enrich": "attr", "attr_drift_check": "attr",
-            "attr_funding_assign": "attr",
+            "attr_funding_assign": "attr", "attr_close_stamp": "attr",
             # meta
             "overflow": "meta",
         }

@@ -510,6 +510,34 @@ class OrderManager:
         except Exception:
             log.debug("order enrichment skipped", exc_info=True)
 
+    # HA-28 (CL.T5): the bracket-inherit SKIP lines and the per-update
+    # `junction_exists` replay SKIP are the largest nothing-to-do
+    # generators — they fire per symbol / per order on EVERY snapshot
+    # pass and WS order update for a steady linked position. On-change
+    # dedup them (the §7.3 mandate, same exception the enrich/drift taps
+    # use): emit on first occurrence + on transition, suppress steady
+    # repeats. Only no-op SKIPPED outcomes route through here — actionable
+    # outcomes (INHERITED / DELEGATED / FORMED) and ERROR twins stay
+    # ungated (repetition there IS the signal). Bounded LRU so a
+    # long-running engine can't leak the memo; an eviction at worst
+    # re-emits one harmless no-op line later.
+    _ATTR_SKIP_MEMO_MAX = 512
+
+    def _attr_skip_is_repeat(self, key: Any, sig: Any) -> bool:
+        """True → this (key, sig) is an unchanged repeat, suppress the
+        emit; False → new or transitioned, emit (and record). Insertion-
+        ordered dict as a cheap LRU: re-record moves the key to the back;
+        over the cap, the oldest insertion is evicted."""
+        memo: Dict[Any, Any] = self.__dict__.setdefault("_attr_skip_memo", {})
+        if memo.get(key) == sig:
+            return True
+        if key in memo:
+            del memo[key]  # re-insert at the back (recency)
+        memo[key] = sig
+        while len(memo) > self._ATTR_SKIP_MEMO_MAX:
+            del memo[next(iter(memo))]  # evict oldest
+        return False
+
     async def _ensure_junction_if_linked(self, account_id: int, eoid: str) -> None:
         """Defect-8 (debug 2026-06-08): on the observe path the matcher sets an
         order's calc_id AFTER its opening fill (once the TP/SL bracket arrives and
@@ -527,6 +555,13 @@ class OrderManager:
         # so the replay path produces two correlated decision lines.
         def _tap_replay(outcome: str, reason: Optional[str] = None,
                         **kw: Any) -> None:
+            # HA-28: steady-state SKIPPED replays (junction_exists is the
+            # big one — every WS update of a linked order) are on-change
+            # deduped; DELEGATED/actionable + any future ERROR stay ungated.
+            if outcome == "SKIPPED" and self._attr_skip_is_repeat(
+                ("replay", account_id, eoid or ""), reason or ""
+            ):
+                return
             payload: Dict[str, Any] = {
                 "outcome": outcome, "via": "post_link_replay",
                 "exchange_order_id": eoid or "",
@@ -716,6 +751,13 @@ class OrderManager:
         # are lifecycle-rate (same order of volume as the ws
         # order_status_applied tap).
         def _tap_bracket_skip(reason: str) -> None:
+            # HA-28: on-change dedup the steady per-symbol-per-pass SKIPs
+            # (a symbol with no bracket to inherit re-skips every snapshot
+            # pass). Emits on first + on reason transition; INHERITED and
+            # the ERROR twin below are separate emits and stay ungated.
+            if self._attr_skip_is_repeat(("bracket", account_id, symbol or ""),
+                                         reason):
+                return
             correlation_log.emit(
                 "order_manager", "internal", "internal",
                 correlation_log.CAT_ATTR_BRACKET_INHERIT,
@@ -2402,20 +2444,60 @@ class OrderManager:
         (UNPLANNED, or the binance_ws empty-tpid path). Best-effort; all
         I/O via ``self._db._conn``.
         """
+        # corr-tap: attr_close_stamp (CL.T5, HA-40, spec §5.6 class) — this
+        # is a genuine attribution DECISION (inherit the position's primary
+        # calc/lifecycle onto the reduce-only closing fill) that the spec's
+        # §5.6 table never listed, so it shipped envelope-less. One envelope
+        # per CLOSING-fill invocation (mandate 1), incl. the SKIPPED no-op
+        # reasons (a close fill that SHOULD inherit but couldn't is the same
+        # stranded-attribution shape mandate 1 exists to surface) and the
+        # UPDATE failure twin. Opening fills (not is_close) are a domain
+        # filter — no envelope (E25 precedent). The fills UPDATE itself is
+        # covered by this decision tap rather than a db_write twin: the
+        # ASSIGNED line carries the row's new calc_id/lifecycle_id, the
+        # ERROR twin its failure (deviation: attr-decision tap over a
+        # db_write twin because this IS a §5.6 decision, not a bare write).
+        def _tap_close_stamp(outcome: str, *, calc_id: str = "",
+                             lifecycle_id: str = "", reason: Optional[str] = None,
+                             error_type: Optional[str] = None) -> None:
+            payload: Dict[str, Any] = {
+                "outcome": outcome,
+                "terminal_position_id": pos_id,
+                "calc_id": calc_id, "lifecycle_id": lifecycle_id,
+                "exchange_order_id": fill.get("exchange_order_id", "") or "",
+            }
+            if fill_id:
+                payload["dedup_key"] = f"{fill_id}:close_stamp"
+            if reason:
+                payload["reason"] = reason
+            if error_type:
+                payload["error_type"] = error_type
+            correlation_log.emit(
+                "order_manager", "internal", "internal",
+                correlation_log.CAT_ATTR_CLOSE_STAMP, payload,
+                account_id=account_id, symbol=fill.get("symbol") or None,
+            )
+
         if not fill.get("is_close"):
-            return
+            return  # domain filter: this method is meaningful only for closes
         pos_id = fill.get("terminal_position_id", "") or ""
-        if not pos_id:
-            return
         fill_id = fill.get("exchange_fill_id", "") or ""
+        if not pos_id:
+            _tap_close_stamp("SKIPPED", reason="empty_tpid")
+            return
         if not fill_id:
+            _tap_close_stamp("SKIPPED", reason="no_fill_id")
             return
 
         primary_calc_id, lifecycle_id = await self._position_primary_calc(
             account_id, pos_id,
         )
         if not primary_calc_id and not lifecycle_id:
-            return  # no junction → nothing to inherit
+            # no junction → nothing to inherit. A stranded close-fill: the
+            # close has no attributable calc (UNPLANNED, or the empty-tpid
+            # binance_ws path) — a line, not a silent return.
+            _tap_close_stamp("SKIPPED", reason="no_junction")
+            return
 
         try:
             await self._db._conn.execute(
@@ -2429,11 +2511,16 @@ class OrderManager:
                 "(lifecycle %s)",
                 fill_id, pos_id, primary_calc_id, lifecycle_id,
             )
-        except Exception:
+            _tap_close_stamp("ASSIGNED", calc_id=primary_calc_id or "",
+                             lifecycle_id=lifecycle_id or "")
+        except Exception as e:
             log.warning(
                 "close-fill stamp: update failed for fill=%s pos=%s",
                 fill_id, pos_id, exc_info=True,
             )
+            _tap_close_stamp("ERROR", calc_id=primary_calc_id or "",
+                             lifecycle_id=lifecycle_id or "",
+                             reason="update_failed", error_type=type(e).__name__)
 
     async def _enrich_positions_calc_id(
         self, account_id: int, positions: List[PositionInfo]

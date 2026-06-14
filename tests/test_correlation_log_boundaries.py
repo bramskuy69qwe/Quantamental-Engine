@@ -351,6 +351,12 @@ class TestPubsubTap:
     def test_inproc_publish_taps_market_gated(self, monkeypatch):
         from core.pubsub.in_process_bus import InProcessBus
 
+        # CL.T5 (HA-14): pubsub_publish is sampled at `full` (default
+        # keep-1-in-10). Pin sample=1 here so the single-publish shape
+        # assertion is deterministic; the sampling behavior itself is
+        # pinned in test_pubsub_sampling below.
+        monkeypatch.setattr(cl, "_pubsub_sample", 1)
+
         async def main(cid_prefix):
             with cl.correlation_scope(cid_prefix) as cid:
                 await InProcessBus().publish("acct.1.position_update",
@@ -366,3 +372,29 @@ class TestPubsubTap:
         monkeypatch.setattr(cl, "_profile", "linkage")
         asyncio.run(main("wsu"))
         assert [e for e in _drain() if e["category"] == "pubsub_publish"] == []
+
+    def test_pubsub_sampling(self, monkeypatch):
+        # HA-14: keep 1-in-N. The per-category counter (next(counter)%rate)
+        # keeps the Nth, 2Nth, … publish; 20 publishes at N=10 → 2 kept.
+        from core.pubsub.in_process_bus import InProcessBus
+
+        monkeypatch.setattr(cl, "_profile", "full")
+        monkeypatch.setattr(cl, "_pubsub_sample", 10)
+        cl._sample_counters.pop(cl.CAT_PUBSUB_PUBLISH, None)  # fresh draw
+
+        async def burst():
+            with cl.correlation_scope("wsu"):
+                bus = InProcessBus()
+                for _ in range(20):
+                    await bus.publish("acct.1.position_update", {"symbol": "X"})
+
+        asyncio.run(burst())
+        kept = [e for e in _drain() if e["category"] == "pubsub_publish"]
+        assert len(kept) == 2
+
+        # sample=1 keeps every publish (the SSE-debug setting)
+        monkeypatch.setattr(cl, "_pubsub_sample", 1)
+        cl._sample_counters.pop(cl.CAT_PUBSUB_PUBLISH, None)
+        asyncio.run(burst())
+        assert len([e for e in _drain()
+                    if e["category"] == "pubsub_publish"]) == 20

@@ -425,7 +425,31 @@ async def _try_correlate(order: Dict[str, Any], db_path: str) -> None:
     from core.link_state import auto_classify
 
     async def _apply_link() -> None:
-        await asyncio.to_thread(_update_orders_sync)
+        # corr-tap: db_write FAILURE twin (CL.T5, HA-35) — closes the
+        # envelope-less post-LINKED-write seam. The matcher emits LINKED
+        # (attr_match_attempt), then THIS is the actual orders.calc_id/
+        # link_status stamp: a raw sqlite UPDATE outside the named-10,
+        # whose only success-side envelope is the link_transition
+        # auto_classify emits AFTER it. If the UPDATE raises, auto_classify
+        # never reaches that emit and `_enrich_order_best_effort` swallows
+        # — the chain would read LINKED while the DB has no link, findable
+        # only by join-absence. The ok:false twin makes it a one-query
+        # find: `db_write ok:false table=orders`. Loop-side emit (the
+        # calling task's corr_id/task). Success stays untwinned — the
+        # link_transition already covers it (no per-link volume added).
+        try:
+            await asyncio.to_thread(_update_orders_sync)
+        except Exception as e:
+            correlation_log.emit(
+                "db", "internal", "internal", correlation_log.CAT_DB_WRITE,
+                {"table": "orders", "op": "UPDATE", "ok": False,
+                 "error_type": type(e).__name__, "rowcount": 0,
+                 "exchange_order_id": eid or "",
+                 "calc_id": result.calc_id or "",
+                 "terminal_position_id": "", "lifecycle_id": ""},
+                account_id=aid,
+            )
+            raise
 
     await auto_classify(row["id"], result.link_status, apply_fn=_apply_link)
 

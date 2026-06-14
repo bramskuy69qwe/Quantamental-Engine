@@ -1,6 +1,6 @@
 # Correlation Log — Implementation Plan
 
-**Status**: design rev 2 — audited (4 adversarial agents, 2026-06-10), pending implementation
+**Status**: **COMPLETE — all 12 tasks shipped (Phases 0–5, 2026-06-14)**; design rev 2 audited (4 adversarial agents, 2026-06-10). Ledger disposition in §9.4.
 **Created**: 2026-06-10
 **Branch**: `v2.5/correlation-log`
 **Spec**: [correlation_log_spec.md](correlation_log_spec.md)
@@ -497,8 +497,8 @@ pre-grepped sites.
 | **CL.T3b-entry** | **SHIPPED `331f00c`** — Attribution entry side: match (calc_correlation/order_enrichment) + bracket + junction + reenrich | plan 3.2 | M |
 | **CL.T3b-close** | **SHIPPED `b35389a`** — Attribution close side: tpid_resolve + close_build + enrich + drift_check (on-change memo) | plan 3.3 | M |
 | **CL.T3c** | **SHIPPED `fd5b56e`** — Funding attribution + race/duplicate fixtures + the one-chain narrative (named deviation: replay wiring shipped self-contained, not by editing the live-debug fixture files — per-bug envelope asserts are CL.T5 5.3's job) | plan 3.4 | S–M |
-| **CL.T4** | Reader — `corr_tail.py` + jq cookbook (may start after Phase 1) | plan 4.1–4.2 | S |
-| **CL.T5** | Volume tuning + perf gate + **8-bug replay gate** + holistic audit + fixes | plan 5.1–5.4 | M |
+| **CL.T4** | **SHIPPED `3b66da5`** — Reader — `corr_tail.py` + jq cookbook | plan 4.1–4.2 | S |
+| **CL.T5** | **SHIPPED (2026-06-14)** — Volume tuning (HA-14/23/28) + perf gate + 8-bug replay gate + HA-35/40/41 seam taps + holistic audit + §15/§9.4 reconciliation. **PROGRAM COMPLETE** | plan 5.1–5.4 | M |
 
 **12 tasks**, ~1.5–3 weeks @ 1–2 tasks/day with per-task audit (rev-2: the
 rev-1 "~8 tasks / 2–3 weeks @ 2/day" arithmetic didn't cohere). Each task =
@@ -630,12 +630,71 @@ below blocks CL.T4.
 | HA-41 | LOW | `log_event`/`log_trade_event` db_write taps are success-side only: an INSERT/connect failure raises out with NO ok:false twin and every caller swallows at debug — engine_events/trade_events write failures are envelope-less (the money tables got both twins in T3a; these two got success + the pollution-reject twin) | CL.T5 (the T3a twin pattern) — NEW (P3A-2) |
 | HA-42 | LOW | **Latent ENGINE defect surfaced by the audit's envelope-table construction** (pre-existing defect-8 replay logic, NOT introduced by Phase 3): if the matcher first links a MARKET parent during fill-N's (N≥2) `_reenrich_parent_after_fill` and fill #1 already backfilled the order's tpid, `_ensure_junction_if_linked` DELEGATEs a synthetic fill summing ALL opening fills (incl. the in-flight one, already upserted) and the same fill's `_link_position_calc_on_open` then UPSERTs it AGAIN → `contributed_qty` over-counts (f1+2·f2) + two FORMED envelopes + two positions_calcs db_writes on one chain. The new dedup keys (`junction:{fid}` + `replay:{eoid}`) make it a one-grep find — the tap working as designed. Fix shape: exclude the in-flight fill from the synthetic SUM, or skip the replay when invoked mid-fill | engine follow-up (reconciler-program input; out of the log program's scope) — NEW (P3A-3, code-read derivation) |
 
+**Phase-5 close-out (CL.T5, 2026-06-14) — PROGRAM COMPLETE.** Three-agent
+holistic audit (code-correctness / test-integrity / spec-ledger
+reconciliation): code **SHIP** (no BLOCKER/HIGH/MED; the taps are pure
+observability — no engine-outcome perturbation), tests **mutation-solid**
+after one folded gap, ledger **reconciled**. Audit folds landed in this
+task: the HA-28 transition-re-emit branch was an unpinned dead branch (a
+surviving mutation) → pinned; the perf gate's aggregator was min-of-rounds
+(lenient) → median; the amend/cancel replay asserted "any SKIPPED line" →
+now leg-specific; **HA-41 closed** (the audit flagged it as the same cheap
+T3a-twin shape as the seams already being closed). Spec deviations filed as
+§15 E29–E34. Full suite green SOLO; live corr dir byte-identical; perf gate
+green (`-m perf`, p50 ≈3.5% < 5%).
+
+**CL.T5 disposition of the open ledger** (every HA-6..HA-42 item resolved
+to CLOSED / ACCEPTED-verdict / DOWNGRADED-with-reason / out-of-scope — no
+MISSED-by-silence):
+
+| HA-id | CL.T5 disposition |
+|---|---|
+| HA-6 | **CLOSED** — `test_bug5_ticker_switch_leak` runs the §9 leak predicate against a healthy trace (change+rebuild → none) AND a leaky trace (change, no rebuild → 1). |
+| HA-7 | DOWNGRADED → opportunistic. Taps→live-writer is component-proven (every tap test drains the queue; T0b proves the writer); a full `_handle_user_event`→`start()`→read-file smoke adds a real-socket/thread harness for little marginal assurance at program close. |
+| HA-8 | ACCEPTED (sibling of HA-24) — plugin `ohlcv_bar` closed-gate; plugin not connected at this deployment. |
+| HA-9 | DOWNGRADED → opportunistic. Payload-FIELD-completeness nits (`ws_kline` interval+close, `ws_connected` duration, news `ws_connect`, `platform_snapshot` counts, `ws_depth` top-of-book, Finnhub `n_items`) — NOT diagnostic-capability gaps; the 8-bug replay + acceptance criteria pass without them; `ws_kline`/depth are market-group (OFF in `linkage`). One-liners at next touch of each file. |
+| HA-10 | DOWNGRADED → opportunistic (NIT bag, by charter). |
+| HA-11 | ACCEPTED — exotic frame types (`MARGIN_CALL`, unknown platform kinds) mint a chain but emit no frame envelope (E12). A kind-only catch-all is declined: the taxonomy defines what is logged; an untyped catch-all adds noise without a known consumer. Re-open if an exotic frame ever needs chain-visibility. |
+| HA-13 | **ACCEPTED** (spec §15 E33) — webhook `http_out_*` stays out of `linkage`. |
+| HA-14 | **CLOSED** — `pubsub_publish` sampled (`CORR_LOG_PUBSUB_SAMPLE=10`); E14 resolved (E32); `test_pubsub_sampling` pins it. |
+| HA-15 | DOWNGRADED → opportunistic. REST-envelope secret-absence is TEST-DEBT (the `_redact` code is clean; the gap is an unpinned assertion). LOW; next test-touch of `boundaries.py`. |
+| HA-16 | DOWNGRADED → opportunistic. yahoo/VIX placement pin is source-level only; LOW test-debt (FRED has behavioral coverage). |
+| HA-17 | DOWNGRADED → opportunistic. The close→bus→queue→POST chain is composition-proven (T2a pins bus re-bind; the 2-hop test pins handler→POST; the Phase-2 audit probe ran the full real composition). No single in-suite test composes it; +5 lines at next webhook-test touch. |
+| HA-23 | **CLOSED** — `closes_detected[:20]` + `n_closes`/`n_closes_omitted`; `test_mass_close_caps_list_but_keeps_honest_counts`. |
+| HA-24 | **ACCEPTED** (spec §15 E34) — platform `account_update_applied` 5 Hz; plugin not connected. |
+| HA-26 | DOWNGRADED → opportunistic. Two-party envelopes' bare `exchange_order_id` key (mandate-2 uniform queries) — the `corr_tail.py --calc-id` substring match (CL.T4) already finds the `parent_`/`child_`-prefixed ids, so the operator-facing gap is covered; the jq-uniformity nit remains LOW. |
+| HA-27 | DOWNGRADED → opportunistic. Manual SKIPPED-vs-ERROR mapping + `lifecycle_id=""` on enrich/drift/manual (E27) — honest-verbatim-empty; one extra SELECT column at next touch. |
+| HA-28 | **CLOSED** — bracket SKIP + `junction_exists` replay SKIP on-change-deduped (bounded LRU `_attr_skip_is_repeat`); first-emit + transition-re-emit + steady-suppress all pinned. |
+| HA-29 | DOWNGRADED → opportunistic (NIT payload bag). |
+| HA-30 | DOWNGRADED → opportunistic (3 docstring `corr-tap:` anchors miss the `#` grep). |
+| HA-31 | DOWNGRADED → opportunistic. Disabled-cost-of-payload-build at the matcher/close_build/funding `finally` blocks: a pre-`enabled()` gate is a micro-optimization for `CORR_LOG_ENABLED=0`, which is NOT the operating mode (the log runs enabled); the cost is a discarded dict-build of a few µs; the generic disabled-emit no-op IS pinned (`test_per_emit_budget` disabled p95 < 3 µs). Adding pre-gates at 3 sites = speculative churn (CLAUDE.md). |
+| HA-33 | DOWNGRADED → opportunistic. Funding pins (`reconcile_queued:false`, `n_rows_processed`); the cookbook caveat (CL.T4) is the operator-facing close. LOW test-debt. |
+| HA-34 | out-of-scope here — cookbook-owned (CL.T4 documents the terminal-replay `rowcount=0` discriminator). |
+| HA-35 | **CLOSED** — `db_write ok:false table=orders` failure twin in `order_enrichment._apply_link`; `test_ha35_…` pins LINKED + twin + ABSENT `link_transition`. |
+| HA-36 | ACCEPTED — `reconcile_closed_position_funding` rollup UPDATE stays untapped; the spec's named-10 doesn't include it (code matches spec). The funding-rollup write is a derived re-summation, not a money-path identity write; the underlying `insert_funding_event` IS tapped. Re-elevate if the reconciler needs the rollup write visible. |
+| HA-37 | DOWNGRADED → opportunistic. (a) flag-flip-with-same-badge drift-sig: the flags-drive-re-emit property IS exercised by `test_stamped_then_sl_removal_badge_transition` (a flag change re-emits); the residual is a NIT same-badge variant. (b) a generic "every attr envelope carries the 4-key identity tuple" drain-time validator conflicts with the KNOWN per-category deviations (E26 two-party prefixes, E27 `lifecycle_id=""`) — it would have to encode those exceptions, duplicating the per-category tests. |
+| HA-38 | out-of-scope here — record-only / E15 precedent (cancelled deferred close-build reads `ERROR/build_incomplete`); CL.T4 cookbook documents it. |
+| HA-40 | **CLOSED** — `attr_close_stamp` (10th attr; spec §15 E30/E31) taps `_stamp_closing_fill_attribution`; `test_ha40_…` pins ASSIGNED/SKIPPED/domain-filter. |
+| HA-41 | **CLOSED** — `log_event`/`log_trade_event` got `db_write ok:false` failure twins (the T3a pattern); two HA-41 twin tests (factory-subclass INSERT-fail injection). |
+| HA-42 | out-of-scope — latent ENGINE defect; the **first input to the attribution-reconciler program** (§9.5). The new dedup keys make it one-grep findable. |
+
 ### 9.5 After this program
 
+**The correlation-log program is COMPLETE** (Phases 0–5, 12 tasks,
+2026-06-10 → 2026-06-14). All §10 acceptance criteria are met (criterion
+#5 met-by-substitution — §15 E29). Whole-engine coverage; NDJSON sink;
+46-category registry (10 attribution); `corr_tail.py` + jq/DuckDB cookbook
+reader; falsifiable perf gate; the 8 historical linkage bugs each
+one-query diagnosable.
+
 The **attribution reconciler** (spec §12) is the next program — a separate
-plan. The correlation log's §5.6 baseline (including SKIPPED lines) is its
-safety net: diff the pre/post `attr_*` streams for the replayed scenarios to
-prove the consolidation is faithful.
+plan + spec. The correlation log's §5.6 baseline (including SKIPPED lines)
+is its safety net: diff the pre/post `attr_*` streams for the replayed
+scenarios to prove the consolidation is faithful. Its **first filed input
+is HA-42** (the latent mid-fill double-junction `contributed_qty`
+over-count corridor) — now one-grep findable via the `junction:{fid}` +
+`replay:{eoid}` dedup keys this program shipped; alongside the §5.6
+baseline-diff method (spec §12).
 
 ---
 

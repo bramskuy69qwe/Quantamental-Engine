@@ -135,6 +135,32 @@ class TestPositionSnapshotApplied:
         p = _by_cat(_drain(), "position_snapshot_applied")[0]["payload"]
         assert p["closes_detected"] == [["XAUUSDT", "LONG", ""]]
 
+    def test_mass_close_caps_list_but_keeps_honest_counts(
+        self, _restore_app_state,
+    ):
+        # HA-23 (CL.T5): a mass-close snapshot must NOT let closes_detected
+        # blow the §7.4 4 KB cap and truncate the WHOLE payload to the
+        # `_truncated` summary (losing n_positions, waited_ms, AND every
+        # tpid). The list caps at 20; n_closes/n_closes_omitted stay honest.
+        from core.data_cache import DataCache, UpdateSource
+
+        cache = DataCache(_StubBus())
+        cache._positions = [
+            _pos(ticker=f"SYM{i:03d}USDT", tpid=f"POS-{i}") for i in range(75)
+        ]
+
+        asyncio.run(cache.apply_position_snapshot(
+            UpdateSource.PLATFORM, [], force=True,
+        ))
+        p = _by_cat(_drain(), "position_snapshot_applied")[0]["payload"]
+        # the envelope survived intact (not the _truncated summary)
+        assert "_truncated" not in p
+        assert len(p["closes_detected"]) == 20
+        assert p["n_closes"] == 75
+        assert p["n_closes_omitted"] == 55
+        # the kept entries are still the readable (symbol, side, tpid) shape
+        assert all(len(c) == 3 for c in p["closes_detected"])
+
     def test_rejected_snapshot_emits_nothing(self, _restore_app_state):
         from core.data_cache import DataCache, UpdateSource
 
@@ -905,6 +931,65 @@ class TestAuditLogWriterTaps:
         assert len(rej) == 1
         assert rej[0]["payload"]["ok"] is False
         assert rej[0]["payload"]["reason"] == "pollution_reject"
+
+    @staticmethod
+    def _fail_insert_connect(orig):
+        """A sqlite3.connect wrapper that injects a Connection subclass whose
+        execute raises on INSERT (only) — so _resolve_db_path's SELECT probe
+        survives and only the write fails. A subclass via the ``factory``
+        arg is the supported way to override execute (the C-level
+        sqlite3.Connection forbids per-instance attribute assignment)."""
+        import sqlite3 as _s
+
+        class _FailInsert(_s.Connection):
+            def execute(self, sql, *a, **k):
+                if str(sql).strip().upper().startswith("INSERT"):
+                    raise _s.OperationalError("disk I/O error")
+                return super().execute(sql, *a, **k)
+
+        return lambda path, *a, **k: orig(path, *a, factory=_FailInsert, **k)
+
+    def test_log_event_write_failure_emits_ok_false_twin_ha41(self, tmp_path):
+        # HA-41 (CL.T5): a real INSERT failure was success-side only and every
+        # caller swallows → envelope-less. The ok:false twin (T3a pattern)
+        # makes the failed engine_events write a one-query find.
+        from core import event_log
+
+        ddir = self._mk_legacy_db(tmp_path)
+        etype = sorted(event_log._VALID_EVENT_TYPES)[0]
+        orig = event_log.sqlite3.connect
+        event_log.sqlite3.connect = self._fail_insert_connect(orig)
+        try:
+            with pytest.raises(Exception):
+                event_log.log_event(1, etype, {"k": 1}, "test", data_dir=ddir)
+        finally:
+            event_log.sqlite3.connect = orig
+        w = [e for e in _by_cat(_drain(), "db_write")
+             if e["payload"]["table"] == "engine_events"]
+        assert len(w) == 1
+        assert w[0]["payload"]["ok"] is False
+        assert w[0]["payload"]["error_type"] == "OperationalError"
+
+    def test_log_trade_event_write_failure_emits_ok_false_twin_ha41(self, tmp_path):
+        from core import trade_event_log
+
+        ddir = self._mk_legacy_db(tmp_path)
+        orig = trade_event_log.sqlite3.connect
+        trade_event_log.sqlite3.connect = self._fail_insert_connect(orig)
+        try:
+            with pytest.raises(Exception):
+                trade_event_log.log_trade_event(
+                    1, "CALC-1", "position_closed",
+                    {"entry_price": 100.0, "exit_price": 110.0,
+                     "symbol": "BTCUSDT"}, "test", data_dir=ddir)
+        finally:
+            trade_event_log.sqlite3.connect = orig
+        w = [e for e in _by_cat(_drain(), "db_write")
+             if e["payload"]["table"] == "trade_events"
+             and e["payload"].get("ok") is False]
+        assert len(w) == 1
+        assert w[0]["payload"]["error_type"] == "OperationalError"
+        assert w[0]["payload"]["calc_id"] == "CALC-1"
 
 
 # ── registry conformance for the T3a categories ─────────────────────────────

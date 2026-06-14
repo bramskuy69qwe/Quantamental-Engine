@@ -22,3 +22,13 @@ timeout = 30
 timeout_method = "thread"
 # Default test path so plain `pytest` (no args) targets only the tests dir.
 testpaths = ["tests"]
+# CL.T5 (plan 5.2): the correlation-log perf gate is a wall-clock
+# benchmark — flaky-by-design and slow (it drives N synthetic
+# frame→state-apply iterations). Register the `perf` marker and EXCLUDE
+# it from the default run (`-m "not perf"`), so a plain `pytest` stays
+# fast + deterministic and honors the 30 s timeout discipline. Run it
+# deliberately with `pytest -m perf` (see tests/test_correlation_log_perf.py).
+addopts = "-m 'not perf'"
+markers = [
+    "perf: wall-clock performance gate, excluded from the default run (run with -m perf)",
+]

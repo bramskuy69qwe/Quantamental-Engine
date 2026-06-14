@@ -194,6 +194,14 @@ CAT_ATTR_JUNCTION_FORM = register("attr_junction_form", GROUP_ATTR)
 CAT_ATTR_ENRICH = register("attr_enrich", GROUP_ATTR)
 CAT_ATTR_DRIFT_CHECK = register("attr_drift_check", GROUP_ATTR)
 CAT_ATTR_FUNDING_ASSIGN = register("attr_funding_assign", GROUP_ATTR)
+# attr_close_stamp (CL.T5, HA-40): the closing-fill primary-calc/lifecycle
+# inheritance (`order_manager._stamp_closing_fill_attribution`) — a
+# §5.6-class attribution decision the original spec table never listed
+# (it was an envelope-less seam: no attr line on stamp / no-junction-skip
+# / failure, and its raw `fills` UPDATE had no db_write tap). The 10th
+# attr category (spec §5.6 said "nine"; the reconciler program will fold
+# all attr_* into one owner regardless).
+CAT_ATTR_CLOSE_STAMP = register("attr_close_stamp", GROUP_ATTR)
 # meta
 CAT_OVERFLOW = register("overflow", GROUP_META)
 
@@ -228,6 +236,7 @@ else:
     _profile = "full"
 
 _mark_price_sample: int = max(0, int(config.CORR_LOG_MARK_PRICE_SAMPLE))
+_pubsub_sample: int = max(1, int(config.CORR_LOG_PUBSUB_SAMPLE))
 
 
 def enabled(category: str) -> bool:
@@ -254,11 +263,15 @@ def enabled(category: str) -> bool:
 def _sample_rate(category: str) -> int:
     """Per-category keep-1-in-N rate; 0/1 = keep every enabled hit.
 
-    Generalized so future sampled categories (pubsub_publish, plan 2b.4/5.1)
-    plug in here rather than special-casing emit.
+    Generalized so sampled categories plug in here rather than
+    special-casing emit. CL.T5 (HA-14) added pubsub_publish — the
+    dominant category at `full` (per-recalc SSE fan-out); the mark-price
+    enablement is gated separately in ``enabled`` (0 = fully off).
     """
     if category == CAT_WS_MARK_PRICE:
         return _mark_price_sample
+    if category == CAT_PUBSUB_PUBLISH:
+        return _pubsub_sample
     return 1
 
 

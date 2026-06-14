@@ -149,6 +149,21 @@ def log_trade_event(
             symbol=(payload or {}).get("symbol"),
         )
         return cur.lastrowid  # type: ignore[return-value]
+    except Exception as e:
+        # corr-tap: db_write FAILURE twin (CL.T5, HA-41) — the pollution
+        # refusal got a twin (above) but a real INSERT/connect failure was
+        # success-side only and every caller swallows. ok:false twin (T3a
+        # pattern) closes the envelope-less write-failure on this audit
+        # table. Re-raise: the swallow stays the caller's.
+        correlation_log.emit(
+            "db", "disk", "internal", correlation_log.CAT_DB_WRITE,
+            {"table": "trade_events", "op": "INSERT", "ok": False,
+             "rowcount": 0, "event_type": event_type,
+             "calc_id": calc_id or "", "error_type": type(e).__name__},
+            account_id=account_id,
+            symbol=(payload or {}).get("symbol"),
+        )
+        raise
     finally:
         conn.close()
 

@@ -504,6 +504,53 @@ class TestJunctionForm:
         assert len(j3) == 1
         assert j3[0]["payload"]["reason"] == "junction_exists"
 
+    def test_junction_exists_replay_is_on_change_deduped(self, tmp_path):
+        # HA-28 (CL.T5): once the junction exists, every later WS update of
+        # the same linked order re-runs the replay and hits junction_exists
+        # — the single largest nothing-to-do generator. On-change dedup: the
+        # FIRST junction_exists emits, identical repeats are suppressed; the
+        # DELEGATED/FORMED action path is never deduped.
+        async def main():
+            db = await _mk_db(tmp_path)
+            try:
+                from core.order_manager import OrderManager
+                om = OrderManager(db)
+                await db.upsert_order_batch([{
+                    "account_id": 1, "exchange_order_id": "E-1",
+                    "symbol": "BTCUSDT", "status": "new", "quantity": 1.0,
+                    "filled_qty": 1.0, "updated_at_ms": 1000,
+                }])
+                await db._conn.execute(
+                    "UPDATE orders SET calc_id='CALC-1',"
+                    " terminal_position_id='POS-1' "
+                    "WHERE exchange_order_id='E-1'")
+                await db.upsert_fill({
+                    "account_id": 1, "exchange_fill_id": "F-1",
+                    "exchange_order_id": "E-1", "symbol": "BTCUSDT",
+                    "direction": "LONG", "quantity": 1.0, "price": 100.0,
+                    "terminal_position_id": "POS-1", "is_close": 0,
+                    "timestamp_ms": 5,
+                })
+                await db._conn.commit()
+                _drain()
+                await om._ensure_junction_if_linked(1, "E-1")  # DELEGATED+FORMED
+                out = {"form": _drain()}
+                await om._ensure_junction_if_linked(1, "E-1")  # junction_exists
+                out["exists1"] = _drain()
+                await om._ensure_junction_if_linked(1, "E-1")  # repeat → suppressed
+                out["exists2"] = _drain()
+                return out
+            finally:
+                await db.close()
+
+        out = asyncio.run(main())
+        assert [e["payload"]["outcome"]
+                for e in _by_cat(out["form"], "attr_junction_form")] == \
+            ["DELEGATED", "FORMED"]
+        ex1 = _by_cat(out["exists1"], "attr_junction_form")
+        assert len(ex1) == 1 and ex1[0]["payload"]["reason"] == "junction_exists"
+        assert _by_cat(out["exists2"], "attr_junction_form") == []
+
 
 class TestBracketInherit:
     def test_inherits_then_idempotent_skip(self, tmp_path):
@@ -584,6 +631,57 @@ class TestBracketInherit:
             assert len(bi) == 1, key
             assert bi[0]["payload"]["outcome"] == "SKIPPED"
             assert bi[0]["payload"]["reason"] == reason
+
+    def test_steady_skip_is_on_change_deduped(self, tmp_path):
+        # HA-28 (CL.T5): a symbol with nothing to inherit re-skips every
+        # snapshot pass — the largest nothing-to-do generator. On-change
+        # dedup: first pass emits the SKIPPED line, identical repeats are
+        # suppressed; a reason TRANSITION re-emits.
+        async def main():
+            db = await _mk_db(tmp_path)
+            try:
+                from core.order_manager import OrderManager
+                om = OrderManager(db)
+                _drain()
+                out = {}
+                await om._propagate_bracket_calc_id(1, "NOSUCH")
+                out["first"] = _drain()
+                await om._propagate_bracket_calc_id(1, "NOSUCH")
+                out["repeat"] = _drain()
+                # a DIFFERENT symbol is a different memo key → still emits
+                await om._propagate_bracket_calc_id(1, "OTHER")
+                out["other"] = _drain()
+                return out
+            finally:
+                await db.close()
+
+        out = asyncio.run(main())
+        assert len(_by_cat(out["first"], "attr_bracket_inherit")) == 1
+        assert _by_cat(out["repeat"], "attr_bracket_inherit") == []
+        assert len(_by_cat(out["other"], "attr_bracket_inherit")) == 1
+
+    def test_attr_skip_dedup_re_emits_on_reason_transition(self, tmp_path):
+        # HA-28 dedup CONTRACT (audit-found gap): the whole point is "emit on
+        # CHANGE". A same-key SKIP with a NEW sig must re-emit, else a real
+        # state transition (e.g. no_recent_orders → no_linked_entry) would be
+        # silently swallowed. Pins the transition branch directly (the
+        # scenario tests only covered first-emit + repeat-suppress).
+        async def main():
+            db = await _mk_db(tmp_path)
+            try:
+                from core.order_manager import OrderManager
+                om = OrderManager(db)
+                k = ("bracket", 1, "X")
+                return [
+                    om._attr_skip_is_repeat(k, "r1"),  # first → emit
+                    om._attr_skip_is_repeat(k, "r1"),  # repeat → suppress
+                    om._attr_skip_is_repeat(k, "r2"),  # TRANSITION → emit
+                    om._attr_skip_is_repeat(k, "r2"),  # new steady → suppress
+                ]
+            finally:
+                await db.close()
+
+        assert asyncio.run(main()) == [False, True, False, True]
 
 
 class TestReenrichTrigger:
