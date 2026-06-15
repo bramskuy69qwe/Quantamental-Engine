@@ -275,7 +275,13 @@ class MexcLinearAdapter(BaseExchangeAdapter):
 
     # ── Trades / Fills ───────────────────────────────────────────────────────
 
-    async def fetch_user_trades(self, symbol: str, limit: int = 200) -> List[NormalizedTrade]:
+    async def fetch_user_trades(
+        self, symbol: str, limit: int = 200,
+        start_ms: Optional[int] = None, end_ms: Optional[int] = None,
+        from_id: Optional[int] = None,
+    ) -> List[NormalizedTrade]:
+        # start_ms/end_ms/from_id: accepted for protocol parity with the
+        # Binance userTrades history paginator; NOT implemented here (ignored).
         # Denormalize symbol for API call (BTCUSDT → BTC/USDT:USDT)
         ccxt_symbol = self.denormalize_symbol(symbol)
         raw = await self._run(self._ex.fetch_my_trades, ccxt_symbol, None, limit)

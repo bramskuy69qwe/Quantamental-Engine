@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 from datetime import datetime, timezone, timedelta
 
 from core.state import app_state
@@ -418,6 +418,168 @@ async def fetch_exchange_trade_history(limit: int = 200) -> None:
             app_state.ws_status.add_log(f"exchange_history DB upsert error: {e}")
     except Exception as e:
         app_state.ws_status.add_log(f"Exchange trade history error: {e}")
+
+
+async def fetch_all_user_trades(
+    symbol: str,
+    start_ms: Optional[int] = None,
+    end_ms: Optional[int] = None,
+    *,
+    page_limit: int = 1000,
+    max_pages: int = 50,
+) -> List[Any]:
+    """Paginate Binance ``userTrades`` to recover the FULL fill set for one
+    symbol in ``[start_ms, end_ms]`` — real opens AND closes, each with its
+    own per-fill commission and a deterministic ``is_close`` (hedge-mode
+    side+positionSide). This is the ground-truth source the fill-backfill
+    uses instead of the REALIZED_PNL income reconstruction (which had only
+    closes + re-summed, inflated fees).
+
+    Strategy: paginate by ``fromId`` from the account's earliest trade on the
+    symbol, advancing ``fromId = max_id + 1`` per page until a short page or
+    ``max_pages``. (Binance caps a startTime/endTime range at 7 days, so
+    time-windowed paging can't recover an older session — fromId has no such
+    limit.) The ``[start_ms, end_ms]`` window is applied as an in-memory
+    filter. Returns ``NormalizedTrade`` objects de-duplicated by trade id,
+    sorted ascending by ``timestamp_ms``.
+
+    NB to capture every position's OPEN, ``start_ms`` must precede the
+    session's first entry — group_fills_into_positions SKIPS a closing fill
+    that has no prior open in the stream (orphan). Callers pass a generous
+    lower bound.
+    """
+    adapter = _get_adapter()
+    try:
+        adapter.set_priority("background")
+    except Exception:
+        pass
+    # fromId pagination from the account's earliest trade on this symbol,
+    # walking forward (id ascending) page by page. NB Binance caps a
+    # startTime/endTime userTrades range at 7 DAYS, so a >7d-old startTime
+    # silently returns an empty window — fromId paging has no such limit and
+    # is the only way to recover a full multi-day / older session. The window
+    # (start_ms/end_ms) is applied as an IN-MEMORY filter on the result.
+    seen: set = set()
+    out: List[Any] = []
+    from_id = 1
+    pages = 0
+    for _ in range(max_pages):
+        pages += 1
+        page = await adapter.fetch_user_trades(symbol, limit=page_limit, from_id=from_id)
+        if not page:
+            break
+        max_id = from_id
+        added = 0
+        for t in page:
+            try:
+                tid = int(getattr(t, "trade_id", "") or getattr(t, "exchange_fill_id", ""))
+            except (TypeError, ValueError):
+                tid = None
+            if tid is not None:
+                if tid in seen:
+                    continue
+                seen.add(tid)
+                if tid > max_id:
+                    max_id = tid
+            out.append(t)
+            added += 1
+        if len(page) < page_limit:
+            break
+        if added == 0 or max_id < from_id:
+            break  # no forward progress — guard against an infinite loop
+        from_id = max_id + 1
+    else:
+        log.warning(
+            "fetch_all_user_trades(%s): hit max_pages=%d — result may be "
+            "incomplete (raise max_pages)", symbol, max_pages,
+        )
+
+    def _in_window(t) -> bool:
+        ts = int(getattr(t, "timestamp_ms", 0) or 0)
+        if start_ms is not None and ts < start_ms:
+            return False
+        if end_ms is not None and ts > end_ms:
+            return False
+        return True
+
+    out = [t for t in out if _in_window(t)]
+    out.sort(key=lambda t: int(getattr(t, "timestamp_ms", 0) or 0))
+    log.info("fetch_all_user_trades(%s): %d fills over %d page(s)", symbol, len(out), pages)
+    return out
+
+
+def user_trade_to_fill_dict(t: Any, account_id: int, source: str = "exchange_usertrades") -> Dict[str, Any]:
+    """Map one Binance ``userTrades`` NormalizedTrade to a ``fills`` row dict.
+
+    Single source of truth for the userTrades→fill shape, shared by the
+    backfill builder and the operator re-fix script. ``exchange_fill_id`` =
+    the Binance ``tradeId`` (the fills dedup key); ``direction`` is the
+    positionSide; ``is_close`` is the adapter's hedge-aware flag.
+    """
+    return {
+        "account_id":        account_id,
+        "exchange_fill_id":  str(getattr(t, "trade_id", "") or getattr(t, "exchange_fill_id", "")),
+        "exchange_order_id": str(getattr(t, "exchange_order_id", "") or ""),
+        "symbol":            getattr(t, "symbol", "") or "",
+        "side":              getattr(t, "side", "") or "",
+        "direction":         getattr(t, "direction", "") or "",
+        "price":             float(getattr(t, "price", 0) or 0),
+        "quantity":          float(getattr(t, "quantity", 0) or 0),
+        "fee":               abs(float(getattr(t, "fee", 0) or 0)),
+        "fee_asset":         getattr(t, "fee_asset", "USDT") or "USDT",
+        "is_close":          int(bool(getattr(t, "is_close", False))),
+        "realized_pnl":      float(getattr(t, "realized_pnl", 0) or 0),
+        "role":              getattr(t, "role", "") or "",
+        "source":            source,
+        "timestamp_ms":      int(getattr(t, "timestamp_ms", 0) or 0),
+    }
+
+
+async def backfill_fills_from_user_trades(
+    symbols: Iterable[str],
+    start_ms: int,
+    end_ms: Optional[int] = None,
+    *,
+    account_id: Optional[int] = None,
+    source: str = "exchange_usertrades",
+) -> Dict[str, Any]:
+    """Build TRUE fills from Binance ``userTrades`` for the given symbols and
+    window, upserting them into the ``fills`` table.
+
+    This is the correct offline-recovery primitive: every fill is a real
+    exchange execution carrying its real side, positionSide (``direction``),
+    ``is_close``, per-fill ``commission`` and ``realized_pnl`` — so the
+    downstream ``group_fills_into_positions`` sees genuine opens AND closes
+    and produces correct positions + fees. It replaces the
+    REALIZED_PNL-income path (``fetch_exchange_trade_history`` →
+    ``backfill_fills_from_exchange_history``) which had close-only synthetic
+    fills with opening commissions re-summed per partial close (8–70× fee
+    inflation) and undersized synthetic opens (position collapse).
+
+    Idempotent: fills dedupe on ``(account_id, exchange_fill_id)`` where
+    ``exchange_fill_id`` = the Binance ``tradeId``. Does NOT rebuild
+    ``closed_positions`` — the caller runs the rebuild afterwards from the
+    corrected fills. Returns ``{"fills_upserted": N, "per_symbol": {...},
+    "skipped_zero_qty": K}``.
+    """
+    aid = account_id if account_id is not None else app_state.active_account_id
+    per_symbol: Dict[str, int] = {}
+    total = 0
+    skipped_zero = 0
+    for sym in symbols:
+        trades = await fetch_all_user_trades(sym, start_ms, end_ms)
+        n = 0
+        for t in trades:
+            qty = float(getattr(t, "quantity", 0) or 0)
+            if qty <= 0:
+                skipped_zero += 1
+                continue
+            await db.upsert_fill(user_trade_to_fill_dict(t, aid, source))
+            n += 1
+            total += 1
+        per_symbol[sym] = n
+        log.info("userTrades fill-backfill: %s -> %d fills upserted", sym, n)
+    return {"fills_upserted": total, "per_symbol": per_symbol, "skipped_zero_qty": skipped_zero}
 
 
 async def fetch_funding_rates(symbols: List[str]) -> Dict[str, Dict]:

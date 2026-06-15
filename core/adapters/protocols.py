@@ -157,8 +157,19 @@ class ExchangeAdapter(Protocol):
         """Fetch all open orders (TP/SL/limit)."""
         ...
 
-    async def fetch_user_trades(self, symbol: str, limit: int = 200) -> List[NormalizedTrade]:
-        """Fetch recent fills for a symbol."""
+    async def fetch_user_trades(
+        self, symbol: str, limit: int = 200,
+        start_ms: Optional[int] = None,
+        end_ms: Optional[int] = None,
+        from_id: Optional[int] = None,
+    ) -> List[NormalizedTrade]:
+        """Fetch fills for a symbol.
+
+        Optional paging args (used by the userTrades history-backfill
+        paginator) are best-effort: adapters that don't support them
+        ignore the extra kwargs and return their default recent window.
+        The Binance adapter honours ``from_id`` / ``start_ms`` / ``end_ms``.
+        """
         ...
 
     async def fetch_order_history(self, symbol: str = "", limit: int = 100) -> List[NormalizedOrder]:

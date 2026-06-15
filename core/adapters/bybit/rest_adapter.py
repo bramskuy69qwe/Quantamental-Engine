@@ -397,7 +397,13 @@ class BybitLinearAdapter(BaseExchangeAdapter):
 
     # ── User trades ──────────────────────────────────────────────────────────
 
-    async def fetch_user_trades(self, symbol: str, limit: int = 200) -> List[NormalizedTrade]:
+    async def fetch_user_trades(
+        self, symbol: str, limit: int = 200,
+        start_ms: Optional[int] = None, end_ms: Optional[int] = None,
+        from_id: Optional[int] = None,
+    ) -> List[NormalizedTrade]:
+        # start_ms/end_ms/from_id: accepted for protocol parity with the
+        # Binance userTrades history paginator; NOT implemented here (ignored).
         def _fetch():
             return self._ex.fetch_my_trades(
                 symbol, limit=limit, params={"category": "linear"}

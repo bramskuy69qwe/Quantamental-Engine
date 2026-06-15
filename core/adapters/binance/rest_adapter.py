@@ -324,11 +324,29 @@ class BinanceUSDMAdapter(BaseExchangeAdapter):
 
     # ── User trades ──────────────────────────────────────────────────────────
 
-    async def fetch_user_trades(self, symbol: str, limit: int = 200) -> List[NormalizedTrade]:
+    async def fetch_user_trades(
+        self, symbol: str, limit: int = 200,
+        start_ms: Optional[int] = None,
+        end_ms: Optional[int] = None,
+        from_id: Optional[int] = None,
+    ) -> List[NormalizedTrade]:
         def _fetch():
-            return self._ex.fapiPrivateGetUserTrades(
-                params={"symbol": symbol, "limit": limit}
-            ) or []
+            params: Dict = {"symbol": symbol, "limit": limit}
+            # userTrades-backfill: optional paging for full-window history
+            # recovery (fetch_all_user_trades paginator). ``fromId`` returns
+            # trades with id >= from_id ascending and takes PRECEDENCE;
+            # otherwise an optional [startTime, endTime] window selects a
+            # <7d range (Binance fapi constraint). Binance rejects fromId +
+            # a time window together, so fromId wins when set — the paginator
+            # uses startTime for the first page then continues by fromId.
+            if from_id is not None:
+                params["fromId"] = int(from_id)
+            else:
+                if start_ms is not None:
+                    params["startTime"] = int(start_ms)
+                if end_ms is not None:
+                    params["endTime"] = int(end_ms)
+            return self._ex.fapiPrivateGetUserTrades(params=params) or []
 
         raw = await self._run(_fetch)
         trades = []
