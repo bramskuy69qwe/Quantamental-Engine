@@ -103,3 +103,20 @@ def test_clear_to_none_schedules_restart_via_caller(monkeypatch):
     monkeypatch.setattr(wm, "restart_market_streams", lambda: None)
     wm.set_calculator_symbol("")
     assert wm._calculator_symbol is None
+
+
+@pytest.mark.asyncio
+async def test_clear_endpoint_drops_backend_symbol(monkeypatch):
+    # 2026-06-15: the Clear button stops the front-end price/orderbook polls, but
+    # those polls are what set _calculator_symbol on the backend — so without a
+    # backend clear the LAST symbol stays subscribed and its @depth20 + markPrice
+    # keep streaming (operator: Clear didn't unsubscribe -> live price AND
+    # orderbook flicker between old + new on the next calc). The /calculator/clear
+    # endpoint must call set_calculator_symbol("") (-> None -> stream rebuild).
+    from api import routes_calculator
+    calls = []
+    monkeypatch.setattr(routes_calculator.ws_manager, "set_calculator_symbol",
+                        lambda s: calls.append(s))
+    resp = await routes_calculator.calculator_clear()
+    assert calls == [""]
+    assert resp.status_code == 200

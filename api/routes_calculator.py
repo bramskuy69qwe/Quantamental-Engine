@@ -110,6 +110,24 @@ async def set_account_window(window_seconds: int = Form(...)):
     return HTMLResponse('<span class="text-green">saved ✓</span>')
 
 
+@router.post("/calculator/clear", response_class=HTMLResponse)
+async def calculator_clear():
+    """Drop the active calculator symbol's market-data subscription on Clear.
+
+    The Clear button stops the front-end 1 Hz price poll, but that poll
+    (`/api/price/{ticker}`) is what sets `_calculator_symbol` on the backend —
+    so without this, the LAST symbol stays subscribed and its `@depth20` +
+    ticker keep streaming after Clear (operator: Clear doesn't unsubscribe →
+    the live data flickers between the old + new symbol when you then
+    calculate a new one). `set_calculator_symbol("")` → `None` → rebuilds the
+    market streams without the calc symbol. A symbol that is ALSO an open
+    position stays subscribed (position symbols are in the stream set too);
+    only the calc-only subscription is dropped.
+    """
+    ws_manager.set_calculator_symbol("")
+    return HTMLResponse("")
+
+
 @router.post("/calculator/calculate", response_class=HTMLResponse)
 async def calculate_risk(
     request:                 Request,

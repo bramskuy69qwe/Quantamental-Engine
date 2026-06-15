@@ -881,6 +881,11 @@ function copySetupSummary(){
 // ── Clear ─────────────────────────────────────────────────────────────────
 function clearCalculator(){
   stopAutoRefresh();if(_priceInterval){clearInterval(_priceInterval);_priceInterval=null;}
+  // Drop the backend calc-symbol subscription too — stopping the front-end
+  // polls alone leaves _calculator_symbol set, so the market WS keeps the old
+  // symbol's @depth20 + markPrice warm and re-feeds BOTH the live price and the
+  // orderbook (flicker between old + new when a new symbol is calculated).
+  try{fetch('/calculator/clear',{method:'POST'});}catch(e){}
   _hasCalculated=false;_calcTicker='';_livePrice=0;_obTicker='';_autoRefreshInFlight=false;
   document.getElementById('auto_refresh_val').value='0';
   ['ticker-input','market-price','limit-price','tp-price-input','sl-price-input','tp-pct-input','sl-pct-input','size-override-input'].forEach(function(id){var el=document.getElementById(id);if(el)el.value='';});
