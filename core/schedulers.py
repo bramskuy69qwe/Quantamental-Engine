@@ -519,22 +519,31 @@ async def _startup_fetch():
     except Exception as e:
         log.warning(f"Exchange trade history initial fetch failed: {e}")
 
-    # Auto-backfill fills + closed_positions from exchange_history (idempotent)
+    # Auto-recover offline-traded fills + closed_positions from Binance
+    # userTrades — the correct, collision-safe replacement for the
+    # income-reconstruction backfill, which inflated fees 8-70x and collapsed
+    # positions (fixed 2026-06-15, project_spcx_offline_backfill_bug). Gap-
+    # scoped + idempotent: only touches symbols with an offline gap, leaving
+    # purely-online symbols (and their calc linkage) untouched.
     try:
-        from core.database import db as _db
+        from core.exchange_income import recover_offline_trades
         aid = app_state.active_account_id
-        result = await _db.backfill_fills_from_exchange_history(account_id=aid, days=90)
-        if result["fills_inserted"] or result["closed_inserted"]:
+        result = await recover_offline_trades(account_id=aid, days=90)
+        if result["symbols"]:
+            total_fills = sum(r.get("fills_inserted", 0) for r in result["recovered"].values())
+            total_pos = sum(r.get("positions_rebuilt", 0) for r in result["recovered"].values())
             log.info(
-                "Startup backfill: %d fills, %d closed_positions from exchange_history",
-                result["fills_inserted"], result["closed_inserted"],
+                "Startup offline-recovery: %d gapped symbol(s) -> %d fills, "
+                "%d positions%s",
+                result["symbols"], total_fills, total_pos,
+                f" ({len(result['errors'])} errored)" if result["errors"] else "",
             )
             app_state.ws_status.add_log(
-                f"Backfill: {result['fills_inserted']} fills, "
-                f"{result['closed_inserted']} closed positions"
+                f"Offline-recovery: {result['symbols']} symbol(s), "
+                f"{total_fills} fills, {total_pos} positions"
             )
     except Exception as e:
-        log.warning(f"Startup backfill failed: {e}")
+        log.warning(f"Startup offline-recovery failed: {e}")
 
     for pos in app_state.positions:
         try:

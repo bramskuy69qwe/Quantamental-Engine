@@ -35,6 +35,7 @@ from core.exchange_income import (  # noqa: E402
     user_trade_to_fill_dict,
     fetch_all_user_trades,
     backfill_fills_from_user_trades,
+    recover_offline_trades,
 )
 from scripts.refix_fills_from_usertrades import preview_from_trades, run_refix  # noqa: E402
 
@@ -52,17 +53,37 @@ def _trade(tid, side, direction, price, qty, fee, is_close, rpnl=0.0, ts=BASE, s
     )
 
 
-def _spcx_shape():
+def _spcx_shape(symbol="SPCXUSDT"):
     """A LONG round-trip (1 open + 2 partial closes) + a SHORT round-trip
     (1 open + 1 close) — the hedge-mode partial-close shape the income path
     mangled. Opening commission appears ONCE (on the open fill)."""
     return [
-        _trade(1, "BUY",  "LONG",  100.0, 10.0, 0.40, False, 0.0,   BASE + 0),
-        _trade(2, "SELL", "LONG",  110.0, 4.0,  0.44, True,  40.0,  BASE + 1000),
-        _trade(3, "SELL", "LONG",  120.0, 6.0,  0.72, True,  120.0, BASE + 2000),
-        _trade(4, "SELL", "SHORT", 200.0, 5.0,  1.00, False, 0.0,   BASE + 500),
-        _trade(5, "BUY",  "SHORT", 190.0, 5.0,  0.95, True,  50.0,  BASE + 1500),
+        _trade(1, "BUY",  "LONG",  100.0, 10.0, 0.40, False, 0.0,   BASE + 0,    symbol),
+        _trade(2, "SELL", "LONG",  110.0, 4.0,  0.44, True,  40.0,  BASE + 1000, symbol),
+        _trade(3, "SELL", "LONG",  120.0, 6.0,  0.72, True,  120.0, BASE + 2000, symbol),
+        _trade(4, "SELL", "SHORT", 200.0, 5.0,  1.00, False, 0.0,   BASE + 500,  symbol),
+        _trade(5, "BUY",  "SHORT", 190.0, 5.0,  0.95, True,  50.0,  BASE + 1500, symbol),
     ]
+
+
+async def _insert_exchange_history(db, *, trade_key, time_ms, symbol, account_id=1,
+                                   income_type="REALIZED_PNL"):
+    """Insert one exchange_history (income ledger) row for gap-detection tests."""
+    await db._conn.execute(
+        "INSERT INTO exchange_history (trade_key, time, symbol, income_type, income, "
+        "direction, account_id) VALUES (?, ?, ?, ?, 0, 'LONG', ?)",
+        (trade_key, time_ms, symbol, income_type, account_id),
+    )
+    await db._conn.commit()
+
+
+async def _seed_backfill_fill(db, symbol, *, eid="bf1", account_id=1, ts=BASE):
+    await db.upsert_fill({
+        "account_id": account_id, "exchange_fill_id": eid, "symbol": symbol,
+        "side": "SELL", "direction": "LONG", "price": 110.0, "quantity": 3.0,
+        "fee": 9.0, "is_close": 1, "timestamp_ms": ts,
+        "source": "exchange_history_backfill",
+    })
 
 
 # ── fixtures ────────────────────────────────────────────────────────────
@@ -354,3 +375,208 @@ class TestRunRefix:
             "SELECT count(*) FROM fills WHERE source='exchange_usertrades'"
         ) as cur:
             assert (await cur.fetchone())[0] == 5   # no duplication on re-run
+
+
+# ── Task 2: gap detection + per-symbol rebuild + auto-recovery on startup ────
+
+class TestGapSymbols:
+    @pytest.mark.asyncio
+    async def test_backfill_marker_selected(self, test_db):
+        await _seed_backfill_fill(test_db, "AAAUSDT")
+        assert "AAAUSDT" in await test_db.get_offline_gap_symbols(1, 0)
+
+    @pytest.mark.asyncio
+    async def test_exchange_history_newer_than_fills_selected(self, test_db):
+        await test_db.upsert_fill({
+            "account_id": 1, "exchange_fill_id": "b1", "symbol": "BBBUSDT",
+            "side": "BUY", "direction": "LONG", "price": 1.0, "quantity": 1.0,
+            "is_close": 0, "timestamp_ms": BASE, "source": "binance_ws",
+        })
+        await _insert_exchange_history(test_db, trade_key="b-eh", time_ms=BASE + 60000, symbol="BBBUSDT")
+        assert "BBBUSDT" in await test_db.get_offline_gap_symbols(1, 0)
+
+    @pytest.mark.asyncio
+    async def test_online_symbol_not_selected(self, test_db):
+        # exchange_history OLDER than the recorded fill, no backfill -> no gap
+        await _insert_exchange_history(test_db, trade_key="c-eh", time_ms=BASE, symbol="CCCUSDT")
+        await test_db.upsert_fill({
+            "account_id": 1, "exchange_fill_id": "c1", "symbol": "CCCUSDT",
+            "side": "BUY", "direction": "LONG", "price": 1.0, "quantity": 1.0,
+            "is_close": 0, "timestamp_ms": BASE + 60000, "source": "binance_ws",
+        })
+        assert "CCCUSDT" not in await test_db.get_offline_gap_symbols(1, 0)
+
+    @pytest.mark.asyncio
+    async def test_cutoff_excludes_old_exchange_history(self, test_db):
+        await _insert_exchange_history(test_db, trade_key="d-eh", time_ms=BASE, symbol="DDDUSDT")
+        # cutoff AFTER the row -> excluded from the gap branch (and no backfill marker)
+        assert "DDDUSDT" not in await test_db.get_offline_gap_symbols(1, BASE + 1_000_000)
+
+    async def _seed_closed(self, db, symbol, *, source, calc_id=""):
+        await db._conn.execute(
+            "INSERT INTO closed_positions (account_id,symbol,terminal_position_id,direction,"
+            "quantity,entry_price,exit_price,realized_pnl,total_fees,net_pnl,source,calc_id) "
+            "VALUES (1,?,?,'LONG',1,1,1,0,0,0,?,?)",
+            (symbol, f"tp-{symbol}", source, calc_id),
+        )
+        await db._conn.commit()
+
+    @pytest.mark.asyncio
+    async def test_protected_real_position_excluded(self, test_db):
+        # gapped (backfill fill) BUT has a real WS closed_position -> EXCLUDED (H1/H2)
+        await _seed_backfill_fill(test_db, "GGGUSDT")
+        await self._seed_closed(test_db, "GGGUSDT", source="binance_ws")
+        assert "GGGUSDT" not in await test_db.get_offline_gap_symbols(1, 0)
+
+    @pytest.mark.asyncio
+    async def test_protected_calc_linked_excluded(self, test_db):
+        # gapped BUT has a calc-linked closed_position -> EXCLUDED (protect linkage)
+        await _seed_backfill_fill(test_db, "HHHUSDT")
+        await self._seed_closed(test_db, "HHHUSDT", source="rebuilt_from_fills", calc_id="CALC-1")
+        assert "HHHUSDT" not in await test_db.get_offline_gap_symbols(1, 0)
+
+    @pytest.mark.asyncio
+    async def test_synthetic_only_symbol_still_selected(self, test_db):
+        # gapped + only synthetic, unlinked closed_positions -> still recoverable
+        await _seed_backfill_fill(test_db, "IIIUSDT")
+        await self._seed_closed(test_db, "IIIUSDT", source="exchange_history_backfill")
+        assert "IIIUSDT" in await test_db.get_offline_gap_symbols(1, 0)
+
+
+class TestRebuildForSymbol:
+    @pytest.mark.asyncio
+    async def test_rebuilds_and_backlinks(self, test_db):
+        for t in _spcx_shape("EEEUSDT"):
+            await test_db.upsert_fill(user_trade_to_fill_dict(t, 1))
+        await test_db._conn.execute(
+            "INSERT INTO closed_positions (account_id,symbol,terminal_position_id,direction,"
+            "quantity,entry_price,exit_price,realized_pnl,total_fees,net_pnl,source) "
+            "VALUES (1,'EEEUSDT','stale','LONG',1,1,1,0,0,0,'exchange_history_backfill')"
+        )
+        await test_db._conn.commit()
+        res = await test_db.rebuild_closed_positions_for_symbol(1, "EEEUSDT")
+        assert res["deleted"] == 1 and res["rebuilt"] == 2
+        async with test_db._conn.execute(
+            "SELECT count(*) FROM closed_positions WHERE symbol='EEEUSDT' AND source='rebuilt_from_fills'"
+        ) as cur:
+            assert (await cur.fetchone())[0] == 2
+        async with test_db._conn.execute(
+            "SELECT count(*) FROM fills WHERE symbol='EEEUSDT' AND terminal_position_id<>''"
+        ) as cur:
+            assert (await cur.fetchone())[0] == 5   # all contributing fills back-linked
+
+    @pytest.mark.asyncio
+    async def test_preserves_operator_columns_on_rebuild(self, test_db):
+        # H1: a re-rebuild must NOT drop operator/reconciler columns. The
+        # synthetic tpid is deterministic, so they re-supply by tpid.
+        for t in _spcx_shape("JJJUSDT"):
+            await test_db.upsert_fill(user_trade_to_fill_dict(t, 1))
+        await test_db.rebuild_closed_positions_for_symbol(1, "JJJUSDT")
+        async with test_db._conn.execute(
+            "SELECT terminal_position_id FROM closed_positions WHERE symbol='JJJUSDT' LIMIT 1"
+        ) as cur:
+            tpid = (await cur.fetchone())[0]
+        await test_db._conn.execute(
+            "UPDATE closed_positions SET close_note='op note', "
+            "exit_reason='MANUAL_DISCIPLINE_BREAK', lifecycle_id='LC-1' "
+            "WHERE terminal_position_id=?", (tpid,),
+        )
+        await test_db._conn.commit()
+        await test_db.rebuild_closed_positions_for_symbol(1, "JJJUSDT")   # re-rebuild
+        async with test_db._conn.execute(
+            "SELECT close_note, exit_reason, lifecycle_id FROM closed_positions "
+            "WHERE terminal_position_id=?", (tpid,),
+        ) as cur:
+            assert tuple(await cur.fetchone()) == ("op note", "MANUAL_DISCIPLINE_BREAK", "LC-1")
+
+
+class TestRecoverOfflineTrades:
+    @staticmethod
+    def _stub(by_symbol):
+        async def _f(symbol, start_ms=None, end_ms=None):
+            if isinstance(by_symbol, Exception):
+                raise by_symbol
+            return by_symbol.get(symbol, [])
+        return _f
+
+    @pytest.mark.asyncio
+    async def test_recovers_gapped_symbol(self, monkeypatch, test_db):
+        await _seed_backfill_fill(test_db, "EEEUSDT")
+        monkeypatch.setattr("core.exchange_income.db", test_db)
+        monkeypatch.setattr("core.exchange_income.fetch_all_user_trades",
+                            self._stub({"EEEUSDT": _spcx_shape("EEEUSDT")}))
+        res = await recover_offline_trades(account_id=1, days=3650)
+        assert res["symbols"] == 1 and res["errors"] == {}
+        r = res["recovered"]["EEEUSDT"]
+        assert r["fills_inserted"] == 5 and r["backfill_fills_deleted"] == 1 and r["positions_rebuilt"] == 2
+
+        async def _cnt(where):
+            async with test_db._conn.execute(f"SELECT count(*) FROM fills WHERE {where}") as cur:
+                return (await cur.fetchone())[0]
+        assert await _cnt("source='exchange_history_backfill'") == 0
+        assert await _cnt("source='exchange_usertrades'") == 5
+        async with test_db._conn.execute(
+            "SELECT count(*) FROM closed_positions WHERE symbol='EEEUSDT'") as cur:
+            assert (await cur.fetchone())[0] == 2
+
+    @pytest.mark.asyncio
+    async def test_idempotent_second_run(self, monkeypatch, test_db):
+        await _seed_backfill_fill(test_db, "EEEUSDT")
+        monkeypatch.setattr("core.exchange_income.db", test_db)
+        monkeypatch.setattr("core.exchange_income.fetch_all_user_trades",
+                            self._stub({"EEEUSDT": _spcx_shape("EEEUSDT")}))
+        await recover_offline_trades(account_id=1, days=3650)
+        res2 = await recover_offline_trades(account_id=1, days=3650)
+        assert res2["symbols"] == 0   # no longer gapped -> not re-recovered
+
+    @pytest.mark.asyncio
+    async def test_collision_preserves_ws_fill(self, monkeypatch, test_db):
+        await _seed_backfill_fill(test_db, "EEEUSDT")
+        await test_db.upsert_fill({
+            "account_id": 1, "exchange_fill_id": "2", "symbol": "EEEUSDT",
+            "side": "SELL", "direction": "LONG", "price": 110.0, "quantity": 4.0,
+            "fee": 0.44, "is_close": 1, "timestamp_ms": BASE + 1000, "source": "binance_ws",
+        })
+        monkeypatch.setattr("core.exchange_income.db", test_db)
+        monkeypatch.setattr("core.exchange_income.fetch_all_user_trades",
+                            self._stub({"EEEUSDT": _spcx_shape("EEEUSDT")}))
+        res = await recover_offline_trades(account_id=1, days=3650)
+        r = res["recovered"]["EEEUSDT"]
+        assert r["fills_preserved"] == 1 and r["fills_inserted"] == 4
+        async with test_db._conn.execute("SELECT source FROM fills WHERE exchange_fill_id='2'") as cur:
+            assert [x[0] for x in await cur.fetchall()] == ["binance_ws"]   # not overwritten
+
+    @pytest.mark.asyncio
+    async def test_error_isolation(self, monkeypatch, test_db):
+        await _seed_backfill_fill(test_db, "EEEUSDT", eid="bf-e")
+        await _seed_backfill_fill(test_db, "FFFUSDT", eid="bf-f")
+
+        async def _f(symbol, start_ms=None, end_ms=None):
+            if symbol == "FFFUSDT":
+                raise RuntimeError("boom")
+            return _spcx_shape(symbol)
+        monkeypatch.setattr("core.exchange_income.db", test_db)
+        monkeypatch.setattr("core.exchange_income.fetch_all_user_trades", _f)
+        res = await recover_offline_trades(account_id=1, days=3650)
+        assert res["symbols"] == 2
+        assert "EEEUSDT" in res["recovered"] and "FFFUSDT" in res["errors"]
+        # the failed symbol's backfill fills are left intact (no partial damage)
+        async with test_db._conn.execute(
+            "SELECT count(*) FROM fills WHERE symbol='FFFUSDT' AND source='exchange_history_backfill'"
+        ) as cur:
+            assert (await cur.fetchone())[0] == 1
+
+    @pytest.mark.asyncio
+    async def test_empty_fetch_skips_delete_and_rebuild(self, monkeypatch, test_db):
+        # H3: an empty/failed userTrades fetch must NOT delete backfill fills
+        # (nothing to replace them with) nor rebuild — avoids data loss + thrash.
+        await _seed_backfill_fill(test_db, "EEEUSDT")
+        monkeypatch.setattr("core.exchange_income.db", test_db)
+        monkeypatch.setattr("core.exchange_income.fetch_all_user_trades", self._stub({"EEEUSDT": []}))
+        res = await recover_offline_trades(account_id=1, days=3650)
+        r = res["recovered"]["EEEUSDT"]
+        assert r.get("skipped_empty") is True and r["backfill_fills_deleted"] == 0
+        async with test_db._conn.execute(
+            "SELECT count(*) FROM fills WHERE symbol='EEEUSDT' AND source='exchange_history_backfill'"
+        ) as cur:
+            assert (await cur.fetchone())[0] == 1   # backfill fills left intact

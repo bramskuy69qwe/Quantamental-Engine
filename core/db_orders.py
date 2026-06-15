@@ -1493,6 +1493,14 @@ class OrdersMixin:
     ) -> Dict[str, int]:
         """One-time migration: copy exchange_history rows into fills + closed_positions.
 
+        DEPRECATED for the engine path (2026-06-15): this income-reconstruction
+        re-summed opening commissions per partial close (8-70x fee inflation)
+        and synthesized undersized opens (position collapse). The engine now
+        auto-recovers offline trades via
+        ``exchange_income.recover_offline_trades`` (Binance userTrades). Kept
+        for the Phase-0.0.2 dedup/grouping regression tests + historical
+        reference — do NOT re-wire into auto-recovery.
+
         OPEN → is_close=0, REALIZED_PNL → is_close=1.
 
         Phase 0.0.2 (T183 / T178 Layers 1+3 fix):
@@ -1690,6 +1698,169 @@ class OrdersMixin:
             "closed_inserted":             closed_inserted,
             "closes_dropped_no_open_time": closes_dropped_no_open_time,
         }
+
+    async def get_offline_gap_symbols(self, account_id: int, cutoff_ms: int) -> List[str]:
+        """Symbols needing offline-trade recovery via the userTrades path.
+
+        A symbol qualifies if it has a GAP:
+          * synthetic ``source='exchange_history_backfill'`` fills (the
+            income-path corruption marker), OR
+          * ``exchange_history`` (the income ledger of what traded) has a
+            trade NEWER than the symbol's newest recorded ``fills`` row within
+            the window (the live WS missed it while the engine was offline).
+
+        Purely-online symbols (live WS fills cover everything, no synthetic
+        rows) qualify for NEITHER → skipped, so their fills + calc linkage are
+        left untouched. Self-terminating: once recovered, a symbol drops out
+        (its backfill fills are gone AND its fills now cover exchange_history).
+
+        PROTECTED-symbol exclusion (audit H1/H2): a symbol is ALSO excluded if
+        it has any real (non-synthetic source) OR calc-linked closed_position.
+        The per-symbol rebuild does a DELETE-all + chronological re-walk, which
+        for a MIXED-history symbol (online linked positions + an offline gap)
+        would revert the online positions' calc/lifecycle attribution and drop
+        operator/reconciler-owned columns. Auto-recovery therefore only ever
+        touches symbols whose ENTIRE closed_positions history is synthetic
+        (``exchange_history_backfill``/``rebuilt_from_fills``) — i.e. the
+        offline-only corrupted set. Mixed symbols are left for the operator's
+        collision-safe manual refix (scripts/refix_fills_from_usertrades.py).
+        """
+        sql = """
+            WITH gapped AS (
+                SELECT DISTINCT symbol FROM fills
+                WHERE account_id = ? AND source = 'exchange_history_backfill'
+                UNION
+                SELECT eh.symbol FROM (
+                    SELECT symbol, MAX(time) AS mt FROM exchange_history
+                    WHERE account_id = ? AND time >= ? GROUP BY symbol
+                ) eh
+                LEFT JOIN (
+                    SELECT symbol, MAX(timestamp_ms) AS mf FROM fills
+                    WHERE account_id = ? GROUP BY symbol
+                ) f ON eh.symbol = f.symbol
+                WHERE eh.mt > COALESCE(f.mf, 0)
+            )
+            SELECT symbol FROM gapped
+            WHERE symbol NOT IN (
+                SELECT DISTINCT symbol FROM closed_positions
+                WHERE account_id = ?
+                  AND (source NOT IN ('exchange_history_backfill', 'rebuilt_from_fills')
+                       OR (calc_id IS NOT NULL AND calc_id <> ''))
+            )
+        """
+        async with self._conn.execute(
+            sql, (account_id, account_id, cutoff_ms, account_id, account_id),
+        ) as cur:
+            return [r[0] for r in await cur.fetchall() if r[0]]
+
+    async def rebuild_closed_positions_for_symbol(
+        self, account_id: int, symbol: str,
+    ) -> Dict[str, int]:
+        """Rebuild ``closed_positions`` for ONE symbol from its current
+        ``fills`` (chronological-walk grouping), atomically: DELETE the
+        symbol's existing closed_positions + INSERT the rebuilt rows +
+        back-link each contributing fill's ``terminal_position_id``, all in a
+        single transaction (rollback on any error).
+
+        The per-symbol engine core of ``scripts/rebuild_closed_positions.py``,
+        used by the userTrades offline-recovery
+        (``exchange_income.recover_offline_trades``). Rebuilt rows carry
+        ``source='rebuilt_from_fills'`` + ``backfill_completed=0`` (helper
+        default) so the reconciler re-runs MFE/MAE. Grouping preserves
+        ``calc_id`` from the contributing opening fills; like the rebuild
+        script, lifecycle attribution can revert — which is why the caller
+        gates this to GAPPED symbols only (never purely-online ones).
+        """
+        from core.position_grouping import group_fills_into_positions
+        async with self._conn.execute(
+            "SELECT * FROM fills WHERE account_id = ? AND symbol = ? "
+            "ORDER BY timestamp_ms ASC, id ASC",
+            (account_id, symbol),
+        ) as cur:
+            fills = [dict(r) for r in await cur.fetchall()]
+
+        # Snapshot operator/reconciler-owned columns the rebuild must NOT drop.
+        # The synthetic ``rebuilt:SYMBOL:DIR:entry_ms`` tpid is DETERMINISTIC
+        # from the fills, so a re-rebuild lands the same tpid — re-supply these
+        # by tpid after the DELETE (insert_closed_position's preserve-by-read
+        # finds no row once the DELETE has run in this txn). (audit H1)
+        async with self._conn.execute(
+            "SELECT terminal_position_id, lifecycle_id, close_note, exit_reason "
+            "FROM closed_positions WHERE account_id = ? AND symbol = ?",
+            (account_id, symbol),
+        ) as cur:
+            preserved_cols = {
+                r[0]: (r[1], r[2], r[3]) for r in await cur.fetchall() if r[0]
+            }
+
+        attribution: Dict[str, List[int]] = {}
+        rebuilt = group_fills_into_positions(fills, attribution_out=attribution)
+
+        deleted = inserted = tpids_updated = 0
+        try:
+            delcur = await self._conn.execute(
+                "DELETE FROM closed_positions WHERE account_id = ? AND symbol = ?",
+                (account_id, symbol),
+            )
+            deleted = delcur.rowcount
+            await delcur.close()
+            for pr in rebuilt:
+                record = dict(pr)
+                record["source"] = "rebuilt_from_fills"
+                keep = preserved_cols.get(record.get("terminal_position_id"))
+                if keep:
+                    lifecycle_id, close_note, exit_reason = keep
+                    if lifecycle_id:
+                        record["lifecycle_id"] = lifecycle_id
+                    if close_note:
+                        record["close_note"] = close_note
+                    # carry only an operator-REFINED (MANUAL_*) exit_reason;
+                    # otherwise let the rebuild's fills-derived default stand
+                    if exit_reason and str(exit_reason).startswith("MANUAL"):
+                        record["exit_reason"] = exit_reason
+                await self.insert_closed_position(record, commit=False)
+                inserted += 1
+            for tpid, fill_ids in attribution.items():
+                for fid in fill_ids:
+                    await self._conn.execute(
+                        "UPDATE fills SET terminal_position_id = ? WHERE id = ?",
+                        (tpid, fid),
+                    )
+                    tpids_updated += 1
+            await self._conn.commit()
+        except BaseException:
+            try:
+                await self._conn.rollback()
+            except Exception:
+                pass
+            raise
+        return {"deleted": deleted, "rebuilt": inserted, "fill_tpids_updated": tpids_updated}
+
+    async def get_real_fill_ids(self, account_id: int, symbol: str) -> set:
+        """``exchange_fill_id`` of NON-backfill (real WS/REST/userTrades) fills
+        for a symbol — the collision-PRESERVE set for offline recovery, so a
+        userTrades fill that shares a tradeId with an already-recorded real
+        fill is skipped rather than overwriting live data."""
+        async with self._conn.execute(
+            "SELECT exchange_fill_id FROM fills "
+            "WHERE account_id = ? AND symbol = ? AND source <> 'exchange_history_backfill'",
+            (account_id, symbol),
+        ) as cur:
+            return {r[0] for r in await cur.fetchall()}
+
+    async def delete_backfill_fills(self, account_id: int, symbol: str) -> int:
+        """Delete the synthetic ``exchange_history_backfill`` fills for a
+        symbol (the income-path rows being replaced by userTrades). Returns
+        the number of rows deleted."""
+        cur = await self._conn.execute(
+            "DELETE FROM fills WHERE account_id = ? AND symbol = ? "
+            "AND source = 'exchange_history_backfill'",
+            (account_id, symbol),
+        )
+        n = cur.rowcount
+        await cur.close()
+        await self._conn.commit()
+        return n
 
     # ── MFE/MAE for closed_positions ───────────────────────────────────────
 

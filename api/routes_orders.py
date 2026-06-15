@@ -574,9 +574,13 @@ async def frag_needs_link_count():
 # ── Backfill + consistency ───────────────────────────────────────────────────
 
 @router.post("/api/orders/backfill")
-async def backfill_from_exchange_history(days: int = 30):
-    """One-time migration: populate fills + closed_positions from exchange_history."""
-    result = await db.backfill_fills_from_exchange_history(
+async def backfill_from_exchange_history(days: int = 90):
+    """Recover offline-traded fills + closed_positions from Binance userTrades
+    (gap-scoped, collision-safe). Replaces the old income-reconstruction
+    backfill, which inflated fees 8-70x + collapsed positions
+    (fixed 2026-06-15, project_spcx_offline_backfill_bug)."""
+    from core.exchange_income import recover_offline_trades
+    result = await recover_offline_trades(
         account_id=app_state.active_account_id, days=days,
     )
     return JSONResponse(result)

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any, Dict, Iterable, List, Optional
 from datetime import datetime, timezone, timedelta
 
@@ -580,6 +581,129 @@ async def backfill_fills_from_user_trades(
         per_symbol[sym] = n
         log.info("userTrades fill-backfill: %s -> %d fills upserted", sym, n)
     return {"fills_upserted": total, "per_symbol": per_symbol, "skipped_zero_qty": skipped_zero}
+
+
+async def _apply_recovered_fills(account_id: int, symbol: str, trades: List[Any]) -> Dict[str, int]:
+    """Apply pre-fetched userTrades for ONE symbol — the DB-WRITE phase, run
+    SERIALLY (see ``recover_offline_trades``): collision-safe true-fill upsert
+    → delete synthetic backfill fills → rebuild closed_positions.
+
+    Collision-safe: a userTrades fill whose tradeId already exists as a real
+    (non-backfill) fill is PRESERVED, not overwritten — live WS data wins.
+    """
+    existing_real = await db.get_real_fill_ids(account_id, symbol)
+    inserted = preserved = skipped_zero = 0
+    for t in trades:
+        if float(getattr(t, "quantity", 0) or 0) <= 0:
+            skipped_zero += 1
+            continue
+        fd = user_trade_to_fill_dict(t, account_id)
+        if fd["exchange_fill_id"] in existing_real:
+            preserved += 1
+            continue
+        await db.upsert_fill(fd)
+        inserted += 1
+    if inserted == 0 and preserved == 0:
+        # No userTrades available (empty / failed / older-than-retention /
+        # max_pages-truncated fetch). Leave the symbol's existing fills +
+        # closed_positions intact rather than deleting backfill rows with
+        # nothing to replace them — avoids data loss AND the rebuild-every-
+        # restart thrash (audit H3). The symbol re-selects next run + retries.
+        log.info("recover %s: no userTrades returned — skipped (retry next run)", symbol)
+        return {
+            "fills_inserted": 0, "fills_preserved": 0, "skipped_zero_qty": skipped_zero,
+            "backfill_fills_deleted": 0, "positions_rebuilt": 0,
+            "positions_deleted": 0, "fill_tpids_updated": 0, "skipped_empty": True,
+        }
+    deleted = await db.delete_backfill_fills(account_id, symbol)
+    rebuilt = await db.rebuild_closed_positions_for_symbol(account_id, symbol)
+    log.info(
+        "recover %s: +%d fills (%d preserved), -%d backfill, %d positions",
+        symbol, inserted, preserved, deleted, rebuilt["rebuilt"],
+    )
+    return {
+        "fills_inserted":         inserted,
+        "fills_preserved":        preserved,
+        "skipped_zero_qty":       skipped_zero,
+        "backfill_fills_deleted": deleted,
+        "positions_rebuilt":      rebuilt["rebuilt"],
+        "positions_deleted":      rebuilt["deleted"],
+        "fill_tpids_updated":     rebuilt["fill_tpids_updated"],
+    }
+
+
+async def recover_offline_trades(
+    account_id: Optional[int] = None,
+    *,
+    days: int = 90,
+    concurrency: int = 5,
+) -> Dict[str, Any]:
+    """Auto-recover offline-traded fills + closed_positions from Binance
+    ``userTrades`` — the CORRECT replacement for the income-reconstruction
+    backfill (``DatabaseManager.backfill_fills_from_exchange_history``), which
+    rebuilt close-only fills with re-summed opening commissions (8–70× fee
+    inflation) and undersized synthetic opens (position collapse).
+
+    SCOPED to GAPPED symbols only (``db.get_offline_gap_symbols``): a symbol is
+    recovered iff it has synthetic ``exchange_history_backfill`` fills (income-
+    path corruption) OR ``exchange_history`` shows a trade newer than its newest
+    recorded fill (an offline WS gap). Purely-online symbols qualify for
+    neither and are left untouched — preserving their live fills + calc linkage.
+    Per symbol: collision-safe true-fill upsert → delete synthetic backfill
+    fills → rebuild closed_positions (``_apply_recovered_fills``). Symbols are
+    fetched concurrently but applied SERIALLY (shared aiosqlite connection).
+
+    Idempotent + self-terminating (a recovered symbol drops out of the gap set
+    next run), concurrency-limited for startup I/O overlap. Best-effort: a
+    per-symbol failure is logged + collected, never aborts the others.
+
+    Returns ``{"symbols": N, "recovered": {sym: {...}}, "errors": {sym: repr}}``.
+    """
+    aid = account_id if account_id is not None else app_state.active_account_id
+    cutoff_ms = int((time.time() - days * 86400) * 1000)
+    try:
+        symbols = await db.get_offline_gap_symbols(aid, cutoff_ms)
+    except Exception as e:
+        log.warning("recover_offline_trades: gap-symbol query failed: %r", e)
+        return {"symbols": 0, "recovered": {}, "errors": {"_query": repr(e)}}
+    if not symbols:
+        return {"symbols": 0, "recovered": {}, "errors": {}}
+
+    log.info("recover_offline_trades: %d gapped symbol(s): %s",
+             len(symbols), ", ".join(symbols))
+
+    # Phase 1: fetch userTrades CONCURRENTLY (network I/O — the slow part;
+    # touches no DB).
+    sem = asyncio.Semaphore(max(1, concurrency))
+
+    async def _fetch(sym: str):
+        async with sem:
+            try:
+                return sym, await fetch_all_user_trades(sym)
+            except Exception as e:  # noqa: BLE001 — collected per-symbol
+                return sym, e
+
+    fetched = await asyncio.gather(*[_fetch(s) for s in symbols])
+
+    # Phase 2: apply SERIALLY. The engine shares ONE aiosqlite connection, so a
+    # connection == one transaction context — running the per-symbol writes
+    # concurrently would interleave multi-statement transactions (the rebuild's
+    # delete+insert+commit, the upsert loop) and cross commit/rollback
+    # boundaries. The slow (network) fetch above is already overlapped.
+    recovered: Dict[str, Any] = {}
+    errors: Dict[str, str] = {}
+    for sym, trades in fetched:
+        if isinstance(trades, BaseException):
+            errors[sym] = repr(trades)
+            log.warning("recover_offline_trades: %s fetch failed: %r", sym, trades)
+            continue
+        try:
+            recovered[sym] = await _apply_recovered_fills(aid, sym, trades)
+        except Exception as e:
+            errors[sym] = repr(e)
+            log.warning("recover_offline_trades: %s apply failed: %r", sym, e)
+
+    return {"symbols": len(symbols), "recovered": recovered, "errors": errors}
 
 
 async def fetch_funding_rates(symbols: List[str]) -> Dict[str, Dict]:
