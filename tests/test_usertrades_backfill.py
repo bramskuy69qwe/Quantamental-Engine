@@ -442,6 +442,17 @@ class TestGapSymbols:
         await self._seed_closed(test_db, "IIIUSDT", source="exchange_history_backfill")
         assert "IIIUSDT" in await test_db.get_offline_gap_symbols(1, 0)
 
+    @pytest.mark.asyncio
+    async def test_synth_legacy_open_marker_selected(self, test_db):
+        # REGRESSION 2026-06-15: synth_legacy_open is ALSO a synthetic-recovery
+        # marker -> the symbol must be selected (so userTrades supersedes it).
+        await test_db.upsert_fill({
+            "account_id": 1, "exchange_fill_id": "sl1", "symbol": "KKKUSDT",
+            "side": "BUY", "direction": "LONG", "price": 1.0, "quantity": 1.0,
+            "is_close": 0, "timestamp_ms": BASE, "source": "synth_legacy_open",
+        })
+        assert "KKKUSDT" in await test_db.get_offline_gap_symbols(1, 0)
+
 
 class TestRebuildForSymbol:
     @pytest.mark.asyncio
@@ -580,3 +591,28 @@ class TestRecoverOfflineTrades:
             "SELECT count(*) FROM fills WHERE symbol='EEEUSDT' AND source='exchange_history_backfill'"
         ) as cur:
             assert (await cur.fetchone())[0] == 1   # backfill fills left intact
+
+    @pytest.mark.asyncio
+    async def test_supersedes_synth_legacy_open(self, monkeypatch, test_db):
+        # REGRESSION 2026-06-15: a prior synth_legacy_open OPEN must be
+        # SUPERSEDED by userTrades, never collision-preserved (which doubled
+        # opens -> broken rebuild -> 0 positions for STO/ON/JCT/...).
+        await test_db.upsert_fill({
+            "account_id": 1, "exchange_fill_id": "synth-1", "symbol": "EEEUSDT",
+            "side": "BUY", "direction": "LONG", "price": 100.0, "quantity": 10.0,
+            "is_close": 0, "timestamp_ms": BASE - 5, "source": "synth_legacy_open",
+        })
+        monkeypatch.setattr("core.exchange_income.db", test_db)
+        monkeypatch.setattr("core.exchange_income.fetch_all_user_trades",
+                            self._stub({"EEEUSDT": _spcx_shape("EEEUSDT")}))
+        res = await recover_offline_trades(account_id=1, days=3650)
+        r = res["recovered"]["EEEUSDT"]
+        assert r["fills_preserved"] == 0          # synth open is NOT "real"
+        assert r["backfill_fills_deleted"] == 1   # the synth_legacy_open fill deleted
+        assert r["positions_rebuilt"] == 2        # correct (not 0 from doubled opens)
+
+        async def _cnt(where):
+            async with test_db._conn.execute(f"SELECT count(*) FROM fills WHERE {where}") as cur:
+                return (await cur.fetchone())[0]
+        assert await _cnt("symbol='EEEUSDT' AND source='synth_legacy_open'") == 0
+        assert await _cnt("symbol='EEEUSDT' AND source='exchange_usertrades'") == 5

@@ -75,7 +75,12 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-BACKFILL_SOURCE = "exchange_history_backfill"   # the synthetic rows we replace
+from core.db_orders import SYNTHETIC_FILL_SOURCES  # noqa: E402
+
+# Prior synthetic-recovery fill sources userTrades supersedes (income backfill
+# + legacy synth-open). DELETE these + never collision-preserve them, else
+# doubled opens break the rebuild (2026-06-15 regression fix).
+_SYNTH_IN = "(" + ",".join("?" * len(SYNTHETIC_FILL_SOURCES)) + ")"
 
 
 def _fmt_ms(v: Any) -> str:
@@ -145,11 +150,11 @@ async def _count(db, sql: str, params: tuple) -> int:
 async def _current_state(db, account_id: int, symbol: str) -> Dict[str, int]:
     return {
         "backfill_fills": await _count(
-            db, "SELECT count(*) FROM fills WHERE account_id=? AND symbol=? AND source=?",
-            (account_id, symbol, BACKFILL_SOURCE)),
+            db, f"SELECT count(*) FROM fills WHERE account_id=? AND symbol=? AND source IN {_SYNTH_IN}",
+            (account_id, symbol, *SYNTHETIC_FILL_SOURCES)),
         "other_fills": await _count(
-            db, "SELECT count(*) FROM fills WHERE account_id=? AND symbol=? AND source<>?",
-            (account_id, symbol, BACKFILL_SOURCE)),
+            db, f"SELECT count(*) FROM fills WHERE account_id=? AND symbol=? AND source NOT IN {_SYNTH_IN}",
+            (account_id, symbol, *SYNTHETIC_FILL_SOURCES)),
         "closed_positions": await _count(
             db, "SELECT count(*) FROM closed_positions WHERE account_id=? AND symbol=?",
             (account_id, symbol)),
@@ -158,8 +163,8 @@ async def _current_state(db, account_id: int, symbol: str) -> Dict[str, int]:
 
 async def _resolve_symbols(db, account_id: int) -> List[str]:
     cur = await db._conn.execute(
-        "SELECT DISTINCT symbol FROM fills WHERE account_id=? AND source=? ORDER BY symbol",
-        (account_id, BACKFILL_SOURCE),
+        f"SELECT DISTINCT symbol FROM fills WHERE account_id=? AND source IN {_SYNTH_IN} ORDER BY symbol",
+        (account_id, *SYNTHETIC_FILL_SOURCES),
     )
     try:
         return [r[0] for r in await cur.fetchall()]
@@ -251,8 +256,9 @@ async def run_refix(
             # and count it. Also makes re-runs idempotent: a prior run's
             # exchange_usertrades rows are non-backfill -> skipped. (HIGH-2)
             ecur = await db._conn.execute(
-                "SELECT exchange_fill_id FROM fills WHERE account_id=? AND symbol=? AND source<>?",
-                (account_id, sym, BACKFILL_SOURCE),
+                f"SELECT exchange_fill_id FROM fills WHERE account_id=? AND symbol=? "
+                f"AND source NOT IN {_SYNTH_IN}",
+                (account_id, sym, *SYNTHETIC_FILL_SOURCES),
             )
             existing_real = {r[0] for r in await ecur.fetchall()}
             await ecur.close()
@@ -271,8 +277,8 @@ async def run_refix(
             # delete a backfill row we won't re-insert (data-loss guard). With
             # the default full-history window both bounds are None -> all
             # backfill rows for the symbol are replaced.
-            del_sql = "DELETE FROM fills WHERE account_id=? AND symbol=? AND source=?"
-            del_params: List[Any] = [account_id, sym, BACKFILL_SOURCE]
+            del_sql = f"DELETE FROM fills WHERE account_id=? AND symbol=? AND source IN {_SYNTH_IN}"
+            del_params: List[Any] = [account_id, sym, *SYNTHETIC_FILL_SOURCES]
             if start_ms is not None:
                 del_sql += " AND timestamp_ms >= ?"
                 del_params.append(start_ms)

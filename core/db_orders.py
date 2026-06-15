@@ -14,6 +14,19 @@ from core import correlation_log
 log = logging.getLogger("database")
 
 
+# Prior synthetic-recovery FILL sources that the userTrades offline-recovery
+# supersedes: ``exchange_history_backfill`` (REALIZED_PNL income reconstruction)
+# + ``synth_legacy_open`` (the legacy synthetic-open migration,
+# scripts/synth_legacy_open_fills.py). Both INJECT synthetic fills that, once
+# real userTrades fills exist, are redundant. Leaving them causes DOUBLED opens
+# (synthetic open + real userTrades open) which break the chronological-walk
+# grouping → lost/garbled positions (regression 2026-06-15: the restart that
+# mangled STO/ON/JCT/AIOT/...). They are therefore treated as NON-real (never
+# collision-preserved against userTrades) and deleted before the rebuild.
+SYNTHETIC_FILL_SOURCES = ("exchange_history_backfill", "synth_legacy_open")
+_SYNTH_SRC_IN = "(" + ",".join("?" * len(SYNTHETIC_FILL_SOURCES)) + ")"
+
+
 # P2.T5 close-time delta columns persisted on closed_positions. Computed
 # in OrderManager (deltas → _compute_close_deltas; cumulative_amendment_count
 # → count_amendments_for_calcs) and written here; preserved across INSERT OR
@@ -1703,8 +1716,8 @@ class OrdersMixin:
         """Symbols needing offline-trade recovery via the userTrades path.
 
         A symbol qualifies if it has a GAP:
-          * synthetic ``source='exchange_history_backfill'`` fills (the
-            income-path corruption marker), OR
+          * synthetic-recovery fills (``SYNTHETIC_FILL_SOURCES`` — income
+            backfill OR legacy synth-open), the corruption marker, OR
           * ``exchange_history`` (the income ledger of what traded) has a
             trade NEWER than the symbol's newest recorded ``fills`` row within
             the window (the live WS missed it while the engine was offline).
@@ -1725,10 +1738,10 @@ class OrdersMixin:
         offline-only corrupted set. Mixed symbols are left for the operator's
         collision-safe manual refix (scripts/refix_fills_from_usertrades.py).
         """
-        sql = """
+        sql = f"""
             WITH gapped AS (
                 SELECT DISTINCT symbol FROM fills
-                WHERE account_id = ? AND source = 'exchange_history_backfill'
+                WHERE account_id = ? AND source IN {_SYNTH_SRC_IN}
                 UNION
                 SELECT eh.symbol FROM (
                     SELECT symbol, MAX(time) AS mt FROM exchange_history
@@ -1749,7 +1762,9 @@ class OrdersMixin:
             )
         """
         async with self._conn.execute(
-            sql, (account_id, account_id, cutoff_ms, account_id, account_id),
+            sql,
+            (account_id, *SYNTHETIC_FILL_SOURCES, account_id, cutoff_ms,
+             account_id, account_id),
         ) as cur:
             return [r[0] for r in await cur.fetchall() if r[0]]
 
@@ -1837,25 +1852,27 @@ class OrdersMixin:
         return {"deleted": deleted, "rebuilt": inserted, "fill_tpids_updated": tpids_updated}
 
     async def get_real_fill_ids(self, account_id: int, symbol: str) -> set:
-        """``exchange_fill_id`` of NON-backfill (real WS/REST/userTrades) fills
-        for a symbol — the collision-PRESERVE set for offline recovery, so a
-        userTrades fill that shares a tradeId with an already-recorded real
-        fill is skipped rather than overwriting live data."""
+        """``exchange_fill_id`` of REAL (non-synthetic) fills for a symbol —
+        the collision-PRESERVE set for offline recovery, so a userTrades fill
+        that shares a tradeId with an already-recorded real fill is skipped
+        rather than overwriting live data. ``SYNTHETIC_FILL_SOURCES``
+        (exchange_history_backfill + synth_legacy_open) are EXCLUDED here so
+        prior synthetic recoveries are superseded by userTrades, never doubled."""
         async with self._conn.execute(
-            "SELECT exchange_fill_id FROM fills "
-            "WHERE account_id = ? AND symbol = ? AND source <> 'exchange_history_backfill'",
-            (account_id, symbol),
+            f"SELECT exchange_fill_id FROM fills "
+            f"WHERE account_id = ? AND symbol = ? AND source NOT IN {_SYNTH_SRC_IN}",
+            (account_id, symbol, *SYNTHETIC_FILL_SOURCES),
         ) as cur:
             return {r[0] for r in await cur.fetchall()}
 
     async def delete_backfill_fills(self, account_id: int, symbol: str) -> int:
-        """Delete the synthetic ``exchange_history_backfill`` fills for a
-        symbol (the income-path rows being replaced by userTrades). Returns
-        the number of rows deleted."""
+        """Delete the symbol's synthetic-recovery fills (``SYNTHETIC_FILL_SOURCES``
+        = exchange_history_backfill + synth_legacy_open) — the prior synthetic
+        rows being replaced by real userTrades. Returns rows deleted."""
         cur = await self._conn.execute(
-            "DELETE FROM fills WHERE account_id = ? AND symbol = ? "
-            "AND source = 'exchange_history_backfill'",
-            (account_id, symbol),
+            f"DELETE FROM fills WHERE account_id = ? AND symbol = ? "
+            f"AND source IN {_SYNTH_SRC_IN}",
+            (account_id, symbol, *SYNTHETIC_FILL_SOURCES),
         )
         n = cur.rowcount
         await cur.close()
