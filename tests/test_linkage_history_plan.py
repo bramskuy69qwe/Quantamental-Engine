@@ -63,13 +63,13 @@ async def db():
 
 
 async def _add_closed(db, *, calc_id=None, size_delta_pct=0.0, amend=0,
-                      symbol="BTCUSDT", exit_ms=1000):
+                      symbol="BTCUSDT", exit_ms=1000, tpsl_amended=None):
     cur = await db._conn.execute(
         "INSERT INTO closed_positions (account_id, symbol, direction, "
         "terminal_position_id, calc_id, size_delta_pct, cumulative_amendment_count, "
-        "exit_time_ms, entry_price, quantity, net_pnl, realized_pnl, total_fees) "
-        "VALUES (1, ?, 'LONG', 'tp', ?, ?, ?, ?, 100.0, 1.0, 1.0, 1.0, 0.0)",
-        (symbol, calc_id, size_delta_pct, amend, exit_ms),
+        "tpsl_amended, exit_time_ms, entry_price, quantity, net_pnl, realized_pnl, total_fees) "
+        "VALUES (1, ?, 'LONG', 'tp', ?, ?, ?, ?, ?, 100.0, 1.0, 1.0, 1.0, 0.0)",
+        (symbol, calc_id, size_delta_pct, amend, tpsl_amended, exit_ms),
     )
     await db._conn.commit()
     return cur.lastrowid
@@ -115,6 +115,26 @@ class TestRouteBadge:
         # the key calibration: a legacy/unlinked close must NOT be flagged red
         # (it had no plan to deviate from) — it gets "" → "—" in the table.
         pid = await _add_closed(db, calc_id=None)
+        rows = await _call_table(monkeypatch, db)
+        assert rows[pid]["deviation_badge"] == ""
+
+    @pytest.mark.asyncio
+    async def test_linked_tpsl_amended_is_yellow(self, db, monkeypatch):
+        # 2026-06-15: a linked, on-plan-SIZE, zero-LEDGER-amendment close that
+        # carries the persisted tpsl_amended flag (a venue cancel+new TP/SL edit,
+        # which writes no order_amendments row → cumulative_amendment_count=0)
+        # must read "amended" (yellow) in history — matching the live badge.
+        # Before the fix it read green/on-plan (the gap the operator hit).
+        pid = await _add_closed(db, calc_id="CALC-1", size_delta_pct=0.0,
+                                amend=0, tpsl_amended=1)
+        rows = await _call_table(monkeypatch, db)
+        assert rows[pid]["deviation_badge"] == "yellow"
+
+    @pytest.mark.asyncio
+    async def test_unlinked_tpsl_amended_stays_blank(self, db, monkeypatch):
+        # tpsl_amended only colors LINKED rows; an unlinked close stays "" even
+        # if the column is somehow set (the has_calc gate wins).
+        pid = await _add_closed(db, calc_id=None, tpsl_amended=1)
         rows = await _call_table(monkeypatch, db)
         assert rows[pid]["deviation_badge"] == ""
 

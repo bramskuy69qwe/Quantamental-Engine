@@ -93,6 +93,14 @@ class OrderManager:
     def __init__(self, db) -> None:
         self._db = db
         self._open_orders: List[Dict] = []   # cached for dashboard reads
+        # 2026-06-15: STICKY per-tpid "this linked position's TP/SL was amended
+        # or removed during its life". Set the moment drift_check first sees it
+        # — the live pos.tpsl_amended is ephemeral (it resets at close when the
+        # protective legs expire, and the position leaves app_state before the
+        # deferred close-row build runs). Read by _build_close_row_for_fill and
+        # persisted onto the closed_positions row so Position History shows
+        # "amended" (matching the live badge). Pruned on the final close row.
+        self._tpsl_amended_seen: Dict[str, bool] = {}
 
     @property
     def open_orders(self) -> List[Dict]:
@@ -2891,6 +2899,14 @@ class OrderManager:
                 _tp_drift or _sl_drift or _sl_removed or _tp_removed
             )
             pos.tpsl_amended = tpsl_amended
+            # STICKY capture (#2 history-badge fix, 2026-06-15): once True for a
+            # tpid it stays set until the final close-row prunes it, so the close
+            # row reflects the amendment even though pos.tpsl_amended resets to
+            # False at close (legs gone → no drift). Only linked positions reach
+            # here (the no-calc branch above continues before this), so the stash
+            # is inherently linked-only.
+            if tpsl_amended and pos.position_id:
+                self._tpsl_amended_seen[pos.position_id] = True
             pos.deviation_badge = deviation_badge_level(
                 has_calc=True, size_delta_pct=pos.size_delta_pct,
                 amendment_count=pos.amendment_count, tpsl_amended=tpsl_amended,
@@ -3370,6 +3386,11 @@ class OrderManager:
                 "calc_id":              close_calc_id,
                 "lifecycle_id":         close_lifecycle_id,
                 "cumulative_amendment_count": cumulative_amendment_count,
+                # 2026-06-15: sticky "TP/SL amended/removed during life" (1/None)
+                # for the Position-History Plan badge. Only linked positions
+                # enter the stash (drift_check's TP/SL compare runs only with a
+                # calc), so this is inherently linked-only; None = never amended.
+                "tpsl_amended": (1 if self._tpsl_amended_seen.get(pos_id) else None),
                 # P6.T7: realized liquidation execution price on a forced-liq
                 # close (NULL otherwise; = the liquidation-fill VWAP, computed
                 # above). bankruptcy_px / insurance_fund_fee / adl_indicator stay
@@ -3378,6 +3399,11 @@ class OrderManager:
                 **shortfall,
                 **deltas,
             }))
+
+            # prune the sticky amended flag once the position is fully closed —
+            # it has now been persisted onto the final closed_positions row.
+            if is_final and pos_id:
+                self._tpsl_amended_seen.pop(pos_id, None)
 
             await event_bus.publish("risk:position_closed", {
                 "symbol": symbol, "direction": direction,

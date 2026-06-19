@@ -489,16 +489,16 @@ class TestRebuildForSymbol:
             tpid = (await cur.fetchone())[0]
         await test_db._conn.execute(
             "UPDATE closed_positions SET close_note='op note', "
-            "exit_reason='MANUAL_DISCIPLINE_BREAK', lifecycle_id='LC-1' "
-            "WHERE terminal_position_id=?", (tpid,),
+            "exit_reason='MANUAL_DISCIPLINE_BREAK', lifecycle_id='LC-1', "
+            "tpsl_amended=1 WHERE terminal_position_id=?", (tpid,),
         )
         await test_db._conn.commit()
         await test_db.rebuild_closed_positions_for_symbol(1, "JJJUSDT")   # re-rebuild
         async with test_db._conn.execute(
-            "SELECT close_note, exit_reason, lifecycle_id FROM closed_positions "
-            "WHERE terminal_position_id=?", (tpid,),
+            "SELECT close_note, exit_reason, lifecycle_id, tpsl_amended "
+            "FROM closed_positions WHERE terminal_position_id=?", (tpid,),
         ) as cur:
-            assert tuple(await cur.fetchone()) == ("op note", "MANUAL_DISCIPLINE_BREAK", "LC-1")
+            assert tuple(await cur.fetchone()) == ("op note", "MANUAL_DISCIPLINE_BREAK", "LC-1", 1)
 
 
 class TestRecoverOfflineTrades:

@@ -367,6 +367,55 @@ class TestCloseRecordingEmptyOpenTpid:
         ) as cur:
             assert (await cur.fetchone())[0] == TPID
 
+    @pytest.mark.asyncio
+    async def test_sticky_tpsl_amended_persisted_to_close_row_and_pruned(self, db, om):
+        # 2026-06-15: a position whose TP/SL was amended during life (sticky
+        # stash set by drift_check) must write tpsl_amended=1 onto the close
+        # row — pos.tpsl_amended has already reset by close, so the stash is the
+        # only surviving signal. And the stash is pruned on the final close.
+        TPID = "binance:DOGEUSDT:LONG:2000"
+        await _seed_fill(db, "F-open2", is_close=False, tpid="", ts=1000,
+                         qty=100.0, price=0.10, order_id="O-entry2")
+        await _seed_fill(db, "F-close2", is_close=True, tpid=TPID, ts=2000,
+                         qty=100.0, price=0.12, order_id="O-close2")
+        om._tpsl_amended_seen[TPID] = True   # drift_check saw an amendment
+        closing = {
+            "exchange_fill_id": "F-close2", "exchange_order_id": "O-close2",
+            "symbol": "DOGEUSDT", "direction": "LONG",
+            "terminal_position_id": TPID, "is_close": 1,
+            "quantity": 100.0, "price": 0.12, "timestamp_ms": 2000,
+            "realized_pnl": 2.0, "fee": 0.0,
+        }
+        await om._build_close_row_for_fill(ACCOUNT_ID, closing, force_final=True)
+        async with db._conn.execute(
+            "SELECT tpsl_amended FROM closed_positions WHERE terminal_position_id=?",
+            (TPID,),
+        ) as cur:
+            assert (await cur.fetchone())[0] == 1
+        assert TPID not in om._tpsl_amended_seen   # pruned on final close
+
+    @pytest.mark.asyncio
+    async def test_never_amended_close_row_tpsl_amended_null(self, db, om):
+        # contrast: a position never amended → tpsl_amended NULL (reads on-plan).
+        TPID = "binance:DOGEUSDT:LONG:3000"
+        await _seed_fill(db, "F-open3", is_close=False, tpid="", ts=1000,
+                         qty=100.0, price=0.10, order_id="O-entry3")
+        await _seed_fill(db, "F-close3", is_close=True, tpid=TPID, ts=2000,
+                         qty=100.0, price=0.12, order_id="O-close3")
+        closing = {
+            "exchange_fill_id": "F-close3", "exchange_order_id": "O-close3",
+            "symbol": "DOGEUSDT", "direction": "LONG",
+            "terminal_position_id": TPID, "is_close": 1,
+            "quantity": 100.0, "price": 0.12, "timestamp_ms": 2000,
+            "realized_pnl": 2.0, "fee": 0.0,
+        }
+        await om._build_close_row_for_fill(ACCOUNT_ID, closing, force_final=True)
+        async with db._conn.execute(
+            "SELECT tpsl_amended FROM closed_positions WHERE terminal_position_id=?",
+            (TPID,),
+        ) as cur:
+            assert (await cur.fetchone())[0] is None
+
 
 # ── #5b — correlated-limit same-symbol exclusion ────────────────────────────
 

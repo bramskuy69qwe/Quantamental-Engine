@@ -214,6 +214,12 @@ def stamp_close_deviation_badges(rows, *, yellow_pct: float, red_pct: float):
                 has_calc=True,
                 size_delta_pct=r.get("size_delta_pct") or 0.0,
                 amendment_count=r.get("cumulative_amendment_count") or 0,
+                # 2026-06-15: persisted sticky "TP/SL amended/removed during
+                # life" — closes the gap where a position amended on the
+                # observe-only Binance path (venue cancel+new, no
+                # order_amendments row → amendment_count=0) read on-plan in
+                # history. Now history matches the live "amended" (yellow) badge.
+                tpsl_amended=bool(r.get("tpsl_amended")),
                 yellow_pct=yellow_pct, red_pct=red_pct,
             )
         else:

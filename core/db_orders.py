@@ -42,6 +42,11 @@ _CLOSED_POS_DELTA_COLS = (
     "realized_r", "planned_r", "hold_time_actual_ms",
     "cumulative_amendment_count",
     "tp_drift_pct", "sl_drift_pct",
+    # 2026-06-15: sticky "this linked position's TP/SL was amended or removed
+    # during its life" (0/1/NULL). Preserved across REPLACE so an offline
+    # rebuild/backfill (which doesn't know it) carries it forward instead of
+    # wiping it (caller-wins-else-carry-forward).
+    "tpsl_amended",
 )
 
 
@@ -484,6 +489,7 @@ class OrdersMixin:
                 entry_px_delta_pct, size_delta_pct, exit_vs_target_pct,
                 realized_r, planned_r, hold_time_actual_ms,
                 cumulative_amendment_count, tp_drift_pct, sl_drift_pct,
+                tpsl_amended,
                 liquidation_px, close_note
             ) VALUES (
                 :account_id, :exchange_position_id, :terminal_position_id,
@@ -496,6 +502,7 @@ class OrdersMixin:
                 :entry_px_delta_pct, :size_delta_pct, :exit_vs_target_pct,
                 :realized_r, :planned_r, :hold_time_actual_ms,
                 :cumulative_amendment_count, :tp_drift_pct, :sl_drift_pct,
+                :tpsl_amended,
                 :liquidation_px, :close_note
             )
         """
@@ -1800,12 +1807,12 @@ class OrdersMixin:
         # by tpid after the DELETE (insert_closed_position's preserve-by-read
         # finds no row once the DELETE has run in this txn). (audit H1)
         async with self._conn.execute(
-            "SELECT terminal_position_id, lifecycle_id, close_note, exit_reason "
-            "FROM closed_positions WHERE account_id = ? AND symbol = ?",
+            "SELECT terminal_position_id, lifecycle_id, close_note, exit_reason, "
+            "tpsl_amended FROM closed_positions WHERE account_id = ? AND symbol = ?",
             (account_id, symbol),
         ) as cur:
             preserved_cols = {
-                r[0]: (r[1], r[2], r[3]) for r in await cur.fetchall() if r[0]
+                r[0]: (r[1], r[2], r[3], r[4]) for r in await cur.fetchall() if r[0]
             }
 
         attribution: Dict[str, List[int]] = {}
@@ -1824,7 +1831,7 @@ class OrdersMixin:
                 record["source"] = "rebuilt_from_fills"
                 keep = preserved_cols.get(record.get("terminal_position_id"))
                 if keep:
-                    lifecycle_id, close_note, exit_reason = keep
+                    lifecycle_id, close_note, exit_reason, tpsl_amended = keep
                     if lifecycle_id:
                         record["lifecycle_id"] = lifecycle_id
                     if close_note:
@@ -1833,6 +1840,10 @@ class OrdersMixin:
                     # otherwise let the rebuild's fills-derived default stand
                     if exit_reason and str(exit_reason).startswith("MANUAL"):
                         record["exit_reason"] = exit_reason
+                    # carry the persisted "amended during life" flag — the
+                    # rebuild can't re-derive it from fills (audit follow-up).
+                    if tpsl_amended:
+                        record["tpsl_amended"] = tpsl_amended
                 await self.insert_closed_position(record, commit=False)
                 inserted += 1
             for tpid, fill_ids in attribution.items():

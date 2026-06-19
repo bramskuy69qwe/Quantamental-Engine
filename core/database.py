@@ -813,6 +813,12 @@ class DatabaseManager(
             "ALTER TABLE closed_positions ADD COLUMN insurance_fund_fee REAL DEFAULT NULL",
             "ALTER TABLE closed_positions ADD COLUMN adl_indicator INTEGER DEFAULT NULL",
             "ALTER TABLE closed_positions ADD COLUMN lifecycle_id TEXT DEFAULT NULL",
+            # 2026-06-15: persist "this linked position's TP/SL was amended or
+            # removed during its life" so the Position-History Plan badge can
+            # show "amended" (matching the live badge). The live signal
+            # (pos.tpsl_amended) is ephemeral — it resets at close when the
+            # legs expire — so it's captured stickily and written here.
+            "ALTER TABLE closed_positions ADD COLUMN tpsl_amended INTEGER DEFAULT NULL",
             # ── P0.T5 spec-gap fix: fills.lifecycle_id ──────────────────
             # spec §3.5 lists fills among the lifecycle_id-carrying
             # tables ("Stamped onto: ... fills.lifecycle_id ..."), and
