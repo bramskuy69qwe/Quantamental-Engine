@@ -15,6 +15,15 @@ from core.order_enrichment import enrich_order
 
 # Within new strict matcher's default 300s window (was 24h pre-P1.T1).
 RECENT = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
+# Epoch-ms of RECENT, for an order's created_at_ms. FLAKE FIX (2026-06-20):
+# the matcher's in-window check compares order.created_at_ms against the calc
+# timestamp; an order with created_at_ms=0 falls back to LIVE now(). RECENT is
+# frozen at module import, so in a long full-suite run now()-RECENT drifts past
+# the 300s window and the only match-dependent test (test_both_children_*) fails
+# — passing solo (import≈exec) but flaking in the suite. Anchoring the order to
+# RECENT_MS makes the window check frozen + deterministic and mirrors production
+# (real adapter orders carry created_at_ms, so no now() fallback / warning).
+RECENT_MS = int(datetime.fromisoformat(RECENT).timestamp() * 1000)
 
 
 def _make_db(tmp_path, ptl_rows=None):
@@ -145,8 +154,9 @@ class TestParentReEnrichment:
         conn = sqlite3.connect(db_path)
         conn.execute(
             "INSERT INTO orders (account_id, exchange_order_id, symbol, side, "
-            "order_type, price, exchange_position_id) "
-            "VALUES (1, 'ENTRY', 'BTCUSDT', 'BUY', 'limit', 50000, 'POS1')"
+            "order_type, price, exchange_position_id, created_at_ms) "
+            "VALUES (1, 'ENTRY', 'BTCUSDT', 'BUY', 'limit', 50000, 'POS1', ?)",
+            (RECENT_MS,),
         )
         conn.execute(
             "INSERT INTO orders (account_id, exchange_order_id, symbol, side, "

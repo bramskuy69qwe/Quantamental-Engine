@@ -88,6 +88,15 @@ def _make_legacy_db(tmp_path, ptl_rows=None):
 
 # Within new strict matcher's default 300s window (was 24h pre-P1.T1).
 RECENT = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
+# Epoch-ms of RECENT, for an order's created_at_ms. FLAKE FIX (2026-06-20):
+# the matcher's in-window check compares order.created_at_ms against the calc
+# timestamp; an order with created_at_ms=0/absent falls back to LIVE now().
+# RECENT is frozen at module import, so in a long full-suite run now()-RECENT
+# drifts past the 300s window and a match-dependent test fails (passes solo,
+# flakes in the suite). Anchoring the order to RECENT_MS makes the window check
+# frozen + deterministic and mirrors production. See the twin fix in
+# tests/test_production_parity.py.
+RECENT_MS = int(datetime.fromisoformat(RECENT).timestamp() * 1000)
 
 
 class TestTpSlPopulation:
@@ -158,14 +167,18 @@ class TestCalcIdCorrelation:
         conn = sqlite3.connect(db_path)
         conn.execute(
             "INSERT INTO orders (account_id, exchange_order_id, symbol, side, order_type, "
-            "price, tp_trigger_price, sl_trigger_price, exchange_position_id) "
-            "VALUES (1, 'ORD1', 'BTCUSDT', 'BUY', 'limit', 50000, 55000, 48000, 'POS1')"
+            "price, tp_trigger_price, sl_trigger_price, exchange_position_id, created_at_ms) "
+            "VALUES (1, 'ORD1', 'BTCUSDT', 'BUY', 'limit', 50000, 55000, 48000, 'POS1', ?)",
+            (RECENT_MS,),
         )
         conn.commit()
         conn.close()
 
+        # created_at_ms anchors the matcher's in-window check to RECENT (the
+        # matcher reads it off THIS dict, not the DB row) — see RECENT_MS note.
         order = {"account_id": 1, "exchange_order_id": "ORD1", "symbol": "BTCUSDT",
-                 "side": "BUY", "order_type": "limit", "exchange_position_id": "POS1"}
+                 "side": "BUY", "order_type": "limit", "exchange_position_id": "POS1",
+                 "created_at_ms": RECENT_MS}
         asyncio.run(enrich_order(order, db_path))
 
         conn = sqlite3.connect(db_path)
