@@ -389,7 +389,9 @@ class TestEightBugReplay:
         assert len(hits) == 1
         p = hits[0]["payload"]
         assert p["planned_sl"] == 95.0 and p["live_sl"] == 0.0
-        assert p["badge_before"] == "green" and p["badge"] == "yellow"
+        # 2026-06-20 severity: a removed stop is now RED (unprotected), not
+        # yellow; the badge still transitions off green (bug #8 stays caught).
+        assert p["badge_before"] == "green" and p["badge"] == "red"
 
 
 # ── acceptance #1 gap: amend + cancel legs + an in-replay SKIPPED line ───────

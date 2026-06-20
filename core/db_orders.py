@@ -43,9 +43,10 @@ _CLOSED_POS_DELTA_COLS = (
     "cumulative_amendment_count",
     "tp_drift_pct", "sl_drift_pct",
     # 2026-06-15: sticky "this linked position's TP/SL was amended or removed
-    # during its life" (0/1/NULL). Preserved across REPLACE so an offline
-    # rebuild/backfill (which doesn't know it) carries it forward instead of
-    # wiping it (caller-wins-else-carry-forward).
+    # during its life". Severity (2026-06-20): 1 = amended (yellow), 2 = SL
+    # removed → unprotected (red), NULL = never amended. Preserved across
+    # REPLACE so an offline rebuild/backfill (which doesn't know it) carries it
+    # forward instead of wiping it (caller-wins-else-carry-forward).
     "tpsl_amended",
 )
 

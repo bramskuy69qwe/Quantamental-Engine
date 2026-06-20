@@ -138,6 +138,16 @@ class TestRouteBadge:
         rows = await _call_table(monkeypatch, db)
         assert rows[pid]["deviation_badge"] == ""
 
+    @pytest.mark.asyncio
+    async def test_linked_sl_removed_is_red(self, db, monkeypatch):
+        # 2026-06-20 severity: tpsl_amended=2 means the STOP was removed during
+        # life (unprotected — the "fatal" deviation). A linked close carrying it
+        # must read RED in history, not yellow — distinct from a benign amend (1).
+        pid = await _add_closed(db, calc_id="CALC-1", size_delta_pct=0.0,
+                                amend=0, tpsl_amended=2)
+        rows = await _call_table(monkeypatch, db)
+        assert rows[pid]["deviation_badge"] == "red"
+
 
 # ── table render: Plan column shows badge for linked, "—" for unlinked ─────────
 

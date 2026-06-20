@@ -169,12 +169,15 @@ class PositionInfo:
 def deviation_badge_level(
     *, has_calc: bool, size_delta_pct: float, amendment_count: int,
     yellow_pct: float, red_pct: float, tpsl_amended: bool = False,
+    sl_removed: bool = False,
 ) -> str:
     """P4.T3 combined live-deviation badge level (spec §10.2 + plan §4.4).
 
     Unifies the spec's semantic badge (green on-plan / yellow amended / red
     no-calc) with the plan's config thresholds:
-      - red:    no calc (UNPLANNED) OR |size_delta_pct| >= red_pct (far off plan)
+      - red:    no calc (UNPLANNED) OR |size_delta_pct| >= red_pct (far off
+                plan) OR sl_removed (a planned stop-loss was removed →
+                unprotected; 2026-06-20)
       - yellow: amended (amendment_count > 0 OR live TP/SL drifted from plan)
                 OR |size_delta_pct| >= yellow_pct
       - green:  linked, on-plan, no amendments
@@ -189,7 +192,10 @@ def deviation_badge_level(
     if not has_calc:
         return "red"
     mag = abs(size_delta_pct or 0.0)
-    if mag >= red_pct:
+    # A REMOVED stop-loss (sl_removed) leaves the position unprotected — the
+    # most dangerous deviation (2026-06-20) → red, the same tier as a
+    # far-off-plan size. A TP/SL move or a removed TP stays "amended" (yellow).
+    if mag >= red_pct or sl_removed:
         return "red"
     if amendment_count > 0 or tpsl_amended or mag >= yellow_pct:
         return "yellow"
@@ -210,16 +216,19 @@ def stamp_close_deviation_badges(rows, *, yellow_pct: float, red_pct: float):
     Position-History table route and the cockpit Recent-Closes pane."""
     for r in rows:
         if r.get("calc_id"):
+            # 2026-06-15: persisted sticky "TP/SL amended/removed during life"
+            # — closes the gap where a position amended on the observe-only
+            # Binance path (venue cancel+new, no order_amendments row →
+            # amendment_count=0) read on-plan in history. Severity (2026-06-20):
+            # 1 = amended (yellow), 2 = SL removed → unprotected (red); now
+            # history matches the live badge tier.
+            _amend_lvl = r.get("tpsl_amended") or 0
             r["deviation_badge"] = deviation_badge_level(
                 has_calc=True,
                 size_delta_pct=r.get("size_delta_pct") or 0.0,
                 amendment_count=r.get("cumulative_amendment_count") or 0,
-                # 2026-06-15: persisted sticky "TP/SL amended/removed during
-                # life" — closes the gap where a position amended on the
-                # observe-only Binance path (venue cancel+new, no
-                # order_amendments row → amendment_count=0) read on-plan in
-                # history. Now history matches the live "amended" (yellow) badge.
-                tpsl_amended=bool(r.get("tpsl_amended")),
+                tpsl_amended=bool(_amend_lvl),
+                sl_removed=(_amend_lvl == 2),
                 yellow_pct=yellow_pct, red_pct=red_pct,
             )
         else:

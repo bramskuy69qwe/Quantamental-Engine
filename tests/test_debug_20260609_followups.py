@@ -187,24 +187,31 @@ class TestTpslDriftEnrich:
         assert pos.deviation_badge == "green"
 
     @pytest.mark.asyncio
-    async def test_sl_removed_while_tp_live_is_amended(self, db, om):
-        # #1b: calc planned an SL but the open position has NO live SL while the
-        # TP is still live → the operator REMOVED the stop → off-plan/amended
-        # (the fatal "shows on-plan while unprotected" case).
+    async def test_sl_removed_while_tp_live_is_red(self, db, om):
+        # #1b + 2026-06-20 severity: calc planned an SL but the open position has
+        # NO live SL while the TP is still live → the operator REMOVED the stop →
+        # unprotected. A removed stop is the most dangerous deviation ("fatal"),
+        # so it now paints RED (was yellow) — distinct from a benign TP/SL move.
         await _seed_junction_tpsl(db, "POS-T", "C1", qty=10.0, planned_size=10.0,
                                   planned_tp=110.0, planned_sl=90.0)
         pos = _pos_tpsl(tp=110.0, sl=0.0)
         await om._enrich_positions_calc_id(ACCOUNT_ID, [pos])
         assert pos.tpsl_amended is True
-        assert pos.deviation_badge == "yellow"
+        assert pos.deviation_badge == "red"
+        # the sticky stash captures the SL-removal at severity 2 (→ red history).
+        assert om._tpsl_amended_seen.get(pos.position_id) == 2
 
     @pytest.mark.asyncio
     async def test_tp_removed_while_sl_live_is_amended(self, db, om):
+        # removing the TAKE-PROFIT (stop still live) is "amended" (yellow), NOT
+        # red — the position is still protected. Severity level 1.
         await _seed_junction_tpsl(db, "POS-T", "C1", qty=10.0, planned_size=10.0,
                                   planned_tp=110.0, planned_sl=90.0)
         pos = _pos_tpsl(tp=0.0, sl=90.0)
         await om._enrich_positions_calc_id(ACCOUNT_ID, [pos])
         assert pos.tpsl_amended is True
+        assert pos.deviation_badge == "yellow"
+        assert om._tpsl_amended_seen.get(pos.position_id) == 1
 
 
 # ── #2 — reconcile_filled_orders (truth-based) ──────────────────────────────
@@ -378,7 +385,7 @@ class TestCloseRecordingEmptyOpenTpid:
                          qty=100.0, price=0.10, order_id="O-entry2")
         await _seed_fill(db, "F-close2", is_close=True, tpid=TPID, ts=2000,
                          qty=100.0, price=0.12, order_id="O-close2")
-        om._tpsl_amended_seen[TPID] = True   # drift_check saw an amendment
+        om._tpsl_amended_seen[TPID] = 1   # drift_check saw an amendment (level 1)
         closing = {
             "exchange_fill_id": "F-close2", "exchange_order_id": "O-close2",
             "symbol": "DOGEUSDT", "direction": "LONG",
@@ -415,6 +422,32 @@ class TestCloseRecordingEmptyOpenTpid:
             (TPID,),
         ) as cur:
             assert (await cur.fetchone())[0] is None
+
+    @pytest.mark.asyncio
+    async def test_sticky_sl_removed_persists_level_2_to_close_row(self, db, om):
+        # 2026-06-20 severity: a position whose STOP was removed during life
+        # (stash level 2) must write tpsl_amended=2 onto the close row, so
+        # Position History reads RED "unprotected", not yellow "amended".
+        TPID = "binance:DOGEUSDT:LONG:4000"
+        await _seed_fill(db, "F-open4", is_close=False, tpid="", ts=1000,
+                         qty=100.0, price=0.10, order_id="O-entry4")
+        await _seed_fill(db, "F-close4", is_close=True, tpid=TPID, ts=2000,
+                         qty=100.0, price=0.12, order_id="O-close4")
+        om._tpsl_amended_seen[TPID] = 2   # drift_check saw an SL removal
+        closing = {
+            "exchange_fill_id": "F-close4", "exchange_order_id": "O-close4",
+            "symbol": "DOGEUSDT", "direction": "LONG",
+            "terminal_position_id": TPID, "is_close": 1,
+            "quantity": 100.0, "price": 0.12, "timestamp_ms": 2000,
+            "realized_pnl": 2.0, "fee": 0.0,
+        }
+        await om._build_close_row_for_fill(ACCOUNT_ID, closing, force_final=True)
+        async with db._conn.execute(
+            "SELECT tpsl_amended FROM closed_positions WHERE terminal_position_id=?",
+            (TPID,),
+        ) as cur:
+            assert (await cur.fetchone())[0] == 2
+        assert TPID not in om._tpsl_amended_seen   # pruned on final close
 
 
 # ── #5b — correlated-limit same-symbol exclusion ────────────────────────────

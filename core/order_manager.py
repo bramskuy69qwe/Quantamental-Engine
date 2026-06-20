@@ -100,7 +100,10 @@ class OrderManager:
         # deferred close-row build runs). Read by _build_close_row_for_fill and
         # persisted onto the closed_positions row so Position History shows
         # "amended" (matching the live badge). Pruned on the final close row.
-        self._tpsl_amended_seen: Dict[str, bool] = {}
+        # Value is a SEVERITY level (2026-06-20): 1 = amended/moved or TP
+        # removed (yellow), 2 = SL removed → unprotected/"fatal" (red). The
+        # MAX level seen during life sticks.
+        self._tpsl_amended_seen: Dict[str, int] = {}
 
     @property
     def open_orders(self) -> List[Dict]:
@@ -2895,21 +2898,35 @@ class OrderManager:
             # observation window self-heals on the next refresh.
             _sl_removed = bool(_p_sl and not _live_sl and _live_tp)
             _tp_removed = bool(_p_tp and not _live_tp and _live_sl)
-            tpsl_amended = bool(
-                _tp_drift or _sl_drift or _sl_removed or _tp_removed
-            )
+            # Severity (2026-06-20): a REMOVED stop-loss leaves the position
+            # unprotected — the most dangerous deviation (operator-flagged
+            # "fatal") → level 2 = RED. A TP/SL price move or a removed
+            # take-profit is "amended" → level 1 = yellow. 0 = on-plan.
+            if _sl_removed:
+                _amend_level = 2
+            elif _tp_drift or _sl_drift or _tp_removed:
+                _amend_level = 1
+            else:
+                _amend_level = 0
+            tpsl_amended = _amend_level > 0
             pos.tpsl_amended = tpsl_amended
-            # STICKY capture (#2 history-badge fix, 2026-06-15): once True for a
-            # tpid it stays set until the final close-row prunes it, so the close
+            # STICKY capture (#2 history-badge fix, 2026-06-15): once set for a
+            # tpid it stays until the final close-row prunes it, so the close
             # row reflects the amendment even though pos.tpsl_amended resets to
-            # False at close (legs gone → no drift). Only linked positions reach
-            # here (the no-calc branch above continues before this), so the stash
-            # is inherently linked-only.
-            if tpsl_amended and pos.position_id:
-                self._tpsl_amended_seen[pos.position_id] = True
+            # False at close (legs gone → no drift). The MAX severity seen
+            # sticks (a once-removed stop stays red in history even if re-added).
+            # Only linked positions reach here (the no-calc branch above
+            # continues before this), so the stash is inherently linked-only.
+            if _amend_level and pos.position_id:
+                if _amend_level > self._tpsl_amended_seen.get(pos.position_id, 0):
+                    self._tpsl_amended_seen[pos.position_id] = _amend_level
+            # LIVE badge uses the CURRENT-refresh sl_removed (reflects NOW — red
+            # while unprotected, back to yellow once a stop is re-added); the
+            # sticky stash above is the close-row's "worst during life".
             pos.deviation_badge = deviation_badge_level(
                 has_calc=True, size_delta_pct=pos.size_delta_pct,
                 amendment_count=pos.amendment_count, tpsl_amended=tpsl_amended,
+                sl_removed=_sl_removed,
                 yellow_pct=yellow_pct, red_pct=red_pct,
             )
 
@@ -3386,11 +3403,12 @@ class OrderManager:
                 "calc_id":              close_calc_id,
                 "lifecycle_id":         close_lifecycle_id,
                 "cumulative_amendment_count": cumulative_amendment_count,
-                # 2026-06-15: sticky "TP/SL amended/removed during life" (1/None)
-                # for the Position-History Plan badge. Only linked positions
-                # enter the stash (drift_check's TP/SL compare runs only with a
-                # calc), so this is inherently linked-only; None = never amended.
-                "tpsl_amended": (1 if self._tpsl_amended_seen.get(pos_id) else None),
+                # 2026-06-15: sticky "TP/SL amended/removed during life" for the
+                # Position-History Plan badge. Severity (2026-06-20): 1 = amended
+                # (yellow), 2 = SL removed → unprotected (red), None = never
+                # amended. Only linked positions enter the stash (drift_check's
+                # TP/SL compare runs only with a calc), so this is linked-only.
+                "tpsl_amended": (self._tpsl_amended_seen.get(pos_id) or None),
                 # P6.T7: realized liquidation execution price on a forced-liq
                 # close (NULL otherwise; = the liquidation-fill VWAP, computed
                 # above). bankruptcy_px / insurance_fund_fee / adl_indicator stay

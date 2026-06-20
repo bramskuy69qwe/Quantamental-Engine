@@ -1561,7 +1561,8 @@ class TestEnrichAndDrift:
 
     def test_stamped_then_sl_removal_badge_transition(self, tmp_path):
         """Historical bug #h on one line: planned_sl present, live_sl=0,
-        sl_removed flag + badge green→yellow — then gated silence."""
+        sl_removed flag + badge green→red (a removed stop = unprotected = red
+        since 2026-06-20) — then gated silence."""
         async def main():
             db = await _mk_db(tmp_path)
             try:
@@ -1607,14 +1608,16 @@ class TestEnrichAndDrift:
         p2 = d2[0]["payload"]
         assert p2["planned_sl"] == 95.0 and p2["live_sl"] == 0.0
         assert p2["sl_removed"] is True
-        assert p2["badge_before"] == "green" and p2["badge"] == "yellow"
-        assert pos.deviation_badge == "yellow"
+        # 2026-06-20 severity: a removed stop is now RED (unprotected), not
+        # yellow — the badge still transitions OFF green (bug #h stays caught).
+        assert p2["badge_before"] == "green" and p2["badge"] == "red"
+        assert pos.deviation_badge == "red"
         # audit T3bC-3c: the badge change also re-emits the enrich STAMPED
         # line (badge is in the enrich sig)
         en2 = _by_cat(second, "attr_enrich")
         assert len(en2) == 1
         assert en2[0]["payload"]["outcome"] == "STAMPED"
-        assert en2[0]["payload"]["badge"] == "yellow"
+        assert en2[0]["payload"]["badge"] == "red"
         # unchanged state → gated silence
         assert _by_cat(third, "attr_drift_check") == []
         assert _by_cat(third, "attr_enrich") == []
