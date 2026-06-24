@@ -403,6 +403,26 @@ async def _try_correlate(order: Dict[str, Any], db_path: str) -> None:
                 except Exception:
                     log.debug("matcher amendment backfill skipped for %s", eid,
                               exc_info=True)
+                # Same discipline for this order's FILLS (2026-06-24): on the
+                # observe-only path the entry fill is enriched BEFORE the matcher
+                # links the order, so the fill-time _propagate_calc_id_to_fill
+                # no-ops (the order had no calc_id yet) and the fill is never
+                # re-stamped — leaving every linked position's ENTRY fill without
+                # calc_id (exec-link drawer blank, /context/calc fills list
+                # incomplete). Backfill here the moment the order links, keyed by
+                # exchange_order_id. WHERE calc_id IS NULL/'' is idempotent.
+                # (lifecycle_id is assigned at position formation and may not be
+                # set yet here; the close-time open-fill backfill stamps it.)
+                try:
+                    conn.execute(
+                        "UPDATE fills SET calc_id = ? "
+                        "WHERE account_id = ? AND exchange_order_id = ? "
+                        "  AND COALESCE(calc_id, '') = ''",
+                        (result.calc_id, aid, eid),
+                    )
+                except Exception:
+                    log.debug("matcher fill calc_id backfill skipped for %s", eid,
+                              exc_info=True)
             else:
                 conn.execute(
                     "UPDATE orders SET link_status = ? "

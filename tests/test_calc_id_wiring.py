@@ -252,6 +252,45 @@ class TestFillCalcIdPropagation:
         conn.close()
         assert row[0] is None
 
+    def test_link_backfills_entry_fill_calc_id(self, tmp_path):
+        # 2026-06-24 link-timing race fix: on the observe-only path the entry
+        # fill is recorded BEFORE the matcher links the order, so enrich_fill's
+        # propagation no-ops (order had no calc_id yet). When enrich_ORDER later
+        # links the order it MUST backfill the order's fills' calc_id — else the
+        # entry fill of every linked position stays NULL (exec-link drawer blank,
+        # /context/calc fills list incomplete).
+        db_path = _make_legacy_db(tmp_path, ptl_rows=[{
+            "timestamp": RECENT, "ticker": "BTCUSDT", "side": "BUY",
+            "effective_entry": 50000.0, "tp_price": 55000.0, "sl_price": 48000.0,
+            "calc_id": "calc-RACE",
+        }])
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            "INSERT INTO orders (account_id, exchange_order_id, symbol, side, order_type, "
+            "price, tp_trigger_price, sl_trigger_price, exchange_position_id, created_at_ms) "
+            "VALUES (1, 'ORD-R', 'BTCUSDT', 'BUY', 'limit', 50000, 55000, 48000, 'POSR', ?)",
+            (RECENT_MS,),
+        )
+        # entry fill recorded FIRST, while the order is still unlinked (calc NULL)
+        conn.execute(
+            "INSERT INTO fills (account_id, exchange_fill_id, exchange_order_id, symbol, side) "
+            "VALUES (1, 'FILL-R', 'ORD-R', 'BTCUSDT', 'BUY')"
+        )
+        conn.commit()
+        conn.close()
+
+        order = {"account_id": 1, "exchange_order_id": "ORD-R", "symbol": "BTCUSDT",
+                 "side": "BUY", "order_type": "limit", "exchange_position_id": "POSR",
+                 "created_at_ms": RECENT_MS}
+        asyncio.run(enrich_order(order, db_path))
+
+        conn = sqlite3.connect(db_path)
+        o = conn.execute("SELECT calc_id FROM orders WHERE exchange_order_id='ORD-R'").fetchone()
+        f = conn.execute("SELECT calc_id FROM fills WHERE exchange_fill_id='FILL-R'").fetchone()
+        conn.close()
+        assert o[0] == "calc-RACE"   # order linked
+        assert f[0] == "calc-RACE"   # entry fill backfilled at link time (the fix)
+
     def test_canceled_entry_still_correlates(self, tmp_path):
         """Canceled entries should still get calc_id for attribution."""
         db_path = _make_legacy_db(tmp_path, ptl_rows=[{

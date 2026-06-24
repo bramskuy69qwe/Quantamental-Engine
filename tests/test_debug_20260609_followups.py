@@ -336,6 +336,38 @@ async def _seed_fill(db, fid, *, is_close, tpid, ts, qty, price,
 
 class TestCloseRecordingEmptyOpenTpid:
     @pytest.mark.asyncio
+    async def test_backfill_open_fill_attributes_calc_and_lifecycle(self, db, om):
+        # 2026-06-24 link-timing race fix: the entry fill is recorded BEFORE the
+        # matcher links the order, so every fill-time attribution path no-ops on
+        # calc_id=NULL and is never re-run -> the entry fill of a linked position
+        # has neither calc_id nor lifecycle_id (the CLOSE fill gets both). At
+        # close, _backfill_open_fill_tpids must attribute the open fills from the
+        # position's primary calc -- else the exec-link drawer + /context/calc
+        # fills list miss the entry fill. Idempotent (COALESCE/NULLIF).
+        TPID = "binance:DOGEUSDT:LONG:5000"
+        await db._conn.execute(
+            "INSERT INTO positions_calcs (position_id, calc_id, order_id, account_id, "
+            " contributed_qty, first_fill_ts, last_fill_ts, planned_size, planned_tp, "
+            " planned_sl, lifecycle_id) "
+            "VALUES (?, 'CALC-X', 1, ?, 100.0, 1000, 1000, 100.0, 0.12, 0.09, 'LC-X')",
+            (TPID, ACCOUNT_ID),
+        )
+        await db._conn.commit()
+        # entry fill recorded unlinked: no tpid, no calc_id, no lifecycle_id
+        await _seed_fill(db, "F-openX", is_close=False, tpid="", ts=1000,
+                         qty=100.0, price=0.10, order_id="O-entryX")
+        opens = [{"exchange_fill_id": "F-openX", "terminal_position_id": ""}]
+        await om._backfill_open_fill_tpids(ACCOUNT_ID, opens, TPID)
+        async with db._conn.execute(
+            "SELECT terminal_position_id, calc_id, lifecycle_id FROM fills "
+            "WHERE exchange_fill_id='F-openX'"
+        ) as cur:
+            row = await cur.fetchone()
+        assert row[0] == TPID        # tpid backfilled (existing behavior)
+        assert row[1] == "CALC-X"    # calc_id backfilled (the race fix)
+        assert row[2] == "LC-X"      # lifecycle_id backfilled (the race fix)
+
+    @pytest.mark.asyncio
     async def test_close_row_built_and_opens_backfilled(self, db, om):
         TPID = "binance:DOGEUSDT:LONG:1000"
         # OPENING fill: empty tpid (observe-only path writes it before mint).

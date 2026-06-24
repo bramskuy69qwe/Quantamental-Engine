@@ -2999,13 +2999,34 @@ class OrderManager:
         the tpid-keyed open lookup AND the per-position fills/events drilldown
         miss them. Best-effort, keyed by exchange_fill_id, only where currently
         empty (idempotent; never reattributes an already-stamped fill). Mirrors
-        the lifecycle_id back-fill in _link_position_calc_on_open."""
+        the lifecycle_id back-fill in _link_position_calc_on_open.
+
+        2026-06-24: ALSO stamps calc_id + lifecycle_id on the open fills, from
+        the position's primary calc. Close-build BACKSTOP for the link-timing
+        race (the link-time fill backfill in order_enrichment.py is the primary
+        fix; this runs only on the strict-lookup-miss + walk path and ALSO
+        covers lifecycle_id, which link-time can't): the entry fill is enriched
+        BEFORE the matcher links the order, so every fill-time attribution path
+        (_propagate_calc_id_to_fill, _link_position_calc_on_open) no-ops on
+        calc_id=NULL and is never re-run — leaving the ENTRY fill of a linked
+        position without calc_id/lifecycle even though the CLOSE fill has both
+        (exec-link drawer blank, /context/calc fills list incomplete). By close
+        the junction is authoritative, so this gives the open fills parity.
+        Idempotent (COALESCE/NULLIF — only fills a currently-empty column)."""
         fids = [
             f.get("exchange_fill_id") for f in opens
             if f.get("exchange_fill_id")
             and not (f.get("terminal_position_id") or "")
         ]
-        if not fids:
+        all_open_fids = [
+            f.get("exchange_fill_id") for f in opens if f.get("exchange_fill_id")
+        ]
+        primary_calc_id = lifecycle_id = None
+        if all_open_fids:
+            primary_calc_id, lifecycle_id = await self._position_primary_calc(
+                account_id, pos_id,
+            )
+        if not fids and not (primary_calc_id or lifecycle_id):
             return 0
         try:
             for fid in fids:
@@ -3015,10 +3036,20 @@ class OrderManager:
                     "  AND COALESCE(terminal_position_id, '') = ''",
                     (pos_id, account_id, fid),
                 )
+            if primary_calc_id or lifecycle_id:
+                for fid in all_open_fids:
+                    await self._db._conn.execute(
+                        "UPDATE fills SET "
+                        "  calc_id = COALESCE(NULLIF(calc_id, ''), ?), "
+                        "  lifecycle_id = COALESCE(NULLIF(lifecycle_id, ''), ?) "
+                        "WHERE account_id = ? AND exchange_fill_id = ?",
+                        (primary_calc_id or None, lifecycle_id or None,
+                         account_id, fid),
+                    )
             await self._db._conn.commit()
             return len(fids)
         except Exception:
-            log.debug("open-fill tpid backfill failed", exc_info=True)
+            log.debug("open-fill tpid/attribution backfill failed", exc_info=True)
             return 0
 
     async def _build_close_row_for_fill(
