@@ -60,7 +60,7 @@
           <td class="{{ 'pos-long' if r.direction == 'LONG' else 'pos-short' }}">{{ r.direction }}</td>
           {# #2: Plan badge — rendered only for calc-linked rows (deviation_badge
              is "" for unlinked/legacy, which the macro skips → show a "—"). #}
-          <td>{% if r.calc_id %}{{ deviation_badge(r.deviation_badge, r.size_delta_pct, r.cumulative_amendment_count) }}{% else %}<span class="td-sub">—</span>{% endif %}</td>
+          <td>{% if r.calc_id %}{{ deviation_badge(r.deviation_badge, r.size_delta_pct, r.cumulative_amendment_count, r.tpsl_amended) }}{% else %}<span class="td-sub">—</span>{% endif %}</td>
           <td>{{ fmt(r.quantity, 4) }}</td>
           <td>{{ fmt(r.entry_price, 6) }}</td>
           <td>{{ fmt(r.exit_price, 6) }}</td>

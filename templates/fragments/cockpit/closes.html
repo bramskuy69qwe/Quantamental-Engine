@@ -19,7 +19,7 @@
       <td class="{{ 'pos-long' if r.direction == 'LONG' else 'pos-short' }}">{{ r.direction }}</td>
       {# #2 (debug 2026-06-08): calc-linkage badge — on-plan/amended/off-plan for
          linked closes, "—" for unlinked/legacy (deviation_badge is "" → skipped). #}
-      <td>{% if r.calc_id %}{{ deviation_badge(r.deviation_badge, r.size_delta_pct, r.cumulative_amendment_count) }}{% else %}<span class="td-sub">—</span>{% endif %}</td>
+      <td>{% if r.calc_id %}{{ deviation_badge(r.deviation_badge, r.size_delta_pct, r.cumulative_amendment_count, r.tpsl_amended) }}{% else %}<span class="td-sub">—</span>{% endif %}</td>
       <td class="td-bold {{ 'text-green' if (r.net_pnl or 0) > 0 else 'text-red' if (r.net_pnl or 0) < 0 else '' }}"
           style="text-align:right;">{{ fmt(r.net_pnl or 0, 2) }}</td>
       <td class="td-sub" style="font-size:.6rem;">{{ r.exit_reason or '—' }}</td>

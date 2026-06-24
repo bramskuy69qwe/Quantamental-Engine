@@ -172,6 +172,7 @@ def _row(**kw):
         "sl_price": 0.0, "mfe": 0.0, "mae": 0.0, "backfill_completed": 0,
         "close_note": "", "calc_id": None, "deviation_badge": "",
         "size_delta_pct": 0.0, "cumulative_amendment_count": 0,
+        "tpsl_amended": None,
     }
     r.update(kw)
     return r
@@ -193,6 +194,28 @@ class TestTableRender:
     def test_plan_header_present(self):
         html = _render_table([_row()])
         assert ">Plan<" in html
+
+    def test_amended_label_when_tpsl_amended(self):
+        # 2026-06-24 frontend fix: the closed-row table must forward
+        # tpsl_amended to the badge macro so a venue TP/SL amendment (yellow,
+        # on-size, 0 ledger amendments) reads "amended" — NOT "off-size". This
+        # is the operator's "history should say amended"; before the fix the
+        # macro defaulted tpsl_amended=false and labelled it "off-size".
+        html = _render_table([_row(calc_id="CALC-1", deviation_badge="yellow",
+                                   size_delta_pct=-1.0, cumulative_amendment_count=0,
+                                   tpsl_amended=1)])
+        assert ">amended<" in html
+        assert "TP/SL amended" in html        # tooltip detail
+        assert ">off-size<" not in html
+
+    def test_off_size_label_when_size_only(self):
+        # contrast: yellow purely from a size delta (no amendment) stays
+        # "off-size" — the tpsl_amended wiring must not over-label.
+        html = _render_table([_row(calc_id="CALC-1", deviation_badge="yellow",
+                                   size_delta_pct=7.0, cumulative_amendment_count=0,
+                                   tpsl_amended=None)])
+        assert ">off-size<" in html
+        assert "TP/SL amended" not in html
 
 
 # ── drawer render: surfaces the linked calc id(s) ─────────────────────────────
@@ -263,3 +286,10 @@ class TestCockpitRecentCloses:
     def test_render_unlinked_shows_dash(self):
         html = _render_cockpit_closes([_row(calc_id=None, deviation_badge="")])
         assert "on-plan" not in html and "—" in html
+
+    def test_render_amended_label(self):
+        # cockpit Recent-Closes shares the badge macro; it must also forward
+        # tpsl_amended so a venue TP/SL amendment reads "amended" (2026-06-24).
+        html = _render_cockpit_closes([_row(calc_id="CALC-1", deviation_badge="yellow",
+                                            size_delta_pct=-1.0, tpsl_amended=1)])
+        assert ">amended<" in html and "TP/SL amended" in html
