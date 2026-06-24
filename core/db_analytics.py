@@ -135,12 +135,28 @@ class AnalyticsMixin:
         ) as cur:
             row = await cur.fetchone()
             final = float(row[0]) if row else 0.0
+        # Maximum drawdown = largest peak-to-trough decline of the period's
+        # equity curve (a PERFORMANCE metric). 2026-06-24: this previously read
+        # MAX(account_snapshots.drawdown), but that column is the rolling-window
+        # dd-GATE measure (≈0 whenever equity sits at its rolling-window high),
+        # so the analytics showed 0% even when the account was well below its
+        # period peak. Compute peak-to-trough directly off the equity curve.
         async with self._conn.execute(
-            "SELECT MAX(drawdown) FROM account_snapshots WHERE account_id=? AND snapshot_ts >= ? AND snapshot_ts <= ?",
+            "SELECT total_equity FROM account_snapshots "
+            "WHERE account_id=? AND snapshot_ts >= ? AND snapshot_ts <= ? "
+            "ORDER BY snapshot_ts ASC",
             (account_id, from_iso, to_iso),
         ) as cur:
-            row = await cur.fetchone()
-            max_dd = float(row[0]) if row and row[0] is not None else 0.0
+            curve = [float(r[0]) for r in await cur.fetchall() if r[0] is not None]
+        max_dd = 0.0
+        peak = 0.0
+        for eq in curve:
+            if eq > peak:
+                peak = eq
+            if peak > 0:
+                dd = (peak - eq) / peak
+                if dd > max_dd:
+                    max_dd = dd
         return {"initial_equity": initial, "final_equity": final, "max_drawdown": max_dd}
 
     async def get_traded_pairs_stats(self, from_ms: int, to_ms: int, account_id: int = 1) -> List[Dict[str, Any]]:
@@ -214,6 +230,22 @@ class AnalyticsMixin:
         ) as cur:
             for row in await cur.fetchall():
                 r_values.append(float(row[0]))
+        # 2026-06-24: trade_history is the MANUAL-journal table (empty for
+        # observe-only/live traders), so the query above yields nothing and the
+        # R-multiple metrics (profit factor / expectancy) render "—". The LIVE
+        # source is closed_positions.realized_r — populated for calc-linked
+        # closes (an R-multiple needs a planned risk, which only linked
+        # positions carry). Pull it as the live source.
+        async with self._conn.execute(
+            """
+            SELECT realized_r FROM closed_positions
+            WHERE account_id = ? AND exit_time_ms >= ? AND exit_time_ms <= ?
+              AND realized_r IS NOT NULL AND realized_r != 0
+            """,
+            (account_id, from_ms, to_ms),
+        ) as cur:
+            for row in await cur.fetchall():
+                r_values.append(float(row[0]))
         if len(r_values) < 5:
             async with self._conn.execute(
                 """
@@ -272,6 +304,23 @@ class AnalyticsMixin:
         for k in row:
             if row[k] is None:
                 row[k] = 0.0
+        # 2026-06-24: cumulative PnL %. The template previously divided by
+        # (total_deposits − total_withdrawals), but on the observe-only path
+        # transfers aren't captured (both 0) → div-by-zero → a stuck 0.00%.
+        # Use net deposits when available, else fall back to the earliest
+        # snapshot equity (the starting-capital proxy).
+        base = row["total_deposits"] - row["total_withdrawals"]
+        if base <= 0:
+            async with self._conn.execute(
+                "SELECT total_equity FROM account_snapshots "
+                "WHERE account_id=? ORDER BY snapshot_ts ASC LIMIT 1",
+                (account_id,),
+            ) as c2:
+                br = await c2.fetchone()
+                base = float(br[0]) if br and br[0] else 0.0
+        row["total_pnl_percent"] = (
+            round(row["total_pnl"] / base * 100, 2) if base > 0 else 0.0
+        )
         return row
 
     async def get_equity_ohlc(self, tf_minutes: int = 60, limit: int = 100, account_id: int = 1) -> List[Dict[str, Any]]:

@@ -112,9 +112,11 @@
           ${{ fmt(cumulative.total_pnl) }}
         </span>
       </div>
-      {% set cum_capital = cumulative.total_deposits - cumulative.total_withdrawals %}
-      {% set cum_pct = (cumulative.total_pnl / cum_capital * 100) if cum_capital > 0 else 0 %}
-      <div style="display:flex;flex-direction:column;gap:2px;">
+      {# 2026-06-24: use the backend-computed cumulative % (get_cumulative_pnl),
+         which falls back to starting-capital when transfers aren't captured —
+         the old inline divided by (deposits − withdrawals) = 0 → a stuck 0.00%. #}
+      {% set cum_pct = cumulative.total_pnl_percent | default(0) %}
+      <div style="display:flex;flex-direction:column;gap:2px;" title="Cumulative realized PnL as a % of INITIAL capital (return on starting equity), not a time-weighted return.">
         <span class="lbl">Cumulative PnL %</span>
         <span class="mono" style="font-size:.82rem;{% if cum_pct >= 0 %}color:var(--green){% else %}color:var(--red){% endif %};">
           {{ fmt(cum_pct, 2) }}%
@@ -146,7 +148,18 @@
       {{ ratio_card("Sharpe",        ratios.sharpe,      "Annualised Sharpe ratio from daily equity returns") }}
       {{ ratio_card("Sharpe (MFE)",  ratios.sharpe_mfe,  "Sharpe computed on MFE/notional per trade") }}
       {{ ratio_card("Sortino",       ratios.sortino,     "Annualised Sortino ratio — only penalises downside") }}
-      {{ ratio_card("Sortino (MAE)", ratios.sortino_mae, "Sortino computed on MAE/notional per trade") }}
+      {# Sortino (MAE) is inherently NEGATIVE (MAE = adverse excursion; closer
+         to 0 = tighter/better). The positive-biased ratio_card hid every
+         val<=0 as "—", so this metric never showed. Render it directly; "—"
+         only when exactly 0 (no data). 2026-06-24 #}
+      <div style="display:flex;flex-direction:column;gap:2px;" title="Sortino computed on MAE/notional per trade (negative by design; closer to 0 = better)">
+        <span class="lbl">Sortino (MAE)</span>
+        {% if (ratios.sortino_mae | float) == 0 %}
+          <span class="mono" style="font-size:.82rem;color:var(--muted);">—</span>
+        {% else %}
+          <span class="mono" style="font-size:.82rem;color:var(--amber);">{{ fmt(ratios.sortino_mae, 2) }}</span>
+        {% endif %}
+      </div>
 
       {% set pf = ratios.profit_factor %}
       <div style="display:flex;flex-direction:column;gap:2px;" title="Gross profit / |Gross loss|">
