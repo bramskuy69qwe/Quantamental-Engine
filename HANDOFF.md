@@ -1,13 +1,31 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-06-14
-**Branch**: **`v2.5/correlation-log`** @ `3309b15` — **PUSHED** (origin up to date, 0 unpushed; the whole 19-commit program is on origin on top of `b9e371e`). Working tree CLEAN.
-**Tests**: full suite **3840 passed / 7 skipped / 2 deselected** (the 2 deselected = the `perf` gate, run deliberately with `-m perf` — green at 34s). Run SOLO (see gotchas). Only pre-existing noise: the aiosqlite `Event loop is closed` teardown warning.
-**Engine**: STOPPED. Start: `.venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000`. Observe-only — force-kill safe. Operator trades **Binance-direct, HEDGE mode**. ⚠ **The correlation log has NEVER been run live** (built + audited + disabled-parity-proven in tests only — HA-6/HA-7); THIS session's job is to start it and dogfood it.
+**Date**: 2026-06-25
+**Branch**: **`v2.5/usertrades-backfill-fix`** (forked off the pushed `v2.5/correlation-log` work) — **3 commits UNPUSHED** vs origin: `9838ca7` (history "amended" label), `90a9da4` (entry-fill calc_id/lifecycle attribution), `17976af` (analytics metrics). The 7 earlier commits (SPCX userTrades fix → engine auto-recovery → synth_legacy_open regression fix → Calc-Clear sub-drop → amended-history column → SL-removal-RED → matcher-flake fix) are PUSHED. Working tree otherwise CLEAN (the v2.6/v2.7/v3.0 design docs are committed alongside this HANDOFF update).
+**Tests**: full suite **3890 passed / 7 skipped / 2 deselected** — **deterministically green** (the long-standing `test_production_parity`/`test_calc_id_wiring` matcher-window flake was FIXED in `1fe4178`: module-frozen `RECENT` vs the matcher's live `now()` fallback → anchor `created_at_ms=RECENT_MS`). Run SOLO (concurrent pytest contends → timeout artifacts). `perf` gate excluded by default (`-m perf`).
+**Engine**: **RUNNING** — restarted by me 2026-06-25, `.venv` python, **no `--reload`**, clock-synced. Observe-only, **Binance-direct HEDGE mode**, force-kill safe. Offline gap set is `[]` (restart-safe — startup recovery is a no-op). ⚠ The engine relies on a **SYNCED OS clock** (no ccxt `adjustForTimeDifference`) — a drifted clock → `-1021 Timestamp ahead` on every Binance REST call → breaks the user-data-stream listenKey (no fills observed). `w32tm /resync` before starting; confirm a `ws_connected stream=user` envelope.
 
-## ▶ NEXT SESSION = LIVE CORRELATION-LOG DEBUGGING SESSION
+## ▶ STATUS 2026-06-24/25 — live dogfood + debug session (DONE)
 
-The correlation-log program (Phases 0–5, 12 tasks) is **COMPLETE + AUDITED + PUSHED**. The build phase is over. **Now USE it**: start the engine, let it emit live envelopes on the real Binance WS, and debug the live calc-linkage attribution (the whack-a-mole paused 2026-06-09) with the new observability spine — while live-verifying the log itself (HA-6/HA-7).
+The corr-log dogfood (HA-6/HA-7) is **VERIFIED live**; the session then fixed a series of calc-linkage + analytics bugs on the running engine. Every fix: targeted tests + an independent-agent (or multi-agent workflow) audit + full-suite gate + live UI verify. Full detail + the parked items live in the **[[project_spcx_offline_backfill_bug]]** memory.
+
+**Fixed on this branch:**
+- **SPCX offline-history corruption** — rebuilt from Binance userTrades (`fromId` paginator); live-remediated to 70 correct positions; gap set converged to `[]`. (`b579db6`/`f80636a`/`0ce2120`, PUSHED.)
+- **Calc-linkage**: entry-fill `calc_id`/`lifecycle_id` attribution — a link-timing race (the entry fill is enriched BEFORE the matcher links the order) left every linked position's ENTRY fill unattributed (exec-link drawer "—", `/context/calc` missing the entry fill); fixed at link-time (`order_enrichment`) + a close-time backstop (`_backfill_open_fill_tpids`) + a one-time backfill script (`90a9da4`). Position-History **"amended" label** (`9838ca7`, on the `43c2c09` backend column). **SL-removal = RED** severity (`32df20e`). Matcher / junction / exec-link all verified HEALTHY.
+- **Analytics metrics** (`17976af`): Max Drawdown (read the rolling dd-GATE column → 0%; now period peak-to-trough off the equity curve), Cumulative PnL % (div-by-0 on uncaptured deposits → 0%; now initial-equity base + clarifying tooltip), Profit Factor/Expectancy (empty manual `trade_history` journal → "—"; now `closed_positions.realized_r`), Sortino(MAE) (positive-biased `ratio_card` hid the inherently-negative metric → "—"; now rendered inline).
+- **Calculator**: verified mathematically sound (`risk_usdt × atr_c / sl_pct` → size, `× regime_mult`, lot-snapped). NOTE: `atr_c ≤ 1`, so realized risk = `atr_c × the displayed 1%` (volatility-defensive — never over-risks; volatile symbols risk notably less).
+
+## ▶ OPEN / NEXT
+- **Push** the 3 unpushed commits when ready.
+- **PARKED — historical residue, operator-deferred, NOT live bugs** (the live code prevents recurrence): SPCX 80 ungrouped fills (cosmetic drill-down gap; P&L correct); 2 historical `positions_calcs` junction gaps (VELVET/ETH, pre-"Defect-8" `_ensure_junction_if_linked`); ~106 ungrouped fills total (pre-`_backfill_open_fill_tpids` residue). Details + backfill approaches in the memory.
+- **PLANNED in separate Claude sessions** (design docs committed alongside this update): `docs/design/v2.6_remove_quantower_plugin_plan.md` (remove the Quantower plugin → Binance-direct only; the `platform_bridge` / `_user_data_loop` plugin gate then becomes dead code), `v2.7_model_library_plan.md`, `v3.0_models_tab_design_prompt.md`.
+- **Deferred lever (gated)**: deterministic linkage via engine-placed `clientOrderId` tagging — the fuzzy 6/6 matcher exists *because* Quantower placement can't tag; reachable once the engine becomes the order-entry point.
+
+---
+
+### Historical playbook — corr-log dogfood (build COMPLETE; steps below were used 2026-06-24, kept for the `corr_tail.py` recipes)
+
+The correlation-log program (Phases 0–5, 12 tasks) is **COMPLETE + AUDITED + PUSHED**.
 
 **Playbook (operator drives trades; ask before probes that touch their stream):**
 
