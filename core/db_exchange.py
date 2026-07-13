@@ -71,6 +71,20 @@ class ExchangeMixin:
                 pass
             raise
 
+    async def get_last_income_time(self, account_id: int = 1) -> Optional[int]:
+        """MAX(time) across this account's exchange_history rows — the anchor for
+        a window-aware income fetch. Binance's income endpoint returns at most
+        ~7 days from a given startTime, so after an offline gap > 7 days the
+        no-startTime fetch silently drops the older trades; anchoring at the last
+        captured row lets the fetch page forward across the whole gap. Returns
+        None on a fresh (empty) exchange_history."""
+        async with self._conn.execute(
+            "SELECT MAX(time) FROM exchange_history WHERE account_id=?",
+            (account_id,),
+        ) as cur:
+            r = await cur.fetchone()
+            return int(r[0]) if r and r[0] else None
+
     async def update_exchange_mfe_mae(self, trade_key: str, mfe: float, mae: float) -> None:
         """Write accurate MFE/MAE for a closed trade (reconciler only)."""
         await self._conn.execute(

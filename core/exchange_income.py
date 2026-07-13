@@ -253,7 +253,78 @@ async def fetch_user_trades(symbol: str, limit: int = 500) -> List[Dict]:
         return []
 
 
-async def fetch_exchange_trade_history(limit: int = 200) -> None:
+# ── Window-aware income paging (2026-07-10) ──────────────────────────────────
+# Binance's income endpoint returns at most ~7 days from a given startTime (and
+# at most `limit` rows). A single no-startTime fetch therefore silently drops
+# every trade older than 7 days after an offline gap — gap detection then never
+# sees those symbols and their trades never reach closed_positions / Position
+# History (the 2026-07-10 PUNDIX/TAC/IN miss). The fetch below anchors at the
+# last captured income row and pages FORWARD in <=7-day windows to now.
+_INCOME_WINDOW_MS = 7 * MS_PER_DAY            # Binance income window per request
+_INCOME_PAGE_LIMIT = 1000                     # Binance income max rows / request
+_INCOME_ANCHOR_OVERLAP_MS = 60 * 60 * 1000    # re-fetch the last hour (dedup-safe)
+_INCOME_MAX_PAGES = 200                       # safety backstop (~3.8y of empty steps)
+
+
+async def _fetch_income_windowed(
+    income_type: str, start_ms: int, now_ms: int,
+) -> List[Dict]:
+    """Page ``fetch_income_history`` forward from ``start_ms`` to ``now_ms`` to
+    cover offline gaps longer than Binance's ~7-day income window.
+
+    Advance rule (the burst case matters — e.g. 800+ REALIZED_PNL events in one
+    day exceeds the 1000-row page): on a FULL page (>= limit rows) the window may
+    hold more rows past the limit, so continue from ``max_time + 1``; on a SHORT
+    page the window is fully returned, so skip a full 7-day window; on an EMPTY
+    (quiet) window, step a full 7 days. De-duplicated by
+    (symbol, type, time, tradeId); the DB upsert also dedups on ``trade_key``.
+    """
+    rows: List[Dict] = []
+    seen: set = set()
+    cursor = int(start_ms)
+    for _ in range(_INCOME_MAX_PAGES):
+        if cursor >= now_ms:
+            break
+        batch = await fetch_income_history(
+            income_type=income_type, start_ms=cursor, limit=_INCOME_PAGE_LIMIT,
+        )
+        if not batch:
+            cursor += _INCOME_WINDOW_MS           # quiet window — probe the next
+            continue
+        max_t = cursor
+        for r in batch:
+            t = int(r.get("time", 0) or 0)
+            if t > max_t:
+                max_t = t
+            key = (r.get("symbol"), r.get("incomeType"), t, r.get("tradeId"))
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(r)
+        if len(batch) >= _INCOME_PAGE_LIMIT:
+            # FULL page — the 7-day window holds more rows than the 1000-row
+            # limit. Re-fetch from max_t (NOT max_t+1) so a same-millisecond
+            # group straddling the row-limit boundary isn't dropped: a heavy
+            # scalp day can put >1000 income rows in one 7-day window (IN alone
+            # did 841 in a day), and advancing past max_t would skip any rows at
+            # exactly max_t beyond the limit. The seen-set dedups the re-fetched
+            # rows. The guard keeps progress if a page were somehow all one ms.
+            cursor = max_t if max_t > cursor else cursor + 1
+        else:
+            cursor += _INCOME_WINDOW_MS           # window fully returned
+    else:
+        # MAX_PAGES exhausted without reaching now — surface it (parity with
+        # fetch_all_user_trades) rather than silently returning partial income.
+        if cursor < now_ms:
+            log.warning(
+                "_fetch_income_windowed(%s): hit MAX_PAGES=%d at cursor=%d "
+                "(< now=%d) — income may be incomplete",
+                income_type, _INCOME_MAX_PAGES, cursor, now_ms,
+            )
+    return rows
+
+
+async def fetch_exchange_trade_history(limit: int = 200, since_ms: Optional[int] = None) -> None:
     """
     Fetch recent realized-PnL income entries from Binance, then augment each
     row with direction, exit_price, entry_price (computed), and fee (from
@@ -261,6 +332,15 @@ async def fetch_exchange_trade_history(limit: int = 200) -> None:
 
     Fallback path only — when the Quantower plugin is connected, exchange_history
     is populated by the plugin's historical_fill events instead.
+
+    ``since_ms`` (2026-07-10): explicit fetch-window floor. Normally the window
+    is anchored at the last captured income row (get_last_income_time), which is
+    forward-only — it CANNOT reach income the old 7-day fetch already stranded
+    behind a newer trade of another symbol (e.g. an offline gap where a later
+    symbol was captured first). Pass ``since_ms`` for a one-time WIDE backfill
+    that re-ingests that stranded income into exchange_history (so the income
+    ledger + analytics reflect it). Upsert dedups on trade_key, so re-ingesting
+    is safe.
     """
     try:
         from core.platform_bridge import platform_bridge  # late import: circular dep
@@ -274,11 +354,23 @@ async def fetch_exchange_trade_history(limit: int = 200) -> None:
         pass
 
     try:
+        # Window-aware anchor (2026-07-10): cover any offline gap since the last
+        # captured income row, not just Binance's default ~7-day window. On a
+        # steady periodic run the anchor is ~now -> a single page; on a restart
+        # after a long offline gap it pages across the whole gap so the older
+        # trades reach exchange_history -> gap detection -> userTrades recovery.
+        now_ms = int(time.time() * 1000)
+        if since_ms is not None:
+            _start_ms = int(since_ms)             # explicit one-time wide backfill
+        else:
+            _anchor = await db.get_last_income_time(account_id=app_state.active_account_id)
+            _start_ms = (_anchor - _INCOME_ANCHOR_OVERLAP_MS) if _anchor else (now_ms - _INCOME_WINDOW_MS)
+
         # Primary: REALIZED_PNL events
-        raw_pnl = await fetch_income_history(income_type="REALIZED_PNL", limit=limit)
+        raw_pnl = await _fetch_income_windowed("REALIZED_PNL", _start_ms, now_ms)
 
         # Secondary: COMMISSION events keyed by tradeId -> fee amount (always positive)
-        raw_commission = await fetch_income_history(income_type="COMMISSION", limit=limit)
+        raw_commission = await _fetch_income_windowed("COMMISSION", _start_ms, now_ms)
         fee_map: Dict[str, float] = {}
         for c in raw_commission:
             tid = str(c.get("tradeId", ""))
@@ -286,7 +378,7 @@ async def fetch_exchange_trade_history(limit: int = 200) -> None:
                 fee_map[tid] = abs(float(c.get("income", 0) or 0))
 
         # Funding fees: FUNDING_FEE events grouped by symbol with timestamps
-        raw_funding = await fetch_income_history(income_type="FUNDING_FEE", limit=limit)
+        raw_funding = await _fetch_income_windowed("FUNDING_FEE", _start_ms, now_ms)
         funding_by_symbol: Dict[str, List[tuple]] = {}
         for f in raw_funding:
             sym = f.get("symbol", "")
