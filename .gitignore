@@ -41,6 +41,7 @@ node_modules/
 dist/
 .env.local
 data.backup-*/
+keep_data.backup-*/
 
 # --- Debug-session artifacts (Playwright browser + root screenshots) ---
 .playwright-mcp/
