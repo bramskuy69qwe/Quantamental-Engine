@@ -243,17 +243,20 @@ class TestLBD2ScaleInPrimaryVsParent:
 
 
 class TestLBD3SameSlotReopen:
-    async def _drive_late_close_fill(self, om, db, live_positions):
-        """POS-1 fully closed (orders persisted with its tpid), POS-2 live
-        on the same slot; return the tpid ⑨ resolves for a late POS-1
-        close fill arriving with an empty tpid."""
-        # POS-1 history: entry + close orders persisted with POS-1's tpid.
+    async def _drive_late_close_fill(self, om, db, live_positions,
+                                     close_order_tpid="POS-1"):
+        """POS-1 fully closed, POS-2 live on the same slot; return the
+        tpid ⑨ resolves for a late POS-1 close fill arriving with an
+        empty tpid. close_order_tpid controls whether POS-1's close
+        order carries its stamp (the LB-F5 tier-0 source)."""
+        # POS-1 history: entry + close orders persisted.
         await seed_order(db, "O-D3E", status="filled", filled_qty=1.0,
                          avg_fill_price=50000.0, tpid="POS-1")
         await seed_order(db, "O-D3C", side="SELL", reduce_only=1,
                          status="filled", filled_qty=1.0,
                          tp_trigger_price=None, sl_trigger_price=None,
-                         tpid="POS-1", created_at_ms=RECENT_MS + 1000)
+                         tpid=close_order_tpid,
+                         created_at_ms=RECENT_MS + 1000)
         # POS-2: live on the same (symbol, direction) slot.
         await seed_order(db, "O-D3E2", tpid="POS-2",
                          created_at_ms=RECENT_MS + 5000)
@@ -266,35 +269,58 @@ class TestLBD3SameSlotReopen:
         return await om._resolve_close_tpid(ACCOUNT_ID, f_late)
 
     @pytest.mark.asyncio
-    async def test_pin_current_tier1_resolves_to_live_slot(
+    async def test_late_close_fill_resolves_to_its_own_position(
             self, real, live_positions):
-        # PIN (current behavior): tier-1 (symbol,direction) wins → the
-        # live POS-2. Guards the xfail twin against fixture regressions —
-        # if this pin breaks, the xfail's failure mode changed too.
+        # LB-F5 FIXED (was xfail): ⑨ tier-0 (parent_order) consults the
+        # fill's own exchange_order_id → orders.terminal_position_id
+        # BEFORE the (symbol, direction) heuristics — the late close
+        # fill resolves to POS-1 even with POS-2 live on the slot.
         om, db = real
         resolved = await self._drive_late_close_fill(om, db, live_positions)
+        assert resolved == "POS-1"
+
+    @pytest.mark.asyncio
+    async def test_pin_heuristic_fallback_without_parent_stamp(
+            self, real, live_positions):
+        # PIN (residual gap, reconciler-relevant): when the close order
+        # carries NO tpid (pre-LB-F5 rows; stamp lost), tier-0 has
+        # nothing and tier-1 still resolves the live same-slot instance
+        # (POS-2). The heuristic tail exists until identity has one
+        # owner — documents WHY tier-0's stamp source matters.
+        om, db = real
+        resolved = await self._drive_late_close_fill(
+            om, db, live_positions, close_order_tpid="")
         assert resolved == "POS-2"
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        strict=True,
-        reason="LB-D3: _resolve_close_tpid tier-1 (order_manager.py:1985-"
-               "1989) scans app_state.positions by (symbol, direction) "
-               "with no parent-order identity check — the fill's "
-               "exchange_order_id → orders.terminal_position_id (POS-1) "
-               "is never consulted, so a late close fill of the CLOSED "
-               "POS-1 resolves to the live same-slot POS-2 (wrong "
-               "instance; misattributes the close to POS-2's junction).")
-    async def test_late_close_fill_resolves_to_its_own_position(
-            self, real, live_positions):
+    async def test_close_order_stamp_end_to_end(self, real, live_positions):
+        # LB-F5 stamp half: the FIRST tpid-carrying closing fill (ws
+        # stamps it from the then-live position) copies its tpid onto
+        # the parent close order (empty-only guard); a LATE sibling fill
+        # then resolves via tier-0 even after the slot reopened.
+        from tests.linkage_battery_helpers import order_by_eoid
         om, db = real
-        resolved = await self._drive_late_close_fill(om, db, live_positions)
+        await seed_order(db, "O-D3E", status="filled", filled_qty=1.0,
+                         avg_fill_price=50000.0, tpid="POS-1")
+        await seed_order(db, "O-D3C2", side="SELL", reduce_only=1,
+                         tp_trigger_price=None, sl_trigger_price=None,
+                         created_at_ms=RECENT_MS + 1000)  # tpid EMPTY
 
-        # DESIRED: parent-order identity wins — the fill belongs to POS-1.
-        assert resolved == "POS-1", (
-            f"late close fill resolved to {resolved!r} — the live "
-            "same-slot position, not the closed position the fill's "
-            "parent order belongs to")
+        # First partial close fill arrives WITH the tpid (POS-1 live then).
+        await om._process_single_fill(
+            ACCOUNT_ID, fill("O-D3C2", "POS-1", 0.5, fid="F-D3C2A",
+                             is_close=1, price=50500.0, realized_pnl=250.0,
+                             ts=RECENT_MS + 1500))
+        assert (await order_by_eoid(db, "O-D3C2"))[
+            "terminal_position_id"] == "POS-1"
+
+        # POS-1 now gone; POS-2 live on the same slot; the late sibling
+        # fill (empty tpid) resolves via tier-0 → POS-1, not POS-2.
+        live_positions.positions = [_pos_info(tpid="POS-2")]
+        f_late = fill("O-D3C2", "", 0.5, fid="F-D3C2B", is_close=1,
+                      price=51000.0, realized_pnl=250.0,
+                      ts=RECENT_MS + 2000)
+        assert await om._resolve_close_tpid(ACCOUNT_ID, f_late) == "POS-1"
 
 
 # ── LB-D5: junction dual-key (HA-42-adjacent) ──────────────────────────

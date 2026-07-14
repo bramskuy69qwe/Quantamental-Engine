@@ -1949,6 +1949,40 @@ class OrderManager:
 
         # 1+2. Upsert fill + update parent order in ONE commit
         await self._db.upsert_fill_and_update_order(fill, exchange_order_id)
+        # LB-F5 (linkage battery 2026-07-15) — close-side twin of the
+        # Defect-1 backfill: stamp the CLOSE order's tpid from its first
+        # tpid-carrying closing fill (whatever the fill carries post-⑨ —
+        # usually the ws live-position stamp, but a tier-1/2-resolved
+        # value freezes too; first-fill-time is when those heuristics
+        # are most reliable). A LATE sibling fill of the same close order — the
+        # position gone from the snapshot, the slot possibly reopened by
+        # a new position — then resolves via ⑨ tier-0 (parent_order)
+        # instead of the (symbol, direction) heuristics that pick the
+        # wrong instance. Same copy-rule as Defect-1 (:2282): fill →
+        # parent order, empty-only guard, never a re-derivation.
+        # REDUCE-ONLY gate (battery LB-T2a caught the leak pre-commit):
+        # a one-way REVERSAL order is BOTH the old position's closer and
+        # the new one's opener — stamping it from the close leg would
+        # hand the OLD tpid to the open leg's Defect-7 order-fallback
+        # (junction + lifecycle keyed onto the dead position). Reversals
+        # are never reduce-only; every hedge-mode close lane (TP/SL
+        # legs, reduce closes) is — an unflagged close just falls back
+        # to the pre-existing heuristics, no worse than before.
+        if fill.get("is_close") and (fill.get("terminal_position_id") or "") \
+                and exchange_order_id:
+            try:
+                await self._db._conn.execute(
+                    "UPDATE orders SET terminal_position_id = ? "
+                    "WHERE account_id = ? AND exchange_order_id = ? "
+                    "  AND COALESCE(terminal_position_id, '') = '' "
+                    "  AND COALESCE(reduce_only, 0) = 1",
+                    (fill["terminal_position_id"], account_id,
+                     exchange_order_id),
+                )
+                await self._db._conn.commit()
+            except Exception:
+                log.debug("close-order tpid stamp failed for %s",
+                          exchange_order_id, exc_info=True)
         # T211 H4: re-fire enrich_order on the parent so the matcher
         # gets a chance to run against the now-populated avg_fill_price.
         # The new strict matcher (spec §4.1 MARKET 6/6) needs
@@ -2040,6 +2074,35 @@ class OrderManager:
         if not symbol or not direction:
             _tap_resolve("SKIPPED", reason="no_symbol_or_direction")
             return ""
+        # 0) LB-F5 (linkage battery 2026-07-15): the fill's OWN parent
+        #    order — the strongest identity signal the fill carries
+        #    (exchange_order_id → the persisted close order's tpid,
+        #    stamped by the close-side Defect-1 twin in
+        #    _process_single_fill, or by recovery/backfill tooling).
+        #    Beats the (symbol, direction) heuristics below: on a
+        #    same-slot reopen, tier-1 resolves the NEW live instance
+        #    while the parent order pins the position this fill actually
+        #    closes. Best-effort: any read failure (incl. stub DBs in
+        #    tests) falls through to tier-1 with no envelope — only a
+        #    genuine resolution emits.
+        eoid = str(fill.get("exchange_order_id") or "")
+        if eoid:
+            parent_tpid = ""
+            try:
+                async with self._db._conn.execute(
+                    "SELECT terminal_position_id FROM orders "
+                    "WHERE account_id = ? AND exchange_order_id = ?",
+                    (account_id, eoid),
+                ) as cur:
+                    row = await cur.fetchone()
+                parent_tpid = (row[0] or "") if row else ""
+            except Exception:
+                log.debug("close-tpid parent-order read failed for %s",
+                          eoid, exc_info=True)
+            if parent_tpid:
+                _tap_resolve("RESOLVED", tier="parent_order",
+                             tpid=parent_tpid)
+                return parent_tpid
         # 1) the live position being closed (precise; present during a partial
         #    close and usually still present at full-close fill time).
         for p in app_state.positions:

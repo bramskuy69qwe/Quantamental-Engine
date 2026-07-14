@@ -1943,10 +1943,16 @@ class TestRaceFixture:
                 async def ws_chain():
                     with cl.correlation_scope("wsu"):
                         await gate.wait()   # the snapshot lands FIRST
+                        # LB-F5 (2026-07-15): parent = a close order with
+                        # NO persisted row — the live single-fill race
+                        # shape (unstamped close order) — so tier-0
+                        # falls through (row missing) and the §4.1
+                        # walkthrough's entry_order_fallback tier fires,
+                        # exactly as spec seq-4474 describes.
                         return await om._resolve_close_tpid(1, {
                             "symbol": "BTCUSDT", "direction": "LONG",
                             "exchange_fill_id": "F-RACE",
-                            "exchange_order_id": "E-RACE",
+                            "exchange_order_id": "C-RACE",
                         })
 
                 async def sched_chain():
@@ -1977,7 +1983,10 @@ class TestRaceFixture:
         assert snap["task"] == "sch-refresh" and res["task"] == "ws-user"
         # …with true order: the wipe happened BEFORE the resolve…
         assert snap["seq"] < res["seq"]
-        # …which is WHY the fallback tier fired (the §4.1 walkthrough)
+        # …which is WHY the fallback tier fired (the §4.1 walkthrough) —
+        # tier-0 (parent_order, LB-F5) fell through on the unstamped
+        # close order C-RACE (row missing), then the wiped live scan
+        # missed, then the entry-order map resolved.
         assert snap["payload"]["closes_detected"] == [["BTCUSDT", "LONG", "POS-9"]]
         assert res["payload"]["tier"] == "entry_order_fallback"
 

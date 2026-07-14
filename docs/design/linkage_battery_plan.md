@@ -33,8 +33,10 @@ operators. Matcher = strict 6/6 (`calc_correlation.py:289`), candidates
 `status IN (active,released)`, entry tolerance 0.25%.
 
 **Axis C — fill/position pipeline** (`order_manager.py:1865
-_process_single_fill`, ordered): ⑨ `_resolve_close_tpid` :1935 (tier-1 live
-position (symbol,direction) → tier-2 entry-order fallback) → persist →
+_process_single_fill`, ordered): ⑨ `_resolve_close_tpid` :1935 (tier-0
+parent-order tpid via the fill's eoid, LB-F5 2026-07-15 → tier-1 live
+position (symbol,direction) → tier-2 entry-order fallback) → persist
+(+ LB-F5 close-order tpid stamp, reduce-only gated) →
 `_reenrich_parent_after_fill` :1901 (matcher re-fire; `_ensure_junction_if_linked`
 :552 replay) → `enrich_fill` (parent calc → fill) →
 `_link_position_calc_on_open` :2102 (tpid backfill :2221, junction UPSERT
@@ -101,7 +103,9 @@ verify at next touch, do not reimplement).
 
 ## 5. Findings ledger
 
-Tier-1 battery result (2026-07-14): **24 tests = 17 passed + 7 strict-xfails**;
+Tier-1 battery result (2026-07-14): **24 tests = 17 passed + 7 strict-xfails**
+(dated snapshot — LB-F1/F2/F3 fixed 2026-07-14, LB-F5 fixed 2026-07-15;
+the live xfail set is LB-D5/D6/I5/T2d/T2e);
 every xfail is a verified engine divergence (mechanism re-read at the write
 site; `--runxfail` traceback confirms the mechanism assertion is what fails),
 and every xfail has a passing current-behavior pin twin (shared drive helper
@@ -114,7 +118,7 @@ the expected failure. Zero fixture-reason xfails.
 | LB-F2 | LB-I1 | `/admin/calc_link/confirm` (routes_admin.py:290-291) raw-wrote `orders.calc_id`+`fills.calc_id` via bare sqlite3 — no `link_status` write, no `auto_classify`, no `calc_state.transition`. Result: order NMR-with-calc_id (calc_id⟺LINKED invariant broken), calc stranded `active`, no junction. | **FIXED 2026-07-14**: handler delegates to `manual_link_order` (choke-pointed lane); legacy calc-linked-elsewhere guard dropped (junction is many-to-many), legacy `link_status=NULL` rows now get `invalid_transition` instead of a raw write. Battery asserts the routed behavior |
 | LB-F3 | LB-I2 | `mark_stale_orders` (db_orders.py:882-888, time-threshold path) + sibling `mark_stale_orders_canceled` (db_orders.py:774, snapshot path) bulk `UPDATE status='canceled'` never routed through `_release_calc_on_operator_cancel` → calc stranded `matched`; replacement order finds no candidates → UNPLANNED. WS-cancel path was already correct (LB-I4). | **FIXED 2026-07-14**: new `OrderManager.release_calcs_for_stale_cancels` sweep (scan canceled/zero-fill/non-reduce-only linked orders with no cancel_reason stamp + calc still `matched`, route each through the ONE existing release rule), wired after all 3 bulk call sites (basic snapshot, algo snapshot, scheduler time path). Sweep is idempotent (reason stamp = processed marker) and self-heals historically stranded calcs. Covers BOTH siblings — the T2 sibling item is closed by the same sweep |
 | LB-F4 | LB-I5 | Lifecycle mint/reuse lookup (order_manager.py:2254-2266) `SELECT lifecycle_id FROM positions_calcs WHERE position_id=? AND account_id=? AND lifecycle_id IS NOT NULL … LIMIT 1` has no closed/sealed filter → a reused tpid bleeds the CLOSED trade's lifecycle_id verbatim into the new economic trade (the :2239 ASSUMPTION-block hazard, "fix is seal-at-close, deferred"). | xfail(strict) + pin test |
-| LB-F5 | LB-D3 | `_resolve_close_tpid` never consults the fill's own parent order: tier-1 (order_manager.py:1985-1989) scans `app_state.positions` by (symbol,direction); tier-2 is also symbol/side-keyed. A late close fill for a FULLY-CLOSED position resolves to the LIVE same-slot instance (POS-2) even though `orders.terminal_position_id` for its parent close order holds POS-1 in the DB. Fix shape candidate: tier-0 = parent-order tpid lookup by exchange_order_id. | xfail(strict) |
+| LB-F5 | LB-D3 | `_resolve_close_tpid` never consulted the fill's own parent order: tier-1 scanned `app_state.positions` by (symbol,direction); tier-2 also symbol/side-keyed → a late close fill for a FULLY-CLOSED position resolved to the LIVE same-slot instance. | **FIXED 2026-07-15**: ⑨ **tier-0 `parent_order`** (fill's exchange_order_id → orders.tpid, before the heuristics; silent fall-through on read failure — spec E35) **PLUS the close-side Defect-1 twin stamp** in `_process_single_fill` (first tpid-carrying closing fill copies its ws-stamped tpid onto the parent close order; empty-only + **reduce-only gates** — the reduce-only gate exists because battery LB-T2a caught the ungated version pre-commit: a reversal order is both closer and opener, and the close-leg stamp handed the OLD tpid to the open leg's Defect-7 fallback). Deviation named: stamp added beyond the §7-sanctioned tier-0 **because** the investigated mechanism showed close orders NEVER carry a tpid live (only Defect-1 stamps entry orders) — tier-0 alone would have been a live no-op; the stamp is the same fill→order copy-rule as Defect-1, not a re-derivation (no new identity site). Residuals pinned/filed: rows with no parent stamp (pre-fix history) still fall to the tier-1 heuristic (`test_pin_heuristic_fallback_without_parent_stamp`); latent one-way shape (audit MINOR-3, filed-not-fixed): a Defect-1-stamped non-reduce-only reversal order could tier-0-resolve a late close leg to the NEW position's tpid — compound-rare outside hedge, optional hardening = reduce-only gate on the tier-0 SELECT (read exactly what the stamp twin writes) |
 | LB-F6 | LB-D5 | `_link_position_calc_on_open` keys the junction on `fill.terminal_position_id` when present (:2175), order-tpid fallback only when empty (Defect-7 :2204); the Defect-1 backfill (:2221) only fills an EMPTY order tpid — nothing reconciles. Mixed-tpid fills on one order → junction rows under TWO position_ids + two minted lifecycles for one economic open. Side obs (LB-T2/HA-42 repro input): with a pre-seeded order tpid, the `_ensure_junction_if_linked` replay + direct builder double-accumulate `contributed_qty` under the fallback key. | xfail(strict) |
 | LB-F7 | LB-D6 | `insert_closed_position` REPLACE binds `calc_id` unconditionally (db_orders.py:536, T234-intentional) while `lifecycle_id` carries forward when caller passes None (:462-465) → REPLACE (CALC-A,L1) with (CALC-B,None) yields ('CALC-B','L1') — calc B welded to calc A's lifecycle. Intentional per-column rules composing into mixed identity. | xfail(strict) |
 
@@ -228,7 +232,8 @@ the reconciler) flip strict-xfail → XPASS → markers removed, with all 46
 pins still green (behavior-preservation proof — the same guard the v2.6
 OrderManager extraction gets for free).
 
-**Sequencing vs the roadmap**: LB-F5 patch next (small task), then the
+**Sequencing vs the roadmap**: ~~LB-F5 patch next~~ **done 2026-07-15**
+(tier-0 + reduce-only-gated stamp; LB-D3 xfail flipped), then the
 reconciler design doc (operator-gated separate session), then build —
 ideally BEFORE v2.6's OrderManager extraction so the extraction moves
 already-owned identity code instead of re-scattering it.
