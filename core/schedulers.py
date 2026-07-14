@@ -720,6 +720,11 @@ async def _order_staleness_loop():
             )
             if count:
                 log.warning("Marked %d stale orders as canceled", count)
+                # LB-F3: the time-threshold bulk UPDATE bypasses the WS
+                # per-order release — sweep stranded 'matched' calcs.
+                await platform_bridge.order_manager.release_calcs_for_stale_cancels(
+                    app_state.active_account_id,
+                )
                 # SR-1: rebuild cache via controlled entry point
                 await platform_bridge.order_manager.refresh_cache(
                     app_state.active_account_id,

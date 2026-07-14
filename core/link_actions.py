@@ -26,10 +26,11 @@ exceptions to a discriminated string result. Route handlers stay thin
 wrappers (api/routes_orders.py) so this logic is unit-testable without a
 TestClient (see HANDOFF gotcha #9).
 
-The legacy ``/admin/calc_link`` surface (api/routes_admin.py) does a raw
-``UPDATE orders SET calc_id`` with NO link_status and NO choke-point — it
-predates this and is the documented Phase-3 fallback (plan §11), to be
-removed once the needs-link tab is proven stable. Do not extend it.
+The legacy ``/admin/calc_link`` surface (api/routes_admin.py) DELEGATES
+here as of LB-F2 (linkage battery 2026-07-14) — its historical raw
+``UPDATE orders SET calc_id`` bypass (no link_status, no choke-point) is
+gone. It remains the documented Phase-3 fallback (plan §11), to be
+removed once the needs-link tab is proven stable.
 """
 from __future__ import annotations
 

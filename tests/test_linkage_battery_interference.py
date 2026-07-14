@@ -100,38 +100,29 @@ class TestLBI1AdminRawConfirm:
         return oid
 
     @pytest.mark.asyncio
-    async def test_raw_confirm_mechanism_pinned(self, real):
-        """Pins the CURRENT mechanism (routes_admin.py:290-291): raw
-        UPDATE of orders.calc_id + fills.calc_id, NO link_status write,
-        NO calc_state transition, NO junction — bypasses both
-        choke-points."""
+    async def test_admin_confirm_routes_through_choke_points(self, real):
+        """LB-F2 FIXED: calc_link_confirm now delegates to
+        link_actions.manual_link_order (the choke-pointed lane) instead
+        of the legacy raw sqlite UPDATEs — order transitions to LINKED,
+        the calc flips active → matched, opening fills are stamped."""
         om, db = real
         oid = await self._drive_confirm(om, db)
 
         order = await order_row(db, oid)
-        assert order["calc_id"] == "CALC-I1"          # raw write landed
-        assert order["link_status"] == "NEEDS_MANUAL_REVIEW"  # untouched
-        # fills propagated (routes_admin.py:291) …
+        assert order["calc_id"] == "CALC-I1"
+        assert order["link_status"] == "LINKED"        # choke-pointed
         assert (await fill_by_fid(db, "F-I1"))["calc_id"] == "CALC-I1"
-        # … but the calc-state choke-point was bypassed: calc never
-        # flips active → matched (compare link_actions.py manual lane).
-        assert (await calc_row(db, "CALC-I1"))["status"] == "active"
-        # And no junction replay fires from this lane either.
+        assert (await calc_row(db, "CALC-I1"))["status"] == "matched"
+        # Junction still absent on this lane — that's LB-F1 (manual_link
+        # lacks the Defect-8 replay), tracked by the LB-E2 xfail.
         assert await junction_rows(db, "POS-I1") == []
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        strict=True,
-        reason="LB-I1: /admin/calc_link/confirm (routes_admin.py:290) "
-               "raw-writes orders.calc_id and never touches link_status "
-               "— bypasses the link_state auto_classify/transition "
-               "choke-point entirely, so calc_id⟺LINKED "
-               "(core/link_state.py invariant) is broken: calc_id set "
-               "while link_status stays NEEDS_MANUAL_REVIEW.")
     async def test_invariant_holds_after_admin_confirm(self, real):
-        # DESIRED: any lane that stamps calc_id also brings the order to
-        # LINKED (the invariant every consumer — matcher already-
-        # correlated gate, badges, needs-link queue — assumes).
+        # LB-F2 FIXED (was xfail): any lane that stamps calc_id also
+        # brings the order to LINKED (the invariant every consumer —
+        # matcher already-correlated gate, badges, needs-link queue —
+        # assumes).
         om, db = real
         oid = await self._drive_confirm(om, db)
         assert_calc_link_invariant(await order_row(db, oid))
@@ -166,45 +157,88 @@ class TestLBI2StaleCancelAsymmetry:
         return oid
 
     @pytest.mark.asyncio
-    async def test_stale_cancel_strands_calc_matched(self, real):
-        """Pins the CURRENT asymmetry (order_manager.py:1205 NOTE): the
-        bulk path is a raw UPDATE that never flows through
-        _release_calc_on_operator_cancel, so the calc stays 'matched'
-        forever — and an identical replacement order finds ZERO
-        candidates (matcher filter status IN ('active','released'),
-        calc_correlation.py:389) → UNPLANNED. Pair test: the per-order
-        WS-cancel path DOES release (LB-I4 below)."""
+    async def test_db_bulk_cancel_alone_still_strands(self, real):
+        """The DB-layer bulk UPDATE itself is unchanged (raw, no release)
+        — that's WHY the LB-F3 sweep exists at the OrderManager layer.
+        Pins the raw layer so a future db-level change is noticed."""
         om, db = real
         await self._link_then_stale_cancel(om, db)
-
         assert (await calc_row(db, "CALC-I2"))["status"] == "matched"
 
-        # Operator re-pastes the identical order → no candidates → UNPLANNED.
+    @pytest.mark.asyncio
+    async def test_calc_released_after_stale_cancel(self, real):
+        """LB-F3 FIXED (was xfail): release_calcs_for_stale_cancels
+        (OrderManager) sweeps canceled/zero-fill/non-reduce-only linked
+        orders with no cancel_reason stamp whose calc is still 'matched'
+        and routes each through _release_calc_on_operator_cancel — wired
+        after all three bulk-cancel call sites (both snapshot paths +
+        the scheduler time path). The full flow: stale-cancel → sweep →
+        calc released → replacement order re-links."""
+        om, db = real
+        oid = await self._link_then_stale_cancel(om, db)
+
+        n = await om.release_calcs_for_stale_cancels(ACCOUNT_ID)
+        assert n == 1
+        assert (await calc_row(db, "CALC-I2"))["status"] == "released"
+        # Cancel-reason stamp doubles as the processed marker …
+        assert (await order_row(db, oid))["cancel_reason_category"] == (
+            "OPERATOR")
+        # … making the sweep idempotent.
+        assert await om.release_calcs_for_stale_cancels(ACCOUNT_ID) == 0
+
+        # Replacement order now finds the released calc → LINKED again.
         oid2 = await seed_order(db, "O-I2B", created_at_ms=RECENT_MS + 5000)
         await om._enrich_order_best_effort(
             order_dict("O-I2B", created_at_ms=RECENT_MS + 5000))
         order2 = await order_row(db, oid2)
-        assert order2["link_status"] == "UNPLANNED"
-        assert order2["calc_id"] is None
+        assert order2["link_status"] == "LINKED"
+        assert order2["calc_id"] == "CALC-I2"
+        assert (await calc_row(db, "CALC-I2"))["status"] == "matched"
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        strict=True,
-        reason="LB-I2: mark_stale_orders (db_orders.py:882, time-threshold "
-               "path) bulk-cancels via raw UPDATE that never routes "
-               "through _release_calc_on_operator_cancel — same "
-               "raw-bulk-cancel family as the asymmetry documented at "
-               "order_manager.py:1205 (that NOTE names the sibling "
-               "mark_stale_orders_canceled, db_orders.py:774, the "
-               "snapshot-reconciliation path — still unpinned, see plan "
-               "§2 LB-T2). Calc stays 'matched', excluded from the "
-               "candidate pool, so the replacement order lands UNPLANNED.")
-    async def test_calc_released_after_stale_cancel(self, real):
-        # DESIRED: a stale-cancelled unfilled entry releases its calc
-        # back to the re-match pool, same as the WS-cancel path (LB-I4).
+    async def test_sweep_skips_filled_and_reduce_only_orders(self, real):
+        """Sweep gates: a canceled order with fills keeps its calc
+        matched (position opened — the calc is contributing), and a
+        reduce-only cancel is never an entry cancel."""
         om, db = real
-        await self._link_then_stale_cancel(om, db)
-        assert (await calc_row(db, "CALC-I2"))["status"] == "released"
+        await seed_calc(db, "CALC-I2F", status="matched", window_seconds=300)
+        await seed_order(db, "O-I2F", calc_id="CALC-I2F",
+                         link_status="LINKED", status="canceled",
+                         filled_qty=1.0)
+        await seed_calc(db, "CALC-I2R", status="matched", window_seconds=300)
+        await seed_order(db, "O-I2R", calc_id="CALC-I2R",
+                         link_status="LINKED", status="canceled",
+                         reduce_only=1)
+        assert await om.release_calcs_for_stale_cancels(ACCOUNT_ID) == 0
+        assert (await calc_row(db, "CALC-I2F"))["status"] == "matched"
+        assert (await calc_row(db, "CALC-I2R"))["status"] == "matched"
+
+    @pytest.mark.asyncio
+    async def test_snapshot_wire_releases_stranded_calc(
+            self, real, monkeypatch):
+        """Wire-in proof (audit MINOR-4): drives the REAL
+        process_order_snapshot — a linked order vanishing from the
+        snapshot is bulk-canceled AND its calc lands released, proving
+        the sweep call inside the snapshot path fires (not just the
+        sweep in isolation). refresh_cache is stubbed: the cache rebuild
+        runs after the sweep and is not the wire under test."""
+        om, db = real
+        await seed_calc(db, "CALC-I2W", window_seconds=300)
+        oid = await seed_order(db, "O-I2W")
+        await om._enrich_order_best_effort(order_dict("O-I2W"))
+        assert (await calc_row(db, "CALC-I2W"))["status"] == "matched"
+
+        async def _noop(_aid):
+            return None
+        monkeypatch.setattr(om, "refresh_cache", _noop)
+
+        # Snapshot WITHOUT O-I2W (operator canceled it venue-side while
+        # the WS was down) → mark_stale_orders_canceled → sweep wire.
+        await om.process_order_snapshot(
+            ACCOUNT_ID, [order_dict("O-I2X", created_at_ms=RECENT_MS + 3000)])
+
+        assert (await order_row(db, oid))["status"] == "canceled"
+        assert (await calc_row(db, "CALC-I2W"))["status"] == "released"
 
 
 # ── LB-I3: expiry-vs-match TOCTOU — order LINKED, calc expired ─────────

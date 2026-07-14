@@ -193,10 +193,15 @@ async def calc_link_page(request: Request):
         conn = sqlite3.connect(_cfg.DB_PATH)
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
+            # LB-F2 fold (audit MINOR-2): only list rows the delegated
+            # confirm can actually act on — the choke-point accepts
+            # NEEDS_MANUAL_REVIEW|UNLINKED → LINKED only (UNPLANNED is
+            # operator-terminal; NULL legacy rows are engine-classified).
             "SELECT id, exchange_order_id, symbol, side, order_type, price, "
             "tp_trigger_price, sl_trigger_price, created_at_ms "
             "FROM orders WHERE account_id = ? AND calc_id IS NULL "
             "AND reduce_only = 0 AND created_at_ms >= ? "
+            "AND link_status IN ('NEEDS_MANUAL_REVIEW', 'UNLINKED') "
             "ORDER BY created_at_ms DESC LIMIT 50",
             (aid, cutoff_ms),
         ).fetchall()
@@ -244,64 +249,62 @@ async def calc_link_candidates(request: Request, order_id: int = 0):
 
 @router.post("/admin/calc_link/confirm", response_class=HTMLResponse)
 async def calc_link_confirm(request: Request):
-    """Confirm manual link: set calc_id on order + propagate to fills."""
-    import sqlite3, config as _cfg
+    """Confirm manual link — delegates to the choke-pointed lane.
 
+    LB-F2 (linkage battery 2026-07-14): the legacy body raw-wrote
+    orders.calc_id + fills.calc_id via bare sqlite, bypassing the
+    link_state/calc_state choke-points — breaking the calc_id ⟺ LINKED
+    invariant and stranding the calc 'active'. Now delegates to
+    link_actions.manual_link_order (same lane as /orders/{id}/manual_link):
+    link_status transition, calc active|released → matched, opening-fill
+    propagation, amendment backfill, operator-attributed event.
+
+    Deviations vs the legacy body: the "calc already linked to another
+    order" guard is dropped (the junction model is many-to-many — a calc
+    may legitimately attach to multiple orders on scale-in; the choke-point
+    validates the order-side transition instead), and a link_status=NULL
+    legacy row now returns invalid_transition rather than being raw-written
+    (invariant-preserving is the point of the fix).
+    """
     try:
         body = await request.json()
     except Exception:
         body = {}
 
     order_id = body.get("order_id")
-    calc_id = body.get("calc_id", "").strip()
+    calc_id = (body.get("calc_id") or "").strip()
     aid = app_state.active_account_id
 
     if not order_id or not calc_id:
         return HTMLResponse(
             '<div class="alert alert-error">Missing order_id or calc_id.</div>', status_code=400
         )
-
-    conn = sqlite3.connect(_cfg.DB_PATH)
-    conn.row_factory = sqlite3.Row
-
-    row = conn.execute(
-        "SELECT calc_id, exchange_order_id FROM orders WHERE account_id = ? AND id = ?",
-        (aid, order_id),
-    ).fetchone()
-    if not row:
-        conn.close()
-        return HTMLResponse('<div class="alert alert-error">Order not found.</div>', status_code=400)
-    if row["calc_id"]:
-        conn.close()
-        return HTMLResponse('<div class="alert alert-error">Order already linked.</div>', status_code=400)
-
-    dup = conn.execute(
-        "SELECT 1 FROM orders WHERE calc_id = ? AND account_id = ? LIMIT 1",
-        (calc_id, aid),
-    ).fetchone()
-    if dup:
-        conn.close()
+    try:
+        order_id = int(order_id)
+    except (TypeError, ValueError):
         return HTMLResponse(
-            '<div class="alert alert-error">calc_id already linked to another order.</div>',
-            status_code=400,
+            '<div class="alert alert-error">Invalid order_id.</div>', status_code=400
         )
 
-    eid = row["exchange_order_id"]
-    conn.execute("UPDATE orders SET calc_id = ? WHERE account_id = ? AND id = ?", (calc_id, aid, order_id))
-    conn.execute("UPDATE fills SET calc_id = ? WHERE account_id = ? AND exchange_order_id = ?", (calc_id, aid, eid))
-    conn.commit()
-    conn.close()
+    from core.link_actions import manual_link_order
+    outcome = await manual_link_order(aid, order_id, calc_id)
 
-    try:
-        from core.trade_event_log import log_trade_event
-        log_trade_event(aid, calc_id, "manual_link_added", {
-            "order_id": order_id, "exchange_order_id": eid,
-        }, source="manual_link")
-    except Exception:
-        log.debug("manual_link_added event failed", exc_info=True)
-
+    if outcome == "linked":
+        return HTMLResponse(
+            '<div class="alert alert-success">Link confirmed. calc_id propagated to order + fills.</div>'
+        )
+    error_map = {
+        "missing_calc_id": (400, "Missing order_id or calc_id."),
+        "order_not_found": (400, "Order not found."),
+        "already_linked": (400, "Order already linked."),
+        "calc_not_found": (400, "Calc not found."),
+        "invalid_transition": (
+            400, "Order is not in a linkable state (needs-review or unlinked)."),
+        "race_lost": (409, "Link lost a concurrent update — refresh and retry."),
+    }
+    status_code, msg = error_map.get(outcome, (500, "Link failed — see engine log."))
     return HTMLResponse(
-        '<div class="alert alert-success">Link confirmed. calc_id propagated to order + fills.</div>'
+        f'<div class="alert alert-error">{msg}</div>', status_code=status_code
     )
 
 

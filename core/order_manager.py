@@ -160,6 +160,9 @@ class OrderManager:
         )
         if canceled:
             log.info("Marked %d missing basic orders as canceled", canceled)
+            # LB-F3: the bulk UPDATE bypasses the WS per-order release —
+            # sweep the stranded 'matched' calcs back to 'released'.
+            await self.release_calcs_for_stale_cancels(account_id)
 
         # 4b. T2.9 (spec §4.5): bracket calc_id inheritance for the REST
         # reconciliation path (WS-drop fallback / catch-up). Per distinct
@@ -198,6 +201,10 @@ class OrderManager:
         )
         if canceled:
             log.info("Marked %d stale algo orders as canceled", canceled)
+            # LB-F3: same sweep as the basic path (algo legs are usually
+            # reduce-only TP/SL → the sweep's gates make this a no-op,
+            # but an algo ENTRY cancel is released like any other).
+            await self.release_calcs_for_stale_cancels(account_id)
 
         # 2b. T2.9 (spec §4.5): bracket calc_id inheritance. Binance TP/SL
         # conditional orders arrive on THIS algo path while the entry came
@@ -1202,10 +1209,11 @@ class OrderManager:
         (T211 M3 pattern), so a repeat WS cancel for the same order is a
         no-op. Best-effort: failures log, never raise.
 
-        NOTE: the snapshot-reconciliation cancel path
-        (``mark_stale_orders_canceled``) is a bulk UPDATE that doesn't
-        flow through here; releasing calcs for stale-canceled orders is
-        a deferred follow-up.
+        NOTE: the bulk cancel paths (``mark_stale_orders`` /
+        ``mark_stale_orders_canceled``) don't flow through here per-order;
+        their stranded calcs are released by
+        ``release_calcs_for_stale_cancels`` below (LB-F3), which routes
+        each swept order through THIS method — one release rule.
         """
         status = (order.get("status") or "").lower()
         if status != "canceled":
@@ -1309,6 +1317,58 @@ class OrderManager:
                 "calc release on cancel failed for calc_id=%s order=%s",
                 calc_id, eid, exc_info=True,
             )
+
+    async def release_calcs_for_stale_cancels(self, account_id: int) -> int:
+        """LB-F3 (linkage battery 2026-07-14): release calcs stranded
+        'matched' by the BULK cancel paths — ``mark_stale_orders`` (time
+        threshold) and ``mark_stale_orders_canceled`` (snapshot
+        reconciliation) are raw UPDATEs that never flow through the
+        per-order WS release above, so their calcs stayed 'matched'
+        forever and replacement orders landed UNPLANNED (candidate filter
+        is status IN ('active','released')).
+
+        Scans for canceled, zero-fill, non-reduce-only LINKED orders with
+        no cancel_reason stamp (the stamp doubles as the processed marker
+        — the WS path writes it, so WS-handled cancels are skipped) whose
+        calc is still 'matched', and routes each through
+        ``_release_calc_on_operator_cancel`` — ONE release rule (T216
+        gates + TOCTOU transition + calc:order_cancelled event), no
+        second implementation. Idempotent (the reason stamp + the
+        matched-guard make re-runs no-ops) and self-healing: also
+        releases calcs stranded by bulk cancels that ran before this
+        sweep existed. Returns the number of orders routed.
+        """
+        try:
+            async with self._db._conn.execute(
+                "SELECT o.exchange_order_id FROM orders o "
+                "JOIN pre_trade_log p ON p.calc_id = o.calc_id "
+                "  AND p.account_id = o.account_id "
+                "WHERE o.account_id = ? AND o.status = 'canceled' "
+                "  AND o.calc_id IS NOT NULL "
+                "  AND COALESCE(o.exchange_order_id, '') != '' "
+                "  AND COALESCE(o.filled_qty, 0) = 0 "
+                "  AND COALESCE(o.reduce_only, 0) = 0 "
+                "  AND o.cancel_reason_category IS NULL "
+                "  AND p.status = 'matched'",
+                (account_id,),
+            ) as cur:
+                rows = await cur.fetchall()
+        except Exception:
+            log.warning(
+                "stale-cancel calc release: scan failed", exc_info=True)
+            return 0
+        for (eoid,) in rows:
+            await self._release_calc_on_operator_cancel(
+                account_id,
+                {"status": "canceled", "reduce_only": 0,
+                 "exchange_order_id": eoid},
+            )
+        if rows:
+            log.info(
+                "Released %d calc(s) stranded by bulk stale-cancel",
+                len(rows),
+            )
+        return len(rows)
 
     async def _complete_calcs_on_close(
         self, account_id: int, calc_ids, position_id: str,
