@@ -113,9 +113,11 @@ class TestLBI1AdminRawConfirm:
         assert order["link_status"] == "LINKED"        # choke-pointed
         assert (await fill_by_fid(db, "F-I1"))["calc_id"] == "CALC-I1"
         assert (await calc_row(db, "CALC-I1"))["status"] == "matched"
-        # Junction still absent on this lane — that's LB-F1 (manual_link
-        # lacks the Defect-8 replay), tracked by the LB-E2 xfail.
-        assert await junction_rows(db, "POS-I1") == []
+        # LB-F1 FIXED: the delegated lane also gets the junction replay —
+        # the pre-link entry fill's junction forms at link time.
+        junc = await junction_rows(db, "POS-I1")
+        assert len(junc) == 1
+        assert junc[0]["calc_id"] == "CALC-I1"
 
     @pytest.mark.asyncio
     async def test_invariant_holds_after_admin_confirm(self, real):

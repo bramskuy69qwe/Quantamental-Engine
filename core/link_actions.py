@@ -248,6 +248,27 @@ async def _manual_link_order_impl(
     except Exception:
         log.debug("manual_link_order: fill calc_id propagation failed", exc_info=True)
 
+    # 4. LB-F1 (linkage battery 2026-07-14): replay the junction for an
+    #    already-filled order. The Defect-8 replay fired only from the
+    #    auto lane (_enrich_order_best_effort), so a manual link placed
+    #    AFTER the entry fill left positions_calcs empty — the
+    #    VELVET/ETH gap shape (live badge unattributed, close-fill stamp
+    #    no-ops; only the close row recovered via earliest-fill
+    #    fallback). A throwaway OrderManager(db) is used instead of
+    #    platform_bridge.order_manager so the replay always runs on THIS
+    #    module's db binding (prod: the same singleton; tests: the
+    #    patched temp DB) — construction is three attribute assignments.
+    #    Idempotent + best-effort; the attr_junction_form
+    #    via=post_link_replay envelope traces the decision.
+    try:
+        from core.order_manager import OrderManager
+        await OrderManager(db)._ensure_junction_if_linked(account_id, eid)
+    except Exception:
+        log.warning(
+            "manual_link_order: junction replay failed for order=%s calc=%s",
+            order_id, calc_id, exc_info=True,
+        )
+
     try:
         from core.trade_event_log import log_trade_event
         from core.auth_state import current_operator_id

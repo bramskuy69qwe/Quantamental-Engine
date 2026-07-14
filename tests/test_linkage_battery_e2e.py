@@ -149,17 +149,11 @@ class TestLBE2ManualLinkLane:
         assert (await fill_by_fid(db, "F-E2"))["calc_id"] == "CALC-E2"
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        strict=True,
-        reason="LB-E2: _ensure_junction_if_linked fires only from "
-               "_enrich_order_best_effort (order_manager.py:518); "
-               "manual_link_order never replays the junction for an "
-               "already-filled order → fresh VELVET/ETH-shaped gap. "
-               "See linkage_battery_plan.md §5.")
     async def test_junction_exists_after_manual_link(self, real):
-        # DESIRED: manually linking an already-filled order forms the
-        # junction (the Defect-8 replay shape). Verified divergence —
-        # the manual lane lacks the replay the auto lane got in Defect-8.
+        # LB-F1 FIXED (was xfail): manual_link_order now replays the
+        # junction for an already-filled order (_ensure_junction_if_linked
+        # via a throwaway OrderManager on link_actions' own db binding) —
+        # the manual lane has the same Defect-8 replay as the auto lane.
         om, db = real
         oid = await self._drive_to_nmr(om, db)
         from core.link_actions import manual_link_order
