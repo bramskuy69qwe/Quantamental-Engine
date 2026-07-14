@@ -142,3 +142,15 @@ reconciler thesis (spec §12). Family 4 is patchable independently. Battery
 verdict so far: **the structural root is real but bounded** — the reconciler
 case strengthens if LB-T2 (HA-42 repro, reversal splits, fill-before-mint)
 lands more findings in families 1–3.
+
+## 6. Filed residual observations (audit-sourced, NOT fixed — opportunistic)
+
+Surfaced by the three pre-commit audits (Tier-1 / Task A / Task B); every
+other audit finding was folded into its commit. These three were left
+unfixed deliberately; filed here so they don't dangle in task transcripts.
+
+| ID | Tier | Observation | Trigger to act |
+|---|---|---|---|
+| LB-R1 | LOW (pre-existing) | The admin calc-link UI flow was likely never end-to-end functional: `templates/admin/_calc_link_candidates.html` sends `hx-vals` FORM-encoded with a forced `application/json` header → `request.json()` fails → `body={}` → 400 "Missing order_id or calc_id"; no `json-enc` extension exists anywhere, and htmx default doesn't swap 4xx bodies (the only `beforeSwap` listener is the ECharts-dispose in base.html), so the error div never renders either. Unchanged by the LB-F2 delegation (same failure before/after). | Next touch of the admin surface: either fix the encoding (hx-post form params) or delete the page per plan §11 (needs-link tab is the modern path) |
+| LB-R2 | LOW (theoretical) | `release_calcs_for_stale_cancels` could wrongly release ONCE in a compound edge: an old WS cancel whose reason-stamp DB-write failed (swallowed at order_manager.py:~1250) AND whose calc later re-matched to a different live order. Live-DB probe at audit time: zero candidate rows of any shape. Optional tightening: `AND NOT EXISTS (other live order on same calc)`. | If the sweep ever logs a release for a calc with a live working order — or before v2.6 makes bulk snapshots the primary cancel path |
+| LB-R3 | NOTE (parity) | The LB-F1 junction replay emits `position:opened`/`scale_in` at manual-link time — potentially long after the fill, possibly for an already-closed position. Exact parity with the auto-lane Defect-8 replay (same late-event property); no live `position:opened` subscriber exists today (only `position:closed` has consumers). | The moment a `position:opened` subscriber is added, both replay lanes need a suppress-or-timestamp decision |
