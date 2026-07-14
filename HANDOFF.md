@@ -1,9 +1,23 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-07-14
-**Branch**: **`v2.5/usertrades-backfill-fix`** — **fully PUSHED, origin in sync**. Latest: `5376aab` (chore: track Codex `AGENTS.md` + `.codex/config.toml`; `.gitignore` rule `keep_data.backup-*/` for the 83 MB local backup dir), `ee4a4dd` (window-aware income fetch), `0d4b220` (HANDOFF + v2.6/v2.7/v3.0 design docs), `17976af`/`90a9da4`/`9838ca7` (analytics + linkage). Working tree CLEAN.
-**Tests**: full suite **3897 passed / 7 skipped / 2 deselected** — deterministically green. Run SOLO (concurrent pytest contends → timeout artifacts). `perf` gate excluded by default (`-m perf`).
-**Engine**: **DOWN** — restart next session: `.venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000` (**no `--reload`**). Observe-only, **Binance-direct HEDGE mode**, force-kill safe. Offline gap set is `[]` (restart-safe — startup recovery is a no-op). ⚠ Requires a **SYNCED OS clock** (no ccxt `adjustForTimeDifference`) — a drifted clock → `-1021 Timestamp ahead` on every Binance REST call → breaks the user-data-stream listenKey (no fills observed). **`w32tm /resync` BEFORE starting** (drifted +1000ms on 07-13); confirm a `ws_connected stream=user` envelope.
+**Date**: 2026-07-15
+**Branch**: **`v2.5/usertrades-backfill-fix`** — **PUSHED through `02eb743`, origin in sync** (+ this refresh's docs commit). 2026-07-14/15 sessions: `07ba8ff` T1 battery, `c636772` LB-F2+F3 fixes, `d9ff4bf` LB-F1 fix, `cb08636` residuals filed, `85656aa` T2 battery, `dac427b` §7 decision, `02eb743` LB-F5 fix.
+**Tests**: full suite **3945 passed / 7 skipped / 2 deselected / 5 xfailed** — green. The 5 strict-xfails are DELIBERATE (the battery's reconciler acceptance set — see below). Run SOLO (concurrent pytest contends → timeout artifacts). `perf` gate excluded by default (`-m perf`).
+**Engine**: **DOWN** (operator-verify at session start) — restart: `.venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000` (**no `--reload`**). Observe-only, **Binance-direct HEDGE mode**, force-kill safe. Offline gap set is `[]` (restart-safe — startup recovery is a no-op). ⚠ Requires a **SYNCED OS clock** (no ccxt `adjustForTimeDifference`) — a drifted clock → `-1021 Timestamp ahead` on every Binance REST call → breaks the user-data-stream listenKey (no fills observed). **`w32tm /resync` BEFORE starting** (drifted +1000ms on 07-13); confirm a `ws_connected stream=user` envelope.
+
+## ▶ STATUS 2026-07-14/15 — linkage battery COMPLETE + 4 fixes + reconciler DECIDED (PUSHED)
+
+**Track 1 is DONE** (supersedes the "NEXT SESSION — TWO tracks" block below, kept for context). The backend attribution battery shipped: 5 files (`tests/test_linkage_battery_{e2e,disagreement,interference,t2_pipeline,t2_lanes}.py` + `tests/linkage_battery_helpers.py`), **53 deterministic tests = 48 pins + 5 strict-xfails**; spec + findings ledger + decision in **`docs/design/linkage_battery_plan.md`**. 9 findings (LB-F1..F9), 4 mechanism families.
+
+- **Fixed + battery-flipped**: LB-F1 (manual-link junction replay, `d9ff4bf`), LB-F2 (admin confirm → choke-pointed lane) + LB-F3 (bulk stale-cancel release sweep, both siblings) (`c636772`), LB-F5 (⑨ tier-0 parent-order tpid + reduce-only-gated close-order stamp, `02eb743`, spec erratum E35).
+- **Headline discovery — LB-F8 = HA-42 with the filed mechanism CORRECTED** (audit-impact-imprecision +1): NO per-fill dual-path exists; the real bug is the guard-key/write-key divergence in `_ensure_junction_if_linked` (guard checks the ORDER-stash tpid, the replay writes under MAX(fills.tpid)) → N-fold unbounded `contributed_qty` inflation per WS/bracket-child event, behind a narrow stash gate. **LB-F9** (new): fill-before-mint first fill permanently stranded — junction UNDER-count, always-on, the mirror image. Do NOT trust the old HA-42 wording further down this file.
+- The battery caught its own author pre-commit (LB-T2a failed the ungated LB-F5 stamp — reversal orders are both closer and opener). The net works.
+
+**§7 DECISION** (`dac427b`, battery plan): **BUILD THE ATTRIBUTION RECONCILER**, scoped to identity ownership (families 1+3); family 4 closed surgically; LB-F5 patched. Decision rule: routing bugs patch cleanly, derivation bugs multiply sites. The 5 remaining xfails (LB-D5, LB-D6, LB-I5, LB-T2d, LB-T2e) ARE the acceptance set.
+
+## ▶ NEXT SESSION — reconciler R1 (operator-gated)
+
+**`docs/design/attribution_reconciler_plan.md`** (rev 2 — 2-agent adversarial design review folded: missed rebuild-lane + fills.calc_id writers added, delta-reconcile evidence-gated, memo-less R1, attr_decide deviation named) is the program doc: `core/position_identity.py` owner, 11-row consumer disposition, phases **R0 (done) → R1 pure extraction → R2 canonical key (kills F8+F6) → R3 retro-reconcile (kills F9) → R4 lifecycle seal + pair coherence (kills F4+F7+LB-D4) → R5 close-out (erratum E36)**. Each phase = one operator-gated task, full-suite + battery gates, per-phase independent audit AND the acceptance-#4 broad re-grep. Sequencing: R1–R5 **before** v2.6 Phase 1 (cross-ref in the v2.6 plan §6). Memory: [[project-linkage-battery]].
 
 ## ▶ STATUS 2026-07-13 — offline income-window incident (DONE + PUSHED)
 
@@ -24,9 +38,9 @@ The corr-log dogfood (HA-6/HA-7) is **VERIFIED live**; the session then fixed a 
 - **Analytics metrics** (`17976af`): Max Drawdown (read the rolling dd-GATE column → 0%; now period peak-to-trough off the equity curve), Cumulative PnL % (div-by-0 on uncaptured deposits → 0%; now initial-equity base + clarifying tooltip), Profit Factor/Expectancy (empty manual `trade_history` journal → "—"; now `closed_positions.realized_r`), Sortino(MAE) (positive-biased `ratio_card` hid the inherently-negative metric → "—"; now rendered inline).
 - **Calculator**: verified mathematically sound (`risk_usdt × atr_c / sl_pct` → size, `× regime_mult`, lot-snapped). NOTE: `atr_c ≤ 1`, so realized risk = `atr_c × the displayed 1%` (volatility-defensive — never over-risks; volatile symbols risk notably less).
 
-## ▶ NEXT SESSION — resume linkage debugging: TWO tracks, timed against the v2.6→v3.0 roadmap
+## ★ HISTORICAL (2026-07-14, Track 1 COMPLETED 07-15 — see the status block above) — the two-track strategy that produced the battery
 
-**Goal**: continue debugging calc → order → fill → position → closed_position attribution + the plan-badge / exec-link / history render layer.
+**Goal (as set)**: continue debugging calc → order → fill → position → closed_position attribution + the plan-badge / exec-link / history render layer. Track 1 executed in full (53 tests vs the ~30-40 estimate); Track 2 remains deferred to post-v3.0 as designed.
 
 **Strategy (settled 2026-07-14) — separate by DURABILITY, not just by layer.** The roadmap forces it: **v3.0 is a ground-up UI rewrite** (design doc: *"v3.0 is a ground-up visual refresh… the polished design it will be **rebuilt against**"*) → every current cockpit/calc/history DOM selector + click-flow is throwaway. **v2.6 extracts the `OrderManager` out of `platform_bridge`** (`docs/design/v2.6_remove_quantower_plugin_plan.md` §2 — the single object every linkage decision flows through). So the two layers have OPPOSITE lifespans: backend attribution is durable through both releases; the browser UI dies at v3.0. Invest accordingly:
 
@@ -53,7 +67,7 @@ v3.0 rewrites the DOM → a Playwright suite against current selectors is throwa
 - **Why deferring is ~free**: once Track 1 proves attribution is correct and the fragment endpoint returns the right data, the only residue for the browser is pure presentation — which v3.0 rebuilds anyway. Browser-layer linkage testing is the lowest-durability work.
 
 ## ▶ OPEN / PARKED
-- **PARKED — historical residue, operator-deferred, NOT live bugs** (the live code prevents recurrence): SPCX 80 ungrouped fills (cosmetic drill-down gap; P&L correct); 2 historical `positions_calcs` junction gaps (VELVET/ETH, pre-"Defect-8" `_ensure_junction_if_linked`); ~106 ungrouped fills total (pre-`_backfill_open_fill_tpids` residue). Backfill approaches in the memory.
+- **PARKED — historical residue, operator-deferred, NOT live bugs**: SPCX 80 ungrouped fills (cosmetic drill-down gap; P&L correct); 2 historical `positions_calcs` junction gaps (VELVET/ETH); ~106 ungrouped fills total. NB the reconciler plan's §5-Q2 delta-reconcile (if adopted at R3) heals the F8-inflated/F9-starved junction shapes for free, and R5 lists an optional dry-run backfill for the rest. (2026-07-15 correction: "live code prevents recurrence" was auto-lane-only — the manual-lane gap was reproducible until `d9ff4bf`.)
 - **PLANNED (separate sessions, design docs committed)**: `docs/design/v2.6_remove_quantower_plugin_plan.md` (remove the Quantower plugin → Binance-direct only; the `platform_bridge` / `_user_data_loop` plugin gate then becomes dead code), `v2.7_model_library_plan.md`, `v3.0_models_tab_design_prompt.md`.
 - **Deferred lever (gated)**: deterministic linkage via engine-placed `clientOrderId` tagging — the fuzzy 6/6 matcher exists *because* Quantower placement can't tag; reachable once the engine becomes the order-entry point (post-v2.6).
 
@@ -79,7 +93,7 @@ The correlation-log program (Phases 0–5, 12 tasks) is **COMPLETE + AUDITED + P
 3. **Live-verify the log (HA-6/HA-7 — the open live-smoke items)**: drive a real open→fill→close (operator) and confirm ONE coherent chain end-to-end. Tripwires: any `corr_id=""` or `rest-*` fallback envelope = a missing-scope entry point (a finding); any unexpected `db_write ok:false` = the HA-35/HA-41 write-failure seams firing; the §4.1 leak query (a `calc_symbol_change` with no following `ws_stream_rebuild`) = bug #4.
 4. **The 8 historical bugs each have a one-query signature** (cookbook "Reading a race" + the `q_*` recipes) — use them if linkage misbehaves live. The disabled-parity probe PASSED in tests (24 env-on / 0 env-off, identical DB), so the log adds zero engine-behavior risk — observe freely.
 
-**AFTER dogfooding** (operator-gated, separate program): the **attribution reconciler** (spec §12) — ONE module owning fill→position→calc so the ~6 ad-hoc sites stop re-deriving (the structural cure). Needs its own plan + spec. **HA-42** (latent mid-fill double-junction `contributed_qty` over-count; now one-grep findable via `junction:{fid}`+`replay:{eoid}`) is its first filed input, alongside the §5.6 baseline-diff method. THEN resume broader calc-linkage debugging.
+**AFTER dogfooding** (operator-gated, separate program): the **attribution reconciler** (spec §12) — ONE module owning fill→position→calc so the ~6 ad-hoc sites stop re-deriving (the structural cure). ~~Needs its own plan + spec~~ **PLAN EXISTS (2026-07-15): `docs/design/attribution_reconciler_plan.md`**. ⚠ **HA-42's filed mechanism here is RETRACTED** — the battery (LB-F8, `85656aa`) proved there is NO per-fill double-junction path; the real over-count is the guard-key/write-key divergence in `_ensure_junction_if_linked` (see the 07-14/15 status block at the top). The §5.6 baseline-diff method stands.
 
 ## Operating rules (operator-set — binding)
 
