@@ -77,8 +77,9 @@ verify at next touch, do not reimplement).
 | LB-I5 | T1 | Lifecycle bleed on tpid reuse (docstring hazard :2239): trade 1 on POS-1 mints L1, closes; trade 2 reuses tpid POS-1 → reuses L1 for a new economic trade. Assert desired = fresh lifecycle |
 | LB-I6a | T1 | NMR sticky vs calc-after-order (ETH case): order → NMR (candidate failed 1 criterion); perfect calc created after; fill-arrival re-fire → still NMR (sticky gate). Pin (deferred follow-up #3) |
 | LB-I6b | T1 | UNPLANNED upgrade: order → 0 candidates → UNPLANNED; calc created after; fill re-fire → LINKED + junction replay + fills attributed |
-| LB-D4 | T2 | closed calc rule divergence live (junction-primary) vs offline rebuild (earliest-fill) — drive `db_orders` backfill path on the LB-D2 shape |
-| LB-T2… | T2 | reversal split legs; partial→final ladder (`partially_actioned`); liquidation; window override (`link_window_seconds_override`); 0.25% entry-tolerance boundary; one-way BOTH gap; funding assign/orphan; HA-42 mid-fill double-junction repro (see LB-F6 side obs); fill-before-mint race; snapshot recovery (partially in test_linkage_binance_ws); `mark_stale_orders_canceled` (db_orders.py:774, the snapshot-reconciliation sibling of LB-F3's time-threshold path); `/history/log_close` route-handler drive |
+| LB-D4 | T2→T3 | closed calc rule divergence live (junction-primary) vs offline rebuild (earliest-fill) — drive `db_orders` backfill path on the LB-D2 shape. NOT in the shipped T2 tranche; carry to a future tranche |
+| LB-T2a..e | **SHIPPED** | `tests/test_linkage_battery_t2_pipeline.py` (2026-07-14): reversal split both-legs attribution (T2a pin — open leg has NO identity until next ACCOUNT_UPDATE, partial attribution by design); partial→final ladder (T2b pin — `partially_actioned` has NO producer, calc_state.py:124-126 documented pre-Phase-6 gap; exit reasons TP_PLANNED→MIXED; completion at final only); liquidation (T2c pin — order-type detection, liq VWAP px, reason dominates ladder); fill-before-mint (T2d → **LB-F9** xfail); HA-42 repro (T2e → **LB-F8** xfail + filed-mechanism CORRECTION) |
+| LB-T2f..l | **SHIPPED** | `tests/test_linkage_battery_t2_lanes.py` (2026-07-14): window per-calc + **override-duality pin** (T2f — `link_window_seconds_override` persisted but NEVER read by the matcher, only legacy exec_link countdown; T215 L2 "intentional-for-now", db_trades.py:176-191 — flag to operator: the calc form's override does NOT extend auto-link); entry-tolerance boundary (T2g — pure-pct criterion, tick feeds TP/SL only; 6/6 vs 5/6 audit rows pinned); one-way BOTH gap (T2h pin — hedge-keyed tier-2 map key-disjoint from BOTH fills; full-pipeline strand: empty tpid, no stamp, no junction); snapshot-cancel sibling (T2i — db strands, LB-F3 sweep releases); `/history/log_close` route drive (T2j — journal-only at route level); funding assign/closed-reconcile/orphan (T2k — funding_events keyed to tpid w/ junction-primary calc; closed-window reconciles funding_fees+net_pnl; orphan writes nothing); snapshot recovery (T2l — already covered in test_linkage_binance_ws:513/:559, only the DataCache position_id self-persist leg was unpinned, now pinned) |
 | T0 | T0 | matcher 6/6 single criteria (test_phase1_matcher*), junction formation/accumulation (test_phase2_junction), link/calc choke-point transitions (link/calc state tests), badges render (test_linkage_history_plan), replay of 8 historical bugs (test_correlation_log_replay), entry-fill attribution + ⑨ tiers (test_correlation_log_attribution, test_linkage_binance_ws) |
 
 ## 3. Harness conventions (binding for battery files)
@@ -117,6 +118,9 @@ the expected failure. Zero fixture-reason xfails.
 | LB-F6 | LB-D5 | `_link_position_calc_on_open` keys the junction on `fill.terminal_position_id` when present (:2175), order-tpid fallback only when empty (Defect-7 :2204); the Defect-1 backfill (:2221) only fills an EMPTY order tpid — nothing reconciles. Mixed-tpid fills on one order → junction rows under TWO position_ids + two minted lifecycles for one economic open. Side obs (LB-T2/HA-42 repro input): with a pre-seeded order tpid, the `_ensure_junction_if_linked` replay + direct builder double-accumulate `contributed_qty` under the fallback key. | xfail(strict) |
 | LB-F7 | LB-D6 | `insert_closed_position` REPLACE binds `calc_id` unconditionally (db_orders.py:536, T234-intentional) while `lifecycle_id` carries forward when caller passes None (:462-465) → REPLACE (CALC-A,L1) with (CALC-B,None) yields ('CALC-B','L1') — calc B welded to calc A's lifecycle. Intentional per-column rules composing into mixed identity. | xfail(strict) |
 
+| LB-F8 | LB-T2e | **HA-42 CONFIRMED — mechanism CORRECTED vs both the HA-42 filing and the LB-D5 side obs** (audit-impact-imprecision +1): the filed per-fill dual-path is wrong — `_reenrich_parent_after_fill` calls bare `enrich_order` (order_manager.py:1071-1073), never `_enrich_order_best_effort`, so NO replay runs in the fill hot path, and the prescribed Defect-7 shape does NOT over-count (pinned passing). The REAL over-count is a **guard-key/write-key divergence inside `_ensure_junction_if_linked`**: the guard exists-checks the ORDER's stashed tpid (:623-631) while the replayed synthetic fill carries `MAX(fills.tpid)` + `SUM(qty)` (:633-651), which the builder prefers (:2235). With a stale stash (Defect-1 backfill :2280-2286 never rewrites a non-empty stash) the guard NEVER satisfies → every WS order update re-accumulates the full fill SUM via the UPSERT accumulate (db_orders.py:2021-2022). **N-fold, unbounded**: 1.0 filled → 3.0 after two order updates. Severity framing (T2 audit): an **unbounded amplifier behind a narrow gate** — no NORMAL live lane produces the divergent stash (WS persists order tpid ""; Defect-1 copies a fill tpid whose junction the direct build already keyed — that shape is pinned idempotent); realistic stash generators are a silently-failed first junction write, tpid reuse mid-order, and offline backfill/recovery tooling stamping orders.tpid (the SPCX-backfill class). Once gated in, the cadence is HOT: the first replay fires within the SAME WS event (ws_manager.py:239 processes the fill before :280 persists the order) and **every TP/SL bracket child event re-fires the parent replay** (order_manager.py:500) — in a bracket-amendment-heavy workflow that's recurring, not rare. Family 1. | xfail(strict) + pin twin (`test_linkage_battery_t2_pipeline.py`) |
+| LB-F9 | LB-T2d | **NEW — fill-before-mint UNDER-count (mirror of LB-F8)**: first fill with tpid="" + order tpid="" SKIPs (no_position_key :2264-2272); the mint lands with the SECOND fill which forms the junction with only its own qty (:2384-2404); Defect-1 backfill stamps the ORDER only (never sibling fills rows) and the sole retro lane is gated by the (position_id,calc_id) exists-check that fill 2's row already satisfies → replay SKIPs (junction_exists), first fill's qty + fills-row identity permanently stranded. Strand is specific to the fill-forms-row-first ordering (an order-update-first mint WOULD reconcile via the replay SUM). The LB-T2a reversal open leg lands in exactly this shape. Family 1. | xfail(strict) + pin twin (`test_linkage_battery_t2_pipeline.py`) |
+
 **Pinned composites / by-design (plain asserts, no xfail)**: LB-I3 — order can
 end LINKED to an `expired` calc (orders write gated only on `calc_id IS NULL`,
 order_enrichment.py:378-384, while the calc flip TOCTOU-loses at :517-524 and
@@ -127,21 +131,34 @@ while close fill + close row take the position PRIMARY calc (the two-rule
 split, working as designed). LB-D7 — live badge memoryless vs history badge
 sticky-worst (32df20e design). LB-D1 bracket legs carry `lifecycle_id=NULL`
 (documented deviation, order_manager.py:735-744).
+T2 additions: LB-T2f — `link_window_seconds_override` is persisted but the
+matcher NEVER reads it (T215 L2 column duality, db_trades.py:176-191
+"intentional-for-now"; read only by the countdown path —
+routes_calculator.py:397 / db_orders.py:1370 → exec_link.py:145 —
+**operator note: the calc form's window override does NOT extend
+auto-link**). LB-T2b — `partially_actioned` has NO producer
+(calc_state.py:124-126, pre-Phase-6 deferred); a calc stays `matched`
+through partial closes. LB-T2h — one-way BOTH close fills strand through
+the whole pipeline (hedge-keyed tier-2 map is key-disjoint;
+ws_manager.py:431-435 KNOWN LATENT GAP; operator runs HEDGE). LB-T2a — the
+reversal open leg carries no position identity until the next
+ACCOUNT_UPDATE (lands in the LB-F9 shape).
 
 ### Mechanism-family triage (patch-vs-reconciler input, HANDOFF Track 1 §4)
 
-The 7 findings collapse to **4 mechanism families**:
+The 9 findings collapse to **4 mechanism families**:
 
-1. **Junction formation is auto-lane-only + key-fragile** (LB-F1, LB-F6, HA-42 side obs) — all inside `_link_position_calc_on_open`/`_ensure_junction_if_linked`. The junction is the identity ledger every consumer reads, and it can be missing (manual lane) or double-keyed (mixed tpids).
+1. **Junction identity keying is fragile** (LB-F1 ✅fixed, LB-F6, **LB-F8**, **LB-F9**) — all inside `_link_position_calc_on_open`/`_ensure_junction_if_linked`. The junction is the identity ledger every consumer reads, and it can be missing (manual lane — fixed), double-keyed (mixed tpids), N-fold inflated (guard-key/write-key divergence), or permanently under-counted (fill-before-mint). Four independent bugs, ONE root: the junction key is re-derived per event from whichever tpid happens to be visible, with no single owner of position identity.
 2. **Identity resolution by (symbol,side) instead of by parent order** (LB-F5) — ⑨'s tier order ignores the strongest identity signal it already has (the fill's own exchange_order_id → order tpid).
 3. **Lifecycle identity has no seal** (LB-F4, LB-F7) — no seal-at-close on mint/reuse; REPLACE carry-forward welds lifecycles across calc rebinds.
-4. **Choke-point bypasses** (LB-F2, LB-F3) — raw writers that predate the calc/link state machines. Two small surgical fixes (route admin-confirm through the choke-points or delete the endpoint; route bulk stale-cancel through the release helper).
+4. **Choke-point bypasses** (LB-F2 ✅fixed, LB-F3 ✅fixed) — raw writers that predated the calc/link state machines; both routed through the existing rules.
 
 Families 1–3 are all "identity derived ad-hoc at the consumer" — the
-reconciler thesis (spec §12). Family 4 is patchable independently. Battery
-verdict so far: **the structural root is real but bounded** — the reconciler
-case strengthens if LB-T2 (HA-42 repro, reversal splits, fill-before-mint)
-lands more findings in families 1–3.
+reconciler thesis (spec §12). Family 4 is CLOSED by surgical patches.
+**T2 verdict: the tranche landed BOTH new findings in family 1** (over-count
++ under-count, mirror images of the same key-derivation root) and corrected
+the HA-42 filing's mechanism — the family-1 concentration is now 4 bugs on
+one root. See §7 for the patch-vs-reconciler decision.
 
 ## 6. Filed residual observations (audit-sourced, NOT fixed — opportunistic)
 
