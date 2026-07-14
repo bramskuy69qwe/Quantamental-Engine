@@ -171,3 +171,64 @@ unfixed deliberately; filed here so they don't dangle in task transcripts.
 | LB-R1 | LOW (pre-existing) | The admin calc-link UI flow was likely never end-to-end functional: `templates/admin/_calc_link_candidates.html` sends `hx-vals` FORM-encoded with a forced `application/json` header → `request.json()` fails → `body={}` → 400 "Missing order_id or calc_id"; no `json-enc` extension exists anywhere, and htmx default doesn't swap 4xx bodies (the only `beforeSwap` listener is the ECharts-dispose in base.html), so the error div never renders either. Unchanged by the LB-F2 delegation (same failure before/after). | Next touch of the admin surface: either fix the encoding (hx-post form params) or delete the page per plan §11 (needs-link tab is the modern path) |
 | LB-R2 | LOW (theoretical) | `release_calcs_for_stale_cancels` could wrongly release ONCE in a compound edge: an old WS cancel whose reason-stamp DB-write failed (swallowed at order_manager.py:~1250) AND whose calc later re-matched to a different live order. Live-DB probe at audit time: zero candidate rows of any shape. Optional tightening: `AND NOT EXISTS (other live order on same calc)`. | If the sweep ever logs a release for a calc with a live working order — or before v2.6 makes bulk snapshots the primary cancel path |
 | LB-R3 | NOTE (parity) | The LB-F1 junction replay emits `position:opened`/`scale_in` at manual-link time — potentially long after the fill, possibly for an already-closed position. Exact parity with the auto-lane Defect-8 replay (same late-event property); no live `position:opened` subscriber exists today (only `position:closed` has consumers). | The moment a `position:opened` subscriber is added, both replay lanes need a suppress-or-timestamp decision |
+
+## 7. PATCH-vs-RECONCILER DECISION (2026-07-14, on the full T1+T2 evidence)
+
+**Decision: BUILD THE RECONCILER, scoped to identity ownership (families
+1 + 3), with ONE pre-reconciler surgical patch (LB-F5 / family 2).**
+Operator-gated: the reconciler needs its own design/plan doc (spec §12 is
+the seed; HA-42→LB-F8 is the first input) — this section is the decision
+record, not the build plan.
+
+**Why not patch family 1 (the 3 open junction-keying bugs)?** Each spot
+fix fails the whack-a-mole test that motivated this battery:
+- LB-F9 (under-count, ALWAYS-ON live) can only be spot-fixed by adding a
+  retroactive sibling-fill backfill lane — a **7th ad-hoc attribution
+  site**, the exact pattern (⑨→close-recording) that proved fixing one
+  site shifts load to another.
+- LB-F6 (dual-key) and LB-F8 (N-fold inflation) both reduce to "which
+  tpid is canonical for this order's junction row?" — answering that
+  per-site IS the reconciler question; answering it in one place is the
+  reconciler.
+- Family-1 evidence: 4 independent bugs (F1 fixed, F6, F8, F9), one root
+  — the junction key is re-derived per event from whichever tpid is
+  visible (fill tpid / order stash / MAX(fills)), with no owner and no
+  retroactive reconcile when late identity (mint, link) arrives.
+- Counter-evidence honestly weighed: family 4 (F2, F3) WAS surgically
+  patchable — but those were missing *routings* into existing rules, not
+  identity derivation. The distinction predicts patchability: routing
+  bugs patch cleanly; derivation bugs multiply sites.
+
+**Why fold family 3 (lifecycle: F4 seal, F7 REPLACE weld) into the
+reconciler?** Lifecycle is the same identity, one level up: seal-at-close
+is naturally the identity owner's close-transition duty, and F7's
+calc-vs-lifecycle REPLACE asymmetry is a coherence rule that belongs to
+whoever owns identity stamping (T234 made the calc half intentional —
+the pair-coherence decision needs one owner, not another per-column rule).
+
+**Why patch family 2 (LB-F5) now, outside the reconciler?** It is a
+resolution-ORDER change inside one existing resolver (⑨ tier-0 = parent
+order's tpid via the fill's own exchange_order_id, before the live
+(symbol,direction) scan) — no new site, no canonical-key question, and it
+kills a live misattribution shape (same-slot reopen) cheaply. Ship as a
+normal fix task; the LB-D3 xfail flips on it.
+
+**Reconciler scope sketch** (for the design doc, not binding): one module
+owns (a) canonical tpid per (account, entry-order) — single derivation,
+consumers read, never re-derive; (b) junction writes keyed ONLY through
+it, replay/idempotency by construction (guard key ≡ write key kills F8);
+(c) retroactive reconcile on late identity — mint-after-fill (F9),
+link-after-fill (F1's generalization), key migration (F6); (d) lifecycle
+mint/seal at open/close transitions (F4) + closed-row identity-pair
+coherence (F7).
+
+**Acceptance harness = THIS battery.** Reconciler done ⟺ the remaining
+xfails (LB-D3 via the F5 patch; LB-D5, LB-D6, LB-I5, LB-T2d, LB-T2e via
+the reconciler) flip strict-xfail → XPASS → markers removed, with all 46
+pins still green (behavior-preservation proof — the same guard the v2.6
+OrderManager extraction gets for free).
+
+**Sequencing vs the roadmap**: LB-F5 patch next (small task), then the
+reconciler design doc (operator-gated separate session), then build —
+ideally BEFORE v2.6's OrderManager extraction so the extraction moves
+already-owned identity code instead of re-scattering it.
