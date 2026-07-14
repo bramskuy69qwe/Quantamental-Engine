@@ -1,9 +1,18 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-06-25
-**Branch**: **`v2.5/usertrades-backfill-fix`** (forked off the pushed `v2.5/correlation-log` work) — **3 commits UNPUSHED** vs origin: `9838ca7` (history "amended" label), `90a9da4` (entry-fill calc_id/lifecycle attribution), `17976af` (analytics metrics). The 7 earlier commits (SPCX userTrades fix → engine auto-recovery → synth_legacy_open regression fix → Calc-Clear sub-drop → amended-history column → SL-removal-RED → matcher-flake fix) are PUSHED. Working tree otherwise CLEAN (the v2.6/v2.7/v3.0 design docs are committed alongside this HANDOFF update).
-**Tests**: full suite **3890 passed / 7 skipped / 2 deselected** — **deterministically green** (the long-standing `test_production_parity`/`test_calc_id_wiring` matcher-window flake was FIXED in `1fe4178`: module-frozen `RECENT` vs the matcher's live `now()` fallback → anchor `created_at_ms=RECENT_MS`). Run SOLO (concurrent pytest contends → timeout artifacts). `perf` gate excluded by default (`-m perf`).
-**Engine**: **RUNNING** — restarted by me 2026-06-25, `.venv` python, **no `--reload`**, clock-synced. Observe-only, **Binance-direct HEDGE mode**, force-kill safe. Offline gap set is `[]` (restart-safe — startup recovery is a no-op). ⚠ The engine relies on a **SYNCED OS clock** (no ccxt `adjustForTimeDifference`) — a drifted clock → `-1021 Timestamp ahead` on every Binance REST call → breaks the user-data-stream listenKey (no fills observed). `w32tm /resync` before starting; confirm a `ws_connected stream=user` envelope.
+**Date**: 2026-07-14
+**Branch**: **`v2.5/usertrades-backfill-fix`** — **fully PUSHED, origin in sync**. Latest: `5376aab` (chore: track Codex `AGENTS.md` + `.codex/config.toml`; `.gitignore` rule `keep_data.backup-*/` for the 83 MB local backup dir), `ee4a4dd` (window-aware income fetch), `0d4b220` (HANDOFF + v2.6/v2.7/v3.0 design docs), `17976af`/`90a9da4`/`9838ca7` (analytics + linkage). Working tree CLEAN.
+**Tests**: full suite **3897 passed / 7 skipped / 2 deselected** — deterministically green. Run SOLO (concurrent pytest contends → timeout artifacts). `perf` gate excluded by default (`-m perf`).
+**Engine**: **DOWN** — restart next session: `.venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000` (**no `--reload`**). Observe-only, **Binance-direct HEDGE mode**, force-kill safe. Offline gap set is `[]` (restart-safe — startup recovery is a no-op). ⚠ Requires a **SYNCED OS clock** (no ccxt `adjustForTimeDifference`) — a drifted clock → `-1021 Timestamp ahead` on every Binance REST call → breaks the user-data-stream listenKey (no fills observed). **`w32tm /resync` BEFORE starting** (drifted +1000ms on 07-13); confirm a `ws_connected stream=user` envelope.
+
+## ▶ STATUS 2026-07-13 — offline income-window incident (DONE + PUSHED)
+
+Operator made several offline (engine-down) trades — mostly losses — that never appeared in Position History. **Root cause = BACKEND** (not frontend): `fetch_exchange_trade_history` called `fetch_income_history` with NO startTime, and Binance's income endpoint returns only ~7 days from a given startTime → after a >7-day offline gap the older trades never entered `exchange_history` → gap detection never flagged them → no userTrades recovery → no `closed_positions` → missing from History.
+
+- **Code fix (`ee4a4dd`, prevention)**: `get_last_income_time` anchor + `_fetch_income_windowed` pages income in ≤7-day windows to now (full-page → re-fetch from `max_t` for same-ms tie-safety; `MAX_PAGES=200` backstop; dedup). `fetch_exchange_trade_history` anchors at last-income − 1h; new `since_ms` param for a one-time wide reach-back. **Forward PREVENTION, not self-heal** — data already stranded behind an advanced anchor still needs the manual userTrades recovery. +7 tests (`tests/test_income_windowed_fetch.py`); 2-agent audit (pager SHIP; integration flagged the prevention-vs-self-heal split).
+- **Data recovery (DB, not a commit)**: refix_fills_from_usertrades + per-symbol rebuild → **IN 101 / TAC 18 / NFP 20 / PUNDIX 1 = 140 positions, −323.71 net** (reconciles the ~606→291 equity drop). The `since_ms` `exchange_history` backfill also surfaced a 4th symbol the ad-hoc probe missed (NFPUSDT). Gap set converged to `[]`.
+- **UI-surface note (verified live)**: engine-reconstructed offline closes render in **History → "Closed Positions" tab** (`/fragments/history/closed_positions`, reads `closed_positions`) + the **Exchange tab** (income ledger) + Analytics + cockpit recent-closes. They do NOT appear in the **"Trade History" tab** — that reads a SEPARATE `trade_history` table populated only by the manual `/history/log_close` journal (`insert_trade_history`, api/routes_history.py:84; NO auto-projection from `closed_positions`). Don't confuse the two tabs when verifying.
+- Full detail in **[[project_spcx_offline_backfill_bug]]** memory (2026-07-13 block).
 
 ## ▶ STATUS 2026-06-24/25 — live dogfood + debug session (DONE)
 
@@ -15,11 +24,38 @@ The corr-log dogfood (HA-6/HA-7) is **VERIFIED live**; the session then fixed a 
 - **Analytics metrics** (`17976af`): Max Drawdown (read the rolling dd-GATE column → 0%; now period peak-to-trough off the equity curve), Cumulative PnL % (div-by-0 on uncaptured deposits → 0%; now initial-equity base + clarifying tooltip), Profit Factor/Expectancy (empty manual `trade_history` journal → "—"; now `closed_positions.realized_r`), Sortino(MAE) (positive-biased `ratio_card` hid the inherently-negative metric → "—"; now rendered inline).
 - **Calculator**: verified mathematically sound (`risk_usdt × atr_c / sl_pct` → size, `× regime_mult`, lot-snapped). NOTE: `atr_c ≤ 1`, so realized risk = `atr_c × the displayed 1%` (volatility-defensive — never over-risks; volatile symbols risk notably less).
 
-## ▶ OPEN / NEXT
-- **Push** the 3 unpushed commits when ready.
-- **PARKED — historical residue, operator-deferred, NOT live bugs** (the live code prevents recurrence): SPCX 80 ungrouped fills (cosmetic drill-down gap; P&L correct); 2 historical `positions_calcs` junction gaps (VELVET/ETH, pre-"Defect-8" `_ensure_junction_if_linked`); ~106 ungrouped fills total (pre-`_backfill_open_fill_tpids` residue). Details + backfill approaches in the memory.
-- **PLANNED in separate Claude sessions** (design docs committed alongside this update): `docs/design/v2.6_remove_quantower_plugin_plan.md` (remove the Quantower plugin → Binance-direct only; the `platform_bridge` / `_user_data_loop` plugin gate then becomes dead code), `v2.7_model_library_plan.md`, `v3.0_models_tab_design_prompt.md`.
-- **Deferred lever (gated)**: deterministic linkage via engine-placed `clientOrderId` tagging — the fuzzy 6/6 matcher exists *because* Quantower placement can't tag; reachable once the engine becomes the order-entry point.
+## ▶ NEXT SESSION — resume linkage debugging: TWO tracks, timed against the v2.6→v3.0 roadmap
+
+**Goal**: continue debugging calc → order → fill → position → closed_position attribution + the plan-badge / exec-link / history render layer.
+
+**Strategy (settled 2026-07-14) — separate by DURABILITY, not just by layer.** The roadmap forces it: **v3.0 is a ground-up UI rewrite** (design doc: *"v3.0 is a ground-up visual refresh… the polished design it will be **rebuilt against**"*) → every current cockpit/calc/history DOM selector + click-flow is throwaway. **v2.6 extracts the `OrderManager` out of `platform_bridge`** (`docs/design/v2.6_remove_quantower_plugin_plan.md` §2 — the single object every linkage decision flows through). So the two layers have OPPOSITE lifespans: backend attribution is durable through both releases; the browser UI dies at v3.0. Invest accordingly:
+
+| Layer | Survives v2.6 | Survives v3.0 | Verdict |
+|---|---|---|---|
+| Attribution logic + DB outputs (`calc_id`, junction, `badge_level`, closed rows) | ✅ behavior preserved | ✅ visual-only | **invest now — durable** |
+| Endpoint/fragment data contract (what `/fragments/*` returns) | ✅ | ~partial (endpoints may be reworked) | cheap HTTP tests, opportunistic |
+| Browser DOM / selectors / click sequences | ✅ | ❌ **thrown away** | **don't build now** |
+
+### ▸ TRACK 1 — Backend attribution battery (NOW; heavy; doubles as the v2.6 safety net)
+Linkage is a backend problem and the corr-log ("booklog") already makes it observable. Build the scenario battery as **deterministic backend fixtures**, NOT browser walks:
+1. **Model the linkage state machine — 3 axes** (from the real state-mutating actions): **calc lifecycle** (`/calculator/calculate`·`/cancel`·`/clear`·`/window` → none/active/expired), **order link-state** (`/orders/{id}/manual_link`·`/mark_unplanned`·`/history/exec_link/confirm` → unlinked/auto-linked/manually-linked/marked-unplanned/needs-link), **manual journal** (`/history/log_close`·`/log_execution` → the SEPARATE `trade_history` table, NOT `closed_positions`). The bug-bearing dimension is **calc-timing vs order-arrival** (calc-before-order = auto-link; calc-after = needs-link — the ETH case).
+2. **Scenarios = each transition once + pairwise-interference (two actions sharing a state axis) + the known end-to-end flows** (place→auto-link→amend→close→history; place→needs-link→manual-link→close; place→mark-unplanned→confirm-not-in-linkage). **~30–40 total, NOT the button factorial** (~2M+ permutations, ~99% waste). Combinatorial-testing reality: bugs are ≤2–3-factor, and every past frontend linkage bug here (ticker-leak, cross-clear drift, PENDING/EXPIRED race, amended-vs-off-size label) was ≤2-factor.
+3. **Assert the attribution OUTPUTS** (`calc_id`, `lifecycle_id`, junction row, tpid grouping, `badge_level`, `closed_position` row), observed via `CORR_LOG_PROFILE=linkage` + `scripts/corr_tail.py` (cookbook recipes). **Build on the EXISTING harness** — `tests/test_correlation_log_attribution.py` (2185 L), `test_correlation_log_replay.py` (626 L, the 8-bug replays), `test_linkage_binance_ws.py`, `test_linkage_history_plan.py`, `test_phase1_matcher*.py`, `test_phase2_junction.py`, `test_exec_link.py`. Seconds to run, no browser, no live market.
+4. **Triage BEFORE fixing** — dedup by MECHANISM: most symptoms collapse to the shared ad-hoc-attribution root (whack-a-mole history: fixing one of ~6 attribution sites shifts load to another — ⑨→close-recording is the proof). Then **independently verify each mechanism** (CLAUDE.md re-investigation discipline — ~53% of race-framed findings were false positives; a filing's named mechanism is often wrong even when the symptom is real). Kill false-positives HERE.
+5. **Each fixture becomes a permanent regression test** — the net this whack-a-mole subsystem has never had, AND the exact guard that tells you **v2.6's `OrderManager` extraction didn't silently regress** `calc_id` propagation / junction / tpid grouping. **Build (most of) Track 1 before/alongside v2.6** — it pays for itself twice.
+
+**Meta-lever**: this battery IS the acceptance harness for the deferred **attribution reconciler** (ONE module owning fill→position→calc — the structural cure; spec §12, HA-42 first input). If discovery confirms most bugs share the ad-hoc root → build the reconciler instead of patching N sites. **The battery decides patch-vs-reconciler.**
+
+### ▸ TRACK 2 — Frontend browser battery (DEFER to post-v3.0; do NOT build against today's DOM)
+v3.0 rewrites the DOM → a Playwright suite against current selectors is throwaway. So:
+- **Now**: fix only *acute* current frontend bugs, minimally + ad-hoc — no durable browser suite. If a frontend safety net is wanted in the interim, put it at the **fragment-HTTP-contract** layer (assert `GET /fragments/history/closed_positions` returns the right rows/badges — fast, no browser, more durable than DOM).
+- **Post-v3.0 (UI stable)**: build the real Playwright battery against the NEW DOM using the state-machine/pairwise model above, and **seed state at the backend** (DB/API fixture) so each browser test is ONE transition + assert — never click through 5 prerequisite steps. That seeding is the single biggest Playwright speedup.
+- **Why deferring is ~free**: once Track 1 proves attribution is correct and the fragment endpoint returns the right data, the only residue for the browser is pure presentation — which v3.0 rebuilds anyway. Browser-layer linkage testing is the lowest-durability work.
+
+## ▶ OPEN / PARKED
+- **PARKED — historical residue, operator-deferred, NOT live bugs** (the live code prevents recurrence): SPCX 80 ungrouped fills (cosmetic drill-down gap; P&L correct); 2 historical `positions_calcs` junction gaps (VELVET/ETH, pre-"Defect-8" `_ensure_junction_if_linked`); ~106 ungrouped fills total (pre-`_backfill_open_fill_tpids` residue). Backfill approaches in the memory.
+- **PLANNED (separate sessions, design docs committed)**: `docs/design/v2.6_remove_quantower_plugin_plan.md` (remove the Quantower plugin → Binance-direct only; the `platform_bridge` / `_user_data_loop` plugin gate then becomes dead code), `v2.7_model_library_plan.md`, `v3.0_models_tab_design_prompt.md`.
+- **Deferred lever (gated)**: deterministic linkage via engine-placed `clientOrderId` tagging — the fuzzy 6/6 matcher exists *because* Quantower placement can't tag; reachable once the engine becomes the order-entry point (post-v2.6).
 
 ---
 
