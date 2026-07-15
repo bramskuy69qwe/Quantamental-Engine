@@ -1,9 +1,33 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-07-15
-**Branch**: **`v2.5/usertrades-backfill-fix`** — **PUSHED through `02eb743`, origin in sync** (+ this refresh's docs commit). 2026-07-14/15 sessions: `07ba8ff` T1 battery, `c636772` LB-F2+F3 fixes, `d9ff4bf` LB-F1 fix, `cb08636` residuals filed, `85656aa` T2 battery, `dac427b` §7 decision, `02eb743` LB-F5 fix.
-**Tests**: full suite **3945 passed / 7 skipped / 2 deselected / 5 xfailed** — green. The 5 strict-xfails are DELIBERATE (the battery's reconciler acceptance set — see below). Run SOLO (concurrent pytest contends → timeout artifacts). `perf` gate excluded by default (`-m perf`).
+**Date**: 2026-07-15 (EOD wrap — context handed off mid-reconciler-program, R0–R3 done, **NEXT = R4**)
+**Branch**: **`v2.5/usertrades-backfill-fix`** — pushed through `25ce43f`; **4 commits UNPUSHED**: `665e804` (R1 extraction), `aa20957` (R2 canonical key), `b50b59c` (R3 retro-reconcile), + this HANDOFF wrap. Push when the operator asks. Earlier 07-14/15 commits (battery + LB-F1/F2/F3/F5 fixes + §7 decision + reconciler design doc) are pushed.
+**Tests**: full suite **3950 passed / 7 skipped / 3 deselected / 2 xfailed** — green. The 2 strict-xfails are DELIBERATE (LB-D6 + LB-I5 — the R4 acceptance set); the 3rd deselected is the perf tripwire (`test_position_identity_perf.py`, run with `-m perf`). Run SOLO (concurrent pytest contends → timeout artifacts).
 **Engine**: **DOWN** (operator-verify at session start) — restart: `.venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000` (**no `--reload`**). Observe-only, **Binance-direct HEDGE mode**, force-kill safe. Offline gap set is `[]` (restart-safe — startup recovery is a no-op). ⚠ Requires a **SYNCED OS clock** (no ccxt `adjustForTimeDifference`) — a drifted clock → `-1021 Timestamp ahead` on every Binance REST call → breaks the user-data-stream listenKey (no fills observed). **`w32tm /resync` BEFORE starting** (drifted +1000ms on 07-13); confirm a `ws_connected stream=user` envelope.
+
+## ▶ STATUS 2026-07-15 EOD — reconciler R0–R3 SHIPPED (8 of 9 battery findings fixed)
+
+The attribution-reconciler program (`docs/design/attribution_reconciler_plan.md`, phases in §4) executed R0–R3 in this session; every phase: full-suite gate SOLO + independent-agent audit + folds + one commit.
+
+- **R1 `665e804` — pure extraction**: `core/position_identity.py` (the identity owner) now holds ⑨ tpid resolution, the LB-F5 stamp, junction formation + lifecycle mint (WITH the position:opened/scale_in emissions — audit proved events-move was forced), the Defect-8 replay, the §3.2 primary-calc rule, the close-time backfill. OrderManager keeps every method name as a thin delegate — caller/test surface unchanged; gate counts were IDENTICAL pre/post (pure-move proof). The owner is the SOLE junction writer + lifecycle mint in `core/` (acceptance-#4 grep; fences: rebuild lane + scripts/).
+- **R2 `aa20957` — canonical key**: replay guard ≡ write key by construction (**LB-F8/HA-42 DEAD** — N-fold junction inflation pinned 1.0→1.0→1.0); builder key-migration pass merges dual-keyed rows + re-stamps fills + corrects the stale order stash (**LB-F6 DEAD**); ⑨ tier-0 reduce-only gate (LB-F5 residual closed); perf tripwire added. **R2-audit caught a MAJOR pre-commit**: ungated migration would drag CORRECT rows onto stale stash keys → the DIRECTION GATE (only a fill carrying its OWN tpid migrates) + mirror-ordering pin.
+- **R3 `b50b59c` — retro-reconcile**: mint-after-fill sweep + **delta-reconcile** (**LB-F9 DEAD**; §5-Q2 DECIDED: evidence-gated, ORDER-keyed, SUM(ABS), on-change, direction-gated — the ungated sweep's mirror mid-state double-count was traced pre-implementation); replay guard gained order_id (second-order-same-calc now replays, pinned). FREE HEAL: historically F8-inflated/F9-starved junction rows self-correct at their next fill/replay event. Honesty correction in the plan: reversal open legs heal AT CLOSE via the retained walk-path backstop, NOT at ACCOUNT_UPDATE.
+
+**Battery score**: LB-F1..F9 → 8 FIXED + battery-flipped (F1/F2/F3 pre-program, F5 patch, F6+F8 at R2, F9 at R3); remaining strict-xfails EXACTLY {**LB-D6** (closed-row REPLACE pair weld), **LB-I5** (lifecycle tpid-reuse bleed)} = the R4 set. Battery = 5 `tests/test_linkage_battery_*` files + helpers + the perf file; ledger + §7 decision in `docs/design/linkage_battery_plan.md`.
+
+## ▶ NEXT SESSION — reconciler R4, then R5 (operator-gated per phase)
+
+**R4 — lifecycle seal + pair coherence** (plan §4-R4; flips the last 2 xfails):
+1. **Seal-at-close (kills LB-F4/LB-I5)**: the lifecycle mint/reuse lookup in `position_identity.link_position_calc_on_open` (`SELECT lifecycle_id FROM positions_calcs WHERE position_id=? … LIMIT 1`) must ignore SEALED lifecycles; seal at the final close (the `_complete_calcs_on_close` moment / final `_build_close_row_for_fill`). §5-Q3 DDL decision due: no-DDL option = gate on the final closed_positions row's existence; nice-to-have = `positions_calcs.sealed_ts` column. Flip `tests/test_linkage_battery_interference.py` LB-I5 xfail + reframe its pin.
+2. **Closed-row identity-pair coherence (kills LB-F7/LB-D6)**: `_build_close_row_for_fill` asks the owner for the (calc_id, lifecycle_id) PAIR; `db_orders.insert_closed_position`'s per-column REPLACE rules (calc unconditional :536 vs lifecycle carry-forward :462-465, T234-intentional) collapse to one pair-coherent bind. Flip `tests/test_linkage_battery_disagreement.py` LB-D6 xfail + pin.
+3. **LB-D4 T3 scenario** (battery plan §2, carried): the offline rebuild's close-calc rule (earliest-fill) delegates to the owner's primary rule — write the T3 battery scenario proving it (drive the `db_orders` backfill path on the LB-D2 shape).
+4. R4 audit charges to pre-load: partial-vs-final close seal timing (multi-TP T2b ladder — seal must NOT fire on partials), REPLACE-carry interactions with the funding reconcile path (`reconcile_closed_position_funding` rewrites net_pnl on the FINAL row), scale-in lifecycle continuity.
+
+**R5 — close-out** (plan §4-R5): remove all flipped xfail markers; holistic 3-agent audit; spec erratum **E36** (`attr_identity_reconcile`-vs-`attr_decide` deviation + MIGRATED/RECONCILED outcomes + component set + §5.6 site column); R3-audit riders (lifecycle sweep rebuilt-namespace filter NIT-6, [FIXED] banners NIT-5); HANDOFF/memory refresh; optional historical-residue backfill script (dry-run-first — NB the R3 delta-reconcile already self-heals junction rows on touch).
+
+**Working discipline for R-phases (proven this session)**: read the plan §4 bullet + its hand-offs FIRST; implement in `core/position_identity.py` (OrderManager delegates stay untouched); flip the named battery xfails + reframe pins in the same task; run battery + `test_correlation_log_attribution/replay` + `test_linkage_binance_ws` + `test_phase2_junction` targeted, then FULL GATE SOLO + independent audit agent (read-only, NO pytest while the gate runs) + fold before commit; ONE commit per phase, then STOP for the operator. The battery has caught implementer errors 4× — trust a red battery over your own diff.
+
+**Gotchas added this session**: future tests must patch `core.state.app_state` (NOT `core.order_manager.app_state`) to reach ⑨ tier-1; the ERROR-twin test matches the replay's SQL text verbatim (update it if the SELECT changes); PowerShell line-splices must verify inter-method neighbors (a splice once ate `_process_reversal_split` — the battery caught it same-run); corr-tap outcome additions (MIGRATED/RECONCILED) ride `attr_junction_form` per R2 precedent — do NOT add registry categories before E36.
 
 ## ▶ STATUS 2026-07-14/15 — linkage battery COMPLETE + 4 fixes + reconciler DECIDED (PUSHED)
 
@@ -15,9 +39,9 @@
 
 **§7 DECISION** (`dac427b`, battery plan): **BUILD THE ATTRIBUTION RECONCILER**, scoped to identity ownership (families 1+3); family 4 closed surgically; LB-F5 patched. Decision rule: routing bugs patch cleanly, derivation bugs multiply sites. The 5 remaining xfails (LB-D5, LB-D6, LB-I5, LB-T2d, LB-T2e) ARE the acceptance set.
 
-## ▶ NEXT SESSION — reconciler R1 (operator-gated)
+## ★ HISTORICAL (2026-07-15 midday — superseded; R1–R3 EXECUTED same day, see the EOD status block at the top)
 
-**`docs/design/attribution_reconciler_plan.md`** (rev 2 — 2-agent adversarial design review folded: missed rebuild-lane + fills.calc_id writers added, delta-reconcile evidence-gated, memo-less R1, attr_decide deviation named) is the program doc: `core/position_identity.py` owner, 11-row consumer disposition, phases **R0 (done) → R1 pure extraction → R2 canonical key (kills F8+F6) → R3 retro-reconcile (kills F9) → R4 lifecycle seal + pair coherence (kills F4+F7+LB-D4) → R5 close-out (erratum E36)**. Each phase = one operator-gated task, full-suite + battery gates, per-phase independent audit AND the acceptance-#4 broad re-grep. Sequencing: R1–R5 **before** v2.6 Phase 1 (cross-ref in the v2.6 plan §6). Memory: [[project-linkage-battery]].
+**`docs/design/attribution_reconciler_plan.md`** (rev 2 — 2-agent adversarial design review folded) is the program doc: `core/position_identity.py` owner, 11-row consumer disposition, phases R0→R5, per-phase gates + audits + the acceptance-#4 broad re-grep. Sequencing: R1–R5 **before** v2.6 Phase 1 (cross-ref in the v2.6 plan §6). Memory: [[project-linkage-battery]].
 
 ## ▶ STATUS 2026-07-13 — offline income-window incident (DONE + PUSHED)
 
