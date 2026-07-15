@@ -1,7 +1,7 @@
 """
 Order lifecycle state machine — status enum, valid transitions, terminal mappings.
 
-No behavior change: consumed by OrderManager (Phase 6) and platform_bridge (Phase 8).
+Consumed by OrderManager and the WS/exchange order pipeline.
 """
 from __future__ import annotations
 
@@ -41,20 +41,7 @@ def validate_transition(current: str, target: str) -> bool:
         return False
 
 
-# ── Quantower terminal → engine status mapping ─────────────────────────────
-
-QT_STATUS_MAP: Dict[str, str] = {
-    "Opened":          OrderStatus.NEW,
-    "PartiallyFilled": OrderStatus.PARTIALLY_FILLED,
-    "Filled":          OrderStatus.FILLED,
-    "Cancelled":       OrderStatus.CANCELED,
-    "Refused":         OrderStatus.REJECTED,
-    "Inactive":        OrderStatus.EXPIRED,
-    "Unspecified":     OrderStatus.NEW,
-}
-
-
-# ── Quantower terminal → engine order type mapping ─────────────────────────
+# ── TP/SL order direction resolution (hedge + one-way modes) ───────────────
 
 def resolve_tpsl_direction(position_side: str | None, side: str) -> str:
     """Resolve position direction for TP/SL order matching.
@@ -71,14 +58,3 @@ def resolve_tpsl_direction(position_side: str | None, side: str) -> str:
     if position_side and position_side != "BOTH":
         return position_side
     return "LONG" if side == "SELL" else "SHORT"
-
-
-QT_ORDER_TYPE_MAP: Dict[str, str] = {
-    "Limit":              "limit",
-    "Market":             "market",
-    "StopMarket":         "stop_loss",
-    "StopLimit":          "stop_loss",
-    "TakeProfitMarket":   "take_profit",
-    "TakeProfitLimit":    "take_profit",
-    "TrailingStop":       "trailing_stop",
-}

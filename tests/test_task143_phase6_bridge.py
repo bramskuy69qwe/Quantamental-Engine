@@ -38,28 +38,6 @@ import pytest_asyncio
 import aiosqlite
 
 
-# ── Source-pin: db._conn removed from executing code ────────────────────────
-
-class TestNoDbConnInExecutingCode:
-    def test_no_db_conn_execute_in_executing_code(self):
-        src = Path("core/platform_bridge.py").read_text(encoding="utf-8")
-        bad_lines = []
-        for ln, line in enumerate(src.splitlines(), 1):
-            stripped = line.lstrip()
-            if stripped.startswith("#") or stripped.startswith('"""'):
-                continue
-            if "db._conn.execute(" in line or "db._conn.commit(" in line:
-                bad_lines.append((ln, line.strip()))
-        assert not bad_lines, (
-            f"HIGH-002 regression: db._conn direct access back in "
-            f"core/platform_bridge.py at {bad_lines!r}."
-        )
-
-    def test_anchor_comments_reference_high_002(self):
-        src = Path("core/platform_bridge.py").read_text(encoding="utf-8")
-        assert "HIGH-002" in src and "Task 143" in src
-
-
 # ── Helpers added to ExchangeMixin (source-pin) ─────────────────────────────
 
 class TestHelpersAddedToExchangeMixin:

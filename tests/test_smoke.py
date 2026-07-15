@@ -32,7 +32,6 @@ MODULES = [
     "core.exchange_income",
     "core.exchange_factory",
     "core.ws_manager",
-    "core.platform_bridge",
     "core.reconciler",
     "core.handlers",
     "core.analytics",
@@ -52,7 +51,6 @@ MODULES = [
     "api.routes_accounts",
     "api.routes_backtest",
     "api.routes_regime",
-    "api.routes_platform",
     "api.routes_models",
     "api.routes_news",
 ]

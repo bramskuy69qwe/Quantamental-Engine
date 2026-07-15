@@ -167,11 +167,6 @@ FRED_API_KEY = os.getenv("FRED_API_KEY", "")
 FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "")
 BWE_NEWS_WS_URL = os.getenv("BWE_NEWS_WS_URL", "wss://bwenews-api.bwe-ws.com/ws")
 
-# ── Platform bridge auth ─────────────────────────────────────────────────────
-# Shared secret for Quantower plugin REST/WS endpoints.
-# Generate: python -c "import secrets; print(secrets.token_hex(32))"
-PLATFORM_TOKEN = os.getenv("PLATFORM_TOKEN", "")
-
 # ── Audit export signing (P7.T4) ─────────────────────────────────────────────
 # Optional HMAC key for the closed-position audit export's signed timestamp. When
 # set, exports are HMAC-SHA256 signed (authenticity); when empty (the localhost

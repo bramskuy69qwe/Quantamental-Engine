@@ -134,9 +134,7 @@ async def test_rl3_rate_limit_propagation(site_id):
     elif site_id == "exchange__fetch_open_orders_tpsl":
         adapter = _mock_adapter(raise_on="fetch_open_orders")
         mock_pb = MagicMock()
-        mock_pb.is_connected = False
         with patch("core.exchange._get_adapter", return_value=adapter), \
-             patch("core.platform_bridge.platform_bridge", mock_pb), \
              patch("core.order_manager_singleton.order_manager", mock_pb.order_manager):
             from core.exchange import fetch_open_orders_tpsl
             await fetch_open_orders_tpsl()
