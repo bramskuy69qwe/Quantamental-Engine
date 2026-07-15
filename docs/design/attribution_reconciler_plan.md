@@ -28,10 +28,10 @@ strict-xfails, 2026-07-14/15) proved the cost:
 | LB-F6 (=LB-D5) | mixed-tpid fills of one order key TWO junction rows + two lifecycles | **fixed at R2** (key migration; xfail flipped) |
 | LB-F8 (=HA-42, corrected) | replay guard checks the ORDER-stash tpid while the write lands under MAX(fills.tpid) → guard never satisfies → N-fold unbounded `contributed_qty` inflation per WS/bracket-child event (gated: needs a divergent stash — "unbounded amplifier behind a narrow gate", battery severity framing) | **fixed at R2** (guard≡write; xfail flipped) |
 | LB-F9 (=LB-T2d) | fill-before-mint first fill permanently stranded from the junction (under-count, mirror of F8); reversal open legs land in the same shape | **fixed at R3** (mint-after-fill retro-sweep + delta-reconcile; xfail flipped) |
-| LB-F4 (=LB-I5) | lifecycle mint/reuse has no seal-at-close → tpid reuse bleeds a closed trade's lifecycle into the new trade | **open xfail** |
-| LB-F7 (=LB-D6) | closed-row REPLACE binds calc_id unconditionally but carries lifecycle_id forward → mixed identity pair | **open xfail** |
+| LB-F4 (=LB-I5) | lifecycle mint/reuse has no seal-at-close → tpid reuse bleeds a closed trade's lifecycle into the new trade | **fixed at R4** (seal-at-close; xfail flipped) |
+| LB-F7 (=LB-D6) | closed-row REPLACE binds calc_id unconditionally but carries lifecycle_id forward → mixed identity pair | **fixed at R4** (pair-gated carry-forward; xfail flipped) |
 | LB-F5 | ⑨ resolved by (symbol,side) heuristics before the parent-order signal | fixed `02eb743` — tier-0 + stamp; heuristic tail pinned |
-| LB-D4 | offline/rebuild close-row calc rule (earliest-fill) diverges from the live rule (junction-primary) — a consumer re-deriving with a DIFFERENT rule | **open, un-battery'd** (T3 scenario owed; owned by R4 below) |
+| LB-D4 | offline/rebuild close-row calc rule (earliest-fill) diverges from the live rule (junction-primary) — a consumer re-deriving with a DIFFERENT rule | **fixed at R4** (rule delegated to the owner's §3.2 helper; T3 scenario shipped) |
 
 (Family 4 — LB-F2/F3 choke-point bypasses — fixed `c636772` and closed;
 they are the proof that *routing* bugs patch cleanly.)
@@ -152,9 +152,9 @@ battery xfail.
 | `_backfill_open_fill_tpids` (:3115) | RETAINED as the close-time backstop (R3 correction — the mint-after-fill sweep covers the mint-event lane, but calc_id parity + the no-later-tpid-event tails still need close-time healing; reversal open legs heal here, on the walk path) |
 | fills.calc_id writers: `order_enrichment.py:418` (link-time backfill, "the primary fix"), `:688` (fill-time propagation), `link_actions.py:241` (manual lane) | DELEGATE — owner stamps fills at registration/retro-sweep (feasibility-review MAJOR-3) |
 | `_stamp_closing_fill_attribution` (:2558) | DELEGATES — reads the owner's (calc, lifecycle) pair for the position |
-| `_build_close_row_for_fill` calc/lifecycle sealing (:3414/:3557) | DELEGATES — asks the owner for the pair; REPLACE coherence rule lands in `insert_closed_position` alongside |
+| `_build_close_row_for_fill` calc/lifecycle sealing (:3414/:3557) | DELEGATES — asks the owner for the pair; REPLACE coherence rule lands in `insert_closed_position` alongside. **R4: shipped** — pair-gated carry-forward + the builder now also calls the owner's `seal_position_lifecycles` at `is_final` |
 | `_enrich_positions_calc_id` live re-derive (:2659) | DELEGATES for identity (tpid recovery), keeps display enrichment |
-| offline-recovery rebuild lane (schedulers :529 → db_orders :1786-1864) | FENCED R1-R4 (contract in §2.2); ABSORB candidate at R5+/T3 with LB-D4 |
+| offline-recovery rebuild lane (schedulers :529 → db_orders :1786-1864) | FENCED R1-R4 (contract in §2.2); ABSORB candidate at R5+/T3. **R4: the LB-D4 close-calc RULE delegated** (`position_grouping._build_row` → the owner's §3.2 helper); the tpid re-mint policy stays fenced |
 | `scripts/` tooling (`backfill_calc_linkage.py:474` junction+lifecycle mint, `rebuild_closed_positions.py:297` + `synth_legacy_open_fills.py:623` fills.tpid, `backfill_entry_fill_calc_id.py`) | EXEMPT from acceptance #4 by name — operator-gated dry-run tooling, not engine runtime; revisit post-R5 |
 
 ## 4. Phased plan (each phase = one operator-gated task, full-suite + battery gates, independent audit, AND the acceptance-#4 broad re-grep — run per phase, not only at R5)
@@ -201,9 +201,75 @@ battery xfail.
   sweep gains a rebuilt-namespace tpid filter (NIT-6, fence-structural
   vs reachability-argued), T2d/T2e test banners get [FIXED] annotations
   (NIT-5).
-- **R4 — lifecycle seal + pair coherence**: kills F4 + F7 (flip `LB-I5`,
-  `LB-D6`); LB-D4's close-calc rule delegates to the owner (T3 scenario
-  proves it).
+- **R4 — lifecycle seal + pair coherence** (**DONE 2026-07-15**): killed
+  F4 + F7 (`LB-I5` + `LB-D6` xfails flipped — the LAST two; the §6-1
+  acceptance set {LB-D5, D6, I5, T2d, T2e} is now EMPTY).
+  **Seal-at-close (F4)**: §5-Q3 DECIDED — `positions_calcs.sealed_ts`
+  column (INTEGER NULL; CREATE + ALTER + the P2.T1-recreate DDL), NOT
+  the no-DDL closed-row-existence gate, BECAUSE closed_positions has one
+  row PER closing order (T2.11 partial rungs) so row-existence would
+  seal on the first partial and break scale-in lifecycle continuity,
+  and a fills-sum finality check is self-polluting in the exact reuse
+  scenario it must detect (the new trade's first fill unbalances the
+  sums before the lookup runs). `seal_position_lifecycles` (owner)
+  stamps the FINAL close's `exit_time_ms` (data-derived, idempotent)
+  on the position's junction rows, called from
+  `_build_close_row_for_fill` at `is_final` — the
+  `_complete_calcs_on_close` moment; partial rungs never seal. The
+  mint/reuse lookup ignores sealed rows, with an OWN-TRIPLE exception
+  (a sealed row for this exact (position, calc, order) still supplies
+  its lifecycle — a late fill of a sealed trade's own order continues
+  THAT trade instead of minting a phantom lifecycle + spurious
+  position:opened; a new trade always arrives on a new order). SEALED
+  tap rides `attr_junction_form` (→ E36), emitted on-change only.
+  **Pair coherence (F7)**: `insert_closed_position`'s lifecycle
+  carry-forward is PAIR-GATED on calc_id — carry only when the calc is
+  unchanged (the T232 preserve case, deterministic re-derivation); a
+  REPLACE that REBINDS the calc takes the REPLACing writer's whole
+  pair. calc_id stays unconditionally bound (T234). The funding
+  reconcile is a targeted UPDATE by row id (not a REPLACE) — no
+  interaction (audit charge traced).
+  **LB-D4**: `position_grouping._build_row` close-calc rule delegates
+  to the owner's §3.2 selection helper (`_most_contributing_calc_id`
+  over the opening fills — same RULE as the live builder; the evidence
+  stays fills-only since the rebuild lane has no junction access, and
+  junction `contributed_qty` IS SUM(fill qty) per calc so the two
+  converge whenever opening fills carry calc stamps). T3 battery
+  scenario drives `rebuild_closed_positions_for_symbol` on the LB-D2
+  shape → rebuilt row takes B (primary), not A (earliest). The lane's
+  tpid re-mint policy stays FENCED (§2.2) — only the RULE delegated.
+  New pins: seal stamps/partial-no-seal/scale-in-continuity/own-triple
+  late fill/carry-forward-when-calc-unchanged.
+  **R4-audit folds (verdict SHIP-WITH-NITS; all three folded
+  pre-commit)**: M1 — the disappearance backstop's
+  recorded-but-never-final lane (`build_final_close_row`, unrecorded
+  EMPTY — the WS-gap shape) completed calcs but never sealed; it now
+  seals from the final recorded close row's `exit_time_ms` (fills-max
+  fallback; no evidence → skip), battery-pinned. M2 — the R2
+  key-migration RE-KEY branch transported a stale `sealed_ts` onto the
+  canonical key (reversal-split stash mis-key shape → live trade's only
+  lifecycle row frozen sealed → phantom mint on scale-in); re-key now
+  resets `sealed_ts` to NULL (the canonical close re-seals; the MERGE
+  branch was already correct). M3 — the builder's seal is
+  EVIDENCE-GATED (`force_final or total_open_qty > 0`): the
+  opens-unresolvable degraded lane sets `is_final` as a completion
+  fallback, and sealing there on a partial would split a live
+  lifecycle; that lane still seals at authoritative disappearance via
+  M1.
+  KNOWN RESIDUALS (documented, R5/T3 candidates): (a) with a
+  venue-reused tpid, `position_primary_calc` still reads ALL junction
+  rows for the tpid (sealed + fresh), so a close of trade 2 on a reused
+  slot can rank trade 1's calc into the primary — identity keyed on
+  position_id cannot fully separate two trades sharing a tpid; the seal
+  fixes the LIFECYCLE bleed (the filed F4 mechanism). Live adapters
+  never reuse tpids (mint includes entry_ms). (b) R4-audit N1: the seal
+  rides the +2s-deferred close-row build — a reused-slot fill landing
+  inside that window still bleeds; and a late-overfill re-run keeps the
+  FIRST sealed_ts (`WHERE sealed_ts IS NULL` never refreshes).
+  (c) R4-audit N2: offline-closed positions never seal (the
+  recovery/rebuild lanes don't touch `positions_calcs`) — trades that
+  final-closed while the engine was down keep unsealed junction rows
+  under their venue tpids.
 - **R5 — close-out**: remove flipped xfail markers, holistic 3-agent audit,
   spec erratum **E36** (attr_identity_reconcile registry + §12/§5.6-close
   correction + component set + §5.6 site column), HANDOFF/memory refresh,
@@ -247,9 +313,13 @@ extraction for free. Cross-ref added to the v2.6 plan §6. LB-R1/R2
    (eoid → canonical_tpid), never raw `fills.terminal_position_id`;
    (c) `SUM(ABS(quantity))` (junction accumulates abs, :2447-precedent);
    (d) F6 migration re-stamps fills (§2.1.3) so keys stay coherent.
-3. **DDL**: none required for the core (`lifecycle seal` can gate on the
-   final closed_positions row's existence); a `positions_calcs.sealed_ts`
-   column is nice-to-have observability. Decide in R4.
+3. **DDL** — **DECIDED at R4: `positions_calcs.sealed_ts` column
+   adopted** (see §4-R4 for the full rationale). The "no DDL required"
+   premise here was WRONG: the closed-row-existence gate is unsound
+   because T2.11 writes one closed row per partial rung (existence ≠
+   finality), and no finality marker exists on the row; the column is
+   the mechanism, not just observability. Original framing kept for
+   the record.
 4. **`attr_identity_reconcile` payload** shape — follow §5.6 conventions
    (outcome + identity tuple verbatim + dedup_key); erratum E36 at R5.
 

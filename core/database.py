@@ -484,6 +484,13 @@ CREATE TABLE IF NOT EXISTS positions_calcs (
     planned_tp      REAL    DEFAULT NULL,
     planned_sl      REAL    DEFAULT NULL,
     lifecycle_id    TEXT    DEFAULT NULL,
+    -- R4 (reconciler seal-at-close, LB-F4/LB-I5): stamped with the FINAL
+    -- close's exit_time_ms on every junction row of a fully-closed
+    -- position. The lifecycle mint/reuse lookup ignores sealed rows, so
+    -- a venue-reused tpid slot mints a FRESH lifecycle instead of
+    -- bleeding the closed trade's one. NULL = trade still open (or
+    -- partially closed — the seal fires only at is_final).
+    sealed_ts       INTEGER DEFAULT NULL,
     UNIQUE (position_id, calc_id, order_id)
 );
 CREATE INDEX IF NOT EXISTS idx_pc_position  ON positions_calcs (position_id);
@@ -836,6 +843,16 @@ class DatabaseManager(
             # COALESCE falls back to session_start_ts (so a stale pre-T4
             # active row is reaped on its age, as intended).
             "ALTER TABLE operator_sessions ADD COLUMN last_seen_ts INTEGER DEFAULT NULL",
+            # ── Reconciler R4 (LB-F4/LB-I5): lifecycle seal-at-close ────
+            # Stamped with the final close's exit_time_ms; the lifecycle
+            # mint/reuse lookup in position_identity ignores sealed rows
+            # so a reused tpid slot mints fresh instead of inheriting a
+            # closed trade's lifecycle. §5-Q3 decision: a column, NOT the
+            # no-DDL closed-row-existence gate — closed_positions has one
+            # row PER closing order (T2.11 partial rungs), so row
+            # existence would seal on the first partial and break
+            # scale-in lifecycle continuity.
+            "ALTER TABLE positions_calcs ADD COLUMN sealed_ts INTEGER DEFAULT NULL",
         ]:
             try:
                 await self._conn.execute(migration)
@@ -1098,6 +1115,10 @@ class DatabaseManager(
                         " planned_tp      REAL    DEFAULT NULL,"
                         " planned_sl      REAL    DEFAULT NULL,"
                         " lifecycle_id    TEXT    DEFAULT NULL,"
+                        # R4: this recreate runs AFTER the ALTER list, so
+                        # the sealed_ts column must be in the recreate DDL
+                        # or a legacy-DB migration would drop it.
+                        " sealed_ts       INTEGER DEFAULT NULL,"
                         " UNIQUE (position_id, calc_id, order_id))"
                     )
                     for _idx in (

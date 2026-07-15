@@ -3018,6 +3018,27 @@ class OrderManager:
             except Exception:
                 log.debug("position_closed trade event failed", exc_info=True)
 
+            # R4 (reconciler seal-at-close, LB-F4/LB-I5): seal the
+            # position's lifecycles at the FINAL close — the same moment
+            # completion fires below — so the owner's mint/reuse lookup
+            # ignores this trade if the venue ever reuses the tpid slot.
+            # Partial rungs never reach here (is_final gate); sealed_ts =
+            # this row's exit_time_ms (data-derived, idempotent re-run).
+            # R4 audit M3 — EVIDENCE GATE: the `total_open_qty <= 0`
+            # degraded lane (opens unresolvable — walk failure / stranded
+            # tpids) sets is_final=True as a completion FALLBACK, so a
+            # PARTIAL close there would wrongly seal a live position and
+            # split its lifecycle on the next scale-in. Seal only when
+            # finality is evidence-backed: real qty accounting
+            # (total_open_qty > 0 → is_final came from Σclose ≥ Σopen) or
+            # authoritative disappearance (force_final). The degraded
+            # lane still seals at authoritative close via the
+            # build_final_close_row backstop (audit M1 fold).
+            if is_final and pos_id and (force_final or total_open_qty > 0):
+                await self._identity.seal_position_lifecycles(
+                    account_id, pos_id, exit_time, symbol=symbol,
+                )
+
             # T221 (P1.T6) + T2.11: auto-complete contributing calcs ONLY on
             # the FINAL close (size→0). Pre-T2.11 this ran on every close-row
             # build, so a multi-TP ladder completed the calc prematurely on
@@ -3154,6 +3175,49 @@ class OrderManager:
                     "No unrecorded closing fills for %s %s",
                     prev.ticker, prev.direction,
                 )
+
+            # R4 audit M1: the recorded-but-never-final lane (unrecorded
+            # EMPTY — the exact WS-gap shape this backstop exists for)
+            # completes calcs below but previously never SEALED the
+            # lifecycles, leaving the LB-F4 reuse hazard open on that
+            # lane. Disappearance is the authoritative close → seal here
+            # too, evidence-timestamped from the final recorded close row
+            # (MAX exit_time_ms — the same final-row convention the
+            # funding reconcile uses), falling back to the newest
+            # recorded closing fill. No close evidence at all → skip the
+            # seal (no timestamp to stamp; completion below still runs).
+            # Idempotent vs the force_final builds above (WHERE sealed_ts
+            # IS NULL) and vs re-entry.
+            if prev.position_id:
+                seal_ts = None
+                try:
+                    async with self._db._conn.execute(
+                        "SELECT MAX(exit_time_ms) FROM closed_positions "
+                        "WHERE account_id = ? AND terminal_position_id = ?",
+                        (account_id, prev.position_id),
+                    ) as cur:
+                        row = await cur.fetchone()
+                    seal_ts = row[0] if row and row[0] else None
+                    if not seal_ts:
+                        async with self._db._conn.execute(
+                            "SELECT MAX(timestamp_ms) FROM fills "
+                            "WHERE account_id = ? "
+                            "  AND terminal_position_id = ? "
+                            "  AND is_close = 1",
+                            (account_id, prev.position_id),
+                        ) as cur:
+                            row = await cur.fetchone()
+                        seal_ts = row[0] if row and row[0] else None
+                except Exception:
+                    log.debug(
+                        "backstop seal-ts read failed for %s",
+                        prev.position_id, exc_info=True,
+                    )
+                if seal_ts:
+                    await self._identity.seal_position_lifecycles(
+                        account_id, prev.position_id, int(seal_ts),
+                        symbol=prev.ticker,
+                    )
 
             # T2.11 (T238 review F1, HIGH): the position has DISAPPEARED from
             # the snapshot — authoritatively closed. The per-fill deferred

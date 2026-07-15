@@ -56,6 +56,11 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, Iterable, List, Optional, Tuple, TypedDict
 
+# R4 (LB-D4): the close-row calc rule delegates to the identity owner's
+# §3.2 selection helper (single source of truth — the same rule the live
+# builder, close-fill stamp, and live enrichment converge on).
+from core.position_identity import _most_contributing_calc_id
+
 log = logging.getLogger("position_grouping")
 
 # Floating-point tolerance for "qty has returned to zero". Crypto futures
@@ -345,23 +350,27 @@ def _build_row(
 
     net_pnl = realized_pnl - total_fees
 
-    # calc_id from the earliest opening fill. NOTE (T234): this is an
-    # intentional RECONSTRUCTION APPROXIMATION, NOT a match to the live
-    # path. The live close-row builder (order_manager._build_close_row_for_fill,
-    # T2.6) attributes closed_positions.calc_id to the junction PRIMARY
-    # (most-contributing calc); this offline fills-only grouper has no
-    # positions_calcs access, so it approximates with the earliest opening
-    # fill that carries a calc_id. Consequence: rebuilding a scale-in
-    # position whose larger calc wasn't first will flip calc_id back to
-    # earliest + leave lifecycle_id NULL (attribution-only drift; PnL/qty/
-    # prices are recomputed correctly from fills). See HANDOFF "rebuild
-    # reverts T2.6 attribution".
-    calc_id = ""
-    for f in opens:
-        cid = f.get("calc_id")
-        if cid:
-            calc_id = cid
-            break
+    # calc_id via the identity owner's §3.2 rule (R4 / LB-D4): the
+    # most-contributing calc across the opening fills — per-calc SUMMED
+    # qty, tie-break earliest fill — the SAME selection rule the live
+    # close-row builder applies to junction rows (T2.6). Pre-R4 this
+    # grouper used "earliest opening fill with a calc_id" (the T234
+    # reconstruction approximation), so rebuilding a scale-in whose
+    # larger calc wasn't first flipped calc_id back to earliest — a
+    # consumer re-deriving identity with a DIFFERENT rule (LB-D4). The
+    # EVIDENCE still differs by construction (fills here vs junction
+    # rows live — this offline grouper has no positions_calcs access),
+    # but junction contributed_qty IS SUM(fill qty) per calc, so the two
+    # converge whenever the opening fills carry their calc stamps.
+    # lifecycle_id remains NULL on rebuilt rows (attribution-only drift;
+    # PnL/qty/prices are recomputed correctly from fills) — the rebuild
+    # lane's preserve pass re-supplies it for same-tpid re-rebuilds.
+    # ``opens`` is in chronological walk order, satisfying the helper's
+    # first_fill_ts-ASC precondition (ties → earliest calc).
+    calc_id = _most_contributing_calc_id(
+        [(f.get("calc_id") or "", float(f.get("quantity", 0) or 0))
+         for f in opens]
+    ) or ""
 
     return {
         "account_id":           account_id,

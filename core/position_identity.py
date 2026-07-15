@@ -670,8 +670,19 @@ class PositionIdentity:
                         (srow[0],),
                     )
                 else:
+                    # R4 audit M2: the re-key must NOT transport a stale
+                    # sealed_ts onto the canonical key — a stash-mis-keyed
+                    # row (reversal-split shape) sealed by the OLD trade's
+                    # close would arrive as the LIVE trade's only
+                    # lifecycle row, frozen sealed → the next scale-in
+                    # would be excluded from reuse and mint a phantom
+                    # lifecycle. Reset on re-key; the canonical trade's
+                    # own final close re-seals it. (The merge branch above
+                    # is already correct — the target keeps ITS seal
+                    # state.)
                     await self._db._conn.execute(
-                        "UPDATE positions_calcs SET position_id = ? "
+                        "UPDATE positions_calcs SET position_id = ?, "
+                        "  sealed_ts = NULL "
                         "WHERE id = ?",
                         (pos_id, srow[0]),
                     )
@@ -705,27 +716,39 @@ class PositionIdentity:
         # this position already established one (multi-fill / scale-in);
         # otherwise this is the first opening fill → mint a UUID v4.
         #
-        # ASSUMPTION (engine-wide invariant): terminal_position_id
-        # identifies ONE position instance, never reused across a
-        # close→reopen on the same symbol/direction slot. The whole
-        # position subsystem already depends on this — get_position_fills
-        # does a strict tpid match and _build_close_row_for_fill VWAPs
-        # opens by tpid; a recurring tpid would corrupt those long before
-        # it reached here. The live paths hold it: binance_ws leaves
-        # PositionInfo.position_id="" (→ empty tpid → skipped above), and
-        # Quantower emits a per-position-object id. IF a future adapter
-        # emits a recurring slot-id, this lookup would bleed a closed
-        # trade's lifecycle into a new one — fix is seal-at-close, but
-        # that must distinguish full vs partial (Phase 2.11 multi-TP)
-        # close, so it's deferred until an adapter actually violates the
-        # invariant. See HANDOFF "lifecycle_id vs tpid-reuse".
-        # (Battery LB-F4/LB-I5 pinned exactly this bleed — R4 target.)
+        # R4 (LB-F4/LB-I5 fix — seal-at-close): the lookup ignores SEALED
+        # lifecycles (sealed_ts stamped on every junction row of the
+        # position at its FINAL close — seal_position_lifecycles below),
+        # so a venue-reused tpid slot mints a FRESH lifecycle for the new
+        # economic trade instead of bleeding the closed trade's one.
+        # Pre-R4 this SELECT took ANY row for the tpid, and the reuse
+        # hazard was a documented deferred ASSUMPTION ("a recurring tpid
+        # would bleed a closed trade's lifecycle into a new one").
+        # Partial closes never seal (the seal fires only at is_final,
+        # T2.11), so multi-TP ladders and scale-ins after a partial keep
+        # lifecycle continuity.
+        # OWN-TRIPLE exception: a row for THIS exact (position, calc,
+        # order) triple supplies its lifecycle even when sealed — an
+        # order belongs to exactly one economic trade, so a LATE fill of
+        # a sealed trade's own order continues THAT trade (junction row,
+        # fill stamps, and events stay coherent; the UPSERT's
+        # lifecycle COALESCE keeps the row on its original lifecycle
+        # anyway, and a fresh mint here would emit a spurious
+        # position:opened for an already-closed position). A genuinely
+        # new trade always arrives on a NEW order → never matches the
+        # exception → mints fresh. ORDER BY prefers the own-triple row
+        # when both it and an unsealed row (reused slot, new trade
+        # already open) qualify.
         try:
             async with self._db._conn.execute(
                 "SELECT lifecycle_id FROM positions_calcs "
                 "WHERE position_id = ? AND account_id = ? "
-                "  AND lifecycle_id IS NOT NULL LIMIT 1",
-                (pos_id, account_id),
+                "  AND lifecycle_id IS NOT NULL "
+                "  AND (sealed_ts IS NULL "
+                "       OR (calc_id = ? AND order_id = ?)) "
+                "ORDER BY (calc_id = ? AND order_id = ?) DESC "
+                "LIMIT 1",
+                (pos_id, account_id, calc_id, order_id, calc_id, order_id),
             ) as cur:
                 lrow = await cur.fetchone()
         except Exception as e:
@@ -987,6 +1010,70 @@ class PositionIdentity:
                 })
         except Exception:
             log.debug("position opened/scale_in event emit failed", exc_info=True)
+
+    # ── R4: lifecycle seal-at-close (LB-F4/LB-I5) ──────────────────────
+
+    async def seal_position_lifecycles(
+        self, account_id: int, position_id: str, sealed_ts: int,
+        symbol: Optional[str] = None,
+    ) -> int:
+        """Seal a fully-closed position's lifecycles (plan §2.1.5, R4).
+
+        Stamps ``sealed_ts`` on every junction row of ``position_id``
+        that isn't already sealed. Called by the close-row builder at
+        the FINAL close only (the ``_complete_calcs_on_close`` moment —
+        ``is_final``, size→0), NEVER on a partial rung, so scale-ins
+        and multi-TP ladders keep lifecycle continuity mid-life.
+
+        ``sealed_ts`` is the close row's ``exit_time_ms`` — data-derived
+        and deterministic (no wall clock; the 1fe4178 flake lesson), and
+        it makes the seal a queryable fact ("this trade sealed at its
+        exit time"), the §5-Q3 observability upside of the column.
+
+        Idempotent (``WHERE sealed_ts IS NULL``): a REPLACE-rebuild of
+        the final row re-runs the builder and no-ops here. Best-effort:
+        a seal failure must never block the close path — the consequence
+        is only that a future tpid-reuse would bleed (the pre-R4
+        behavior). Returns the number of rows sealed; emits a SEALED
+        ``attr_junction_form`` line only when > 0 (the R2 MIGRATED /
+        R3 RECONCILED outcome-riding precedent — no new registry
+        category before E36).
+        """
+        if not position_id:
+            return 0
+        try:
+            cur = await self._db._conn.execute(
+                "UPDATE positions_calcs SET sealed_ts = ? "
+                "WHERE position_id = ? AND account_id = ? "
+                "  AND sealed_ts IS NULL",
+                (sealed_ts, position_id, account_id),
+            )
+            await self._db._conn.commit()
+            sealed = max(0, cur.rowcount or 0)
+        except Exception:
+            try:
+                await self._db._conn.rollback()
+            except Exception:
+                pass
+            log.debug("lifecycle seal failed for %s", position_id,
+                      exc_info=True)
+            return 0
+        if sealed:
+            correlation_log.emit(
+                "position_identity", "internal", "internal",
+                correlation_log.CAT_ATTR_JUNCTION_FORM,
+                {
+                    "outcome": "SEALED",
+                    "terminal_position_id": position_id,
+                    "calc_id": "", "lifecycle_id": "",
+                    "exchange_order_id": "",
+                    "sealed_ts": sealed_ts,
+                    "rows_sealed": sealed,
+                    "dedup_key": f"seal:{position_id}:{sealed_ts}",
+                },
+                account_id=account_id, symbol=symbol or None,
+            )
+        return sealed
 
     # ── close-time open-fill identity backfill (moved verbatim) ────────
 

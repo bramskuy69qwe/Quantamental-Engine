@@ -101,6 +101,10 @@ async def test_empty_integer_table_recreated_as_text():
         async with db._conn.execute("PRAGMA table_info(positions_calcs)") as cur:
             cols = {r[1]: r[2] for r in await cur.fetchall()}
         assert cols["position_id"] == "TEXT"
+        # R4: the recreate runs AFTER the ALTER migration list, so its DDL
+        # must carry sealed_ts itself or a legacy-DB migration drops the
+        # column the lifecycle mint/reuse lookup now reads.
+        assert "sealed_ts" in cols
         async with db._conn.execute("PRAGMA index_list(positions_calcs)") as cur:
             idx = {r[1] for r in await cur.fetchall()}
         for name in ("idx_pc_position", "idx_pc_calc", "idx_pc_order",

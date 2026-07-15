@@ -367,8 +367,13 @@ class OrdersMixin:
         # columns). That asymmetry is intentional — every close path derives
         # calc_id deterministically and always supplies it (the live builder
         # → junction primary or earliest-fill fallback; backfill/rebuild →
-        # earliest-fill), so there is no "caller omitted it" case to carry
-        # forward, and cross-path REPLACEs use non-colliding 'rebuilt:' tpids.
+        # the same §3.2 most-contributing rule over opening fills, R4/LB-D4),
+        # so there is no "caller omitted it" case to carry forward, and
+        # cross-path REPLACEs use non-colliding 'rebuilt:' tpids.
+        # R4 (LB-F7/LB-D6): the lifecycle carry-forward below is PAIR-GATED
+        # on this calc_id — a REPLACE that REBINDS the calc no longer keeps
+        # the old row's lifecycle (a (calc, lifecycle) pair that never
+        # coexisted); carry-forward only fires when the calc is unchanged.
         # tp_price/sl_price auto-resolve keys off this same calc_id (so they
         # follow the primary post-T2.6, by design).
         calc_id = row.get("calc_id")
@@ -444,7 +449,7 @@ class OrdersMixin:
         try:
             async with self._conn.execute(
                 "SELECT mfe, mae, backfill_completed, lifecycle_id, "
-                "close_note, exit_reason, "
+                "close_note, exit_reason, calc_id, "
                 + ", ".join(_CLOSED_POS_DELTA_COLS)
                 + " FROM closed_positions "
                 "WHERE account_id = ? AND terminal_position_id = ? "
@@ -461,7 +466,18 @@ class OrdersMixin:
                     preserved_backfill = existing["backfill_completed"]
                 # Preserve a stamped lifecycle_id unless the caller is
                 # supplying one (caller wins on first insert / forward seal).
-                if existing and existing["lifecycle_id"] and not preserved_lifecycle:
+                # R4 PAIR GATE (LB-F7/LB-D6): carry forward ONLY when the
+                # caller's calc matches the existing row's — the identity
+                # pair travels together. A REPLACE that rebinds the calc
+                # (CALC-A → CALC-B) takes the REPLACing writer's whole
+                # pair (its lifecycle, even None), never welding the new
+                # calc to the old row's lifecycle. The T232 preserve case
+                # (re-running a backfill that re-derives the SAME calc)
+                # still carries forward — its calc is unchanged by
+                # construction (deterministic derivation).
+                if (existing and existing["lifecycle_id"]
+                        and not preserved_lifecycle
+                        and (existing["calc_id"] or None) == (calc_id or None)):
                     preserved_lifecycle = existing["lifecycle_id"]
                 # Same caller-wins-else-carry-forward for the delta columns.
                 if existing:

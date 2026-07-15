@@ -334,7 +334,16 @@ class TestLBI4ReleaseThenRematch:
         assert (await calc_row(db, "CALC-I4"))["status"] == "matched"
 
 
-# ── LB-I5: lifecycle bleed on tpid reuse ───────────────────────────────
+# ── LB-I5: lifecycle bleed on tpid reuse — LB-F4 FIXED (R4) ────────────
+#
+# Seal-at-close: the final close-row build stamps sealed_ts on every
+# junction row of the position (position_identity.seal_position_lifecycles,
+# called from _build_close_row_for_fill at is_final); the lifecycle
+# mint/reuse lookup ignores sealed rows, so a venue-reused tpid slot
+# mints a FRESH lifecycle for the new economic trade. Partial rungs
+# never seal (is_final only), and a sealed trade's OWN (calc, order)
+# triple still supplies its lifecycle to a late fill of that order
+# (own-triple exception) — both boundaries pinned below.
 
 
 class TestLBI5LifecycleBleedOnTpidReuse:
@@ -383,31 +392,158 @@ class TestLBI5LifecycleBleedOnTpidReuse:
         return l1, row_b
 
     @pytest.mark.asyncio
-    async def test_current_lookup_reuses_closed_trades_lifecycle(self, real):
-        """Pins the CURRENT mechanism: the lifecycle lookup
-        (order_manager.py:2254-2266) selects ANY positions_calcs row for
-        the tpid — no sealed-at-close filter — so trade 2 inherits L1."""
+    async def test_seal_at_close_stamps_sealed_ts(self, real):
+        """R4 pin (reframed from the pre-R4 bleed pin, which asserted
+        row_b inherits L1): the final close-row build SEALS the closed
+        trade's junction rows — sealed_ts = the final row's exit_time_ms,
+        the data-derived stamp the mint/reuse lookup filters on. Trade
+        2's fresh row stays unsealed (its trade is live)."""
         om, db = real
-        l1, row_b = await self._two_trades_same_tpid(om, db)
-        assert row_b["lifecycle_id"] == l1  # the bleed, verbatim
+        _l1, _row_b = await self._two_trades_same_tpid(om, db)
+        junc = {r["calc_id"]: r for r in await junction_rows(db, "POS-R")}
+        assert junc["CALC-I5A"]["sealed_ts"] == RECENT_MS + 2000  # exit_time
+        assert junc["CALC-I5B"]["sealed_ts"] is None
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        strict=True,
-        reason="LB-I5: lifecycle mint/reuse lookup (order_manager.py:"
-               "2254-2266) reuses ANY junction row's lifecycle_id for "
-               "the same position_id with no closed/sealed filter — the "
-               "documented ASSUMPTION (:2239, 'a recurring tpid would "
-               "bleed a closed trade's lifecycle into a new one; fix is "
-               "seal-at-close, deferred'). A tpid-reusing adapter makes "
-               "trade 2 inherit trade 1's L1.")
     async def test_fresh_lifecycle_for_new_economic_trade(self, real):
-        # DESIRED: a new economic trade (calc B, order B, after the slot
-        # fully closed) mints a FRESH lifecycle even when the venue
+        # LB-F4 FIXED (R4, was strict-xfail): the mint/reuse lookup in
+        # position_identity.link_position_calc_on_open now ignores SEALED
+        # lifecycles, so a new economic trade (calc B, order B, after the
+        # slot fully closed) mints a FRESH lifecycle even when the venue
         # reuses the tpid slot.
         om, db = real
         l1, row_b = await self._two_trades_same_tpid(om, db)
         assert row_b["lifecycle_id"] and row_b["lifecycle_id"] != l1
+
+    @pytest.mark.asyncio
+    async def test_partial_close_does_not_seal_scale_in_continues(self, real):
+        """R4 audit-charge pin: the seal fires ONLY at the final close
+        (is_final, size→0) — a partial rung must NOT seal, so a scale-in
+        AFTER a partial close still reuses the live trade's lifecycle;
+        the final rung then seals every junction row with ITS exit
+        time."""
+        om, db = real
+        await seed_calc(db, "CALC-I5C", window_seconds=300)
+        await seed_order(db, "O-I5C", quantity=2.0)
+        await om._enrich_order_best_effort(order_dict("O-I5C", quantity=2.0))
+        await om._process_single_fill(
+            ACCOUNT_ID, fill("O-I5C", "POS-P", 2.0, fid="F-I5C"))
+        junc = await junction_rows(db, "POS-P")
+        assert len(junc) == 1
+        l1 = junc[0]["lifecycle_id"]
+        assert l1
+
+        # Partial close (1.0 of 2.0) → is_final False → NO seal.
+        await seed_order(db, "O-I5CP", side="SELL", reduce_only=1,
+                         tp_trigger_price=None, sl_trigger_price=None,
+                         created_at_ms=RECENT_MS + 1500)
+        f_part = fill("O-I5CP", "POS-P", 1.0, fid="F-I5CP", is_close=1,
+                      price=51000.0, realized_pnl=1000.0,
+                      ts=RECENT_MS + 2000)
+        await om._process_single_fill(ACCOUNT_ID, f_part)
+        await om._build_close_row_for_fill(ACCOUNT_ID, f_part)
+        assert len(await closed_rows(db, "POS-P")) == 1  # partial rung row
+        junc = await junction_rows(db, "POS-P")
+        assert all(r["sealed_ts"] is None for r in junc)
+
+        # Scale-in after the partial (new calc + order, same live tpid):
+        # lifecycle CONTINUES — no fresh mint mid-life.
+        await seed_calc(db, "CALC-I5D", status="matched", window_seconds=300)
+        await seed_order(db, "O-I5D", calc_id="CALC-I5D",
+                         link_status="LINKED",
+                         created_at_ms=RECENT_MS + 2500)
+        await om._process_single_fill(
+            ACCOUNT_ID, fill("O-I5D", "POS-P", 0.5, fid="F-I5D",
+                             ts=RECENT_MS + 3000, price=50500.0))
+        junc = {r["calc_id"]: r for r in await junction_rows(db, "POS-P")}
+        assert junc["CALC-I5D"]["lifecycle_id"] == l1   # continuity
+
+        # Final close (the remaining 1.5) → is_final → every row seals
+        # with the final rung's exit_time_ms.
+        await seed_order(db, "O-I5CF", side="SELL", reduce_only=1,
+                         tp_trigger_price=None, sl_trigger_price=None,
+                         created_at_ms=RECENT_MS + 3500)
+        f_fin = fill("O-I5CF", "POS-P", 1.5, fid="F-I5CF", is_close=1,
+                     price=52000.0, realized_pnl=2250.0,
+                     ts=RECENT_MS + 4000)
+        await om._process_single_fill(ACCOUNT_ID, f_fin)
+        await om._build_close_row_for_fill(ACCOUNT_ID, f_fin)
+        junc = await junction_rows(db, "POS-P")
+        assert len(junc) == 2
+        assert all(r["sealed_ts"] == RECENT_MS + 4000 for r in junc)
+
+    @pytest.mark.asyncio
+    async def test_disappearance_backstop_seals_recorded_never_final(self, real):
+        """R4 audit M1 fold: the WS-gap shape — a RECORDED partial close,
+        the remaining closing fill never arrives (is_final never fires),
+        the position disappears from the snapshot. The
+        build_final_close_row backstop takes its recorded-but-never-final
+        lane (unrecorded EMPTY): it force-completes calcs AND — the M1
+        fix — SEALS the lifecycles from the final recorded close row's
+        exit_time_ms. Pre-fold this lane completed without sealing,
+        leaving the LB-F4 reuse hazard open exactly where fills
+        undercount."""
+        from core.state import PositionInfo, app_state
+        om, db = real
+        assert app_state.active_account_id == ACCOUNT_ID  # backstop reads it
+        await seed_calc(db, "CALC-I5G", window_seconds=300)
+        await seed_order(db, "O-I5G", quantity=2.0)
+        await om._enrich_order_best_effort(order_dict("O-I5G", quantity=2.0))
+        await om._process_single_fill(
+            ACCOUNT_ID, fill("O-I5G", "POS-G", 2.0, fid="F-I5G"))
+
+        # Recorded partial close (1.0 of 2.0) → closed row exists,
+        # is_final False → no seal. The remaining 1.0 close is LOST.
+        await seed_order(db, "O-I5GP", side="SELL", reduce_only=1,
+                         tp_trigger_price=None, sl_trigger_price=None,
+                         created_at_ms=RECENT_MS + 1500)
+        f_part = fill("O-I5GP", "POS-G", 1.0, fid="F-I5GP", is_close=1,
+                      price=51000.0, realized_pnl=1000.0,
+                      ts=RECENT_MS + 2000)
+        await om._process_single_fill(ACCOUNT_ID, f_part)
+        await om._build_close_row_for_fill(ACCOUNT_ID, f_part)
+        junc = await junction_rows(db, "POS-G")
+        assert len(junc) == 1 and junc[0]["sealed_ts"] is None
+
+        # Position disappears → backstop. The recorded close fill falls
+        # inside the closed row's entry→exit window → unrecorded EMPTY
+        # → the M1 lane (no force_final build runs).
+        prev = PositionInfo(
+            ticker="BTCUSDT", direction="LONG", contract_amount=2.0,
+            average=50000.0, fair_price=50000.0, individual_unrealized=0.0,
+            position_value_usdt=100000.0,
+            entry_timestamp="2026-06-12T00:00:00+00:00",
+            sector="", position_id="POS-G",
+        )
+        await om.build_final_close_row(prev)
+
+        junc = await junction_rows(db, "POS-G")
+        assert junc[0]["sealed_ts"] == RECENT_MS + 2000  # final row's exit
+        assert (await calc_row(db, "CALC-I5G"))["status"] == (
+            "completed_via_position")
+
+    @pytest.mark.asyncio
+    async def test_late_fill_of_sealed_order_reuses_own_lifecycle(self, real):
+        """R4 own-triple boundary pin: a LATE opening fill of a SEALED
+        trade's OWN order continues THAT trade — same junction row, same
+        lifecycle, no phantom second lifecycle (and no spurious
+        position:opened) for an already-closed position. A genuinely new
+        trade always arrives on a NEW order (the fresh-mint case above);
+        this pins the boundary between the two."""
+        om, db = real
+        l1, _row_b = await self._two_trades_same_tpid(om, db)
+        # Late opening fill of trade 1's own (sealed) entry order —
+        # with trade 2 live and UNSEALED on the same slot, the own-triple
+        # ORDER BY preference must still pick trade 1's L1.
+        await om._process_single_fill(
+            ACCOUNT_ID, fill("O-I5A", "POS-R", 1.0, fid="F-I5A2",
+                             ts=RECENT_MS + 5000))
+        rows_a = [r for r in await junction_rows(db, "POS-R")
+                  if r["calc_id"] == "CALC-I5A"]
+        assert len(rows_a) == 1                    # no second row/lifecycle
+        assert rows_a[0]["lifecycle_id"] == l1     # own trade's lifecycle
+        assert rows_a[0]["contributed_qty"] == pytest.approx(2.0)
+        assert (await fill_by_fid(db, "F-I5A2"))["lifecycle_id"] == l1
 
 
 # ── LB-I6a: NMR sticky beats a later perfect calc (pin, no xfail) ─────

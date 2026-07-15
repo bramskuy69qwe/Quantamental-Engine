@@ -323,6 +323,73 @@ class TestLBD3SameSlotReopen:
         assert await om._resolve_close_tpid(ACCOUNT_ID, f_late) == "POS-1"
 
 
+# ── LB-D4: offline rebuild close-calc rule = the owner's §3.2 rule ─────
+#
+# T3 scenario (battery plan §2 row LB-D4, owed since the T2 tranche;
+# shipped at R4). The offline rebuild lane
+# (db_orders.rebuild_closed_positions_for_symbol →
+# position_grouping._build_row) historically derived the close row's
+# calc from the EARLIEST opening fill with a calc_id, while the live
+# builder uses the junction PRIMARY (§3.2 most-contributing) — a
+# consumer re-deriving identity with a DIFFERENT rule. R4: the grouper
+# delegates to the owner's _most_contributing_calc_id over the opening
+# fills (same rule; the evidence is fills instead of junction rows, and
+# junction contributed_qty IS SUM(fill qty) per calc, so the two
+# converge whenever opening fills carry their calc stamps).
+
+
+class TestLBD4RebuildCloseCalcRule:
+    @pytest.mark.asyncio
+    async def test_rebuild_close_calc_follows_owner_primary_rule(self, real):
+        om, db = real
+        # The LB-D2 shape driven through the REAL pipeline: calc A
+        # contributes 1.0, calc B 3.0 (fills carry their parent calc
+        # stamps: A on F-D4A, B on F-D4B — pinned by LB-D2 above).
+        await seed_calc(db, "CALC-A4", status="matched", window_seconds=300)
+        await seed_calc(db, "CALC-B4", status="matched", window_seconds=300)
+        await seed_order(db, "O-D4A", calc_id="CALC-A4",
+                         link_status="LINKED")
+        await seed_order(db, "O-D4B", calc_id="CALC-B4",
+                         link_status="LINKED",
+                         created_at_ms=RECENT_MS + 500)
+        await om._process_single_fill(
+            ACCOUNT_ID, fill("O-D4A", "POS-D4", 1.0, fid="F-D4A",
+                             ts=RECENT_MS + 1000))
+        await om._process_single_fill(
+            ACCOUNT_ID, fill("O-D4B", "POS-D4", 3.0, fid="F-D4B",
+                             ts=RECENT_MS + 1200, price=50200.0))
+        await seed_order(db, "O-D4C", side="SELL", reduce_only=1,
+                         tp_trigger_price=None, sl_trigger_price=None,
+                         created_at_ms=RECENT_MS + 1500)
+        f_close = fill("O-D4C", "POS-D4", 4.0, fid="F-D4C", is_close=1,
+                       price=52000.0, realized_pnl=7400.0,
+                       ts=RECENT_MS + 2000)
+        await om._process_single_fill(ACCOUNT_ID, f_close)
+        await om._build_close_row_for_fill(ACCOUNT_ID, f_close)
+        live = await closed_rows(db, "POS-D4")
+        assert len(live) == 1
+        assert live[0]["calc_id"] == "CALC-B4"   # live rule: junction primary
+
+        # Drive the db_orders rebuild lane over the same fills. It
+        # DELETEs the live row and re-groups from fills under a
+        # deterministic rebuilt: tpid.
+        res = await db.rebuild_closed_positions_for_symbol(
+            ACCOUNT_ID, "BTCUSDT")
+        assert res["deleted"] == 1
+        assert res["rebuilt"] == 1
+
+        rows = await closed_rows(db)
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["terminal_position_id"].startswith(
+            "rebuilt:BTCUSDT:LONG:")
+        assert row["source"] == "rebuilt_from_fills"
+        # THE LB-D4 assert: the rebuilt row takes the §3.2 primary (B,
+        # the most-contributing calc) — pre-R4 the earliest-fill rule
+        # flipped it back to A.
+        assert row["calc_id"] == "CALC-B4"
+
+
 # ── LB-D5: junction dual-key (HA-42-adjacent) ──────────────────────────
 #
 # Entry order carries tpid=POS-A; its FIRST fill arrives tpid="" (Defect-7
@@ -432,13 +499,15 @@ class TestLBD5JunctionDualKey:
             "terminal_position_id"] == "POS-B"      # stash corrected
 
 
-# ── LB-D6: closed_positions REPLACE asymmetry ──────────────────────────
+# ── LB-D6: closed_positions REPLACE asymmetry — LB-F7 FIXED (R4) ───────
 #
-# insert_closed_position (db_orders.py:299) binds calc_id UNCONDITIONALLY
-# (:536; documented-intentional, :365-373) while lifecycle_id carries
-# forward from the existing row when the caller omits it (:420 +
-# :462-465). A REPLACE that rebinds the calc therefore keeps the OLD
-# lifecycle → a (calc, lifecycle) pair that never coexisted.
+# insert_closed_position binds calc_id UNCONDITIONALLY (documented-
+# intentional T234 asymmetry) while lifecycle_id carried forward from
+# the existing row when the caller omits it — so a REPLACE that REBOUND
+# the calc kept the OLD lifecycle → a (calc, lifecycle) pair that never
+# coexisted. R4: the carry-forward is PAIR-GATED on calc_id — it fires
+# only when the calc is unchanged (the T232 preserve case); a calc
+# rebind takes the REPLACing writer's whole pair.
 
 
 class TestLBD6ReplaceAsymmetry:
@@ -459,28 +528,26 @@ class TestLBD6ReplaceAsymmetry:
         }
 
     @pytest.mark.asyncio
-    async def test_pin_current_replace_mixes_identity(self, real):
-        # PIN (current behavior): REPLACE yields calc B welded to calc A's
-        # carried-forward lifecycle. Guards the xfail twin against
-        # fixture regressions.
+    async def test_pin_carry_forward_when_calc_unchanged(self, real):
+        # R4 pin (reframed from the pre-R4 mixed-identity pin, which
+        # asserted (CALC-B, L1)): the T232 lifecycle preserve still fires
+        # when the calc is UNCHANGED — a recompute that re-derives the
+        # SAME calc and omits lifecycle (the backfill re-run shape) keeps
+        # the stamped lifecycle. Guards the R4 pair gate against
+        # over-fixing the exact case the preserve exists for.
         _om, db = real
         assert await db.insert_closed_position(self._row("CALC-A", "L1"))
-        assert await db.insert_closed_position(self._row("CALC-B", None))
+        assert await db.insert_closed_position(self._row("CALC-A", None))
         rows = await closed_rows(db, "POS-D6")
         assert len(rows) == 1
         assert (rows[0]["calc_id"], rows[0]["lifecycle_id"]) == (
-            "CALC-B", "L1")
+            "CALC-A", "L1")
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        strict=True,
-        reason="LB-D6: insert_closed_position binds calc_id "
-               "unconditionally (db_orders.py:536, documented-intentional "
-               "asymmetry :365-373) but carries lifecycle_id forward from "
-               "the existing row when the caller passes None (:420 + "
-               ":462-465) — REPLACE (CALC-A,L1) with (CALC-B,None) yields "
-               "the mixed-identity pair (CALC-B, L1).")
     async def test_replace_keeps_identity_pair_coherent(self, real):
+        # LB-F7 FIXED (R4, was strict-xfail): the lifecycle carry-forward
+        # in insert_closed_position is PAIR-GATED on calc_id — a REPLACE
+        # that REBINDS the calc takes the REPLACing writer's whole pair.
         _om, db = real
         assert await db.insert_closed_position(self._row("CALC-A", "L1"))
         assert await db.insert_closed_position(self._row("CALC-B", None))
@@ -488,9 +555,9 @@ class TestLBD6ReplaceAsymmetry:
         rows = await closed_rows(db, "POS-D6")
         assert len(rows) == 1  # REPLACE on (account, tpid, exit_time_ms)
         got = (rows[0]["calc_id"], rows[0]["lifecycle_id"])
-        # DESIRED: the row carries the REPLACing writer's coherent
-        # identity pair — calc B with the lifecycle THAT writer supplied
-        # (None) — not calc B welded to calc A's lifecycle.
+        # The row carries the REPLACing writer's coherent identity pair —
+        # calc B with the lifecycle THAT writer supplied (None) — not
+        # calc B welded to calc A's carried-forward lifecycle.
         assert got == ("CALC-B", None), (
             f"mixed identity after REPLACE: {got} — calc rebound to B "
             "while A's lifecycle L1 was carried forward")

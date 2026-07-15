@@ -74,6 +74,10 @@ class TestSchemaPositionsCalcs:
             "contributed_qty", "first_fill_ts", "last_fill_ts",
             "planned_size", "size_delta_pct", "planned_tp", "planned_sl",
             "lifecycle_id",
+            # R4 (reconciler seal-at-close, LB-F4/LB-I5): stamped with the
+            # final close's exit_time_ms; the lifecycle mint/reuse lookup
+            # ignores sealed rows.
+            "sealed_ts",
         }
         assert set(cols.keys()) == expected
 
