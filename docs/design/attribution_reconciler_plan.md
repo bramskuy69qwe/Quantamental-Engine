@@ -25,8 +25,8 @@ strict-xfails, 2026-07-14/15) proved the cost:
 | Finding | Mechanism (verified at source) | Status |
 |---|---|---|
 | LB-F1 | manual-link lane never formed the junction (replay was auto-lane-only) | fixed `d9ff4bf` — a LANE patch; the root remains |
-| LB-F6 (=LB-D5) | mixed-tpid fills of one order key TWO junction rows + two lifecycles | **open xfail** |
-| LB-F8 (=HA-42, corrected) | replay guard checks the ORDER-stash tpid while the write lands under MAX(fills.tpid) → guard never satisfies → N-fold unbounded `contributed_qty` inflation per WS/bracket-child event (gated: needs a divergent stash — "unbounded amplifier behind a narrow gate", battery severity framing) | **open xfail** |
+| LB-F6 (=LB-D5) | mixed-tpid fills of one order key TWO junction rows + two lifecycles | **fixed at R2** (key migration; xfail flipped) |
+| LB-F8 (=HA-42, corrected) | replay guard checks the ORDER-stash tpid while the write lands under MAX(fills.tpid) → guard never satisfies → N-fold unbounded `contributed_qty` inflation per WS/bracket-child event (gated: needs a divergent stash — "unbounded amplifier behind a narrow gate", battery severity framing) | **fixed at R2** (guard≡write; xfail flipped) |
 | LB-F9 (=LB-T2d) | fill-before-mint first fill permanently stranded from the junction (under-count, mirror of F8); reversal open legs land in the same shape | **open xfail, always-on** |
 | LB-F4 (=LB-I5) | lifecycle mint/reuse has no seal-at-close → tpid reuse bleeds a closed trade's lifecycle into the new trade | **open xfail** |
 | LB-F7 (=LB-D6) | closed-row REPLACE binds calc_id unconditionally but carries lifecycle_id forward → mixed identity pair | **open xfail** |
@@ -170,14 +170,27 @@ battery xfail.
   split, the `_link_position_calc_on_open` delegate return contract. Gate:
   all pins green, xfails still xfail, corr-log faithful-consolidation diff
   clean on the battery scenarios.
-- **R2 — canonical key + guard≡write**: kills F8 + F6 (flip `LB-T2e`,
-  `LB-D5` xfails). Includes key migration WITH fill re-stamping (§2.1.3).
-  Adds a `perf`-marked fill-pipeline micro-benchmark (see §6.2).
-  Opportunistic: the LB-F5 filed residual (tier-0 reduce-only gate —
-  battery plan §5 LB-F5 row) naturally lands here if adopted.
+- **R2 — canonical key + guard≡write** (**DONE 2026-07-15**): killed F8 +
+  F6 (`LB-T2e` + `LB-D5` xfails flipped). Replay derives the
+  fills-aggregate write key first and guards on it (guard ≡ write by
+  construction); builder migration pass merges/re-keys stale (calc,
+  order) junction rows to the canonical key, re-stamps affected fills
+  (§2.1.3), and — named extension — corrects the order's stale stash
+  (a surviving stash keeps feeding ⑨ tier-0/the guard the dead key).
+  New `MIGRATED` tap outcome (→ E36). `perf`-marked fill-pipeline
+  micro-benchmark added (`tests/test_position_identity_perf.py`, 150 ms
+  p50 tripwire). LB-F5 residual adopted: tier-0 reduce-only gate.
 - **R3 — retroactive reconcile**: mint-after-fill sweep kills F9 (flip
   `LB-T2d`); reversal open legs heal on the next ACCOUNT_UPDATE mint.
-  LB-R3 (late-event parity) is the named design consideration.
+  LB-R3 (late-event parity) is the named design consideration. R2
+  hand-offs into this phase: (a) the mirror-ordering residue — a
+  stash-derived Defect-7 event can still fork a bounded stale-key
+  junction row that only converges on the next tpid-carrying event
+  (the R2-audit MAJOR-1 direction gate deliberately blocks stash-driven
+  migration; the no-later-event tail is retro-reconcile work); (b) the
+  replay guard exists-checks (position_id, calc_id) WITHOUT order_id
+  while the write is per-order — a second order of the same calc on the
+  same position never replays (R2-audit NIT-6, F9-family).
 - **R4 — lifecycle seal + pair coherence**: kills F4 + F7 (flip `LB-I5`,
   `LB-D6`); LB-D4's close-calc rule delegates to the owner (T3 scenario
   proves it).

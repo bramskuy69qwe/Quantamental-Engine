@@ -538,47 +538,30 @@ class TestLBT2eHA42DoubleJunction:
         return totals, await junction_rows(db)
 
     @pytest.mark.asyncio
-    async def test_pin_current_replay_inflates_contributed_qty(self, real):
-        # PIN (current behavior): 1.0 filled → contributed 1.0 → 2.0 →
-        # 3.0; every replay re-accumulates the full fill SUM under the
-        # fill-tpid key while the guard keeps checking the stale order
-        # stash. Guards the xfail twin against fixture regressions.
+    async def test_pin_replay_guard_matches_write_key(self, real):
+        # LB-F8 FIXED (R2): the replay derives the fills-aggregate write
+        # key FIRST and exists-checks THAT key (guard ≡ write by
+        # construction, position_identity.ensure_junction_if_linked) —
+        # a divergent order stash can no longer defeat the guard. Pins
+        # the fixed progression: 1.0 filled stays 1.0 across replays.
         om, db = real
         totals, junc = await self._drive_stale_stash_replays(om, db)
-        assert totals == [pytest.approx(1.0), pytest.approx(2.0),
-                          pytest.approx(3.0)]
-        # Single junction row, keyed by the FILL's tpid — the stale stash
-        # key never materializes a row (which is why the guard never
-        # satisfies and the inflation is unbounded).
+        assert totals == [pytest.approx(1.0), pytest.approx(1.0),
+                          pytest.approx(1.0)]
+        # Single junction row keyed by the FILL's tpid. NB the stale
+        # stash itself survives here (no stale junction ROW ever existed
+        # for (calc, order), so the R2 migration pass has nothing to
+        # move) — it is simply INERT now: the guard keys on the
+        # fills-derived write key, never the stash.
         assert [(r["position_id"], r["calc_id"]) for r in junc] == [
             ("POS-H2", "CALC-H2")]
-        assert junc[0]["contributed_qty"] == pytest.approx(3.0)
+        assert junc[0]["contributed_qty"] == pytest.approx(1.0)
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        strict=True,
-        reason="LB-T2e: HA-42 verified (corrected mechanism) — "
-               "_ensure_junction_if_linked guards on the ORDER's stashed "
-               "tpid ((position_id, calc_id) exists-check, "
-               "order_manager.py:623-631) but replays a synthetic fill "
-               "carrying MAX(fills.terminal_position_id) + SUM(qty) "
-               "(:633-651), which _link_position_calc_on_open prefers over "
-               "the order tpid (:2235) — when the opening fills' tpid "
-               "differs from the stash (Defect-1 backfill :2280-2286 never "
-               "rewrites a non-empty stash), the guard NEVER satisfies and "
-               "every replay (one per WS order update via "
-               "_enrich_order_best_effort:525) re-accumulates the full fill "
-               "SUM through the UPSERT accumulate (db_orders.py:2021-2022): "
-               "1.0 filled → 3.0 after two order updates, unbounded. NOT "
-               "the filed per-fill dual-path — _reenrich_parent_after_fill "
-               "(:1071-1073) calls bare enrich_order, so no replay runs "
-               "inside _process_single_fill.")
     async def test_junction_contributed_qty_equals_filled_qty(self, real):
+        # LB-F8 FIXED (R2, was strict-xfail): the junction ledger equals
+        # what actually filled — replays are idempotent regardless of
+        # which tpid keyed the row.
         om, db = real
         totals, junc = await self._drive_stale_stash_replays(om, db)
-        # DESIRED: the junction ledger equals what actually filled —
-        # replays must be idempotent regardless of which tpid keyed the row.
-        assert totals[-1] == pytest.approx(1.0), (
-            f"contributed_qty inflated to {totals[-1]} for 1.0 filled — "
-            "the replay guard checks the stale order-stash key while the "
-            "write lands under the fill-tpid key")
+        assert totals[-1] == pytest.approx(1.0)

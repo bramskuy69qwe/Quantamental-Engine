@@ -356,38 +356,80 @@ class TestLBD5JunctionDualKey:
         return await junction_rows(db)
 
     @pytest.mark.asyncio
-    async def test_pin_current_dual_key_forms(self, real):
-        # PIN (current behavior): the mixed-tpid fills split the junction
-        # under both keys with two minted lifecycles. Guards the xfail
-        # twin against fixture regressions.
+    async def test_pin_migration_unifies_key_and_restamps(self, real):
+        # LB-F6 FIXED (R2): the second fill's canonical key (POS-B)
+        # triggers the migration pass — the POS-A row is re-keyed/merged,
+        # the first fill's tpid is re-stamped, and the order's stale
+        # stash is corrected in the same coherence pass. Pins the full
+        # fixed shape beyond the xfail-twin's key/lifecycle asserts.
         om, db = real
         junc = await self._drive_mixed_tpid_fills(om, db)
-        assert {r["position_id"] for r in junc} == {"POS-A", "POS-B"}
-        assert len({r["lifecycle_id"] for r in junc}) == 2
+        assert {r["position_id"] for r in junc} == {"POS-B"}
+        assert len({r["lifecycle_id"] for r in junc}) == 1
+        assert sum(r["contributed_qty"] for r in junc) == pytest.approx(2.0)
+        # Fill re-stamp (plan §2.1.3): the pre-migration fill follows.
+        assert (await fill_by_fid(db, "F-D5A"))[
+            "terminal_position_id"] == "POS-B"
+        # Order-stash correction (R2 coherence extension): the dead key
+        # no longer feeds ⑨ tier-0 / the replay guard.
+        from tests.linkage_battery_helpers import order_by_eoid
+        assert (await order_by_eoid(db, "O-D5"))[
+            "terminal_position_id"] == "POS-B"
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        strict=True,
-        reason="LB-D5: _link_position_calc_on_open keys the junction on "
-               "fill.terminal_position_id when present (order_manager.py"
-               ":2175) and falls back to the order's tpid only when the "
-               "fill's is empty (:2204-2206) — two fills of ONE entry "
-               "order carrying '' then 'POS-B' key TWO junction rows "
-               "(POS-A via Defect-7 fallback, POS-B via the fill), each "
-               "with its own minted lifecycle (:2266); the Defect-1 "
-               "back-fill (:2221-2226) never rewrites a non-empty order "
-               "tpid, so the dual key persists (HA-42-adjacent "
-               "double-count shape).")
     async def test_one_economic_open_keys_one_junction(self, real):
+        # LB-F6 FIXED (R2, was strict-xfail): one economic open → ONE
+        # junction key, ONE lifecycle (key migration in
+        # position_identity.link_position_calc_on_open).
         om, db = real
         junc = await self._drive_mixed_tpid_fills(om, db)
-        keys = {r["position_id"] for r in junc}
-        lifecycles = {r["lifecycle_id"] for r in junc}
-        # DESIRED: one economic open → ONE junction key, ONE lifecycle.
-        assert len(keys) == 1, (
-            f"one entry order's fills keyed the junction under {keys} — "
-            "two position identities for one economic open")
-        assert len(lifecycles) == 1
+        assert len({r["position_id"] for r in junc}) == 1
+        assert len({r["lifecycle_id"] for r in junc}) == 1
+
+    @pytest.mark.asyncio
+    async def test_pin_mirror_ordering_gate_and_convergence(self, real):
+        """R2-audit MAJOR-1 direction gate: a STALE stash must never pull
+        a correct fills-derived row onto the dead key. Mirror ordering:
+        stash=POS-A (stale), F1 carries the true mint POS-B, F2 arrives
+        tpid='' (Defect-7 derives POS-A). The gate blocks migration on
+        the stash-derived event — POS-B's row and F1's tpid stay intact;
+        the bounded POS-A residue row converges on the NEXT
+        tpid-carrying event (R3 retro-reconcile input for the no-later-
+        event tail)."""
+        from tests.linkage_battery_helpers import order_by_eoid
+        om, db = real
+        await seed_calc(db, "CALC-D5M", status="matched", window_seconds=300)
+        await seed_order(db, "O-D5M", calc_id="CALC-D5M",
+                         link_status="LINKED", tpid="POS-A")
+
+        # F1: the true mint POS-B (junction keys POS-B; stash survives).
+        await om._process_single_fill(
+            ACCOUNT_ID, fill("O-D5M", "POS-B", 1.0, fid="F-D5M1",
+                             ts=RECENT_MS + 1000))
+        # F2: empty tpid → Defect-7 stash fallback POS-A. The gate must
+        # NOT migrate POS-B → POS-A; F1's fill tpid must stay POS-B.
+        await om._process_single_fill(
+            ACCOUNT_ID, fill("O-D5M", "", 1.0, fid="F-D5M2",
+                             ts=RECENT_MS + 1100))
+        junc = {r["position_id"]: r for r in await junction_rows(db)}
+        assert junc["POS-B"]["contributed_qty"] == pytest.approx(1.0)
+        assert (await fill_by_fid(db, "F-D5M1"))[
+            "terminal_position_id"] == "POS-B"      # NOT mutated
+        assert junc["POS-A"]["contributed_qty"] == pytest.approx(1.0)
+
+        # F3 carries POS-B again → migration fires (fills-derived key):
+        # the POS-A residue merges into POS-B; fills + stash converge.
+        await om._process_single_fill(
+            ACCOUNT_ID, fill("O-D5M", "POS-B", 1.0, fid="F-D5M3",
+                             ts=RECENT_MS + 1200))
+        junc = await junction_rows(db)
+        assert [(r["position_id"], r["calc_id"]) for r in junc] == [
+            ("POS-B", "CALC-D5M")]
+        assert junc[0]["contributed_qty"] == pytest.approx(3.0)
+        assert (await fill_by_fid(db, "F-D5M2"))[
+            "terminal_position_id"] == "POS-B"      # residue re-stamped
+        assert (await order_by_eoid(db, "O-D5M"))[
+            "terminal_position_id"] == "POS-B"      # stash corrected
 
 
 # ── LB-D6: closed_positions REPLACE asymmetry ──────────────────────────

@@ -198,9 +198,17 @@ class PositionIdentity:
         if eoid:
             parent_tpid = ""
             try:
+                # R2 fold of the LB-F5 filed residual (battery plan §5):
+                # tier-0 reads ONLY reduce-only parents — exactly what its
+                # stamp twin writes — so a Defect-1-stamped NON-reduce-only
+                # order (a one-way reversal: closer AND opener) can never
+                # tier-0-route a late close leg onto the NEW position's
+                # tpid. Costs nothing in the hedge deployment (LB-F5 audit
+                # live-DB proof: 63/63 close parents reduce-only).
                 async with self._db._conn.execute(
                     "SELECT terminal_position_id FROM orders "
-                    "WHERE account_id = ? AND exchange_order_id = ?",
+                    "WHERE account_id = ? AND exchange_order_id = ? "
+                    "  AND COALESCE(reduce_only, 0) = 1",
                     (account_id, eoid),
                 ) as cur:
                     row = await cur.fetchone()
@@ -347,20 +355,23 @@ class PositionIdentity:
                 _tap_replay("SKIPPED", "not_linked",
                             terminal_position_id=orow[1] or "")
                 return
-            if not (orow[1] or ""):
-                _tap_replay("SKIPPED", "no_position_key", calc_id=orow[0])
-                return
-            calc_id, pos_id = orow[0], orow[1]
-            async with self._db._conn.execute(
-                "SELECT 1 FROM positions_calcs "
-                "WHERE position_id = ? AND calc_id = ? AND account_id = ? LIMIT 1",
-                (pos_id, calc_id, account_id),
-            ) as cur:
-                if await cur.fetchone():
-                    _tap_replay("SKIPPED", "junction_exists",
-                                calc_id=calc_id, terminal_position_id=pos_id)
-                    return
-            # Replay the order's opening fill(s): summed qty, earliest ts, tpid.
+            calc_id = orow[0]
+            stash_tpid = orow[1] or ""
+            # R2 (LB-F8 fix — guard ≡ write key BY CONSTRUCTION): read the
+            # opening-fills aggregate FIRST and derive the key the builder
+            # will actually write under (fill tpid wins; the order stash
+            # is the Defect-7 fallback), then exists-check THAT key. The
+            # historical shape guarded the STASH while the synthetic fill
+            # carried MAX(fills.tpid) → a divergent stash never satisfied
+            # the guard and every replay re-accumulated the full SUM
+            # (battery LB-T2e: N-fold unbounded contributed_qty inflation,
+            # one per WS/bracket-child event). Write-key semantics also
+            # mean no_position_key now fires only when BOTH the
+            # fills-derived tpid AND the stash are empty (a stash-empty
+            # order whose fills carry a tpid legitimately replays — the
+            # builder would key it on the fill tpid anyway); the skip
+            # precedence between no_opening_fill and junction_exists
+            # swaps accordingly (fills are read first now).
             async with self._db._conn.execute(
                 "SELECT COALESCE(MAX(terminal_position_id), ''), MAX(symbol), "
                 "       MAX(direction), SUM(quantity), MAX(price), MIN(timestamp_ms) "
@@ -371,8 +382,21 @@ class PositionIdentity:
                 frow = await cur.fetchone()
             if not frow or not frow[3]:
                 _tap_replay("SKIPPED", "no_opening_fill",
-                            calc_id=calc_id, terminal_position_id=pos_id)
+                            calc_id=calc_id, terminal_position_id=stash_tpid)
                 return
+            write_key = (frow[0] or "") or stash_tpid
+            if not write_key:
+                _tap_replay("SKIPPED", "no_position_key", calc_id=calc_id)
+                return
+            async with self._db._conn.execute(
+                "SELECT 1 FROM positions_calcs "
+                "WHERE position_id = ? AND calc_id = ? AND account_id = ? LIMIT 1",
+                (write_key, calc_id, account_id),
+            ) as cur:
+                if await cur.fetchone():
+                    _tap_replay("SKIPPED", "junction_exists",
+                                calc_id=calc_id, terminal_position_id=write_key)
+                    return
             synth_fill = {
                 "account_id": account_id, "exchange_order_id": eoid,
                 "terminal_position_id": frow[0] or "", "is_close": 0,
@@ -381,7 +405,7 @@ class PositionIdentity:
                 "timestamp_ms": frow[5] or 0,
             }
             _tap_replay("DELEGATED", calc_id=calc_id,
-                        terminal_position_id=pos_id)
+                        terminal_position_id=write_key)
             await self.link_position_calc_on_open(account_id, synth_fill)
         except Exception as e:
             log.debug("ensure junction post-link skipped for %s", eoid, exc_info=True)
@@ -570,6 +594,105 @@ class PositionIdentity:
             # UNPLANNED / unlinked entry — nothing to attribute
             _tap_junction("SKIPPED", "not_linked", order_pk=order_id)
             return
+
+        # R2 (LB-F6 fix — key migration, plan §2.1.3): this economic open
+        # (calc_id, order_id) may already be keyed under a DIFFERENT
+        # position_id — the LB-D5 dual-key shape: the first fill keyed the
+        # Defect-7 order-stash fallback, a later fill carries the freshly
+        # minted tpid, and nothing reconciled (two junction rows + two
+        # lifecycles for ONE open). Migrate the stale row(s) to the
+        # canonical key instead of forking a second identity: MERGE if a
+        # row already exists under the new key (UNIQUE(position_id,
+        # calc_id, order_id)), else re-key in place. In the same pass,
+        # re-stamp the affected fills' tpids (plan §2.1.3 — any
+        # fills-keyed recompute must stay coherent) AND correct the
+        # order's stale stash (extension beyond the plan's junction+fills
+        # list, named in the R2 report: a surviving stale stash keeps
+        # feeding ⑨ tier-0 and the replay guard the dead key — the
+        # LB-F8 stash-generator class). Best-effort; MIGRATED tap per
+        # moved row (outcome-vocabulary addition → E36 at R5).
+        # DIRECTION GATE (R2 audit MAJOR-1): only a fill that carried its
+        # OWN tpid may trigger migration — when the triggering fill was
+        # empty, pos_id above is the Defect-7 STASH fallback, and a stale
+        # stash would migrate the CORRECT fills-derived row onto the dead
+        # key (mutating correct fills). A stash-derived key never
+        # migrates; the mirror-ordering residue (a bounded stash-keyed
+        # dual row until the next tpid-carrying event converges it) is
+        # pinned in the battery and is R3 retro-reconcile input. The
+        # replay lane still migrates (its synth fill carries
+        # MAX(fills.tpid) — fills-derived by construction).
+        fill_carried_tpid = bool(fill.get("terminal_position_id") or "")
+        try:
+            stale_rows = []
+            if fill_carried_tpid:
+                async with self._db._conn.execute(
+                    "SELECT id, position_id, contributed_qty, "
+                    "       first_fill_ts, last_fill_ts "
+                    "FROM positions_calcs "
+                    "WHERE calc_id = ? AND order_id = ? AND account_id = ? "
+                    "  AND position_id != ?",
+                    (calc_id, order_id, account_id, pos_id),
+                ) as cur:
+                    stale_rows = await cur.fetchall()
+            for srow in stale_rows:
+                old_key = srow[1]
+                async with self._db._conn.execute(
+                    "SELECT id FROM positions_calcs "
+                    "WHERE position_id = ? AND calc_id = ? AND order_id = ? "
+                    "  AND account_id = ? LIMIT 1",
+                    (pos_id, calc_id, order_id, account_id),
+                ) as cur:
+                    target = await cur.fetchone()
+                if target:
+                    # COALESCE guards: ts columns are always set by the
+                    # UPSERT in practice; the scalar MIN/MAX would NULL
+                    # out on a NULL side otherwise.
+                    await self._db._conn.execute(
+                        "UPDATE positions_calcs SET "
+                        "  contributed_qty = contributed_qty + ?, "
+                        "  first_fill_ts = COALESCE("
+                        "      MIN(first_fill_ts, ?), first_fill_ts, ?), "
+                        "  last_fill_ts = COALESCE("
+                        "      MAX(last_fill_ts, ?), last_fill_ts, ?) "
+                        "WHERE id = ?",
+                        (srow[2] or 0.0, srow[3], srow[3],
+                         srow[4], srow[4], target[0]),
+                    )
+                    await self._db._conn.execute(
+                        "DELETE FROM positions_calcs WHERE id = ?",
+                        (srow[0],),
+                    )
+                else:
+                    await self._db._conn.execute(
+                        "UPDATE positions_calcs SET position_id = ? "
+                        "WHERE id = ?",
+                        (pos_id, srow[0]),
+                    )
+                await self._db._conn.execute(
+                    "UPDATE fills SET terminal_position_id = ? "
+                    "WHERE account_id = ? AND exchange_order_id = ? "
+                    "  AND is_close = 0 "
+                    "  AND terminal_position_id IN ('', ?)",
+                    (pos_id, account_id, eoid, old_key),
+                )
+                await self._db._conn.execute(
+                    "UPDATE orders SET terminal_position_id = ? "
+                    "WHERE id = ? AND terminal_position_id = ?",
+                    (pos_id, order_id, old_key),
+                )
+                await self._db._conn.commit()
+                _tap_junction("MIGRATED", old_key=old_key,
+                              contributed_qty=srow[2] or 0.0,
+                              order_pk=order_id)
+        except Exception:
+            # NIT-5 (R2 audit): a mid-loop failure must not leave
+            # uncommitted statements riding the next unrelated commit.
+            try:
+                await self._db._conn.rollback()
+            except Exception:
+                pass
+            log.debug("junction key migration failed for %s/%s",
+                      calc_id, order_id, exc_info=True)
 
         # Reuse the position's existing lifecycle_id if a prior fill on
         # this position already established one (multi-fill / scale-in);
