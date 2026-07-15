@@ -24,10 +24,6 @@ class TestCheckMethodsExist:
         from core.monitoring import MonitoringService
         assert hasattr(MonitoringService, "_check_news_feed_health")
 
-    def test_check_plugin_connection(self):
-        from core.monitoring import MonitoringService
-        assert hasattr(MonitoringService, "_check_plugin_connection_sync")
-
     def test_check_reconciler_health(self):
         from core.monitoring import MonitoringService
         assert hasattr(MonitoringService, "_check_reconciler_health")
@@ -76,31 +72,13 @@ class TestRegimeFreshness:
         assert ev.severity == "warning"
 
 
-class TestPluginConnection:
-    def test_emits_on_disconnect(self):
-        from core.monitoring import MonitoringService
-        svc = MonitoringService()
-        svc._ever_plugin_connected = True
-        svc._check_plugin_connection_sync(plugin_connected=False)
-        kinds = [e.kind for e in svc.get_active_events()]
-        assert "plugin_disconnected" in kinds
-
-    def test_skips_if_never_connected(self):
-        from core.monitoring import MonitoringService
-        svc = MonitoringService()
-        svc._ever_plugin_connected = False
-        svc._check_plugin_connection_sync(plugin_connected=False)
-        kinds = [e.kind for e in svc.get_active_events()]
-        assert "plugin_disconnected" not in kinds
-
-    def test_resolves_on_reconnect(self):
-        from core.monitoring import MonitoringService
-        svc = MonitoringService()
-        svc._ever_plugin_connected = True
-        svc._check_plugin_connection_sync(plugin_connected=False)
-        svc._check_plugin_connection_sync(plugin_connected=True)
-        kinds = [e.kind for e in svc.get_active_events()]
-        assert "plugin_disconnected" not in kinds
+# (v2.6: TestPluginConnection removed with monitoring's Check 6 — the
+#  plugin-connection health check. Phase 5 deleted the Quantower plugin, so
+#  nothing could set `_ever_plugin_connected` and the check could never fire;
+#  all three of its tests — test_emits_on_disconnect / test_skips_if_never_
+#  connected / test_resolves_on_reconnect — only reached it by passing
+#  `plugin_connected=` explicitly, i.e. they exercised a path production could
+#  not.)
 
 
 class TestRateLimitFrequency:
@@ -141,8 +119,12 @@ class TestRateLimitFrequency:
 
 
 class TestAllChecksInRunLoop:
-    def test_run_loop_source_references_all_9(self):
-        """The run() method must call all 9 checks."""
+    def test_run_loop_source_references_all_8(self):
+        """The run() method must call all 8 checks.
+
+        (Was 9 — v2.6 removed Check 6, plugin connection health, with the
+        Quantower plugin. Keep this list in step with monitoring.py's module
+        docstring roster.)"""
         import inspect
         from core.monitoring import MonitoringService
         source = inspect.getsource(MonitoringService.run)
@@ -151,7 +133,8 @@ class TestAllChecksInRunLoop:
         assert "_check_position_count" in source
         assert "_check_regime_freshness" in source
         assert "_check_news_feed" in source or "_check_news" in source
-        assert "_check_plugin_connection" in source
         assert "_check_reconciler_health" in source or "_check_reconciler" in source
         assert "_check_db_health" in source
         assert "_check_rate_limit" in source
+        # anti-revert: the removed check must not come back unnoticed
+        assert "_check_plugin_connection" not in source

@@ -1,16 +1,15 @@
 """
 MonitoringService — periodic health checks with structured event model.
 
-Checks (9 total):
+Checks (8 total):
   1. P&L anomaly          — equity drops > 1 % in a 5-minute window
   2. WS staleness         — WS last_update > 45 s ago (not in fallback)
   3. Position count        — in-memory count differs from last DB snapshot
   4. Regime data freshness — regime classification older than 90 min
   5. News feed health      — no news rows inserted in last 60 min
-  6. Plugin connection     — plugin was connected but is now disconnected
-  7. Reconciler health     — >20 pending backfill rows
-  8. Database health       — SELECT 1 fails or times out
-  9. Rate-limit frequency  — >5 rate-limit events in 30-minute window
+  6. Reconciler health     — >20 pending backfill rows
+  7. Database health       — SELECT 1 fails or times out
+  8. Rate-limit frequency  — >5 rate-limit events in 30-minute window
 
 Start as an asyncio background task in lifespan startup:
     from core.monitoring import MonitoringService
@@ -156,7 +155,6 @@ class MonitoringService:
 
     def __init__(self) -> None:
         self.events: List[MonitoringEvent] = []
-        self._ever_plugin_connected: bool = False
         self._rate_limit_timestamps: List[tuple] = []  # [(epoch_s, was_ban), ...]
         self._cycle_count: int = 0
 
@@ -199,7 +197,7 @@ class MonitoringService:
 
     async def run(self) -> None:
         from core import correlation_log
-        log.info("MonitoringService started (9 checks)")
+        log.info("MonitoringService started (8 checks)")
         while True:
             correlation_log.tick("sch-monitoring")  # corr-tap: entry scope (CL.T1a)
             await asyncio.sleep(_CHECK_INTERVAL)
@@ -208,16 +206,15 @@ class MonitoringService:
             await self._check_pnl_anomaly()
             await self._check_ws_staleness()
             await self._check_position_count()
-            # New checks 4-7 (every cycle — fast, in-memory reads)
+            # Checks 4 + 8 (every cycle — fast, in-memory reads)
             self._check_regime_freshness_sync()
-            self._check_plugin_connection_sync()
             self._check_rate_limit_frequency_sync()
             # Check 5: news feed (every cycle, lightweight DB query)
             await self._check_news_feed_health()
-            # Check 7: reconciler health (every 5th cycle = 5 min)
+            # Check 6: reconciler health (every 5th cycle = 5 min)
             if self._cycle_count % 5 == 0:
                 await self._check_reconciler_health()
-            # Check 8: DB health (every 2nd cycle = 2 min)
+            # Check 7: DB health (every 2nd cycle = 2 min)
             if self._cycle_count % 2 == 0:
                 await self._check_db_health()
 
@@ -357,28 +354,13 @@ class MonitoringService:
         else:
             self.resolve("news_stale")
 
-    # ── Check 6: Plugin connection health ────────────────────────────────────
+    # (v2.6: "Check 6 — Plugin connection health" REMOVED. It alerted when the
+    #  Quantower plugin had been connected and then dropped. Phase 5 deleted the
+    #  plugin, so the check could never fire again — nothing could set
+    #  `_ever_plugin_connected`, and the loop paid a call per tick to reach a
+    #  guaranteed early-return. Checks below renumbered 7-9 → 6-8.)
 
-    def _check_plugin_connection_sync(self, plugin_connected: Optional[bool] = None) -> None:
-        # v2.6: no plugin ingestion path exists — the live connection state is
-        # always False, so this check never fires in standalone mode. Method +
-        # tests retained; removed with the plugin in a later phase.
-        if plugin_connected is None:
-            plugin_connected = False
-
-        if plugin_connected:
-            self._ever_plugin_connected = True
-            self.resolve("plugin_disconnected")
-            return
-
-        if not self._ever_plugin_connected:
-            return  # Standalone mode — don't alert
-
-        if not any(e.kind == "plugin_disconnected" and not e.resolved for e in self.events):
-            self.emit("plugin_disconnected", "warning",
-                      "Plugin was connected but is now disconnected — using exchange fallback")
-
-    # ── Check 7: Reconciler health ───────────────────────────────────────────
+    # ── Check 6: Reconciler health ───────────────────────────────────────────
 
     async def _check_reconciler_health(self) -> None:
         # HIGH-002 (Task 144) — refactored to db.count_pending_reconciler_rows.
@@ -395,7 +377,7 @@ class MonitoringService:
         else:
             self.resolve("reconciler_backlog")
 
-    # ── Check 8: Database health ─────────────────────────────────────────────
+    # ── Check 7: Database health ─────────────────────────────────────────────
 
     async def _check_db_health(self) -> None:
         # HIGH-002 (Task 144) — refactored to db.check_db_alive.
@@ -409,7 +391,7 @@ class MonitoringService:
                           "Database health check failed (SELECT 1 timeout or error)",
                           {"timeout_s": _DB_HEALTH_TIMEOUT})
 
-    # ── Check 9: Rate-limit frequency ────────────────────────────────────────
+    # ── Check 8: Rate-limit frequency ────────────────────────────────────────
 
     def record_rate_limit_event(self, was_ban: bool = False) -> None:
         """Called by handle_rate_limit_error() to record a rate-limit event."""

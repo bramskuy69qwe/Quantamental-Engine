@@ -1161,7 +1161,10 @@ class DatabaseManager(
         await self._conn.commit()
 
         # Seed default settings rows
-        for key, val in [("active_account_id", "1"), ("active_platform", "standalone")]:
+        # (v2.6: dropped the "active_platform" seed — nothing reads the setting
+        #  since Phase 3 removed its loader. Existing DBs keep the orphan row;
+        #  it is inert. INSERT OR IGNORE, so this is safe to re-run.)
+        for key, val in [("active_account_id", "1")]:
             await self._conn.execute(
                 "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, val)
             )

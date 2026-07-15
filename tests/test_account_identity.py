@@ -90,14 +90,21 @@ class TestSetActivePropagation:
 
 # ── Test 2: account-identity convergence (registry ⇔ app_state) ────────────
 
-class TestPlatformBridgeHello:
-    """After _handle_hello fires, both AccountRegistry.active_id and
-    AppState.active_account_id must read the same value."""
+class TestAccountIdentityConvergence:
+    """After an account-identity change, both AccountRegistry.active_id and
+    AppState.active_account_id must read the same value.
+
+    (Named TestPlatformBridgeHello until v2.6: the original trigger was the
+    Quantower plugin's `_handle_hello` frame, which resolved a broker_account_id
+    and switched the active account. Phase 5 deleted that frame — but these
+    tests never drove it; they exercise the registry writers it called
+    (`set_active` / `update_account`), which are still live and reachable from
+    the accounts UI. The invariant is durable; only the caller was plugin-era.)"""
 
     @pytest.mark.asyncio
-    async def test_hello_existing_account_converges(self):
-        """When plugin sends a broker_account_id matching an existing account,
-        both identity sources must agree on the matched account."""
+    async def test_broker_id_match_converges(self):
+        """Resolving a broker_account_id to an existing account: both identity
+        sources must agree on the matched account."""
         reg = _fresh_registry()
         state = _fresh_app_state()
 
@@ -112,9 +119,9 @@ class TestPlatformBridgeHello:
             assert state.active_account_id == reg.active_id == 2
 
     @pytest.mark.asyncio
-    async def test_hello_auto_populate_converges(self):
-        """When plugin populates a new broker_account_id on an empty slot,
-        identity must converge."""
+    async def test_broker_id_auto_populate_converges(self):
+        """Populating a new broker_account_id on an empty slot: identity
+        must converge."""
         reg = _fresh_registry()
         state = _fresh_app_state()
 

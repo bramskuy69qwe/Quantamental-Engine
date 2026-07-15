@@ -883,7 +883,33 @@ class OrdersMixin:
     async def mark_stale_orders(
         self, account_id: int, stale_threshold_ms: int = 300_000
     ) -> int:
-        """Mark active orders not seen in stale_threshold_ms as canceled."""
+        """Mark active orders not seen in stale_threshold_ms as canceled.
+
+        **Deliberately caller-less in production — do NOT delete as dead code.**
+        v2.6 removed its only caller (the plugin-gated `_order_staleness_loop`
+        time-sweep, 157bd20); un-gating it on the Binance-direct path was
+        REJECTED, not overlooked, because without plugin order snapshots a
+        time threshold wrongly cancels real working stops that simply get no
+        periodic WS refresh.
+
+        It survives as a tested DB-layer primitive, and the linkage battery
+        pins it on purpose: LB-I2 (`test_linkage_battery_interference.py`)
+        drives it as the TIME path of the bulk-cancel class, paired with
+        LB-T2i (`test_linkage_battery_t2_lanes.py`) which drives the live
+        SNAPSHOT sibling `mark_stale_orders_canceled`. Both raw-UPDATE
+        siblings strand a `matched` calc identically — that pair is WHY the
+        LB-F3 `release_calcs_for_stale_cancels` sweep exists at the
+        OrderManager layer. `test_correlation_log_state.py` additionally pins
+        this method's `order_status_applied` tap (source=stale-mark, via=time).
+        Deleting it would weaken the battery's model of a class that is still
+        live through the sibling.
+
+        This is the established convention, not a bespoke exemption: it is the
+        same disposition as the v2.6 plan's kept landmines L2-L5, and the exact
+        twin of `data_cache.apply_account_update_platform` (also caller-less,
+        also battery-pinned, dispositioned as L3). (v2.6 audit finding #3a —
+        filed as dead code, closed WONTFIX on investigation; the real defect
+        was the docstrings that called it a LIVE path, fixed in 425cf87.)"""
         now_ms = int(time.time() * 1000)
         cutoff = now_ms - stale_threshold_ms
         _tap_rows: List[Tuple[Any, Any]] = []

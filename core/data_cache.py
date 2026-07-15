@@ -962,7 +962,18 @@ class DataCache:
         margin_ratio: float,
         ts_ms: int = 0,
     ) -> None:
-        """Apply platform (Quantower) account state — broker truth, always accepted."""
+        """Apply platform (Quantower) account state — broker truth, always accepted.
+
+        **Deliberately caller-less since v2.6 — do NOT delete as dead code.**
+        Its only caller was the Quantower plugin's `account_state` frame, which
+        Phase 5 deleted; retained as plan landmine **L3** (with
+        `UpdateSource.PLATFORM`) because removing it means a wide test rewrite
+        for no gain — ~6 tests pin the PLATFORM precedence rules in
+        `_advance_account_version`. Battery-pinned at
+        `tests/test_correlation_log_state.py`. Same disposition as
+        `db_orders.mark_stale_orders` (v2.6 audit #3a). NB `account_update_
+        applied`'s `source="platform"` payload value is therefore UNREACHABLE
+        but not removed — see correlation_log_spec.md §5.4."""
         from core.state import app_state
 
         if ts_ms == 0:

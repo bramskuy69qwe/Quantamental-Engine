@@ -104,7 +104,7 @@ See [v2.4.md](v2.4.md) for spec + implementation status, and
 │   ├── event_bus.py           # Async pub/sub (InProcess or Redis)
 │   ├── regime_classifier.py   # Rule-based 5-state macro regime classifier
 │   ├── database.py            # SQLite manager (delegates to db_*.py)
-│   ├── monitoring.py          # System health checks (9 checks)
+│   ├── monitoring.py          # System health checks (8 checks)
 │   └── migrations/            # Schema migrations (applied on startup)
 │
 ├── api/                       # FastAPI route handlers (Jinja2 + HTMX)

@@ -173,7 +173,13 @@ class TestIntegration:
 
 class TestHeaderUIPolish:
     def test_no_account_conn_badge(self):
-        """account-conn-badge removed (redundant with plugin indicator)."""
+        """account-conn-badge stays out of the header.
+
+        Originally removed as redundant with the plugin indicator, which v2.6
+        deleted along with the rest of the Quantower UI. The anti-revert pin
+        outlives its original rationale: the header's connection signal is the
+        WS status bar, and re-adding a per-account badge would reintroduce the
+        competing-indicators clutter FE-HIGH-001 fixed."""
         content = open("templates/base.html", encoding="utf-8").read()
         assert 'id="account-conn-badge"' not in content
 

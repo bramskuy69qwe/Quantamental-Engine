@@ -398,7 +398,10 @@ class AppState:
         # SR-2: active_account_id is now a read-only @property backed by
         # account_registry.active_id.  All writes go through
         # account_registry.set_active().  See property definition below.
-        self.active_platform:   str = "standalone"
+        # (v2.6: `active_platform` removed. It selected between "standalone" and
+        #  "quantower" data paths; Phase 3 deleted its writers + loader and
+        #  Phase 4 its last template read, leaving an attribute nothing read.
+        #  The engine is exchange-only — there is no platform to choose.)
 
         # P9.T3: write-through cache of the operator on duty (active seat)
         # per account — set on operator-session register/takeover
