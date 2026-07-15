@@ -312,10 +312,12 @@ class TestRegistryAndProfiles:
             "http_out_call": "outbound", "http_out_return": "outbound",
             # lifecycle frames
             "ws_account_update": "lifecycle", "ws_order_update": "lifecycle",
-            "ws_algo_update": "lifecycle", "platform_fill": "lifecycle",
-            "platform_snapshot": "lifecycle", "platform_hello": "lifecycle",
+            "ws_algo_update": "lifecycle",
+            # (v2.6/E37: platform_fill / platform_snapshot / platform_hello
+            #  removed here, platform_push from market — platform_bridge was
+            #  their only emitter and Phase 5 deleted it. 46 → 42.)
             # market (volume-gated; OFF in linkage)
-            "platform_push": "market", "ws_news": "market",
+            "ws_news": "market",
             "ws_kline": "market", "ws_depth": "market",
             "ws_mark_price": "market", "pubsub_publish": "market",
             # ws_lifecycle

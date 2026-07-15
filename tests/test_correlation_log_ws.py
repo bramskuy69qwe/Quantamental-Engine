@@ -5,13 +5,12 @@ Covers: wsu-/wsm-/wsn- per-frame minting, the §5.4 frame categories
 ws_stream_rebuild behaviorally; connect/disconnect/keepalive via source
 pins — they live inside real-socket paths), and ws task naming.
 
-NOT covered (v2.6): the `wsp-` platform chain and the plugin market frames.
-`TestPlatformFrames` was removed with the Quantower plugin in v2.6 Phase 5
-(`aeb397f`) — `platform_bridge` was its only producer, so no `wsp-*` chain can
-be minted and the `platform_*` categories are producer-less. The `platform_push`
-→ market grouping pin was re-homed to the registry snapshot in
-`test_correlation_log_spine.py::test_registry_snapshot_ha3`, which is also what
-pins the categories' continued presence in the 46-category registry.
+NOT covered: the `wsp-` platform chain and the plugin market frames — they no
+longer exist. `TestPlatformFrames` was removed with the Quantower plugin in
+v2.6 Phase 5 (`aeb397f`); `platform_bridge` was its only producer, so no `wsp-*`
+chain can be minted. The four now-producer-less `platform_*` categories were
+then dropped from the registry (46 → 42, spec erratum E37), which retired the
+`platform_push` → market grouping pin along with them.
 """
 
 import asyncio

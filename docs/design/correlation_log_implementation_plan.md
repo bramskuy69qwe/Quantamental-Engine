@@ -684,7 +684,9 @@ MISSED-by-silence):
 **The correlation-log program is COMPLETE** (Phases 0–5, 12 tasks,
 2026-06-10 → 2026-06-14). All §10 acceptance criteria are met (criterion
 #5 met-by-substitution — §15 E29). Whole-engine coverage; NDJSON sink;
-46-category registry (10 attribution); `corr_tail.py` + jq/DuckDB cookbook
+42-category registry (10 attribution; was 46 until v2.6/E37 dropped the four
+producer-less `platform_*` categories with the Quantower plugin);
+`corr_tail.py` + jq/DuckDB cookbook
 reader; falsifiable perf gate; the 8 historical linkage bugs each
 one-query diagnosable.
 

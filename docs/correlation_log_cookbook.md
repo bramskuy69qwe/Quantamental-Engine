@@ -165,7 +165,6 @@ strings and compare only within a category (verified against code,
 |---|---|
 | `ws_order_update` / `ws_algo_update` | `{exchangeOrderId}:{status}:{qty}` (omitted when the id is missing; ALGO frames key on `aid`) |
 | `order_status_applied` | `{exchangeOrderId}:{normalized_status}:{qty}` (E21: NORMALIZED, not the raw frame's; bulk reconcile/stale lines have none) |
-| `platform_fill` | `qt:{trade_id}` |
 | `ws_news` | `bwe:{ext_id}` |
 | `attr_match_attempt` | triggering-order key (see `calc_correlation.py`) |
 | `attr_tpid_resolve` | `{fill_id}:tpid_resolve` |

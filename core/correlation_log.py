@@ -152,21 +152,13 @@ CAT_HTTP_OUT_RETURN = register("http_out_return", GROUP_OUTBOUND)
 CAT_WS_ACCOUNT_UPDATE = register("ws_account_update", GROUP_LIFECYCLE)
 CAT_WS_ORDER_UPDATE = register("ws_order_update", GROUP_LIFECYCLE)
 CAT_WS_ALGO_UPDATE = register("ws_algo_update", GROUP_LIFECYCLE)
-CAT_PLATFORM_FILL = register("platform_fill", GROUP_LIFECYCLE)
-CAT_PLATFORM_SNAPSHOT = register("platform_snapshot", GROUP_LIFECYCLE)
-CAT_PLATFORM_HELLO = register("platform_hello", GROUP_LIFECYCLE)
-# platform_push rode the ~1 Hz risk-state fanout while the Quantower plugin
-# was connected — market-grouped (volume-gated, OFF in `linkage`) rather than
-# lifecycle, deviating from the spec §5.4 table's placement: a 1 Hz state
-# push is market-shaped traffic, not a lifecycle event (CL.T1b). The grouping
-# rationale is why this line stays; the traffic itself is gone.
-#
-# v2.6: the four platform_* categories above are PRODUCER-LESS — platform_bridge
-# was their only emitter and Phase 5 deleted it. Retained deliberately, not by
-# oversight: removal changes the snapshot-pinned registry (46 categories,
-# test_correlation_log_spine.py::test_registry_snapshot_ha3) and must land WITH
-# the correlation_log_spec.md erratum that drops them from §3.2/§4/§5.4.
-CAT_PLATFORM_PUSH = register("platform_push", GROUP_MARKET)
+# v2.6 (E37): the four Quantower `platform_*` categories — platform_fill /
+# platform_snapshot / platform_hello (lifecycle) + platform_push (market) —
+# were REMOVED here. `core/platform_bridge.py` was their only emitter and v2.6
+# Phase 5 deleted it, leaving them producer-less; the plugin is archived
+# (branch `archive/quantower-plugin`) and cannot return, so nothing can ever
+# re-emit them. Registry 46 → 42. Dropping them also restores §4's "no dead
+# peers" audit rule: `quantower` was the last unreachable peer.
 CAT_WS_NEWS = register("ws_news", GROUP_MARKET)
 CAT_WS_KLINE = register("ws_kline", GROUP_MARKET)
 CAT_WS_DEPTH = register("ws_depth", GROUP_MARKET)
