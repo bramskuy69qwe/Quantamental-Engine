@@ -343,17 +343,6 @@ async def fetch_exchange_trade_history(limit: int = 200, since_ms: Optional[int]
     is safe.
     """
     try:
-        from core.platform_bridge import platform_bridge  # late import: circular dep
-        if platform_bridge.is_connected:
-            log.debug(
-                "fetch_exchange_trade_history: plugin connected — skipping "
-                "Binance backfill (Quantower is canonical)"
-            )
-            return
-    except Exception:
-        pass
-
-    try:
         # Window-aware anchor (2026-07-10): cover any offline gap since the last
         # captured income row, not just Binance's default ~7-day window. On a
         # steady periodic run the anchor is ~now -> a single page; on a restart

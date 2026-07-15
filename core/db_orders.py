@@ -917,8 +917,9 @@ class OrdersMixin:
         ORDER_TRADE_UPDATE (status=FILLED) while still recording every TRADE —
         so ``filled_qty`` reaches ``quantity`` but ``status`` lingers, leaving a
         long-dead order in the Open Orders view forever (the time-based
-        ``mark_stale_orders`` loop is plugin-gated, so Binance-direct never
-        clears them). This reconcile is TRUTH-based (``filled_qty >= quantity``),
+        ``mark_stale_orders`` sweep is NOT wired on the Binance-direct path —
+        it would wrongly cancel real working stops — so nothing else clears
+        them). This reconcile is TRUTH-based (``filled_qty >= quantity``),
         NOT time-based, so it can NEVER cancel a genuinely-working order — it only
         promotes an already-complete order to its correct terminal status."""
         now_ms = int(time.time() * 1000)

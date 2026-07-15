@@ -135,10 +135,10 @@ class TestLBI1AdminRawConfirm:
 
 class TestLBI2StaleCancelAsymmetry:
     async def _link_then_stale_cancel(self, om, db):
-        """Calc matched + order LINKED, then the scheduler's bulk
-        stale-cancel (schedulers.py:717 → db.mark_stale_orders,
-        db_orders.py:867): raw UPDATE orders SET status='canceled' for
-        rows last seen > threshold ago."""
+        """Calc matched + order LINKED, then a bulk stale-cancel via
+        ``db.mark_stale_orders`` (db_orders.py): raw UPDATE orders SET
+        status='canceled' for rows last seen > threshold ago. (v2.6 removed
+        the scheduler time-path caller; the DB method + asymmetry remain.)"""
         await seed_calc(db, "CALC-I2", window_seconds=300)
         oid = await seed_order(db, "O-I2")
         await om._enrich_order_best_effort(order_dict("O-I2"))

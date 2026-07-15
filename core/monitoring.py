@@ -360,12 +360,11 @@ class MonitoringService:
     # ── Check 6: Plugin connection health ────────────────────────────────────
 
     def _check_plugin_connection_sync(self, plugin_connected: Optional[bool] = None) -> None:
+        # v2.6: no plugin ingestion path exists — the live connection state is
+        # always False, so this check never fires in standalone mode. Method +
+        # tests retained; removed with the plugin in a later phase.
         if plugin_connected is None:
-            try:
-                from core.platform_bridge import platform_bridge
-                plugin_connected = platform_bridge.is_connected
-            except Exception:
-                return
+            plugin_connected = False
 
         if plugin_connected:
             self._ever_plugin_connected = True

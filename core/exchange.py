@@ -305,20 +305,14 @@ async def fetch_open_orders_tpsl() -> None:
     (basic orders) and _algo_order_sync_loop (conditional orders) — both
     run regardless of plugin state.
 
-    Falls back to direct REST fetch when OrderManager cache is empty and
-    plugin is disconnected.
+    Falls back to direct REST fetch when the OrderManager cache is empty.
     """
-    from core.platform_bridge import platform_bridge
     from core.order_manager_singleton import order_manager
     # OM-5b: always enrich from cache (populated by order sync loops)
     order_manager.enrich_positions_tpsl(app_state.positions)
 
     # If cache has TP/SL data, we're done — no need for direct REST fetch
     if any(p.individual_tpsl for p in app_state.positions):
-        return
-
-    # Fallback: direct REST fetch when cache is empty and plugin is disconnected
-    if platform_bridge.is_connected:
         return
 
     adapter = _get_adapter()

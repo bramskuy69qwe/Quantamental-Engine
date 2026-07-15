@@ -27,7 +27,6 @@ from core import correlation_log
 from core import ws_manager
 from core.data_logger import take_daily_snapshot, take_monthly_snapshot, export_all_to_excel
 from core.event_bus import event_bus, CH_TRADE_CLOSED
-from core.platform_bridge import platform_bridge
 from core.order_manager_singleton import order_manager
 from core.handlers import (
     handle_account_updated, handle_positions_refreshed,
@@ -167,23 +166,22 @@ async def _account_refresh_loop():
             continue
         _account_refresh_in_flight = True
         try:
-            # ── Account + position sync (plugin-gated) ─────────────────────
-            if not platform_bridge.is_connected:
-                # v2.4 Priority 3a: real-time refresh is urgent priority
-                try:
-                    from core.exchange import _get_adapter
-                    _get_adapter().set_priority("urgent")
-                except Exception:
-                    pass
-                await fetch_account()
-                await asyncio.sleep(0.5)  # RL-1: per-second burst pacing
-                await fetch_positions()
-                try:
-                    _get_adapter().set_priority("normal")
-                except Exception:
-                    pass
-                # Note: risk:positions_refreshed now fires inside
-                # DataCache.apply_position_snapshot() — no duplicate needed.
+            # ── Account + position sync (standalone: always run) ───────────
+            # v2.4 Priority 3a: real-time refresh is urgent priority
+            try:
+                from core.exchange import _get_adapter
+                _get_adapter().set_priority("urgent")
+            except Exception:
+                pass
+            await fetch_account()
+            await asyncio.sleep(0.5)  # RL-1: per-second burst pacing
+            await fetch_positions()
+            try:
+                _get_adapter().set_priority("normal")
+            except Exception:
+                pass
+            # Note: risk:positions_refreshed now fires inside
+            # DataCache.apply_position_snapshot() — no duplicate needed.
 
             # ── Basic order sync (NOT plugin-gated, OM-5b) ─────────────────
             # Orders are idempotent by exchange_order_id — safe to run
@@ -296,14 +294,11 @@ async def _account_refresh_loop():
 # ── Latency ping loop ───────────────────────────────────────────────────────
 
 async def _ping_loop():
-    """Measure REST round-trip latency every 10 seconds.
-    Skipped when the Quantower plugin is connected — avoids hammering Binance REST."""
+    """Measure REST round-trip latency every 10 seconds."""
     while True:
         correlation_log.tick("sch-ping")  # corr-tap: entry scope (CL.T1a)
         # RL-1: raised from 1s to 10s (was 60 req/min, now 6 req/min)
         await asyncio.sleep(10)
-        if platform_bridge.is_connected:
-            continue
         # RL-1: skip if rate-limited
         if app_state.ws_status.is_rate_limited:
             continue
@@ -316,13 +311,10 @@ async def _ping_loop():
 # ── BOD/SOW + exchange history refresh ───────────────────────────────────────
 
 async def _history_refresh_loop():
-    """Refresh BOD/SOW equity and exchange trade history every 5 minutes.
-    Skipped when the Quantower plugin is connected."""
+    """Refresh BOD/SOW equity and exchange trade history every 5 minutes."""
     while True:
         correlation_log.tick("sch-history_refresh")  # corr-tap: entry scope (CL.T1a)
         await asyncio.sleep(300)
-        if platform_bridge.is_connected:
-            continue
         try:
             await fetch_bod_sow_equity()
         except Exception as e:
@@ -698,11 +690,11 @@ async def _order_staleness_loop():
     while True:
         correlation_log.tick("sch-order_staleness")  # corr-tap: entry scope (CL.T1a)
         await asyncio.sleep(60)
-        # #2 (debug 2026-06-09): truth-based filled-order reconcile runs REGARDLESS
-        # of the plugin (the time-based mark_stale below stays plugin-gated, since
-        # it would wrongly cancel a real working stop that simply gets no periodic
-        # WS refresh). Safe — only promotes orders whose filled_qty already
-        # reached quantity to 'filled'. This is the Binance-direct cleanup path.
+        # #2 (debug 2026-06-09): truth-based filled-order reconcile — promotes
+        # orders whose filled_qty already reached quantity to 'filled'. Safe,
+        # Binance-direct cleanup path. (v2.6: the time-based mark_stale that ran
+        # only under the plugin is gone — in Binance-direct mode it would
+        # wrongly cancel real working stops that simply get no periodic WS refresh.)
         try:
             n = await db.reconcile_filled_orders(app_state.active_account_id)
             if n:
@@ -712,26 +704,6 @@ async def _order_staleness_loop():
                 )
         except Exception as e:
             log.warning("Filled-order reconcile error: %s", e)
-        if not platform_bridge.is_connected:
-            continue
-        try:
-            count = await db.mark_stale_orders(
-                account_id=app_state.active_account_id,
-                stale_threshold_ms=5 * 60 * 1000,
-            )
-            if count:
-                log.warning("Marked %d stale orders as canceled", count)
-                # LB-F3: the time-threshold bulk UPDATE bypasses the WS
-                # per-order release — sweep stranded 'matched' calcs.
-                await order_manager.release_calcs_for_stale_cancels(
-                    app_state.active_account_id,
-                )
-                # SR-1: rebuild cache via controlled entry point
-                await order_manager.refresh_cache(
-                    app_state.active_account_id,
-                )
-        except Exception as e:
-            log.warning("Order staleness loop error: %s", e)
 
 
 # ── Algo/conditional order sync (NOT plugin-gated) ───────────────────────────

@@ -6,7 +6,6 @@ calls go through the adapter layer.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Dict, List, Optional
 
@@ -27,18 +26,6 @@ log = logging.getLogger("exchange")
 
 async def fetch_ohlcv(symbol: str, timeframe: str = config.ATR_TIMEFRAME,
                       limit: int = config.ATR_FETCH_LIMIT) -> List:
-    # Fallback path only — when plugin is connected it streams bars via ohlcv_bar events.
-    try:
-        from core.platform_bridge import platform_bridge  # late import: circular dep
-        if platform_bridge.is_connected:
-            cached = app_state.ohlcv_cache.get(symbol, [])
-            if not cached:
-                # Plugin hasn't sent bars yet — ask for them now.
-                asyncio.create_task(platform_bridge.request_ohlcv(symbol, timeframe))
-            return cached
-    except Exception:
-        pass
-
     adapter = _get_adapter()
     candles = await adapter.fetch_ohlcv(symbol, timeframe, limit)
     app_state.ohlcv_cache[symbol] = candles
@@ -136,17 +123,6 @@ def calc_mfe_mae(
 # ── Orderbook ────────────────────────────────────────────────────────────────
 
 async def fetch_orderbook(symbol: str, limit: int = 20) -> Dict:
-    # Fallback path only — when plugin is connected it streams depth via depth_snapshot events.
-    try:
-        from core.platform_bridge import platform_bridge  # late import: circular dep
-        if platform_bridge.is_connected:
-            cached = app_state.orderbook_cache.get(symbol)
-            if not cached:
-                asyncio.create_task(platform_bridge.request_depth(symbol))
-            return cached or {"bids": [], "asks": []}
-    except Exception:
-        pass
-
     adapter = _get_adapter()
     ob = await adapter.fetch_orderbook(symbol, limit)
     app_state.orderbook_cache[symbol] = ob

@@ -361,7 +361,7 @@ class TestWsLifecycle:
 
     def test_ws_tasks_are_named_at_every_spawn_site(self):
         src = inspect.getsource(wsm)
-        assert src.count('name="ws-user"') >= 3      # start + standby + reconnect
+        assert src.count('name="ws-user"') >= 2      # start + reconnect (v2.6: plugin standby spawn removed)
         assert src.count('name="ws-market"') >= 4    # start + no-streams + reconnect + rebuild
         assert 'name="ws-keepalive"' in src
         assert 'name="ws-fallback"' in src

@@ -119,7 +119,6 @@ templates.env.globals["project_version_"] = config.PROJECT_VERSION_
 
 def _ctx(request: Request, **extra) -> dict:
     """Base template context for every page render."""
-    from core.platform_bridge import platform_bridge  # late import: circular dep with exchange
     # FE-HIGH-002 (Task 111): expose the registered REST adapters to every
     # template render. The Add Account modal in base.html iterates this list
     # so non-Binance adapters appear with a "(Beta)" suffix on the label.
@@ -128,7 +127,6 @@ def _ctx(request: Request, **extra) -> dict:
         "now":               now_in_account_tz(app_state.active_account_id).strftime("%Y-%m-%d %H:%M:%S"),
         "tz_display":        _tz_display(),
         "ws_status":         app_state.ws_status,
-        "plugin_connected":  platform_bridge.is_connected,
         "params":            app_state.params,
         "is_initializing":   app_state.is_initializing,
         "active_account_id": app_state.active_account_id,
