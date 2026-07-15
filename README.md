@@ -4,8 +4,6 @@ Pre-trade risk gatekeeper and post-trade logger for discretionary crypto
 futures trading. The engine provides real-time position monitoring, ATR-based
 position sizing with macro regime multipliers, and a browser-based dashboard
 served as a PWA. It connects to exchanges via a vendor-neutral adapter layer.
-A Quantower plugin is an **optional execution-side integration** — the
-engine does not depend on it for data flow.
 
 Currently deployed against Binance USDM-M and Bybit Linear perpetuals, with
 MEXC read-only integration via adapter capability flags.
@@ -31,20 +29,12 @@ adapter layer defined by Python protocols in `core/adapters/protocols.py`.
                           |
               +-----------+-----------+
               |           |           |
-         +----+----+ +---+---+ +----+----+      [Quantower plugin]
-         | Binance | | Bybit | |  MEXC   |  ←   (optional, execution-side
-         | adapter | |adapter| |adapter* |       only; not a data dependency)
+         +----+----+ +---+---+ +----+----+
+         | Binance | | Bybit | |  MEXC   |
+         | adapter | |adapter| |adapter* |
          +---------+ +-------+ +---------+
                                 * read-only (capability flags)
 ```
-
-**Quantower plugin (optional execution-side integration).** As of v2.5,
-exchange-WS is the primary data path. The plugin — if the operator chooses
-to run QT alongside the engine — pushes fills + position snapshots to
-`/ws/platform` and consumes risk-state updates for chart overlays. Operating
-in "standalone" mode (plugin absent) is the supported default. The
-`core/platform_bridge.py` module that handles plugin traffic is marked
-legacy / archive-candidate; see its docstring for the deprecation timeline.
 
 Engine core never imports exchange libraries directly. Adapters implement
 `ExchangeAdapter` / `WSAdapter` protocols and are resolved at runtime by
@@ -67,7 +57,6 @@ full adapter inventory.
 | Data processing | pandas, numpy |
 | Encryption | cryptography (Fernet, AES-256 for API keys) |
 | HTTP client | httpx (async) |
-| Broker bridge | Quantower C# plugin via WebSocket *(legacy / optional — not a data dependency as of v2.5; archive candidate)* |
 | Testing | pytest + pytest-asyncio (1247 tests) |
 
 ---
@@ -114,7 +103,6 @@ See [v2.4.md](v2.4.md) for spec + implementation status, and
 │   ├── schedulers.py          # Background tasks (BOD, regime, news, ping)
 │   ├── event_bus.py           # Async pub/sub (InProcess or Redis)
 │   ├── regime_classifier.py   # Rule-based 5-state macro regime classifier
-│   ├── platform_bridge.py     # Quantower plugin integration
 │   ├── database.py            # SQLite manager (delegates to db_*.py)
 │   ├── monitoring.py          # System health checks (9 checks)
 │   └── migrations/            # Schema migrations (applied on startup)
@@ -131,8 +119,7 @@ See [v2.4.md](v2.4.md) for spec + implementation status, and
 ├── tests/                     # pytest suite (1247 tests, 111-row baseline)
 ├── scripts/                   # Utility scripts
 ├── data/                      # Runtime data (gitignored: DBs, logs, snapshots)
-├── docs/                      # Documentation (see below)
-└── QuantowerRiskPlugin/       # C# .NET Quantower integration plugin
+└── docs/                      # Documentation (see below)
 ```
 
 ---

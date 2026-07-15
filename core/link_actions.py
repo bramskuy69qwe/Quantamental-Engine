@@ -255,7 +255,7 @@ async def _manual_link_order_impl(
     #    VELVET/ETH gap shape (live badge unattributed, close-fill stamp
     #    no-ops; only the close row recovered via earliest-fill
     #    fallback). A throwaway OrderManager(db) is used instead of
-    #    platform_bridge.order_manager so the replay always runs on THIS
+    #    the order_manager singleton so the replay always runs on THIS
     #    module's db binding (prod: the same singleton; tests: the
     #    patched temp DB) — construction is three attribute assignments.
     #    Idempotent + best-effort; the attr_junction_form

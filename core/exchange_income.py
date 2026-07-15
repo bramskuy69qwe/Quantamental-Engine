@@ -330,9 +330,6 @@ async def fetch_exchange_trade_history(limit: int = 200, since_ms: Optional[int]
     row with direction, exit_price, entry_price (computed), and fee (from
     COMMISSION income events matched by tradeId).  Stores newest-first.
 
-    Fallback path only — when the Quantower plugin is connected, exchange_history
-    is populated by the plugin's historical_fill events instead.
-
     ``since_ms`` (2026-07-10): explicit fetch-window floor. Normally the window
     is anchored at the last captured income row (get_last_income_time), which is
     forward-only — it CANNOT reach income the old 7-day fetch already stranded

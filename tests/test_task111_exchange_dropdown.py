@@ -167,7 +167,6 @@ class TestBaseTemplateRendersDropdown:
             params={"individual_risk_per_trade": 0.005},
             is_initializing=False,
             active_account_id=1,
-            active_platform="standalone",
             accounts=[{"id": 1, "name": "Account 1", "is_active": 1, "environment": "live"}],
             available_exchanges=available_exchanges,
             project_name="QUANTAMENTAL ENGINE v2.4.1",

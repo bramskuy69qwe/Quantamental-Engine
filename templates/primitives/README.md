@@ -168,30 +168,32 @@ TableRow is the convention example. Reasons:
 ### StatusIndicator (Task 121)
 
 `templates/primitives/status_indicator.html` — single labeled status
-component. Used at the header plugin/connection indicator
-(FE-HIGH-001 fix). See the macro docstring for full API.
+component (a ●-dot + label + optional value). Used in the Needs-Link
+queue, and available to any surface that needs a labeled status. See
+the macro docstring for full API.
 
 ```jinja2
 {% from "primitives/status_indicator.html" import status_indicator %}
 
 {# Minimal: just label + dot, no value #}
-{{ status_indicator("neutral", "Quantower") }}
+{{ status_indicator("neutral", "Matcher") }}
 
 {# With value (most common shape) #}
-{{ status_indicator("success", "Quantower", value="Connected") }}
-{{ status_indicator("error",   "Quantower", value="Disconnected") }}
-{{ status_indicator("warning", "API",       value="rate-limited") }}
+{{ status_indicator("success", "Matcher", value="Linked") }}
+{{ status_indicator("error",   "Matcher", value="Needs link") }}
+{{ status_indicator("warning", "API",     value="rate-limited") }}
+{{ status_indicator("info",    "Regime",  value="recomputing") }}
 
 {# With id for JS targeting #}
-{{ status_indicator("neutral", "Quantower",
-                    value="Connecting…",
-                    id="plugin-indicator") }}
+{{ status_indicator("neutral", "Matcher",
+                    value="Checking…",
+                    id="match-indicator") }}
 ```
 
 JS pattern for state transitions:
 
 ```javascript
-var indicator = document.getElementById('plugin-indicator');
+var indicator = document.getElementById('match-indicator');
 var value     = indicator.querySelector('.si-value');
 
 function setSeverity(el, sev){
@@ -200,7 +202,7 @@ function setSeverity(el, sev){
 }
 
 setSeverity(indicator, 'success');
-value.textContent = 'Connected';
+value.textContent = 'Linked';
 ```
 
 ### Card (Task 122)

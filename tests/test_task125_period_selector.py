@@ -256,7 +256,6 @@ class TestHistoryMigration:
         out = tpl.render(
             active_page="history",
             active_account_id=1,
-            active_platform="standalone",
             available_exchanges=[],
             project_name="x", tz_display="UTC", now="2026-05-19",
             accounts=[],

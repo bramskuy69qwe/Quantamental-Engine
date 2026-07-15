@@ -415,8 +415,7 @@ async def _create_fill_from_ws(order, raw_msg: dict) -> None:
     (_build_close_row_for_fill → insert_closed_position) fires for closing fills.
     Without this, WS-arrived fills land in the fills table but never produce a
     closed_positions row until the next engine restart's backfill sweep — leaving
-    Position History stale whenever the Quantower plugin is disconnected and the
-    engine's own user-data WS is the sole fill source.
+    Position History stale (the engine's user-data WS is the sole fill source).
     """
     o = raw_msg.get("o", {})
     trade_id = str(o.get("t", ""))

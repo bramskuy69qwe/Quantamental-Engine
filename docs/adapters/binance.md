@@ -72,7 +72,6 @@ User-data stream (private, authenticated):
   Auth: Listen key from POST /fapi/v1/listenKey
   Keepalive: PUT /fapi/v1/listenKey every 25 min (_keepalive_loop)
   Reconnect: Exponential backoff, fresh listen key on each attempt
-  Plugin gating: Stands by when Quantower plugin connected (30s retry loop)
 
 Market-data stream (public, combined):
   URL: wss://fstream.binance.com/market/stream?streams={list}
@@ -157,13 +156,6 @@ Only populated for HTTP 418 (IP ban). HTTP 429 responses do NOT include
 Income API rows use `{timestamp_ms}_{symbol}_{incomeType}` as `trade_key`
 (no exchange-native tradeId). PA-1a dedup uses `symbol+side+qty+|ts|<1s`
 tolerance to avoid dual records from WS fill creation.
-
-### Plugin Connection Gating
-When Quantower plugin is connected:
-- User-data WS stands by (30s retry loop) — no ORDER_TRADE_UPDATE events
-- Account/position REST sync skipped (plugin is authoritative)
-- Basic order REST sync: NOT gated (OM-5b)
-- Conditional/algo order sync: NOT gated (OM-5)
 
 ### CCXT binanceusdm vs binance
 Engine uses `ccxt.binanceusdm`, which inherits from `ccxt.binance` but

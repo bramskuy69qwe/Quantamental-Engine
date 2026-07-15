@@ -55,7 +55,6 @@ Read once at import time by `config.py`. Changes require restart.
 | `FRED_API_KEY` | No | FRED macro data (regime classifier) |
 | `FINNHUB_API_KEY` | No | Market news feed |
 | `BWE_NEWS_WS_URL` | No | BWE news WebSocket endpoint |
-| `PLATFORM_TOKEN` | No | Quantower platform bridge authentication |
 
 ---
 

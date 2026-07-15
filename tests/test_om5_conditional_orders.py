@@ -284,7 +284,6 @@ async def test_ws_dispatcher_routes_algo_update():
     mock_pb.order_manager.process_order_update = AsyncMock(return_value=True)
 
     with patch("core.ws_manager.app_state") as mock_state, \
-         patch.dict("sys.modules", {"core.platform_bridge": MagicMock(platform_bridge=mock_pb)}), \
          patch("core.order_manager_singleton.order_manager", mock_pb.order_manager):
         mock_state.positions = [pos]
         mock_state.active_account_id = 1

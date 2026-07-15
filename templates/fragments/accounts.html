@@ -34,7 +34,7 @@
           <input type="text"
                  value="{{ acct.broker_account_id or '' }}"
                  placeholder="e.g. binancefutures_1234"
-                 title="Quantower account ID for fill routing"
+                 title="Broker account ID for fill routing"
                  style="background:var(--panel);border:1px solid var(--border);color:var(--sub);border-radius:4px;padding:2px 6px;font-size:.68rem;font-family:var(--font-mono);width:160px;height:24px;"
                  hx-put="/accounts/{{ acct.id }}"
                  hx-trigger="change, keydown[key=='Enter']"

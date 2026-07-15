@@ -1,13 +1,13 @@
 """
 OrderManager — domain logic for order lifecycle.
 
-Decoupled from WebSocket transport. platform_bridge parses messages and
+Decoupled from WebSocket transport. ws_manager parses WS messages and
 delegates here; schedulers call for REST fallback; both produce identical
 dict inputs.
 
 Instantiated once as the process-wide singleton in
-core.order_manager_singleton (v2.6 Phase 1); platform_bridge and every
-consumer read that shared instance.
+core.order_manager_singleton (v2.6 Phase 1); every consumer reads that
+shared instance.
 """
 from __future__ import annotations
 

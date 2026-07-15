@@ -340,8 +340,9 @@ What this changes in the audit ledger:
 - **Phase 7 remainder** (MED-040 SRI, MED-041 CSP, LOW-001 ticker
   regex) — downgraded to opportunistic. Real findings, but not
   audit-cycle priority work at this deployment shape.
-- **MED-023** (empty PLATFORM_TOKEN bypass) — same logic if it
-  resurfaces; localhost-only deployment makes the bypass moot.
+- **MED-023** (empty PLATFORM_TOKEN bypass) — CLOSED / not-applicable:
+  v2.6 removed the Quantower plugin, its `/api/platform` routes, and
+  `PLATFORM_TOKEN` entirely, so the bypass no longer exists.
 
 Future tasks SHOULD reference this section before doing
 exposure-driven hardening. If the deployment context changes,

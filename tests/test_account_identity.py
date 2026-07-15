@@ -88,7 +88,7 @@ class TestSetActivePropagation:
         assert reg._cache[3]["is_active"] == 0
 
 
-# ── Test 2: platform_bridge hello convergence ──────────────────────────────
+# ── Test 2: account-identity convergence (registry ⇔ app_state) ────────────
 
 class TestPlatformBridgeHello:
     """After _handle_hello fires, both AccountRegistry.active_id and

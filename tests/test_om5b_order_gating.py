@@ -65,11 +65,9 @@ async def test_tpsl_enriches_when_plugin_connected(om_with_basic_orders):
     pos = PositionInfo(ticker="BTCUSDT", direction="LONG", fair_price=68000.0, average=68000.0)
 
     mock_pb = MagicMock()
-    mock_pb.is_connected = True  # Plugin IS connected
     mock_pb.order_manager = om
 
     with patch("core.exchange.app_state") as mock_state, \
-         patch.dict("sys.modules", {"core.platform_bridge": MagicMock(platform_bridge=mock_pb)}), \
          patch("core.order_manager_singleton.order_manager", mock_pb.order_manager):
         mock_state.positions = [pos]
 

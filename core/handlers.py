@@ -64,7 +64,6 @@ async def handle_account_updated(payload: Dict[str, Any]) -> None:
 
     1. Recalculate portfolio metrics
     2. Persist account snapshot to DB
-    3. Push risk state to any connected Quantower plugin clients
     """
     # recalculate_portfolio() now called inside DataCache after position mutations.
     # For account_updated events (WS), DataCache already recalculated.

@@ -46,11 +46,3 @@ keep_data.backup-*/
 # --- Debug-session artifacts (Playwright browser + root screenshots) ---
 .playwright-mcp/
 /*.png
-
-# --- .NET / Quantower plugin build artifacts ---
-# obj/ and bin/ are reproducible from the .csproj source. T156 latent
-# noted these were being tracked and modified silently on every IDE
-# build; T157 removes them from the index. The .NET SDK regenerates
-# these locally on the next `dotnet build`.
-QuantowerRiskPlugin/obj/
-QuantowerRiskPlugin/bin/

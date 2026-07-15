@@ -8,10 +8,10 @@
 
    Usage:
        {% from "primitives/status_indicator.html" import status_indicator %}
-       {{ status_indicator("success", "Quantower", value="43ms") }}
-       {{ status_indicator("error",   "Quantower", value="Disconnected") }}
-       {{ status_indicator("neutral", "Quantower") }}
-       {{ status_indicator("warning", "API",      value="rate-limited",
+       {{ status_indicator("success", "Matcher", value="Linked") }}
+       {{ status_indicator("error",   "Matcher", value="Needs link") }}
+       {{ status_indicator("neutral", "Matcher") }}
+       {{ status_indicator("warning", "API",     value="rate-limited",
                            id="api-status") }}
 
    Parameters:
@@ -19,7 +19,7 @@
                   Maps to existing CSS vars: --green / --amber / --red /
                   --blue / --muted. Strict — unknown values fall through to
                   neutral (defensive).
-       label      primary text — the *what* (e.g. "Quantower", "API").
+       label      primary text — the *what* (e.g. "Matcher", "API").
                   Always rendered.
        value      optional secondary text — the *state value* (e.g. "43ms",
                   "Disconnected", "rate-limited"). Pass empty string to

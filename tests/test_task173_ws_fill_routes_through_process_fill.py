@@ -19,21 +19,23 @@ Repro: opened/closed ALTUSDT today; DB had 8 ALTUSDT fills
 (source=binance_ws) but zero ALT* closed_positions rows.
 
 Fix: route _create_fill_from_ws through
-platform_bridge.order_manager.process_fill, and populate
+order_manager.process_fill, and populate
 terminal_position_id from app_state.positions before the call so
 _build_close_row_for_fill uses the indexed terminal_position_id path
 instead of falling back to (symbol, direction).
 
 These tests:
   1. Assert _create_fill_from_ws calls order_manager.process_fill (not
-     bare db.upsert_fill) when platform_bridge is available.
+     bare db.upsert_fill) when the order_manager singleton is available.
   2. Assert terminal_position_id is populated from app_state.positions
      when a matching (symbol, direction) position exists.
   3. Assert the function falls back to db.upsert_fill when
      order_manager.process_fill raises (defense in depth — the fill
      must always be persisted).
   4. Source-grep pin: _create_fill_from_ws references
-     platform_bridge.order_manager.process_fill.
+     order_manager.process_fill.
+  (v2.6: the singleton is core.order_manager_singleton.order_manager,
+  not platform_bridge.order_manager.)
 
 Run: pytest tests/test_task173_ws_fill_routes_through_process_fill.py -v
 """
@@ -123,7 +125,7 @@ class _FakePosition:
 
 @pytest.mark.asyncio
 async def test_routes_through_order_manager_process_fill_when_available():
-    """When platform_bridge.order_manager is available, _create_fill_from_ws
+    """When the order_manager singleton is available, _create_fill_from_ws
     must call its process_fill (not bare db.upsert_fill)."""
     from core import ws_manager
 
@@ -131,13 +133,10 @@ async def test_routes_through_order_manager_process_fill_when_available():
     fake_om = MagicMock()
     fake_om.process_fill = AsyncMock()
 
-    fake_pb = MagicMock()
-    fake_pb.order_manager = fake_om
 
     fake_db_upsert = AsyncMock()
 
     with patch.object(ws_manager, "app_state") as mock_state, \
-         patch.dict("sys.modules", {"core.platform_bridge": MagicMock(platform_bridge=fake_pb)}), \
          patch("core.order_manager_singleton.order_manager", fake_om):
         mock_state.active_account_id = 1
         mock_state.positions = []
@@ -167,11 +166,8 @@ async def test_populates_terminal_position_id_from_app_state():
 
     fake_om = MagicMock()
     fake_om.process_fill = AsyncMock()
-    fake_pb = MagicMock()
-    fake_pb.order_manager = fake_om
 
     with patch.object(ws_manager, "app_state") as mock_state, \
-         patch.dict("sys.modules", {"core.platform_bridge": MagicMock(platform_bridge=fake_pb)}), \
          patch("core.order_manager_singleton.order_manager", fake_om):
         mock_state.active_account_id = 1
         mock_state.positions = [fake_pos]
@@ -200,11 +196,8 @@ async def test_terminal_position_id_empty_when_no_matching_position():
 
     fake_om = MagicMock()
     fake_om.process_fill = AsyncMock()
-    fake_pb = MagicMock()
-    fake_pb.order_manager = fake_om
 
     with patch.object(ws_manager, "app_state") as mock_state, \
-         patch.dict("sys.modules", {"core.platform_bridge": MagicMock(platform_bridge=fake_pb)}), \
          patch("core.order_manager_singleton.order_manager", fake_om):
         mock_state.active_account_id = 1
         mock_state.positions = [other_pos]
@@ -229,13 +222,10 @@ async def test_falls_back_to_upsert_fill_when_process_fill_raises():
     raw = _make_raw_msg(trade_id="t-4004")
     fake_om = MagicMock()
     fake_om.process_fill = AsyncMock(side_effect=RuntimeError("simulated failure"))
-    fake_pb = MagicMock()
-    fake_pb.order_manager = fake_om
 
     fake_db_upsert = AsyncMock()
 
     with patch.object(ws_manager, "app_state") as mock_state, \
-         patch.dict("sys.modules", {"core.platform_bridge": MagicMock(platform_bridge=fake_pb)}), \
          patch("core.order_manager_singleton.order_manager", fake_om):
         mock_state.active_account_id = 1
         mock_state.positions = []
@@ -259,13 +249,10 @@ async def test_skips_when_trade_id_missing():
     raw = {"o": {"t": "0", "s": "ALTUSDT", "L": 1.0, "l": 1.0}}
     fake_om = MagicMock()
     fake_om.process_fill = AsyncMock()
-    fake_pb = MagicMock()
-    fake_pb.order_manager = fake_om
 
     fake_db_upsert = AsyncMock()
 
     with patch.object(ws_manager, "app_state") as mock_state, \
-         patch.dict("sys.modules", {"core.platform_bridge": MagicMock(platform_bridge=fake_pb)}), \
          patch("core.order_manager_singleton.order_manager", fake_om):
         mock_state.active_account_id = 1
         mock_state.positions = []

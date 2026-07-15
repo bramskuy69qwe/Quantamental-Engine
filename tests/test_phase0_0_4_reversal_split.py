@@ -423,10 +423,6 @@ class TestWsPipelineIntegration:
 
         om = OrderManager(test_db)
 
-        fake_pb = MagicMock()
-        fake_pb.order_manager = om
-        fake_pb.is_connected = False
-
         fake_pos = MockPosition(
             ticker="BTCUSDT", direction="LONG",
             contract_amount=5.0, position_id="pos-old",
@@ -454,11 +450,6 @@ class TestWsPipelineIntegration:
 
         with patch.object(ws_manager, "app_state") as mock_ws_state, \
              patch("core.order_manager.app_state") as mock_om_state, \
-             patch.dict(
-                 "sys.modules",
-                 {"core.platform_bridge":
-                  MagicMock(platform_bridge=fake_pb)},
-             ), \
              patch("core.order_manager_singleton.order_manager", om):
             mock_ws_state.active_account_id = 1
             mock_ws_state.positions = [fake_pos]
