@@ -94,9 +94,12 @@ class ExchangeMixin:
         await self._conn.commit()
 
     # ── HIGH-002 (Task 143, Phase 6 platform_bridge) ────────────────────────
-    # Helpers below replace `db._conn` direct access in
-    # `core/platform_bridge.py::handle_historical_fill`. All scoped to
-    # exchange_history; merge + open-time-resolution logic for closing fills.
+    # Helpers below replaced `db._conn` direct access in the since-deleted
+    # `core/platform_bridge.py::handle_historical_fill` (v2.6 Phase 5 removed
+    # the plugin; the pre-deletion source is recoverable from the LOCAL
+    # `archive/quantower-plugin` branch at 523e0d1). They remain in use on the
+    # exchange-history path. All scoped to exchange_history; merge +
+    # open-time-resolution logic for closing fills.
 
     async def find_realized_pnl_for_merge(
         self, *, time_ms: int, symbol: str, direction: str, account_id: int,
@@ -189,8 +192,12 @@ class ExchangeMixin:
         close timestamp (placeholder). Prevents overwriting a properly-
         resolved open_time on re-entry. Commits.
 
-        The (open_time=0 OR open_time=?) guard matches the original
-        platform_bridge logic byte-for-byte.
+        The (open_time=0 OR open_time=?) guard was lifted byte-for-byte from
+        the original platform_bridge logic, which v2.6 Phase 5 deleted — to
+        re-verify the equivalence claim, read `core/platform_bridge.py` on the
+        LOCAL `archive/quantower-plugin` branch (at 523e0d1). The guard's own
+        justification stands on its stated terms above; the provenance note is
+        history, not a live dependency.
         """
         await self._conn.execute(
             "UPDATE exchange_history SET open_time=?"

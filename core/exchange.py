@@ -300,10 +300,12 @@ async def fetch_open_orders_tpsl() -> None:
     """
     Enrich positions with TP/SL from cached open orders.
 
-    OM-5b: Always enriches from OrderManager cache regardless of plugin
-    connection state. The cache is populated by _account_refresh_loop
-    (basic orders) and _algo_order_sync_loop (conditional orders) — both
-    run regardless of plugin state.
+    OM-5b: Always enriches from the OrderManager cache. The cache is populated
+    by _account_refresh_loop (basic orders; 30s when WS healthy, 5s when down)
+    and _algo_order_sync_loop (conditional orders; every 15s) — both
+    unconditional. (OM-5b's original phrasing — "regardless of plugin
+    connection state" — described a gate v2.6 removed with the Quantower
+    plugin.)
 
     Falls back to direct REST fetch when the OrderManager cache is empty.
     """

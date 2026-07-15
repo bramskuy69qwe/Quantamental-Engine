@@ -1,8 +1,16 @@
 """
-OM-5b: Basic order REST sync must not be plugin-gated.
+OM-5b: Basic order REST sync must always run.
 
-Verifies that basic order fetch runs regardless of plugin connection state,
-and that fetch_open_orders_tpsl always enriches from cache.
+Verifies that basic order fetch runs on every account refresh + at startup,
+and that fetch_open_orders_tpsl always enriches from the OrderManager cache.
+
+OM-5b was originally specified against the Quantower plugin: 'basic order sync
+must NOT be plugin-gated' — i.e. it must run even while the plugin was
+connected and claiming to be authoritative. v2.6 removed the plugin, so the
+gate these tests guarded against no longer exists and the conditional framing
+was dropped. The invariant that survives is unconditional: orders sync every
+refresh, TP/SL enriches from cache. Kept because that half is what actually
+protects Open Orders + TP/SL display on the Binance-direct path.
 """
 import os
 import sys
@@ -57,8 +65,14 @@ async def om_with_basic_orders():
 # ── fetch_open_orders_tpsl always enriches ───────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_tpsl_enriches_when_plugin_connected(om_with_basic_orders):
-    """fetch_open_orders_tpsl enriches positions even when plugin connected."""
+async def test_tpsl_enriches_from_order_manager_cache(om_with_basic_orders):
+    """fetch_open_orders_tpsl enriches positions from the OrderManager cache.
+
+    OM-5b's original phrasing was 'enriches EVEN WHEN the plugin is connected',
+    and the premise was a `mock_pb.is_connected = True` that v2.6 removed with
+    the attribute. What remains is the durable half: enrichment reads the cache
+    the order-sync loops populate, with no REST fallback needed when it's warm.
+    """
     om, _ = om_with_basic_orders
     from core.state import PositionInfo
 
@@ -81,26 +95,33 @@ async def test_tpsl_enriches_when_plugin_connected(om_with_basic_orders):
 
 # ── Scheduler order sync not gated ───────────────────────────────────────────
 
-def test_account_refresh_loop_has_order_sync_outside_gate():
-    """_account_refresh_loop runs order sync even when plugin connected.
+def test_account_refresh_loop_includes_order_sync():
+    """_account_refresh_loop syncs basic orders on every refresh.
 
-    Structural test: verify the code structure separates account/position
-    gating from order sync.
+    Structural test, mirroring test_startup_fetch_includes_order_sync below:
+    pin the CALL, not a comment.
+
+    OM-5b originally phrased this invariant as 'order sync runs even when the
+    plugin is connected', and this test used to assert that the source carried
+    a comment saying so ("OM-5b" or "not plugin-gated" or "regardless of
+    plugin"). That was a prose-pin: it would have passed with the entire
+    order-sync block deleted, so long as one of those strings survived in any
+    comment. v2.6 removed the plugin, so the distinction the prose drew no
+    longer exists. Replaced with a call-pin on the load-bearing half — the
+    refresh loop must sync orders, unconditionally.
     """
     import inspect
     from core.schedulers import _account_refresh_loop
     source = inspect.getsource(_account_refresh_loop)
 
-    # The order sync section should include a comment indicating it's not gated
-    assert "OM-5b" in source or "not plugin-gated" in source.lower() or \
-           "regardless of plugin" in source.lower(), \
-           "Order sync in _account_refresh_loop should be marked as not plugin-gated"
+    assert "process_order_snapshot" in source, \
+        "_account_refresh_loop no longer syncs basic orders (OM-5b invariant)"
 
 
 # ── Startup order fetch ──────────────────────────────────────────────────────
 
 def test_startup_fetch_includes_order_sync():
-    """_startup_fetch includes basic order sync regardless of plugin state."""
+    """_startup_fetch includes basic order sync."""
     import inspect
     from core.schedulers import _startup_fetch
     source = inspect.getsource(_startup_fetch)

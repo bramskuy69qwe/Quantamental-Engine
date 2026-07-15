@@ -1084,11 +1084,14 @@ class OrderManager:
         (T211 M3 pattern), so a repeat WS cancel for the same order is a
         no-op. Best-effort: failures log, never raise.
 
-        NOTE: the bulk cancel paths (``mark_stale_orders`` /
-        ``mark_stale_orders_canceled``) don't flow through here per-order;
-        their stranded calcs are released by
-        ``release_calcs_for_stale_cancels`` below (LB-F3), which routes
-        each swept order through THIS method — one release rule.
+        NOTE: the bulk cancel path (``mark_stale_orders_canceled``, the
+        snapshot reconciliation) doesn't flow through here per-order; its
+        stranded calcs are released by ``release_calcs_for_stale_cancels``
+        below (LB-F3), which routes each swept order through THIS method —
+        one release rule. (Its sibling ``mark_stale_orders`` — the
+        time-threshold path — lost its only production caller when v2.6
+        deleted the plugin-gated scheduler sweep; it survives for the LB-I2
+        battery scenario, and the LB-F3 sweep would still cover it.)
         """
         status = (order.get("status") or "").lower()
         if status != "canceled":
@@ -1195,12 +1198,18 @@ class OrderManager:
 
     async def release_calcs_for_stale_cancels(self, account_id: int) -> int:
         """LB-F3 (linkage battery 2026-07-14): release calcs stranded
-        'matched' by the BULK cancel paths — ``mark_stale_orders`` (time
-        threshold) and ``mark_stale_orders_canceled`` (snapshot
-        reconciliation) are raw UPDATEs that never flow through the
+        'matched' by the BULK cancel paths — ``mark_stale_orders_canceled``
+        (snapshot reconciliation) and its sibling ``mark_stale_orders``
+        (time threshold) are raw UPDATEs that never flow through the
         per-order WS release above, so their calcs stayed 'matched'
         forever and replacement orders landed UNPLANNED (candidate filter
         is status IN ('active','released')).
+
+        v2.6: only the snapshot path is live. ``mark_stale_orders`` lost its
+        sole production caller when the plugin-gated scheduler time-sweep was
+        deleted, so the two wired call sites (basic + algo snapshot) are now
+        the full set. The sweep is source-agnostic — it scans DB state, not
+        the caller — so it covers the time path too if it is ever re-wired.
 
         Scans for canceled, zero-fill, non-reduce-only LINKED orders with
         no cancel_reason stamp (the stamp doubles as the processed marker

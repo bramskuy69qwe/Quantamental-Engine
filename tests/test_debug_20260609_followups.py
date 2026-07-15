@@ -7,8 +7,10 @@ Covers the behaviours fixed during the live Binance-direct debug session:
       A market-fill size rounding must NOT read as "amended".
   #2  ``reconcile_filled_orders`` — truth-based (filled_qty >= quantity) promotion
       of orders stuck in new/partially_filled to 'filled'. Must NEVER touch a
-      genuinely-working order (filled_qty < quantity). The time-based staleness
-      loop is plugin-gated, so this is the Binance-direct cleanup path.
+      genuinely-working order (filled_qty < quantity). This is the ONLY thing
+      that clears them: the time-based mark_stale sweep is not wired on the
+      Binance-direct path (v2.6 deleted its plugin-gated caller; un-gating it
+      would wrongly cancel real working stops).
   #3  ``query_trade_events(symbol=...)`` — payload-symbol filter used by the
       per-position drilldown to attribute order-lifecycle events (which on the
       observe-only path carry no calc_id) by symbol+time-window.

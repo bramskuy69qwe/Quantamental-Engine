@@ -1646,11 +1646,13 @@ class OrdersMixin:
 
         # Phase 0.0.2 + T184 audit fix (B1): closed_positions reconstruction.
         #
-        # The helper requires both opens and closes in the fill stream. In
-        # the Binance-only path (Quantower plugin NOT connected),
-        # `exchange_history` only contains REALIZED_PNL events — no OPEN
-        # rows (those come from platform_bridge / Quantower). The OLD
-        # backfill reconstructed closed_positions from REALIZED_PNL rows'
+        # The helper requires both opens and closes in the fill stream, but
+        # `exchange_history` only ever contains REALIZED_PNL events — no OPEN
+        # rows. (Pre-v2.6 the Quantower plugin's historical_fill events were a
+        # second writer that DID supply OPEN rows; v2.6 deleted that path, so
+        # the income ledger is now the only writer and OPEN rows never appear.
+        # The synthesis below was always what ran on Binance-direct.)
+        # The OLD backfill reconstructed closed_positions from REALIZED_PNL rows'
         # embedded `entry_price` + `open_time` metadata directly. To
         # preserve that behavior under the new chronological-walk grouping,
         # we synthesize an in-memory OPEN fill for each REALIZED_PNL row

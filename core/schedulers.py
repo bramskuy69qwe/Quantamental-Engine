@@ -139,9 +139,11 @@ _account_refresh_in_flight = False
 async def _account_refresh_loop():
     """Refresh account + positions via REST, and sync basic open orders.
 
-    Account/position refresh: plugin-gated (plugin is authoritative).
-    Basic order sync: NOT plugin-gated (OM-5b — orders are idempotent by
-    exchange_order_id, safe to run alongside plugin).
+    Both run unconditionally. Pre-v2.6 the account/position refresh was SKIPPED
+    whenever the Quantower plugin was connected (it claimed to be authoritative
+    for account truth), while the basic order sync deliberately ran anyway
+    (OM-5b — orders are idempotent by exchange_order_id). v2.6 removed the
+    plugin, so the skip is gone and both halves simply always run.
     Guards against overlap if a single refresh takes longer than the interval."""
     global _account_refresh_in_flight
     while True:
@@ -183,10 +185,12 @@ async def _account_refresh_loop():
             # Note: risk:positions_refreshed now fires inside
             # DataCache.apply_position_snapshot() — no duplicate needed.
 
-            # ── Basic order sync (NOT plugin-gated, OM-5b) ─────────────────
-            # Orders are idempotent by exchange_order_id — safe to run
-            # regardless of plugin state. Catches pre-existing orders placed
-            # before engine started or outside plugin scope.
+            # ── Basic order sync (OM-5b) ──────────────────────────────────
+            # Orders are idempotent by exchange_order_id — safe to run on
+            # every refresh. Catches pre-existing orders placed before the
+            # engine started. (OM-5b originally made this sync run even when
+            # the Quantower plugin was connected; v2.6 removed the plugin, so
+            # there is no gate left to sit outside of — it simply always runs.)
             try:
                 from core.exchange import _get_adapter
                 adapter = _get_adapter()
@@ -439,7 +443,7 @@ async def _startup_fetch():
     # v2.4 Priority 2d: equity delta warning on startup
     _check_startup_equity_delta()
 
-    # OM-5b: one-shot basic order sync on startup (regardless of plugin state).
+    # OM-5b: one-shot basic order sync on startup.
     # Catches pre-existing orders placed before engine started.
     try:
         from core.exchange import _get_adapter
@@ -480,9 +484,10 @@ async def _startup_fetch():
 
     # #2 (debug 2026-06-09): truth-based cleanup of fully-filled orders stuck in
     # new/partially_filled (a missed venue terminal status update on the
-    # observe-only path leaves filled_qty == quantity but status unchanged). The
-    # time-based staleness loop is plugin-gated, so on Binance-direct nothing
-    # else clears them — they pile up in Open Orders across restarts.
+    # observe-only path leaves filled_qty == quantity but status unchanged).
+    # Nothing else clears them — the time-based mark_stale sweep is NOT wired on
+    # the Binance-direct path (it would wrongly cancel real working stops) — so
+    # without this they pile up in Open Orders across restarts.
     try:
         from core.database import db
         n = await db.reconcile_filled_orders(app_state.active_account_id)
@@ -683,8 +688,16 @@ async def _bwe_ws_consumer():
 # ── Order staleness detection ────────────────────────────────────────────────
 
 async def _order_staleness_loop():
-    """Every 60s: mark active orders not seen in 5+ minutes as canceled.
-    Only meaningful when the plugin is connected (providing order snapshots)."""
+    """Every 60s: promote fully-filled orders (filled_qty >= quantity) to
+    'filled' — a TRUTH-based reconcile, safe by construction.
+
+    The name is historical. This loop once ALSO ran a time-based sweep marking
+    orders unseen for 5+ minutes as canceled, but that was gated on the
+    Quantower plugin supplying order snapshots and so never ran in standalone;
+    v2.6 deleted it (157bd20). Un-gating it was rejected rather than
+    overlooked: without plugin snapshots it would wrongly cancel real working
+    stops that simply get no periodic WS refresh. The truth-based reconcile
+    below is the only cleanup left, and it can never touch a working order."""
     from core.database import db
 
     while True:
@@ -706,14 +719,15 @@ async def _order_staleness_loop():
             log.warning("Filled-order reconcile error: %s", e)
 
 
-# ── Algo/conditional order sync (NOT plugin-gated) ───────────────────────────
+# ── Algo/conditional order sync ──────────────────────────────────────────────
 
 async def _algo_order_sync_loop():
     """Periodically fetch conditional/algo orders via REST.
 
-    Runs every 15s regardless of plugin connection state — addresses OM-5b
-    for conditional orders. Binance conditional orders (TP/SL placed via UI)
-    use a separate API from basic open orders.
+    Runs every 15s — the OM-5b treatment for conditional orders (it predates
+    v2.6 and was originally specified as 'not plugin-gated'; with the plugin
+    gone it simply always runs). Binance conditional orders (TP/SL placed via
+    UI) use a separate API from basic open orders.
     """
     await asyncio.sleep(5)  # initial delay for engine bootstrap
     while True:
@@ -759,7 +773,7 @@ async def _algo_order_sync_loop():
         await asyncio.sleep(15)
 
 
-# ── Funding attribution (Phase 5 — NOT plugin-gated) ─────────────────────────
+# ── Funding attribution (Phase 5) ────────────────────────────────────────────
 
 async def _funding_refresh_loop(interval_s: int = 300):
     """P5.T1: periodically pull FUNDING_FEE income and attribute it to the
