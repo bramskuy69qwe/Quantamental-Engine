@@ -13,7 +13,7 @@ from core.state import app_state
 from core.tz import get_account_tz, now_in_account_tz
 from core import ws_manager
 from core.database import db
-from core.order_manager_singleton import order_manager
+from core import order_manager_singleton
 from api.helpers import templates, _ctx
 from api.cache import _ensure_funding_rates, get_funding_lines, _maybe_backfill_equity, _inject_live_equity
 
@@ -64,7 +64,7 @@ async def frag_dashboard(request: Request):
     sector_lines = [f"{s}: ${v:,.0f}" for s, v in sorted(sector_totals.items(), key=lambda x: -x[1])]
 
     # Working orders (in-memory cache) + recent order history (5s TTL cache)
-    working_orders = order_manager.open_orders
+    working_orders = order_manager_singleton.order_manager.open_orders
     aid = app_state.active_account_id
     recent_orders = await _get_cached_recent_orders(aid)
 
@@ -120,7 +120,7 @@ async def frag_dashboard_risk(request: Request):
 async def frag_dashboard_positions(request: Request):
     """Positions + orders tabbed panel fragment."""
     prm = app_state.params
-    working_orders = order_manager.open_orders
+    working_orders = order_manager_singleton.order_manager.open_orders
     aid = app_state.active_account_id
     recent_orders = await _get_cached_recent_orders(aid)
 
@@ -138,7 +138,7 @@ async def frag_dashboard_positions(request: Request):
 async def frag_dashboard_positions_rows(request: Request, tab: str = "positions"):
     """Row-only fragment for positions/orders/history tbodies (SSE-driven)."""
     if tab == "orders":
-        working_orders = order_manager.open_orders
+        working_orders = order_manager_singleton.order_manager.open_orders
         return templates.TemplateResponse(
             request, "fragments/dashboard_orders_rows.html",
             _ctx(request, working_orders=working_orders),

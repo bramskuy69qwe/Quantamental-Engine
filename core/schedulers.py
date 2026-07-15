@@ -27,7 +27,7 @@ from core import correlation_log
 from core import ws_manager
 from core.data_logger import take_daily_snapshot, take_monthly_snapshot, export_all_to_excel
 from core.event_bus import event_bus, CH_TRADE_CLOSED
-from core.order_manager_singleton import order_manager
+from core import order_manager_singleton
 from core.handlers import (
     handle_account_updated, handle_positions_refreshed,
     handle_risk_calculated, handle_params_updated,
@@ -218,7 +218,7 @@ async def _account_refresh_loop():
                     }
                     for o in normalized_orders
                 ]
-                await order_manager.process_order_snapshot(
+                await order_manager_singleton.order_manager.process_order_snapshot(
                     app_state.active_account_id, order_dicts,
                 )
             except Exception as e:
@@ -471,7 +471,7 @@ async def _startup_fetch():
             }
             for o in normalized_orders
         ]
-        await order_manager.process_order_snapshot(
+        await order_manager_singleton.order_manager.process_order_snapshot(
             app_state.active_account_id, order_dicts,
         )
         log.info("Startup order sync: %d basic orders", len(order_dicts))
@@ -488,7 +488,7 @@ async def _startup_fetch():
         n = await db.reconcile_filled_orders(app_state.active_account_id)
         if n:
             log.info("Startup: reconciled %d fully-filled orders to 'filled'", n)
-            await order_manager.refresh_cache(
+            await order_manager_singleton.order_manager.refresh_cache(
                 app_state.active_account_id,
             )
     except Exception as e:
@@ -699,7 +699,7 @@ async def _order_staleness_loop():
             n = await db.reconcile_filled_orders(app_state.active_account_id)
             if n:
                 log.info("Reconciled %d fully-filled orders to 'filled'", n)
-                await order_manager.refresh_cache(
+                await order_manager_singleton.order_manager.refresh_cache(
                     app_state.active_account_id,
                 )
         except Exception as e:
@@ -751,7 +751,7 @@ async def _algo_order_sync_loop():
                 }
                 for o in algo_orders
             ]
-            await order_manager.process_algo_snapshot(
+            await order_manager_singleton.order_manager.process_algo_snapshot(
                 app_state.active_account_id, order_dicts,
             )
         except Exception as e:
@@ -825,7 +825,7 @@ async def _funding_refresh_loop(interval_s: int = 300):
                     positions=list(app_state.positions),
                     db=db,
                     primary_calc_resolver=(
-                        order_manager._position_primary_calc
+                        order_manager_singleton.order_manager._position_primary_calc
                     ),
                 )
                 last_seen_ms = max(

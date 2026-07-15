@@ -5,17 +5,29 @@ Before v2.6 the single production ``OrderManager`` was constructed inside
 (``docs/design/v2.6_remove_quantower_plugin_plan.md``) hoists it here so the
 ``OrderManager`` — which holds the live in-memory ``open_orders`` /
 ``_position_primary_calc`` state and MUST be a single process-wide instance
-(v2.6 plan landmine L1) — no longer depends on the bridge. ``platform_bridge``
-now consumes this shared instance rather than building its own.
+(v2.6 plan landmine L1) — no longer depends on the bridge. The bridge itself
+was deleted in v2.6 Phase 5; this module is now the sole construction site.
 
-Imports only ``core.database`` + ``core.order_manager``; neither references
-``platform_bridge`` at runtime (v2.6 plan §2 verified), so importing this
-module can never create an import cycle with the bridge. ``OrderManager.__init__``
+Imports only ``core.database`` + ``core.order_manager``. ``OrderManager.__init__``
 takes only ``db`` and constructs its ``PositionIdentity`` owner internally.
 
-Usage::
+Usage — import the MODULE, resolve the attribute at CALL time::
 
-    from core.order_manager_singleton import order_manager
+    from core import order_manager_singleton
+    ...
+    order_manager_singleton.order_manager.process_order_update(...)
+
+Do NOT write ``from core.order_manager_singleton import order_manager`` at
+module scope. That binds the instance into the consumer's namespace at import
+time, so the ONE documented test seam —
+``patch("core.order_manager_singleton.order_manager", fake)`` — rebinds only
+this module's attribute and never reaches that consumer: the test passes while
+the real OrderManager runs against the real DB (a false green). The attribute
+form above resolves through this module on every call, so the patch always
+lands. A function-level ``from``-import is equivalent (it re-resolves per call)
+and is what ``ws_manager`` / ``exchange`` / ``routes_history`` use; the
+module-import form is preferred where the consumer already imports other
+``core`` modules that way. Pinned by ``tests/test_order_manager_singleton_seam.py``.
 
 NB the deliberate throwaway ``OrderManager(db)`` in ``core.link_actions`` (the
 LB-F1 junction-replay) is NOT a second live instance in the L1 sense — it is a
