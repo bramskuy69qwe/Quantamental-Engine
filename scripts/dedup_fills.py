@@ -75,6 +75,11 @@ SOURCE_PRIORITY: Dict[str, int] = {
     "binance_ws":        0,
     "binance_algo_ws":   0,
     "mexc_ws":           0,
+    # v2.6 removed the live Quantower plugin, but "quantower" stays here as
+    # legacy/historical only: old source='quantower' fills + qt: trade_keys
+    # are kept as-is (operator decision), and dedup must still rank them
+    # WS-class. Removing this entry would re-rank + change keep/delete on
+    # those historical rows (L4).
     "quantower":         0,
     # REST-poll-class (slight latency but reliable)
     "binance_rest":      1,

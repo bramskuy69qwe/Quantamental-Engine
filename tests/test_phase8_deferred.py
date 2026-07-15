@@ -101,13 +101,6 @@ class TestPollIifeGuards:
         with open("templates/base.html", encoding="utf-8") as fh:
             return fh.read()
 
-    def test_connection_poll_timer_is_guarded(self):
-        src = self._base()
-        assert "window._connPoll" in src
-        # the guard must wrap the 5s poller itself — not sit decoratively elsewhere.
-        i = src.index("window._connPoll")
-        assert "setInterval(pollConnection, 5000)" in src[i:i + 160]
-
     def test_hold_time_ticker_is_guarded(self):
         # Assert the load-bearing EARLY-RETURN, not just the flag name — a guard
         # that kept `window._holdTick = true` but dropped the `return` would
@@ -168,9 +161,10 @@ class TestListenerStackingGuards:
 
     def test_known_persistent_listener_guards_all_present(self):
         # Completeness anchor for the persistent-node LISTENER guards (#3c) + the
-        # pre-existing notif listener guard. (The #3a TIMER guards _connPoll /
-        # _holdTick are setInterval, not listeners — covered by TestPollIifeGuards
-        # above.) A NEW unguarded document(.body).addEventListener added later
+        # pre-existing notif listener guard. (The #3a TIMER guard _holdTick is a
+        # setInterval, not a listener — covered by TestPollIifeGuards above; the
+        # _connPoll plugin poller was removed with the Quantower UI in v2.6.)
+        # A NEW unguarded document(.body).addEventListener added later
         # won't be covered here — update the guard AND this anchor together.
         src = self._base()
         for flag in ("_acctAddedBound", "_echartsDisposeBound", "_htmxErrBound",

@@ -232,14 +232,6 @@
     @keyframes _sba { 0%{left:-55%;width:55%} 100%{left:100%;width:55%} }
     #_sbi { position:absolute;top:0;height:100%;background:var(--blue);border-radius:99px;animation:_sba 1.2s ease-in-out infinite; }
 
-    /* ── Standalone/plugin banner ── */
-    #standalone-banner {
-      display:none; background:#1e0f00; border-bottom:1px solid #6b3a00;
-      padding:5px 12px; font-size:.7rem; color:var(--amber);
-      align-items:center; gap:8px; flex-shrink:0;
-    }
-    #standalone-banner svg { flex-shrink:0; }
-
     /* ── Operator-session banner (P9.T1 minimal multi-session signal) ── */
     #operator-session-banner {
       display:none; background:#0a1426; border-bottom:1px solid #2a4a8f;
@@ -534,35 +526,6 @@
       <span id="account-switch-msg" class="htmx-indicator" style="font-size:.62rem;color:var(--sub);"></span>
     </div>
 
-    <!-- Platform selector -->
-    <select id="platform-selector"
-            style="width:140px;height:24px;font-size:.68rem;padding:2px 6px;text-overflow:ellipsis;overflow:hidden;white-space:nowrap;"
-            hx-post="/api/settings/platform"
-            hx-trigger="change"
-            hx-swap="none"
-            name="platform">
-      <option value="standalone" {% if active_platform=='standalone' %}selected{% endif %}>Standalone</option>
-      <option value="quantower"  {% if active_platform=='quantower'  %}selected{% endif %}>Quantower</option>
-    </select>
-
-    {# FE-HIGH-001 (Task 121): Plugin/connection indicator migrated to
-       the Bundle A StatusIndicator primitive. Replaces the bare
-       open-circle + "Plugin" text whose adjacent WS-status "OFF" and
-       "+437ms" were visually grouped by the eye into a misleading
-       composite. Now: "Quantower : Connecting..." (neutral grey on
-       init), "Quantower : Connected" (green), or "Quantower :
-       Disconnected" (red). JS in pollConnection() swaps the severity
-       class + value text. #}
-    {% from "primitives/status_indicator.html" import status_indicator %}
-    <span id="plugin-status" style="display:inline-flex;align-items:center;">
-      {{ status_indicator(
-          severity="neutral",
-          label="Quantower",
-          value="Connecting…",
-          id="plugin-indicator",
-      ) }}
-    </span>
-
     <!-- WS status (fixed width to prevent layout shift) -->
     <div id="ws-status-bar"
          hx-get="/fragments/ws_status"
@@ -614,14 +577,6 @@
   <span style="font-size:.62rem;color:var(--muted);">{{ page_meta[active_page][1] }}</span>
 </div>
 {% endif %}
-
-<!-- ── Standalone / disconnected banner ───────────────────────────────────── -->
-<div id="standalone-banner">
-  <svg xmlns="http://www.w3.org/2000/svg" style="width:13px;height:13px;" viewBox="0 0 20 20" fill="currentColor">
-    <path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 6a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 6zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/>
-  </svg>
-  <span id="standalone-banner-msg">Standalone mode — P&amp;L and positions are estimated from Binance WS, not broker truth.</span>
-</div>
 
 <!-- ── Operator-session banner (P9.T1 minimal — another browser seat is active) ── -->
 <div id="operator-session-banner">
@@ -741,71 +696,6 @@ if (!window._acctAddedBound) {
 </footer>
 
 <script>
-// ── Plugin / connection polling ───────────────────────────────────────────
-(function(){
-  var platSel  = document.getElementById('platform-selector');
-  // FE-HIGH-001 (Task 121): swap severity class + value text on the
-  // StatusIndicator primitive (template macro renders the initial neutral
-  // state; JS drives state transitions).
-  var plugIndicator = document.getElementById('plugin-indicator');
-  var plugValue     = plugIndicator ? plugIndicator.querySelector('.si-value') : null;
-  var banner   = document.getElementById('standalone-banner');
-  var bannerMsg= document.getElementById('standalone-banner-msg');
-
-  function getPlatform(){ return platSel ? platSel.value : '{{ active_platform }}'; }
-
-  function setSeverity(el, sev){
-    if(!el) return;
-    el.classList.remove('si-success','si-warning','si-error','si-info','si-neutral');
-    el.classList.add('si-'+sev);
-  }
-
-  function updateUI(connected){
-    var platform = getPlatform();
-    // Plugin / mode indicator (always visible) — single labeled component:
-    // "Quantower · Connected" (green) or "Quantower · Disconnected" (red).
-    // No competing "OFF" or "+437ms" lives in this slot anymore; the value
-    // is the connection state, full stop. Latency lives in the WS status
-    // bar to its right (separate visual cluster).
-    if(plugIndicator && plugValue){
-      if(connected){
-        setSeverity(plugIndicator, 'success');
-        plugValue.textContent = 'Connected';
-      } else {
-        setSeverity(plugIndicator, 'error');
-        plugValue.textContent = 'Disconnected';
-      }
-    }
-    // Standalone banner
-    if(banner){
-      var show = platform==='standalone' || (platform==='quantower' && !connected);
-      banner.style.display = show ? 'flex' : 'none';
-      if(bannerMsg) bannerMsg.textContent = platform==='standalone'
-        ? 'Standalone mode — P&L and positions are estimated from Binance WS, not broker truth.'
-        : 'Quantower plugin not connected — showing last-known positions. P&L may be stale.';
-    }
-  }
-
-  async function pollConnection(){
-    try{
-      var r = await fetch('/api/platform/connection');
-      if(r.ok){ var d=await r.json(); updateUI(d.connected); }
-    }catch(e){}
-  }
-
-  updateUI(false);
-  pollConnection();
-  // hx-boost re-runs this script on every boosted nav (it swaps the <body>
-  // innerHTML; the body node itself persists). The platform-selector change
-  // listener below MUST re-bind to the fresh DOM each time, but setInterval is
-  // window-scoped and would STACK a new 5s poller per nav. Guard the timer only
-  // (not the whole IIFE) so exactly one poller survives boosted navigation while
-  // the listener still re-binds. Mirrors the P8.T7 notif IIFE guard. (Phase-8
-  // deferred #3a.)
-  if(!window._connPoll){ window._connPoll = true; setInterval(pollConnection, 5000); }
-  if(platSel) platSel.addEventListener('change',function(){ updateUI(false); setTimeout(pollConnection,500); });
-})();
-
 // ── Global toast helper ───────────────────────────────────────────────────
 // Accepts either a plain string (back-compat) OR an object
 // {message, detail} where `message` is friendly prose and `detail`

@@ -121,25 +121,13 @@ class TestStatusIndicatorRendering:
 # ── FE-HIGH-001 migration: header site uses the primitive ────────────────────
 
 class TestFeHigh001HeaderMigration:
-    """The plugin indicator in base.html must now use the
-    StatusIndicator primitive, not the bare `◌ Plugin` markup."""
+    """v2.6 removed the plugin/connection indicator (and the rest of the
+    Quantower UI) from base.html. These pins guard the RETAINED
+    StatusIndicator primitive CSS in base.html (still used by other
+    templates) + anti-revert of the old bare `◌ Plugin` glyph markup."""
 
     def _base_html(self) -> str:
         return Path("templates/base.html").read_text(encoding="utf-8")
-
-    def test_base_html_imports_status_indicator_primitive(self):
-        src = self._base_html()
-        assert 'from "primitives/status_indicator.html" import status_indicator' in src, (
-            "FE-HIGH-001 regression: base.html no longer imports the "
-            "StatusIndicator macro. The plugin indicator may have "
-            "regressed to the old ◌ Plugin markup."
-        )
-
-    def test_base_html_calls_status_indicator_for_plugin(self):
-        src = self._base_html()
-        # The macro call sets id="plugin-indicator" for JS targeting
-        assert 'id="plugin-indicator"' in src
-        assert 'label="Quantower"' in src
 
     def test_old_plugin_glyph_text_removed(self):
         """Anti-revert: the old `● Plugin` / `◌ Plugin` text strings
@@ -152,24 +140,6 @@ class TestFeHigh001HeaderMigration:
             "reverted."
         )
         assert "◌ Plugin" not in src
-
-    def test_js_sets_value_text_via_si_value_selector(self):
-        """The JS must drive the new DOM: querySelector('.si-value')
-        and textContent assignment to 'Connected' / 'Disconnected'."""
-        src = self._base_html()
-        assert ".si-value" in src
-        assert "'Connected'" in src
-        assert "'Disconnected'" in src
-
-    def test_js_swaps_severity_classes(self):
-        """JS swaps `.si-success` / `.si-error` on the indicator
-        wrapper. The helper `setSeverity()` is the convention — future
-        JS that interacts with StatusIndicators should reuse it."""
-        src = self._base_html()
-        assert "setSeverity" in src
-        assert "si-success" in src
-        assert "si-error" in src
-        assert "si-neutral" in src
 
     def test_primitives_css_block_present(self):
         """The .si CSS rules must live in base.html's <style> block
