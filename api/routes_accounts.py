@@ -323,20 +323,6 @@ async def test_account_preview(
         return HTMLResponse(f'<span class="text-red" style="font-size:.65rem;">Failed: {exc}</span>')
 
 
-@router.get("/api/settings/platform", response_class=JSONResponse)
-async def get_platform(request: Request):
-    return JSONResponse({"platform": app_state.active_platform})
-
-
-@router.post("/api/settings/platform", response_class=JSONResponse)
-async def set_platform(request: Request, platform: str = Form(...)):
-    if platform not in ("standalone", "quantower"):
-        return JSONResponse({"status": "error", "error": "Unknown platform"}, status_code=400)
-    app_state.active_platform = platform
-    await db.set_setting("active_platform", platform)
-    return JSONResponse({"status": "ok", "platform": platform})
-
-
 @router.get("/fragments/accounts", response_class=HTMLResponse)
 async def frag_accounts(request: Request):
     accounts = await account_registry.list_accounts()

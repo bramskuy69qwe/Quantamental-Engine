@@ -104,10 +104,6 @@ async def lifespan(app: FastAPI):
     from core.connections import connections_manager
     await connections_manager.load_all()
 
-    # ── Load active platform from settings ────────────────────────────────────
-    platform = await db.get_setting("active_platform")
-    app_state.active_platform = platform or "standalone"
-
     # ── Load persisted parameters (per-account from DB) ──────────────────────
     app_state.load_params()
 

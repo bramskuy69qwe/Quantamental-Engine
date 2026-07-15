@@ -93,14 +93,6 @@ async def handle_account_updated(payload: Dict[str, Any]) -> None:
     except (ImportError, ConnectionError, TimeoutError, OSError) as exc:
         log.warning("handle_account_updated: equity publish failed: %r", exc)
 
-    # Push to Quantower plugin (no-op when standalone or no clients connected)
-    if app_state.active_platform == "quantower":
-        try:
-            from core.platform_bridge import platform_bridge
-            await platform_bridge.push_risk_state()
-        except Exception as exc:
-            log.warning("push_risk_state failed: %s", exc)
-
     log.debug(
         "account_updated",
         extra={

@@ -130,7 +130,6 @@ def _ctx(request: Request, **extra) -> dict:
         "params":            app_state.params,
         "is_initializing":   app_state.is_initializing,
         "active_account_id": app_state.active_account_id,
-        "active_platform":   app_state.active_platform,
         "accounts":          account_registry.list_accounts_sync(),
         "available_exchanges": list_rest_exchanges(),
         **extra,
