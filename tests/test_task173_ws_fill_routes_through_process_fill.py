@@ -137,7 +137,8 @@ async def test_routes_through_order_manager_process_fill_when_available():
     fake_db_upsert = AsyncMock()
 
     with patch.object(ws_manager, "app_state") as mock_state, \
-         patch.dict("sys.modules", {"core.platform_bridge": MagicMock(platform_bridge=fake_pb)}):
+         patch.dict("sys.modules", {"core.platform_bridge": MagicMock(platform_bridge=fake_pb)}), \
+         patch("core.order_manager_singleton.order_manager", fake_om):
         mock_state.active_account_id = 1
         mock_state.positions = []
         with patch("core.database.db.upsert_fill", fake_db_upsert):
@@ -170,7 +171,8 @@ async def test_populates_terminal_position_id_from_app_state():
     fake_pb.order_manager = fake_om
 
     with patch.object(ws_manager, "app_state") as mock_state, \
-         patch.dict("sys.modules", {"core.platform_bridge": MagicMock(platform_bridge=fake_pb)}):
+         patch.dict("sys.modules", {"core.platform_bridge": MagicMock(platform_bridge=fake_pb)}), \
+         patch("core.order_manager_singleton.order_manager", fake_om):
         mock_state.active_account_id = 1
         mock_state.positions = [fake_pos]
         await ws_manager._create_fill_from_ws(order=None, raw_msg=raw)
@@ -202,7 +204,8 @@ async def test_terminal_position_id_empty_when_no_matching_position():
     fake_pb.order_manager = fake_om
 
     with patch.object(ws_manager, "app_state") as mock_state, \
-         patch.dict("sys.modules", {"core.platform_bridge": MagicMock(platform_bridge=fake_pb)}):
+         patch.dict("sys.modules", {"core.platform_bridge": MagicMock(platform_bridge=fake_pb)}), \
+         patch("core.order_manager_singleton.order_manager", fake_om):
         mock_state.active_account_id = 1
         mock_state.positions = [other_pos]
         await ws_manager._create_fill_from_ws(order=None, raw_msg=raw)
@@ -232,7 +235,8 @@ async def test_falls_back_to_upsert_fill_when_process_fill_raises():
     fake_db_upsert = AsyncMock()
 
     with patch.object(ws_manager, "app_state") as mock_state, \
-         patch.dict("sys.modules", {"core.platform_bridge": MagicMock(platform_bridge=fake_pb)}):
+         patch.dict("sys.modules", {"core.platform_bridge": MagicMock(platform_bridge=fake_pb)}), \
+         patch("core.order_manager_singleton.order_manager", fake_om):
         mock_state.active_account_id = 1
         mock_state.positions = []
         with patch("core.database.db.upsert_fill", fake_db_upsert):
@@ -261,7 +265,8 @@ async def test_skips_when_trade_id_missing():
     fake_db_upsert = AsyncMock()
 
     with patch.object(ws_manager, "app_state") as mock_state, \
-         patch.dict("sys.modules", {"core.platform_bridge": MagicMock(platform_bridge=fake_pb)}):
+         patch.dict("sys.modules", {"core.platform_bridge": MagicMock(platform_bridge=fake_pb)}), \
+         patch("core.order_manager_singleton.order_manager", fake_om):
         mock_state.active_account_id = 1
         mock_state.positions = []
         with patch("core.database.db.upsert_fill", fake_db_upsert):

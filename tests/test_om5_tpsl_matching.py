@@ -204,7 +204,8 @@ async def test_ws_tpsl_one_way_mode():
     mock_pb.order_manager.process_order_update = MagicMock(return_value=True)
 
     with patch("core.ws_manager.app_state") as mock_state, \
-         patch.dict("sys.modules", {"core.platform_bridge": MagicMock(platform_bridge=mock_pb)}):
+         patch.dict("sys.modules", {"core.platform_bridge": MagicMock(platform_bridge=mock_pb)}), \
+         patch("core.order_manager_singleton.order_manager", mock_pb.order_manager):
         mock_state.positions = [pos]
         mock_state.active_account_id = 1
 
@@ -241,7 +242,8 @@ async def test_ws_tpsl_hedge_mode():
     mock_pb.order_manager.process_order_update = MagicMock(return_value=True)
 
     with patch("core.ws_manager.app_state") as mock_state, \
-         patch.dict("sys.modules", {"core.platform_bridge": MagicMock(platform_bridge=mock_pb)}):
+         patch.dict("sys.modules", {"core.platform_bridge": MagicMock(platform_bridge=mock_pb)}), \
+         patch("core.order_manager_singleton.order_manager", mock_pb.order_manager):
         mock_state.positions = [pos]
         mock_state.active_account_id = 1
 
@@ -279,7 +281,8 @@ async def test_fetch_tpsl_one_way_mode():
 
     with patch("core.exchange.app_state") as mock_state, \
          patch("core.exchange._get_adapter", return_value=mock_adapter), \
-         patch.dict("sys.modules", {"core.platform_bridge": MagicMock(platform_bridge=mock_pb)}):
+         patch.dict("sys.modules", {"core.platform_bridge": MagicMock(platform_bridge=mock_pb)}), \
+         patch("core.order_manager_singleton.order_manager", mock_pb.order_manager):
         mock_state.positions = [pos]
 
         from core.exchange import fetch_open_orders_tpsl

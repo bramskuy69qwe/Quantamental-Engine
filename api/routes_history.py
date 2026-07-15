@@ -118,14 +118,14 @@ async def frag_history_exchange(
 
 @router.get("/fragments/history/open_positions", response_class=HTMLResponse)
 async def frag_history_open_positions(request: Request):
-    from core.platform_bridge import platform_bridge
+    from core.order_manager_singleton import order_manager
     prm = app_state.params
     return templates.TemplateResponse(
         request, "fragments/history/open_positions.html",
         _ctx(request,
              positions=app_state.positions,
              max_positions=prm["max_position_count"],
-             working_orders=platform_bridge.order_manager.open_orders),
+             working_orders=order_manager.open_orders),
     )
 
 

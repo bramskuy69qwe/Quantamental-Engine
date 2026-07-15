@@ -56,6 +56,7 @@ from core.state import app_state, PositionInfo
 from core.database import db
 from core.account_registry import account_registry
 from core.order_manager import OrderManager
+from core.order_manager_singleton import order_manager as _order_manager_singleton
 from core.order_state import QT_STATUS_MAP, QT_ORDER_TYPE_MAP
 
 log = logging.getLogger("platform_bridge")
@@ -189,7 +190,10 @@ class PlatformBridge:
         self._last_push: float = 0.0
         self._historical_fill_count: int = 0   # session counter for backfill
         self._metadata_populated: bool = False  # one-shot flag for metadata backfill
-        self._order_manager: OrderManager = OrderManager(db)
+        # v2.6 Phase 1: consume the shared process-wide singleton instead of
+        # constructing our own — preserves the single-instance invariant (L1)
+        # as the bridge is emptied of its load-bearing role ahead of deletion.
+        self._order_manager: OrderManager = _order_manager_singleton
 
     @property
     def order_manager(self) -> OrderManager:

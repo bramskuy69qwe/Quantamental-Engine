@@ -69,7 +69,8 @@ async def test_tpsl_enriches_when_plugin_connected(om_with_basic_orders):
     mock_pb.order_manager = om
 
     with patch("core.exchange.app_state") as mock_state, \
-         patch.dict("sys.modules", {"core.platform_bridge": MagicMock(platform_bridge=mock_pb)}):
+         patch.dict("sys.modules", {"core.platform_bridge": MagicMock(platform_bridge=mock_pb)}), \
+         patch("core.order_manager_singleton.order_manager", mock_pb.order_manager):
         mock_state.positions = [pos]
 
         from core.exchange import fetch_open_orders_tpsl

@@ -5,7 +5,9 @@ Decoupled from WebSocket transport. platform_bridge parses messages and
 delegates here; schedulers call for REST fallback; both produce identical
 dict inputs.
 
-Instantiated once on PlatformBridge.__init__() as self._order_manager.
+Instantiated once as the process-wide singleton in
+core.order_manager_singleton (v2.6 Phase 1); platform_bridge and every
+consumer read that shared instance.
 """
 from __future__ import annotations
 

@@ -458,7 +458,8 @@ class TestWsPipelineIntegration:
                  "sys.modules",
                  {"core.platform_bridge":
                   MagicMock(platform_bridge=fake_pb)},
-             ):
+             ), \
+             patch("core.order_manager_singleton.order_manager", om):
             mock_ws_state.active_account_id = 1
             mock_ws_state.positions = [fake_pos]
             mock_om_state.active_account_id = 1

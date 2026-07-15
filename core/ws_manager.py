@@ -243,7 +243,7 @@ async def _apply_order_update(msg: dict, ws_adapter) -> None:
 
     # ── SR-1: Persist order via OrderManager (validates transition + timestamp)
     try:
-        from core.platform_bridge import platform_bridge
+        from core.order_manager_singleton import order_manager
         order_dict = {
             "account_id":         app_state.active_account_id,
             "exchange_order_id":  order.exchange_order_id,
@@ -272,12 +272,12 @@ async def _apply_order_update(msg: dict, ws_adapter) -> None:
         # self-transition that amendments arrive as. Isolated try so a
         # detection fault can't block order persistence.
         try:
-            await platform_bridge.order_manager.detect_and_persist_amendment(
+            await order_manager.detect_and_persist_amendment(
                 app_state.active_account_id, order_dict,
             )
         except Exception as _ae:
             log.debug("amendment detection skipped: %s", _ae)
-        await platform_bridge.order_manager.process_order_update(
+        await order_manager.process_order_update(
             app_state.active_account_id, order_dict,
         )
     except Exception as e:
@@ -327,7 +327,7 @@ async def _apply_algo_update(msg: dict, ws_adapter) -> None:
 
     # ── Persist via OrderManager ───────────────────────────────────────
     try:
-        from core.platform_bridge import platform_bridge
+        from core.order_manager_singleton import order_manager
         order_dict = {
             "account_id":         app_state.active_account_id,
             "exchange_order_id":  order.exchange_order_id,
@@ -354,12 +354,12 @@ async def _apply_algo_update(msg: dict, ws_adapter) -> None:
         # P4.T1: amendment detection on the algo path too (defensive — see
         # detect_and_persist_amendment scope note: no-op under cancel-replace).
         try:
-            await platform_bridge.order_manager.detect_and_persist_amendment(
+            await order_manager.detect_and_persist_amendment(
                 app_state.active_account_id, order_dict,
             )
         except Exception as _ae:
             log.debug("algo amendment detection skipped: %s", _ae)
-        await platform_bridge.order_manager.process_order_update(
+        await order_manager.process_order_update(
             app_state.active_account_id, order_dict,
         )
     except Exception as e:
@@ -466,11 +466,11 @@ async def _create_fill_from_ws(order, raw_msg: dict) -> None:
 
     # Primary path: route through order_manager.process_fill so closing fills
     # trigger _build_close_row_for_fill → insert_closed_position. Falls back to
-    # bare db.upsert_fill if platform_bridge is unavailable (very early startup)
-    # or if process_fill raises — the fill must always be persisted.
+    # bare db.upsert_fill if the order_manager singleton is unavailable (very
+    # early startup) or if process_fill raises — the fill must always be persisted.
     try:
-        from core.platform_bridge import platform_bridge as _pb
-        om = _pb.order_manager
+        from core.order_manager_singleton import order_manager
+        om = order_manager
     except Exception:
         om = None
 

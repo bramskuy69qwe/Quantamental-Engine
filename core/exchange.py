@@ -309,8 +309,9 @@ async def fetch_open_orders_tpsl() -> None:
     plugin is disconnected.
     """
     from core.platform_bridge import platform_bridge
+    from core.order_manager_singleton import order_manager
     # OM-5b: always enrich from cache (populated by order sync loops)
-    platform_bridge.order_manager.enrich_positions_tpsl(app_state.positions)
+    order_manager.enrich_positions_tpsl(app_state.positions)
 
     # If cache has TP/SL data, we're done — no need for direct REST fetch
     if any(p.individual_tpsl for p in app_state.positions):
