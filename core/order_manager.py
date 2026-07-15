@@ -12,13 +12,23 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 from core import correlation_log
 from core.auth_state import cached_operator_id
 from core.event_bus import event_bus, DOMAIN_CALC, DOMAIN_POSITION, DOMAIN_ORDER
 from core.order_state import validate_transition, ACTIVE_STATES, OrderStatus, resolve_tpsl_direction
+# Reconciler R1 (docs/design/attribution_reconciler_plan.md): the identity
+# sites moved to core.position_identity; the OrderManager methods below are
+# thin delegates so the caller/test surface is unchanged. The shared
+# selection-rule helpers moved with them and are re-imported here for the
+# remaining in-file consumers (_enrich_positions_calc_id, close-row
+# planned_entry).
+from core.position_identity import (
+    PositionIdentity,
+    _first_truthy,
+    _most_contributing_calc_id,
+)
 from core.state import app_state, PositionInfo, deviation_badge_level
 
 log = logging.getLogger("order_manager")
@@ -31,60 +41,8 @@ log = logging.getLogger("order_manager")
 DUP_WINDOW_MS = 2000
 
 
-def _first_truthy(*vals: Any) -> Optional[float]:
-    """Return the first non-null, non-zero value among ``vals``, else None.
-
-    Backs the T2.4 junction ``planned_*`` snapshot source-priority: the
-    spec's ``overridden_*`` / ``planned_*`` calc columns are preferred
-    (if a future calculator ever populates them) over the legacy
-    ``size`` / ``tp_price`` / ``sl_price`` the calculator writes today.
-    The non-zero test also coerces an "absent" TP/SL — stored as ``0.0``
-    in ``pre_trade_log`` (NOT NULL DEFAULT 0; HANDOFF lesson 7 / T1.7) —
-    to ``None`` so the nullable junction column reflects "no planned
-    level" rather than a literal 0.
-    """
-    for v in vals:
-        if v:
-            return v
-    return None
-
-
-def _most_contributing_calc_id(
-    ordered_rows: List[Tuple[str, float]],
-) -> Optional[str]:
-    """Spec §3.2 / §12.4 "most-contributing calc": the ``calc_id`` with the
-    largest **summed** ``contributed_qty`` across its junction rows.
-
-    A calc may place >1 opening order on a position, and the junction is
-    keyed ``UNIQUE(position_id, calc_id, order_id)`` — so one calc can own
-    multiple rows for the same position. The spec defines contribution at
-    the CALC level (§12.4: junction ``contributed_qty = SUM(fill_qty)``
-    grouped by ``(position lifecycle, calc_id)``), so the primary must be
-    chosen by the per-calc SUM, not the largest single row.
-
-    ``ordered_rows`` is an iterable of ``(calc_id, contributed_qty)`` that
-    MUST already be sorted by ``first_fill_ts ASC`` — dict insertion order
-    then encodes the earliest-first_fill tie-break, and ``max`` returns the
-    first maximal element, so ties resolve to the earliest calc (§3.2).
-    Returns ``None`` when there are no calc-bearing rows.
-
-    T240 (P2.T12 review): the single source of truth for the §3.2 selection
-    rule, shared by :meth:`OrderManager._position_primary_calc` (close-path
-    T2.2/T2.5/T2.6) and :meth:`OrderManager._enrich_positions_calc_id`
-    (live + rehydrate T2.3/T2.12) so ALL surfaces converge (R1). Before
-    T240 the two implemented the rule separately — ``_position_primary_calc``
-    took the max single ROW (not per-calc summed), so a multi-order calc
-    could be mis-ranked, diverging the live PositionInfo.calc_id from the
-    sealed closed_positions.calc_id for the same position.
-    """
-    per_calc: Dict[str, float] = {}
-    for cid, qty in ordered_rows:
-        if not cid:
-            continue
-        per_calc[cid] = per_calc.get(cid, 0.0) + (qty or 0.0)
-    if not per_calc:
-        return None
-    return max(per_calc.items(), key=lambda kv: kv[1])[0]
+# _first_truthy + _most_contributing_calc_id moved to core.position_identity
+# (reconciler R1) — re-imported above for the in-file consumers.
 
 
 class OrderManager:
@@ -92,6 +50,10 @@ class OrderManager:
 
     def __init__(self, db) -> None:
         self._db = db
+        # Reconciler R1: the fill→position→calc identity owner. The
+        # OrderManager identity methods below delegate here; v2.6 extracts
+        # them together.
+        self._identity = PositionIdentity(db)
         self._open_orders: List[Dict] = []   # cached for dashboard reads
         # 2026-06-15: STICKY per-tpid "this linked position's TP/SL was amended
         # or removed during its life". Set the moment drift_check first sees it
@@ -528,17 +490,19 @@ class OrderManager:
         except Exception:
             log.debug("order enrichment skipped", exc_info=True)
 
-    # HA-28 (CL.T5): the bracket-inherit SKIP lines and the per-update
-    # `junction_exists` replay SKIP are the largest nothing-to-do
-    # generators — they fire per symbol / per order on EVERY snapshot
-    # pass and WS order update for a steady linked position. On-change
-    # dedup them (the §7.3 mandate, same exception the enrich/drift taps
-    # use): emit on first occurrence + on transition, suppress steady
-    # repeats. Only no-op SKIPPED outcomes route through here — actionable
-    # outcomes (INHERITED / DELEGATED / FORMED) and ERROR twins stay
-    # ungated (repetition there IS the signal). Bounded LRU so a
-    # long-running engine can't leak the memo; an eviction at worst
-    # re-emits one harmless no-op line later.
+    # HA-28 (CL.T5): the bracket-inherit SKIP lines are the largest
+    # nothing-to-do generators on THIS class — they fire per symbol on
+    # EVERY snapshot pass for a steady linked position. On-change dedup
+    # them (the §7.3 mandate, same exception the enrich/drift taps use):
+    # emit on first occurrence + on transition, suppress steady repeats.
+    # Only no-op SKIPPED outcomes route through here — actionable
+    # outcomes (INHERITED) and ERROR twins stay ungated (repetition
+    # there IS the signal). Bounded LRU so a long-running engine can't
+    # leak the memo; an eviction at worst re-emits one harmless no-op
+    # line later. Reconciler R1: the replay tap's `junction_exists` SKIP
+    # dedup moved WITH the replay to PositionIdentity (its own memo —
+    # the plan §4-R1 memo split); this copy now serves the
+    # bracket-inheritance tap only.
     _ATTR_SKIP_MEMO_MAX = 512
 
     def _attr_skip_is_repeat(self, key: Any, sig: Any) -> bool:
@@ -557,104 +521,13 @@ class OrderManager:
         return False
 
     async def _ensure_junction_if_linked(self, account_id: int, eoid: str) -> None:
-        """Defect-8 (debug 2026-06-08): on the observe path the matcher sets an
-        order's calc_id AFTER its opening fill (once the TP/SL bracket arrives and
-        re-enrichment runs). The fill-time _link_position_calc_on_open already
-        returned (calc_id was NULL then), so the positions_calcs junction was
-        never written even though the order links. Re-trigger junction creation
-        here by replaying the order's opening fill into the existing builder.
-
-        Idempotent: skips when the order isn't linked, has no position key, or a
-        junction row for (position_id, calc_id) already exists. Best-effort.
-        """
-        # corr-tap: attr_junction_form via=post_link_replay (CL.T3b-entry,
-        # spec §5.6) — the "should the junction be replayed?" decision.
-        # On delegation the builder emits its own FORMED/SKIPPED envelope,
-        # so the replay path produces two correlated decision lines.
-        def _tap_replay(outcome: str, reason: Optional[str] = None,
-                        **kw: Any) -> None:
-            # HA-28: steady-state SKIPPED replays (junction_exists is the
-            # big one — every WS update of a linked order) are on-change
-            # deduped; DELEGATED/actionable + any future ERROR stay ungated.
-            if outcome == "SKIPPED" and self._attr_skip_is_repeat(
-                ("replay", account_id, eoid or ""), reason or ""
-            ):
-                return
-            payload: Dict[str, Any] = {
-                "outcome": outcome, "via": "post_link_replay",
-                "exchange_order_id": eoid or "",
-                "terminal_position_id": "", "calc_id": "",
-                "lifecycle_id": "", **kw,
-            }
-            if reason:
-                payload["reason"] = reason
-            if eoid:
-                # dedup_key (mandate 3, audit T3bE-4): the triggering
-                # ORDER id is in scope here — a double-replay is the
-                # §4.1 double-process class and must be a one-grep find.
-                payload["dedup_key"] = f"replay:{eoid}"
-            correlation_log.emit(
-                "order_manager", "internal", "internal",
-                correlation_log.CAT_ATTR_JUNCTION_FORM, payload,
-                account_id=account_id,
-            )
-
-        if not eoid:
-            _tap_replay("SKIPPED", "no_exchange_order_id")
-            return
-        try:
-            async with self._db._conn.execute(
-                "SELECT calc_id, terminal_position_id FROM orders "
-                "WHERE account_id = ? AND exchange_order_id = ?",
-                (account_id, eoid),
-            ) as cur:
-                orow = await cur.fetchone()
-            if not orow:
-                _tap_replay("SKIPPED", "order_row_missing")
-                return
-            if not orow[0]:
-                _tap_replay("SKIPPED", "not_linked",
-                            terminal_position_id=orow[1] or "")
-                return
-            if not (orow[1] or ""):
-                _tap_replay("SKIPPED", "no_position_key", calc_id=orow[0])
-                return
-            calc_id, pos_id = orow[0], orow[1]
-            async with self._db._conn.execute(
-                "SELECT 1 FROM positions_calcs "
-                "WHERE position_id = ? AND calc_id = ? AND account_id = ? LIMIT 1",
-                (pos_id, calc_id, account_id),
-            ) as cur:
-                if await cur.fetchone():
-                    _tap_replay("SKIPPED", "junction_exists",
-                                calc_id=calc_id, terminal_position_id=pos_id)
-                    return
-            # Replay the order's opening fill(s): summed qty, earliest ts, tpid.
-            async with self._db._conn.execute(
-                "SELECT COALESCE(MAX(terminal_position_id), ''), MAX(symbol), "
-                "       MAX(direction), SUM(quantity), MAX(price), MIN(timestamp_ms) "
-                "FROM fills WHERE account_id = ? AND exchange_order_id = ? "
-                "  AND is_close = 0",
-                (account_id, eoid),
-            ) as cur:
-                frow = await cur.fetchone()
-            if not frow or not frow[3]:
-                _tap_replay("SKIPPED", "no_opening_fill",
-                            calc_id=calc_id, terminal_position_id=pos_id)
-                return
-            synth_fill = {
-                "account_id": account_id, "exchange_order_id": eoid,
-                "terminal_position_id": frow[0] or "", "is_close": 0,
-                "symbol": frow[1] or "", "direction": frow[2] or "",
-                "quantity": frow[3], "price": frow[4] or 0.0,
-                "timestamp_ms": frow[5] or 0,
-            }
-            _tap_replay("DELEGATED", calc_id=calc_id,
-                        terminal_position_id=pos_id)
-            await self._link_position_calc_on_open(account_id, synth_fill)
-        except Exception as e:
-            log.debug("ensure junction post-link skipped for %s", eoid, exc_info=True)
-            _tap_replay("ERROR", "exception", error_type=type(e).__name__)
+        """Reconciler R1 delegate — the Defect-8 link-after-fill junction
+        replay moved verbatim to
+        :meth:`core.position_identity.PositionIdentity.ensure_junction_if_linked`.
+        The replay reaches the owner's builder, which also owns the
+        position:opened/scale_in emissions (R1 events-move decision), so
+        both lanes keep their historical event behavior."""
+        await self._identity.ensure_junction_if_linked(account_id, eoid)
 
     # ── TP/SL bracket calc_id inheritance (Phase 2.9, spec §4.5) ─────────────
 
@@ -1949,40 +1822,10 @@ class OrderManager:
 
         # 1+2. Upsert fill + update parent order in ONE commit
         await self._db.upsert_fill_and_update_order(fill, exchange_order_id)
-        # LB-F5 (linkage battery 2026-07-15) — close-side twin of the
-        # Defect-1 backfill: stamp the CLOSE order's tpid from its first
-        # tpid-carrying closing fill (whatever the fill carries post-⑨ —
-        # usually the ws live-position stamp, but a tier-1/2-resolved
-        # value freezes too; first-fill-time is when those heuristics
-        # are most reliable). A LATE sibling fill of the same close order — the
-        # position gone from the snapshot, the slot possibly reopened by
-        # a new position — then resolves via ⑨ tier-0 (parent_order)
-        # instead of the (symbol, direction) heuristics that pick the
-        # wrong instance. Same copy-rule as Defect-1 (:2282): fill →
-        # parent order, empty-only guard, never a re-derivation.
-        # REDUCE-ONLY gate (battery LB-T2a caught the leak pre-commit):
-        # a one-way REVERSAL order is BOTH the old position's closer and
-        # the new one's opener — stamping it from the close leg would
-        # hand the OLD tpid to the open leg's Defect-7 order-fallback
-        # (junction + lifecycle keyed onto the dead position). Reversals
-        # are never reduce-only; every hedge-mode close lane (TP/SL
-        # legs, reduce closes) is — an unflagged close just falls back
-        # to the pre-existing heuristics, no worse than before.
-        if fill.get("is_close") and (fill.get("terminal_position_id") or "") \
-                and exchange_order_id:
-            try:
-                await self._db._conn.execute(
-                    "UPDATE orders SET terminal_position_id = ? "
-                    "WHERE account_id = ? AND exchange_order_id = ? "
-                    "  AND COALESCE(terminal_position_id, '') = '' "
-                    "  AND COALESCE(reduce_only, 0) = 1",
-                    (fill["terminal_position_id"], account_id,
-                     exchange_order_id),
-                )
-                await self._db._conn.commit()
-            except Exception:
-                log.debug("close-order tpid stamp failed for %s",
-                          exchange_order_id, exc_info=True)
+        # LB-F5 close-order tpid stamp — reconciler R1 delegate (moved
+        # verbatim to PositionIdentity.stamp_close_order_tpid; gates —
+        # is_close + tpid-carrying + empty-only + reduce-only — live there).
+        await self._identity.stamp_close_order_tpid(account_id, fill)
         # T211 H4: re-fire enrich_order on the parent so the matcher
         # gets a chance to run against the now-populated avg_fill_price.
         # The new strict matcher (spec §4.1 MARKET 6/6) needs
@@ -2029,105 +1872,10 @@ class OrderManager:
     async def _resolve_close_tpid(
         self, account_id: int, fill: Dict[str, Any]
     ) -> str:
-        """⑨ (debug 2026-06-08): resolve the terminal_position_id for a CLOSING
-        fill that arrived without one (observe-only Binance: the WS trade event
-        carries no venue position id, and ws_manager's live-position lookup can
-        miss on the full-close race). Prefers the live ``PositionInfo`` for
-        ``(symbol, direction)`` — the position being closed, which carries the
-        minted/snapshot-recovered tpid — then falls back to the persisted entry
-        order's tpid (``get_open_entry_tpids_by_symbol_side``), which survives
-        the position's removal from the snapshot. Returns "" when neither
-        resolves (genuine one-way / unlinked path — behaviour unchanged)."""
-        symbol = fill.get("symbol", fill.get("ticker", "")) or ""
-        direction = fill.get("direction", "") or ""
-
-        # corr-tap: attr_tpid_resolve (CL.T3b-close, spec §5.6) — one
-        # envelope per invocation, tier NAMED. The ⑨ close-tpid race is
-        # exactly "which tier fired and why" — the §4.1 walkthrough's
-        # seq-4474 line.
-        _fid = str(fill.get("exchange_fill_id") or "")
-
-        def _tap_resolve(outcome: str, tier: str = "", reason: str = "",
-                         tpid: str = "", error_type: str = "") -> None:
-            payload: Dict[str, Any] = {
-                "outcome": outcome,
-                "via": "close_fill",
-                "symbol": symbol, "direction": direction,
-                "terminal_position_id": tpid,
-                "calc_id": "", "lifecycle_id": "",
-                "exchange_order_id": str(fill.get("exchange_order_id") or ""),
-            }
-            if tier:
-                payload["tier"] = tier
-            if reason:
-                payload["reason"] = reason
-            if error_type:
-                payload["error_type"] = error_type
-            if _fid:
-                payload["dedup_key"] = f"{_fid}:tpid_resolve"
-            correlation_log.emit(
-                "order_manager", "internal", "internal",
-                correlation_log.CAT_ATTR_TPID_RESOLVE, payload,
-                account_id=account_id, symbol=symbol or None,
-            )
-
-        if not symbol or not direction:
-            _tap_resolve("SKIPPED", reason="no_symbol_or_direction")
-            return ""
-        # 0) LB-F5 (linkage battery 2026-07-15): the fill's OWN parent
-        #    order — the strongest identity signal the fill carries
-        #    (exchange_order_id → the persisted close order's tpid,
-        #    stamped by the close-side Defect-1 twin in
-        #    _process_single_fill, or by recovery/backfill tooling).
-        #    Beats the (symbol, direction) heuristics below: on a
-        #    same-slot reopen, tier-1 resolves the NEW live instance
-        #    while the parent order pins the position this fill actually
-        #    closes. Best-effort: any read failure (incl. stub DBs in
-        #    tests) falls through to tier-1 with no envelope — only a
-        #    genuine resolution emits.
-        eoid = str(fill.get("exchange_order_id") or "")
-        if eoid:
-            parent_tpid = ""
-            try:
-                async with self._db._conn.execute(
-                    "SELECT terminal_position_id FROM orders "
-                    "WHERE account_id = ? AND exchange_order_id = ?",
-                    (account_id, eoid),
-                ) as cur:
-                    row = await cur.fetchone()
-                parent_tpid = (row[0] or "") if row else ""
-            except Exception:
-                log.debug("close-tpid parent-order read failed for %s",
-                          eoid, exc_info=True)
-            if parent_tpid:
-                _tap_resolve("RESOLVED", tier="parent_order",
-                             tpid=parent_tpid)
-                return parent_tpid
-        # 1) the live position being closed (precise; present during a partial
-        #    close and usually still present at full-close fill time).
-        for p in app_state.positions:
-            if p.ticker == symbol and p.direction == direction and p.position_id:
-                _tap_resolve("RESOLVED", tier="live_position",
-                             tpid=p.position_id)
-                return p.position_id
-        # 2) the persisted entry order's minted tpid (survives the position's
-        #    removal from the snapshot on a full close).
-        try:
-            tpid_by_key = await self._db.get_open_entry_tpids_by_symbol_side(
-                account_id)
-        except Exception as e:
-            log.debug("close-tpid order fallback read failed", exc_info=True)
-            _tap_resolve("ERROR", tier="entry_order_fallback",
-                         reason="fallback_read_failed",
-                         error_type=type(e).__name__)
-            return ""
-        resolved = tpid_by_key.get((symbol, direction), "")
-        if resolved:
-            _tap_resolve("RESOLVED", tier="entry_order_fallback", tpid=resolved)
-        else:
-            # the genuine miss — the stranded-close shape stays a LINE
-            _tap_resolve("UNRESOLVED", reason="no_match")
-        return resolved
+        """Reconciler R1 delegate — ⑨ close-fill tpid resolution (tier-0
+        parent_order → live position → entry-order map) moved verbatim to
+        :meth:`core.position_identity.PositionIdentity.resolve_close_tpid`."""
+        return await self._identity.resolve_close_tpid(account_id, fill)
 
     async def _process_reversal_split(
         self,
@@ -2181,379 +1929,21 @@ class OrderManager:
     async def _position_primary_calc(
         self, account_id: int, position_id: str,
     ) -> Tuple[Optional[str], Optional[str]]:
-        """Return ``(calc_id, lifecycle_id)`` of a position's PRIMARY calc.
-
-        Primary = the most-contributing junction row (largest
-        ``contributed_qty``; tie-break earliest ``first_fill_ts`` —
-        spec §3.2). ``(None, None)`` if the position has no junction.
-        One source of truth for the §3.2 rule, shared by the closing-fill
-        stamp (T2.2) and the live PositionInfo enrichment (T2.3).
-        """
-        if not position_id:
-            return None, None
-        try:
-            async with self._db._conn.execute(
-                "SELECT calc_id, lifecycle_id, contributed_qty "
-                "FROM positions_calcs "
-                "WHERE position_id = ? AND account_id = ? "
-                "ORDER BY first_fill_ts ASC, id ASC",
-                (position_id, account_id),
-            ) as cur:
-                links = await cur.fetchall()
-        except Exception:
-            log.debug(
-                "primary-calc read failed for position %s", position_id,
-                exc_info=True,
-            )
-            return None, None
-        # Rows ordered by first_fill_ts ASC. Primary = the calc with the
-        # largest SUMMED contributed_qty (spec §3.2/§12.4 per-CALC, not the
-        # largest single row), tie-break earliest first_fill — via the shared
-        # _most_contributing_calc_id helper so this (close-path) and
-        # _enrich_positions_calc_id (live/rehydrate) cannot diverge (T240/R1).
-        primary_cid = _most_contributing_calc_id([(r[0], r[2]) for r in links])
-        if primary_cid is None:
-            return None, None
-        # lifecycle_id is shared across a position's junction rows; prefer the
-        # primary calc's, fall back to any non-null.
-        lifecycle_id = (
-            next((r[1] for r in links if r[0] == primary_cid and r[1]), None)
-            or next((r[1] for r in links if r[1]), None)
-        )
-        return primary_cid, lifecycle_id
+        """Reconciler R1 delegate — the §3.2 primary-calc (calc_id,
+        lifecycle_id) selection moved verbatim to
+        :meth:`core.position_identity.PositionIdentity.position_primary_calc`."""
+        return await self._identity.position_primary_calc(
+            account_id, position_id)
 
     async def _link_position_calc_on_open(
         self, account_id: int, fill: Dict[str, Any]
     ) -> None:
-        """T2.1 (plan §2 task 2.1): on each opening fill, upsert the
-        ``positions_calcs`` junction row and generate / propagate the
-        position's ``lifecycle_id``.
-
-        Spec §3.1 / §3.5 / §7. The junction is keyed by
-        ``terminal_position_id`` (the engine's universal position
-        identity — see the P2.T1 schema note in ``database.py``), one
-        row per (position, calc, order). ``contributed_qty`` accumulates
-        across fills of the same triple via the UPSERT.
-
-        ``lifecycle_id`` (UUID v4) is the operator-facing trade
-        reference: generated at the FIRST opening fill of a position and
-        reused by every later fill / scale-in calc on that position
-        (spec §3.5 — "multi-calc scale-ins share same lifecycle_id").
-        Back-filled onto the contributing ``pre_trade_log`` + ``orders``
-        rows (idempotent ``WHERE lifecycle_id IS NULL``).
-
-        T2.4: also snapshots the calc's planned ``size`` / ``TP`` / ``SL``
-        onto the junction row at contribution time (per-calc — a scale-in
-        gets its own row with its own calc's plan). See the snapshot
-        block below for source-column priority.
-
-        Skips (no attribution possible) when:
-          - the fill is a close (only opening fills seed the junction);
-          - ``terminal_position_id`` is empty on BOTH the fill AND the
-            entry order (defect-7 falls back to the order's minted tpid
-            when only the fill's is empty — the fill-before-mint race);
-          - the parent order has no ``calc_id`` (UNPLANNED / unlinked —
-            nothing to attribute).
-
-        Best-effort: failures log + return; never break the fill hot
-        path. All reads/writes go through ``self._db._conn`` (the
-        single calc-linkage DB, ``config.DB_PATH``), matching the
-        sibling Phase-1 transition sites.
-        """
-        # corr-tap: attr_junction_form (CL.T3b-entry, spec §5.6) — one
-        # envelope per invocation, no silent exits (mandate 1). The gates
-        # below ARE the historical silent-skip class: "no_position_key"
-        # is the empty-tpid shape that hid the junction-never-written
-        # bug. ``_ident`` carries the identity tuple VERBATIM incl. ""
-        # (mandate 2) as facts resolve; each emit snapshots it.
-        _ident: Dict[str, Any] = {
-            "exchange_order_id": "", "terminal_position_id": "",
-            "calc_id": "", "lifecycle_id": "",
-        }
-        _fid = str(fill.get("exchange_fill_id") or "")
-
-        def _tap_junction(outcome: str, reason: Optional[str] = None,
-                          **kw: Any) -> None:
-            payload: Dict[str, Any] = {"outcome": outcome, **_ident, **kw}
-            if reason:
-                payload["reason"] = reason
-            if _fid:
-                # dedup_key of the triggering fill (mandate 3): the same
-                # fill replayed through the builder twice = one grep.
-                payload["dedup_key"] = f"junction:{_fid}"
-            correlation_log.emit(
-                "order_manager", "internal", "internal",
-                correlation_log.CAT_ATTR_JUNCTION_FORM, payload,
-                account_id=account_id, symbol=fill.get("symbol") or None,
-            )
-
-        if fill.get("is_close"):
-            _tap_junction("SKIPPED", "close_fill")
-            return
-        eoid = fill.get("exchange_order_id", "") or ""
-        _ident["exchange_order_id"] = eoid
-        if not eoid:
-            _tap_junction("SKIPPED", "no_exchange_order_id")
-            return
-        pos_id = fill.get("terminal_position_id", "") or ""
-        _ident["terminal_position_id"] = pos_id
-
-        try:
-            async with self._db._conn.execute(
-                "SELECT id, calc_id, terminal_position_id FROM orders "
-                "WHERE account_id = ? AND exchange_order_id = ?",
-                (account_id, eoid),
-            ) as cur:
-                orow = await cur.fetchone()
-        except Exception as e:
-            log.debug("junction link: order read failed for %s", eoid, exc_info=True)
-            _tap_junction("ERROR", "order_read_failed",
-                          error_type=type(e).__name__)
-            return
-        if not orow:
-            _tap_junction("SKIPPED", "order_row_missing")
-            return
-        order_id = orow[0]
-        calc_id = orow[1]
-        _ident["calc_id"] = calc_id or ""
-        # Defect-7 (debug 2026-06-08, fill-before-mint race): the OPENING fill
-        # can beat the ACCOUNT_UPDATE that mints the position, so
-        # fill.terminal_position_id is empty even though the ENTRY ORDER carries
-        # the minted id (from the data_cache mint via a later fill, or the
-        # back-fill below). Fall back to the order's tpid so the positions_calcs
-        # junction — and the Position-History drilldown that keys on it — still
-        # forms. Without this, an order links (calc_id/LINKED + calc_match_audit)
-        # but NO junction row is ever written for a race-affected open.
-        if not pos_id:
-            pos_id = orow[2] or ""
-            _ident["terminal_position_id"] = pos_id
-        if not pos_id:
-            # neither the fill nor the order has a position key yet —
-            # the canonical stranded-identity shape (spec §5.6 reason
-            # vocabulary: no_position_key)
-            _tap_junction("SKIPPED", "no_position_key", order_pk=order_id)
-            return
-        # Defect-1 (debug 2026-06-07): back-fill the entry order's
-        # terminal_position_id from the (now-minted) position key so
-        # reverse-query / context assembly (get_orders_by_position_id) can find
-        # this order under its position. Idempotent (fills only an empty tpid);
-        # piggybacks on the exchange_order_id row already read above. Runs for
-        # UNLINKED orders too (before the calc_id gate) — the order belongs to
-        # the position regardless of whether a calc was matched.
-        try:
-            await self._db._conn.execute(
-                "UPDATE orders SET terminal_position_id = ? "
-                "WHERE id = ? AND COALESCE(terminal_position_id, '') = ''",
-                (pos_id, order_id),
-            )
-            await self._db._conn.commit()
-        except Exception:
-            log.debug("junction link: order tpid back-fill failed for %s",
-                      eoid, exc_info=True)
-        if not calc_id:
-            # UNPLANNED / unlinked entry — nothing to attribute
-            _tap_junction("SKIPPED", "not_linked", order_pk=order_id)
-            return
-
-        # Reuse the position's existing lifecycle_id if a prior fill on
-        # this position already established one (multi-fill / scale-in);
-        # otherwise this is the first opening fill → mint a UUID v4.
-        #
-        # ASSUMPTION (engine-wide invariant): terminal_position_id
-        # identifies ONE position instance, never reused across a
-        # close→reopen on the same symbol/direction slot. The whole
-        # position subsystem already depends on this — get_position_fills
-        # does a strict tpid match and _build_close_row_for_fill VWAPs
-        # opens by tpid; a recurring tpid would corrupt those long before
-        # it reached here. The live paths hold it: binance_ws leaves
-        # PositionInfo.position_id="" (→ empty tpid → skipped above), and
-        # Quantower emits a per-position-object id. IF a future adapter
-        # emits a recurring slot-id, this lookup would bleed a closed
-        # trade's lifecycle into a new one — fix is seal-at-close, but
-        # that must distinguish full vs partial (Phase 2.11 multi-TP)
-        # close, so it's deferred until an adapter actually violates the
-        # invariant. See HANDOFF "lifecycle_id vs tpid-reuse".
-        try:
-            async with self._db._conn.execute(
-                "SELECT lifecycle_id FROM positions_calcs "
-                "WHERE position_id = ? AND account_id = ? "
-                "  AND lifecycle_id IS NOT NULL LIMIT 1",
-                (pos_id, account_id),
-            ) as cur:
-                lrow = await cur.fetchone()
-        except Exception as e:
-            log.debug("junction link: lifecycle lookup failed for %s", pos_id, exc_info=True)
-            _tap_junction("ERROR", "lifecycle_lookup_failed",
-                          error_type=type(e).__name__, order_pk=order_id)
-            return
-        lifecycle_id = lrow[0] if lrow and lrow[0] else str(uuid.uuid4())
-        _ident["lifecycle_id"] = lifecycle_id
-        # P6.T4: the lifecycle mint-vs-reuse signal IS the position-level
-        # open-vs-scale-in distinction. No prior lifecycle → this fill OPENS the
-        # position. Reuse → the position is already open; whether THIS is a
-        # scale-in (a calc new to the position) vs just another fill of an
-        # existing contribution is resolved by the junction-membership check
-        # below (run BEFORE the upsert creates the row).
-        is_first_open = not (lrow and lrow[0])
-        calc_new_to_position = False
-        if not is_first_open:
-            try:
-                async with self._db._conn.execute(
-                    "SELECT 1 FROM positions_calcs "
-                    "WHERE position_id = ? AND calc_id = ? AND account_id = ? LIMIT 1",
-                    (pos_id, calc_id, account_id),
-                ) as cur:
-                    calc_new_to_position = (await cur.fetchone()) is None
-            except Exception:
-                log.debug(
-                    "scale-in check failed for %s/%s", pos_id, calc_id, exc_info=True,
-                )
-
-        # T2.4 (plan §2 task 2.4): snapshot the calc's planned size / TP /
-        # SL onto the junction row at contribution time (spec §3.1).
-        # Source priority (spec deviation, forced by reality): spec §3.1
-        # says planned_size ← calc.overridden_size or planned_size, but
-        # those P0.T3 columns are NULL on EVERY live calc — the calculator
-        # only ever writes the legacy size/tp_price/sl_price (verified
-        # T231: 0/118 rows populate overridden_*/planned_*). So source the
-        # spec columns first (forward-compat if a future calculator wires
-        # them) and fall back to the legacy columns the calculator writes
-        # today. Per-calc: each (position, calc, order) row snapshots ITS
-        # OWN calc, so a scale-in's new junction row carries the new
-        # calc's plan. size_delta_pct stays NULL — deferred to T2.5/close
-        # (plan + spec §3.2; it needs the cumulative contributed_qty that
-        # the UPSERT only knows SQL-side).
-        planned_size = planned_tp = planned_sl = None
-        try:
-            async with self._db._conn.execute(
-                "SELECT overridden_size, planned_size, size, "
-                "       overridden_tp, planned_tp, tp_price, "
-                "       overridden_sl, planned_sl, sl_price "
-                "FROM pre_trade_log WHERE calc_id = ? AND account_id = ? "
-                "ORDER BY id ASC LIMIT 1",
-                (calc_id, account_id),
-            ) as cur:
-                prow = await cur.fetchone()
-            if prow:
-                planned_size = _first_truthy(prow[0], prow[1], prow[2])
-                planned_tp = _first_truthy(prow[3], prow[4], prow[5])
-                planned_sl = _first_truthy(prow[6], prow[7], prow[8])
-        except Exception:
-            log.debug(
-                "junction link: planned_* snapshot read failed for calc %s",
-                calc_id, exc_info=True,
-            )
-
-        qty = abs(float(fill.get("quantity", 0) or 0))
-        ts = int(fill.get("timestamp_ms", 0) or 0)
-
-        # Upsert the junction row (cumulative contributed_qty). The UPSERT
-        # omits planned_* from DO UPDATE SET, so this first-contribution
-        # snapshot is PRESERVED across later fills of the same triple
-        # (snapshot-at-contribution-time). size_delta_pct left NULL —
-        # computed at close in T2.5.
-        _junction_ok = await self._db.upsert_position_calc_link({
-            "position_id":     pos_id,
-            "calc_id":         calc_id,
-            "order_id":        order_id,
-            "account_id":      account_id,
-            "contributed_qty": qty,
-            "first_fill_ts":   ts,
-            "last_fill_ts":    ts,
-            "planned_size":    planned_size,
-            "planned_tp":      planned_tp,
-            "planned_sl":      planned_sl,
-            "lifecycle_id":    lifecycle_id,
-        })
-
-        # Back-fill lifecycle_id onto the contributing calc + order + this
-        # opening fill (spec §3.5 lists fills among the lifecycle_id
-        # stamping targets). Idempotent via WHERE lifecycle_id IS NULL:
-        # the first opening fill stamps; repeat fills no-op. A calc
-        # contributes to one position lifecycle and an order belongs to
-        # one position, so the stamped value is always the right one.
-        # T232: the fill stamp closes the spec-§3.5 gap where forward
-        # OPENING fills carried NULL fills.lifecycle_id (only closing
-        # fills — T2.2 — and backfilled legacy fills had it), which would
-        # have left the Phase-7 single-key /context/lifecycle/{id} fills
-        # join incomplete for new positions.
-        fill_id = fill.get("exchange_fill_id", "") or ""
-        try:
-            await self._db._conn.execute(
-                "UPDATE pre_trade_log SET lifecycle_id = ? "
-                "WHERE calc_id = ? AND lifecycle_id IS NULL",
-                (lifecycle_id, calc_id),
-            )
-            await self._db._conn.execute(
-                "UPDATE orders SET lifecycle_id = ? "
-                "WHERE id = ? AND lifecycle_id IS NULL",
-                (lifecycle_id, order_id),
-            )
-            if fill_id:
-                await self._db._conn.execute(
-                    "UPDATE fills SET lifecycle_id = ? "
-                    "WHERE account_id = ? AND exchange_fill_id = ? "
-                    "  AND lifecycle_id IS NULL",
-                    (lifecycle_id, account_id, fill_id),
-                )
-            await self._db._conn.commit()
-        except Exception:
-            log.warning(
-                "junction link: lifecycle back-fill failed for calc=%s order=%s",
-                calc_id, order_id, exc_info=True,
-            )
-
-        log.info(
-            "Linked position %s ↔ calc %s (order_id=%s, lifecycle=%s, qty=%.6f)",
-            pos_id, calc_id, order_id, lifecycle_id, qty,
-        )
-        # The decision line: FORMED only when the junction write actually
-        # landed (audit T3bE-3 — the writer swallows its own failures, and
-        # asserting FORMED on a failed write is the historical "junction
-        # missing" shape this tap exists to expose). The paired db_write
-        # envelope carries the rowcount on the same chain; flow (the
-        # lifecycle backfills above) is unchanged on failure, matching
-        # pre-tap behavior. The mint-vs-reuse signal IS the open-vs-
-        # scale-in distinction (P6.T4).
-        if _junction_ok:
-            _tap_junction(
-                "FORMED", order_pk=order_id,
-                lifecycle_minted=is_first_open,
-                scale_in=calc_new_to_position,
-                contributed_qty=qty,
-            )
-        else:
-            _tap_junction(
-                "ERROR", "junction_write_failed", order_pk=order_id,
-                lifecycle_minted=is_first_open,
-                scale_in=calc_new_to_position,
-                contributed_qty=qty,
-            )
-
-        # P6.T4 (spec §9): position lifecycle events on the per-account topic,
-        # emitted AFTER the durable junction write. POSITION-level semantics
-        # from the mint-vs-reuse signal — note the position_opened TRADE event
-        # in _emit_fill_events is per-CALC-first-fill (so it ALSO fires on a
-        # scale-in); these event_bus topics use the §9-correct position-first-
-        # open vs scale_in split. Best-effort (publish_engine is enqueue-only).
-        try:
-            if is_first_open:
-                await event_bus.publish_engine(account_id, DOMAIN_POSITION, "opened", {
-                    "position_id": pos_id,
-                    "calc_ids":    [calc_id],
-                    "symbol":      fill.get("symbol", ""),
-                    "direction":   fill.get("direction", ""),
-                    "entry_px":    fill.get("price", 0),
-                    "size":        qty,
-                })
-            elif calc_new_to_position:
-                await event_bus.publish_engine(account_id, DOMAIN_POSITION, "scale_in", {
-                    "position_id": pos_id,
-                    "new_calc_id": calc_id,
-                    "added_qty":   qty,
-                })
-        except Exception:
-            log.debug("position opened/scale_in event emit failed", exc_info=True)
+        """Reconciler R1 delegate — T2.1 junction formation + lifecycle
+        mint/backfill moved verbatim to
+        :meth:`core.position_identity.PositionIdentity.link_position_calc_on_open`
+        (which also owns the position:opened/scale_in emissions — the R1
+        events-move decision, see the owner's module docstring)."""
+        await self._identity.link_position_calc_on_open(account_id, fill)
 
     async def _stamp_closing_fill_attribution(
         self, account_id: int, fill: Dict[str, Any]
@@ -3115,65 +2505,11 @@ class OrderManager:
     async def _backfill_open_fill_tpids(
         self, account_id: int, opens: List[Dict[str, Any]], pos_id: str,
     ) -> int:
-        """#3/#4 (debug 2026-06-08): stamp the minted terminal_position_id onto
-        this position's OPENING fills, which the observe-only Binance path wrote
-        empty (the position is minted only after the first open completes; the
-        junction-link backfill stamps lifecycle_id but not the tpid). Without it
-        the tpid-keyed open lookup AND the per-position fills/events drilldown
-        miss them. Best-effort, keyed by exchange_fill_id, only where currently
-        empty (idempotent; never reattributes an already-stamped fill). Mirrors
-        the lifecycle_id back-fill in _link_position_calc_on_open.
-
-        2026-06-24: ALSO stamps calc_id + lifecycle_id on the open fills, from
-        the position's primary calc. Close-build BACKSTOP for the link-timing
-        race (the link-time fill backfill in order_enrichment.py is the primary
-        fix; this runs only on the strict-lookup-miss + walk path and ALSO
-        covers lifecycle_id, which link-time can't): the entry fill is enriched
-        BEFORE the matcher links the order, so every fill-time attribution path
-        (_propagate_calc_id_to_fill, _link_position_calc_on_open) no-ops on
-        calc_id=NULL and is never re-run — leaving the ENTRY fill of a linked
-        position without calc_id/lifecycle even though the CLOSE fill has both
-        (exec-link drawer blank, /context/calc fills list incomplete). By close
-        the junction is authoritative, so this gives the open fills parity.
-        Idempotent (COALESCE/NULLIF — only fills a currently-empty column)."""
-        fids = [
-            f.get("exchange_fill_id") for f in opens
-            if f.get("exchange_fill_id")
-            and not (f.get("terminal_position_id") or "")
-        ]
-        all_open_fids = [
-            f.get("exchange_fill_id") for f in opens if f.get("exchange_fill_id")
-        ]
-        primary_calc_id = lifecycle_id = None
-        if all_open_fids:
-            primary_calc_id, lifecycle_id = await self._position_primary_calc(
-                account_id, pos_id,
-            )
-        if not fids and not (primary_calc_id or lifecycle_id):
-            return 0
-        try:
-            for fid in fids:
-                await self._db._conn.execute(
-                    "UPDATE fills SET terminal_position_id = ? "
-                    "WHERE account_id = ? AND exchange_fill_id = ? "
-                    "  AND COALESCE(terminal_position_id, '') = ''",
-                    (pos_id, account_id, fid),
-                )
-            if primary_calc_id or lifecycle_id:
-                for fid in all_open_fids:
-                    await self._db._conn.execute(
-                        "UPDATE fills SET "
-                        "  calc_id = COALESCE(NULLIF(calc_id, ''), ?), "
-                        "  lifecycle_id = COALESCE(NULLIF(lifecycle_id, ''), ?) "
-                        "WHERE account_id = ? AND exchange_fill_id = ?",
-                        (primary_calc_id or None, lifecycle_id or None,
-                         account_id, fid),
-                    )
-            await self._db._conn.commit()
-            return len(fids)
-        except Exception:
-            log.debug("open-fill tpid/attribution backfill failed", exc_info=True)
-            return 0
+        """Reconciler R1 delegate — the close-time open-fill tpid/calc/
+        lifecycle backfill moved verbatim to
+        :meth:`core.position_identity.PositionIdentity.backfill_open_fill_tpids`."""
+        return await self._identity.backfill_open_fill_tpids(
+            account_id, opens, pos_id)
 
     async def _build_close_row_for_fill(
         self, account_id: int, fill: Dict[str, Any], *, force_final: bool = False,
