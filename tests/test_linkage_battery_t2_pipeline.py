@@ -401,50 +401,72 @@ class TestLBT2dFillBeforeMint:
         return await junction_rows(db, "POS-M")
 
     @pytest.mark.asyncio
-    async def test_pin_current_first_fill_stranded(self, real):
-        # PIN (current behavior): junction counts ONLY the post-mint fill;
-        # the replay lane skips (junction_exists); the first fill keeps
-        # tpid=""/lifecycle NULL forever. Guards the xfail twin.
+    async def test_pin_mint_sweep_full_identity(self, real):
+        # LB-F9 FIXED (R3): the mint-carrying second fill sweeps the
+        # pre-mint sibling (tpid + lifecycle stamped) and delta-reconciles
+        # the junction row to the order's true opening SUM. Pins the full
+        # fixed shape beyond the twin's qty assert.
         om, db = real
         junc = await self._drive_fill_before_mint(om, db)
         assert len(junc) == 1
         assert junc[0]["calc_id"] == "CALC-M"
-        assert junc[0]["contributed_qty"] == pytest.approx(1.0)  # under-count
-        # Defect-1 backfilled the ORDER's tpid from fill 2…
+        assert junc[0]["contributed_qty"] == pytest.approx(2.0)
         assert (await order_by_eoid(db, "O-M"))[
             "terminal_position_id"] == "POS-M"
-        # …but the first FILL row is stranded: no tpid, no lifecycle.
+        # The formerly-stranded first fill now carries full identity.
         f1 = await fill_by_fid(db, "F-M1")
-        assert f1["terminal_position_id"] == ""
-        assert f1["lifecycle_id"] is None
+        assert f1["terminal_position_id"] == "POS-M"
+        assert f1["lifecycle_id"] == junc[0]["lifecycle_id"]
         f2 = await fill_by_fid(db, "F-M2")
         assert f2["terminal_position_id"] == "POS-M"
         assert f2["lifecycle_id"] == junc[0]["lifecycle_id"]
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        strict=True,
-        reason="LB-T2d: fill-before-mint first fill is permanently stranded "
-               "— _link_position_calc_on_open skips it (no_position_key, "
-               "order_manager.py:2264-2272: fill tpid '' AND order tpid ''), "
-               "the mint lands with the SECOND fill which forms the junction "
-               "with only its own qty (:2384-2404), the Defect-1 backfill "
-               "(:2280-2289) stamps the ORDER's tpid but never sibling fills "
-               "rows, and the sole retroactive lane _ensure_junction_if_linked "
-               "(:559) is gated by the (position_id, calc_id) existence check "
-               "(:623-631) which the second fill's row already satisfies — so "
-               "the replay SKIPs (junction_exists) and the first fill's qty "
-               "never reaches contributed_qty (junction UNDER-count, the "
-               "mirror image of the HA-42 over-count).")
     async def test_mint_reconciles_first_fill(self, real):
+        # LB-F9 FIXED (R3, was strict-xfail): once the mint lands, the
+        # junction reflects the FULL opening quantity — including the
+        # pre-mint first fill (mint-after-fill retro-sweep +
+        # evidence-gated, order-keyed delta-reconcile).
         om, db = real
         junc = await self._drive_fill_before_mint(om, db)
         assert len(junc) == 1
-        # DESIRED: once the mint lands, the position's junction reflects
-        # the FULL opening quantity — including the pre-mint first fill.
-        assert junc[0]["contributed_qty"] == pytest.approx(2.0), (
-            "pre-mint first fill's qty missing from contributed_qty — "
-            "nothing reconciles the fill/junction retroactively")
+        assert junc[0]["contributed_qty"] == pytest.approx(2.0)
+
+    @pytest.mark.asyncio
+    async def test_pin_second_order_same_calc_replays(self, real):
+        """R2-audit NIT-6 fix (R3): the replay guard now includes
+        order_id — a SECOND order of the same calc on the same position
+        forms its own junction row via the link-after-fill replay
+        (previously the (position_id, calc_id) guard skipped it forever,
+        an F9-family under-count)."""
+        om, db = real
+        await seed_calc(db, "CALC-2O", status="matched", window_seconds=300)
+        await seed_order(db, "O-2O-A", calc_id="CALC-2O",
+                         link_status="LINKED")
+        await om._process_single_fill(
+            ACCOUNT_ID, fill("O-2O-A", "POS-2O", 1.0, fid="F-2OA",
+                             ts=RECENT_MS + 1000))
+        # Second order, same calc: fill processed while UNLINKED (the
+        # link-timing race), linked afterwards → the replay lane is the
+        # ONLY path that can form its junction row.
+        await seed_order(db, "O-2O-B", created_at_ms=RECENT_MS + 1500)
+        await om._process_single_fill(
+            ACCOUNT_ID, fill("O-2O-B", "POS-2O", 2.0, fid="F-2OB",
+                             ts=RECENT_MS + 2000))
+        await db._conn.execute(
+            "UPDATE orders SET calc_id = 'CALC-2O', link_status = 'LINKED' "
+            "WHERE exchange_order_id = 'O-2O-B'")
+        await db._conn.commit()
+
+        await om._ensure_junction_if_linked(ACCOUNT_ID, "O-2O-B")
+
+        junc = await junction_rows(db, "POS-2O")
+        by_order_qty = sorted(r["contributed_qty"] for r in junc)
+        assert len(junc) == 2, (
+            "second order of the same calc never replayed — the old "
+            "(position_id, calc_id) guard shape")
+        assert by_order_qty == [pytest.approx(1.0), pytest.approx(2.0)]
+        assert len({r["lifecycle_id"] for r in junc}) == 1
 
 
 # ── LB-T2e: HA-42 repro — mid-fill double-junction over-count ──────────

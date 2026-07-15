@@ -343,7 +343,7 @@ class PositionIdentity:
             return
         try:
             async with self._db._conn.execute(
-                "SELECT calc_id, terminal_position_id FROM orders "
+                "SELECT calc_id, terminal_position_id, id FROM orders "
                 "WHERE account_id = ? AND exchange_order_id = ?",
                 (account_id, eoid),
             ) as cur:
@@ -357,6 +357,7 @@ class PositionIdentity:
                 return
             calc_id = orow[0]
             stash_tpid = orow[1] or ""
+            order_pk = orow[2]
             # R2 (LB-F8 fix — guard ≡ write key BY CONSTRUCTION): read the
             # opening-fills aggregate FIRST and derive the key the builder
             # will actually write under (fill tpid wins; the order stash
@@ -388,10 +389,16 @@ class PositionIdentity:
             if not write_key:
                 _tap_replay("SKIPPED", "no_position_key", calc_id=calc_id)
                 return
+            # R3 (R2-audit NIT-6 fix): the exists-check now includes
+            # order_id — junction rows are PER-ORDER, and the old
+            # (position_id, calc_id) guard meant a second order of the
+            # same calc on the same position never replayed (its row
+            # could never form via this lane — F9-family under-count).
             async with self._db._conn.execute(
                 "SELECT 1 FROM positions_calcs "
-                "WHERE position_id = ? AND calc_id = ? AND account_id = ? LIMIT 1",
-                (write_key, calc_id, account_id),
+                "WHERE position_id = ? AND calc_id = ? AND order_id = ? "
+                "  AND account_id = ? LIMIT 1",
+                (write_key, calc_id, order_pk, account_id),
             ) as cur:
                 if await cur.fetchone():
                     _tap_replay("SKIPPED", "junction_exists",
@@ -843,6 +850,90 @@ class PositionIdentity:
                 calc_id, order_id, exc_info=True,
             )
 
+        # R3 (LB-F9 fix — mint-after-fill retro-reconcile; §5-Q2 decision:
+        # DELTA-RECONCILE adopted with the design-review constraints).
+        # (1) SWEEP: earlier opening fills of THIS order that predate the
+        #     mint (tpid='') are stamped with the canonical key +
+        #     lifecycle — the fill-before-mint first fill is no longer
+        #     stranded (battery LB-T2d: the mint landed with a later fill
+        #     and nothing ever folded the first one in).
+        # (2) RECONCILE: the junction row's contributed_qty is set to
+        #     SUM(ABS(quantity)) of the order's opening fills — keyed by
+        #     ORDER (eoid), never raw fills.tpid (review MAJOR-2: a
+        #     tpid-keyed recompute zeroes valid rows on rebuilt: shapes);
+        #     EVIDENCE-GATED (no fills → NO-OP); on-change only. Also
+        #     heals F8-inflated / F9-starved HISTORICAL rows for free at
+        #     the next fill/replay event on the row.
+        # DIRECTION GATE (same rule as the R2 migration, same reason): a
+        # stash-derived Defect-7 event must neither stamp sibling fills
+        # with a possibly-stale key nor reconcile across a transient
+        # dual-key state (an ungated sweep double-counts the mirror
+        # ordering's mid-state); only a fill that carried its OWN tpid —
+        # incl. the replay's fills-derived synth fill — sweeps.
+        # Emits a RECONCILED tap (attr_junction_form outcome, the R2
+        # MIGRATED precedent → E36) only when the value actually moved.
+        if fill_carried_tpid:
+            try:
+                cur_sweep = await self._db._conn.execute(
+                    "UPDATE fills SET terminal_position_id = ? "
+                    "WHERE account_id = ? AND exchange_order_id = ? "
+                    "  AND is_close = 0 "
+                    "  AND COALESCE(terminal_position_id, '') = ''",
+                    (pos_id, account_id, eoid),
+                )
+                swept = cur_sweep.rowcount or 0
+                await self._db._conn.execute(
+                    "UPDATE fills SET lifecycle_id = ? "
+                    "WHERE account_id = ? AND exchange_order_id = ? "
+                    "  AND is_close = 0 AND lifecycle_id IS NULL",
+                    (lifecycle_id, account_id, eoid),
+                )
+                async with self._db._conn.execute(
+                    "SELECT contributed_qty FROM positions_calcs "
+                    "WHERE position_id = ? AND calc_id = ? AND order_id = ? "
+                    "  AND account_id = ?",
+                    (pos_id, calc_id, order_id, account_id),
+                ) as cur:
+                    rrow = await cur.fetchone()
+                async with self._db._conn.execute(
+                    "SELECT SUM(ABS(quantity)) FROM fills "
+                    "WHERE account_id = ? AND exchange_order_id = ? "
+                    "  AND is_close = 0",
+                    (account_id, eoid),
+                ) as cur:
+                    srow = await cur.fetchone()
+                true_qty = srow[0] if srow else None
+                row_qty = rrow[0] if rrow else None
+                changed = (true_qty is not None and row_qty is not None
+                           and abs(float(true_qty) - float(row_qty)) > 1e-12)
+                if changed:
+                    await self._db._conn.execute(
+                        "UPDATE positions_calcs SET contributed_qty = ? "
+                        "WHERE position_id = ? AND calc_id = ? "
+                        "  AND order_id = ? AND account_id = ?",
+                        (float(true_qty), pos_id, calc_id, order_id,
+                         account_id),
+                    )
+                await self._db._conn.commit()
+                # Tap AFTER the commit (R3-audit NIT-1, matching the R2
+                # MIGRATED precedent) — a rolled-back reconcile must not
+                # leave a RECONCILED line for a change that didn't persist.
+                if changed:
+                    _tap_junction(
+                        "RECONCILED", order_pk=order_id,
+                        old_qty=float(row_qty), new_qty=float(true_qty),
+                        swept_fills=swept,
+                    )
+            except Exception:
+                try:
+                    await self._db._conn.rollback()
+                except Exception:
+                    pass
+                log.debug(
+                    "retro-reconcile failed for calc=%s order=%s",
+                    calc_id, order_id, exc_info=True,
+                )
+
         log.info(
             "Linked position %s ↔ calc %s (order_id=%s, lifecycle=%s, qty=%.6f)",
             pos_id, calc_id, order_id, lifecycle_id, qty,
@@ -923,7 +1014,11 @@ class PositionIdentity:
         (exec-link drawer blank, /context/calc fills list incomplete). By close
         the junction is authoritative, so this gives the open fills parity.
         Idempotent (COALESCE/NULLIF — only fills a currently-empty column).
-        (R3 target: ABSORBED by the mint-after-fill retro-sweep.)"""
+        R3 NOTE: the mint-after-fill retro-sweep (link_position_calc_on_open)
+        now stamps tpid+lifecycle at mint time, so this close-time backstop
+        mostly no-ops on tpid — it REMAINS for calc_id parity (link-timing)
+        and the no-later-event tails (stash-derived-only opens; reversal
+        open legs heal here at close, on the strict-miss→walk path)."""
         fids = [
             f.get("exchange_fill_id") for f in opens
             if f.get("exchange_fill_id")

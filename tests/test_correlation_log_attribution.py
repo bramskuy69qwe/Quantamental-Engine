@@ -1114,7 +1114,9 @@ class TestAuditFoldPins:
                 orig = db._conn.execute
 
                 def _boom(sql, *a, **k):
-                    if "SELECT calc_id, terminal_position_id FROM orders" in sql:
+                    # R3: the replay's order read gained `id` (order_pk
+                    # for the per-order guard) — match the current text.
+                    if "SELECT calc_id, terminal_position_id, id FROM orders" in sql:
                         raise _s.OperationalError("locked")
                     return orig(sql, *a, **k)
 

@@ -27,7 +27,7 @@ strict-xfails, 2026-07-14/15) proved the cost:
 | LB-F1 | manual-link lane never formed the junction (replay was auto-lane-only) | fixed `d9ff4bf` — a LANE patch; the root remains |
 | LB-F6 (=LB-D5) | mixed-tpid fills of one order key TWO junction rows + two lifecycles | **fixed at R2** (key migration; xfail flipped) |
 | LB-F8 (=HA-42, corrected) | replay guard checks the ORDER-stash tpid while the write lands under MAX(fills.tpid) → guard never satisfies → N-fold unbounded `contributed_qty` inflation per WS/bracket-child event (gated: needs a divergent stash — "unbounded amplifier behind a narrow gate", battery severity framing) | **fixed at R2** (guard≡write; xfail flipped) |
-| LB-F9 (=LB-T2d) | fill-before-mint first fill permanently stranded from the junction (under-count, mirror of F8); reversal open legs land in the same shape | **open xfail, always-on** |
+| LB-F9 (=LB-T2d) | fill-before-mint first fill permanently stranded from the junction (under-count, mirror of F8); reversal open legs land in the same shape | **fixed at R3** (mint-after-fill retro-sweep + delta-reconcile; xfail flipped) |
 | LB-F4 (=LB-I5) | lifecycle mint/reuse has no seal-at-close → tpid reuse bleeds a closed trade's lifecycle into the new trade | **open xfail** |
 | LB-F7 (=LB-D6) | closed-row REPLACE binds calc_id unconditionally but carries lifecycle_id forward → mixed identity pair | **open xfail** |
 | LB-F5 | ⑨ resolved by (symbol,side) heuristics before the parent-order signal | fixed `02eb743` — tier-0 + stamp; heuristic tail pinned |
@@ -149,7 +149,7 @@ battery xfail.
 | close-order tpid stamp (`_process_single_fill`, LB-F5) | MOVES — owner stamps as part of canonical registration |
 | `_link_position_calc_on_open` (:2225) | MOVED WHOLE incl. the `position:opened`/`scale_in` emissions — **R1 decision (2026-07-15): events moved WITH the builder**, because (a) at HEAD the emissions were already the TAIL of the builder itself (the ":2539-2556 stay at the call site" framing here was imprecise — R1 audit) and (b) the Defect-8 replay lane reaches the builder too and historically emitted through it; a contract-return would have dropped replay-lane events. See position_identity module docstring |
 | `_ensure_junction_if_linked` (:559) | MOVES — the link-after-fill retro path, canonical-keyed (guard≡write). NB its HA-28 SKIP-dedup memo (`_attr_skip_is_repeat` :544) is SHARED with the bracket-inheritance tap (:776, stays behind) — R1 must state where the memo lives (split it; shared-LRU eviction coupling is not worth preserving) |
-| `_backfill_open_fill_tpids` (:3115) | ABSORBED by retro-reconcile (mint-after-fill sweep); the close-time call site becomes a no-op check |
+| `_backfill_open_fill_tpids` (:3115) | RETAINED as the close-time backstop (R3 correction — the mint-after-fill sweep covers the mint-event lane, but calc_id parity + the no-later-tpid-event tails still need close-time healing; reversal open legs heal here, on the walk path) |
 | fills.calc_id writers: `order_enrichment.py:418` (link-time backfill, "the primary fix"), `:688` (fill-time propagation), `link_actions.py:241` (manual lane) | DELEGATE — owner stamps fills at registration/retro-sweep (feasibility-review MAJOR-3) |
 | `_stamp_closing_fill_attribution` (:2558) | DELEGATES — reads the owner's (calc, lifecycle) pair for the position |
 | `_build_close_row_for_fill` calc/lifecycle sealing (:3414/:3557) | DELEGATES — asks the owner for the pair; REPLACE coherence rule lands in `insert_closed_position` alongside |
@@ -180,17 +180,27 @@ battery xfail.
   New `MIGRATED` tap outcome (→ E36). `perf`-marked fill-pipeline
   micro-benchmark added (`tests/test_position_identity_perf.py`, 150 ms
   p50 tripwire). LB-F5 residual adopted: tier-0 reduce-only gate.
-- **R3 — retroactive reconcile**: mint-after-fill sweep kills F9 (flip
-  `LB-T2d`); reversal open legs heal on the next ACCOUNT_UPDATE mint.
-  LB-R3 (late-event parity) is the named design consideration. R2
-  hand-offs into this phase: (a) the mirror-ordering residue — a
-  stash-derived Defect-7 event can still fork a bounded stale-key
-  junction row that only converges on the next tpid-carrying event
-  (the R2-audit MAJOR-1 direction gate deliberately blocks stash-driven
-  migration; the no-later-event tail is retro-reconcile work); (b) the
-  replay guard exists-checks (position_id, calc_id) WITHOUT order_id
-  while the write is per-order — a second order of the same calc on the
-  same position never replays (R2-audit NIT-6, F9-family).
+- **R3 — retroactive reconcile** (**DONE 2026-07-15**): killed F9
+  (`LB-T2d` flipped). Mint-after-fill retro-sweep in the builder: a
+  tpid-carrying fill stamps pre-mint sibling fills (tpid + lifecycle)
+  and **delta-reconciles** the junction row — §5-Q2 DECIDED:
+  delta-reconcile adopted with the review constraints (evidence-gated:
+  no fills → NO-OP; keyed by ORDER eoid, never raw fills.tpid;
+  SUM(ABS); on-change only, RECONCILED tap — the R2 MIGRATED-outcome
+  precedent, → E36). The R2 direction gate EXTENDS to the sweep
+  (traced: an ungated sweep double-counts the mirror-ordering
+  mid-state). Free heal: F8-inflated/F9-starved HISTORICAL rows correct
+  themselves at the next fill/replay event. Hand-off (b) fixed: replay
+  guard now includes order_id (second-order-same-calc replays; battery
+  pin). CORRECTION to this bullet's original claim: reversal open legs
+  do NOT heal "on the next ACCOUNT_UPDATE mint" (no event reaches the
+  order) — they heal AT CLOSE via the retained backfill backstop (on
+  the strict-miss→walk path — R3-audit NIT-3 qualifier); the
+  no-later-tpid-event tail (incl. hand-off (a)'s residue) remains
+  bounded, noted for R5/T3. R5 riders from the R3 audit: lifecycle
+  sweep gains a rebuilt-namespace tpid filter (NIT-6, fence-structural
+  vs reachability-argued), T2d/T2e test banners get [FIXED] annotations
+  (NIT-5).
 - **R4 — lifecycle seal + pair coherence**: kills F4 + F7 (flip `LB-I5`,
   `LB-D6`); LB-D4's close-calc rule delegates to the owner (T3 scenario
   proves it).
@@ -219,7 +229,9 @@ extraction for free. Cross-ref added to the v2.6 plan §6. LB-R1/R2
    migration/rebuild AND either the manual lane routes through the live
    owner (resolving the db-binding caveat) or cross-instance safety is
    proven. Decide at the phase that wants the memo, not before.
-2. **Retro-sweep idempotency mechanism**: per-fill `identity_applied`
+2. **Retro-sweep idempotency mechanism** — **DECIDED at R3:
+   delta-reconcile adopted** with constraints (a)-(d) below, see §4-R3.
+   Original framing kept for the record: per-fill `identity_applied`
    marker column vs qty-delta reconcile (recompute junction
    contributed_qty from fills as source of truth). Delta-reconcile heals
    F8-inflated and F9-starved historical rows for free, and fills are a

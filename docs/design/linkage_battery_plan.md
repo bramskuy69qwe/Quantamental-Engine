@@ -105,8 +105,8 @@ verify at next touch, do not reimplement).
 
 Tier-1 battery result (2026-07-14): **24 tests = 17 passed + 7 strict-xfails**
 (dated snapshot — LB-F1/F2/F3 fixed 2026-07-14, LB-F5 fixed 2026-07-15,
-LB-F6/LB-F8 fixed 2026-07-15 at reconciler R2; the live xfail set is
-LB-D6/LB-I5/LB-T2d — the R3/R4 acceptance set);
+LB-F6/LB-F8 fixed 2026-07-15 at reconciler R2, LB-F9 at R3; the live
+xfail set is LB-D6/LB-I5 — the R4 acceptance set);
 every xfail is a verified engine divergence (mechanism re-read at the write
 site; `--runxfail` traceback confirms the mechanism assertion is what fails),
 and every xfail has a passing current-behavior pin twin (shared drive helper
@@ -124,7 +124,7 @@ the expected failure. Zero fixture-reason xfails.
 | LB-F7 | LB-D6 | `insert_closed_position` REPLACE binds `calc_id` unconditionally (db_orders.py:536, T234-intentional) while `lifecycle_id` carries forward when caller passes None (:462-465) → REPLACE (CALC-A,L1) with (CALC-B,None) yields ('CALC-B','L1') — calc B welded to calc A's lifecycle. Intentional per-column rules composing into mixed identity. | xfail(strict) |
 
 | LB-F8 | LB-T2e | **HA-42 CONFIRMED — mechanism CORRECTED vs both the HA-42 filing and the LB-D5 side obs** (audit-impact-imprecision +1): the filed per-fill dual-path is wrong — no replay runs in the fill hot path, and the prescribed Defect-7 shape does NOT over-count (pinned passing). The REAL over-count was a **guard-key/write-key divergence inside `_ensure_junction_if_linked`**: the guard exists-checked the ORDER's stashed tpid while the replayed synthetic fill carried `MAX(fills.tpid)` + `SUM(qty)`, which the builder prefers — a divergent stash never satisfied the guard → **N-fold, unbounded** contributed_qty inflation per WS/bracket-child event (behind a narrow stash gate; see the T2-audit severity framing in the git history of this row). | **FIXED 2026-07-15 (reconciler R2)**: `position_identity.ensure_junction_if_linked` now derives the fills-aggregate write key FIRST and exists-checks THAT key — guard ≡ write BY CONSTRUCTION. Consequences (named): `no_position_key` fires only when both fills-tpid AND stash are empty (a stash-empty order with tpid-carrying fills legitimately replays), and the no_opening_fill/junction_exists skip precedence swaps (fills read first). Battery pins the idempotent progression 1.0→1.0→1.0 |
-| LB-F9 | LB-T2d | **NEW — fill-before-mint UNDER-count (mirror of LB-F8)**: first fill with tpid="" + order tpid="" SKIPs (no_position_key :2264-2272); the mint lands with the SECOND fill which forms the junction with only its own qty (:2384-2404); Defect-1 backfill stamps the ORDER only (never sibling fills rows) and the sole retro lane is gated by the (position_id,calc_id) exists-check that fill 2's row already satisfies → replay SKIPs (junction_exists), first fill's qty + fills-row identity permanently stranded. Strand is specific to the fill-forms-row-first ordering (an order-update-first mint WOULD reconcile via the replay SUM). The LB-T2a reversal open leg lands in exactly this shape. Family 1. | xfail(strict) + pin twin (`test_linkage_battery_t2_pipeline.py`) |
+| LB-F9 | LB-T2d | **fill-before-mint UNDER-count (mirror of LB-F8)**: first fill with tpid="" + order tpid="" SKIPped; the mint landed with the SECOND fill which formed the junction with only its own qty; nothing folded the first fill in (Defect-1 stamps the ORDER only; the replay guard was satisfied by fill 2's row). The LB-T2a reversal open leg lands in the same shape. | **FIXED 2026-07-15 (reconciler R3)**: mint-after-fill retro-sweep in the builder — the tpid-carrying fill stamps pre-mint siblings (tpid+lifecycle) and **delta-reconciles** the junction row to `SUM(ABS(qty))` of the ORDER's opening fills (§5-Q2 decision: delta-reconcile adopted — evidence-gated, order-keyed, on-change; also heals F8/F9-shaped historical rows at the next event). Direction-gated like the R2 migration (stash-derived events never sweep). Companion NIT-6 fix: the replay guard now includes order_id (second order of the same calc replays). Residual tails (no-later-tpid-event opens; reversal legs) heal at close via the retained backstop |
 
 **Pinned composites / by-design (plain asserts, no xfail)**: LB-I3 — order can
 end LINKED to an `expired` calc (orders write gated only on `calc_id IS NULL`,
@@ -146,8 +146,9 @@ auto-link**). LB-T2b — `partially_actioned` has NO producer
 through partial closes. LB-T2h — one-way BOTH close fills strand through
 the whole pipeline (hedge-keyed tier-2 map is key-disjoint;
 ws_manager.py:431-435 KNOWN LATENT GAP; operator runs HEDGE). LB-T2a — the
-reversal open leg carries no position identity until the next
-ACCOUNT_UPDATE (lands in the LB-F9 shape).
+reversal open leg carries no position identity at split time (lands in
+the LB-F9 shape; heals at close via the walk-path backstop — R3
+correction: no mint event ever reaches the order).
 
 ### Mechanism-family triage (patch-vs-reconciler input, HANDOFF Track 1 §4)
 
@@ -231,8 +232,8 @@ coherence (F7).
 xfails flip strict-xfail → XPASS → markers removed, with all pins still
 green (behavior-preservation proof — the same guard the v2.6
 OrderManager extraction gets for free). Progress: LB-D3 flipped via the
-F5 patch (02eb743); LB-D5 + LB-T2e flipped at R2 (2026-07-15); LB-D6,
-LB-I5, LB-T2d remain — the R3/R4 set.
+F5 patch (02eb743); LB-D5 + LB-T2e flipped at R2; LB-T2d flipped at R3
+(2026-07-15); LB-D6 + LB-I5 remain — the R4 set.
 
 **Sequencing vs the roadmap**: ~~LB-F5 patch next~~ **done 2026-07-15**
 (tier-0 + reduce-only-gated stamp; LB-D3 xfail flipped), then the
