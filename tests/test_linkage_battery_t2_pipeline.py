@@ -359,6 +359,12 @@ class TestLBT2cLiquidation:
 
 # ── LB-T2d: fill-before-mint — first fill permanently stranded ─────────
 #
+# [FIXED at reconciler R3 (`b50b59c`) — R5/NIT-5 annotation: the banner
+# below documents the PRE-FIX mechanism this scenario was filed against
+# (kept as the historical record per plan §4 triage); the tests inside
+# pin the FIXED shape — mint-after-fill retro-sweep + evidence-gated,
+# order-keyed delta-reconcile in position_identity.]
+#
 # Entry fill tpid="" AND parent order tpid="" (nothing minted): the
 # builder's no-key path (order_manager.py:2264-2272 — Defect-7 fallback
 # reads the order tpid :2264-2266, then the residual empty key SKIPs
@@ -433,6 +439,44 @@ class TestLBT2dFillBeforeMint:
         assert junc[0]["contributed_qty"] == pytest.approx(2.0)
 
     @pytest.mark.asyncio
+    async def test_pin_sweep_skips_rebuilt_namespace_fills(self, real):
+        """R5 (R3-audit NIT-6 rider): the mint-after-fill LIFECYCLE sweep
+        is STRUCTURALLY fenced off the offline-rebuild namespaces — a
+        fill the fenced rebuild lane re-keyed to rebuilt:/bf: is never
+        stamped with the live trade's lifecycle even when it shares the
+        order (the §2.2 fence, previously reachability-argued only). The
+        tpid sweep was already safe by shape (empty-only)."""
+        om, db = real
+        await seed_calc(db, "CALC-N6", status="matched", window_seconds=300)
+        await seed_order(db, "O-N6", calc_id="CALC-N6", link_status="LINKED")
+        # Fill 1 lands pre-mint (stranded), then the rebuild lane re-keys
+        # it into the rebuilt: namespace.
+        await om._process_single_fill(
+            ACCOUNT_ID, fill("O-N6", "", 1.0, fid="F-N6A",
+                             ts=RECENT_MS + 1000))
+        await db._conn.execute(
+            "UPDATE fills SET terminal_position_id = "
+            "'rebuilt:BTCUSDT:LONG:1' WHERE exchange_fill_id = 'F-N6A'")
+        await db._conn.commit()
+        # Fill 2 carries the live mint → the R3 sweep + reconcile fire.
+        await om._process_single_fill(
+            ACCOUNT_ID, fill("O-N6", "POS-N6", 1.0, fid="F-N6B",
+                             ts=RECENT_MS + 2000))
+        f1 = await fill_by_fid(db, "F-N6A")
+        assert f1["terminal_position_id"] == "rebuilt:BTCUSDT:LONG:1"
+        assert f1["lifecycle_id"] is None          # the NIT-6 fence
+        f2 = await fill_by_fid(db, "F-N6B")
+        assert f2["terminal_position_id"] == "POS-N6"
+        assert f2["lifecycle_id"]                  # live fill still stamps
+        # The delta-reconcile SUM stays ORDER-keyed across namespaces
+        # (§5-Q2 (b) DECIDED: fills are evidence of the ORDER's true
+        # qty regardless of key namespace — only the lifecycle STAMP is
+        # fenced). Pins the boundary between the two rules.
+        junc = await junction_rows(db, "POS-N6")
+        assert len(junc) == 1
+        assert junc[0]["contributed_qty"] == pytest.approx(2.0)
+
+    @pytest.mark.asyncio
     async def test_pin_second_order_same_calc_replays(self, real):
         """R2-audit NIT-6 fix (R3): the replay guard now includes
         order_id — a SECOND order of the same calc on the same position
@@ -470,6 +514,12 @@ class TestLBT2dFillBeforeMint:
 
 
 # ── LB-T2e: HA-42 repro — mid-fill double-junction over-count ──────────
+#
+# [FIXED at reconciler R2 (`aa20957`) — R5/NIT-5 annotation: shape (2)
+# below documents the PRE-FIX guard-key/write-key divergence (kept as
+# the historical record + the HA-42 mechanism correction); the tests
+# inside pin the FIXED shape — guard ≡ write key by construction, the
+# 1.0→1.0→1.0 idempotent progression.]
 #
 # HEADLINE. Two shapes, both driven:
 #

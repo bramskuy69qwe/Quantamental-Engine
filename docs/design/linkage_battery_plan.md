@@ -107,7 +107,9 @@ Tier-1 battery result (2026-07-14): **24 tests = 17 passed + 7 strict-xfails**
 (dated snapshot — LB-F1/F2/F3 fixed 2026-07-14, LB-F5 fixed 2026-07-15,
 LB-F6/LB-F8 fixed 2026-07-15 at reconciler R2, LB-F9 at R3, LB-F4/LB-F7
 at R4 2026-07-15; the live xfail set is now **EMPTY** — all 9 findings
-FIXED, the battery is 61 plain-passing tests);
+FIXED, the battery is **62** plain-passing tests after R5's three pins:
+NIT-6 sweep fence, reused-slot close identity + live-enrich twin,
+migration rebuilt-namespace fence);
 every xfail is a verified engine divergence (mechanism re-read at the write
 site; `--runxfail` traceback confirms the mechanism assertion is what fails),
 and every xfail has a passing current-behavior pin twin (shared drive helper
@@ -236,7 +238,10 @@ OrderManager extraction gets for free). Progress: LB-D3 flipped via the
 F5 patch (02eb743); LB-D5 + LB-T2e flipped at R2; LB-T2d flipped at R3
 (2026-07-15); **LB-D6 + LB-I5 flipped at R4 (2026-07-15) — the
 acceptance xfail set is EMPTY**; LB-D4's owed T3 scenario shipped at R4
-too. Remaining: R5 close-out (holistic audit, E36, riders).
+too. **R5 close-out DONE 2026-07-15** (E36 + NIT-5/6 riders + R4
+residual (a) unsealed-basis + holistic 3-agent audit; residuals
+(d)-(f) filed in the reconciler plan §4-R4). The program's remaining
+acceptance item is §6-#5 live dogfood (operator-driven).
 
 **Sequencing vs the roadmap**: ~~LB-F5 patch next~~ **done 2026-07-15**
 (tier-0 + reduce-only-gated stamp; LB-D3 xfail flipped), then the

@@ -444,6 +444,7 @@ class TestLBI5LifecycleBleedOnTpidReuse:
         await om._build_close_row_for_fill(ACCOUNT_ID, f_part)
         assert len(await closed_rows(db, "POS-P")) == 1  # partial rung row
         junc = await junction_rows(db, "POS-P")
+        assert len(junc) == 1        # non-vacuous (R5 audit B3)
         assert all(r["sealed_ts"] is None for r in junc)
 
         # Scale-in after the partial (new calc + order, same live tpid):
@@ -471,6 +472,81 @@ class TestLBI5LifecycleBleedOnTpidReuse:
         junc = await junction_rows(db, "POS-P")
         assert len(junc) == 2
         assert all(r["sealed_ts"] == RECENT_MS + 4000 for r in junc)
+
+    @pytest.mark.asyncio
+    async def test_reused_slot_close_takes_live_trades_identity(self, real):
+        """R5 pin (R4 residual (a) fix): on a venue-reused tpid, the
+        primary-calc selection prefers the UNSEALED basis — trade 1
+        (sealed, larger contribution 3.0) must NOT out-rank the live
+        trade 2 (1.0) on trade 2's close-fill stamp and close row. Both
+        carry trade 2's coherent (calc, lifecycle) pair. Pre-R5 the
+        selector read all rows: A's 3.0 > B's 1.0 → trade 2's close
+        welded to (CALC-A, L1)."""
+        om, db = real
+        # Trade 1: 3.0 contribution, fully closed → sealed.
+        await seed_calc(db, "CALC-I5RA", status="matched", window_seconds=300)
+        await seed_order(db, "O-I5RA", calc_id="CALC-I5RA",
+                         link_status="LINKED", quantity=3.0)
+        await om._process_single_fill(
+            ACCOUNT_ID, fill("O-I5RA", "POS-R2", 3.0, fid="F-I5RA"))
+        junc = await junction_rows(db, "POS-R2")
+        l1 = junc[0]["lifecycle_id"]
+        await seed_order(db, "O-I5RAC", side="SELL", reduce_only=1,
+                         tp_trigger_price=None, sl_trigger_price=None,
+                         created_at_ms=RECENT_MS + 1500)
+        f_c1 = fill("O-I5RAC", "POS-R2", 3.0, fid="F-I5RAC", is_close=1,
+                    price=55000.0, realized_pnl=15000.0,
+                    ts=RECENT_MS + 2000)
+        await om._process_single_fill(ACCOUNT_ID, f_c1)
+        await om._build_close_row_for_fill(ACCOUNT_ID, f_c1)
+        junc = await junction_rows(db, "POS-R2")
+        assert junc[0]["sealed_ts"] is not None       # precondition: sealed
+
+        # Trade 2: fresh calc+order, SAME tpid slot, SMALLER qty (1.0).
+        await seed_calc(db, "CALC-I5RB", window_seconds=300)
+        await seed_order(db, "O-I5RB", created_at_ms=RECENT_MS + 3000)
+        await om._enrich_order_best_effort(
+            order_dict("O-I5RB", created_at_ms=RECENT_MS + 3000))
+        await om._process_single_fill(
+            ACCOUNT_ID, fill("O-I5RB", "POS-R2", 1.0, fid="F-I5RB",
+                             ts=RECENT_MS + 4000))
+        # The owner's pair read ranks only the unsealed (live) basis.
+        cid, lc = await om._position_primary_calc(ACCOUNT_ID, "POS-R2")
+        assert cid == "CALC-I5RB" and lc and lc != l1
+
+        # The LIVE-ENRICH twin applies the same basis rule (R5 audit B5:
+        # the exclusion is duplicated in _enrich_positions_calc_id, not
+        # shared — pin it directly so the live badge/linked-calc can't
+        # silently weld to the sealed trade on a reused slot).
+        from core.state import PositionInfo
+        live = PositionInfo(
+            ticker="BTCUSDT", direction="LONG", contract_amount=1.0,
+            average=50000.0, fair_price=50000.0, individual_unrealized=0.0,
+            position_value_usdt=50000.0,
+            entry_timestamp="2026-06-12T00:00:00+00:00",
+            sector="", position_id="POS-R2",
+        )
+        await om._enrich_positions_calc_id(ACCOUNT_ID, [live])
+        assert live.calc_id == "CALC-I5RB"
+        assert live.contributing_calc_ids == ["CALC-I5RB"]
+
+        # Trade 2 closes: close-fill stamp + close row carry ITS pair.
+        await seed_order(db, "O-I5RBC", side="SELL", reduce_only=1,
+                         tp_trigger_price=None, sl_trigger_price=None,
+                         created_at_ms=RECENT_MS + 4500)
+        f_c2 = fill("O-I5RBC", "POS-R2", 1.0, fid="F-I5RBC", is_close=1,
+                    price=52000.0, realized_pnl=2000.0,
+                    ts=RECENT_MS + 5000)
+        await om._process_single_fill(ACCOUNT_ID, f_c2)
+        await om._build_close_row_for_fill(ACCOUNT_ID, f_c2)
+        stamped = await fill_by_fid(db, "F-I5RBC")
+        assert stamped["calc_id"] == "CALC-I5RB"
+        assert stamped["lifecycle_id"] == lc
+        rows = [r for r in await closed_rows(db, "POS-R2")
+                if r["exit_time_ms"] == RECENT_MS + 5000]
+        assert len(rows) == 1
+        assert (rows[0]["calc_id"], rows[0]["lifecycle_id"]) == (
+            "CALC-I5RB", lc)
 
     @pytest.mark.asyncio
     async def test_disappearance_backstop_seals_recorded_never_final(self, real):

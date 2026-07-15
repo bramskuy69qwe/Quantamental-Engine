@@ -496,8 +496,11 @@ def find_opens_for_position_close_at(
 def _synthetic_pos_id(symbol: str, direction: str, entry_time_ms: int) -> str:
     """Deterministic synthetic position ID — same logical position
     always gets the same ID across reruns. Format mirrors the
-    db_orders.py:954 exchange-history backfill convention (``bf:...``).
-    Distinguishable as ``rebuilt:`` for traceability."""
+    exchange-history backfill convention (``bf:...``; see
+    synth_legacy_open_fills.ORPHAN_TPID_PREFIX — the db_orders line
+    once cited here moved). Distinguishable as ``rebuilt:`` for
+    traceability. Both namespaces are structurally FENCED from the
+    identity owner's migration + lifecycle-sweep passes (R5)."""
     return f"rebuilt:{symbol}:{direction}:{entry_time_ms}"
 
 

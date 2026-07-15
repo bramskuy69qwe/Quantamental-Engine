@@ -141,6 +141,14 @@ envelope-equivalent stream (modulo `component`); later phases change
 decisions ONLY where a ledger finding says so, each flipping a named
 battery xfail.
 
+**SUPERSEDED at R5 (second-order deviation, named)**: the
+`attr_identity_reconcile` category proposed above was NEVER added — the
+R2 implementation rode the new decisions as `attr_junction_form`
+OUTCOMES (MIGRATED, then RECONCILED at R3, SEALED at R4) pending E36,
+and E36 RATIFIES that as the final design (rationale in the erratum +
+§4-R5). The keep-the-10 half of this paragraph stands as shipped; only
+the new-category half is superseded.
+
 ## 3. Consumer disposition (the identity-writing sites @ `02eb743`)
 
 | Site (today) | Disposition |
@@ -270,10 +278,70 @@ battery xfail.
   recovery/rebuild lanes don't touch `positions_calcs`) — trades that
   final-closed while the engine was down keep unsealed junction rows
   under their venue tpids.
-- **R5 — close-out**: remove flipped xfail markers, holistic 3-agent audit,
-  spec erratum **E36** (attr_identity_reconcile registry + §12/§5.6-close
-  correction + component set + §5.6 site column), HANDOFF/memory refresh,
-  optional historical-residue backfill script (dry-run-first).
+  (d) **R5-holistic MED-1 (filed, not fixed)**: a junction row formed
+  AFTER the final-close seal on the same tpid (manual-link-after-close
+  replay; a genuinely late different-order fill) is unsealed by
+  construction, so the R5 unsealed-basis rule ranks the straggler ALONE
+  on a later close-row rebuild — a minority late-linked calc can
+  out-rank the sealed majority (pre-R5 the joint basis kept the
+  majority; the straggler also mints a phantom lifecycle + spurious
+  position:opened — the R4-known wart). ⚠ The audit's proposed fix
+  (inherit the seal whenever all existing rows are sealed) is WRONG —
+  it would seal a reused-slot NEW trade's first row at birth and break
+  LB-I5's fix (scale-in would mint a third lifecycle). CORRECT fix
+  shape (traced): inherit the seal only with FILL-TIMESTAMP EVIDENCE —
+  the straggler's opening fills all predate sealed_ts; a new trade's
+  post-date it. Needs its own battery scenario; reachability is
+  operator-manual-link-onto-a-closed-trade + a late close rebuild.
+  (e) R5-holistic LOW-2: on a reused tpid, T238's interleaved
+  per-rung builds can seal between one build's primary read and its
+  deltas read (basis flips mid-build) — fix shape: pass the primary
+  pair into `_compute_close_deltas` instead of re-reading.
+  (f) R5-holistic LOW-4 (pre-existing, not program-introduced): the
+  sticky `_tpsl_amended_seen` stash is raw-tpid-keyed and prune-timed
+  at the final build — a reused tpid can inherit the dead trade's
+  amend level on its close row. Same reuse family; not junction-based
+  so the basis rule can't cover it.
+- **R5 — close-out** (**DONE 2026-07-15**): xfail markers were already
+  gone (each flip removed its marker in-phase — verified zero live
+  markers). **E36 FILED with a NAMED DEVIATION from this plan's §2.3**:
+  `attr_identity_reconcile` was NOT added — the outcome-riding shipped
+  at R2–R4 (MIGRATED/RECONCILED/SEALED on `attr_junction_form`) is
+  RATIFIED as final, BECAUSE the new decisions are junction-row
+  mutations inside the formation flow (same identity tuple / dedup_key
+  family / corr chain as FORMED — a separate category would split one
+  decision flow across two greps), category-name stability is what the
+  §12 faithful-consolidation proof runs on, and outcome churn is
+  cheaper than registry churn (46-category registry snapshot-pinned;
+  no tooling filters between attr categories — verified). E36 also
+  records the §3 component-set addition (`position_identity`) and the
+  §5.6 site-column read; cookbook gained the outcome vocabulary + the
+  seal dedup_key. **R3-audit riders shipped**: NIT-6 — the R3
+  lifecycle sweep gained the STRUCTURAL `rebuilt:`/`bf:` namespace
+  fence (was reachability-argued; battery-pinned), NIT-5 — T2d/T2e
+  banners carry [FIXED] annotations. **R4 residual (a) FIXED**:
+  `position_primary_calc` AND the live-enrich twin now rank the
+  UNSEALED rows as the selection basis (fall back to ALL rows when
+  none unsealed, so post-close REPLACE-rebuilds keep their original
+  primary — no earliest-fill degradation); a reused-slot trade 2's
+  close-fill stamp / close row / live badge carry ITS pair even when
+  the sealed trade contributed more (battery-pinned, decisive 3.0-vs-
+  1.0 shape). Residual narrows to two SEALED trades sharing a reused
+  tpid (rebuild-time ranking joins them — documented, live adapters
+  never reuse). COUNT CORRECTION (honesty): at R4 commit the battery's
+  true count was **59** (5 files) — R4's "62" claim conflated a 6-file
+  run; R5's three pins (NIT-6 sweep fence, reused-slot close identity
+  + live-enrich twin, migration rebuilt-namespace fence) bring it to
+  **62**. The optional
+  historical-residue backfill script was DEFERRED (named deviation):
+  the R3 delta-reconcile already self-heals junction rows on touch,
+  the remaining residue is operator-parked cosmetic data (SPCX
+  ungrouped fills), and building a destructive live-DB tool
+  unprompted contradicts the operator-gated dry-run discipline —
+  available on request. Holistic 3-agent audit run + folds recorded in
+  the R5 commit. Remaining §6 acceptance item: **#5 live dogfood**
+  (operator-driven open→amend→close with `CORR_LOG_PROFILE=linkage`)
+  — flagged to the operator; everything self-verifiable is green.
 
 Sequencing: R1–R5 BEFORE v2.6's OrderManager extraction. Precise rationale
 (consistency-review MINOR-4): v2.6 Phase 1 moves the CONSTRUCTION site
@@ -320,8 +388,11 @@ extraction for free. Cross-ref added to the v2.6 plan §6. LB-R1/R2
    finality), and no finality marker exists on the row; the column is
    the mechanism, not just observability. Original framing kept for
    the record.
-4. **`attr_identity_reconcile` payload** shape — follow §5.6 conventions
-   (outcome + identity tuple verbatim + dedup_key); erratum E36 at R5.
+4. **`attr_identity_reconcile` payload** shape — **RESOLVED at R5: the
+   category does not exist** (superseded, §2.3 note). The decisions ship
+   as `attr_junction_form` outcomes (MIGRATED/RECONCILED/SEALED), each
+   following the §5.6 conventions (outcome + identity tuple verbatim +
+   dedup_key) — documented in erratum E36 + the cookbook.
 
 ## 6. Acceptance criteria (verbatim checklist for R5)
 

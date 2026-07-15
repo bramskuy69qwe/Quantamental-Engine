@@ -1,6 +1,6 @@
 # Correlation Log — Consolidated Spec
 
-**Status**: **IMPLEMENTED — program COMPLETE (Phases 0–5, 2026-06-14)**; design rev 2 audited (4 adversarial agents, 2026-06-10). As-built deviations in §15 (E1–E34).
+**Status**: **IMPLEMENTED — program COMPLETE (Phases 0–5, 2026-06-14)**; design rev 2 audited (4 adversarial agents, 2026-06-10). As-built deviations in §15 (E1–E36; E35–E36 filed by the linkage-battery + attribution-reconciler program, 2026-07-15 — NB §12's `attr_decide` consolidation was superseded by E36's outcome-riding).
 **Created**: 2026-06-10
 **Branch**: `v2.5/correlation-log`
 **Scope**: an observability spine — a uniform, correlation-id-threaded event
@@ -489,6 +489,9 @@ Nine categories (**TEN as-built** — CL.T5 added `attr_close_stamp`, §15
 E30). After the reconciler ships, these taps move to the single
 owner and collapse toward one `attr_decide` — the log will *prove* the
 consolidation is faithful (same decisions, one site; §12).
+(**Superseded as-built — §15 E36**: the reconciler SHIPPED 2026-07-15
+keeping the ten categories; no `attr_decide` collapse — the owner's new
+decisions ride `attr_junction_form` outcomes.)
 
 *Not* an attribution site (deliberate, so nobody re-adds it): the
 **reconciler** (`core/reconciler.py`) re-derives price extremes (MFE/MAE),
@@ -879,7 +882,8 @@ Out of scope here, but the log is shaped to de-risk it:
   regression *as a regression* (`attr_close_build` flipping strict-hit →
   strict-miss across the ⑨ commit).
 - The bus and webhook queues carry + re-bind corr_id (§6.2), so when the
-  reconciler emits its single `attr_decide`, it is automatically correlated
+  reconciler emits its single `attr_decide` (superseded — §15 E36: shipped
+  as `attr_junction_form` outcomes instead), it is automatically correlated
   to the inbound frame that triggered it — no extra wiring.
 
 ---
@@ -937,7 +941,9 @@ shipped code, named in one place so a fresh reader of any section below
 is not misled. E1–E12 = Phase-1 filing (2026-06-11); E13–E18 = Phase-2
 filing (2026-06-11, CL.T2a+T2b); E19–E28 = Phase-3 filing (2026-06-12,
 CL.T3a `3646a4d` + CL.T3b-entry `331f00c` + CL.T3b-close `b35389a` +
-CL.T3c `fd5b56e`); E29–E34 = Phase-5 close-out (2026-06-14, CL.T5).
+CL.T3c `fd5b56e`); E29–E34 = Phase-5 close-out (2026-06-14, CL.T5);
+E35–E36 = linkage battery + attribution-reconciler program
+(2026-07-15, LB-F5 `02eb743` + reconciler R1–R5).
 Each entry is documented at the code site and in its commit; this table
 is the spec-side record. "§" = the section whose literal text the
 as-built behavior deviates from.
@@ -979,6 +985,7 @@ as-built behavior deviates from.
 | E33 | §7.3 | **HA-13 ACCEPTED**: the `linkage` profile keeps dropping the whole `outbound` group (incl. the webhook `http_out_*` POST). NOT re-grouped | the webhook POST is a downstream NOTIFICATION, not a linkage decision (the linkage decision surface — attr/state/db/bus/ws_lifecycle — is fully retained); `http_out_*` is a generic category shared with Finnhub/FRED, so re-grouping would pull venue-REST/news noise into `linkage` or require splitting the category — disproportionate at single-tenant localhost where the default profile is `full` (everything visible). Re-elevate if linkage-profile webhook visibility is needed |
 | E34 | §5.5, §7.3 | **HA-24 ACCEPTED**: platform `account_update_applied` stays per-frame (~5 Hz when the Quantower plugin streams), NOT gated/sampled | the plugin is **not connected at this deployment** (Binance-direct); the per-frame cost is latent and bounded by the per-day MB guard; gating a STATE-group category per-source adds complexity for an inactive path (CLAUDE.md "don't build speculative"). Re-elevate when the Quantower plugin is wired |
 | E35 | §5.6 (E26) | `attr_tpid_resolve` gained a **tier-0 `parent_order`** (LB-F5, linkage battery 2026-07-15): the fill's own `exchange_order_id` → `orders.terminal_position_id`, consulted BEFORE `live_position`/`entry_order_fallback`. Emits only on a genuine resolution — a tier-0 read failure falls through silently (no ERROR envelope; keeps stub-DB fixtures and envelope counts stable). Close orders acquire their tpid via the close-side Defect-1 twin stamp in `_process_single_fill` (reduce-only + empty-only gated; copies whatever the fill carries post-⑨ — usually the ws live-position stamp, but a tier-1/2-resolved value freezes too) | the parent order is the strongest identity signal the fill carries; the (symbol,direction) tiers misroute a late close fill onto a same-slot reopen (battery LB-D3 / plan §7 sanctioned patch) |
+| E36 | §12 (:882), §5.6-close (:490), §3, §5.6 | **The attribution reconciler shipped (R1–R5, 2026-07-15; `core/position_identity.py`) with the TEN `attr_*` categories KEPT verbatim and NO new category** — neither §12's "single `attr_decide`" consolidation NOR the reconciler plan §2.3's proposed `attr_identity_reconcile`. The owner's genuinely-new decisions ride **`attr_junction_form` as outcome-vocabulary additions**: `MIGRATED` (R2 key migration — one line per migrated row, post-commit), `RECONCILED` (R3 delta-reconcile — on-change only, carries old/new qty + swept-fill count), `SEALED` (R4 lifecycle seal-at-close — emitted only when rows actually sealed; dedup_key `seal:{terminal_position_id}:{sealed_ts}`). The registry stays **46** categories. §3's `component` set gains **`position_identity`**: the moved decision sites (`attr_tpid_resolve` close-fill lane, `attr_junction_form` incl. the replay lane) now emit with it — NB `attr_tpid_resolve` is MIXED-component: the E26 `via=snapshot_recovery` lane did NOT move and stays `order_manager` — while `attr_close_stamp`/`attr_enrich`/`attr_drift_check` stay `order_manager` and `attr_match_attempt`/`attr_bracket_inherit`/`attr_reenrich_trigger`/`attr_funding_assign` keep their original owning modules (§5.6 site column read accordingly) | Deviation-discipline record — "outcome-riding INSTEAD OF a new category BECAUSE": (1) category-name stability is what §12's faithful-consolidation proof runs on (pre/post `attr_*` diffs compare like-for-like; R1 shipped envelope-equivalent modulo `component`); (2) migration/reconcile/seal are junction-ROW mutations inside the formation flow — same identity tuple, same dedup_key family, same corr chain as their FORMED/SKIPPED siblings; a separate category would split one decision flow across two greps; (3) no tooling filters between attr categories (cookbook + `corr_tail.py` verified — `attr_*` and per-category greps both keep working); (4) outcome churn is cheaper than registry churn (the 46-category registry is snapshot-pinned; profiles/tests unchanged) |
 
 Confirmed **code gaps** (spec is right, code owes the fields — filed
 HA-9; **DOWNGRADED to opportunistic at CL.T5** — payload-FIELD-completeness

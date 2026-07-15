@@ -454,6 +454,38 @@ class TestLBD5JunctionDualKey:
         assert len({r["lifecycle_id"] for r in junc}) == 1
 
     @pytest.mark.asyncio
+    async def test_pin_migration_never_drags_rebuilt_rows(self, real):
+        """R5 pin (holistic-audit LOW-3): the R2 key migration is
+        structurally fenced off the offline-rebuild namespaces — a
+        script-written junction row keyed rebuilt:/bf: for the same
+        (calc, order) is never merged/re-keyed onto the live canonical
+        key (operator tooling owns its rows), while the live fill still
+        forms its own row normally."""
+        om, db = real
+        await seed_calc(db, "CALC-D5R", status="matched", window_seconds=300)
+        oid = await seed_order(db, "O-D5R", calc_id="CALC-D5R",
+                               link_status="LINKED")
+        # Script-written junction row under the rebuilt: namespace.
+        await db.upsert_position_calc_link({
+            "position_id": "rebuilt:BTCUSDT:LONG:9", "calc_id": "CALC-D5R",
+            "order_id": oid, "account_id": ACCOUNT_ID,
+            "contributed_qty": 5.0, "first_fill_ts": RECENT_MS - 1000,
+            "last_fill_ts": RECENT_MS - 1000, "lifecycle_id": "L-REBUILT",
+        })
+        # Live fill carrying its own tpid → would trigger migration of
+        # any stale (calc, order) row; the rebuilt row must be skipped.
+        await om._process_single_fill(
+            ACCOUNT_ID, fill("O-D5R", "POS-D5R", 1.0, fid="F-D5R",
+                             ts=RECENT_MS + 1000))
+        junc = {r["position_id"]: r for r in await junction_rows(db)
+                if r["calc_id"] == "CALC-D5R"}
+        assert set(junc) == {"rebuilt:BTCUSDT:LONG:9", "POS-D5R"}
+        assert junc["rebuilt:BTCUSDT:LONG:9"]["contributed_qty"] == (
+            pytest.approx(5.0))                      # untouched
+        assert junc["rebuilt:BTCUSDT:LONG:9"]["lifecycle_id"] == "L-REBUILT"
+        assert junc["POS-D5R"]["contributed_qty"] == pytest.approx(1.0)
+
+    @pytest.mark.asyncio
     async def test_pin_mirror_ordering_gate_and_convergence(self, real):
         """R2-audit MAJOR-1 direction gate: a STALE stash must never pull
         a correct fills-derived row onto the dead key. Mirror ordering:

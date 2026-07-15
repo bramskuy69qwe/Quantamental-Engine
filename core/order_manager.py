@@ -1954,8 +1954,10 @@ class OrderManager:
         The primary is the most-contributing calc in the position's
         ``positions_calcs`` junction — largest ``contributed_qty``,
         tie-break earliest ``first_fill_ts`` (spec §3.2, the same basis
-        as the close-row delta computation in T2.5/T2.6). All junction
-        rows for one position share the same ``lifecycle_id``.
+        as the close-row delta computation in T2.5/T2.6). Junction rows
+        share one ``lifecycle_id`` per ECONOMIC trade (post-R4 a
+        venue-reused tpid can carry a second, sealed trade's rows —
+        the owner's unsealed-basis rule scopes the read, R5).
 
         Closing fills usually carry no calc_id of their own (reduce-only
         TP/SL/manual closes never pass through the matcher); this
@@ -2216,7 +2218,7 @@ class OrderManager:
         try:
             async with self._db._conn.execute(
                 "SELECT position_id, calc_id, contributed_qty, planned_size, "
-                "planned_tp, planned_sl "
+                "planned_tp, planned_sl, sealed_ts "
                 "FROM positions_calcs WHERE account_id = ? "
                 "ORDER BY first_fill_ts ASC, id ASC",
                 (account_id,),
@@ -2241,10 +2243,20 @@ class OrderManager:
         # the calc's planned_size snapshot. Rows arrive ordered by
         # first_fill_ts ASC, and dict preserves insertion order, so a calc's
         # first appearance fixes its tie-break rank (earliest first_fill).
+        # R5 (R4 residual (a)) — same UNSEALED-basis rule as the owner's
+        # position_primary_calc (T240 convergence): a position with ANY
+        # unsealed junction rows aggregates ONLY those, so on a
+        # venue-reused tpid the sealed (closed) trade's rows can't paint
+        # the LIVE trade's badge/calc. An all-sealed position (the brief
+        # post-final-close window before the snapshot drops it) keeps the
+        # full-rows basis.
+        _has_unsealed = {r[0] for r in rows if r[6] is None and r[0]}
         per_pos: Dict[str, Dict[str, Dict[str, Any]]] = {}
-        for pid, cid, qty, planned, p_tp, p_sl in rows:
+        for pid, cid, qty, planned, p_tp, p_sl, sealed in rows:
             if not pid or not cid:
                 continue
+            if sealed is not None and pid in _has_unsealed:
+                continue  # sealed rows excluded when the trade has live rows
             calcs = per_pos.setdefault(pid, {})
             agg = calcs.get(cid)
             if agg is None:

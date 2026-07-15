@@ -170,7 +170,7 @@ strings and compare only within a category (verified against code,
 | `attr_match_attempt` | triggering-order key (see `calc_correlation.py`) |
 | `attr_tpid_resolve` | `{fill_id}:tpid_resolve` |
 | `attr_close_build` | `close:{fill_id}` |
-| `attr_junction_form` | `junction:{fill_id}`, replay path `replay:{exchange_order_id}` |
+| `attr_junction_form` | `junction:{fill_id}`, replay path `replay:{exchange_order_id}`, seal `seal:{terminal_position_id}:{sealed_ts}` (E36) |
 | `attr_bracket_inherit` | `{leg_exchange_order_id}:inherit:{src_calc_id}` |
 | `attr_reenrich_trigger` | `{exchange_order_id}:reenrich_fill` |
 | manual link/unplanned (`attr_match_attempt` via link_actions) | `manual:{order_id}:{calc_id}` / `manual:{order_id}:unplanned` |
@@ -224,6 +224,21 @@ triggering frame — E27).
   reason:"junction_exists"` and steady bracket SKIPPED lines are the
   normal idle chatter of a linked order at `full` — volume, not signal;
   the CL.T5 volume pass owns the dedup decision.
+- **Reconciler outcomes on `attr_junction_form`** (E36, reconciler
+  R2–R4): `MIGRATED` (junction row re-keyed/merged to the canonical
+  tpid), `RECONCILED` (contributed_qty delta-reconciled to the order's
+  true opening SUM; carries old/new qty), `SEALED` (lifecycle sealed at
+  the final close). All three are on-change/actionable — one line per
+  actual mutation, never idle chatter; an ENDLESSLY repeating
+  MIGRATED/RECONCILED across events is a finding (caveats: one fill
+  migrating ≥2 stale rows legitimately emits multiple same-key
+  MIGRATED lines in ONE pass — `old_key` differs; and builder lines
+  reached via the replay lane carry NO dedup_key, the synth fill has
+  no fill id). Owner-emitted attr lines
+  (`attr_tpid_resolve` close-fill lane, `attr_junction_form`) carry
+  `component:"position_identity"` since reconciler R1 (the
+  snapshot-recovery `attr_tpid_resolve` lane stays `order_manager` —
+  E36) — filter by category as always; component is informational.
 
 ---
 

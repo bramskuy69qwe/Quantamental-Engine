@@ -435,7 +435,7 @@ class PositionIdentity:
             return None, None
         try:
             async with self._db._conn.execute(
-                "SELECT calc_id, lifecycle_id, contributed_qty "
+                "SELECT calc_id, lifecycle_id, contributed_qty, sealed_ts "
                 "FROM positions_calcs "
                 "WHERE position_id = ? AND account_id = ? "
                 "ORDER BY first_fill_ts ASC, id ASC",
@@ -448,19 +448,34 @@ class PositionIdentity:
                 exc_info=True,
             )
             return None, None
+        # R5 (R4 residual (a)): prefer the UNSEALED rows as the selection
+        # basis. On a venue-reused tpid the junction holds BOTH the sealed
+        # (closed) trade's rows and the live trade's — without this, the
+        # closed trade's contribution can out-rank (or tie-break ahead of)
+        # the live trade's, welding the OLD identity onto the NEW trade's
+        # close row / close-fill stamp / live badge. When NO unsealed rows
+        # exist (the normal post-final-close case — everything sealed at
+        # is_final), fall back to ALL rows so a REPLACE-rebuild of a final
+        # row keeps its original primary instead of degrading to the
+        # earliest-fill fallback. Residual (documented, plan §4-R4): two
+        # SEALED trades sharing a reused tpid still rank jointly.
+        unsealed = [r for r in links if r[3] is None]
+        basis = unsealed or links
         # Rows ordered by first_fill_ts ASC. Primary = the calc with the
         # largest SUMMED contributed_qty (spec §3.2/§12.4 per-CALC, not the
         # largest single row), tie-break earliest first_fill — via the shared
         # _most_contributing_calc_id helper so this (close-path) and
-        # _enrich_positions_calc_id (live/rehydrate) cannot diverge (T240/R1).
-        primary_cid = _most_contributing_calc_id([(r[0], r[2]) for r in links])
+        # _enrich_positions_calc_id (live/rehydrate) cannot diverge (T240/R1;
+        # the enrich path applies the SAME unsealed-basis rule).
+        primary_cid = _most_contributing_calc_id([(r[0], r[2]) for r in basis])
         if primary_cid is None:
             return None, None
         # lifecycle_id is shared across a position's junction rows; prefer the
-        # primary calc's, fall back to any non-null.
+        # primary calc's, fall back to any non-null (within the same basis —
+        # the sealed trade's lifecycle must not leak into the live pair).
         lifecycle_id = (
-            next((r[1] for r in links if r[0] == primary_cid and r[1]), None)
-            or next((r[1] for r in links if r[1]), None)
+            next((r[1] for r in basis if r[0] == primary_cid and r[1]), None)
+            or next((r[1] for r in basis if r[1]), None)
         )
         return primary_cid, lifecycle_id
 
@@ -643,6 +658,15 @@ class PositionIdentity:
                     stale_rows = await cur.fetchall()
             for srow in stale_rows:
                 old_key = srow[1]
+                # R5 (holistic-audit LOW-3 — the NIT-6 stance applied
+                # symmetrically): never migrate a junction row keyed
+                # under the offline-rebuild namespaces. Those rows are
+                # operator-tooling-written (scripts/ backfill lane);
+                # dragging one onto a live key would mutate
+                # script-owned history AND re-key its rebuilt-namespace
+                # fills. Structural fence, not reachability-argued.
+                if old_key.startswith(("rebuilt:", "bf:")):
+                    continue
                 async with self._db._conn.execute(
                     "SELECT id FROM positions_calcs "
                     "WHERE position_id = ? AND calc_id = ? AND order_id = ? "
@@ -905,10 +929,22 @@ class PositionIdentity:
                     (pos_id, account_id, eoid),
                 )
                 swept = cur_sweep.rowcount or 0
+                # R5 (R3-audit NIT-6 rider): STRUCTURAL rebuilt-namespace
+                # fence, not reachability-argued. The §2.2 fence promises
+                # the owner's retro passes never mutate rows whose fills
+                # live under the offline-rebuild namespaces; the tpid
+                # sweep above is empty-only (rebuilt-safe by shape), but
+                # this lifecycle stamp matched ANY of the order's opening
+                # fills — including ones the fenced rebuild lane re-keyed
+                # to `rebuilt:`/`bf:`. Exclude those namespaces outright.
                 await self._db._conn.execute(
                     "UPDATE fills SET lifecycle_id = ? "
                     "WHERE account_id = ? AND exchange_order_id = ? "
-                    "  AND is_close = 0 AND lifecycle_id IS NULL",
+                    "  AND is_close = 0 AND lifecycle_id IS NULL "
+                    "  AND COALESCE(terminal_position_id, '') "
+                    "      NOT LIKE 'rebuilt:%' "
+                    "  AND COALESCE(terminal_position_id, '') "
+                    "      NOT LIKE 'bf:%'",
                     (lifecycle_id, account_id, eoid),
                 )
                 async with self._db._conn.execute(
