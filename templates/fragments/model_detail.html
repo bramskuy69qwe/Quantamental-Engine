@@ -1,7 +1,7 @@
-{# Model detail fragment (v2.7 Phase 3; plan 4.3 minimal — the
-   "Load into Calculator" action lands in Phase 4/5 with the picker).
-   Vars: model (decoded row), runs (list_model_backtests), adapters
-   (list_backtest_adapters rows). #}
+{# Model detail fragment (v2.7 Phase 3; plan 4.3 — the "Load into
+   Calculator" action shipped in P4 below; the P5 picker consumes its
+   ?model_id= param). Vars: model (decoded row), runs
+   (list_model_backtests), adapters (list_backtest_adapters rows). #}
 {% set rp = model.risk_preset or {} %}
 {% set st = model.strategy or {} %}
 <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
@@ -13,6 +13,12 @@
     </div>
   </div>
   <div style="display:flex;gap:6px;flex-shrink:0;">
+    {# P4: navigates to the calculator carrying the model id; Phase 5's
+       picker consumes ?model_id= via /calculator/prefill/{id}. Until
+       then it opens the calculator unprefixed — harmless forward-wiring. #}
+    <a class="btn btn-ghost btn-sm" href="/calculator?model_id={{ model.id }}"
+       title="Opens the Calculator carrying ?model_id — prefill lands in Phase 5">
+      Load into Calculator</a>
     <button class="btn btn-ghost btn-sm"
             hx-get="/fragments/models/form/{{ model.id }}"
             hx-target="#model-detail" hx-swap="innerHTML">Edit</button>
@@ -65,7 +71,13 @@
 </div>
 
 <div style="margin-top:12px;">
-  <div style="font-size:.62rem;font-weight:700;color:var(--sub);text-transform:uppercase;">Imported backtests</div>
+  <div style="display:flex;align-items:center;gap:8px;">
+    <div style="font-size:.62rem;font-weight:700;color:var(--sub);text-transform:uppercase;">Imported backtests</div>
+    {# P4: wires the standalone refresh hook (frag_model_backtests). #}
+    <button class="btn btn-ghost btn-sm"
+            hx-get="/fragments/models/backtests/{{ model.id }}"
+            hx-target="#model-backtest-list" hx-swap="innerHTML">&#8635;</button>
+  </div>
   {% include "fragments/model_backtest_upload.html" %}
   <div id="model-backtest-list" style="margin-top:6px;">
     {# error is part of the included fragment's contract — pass it

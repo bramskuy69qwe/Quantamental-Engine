@@ -130,6 +130,15 @@ async def api_delete_model(model_id: int):
     return JSONResponse({"status": "deleted"})
 
 
+# ── Page (v2.7 Phase 4 — moved here from 3.2 once the template existed) ─────
+
+@router.get("/models", response_class=HTMLResponse)
+async def models_page(request: Request):
+    return templates.TemplateResponse(
+        request, "model_library.html", _ctx(request, active_page="models")
+    )
+
+
 # ── Fragments (GET — TemplateResponse + _ctx house idiom) ────────────────────
 
 @router.get("/fragments/models/list", response_class=HTMLResponse)

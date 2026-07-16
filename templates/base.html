@@ -481,6 +481,7 @@
         ('needs_link', '/orders/needs_link'),
         ('analytics',  '/analytics'),
         ('backtest',   '/backtest'),
+        ('models',     '/models'),
         ('regime',     '/regime'),
       ] %}
       {% for page_key, url in nav_items %}
@@ -569,6 +570,7 @@
   'config':     ('Configuration','Accounts · connections · risk parameters'),
   'analytics':  ('Analytics',   'Portfolio performance · equity curve · pairs'),
   'backtest':   ('Backtest',    'Strategy simulation · model management · QT import'),
+  'models':     ('Model Library', 'Reusable strategy models · risk presets · imported backtests'),
   'regime':     ('Regime Classifier', 'Macro classifier · signals · timeline'),
 } %}
 {% if active_page in page_meta %}

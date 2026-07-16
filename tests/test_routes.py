@@ -49,6 +49,7 @@ PAGE_ROUTES = [
     "/params",
     "/analytics",
     "/backtest",
+    "/models",  # v2.7 P4: model-library page
     "/regime",
 ]
 
