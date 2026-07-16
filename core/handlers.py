@@ -615,6 +615,9 @@ async def handle_risk_calculated(payload: Dict[str, Any]) -> None:
                 "direction":      payload.get("side", ""),
                 "window_seconds": account_config.window_seconds,
                 "model_name":     payload.get("model_name", ""),
+                # v2.7 5.2 (optional plan item): the model-library FK rides
+                # the event too — additive for consumers.
+                "model_id":       payload.get("model_id"),
                 "tags":           payload.get("tags"),
                 "operator_id":    operator_id,  # P9.T3 (active session seat)
             })

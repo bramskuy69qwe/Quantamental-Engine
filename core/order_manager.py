@@ -2783,6 +2783,17 @@ class OrderManager:
             _trace["calc_id"] = close_calc_id or ""
             _trace["lifecycle_id"] = close_lifecycle_id or ""
 
+            # v2.7 5.4 (P5 audit MED-1): the shortfall-window heuristic name
+            # is FALLBACK-ONLY — when the position HAS a calc, blank it so
+            # insert_closed_position stamps model_id + model_name from THAT
+            # calc's pre_trade_log row instead. Without this gate a window
+            # collision (two model-named calcs for the symbol within 300s —
+            # the T234 mis-attribution limit) lands a mismatched pair:
+            # model_id from the primary calc, model_name from a different
+            # calc. Heuristic name survives only on calc-less positions.
+            if close_calc_id:
+                model_name = ""
+
             # ── T2.5: close-time deltas vs the most-contributing calc ───
             # Spec §3.2 delta-basis rule. Best-effort (try/except → {}),
             # so a junction/calc read failure never blocks the close-row

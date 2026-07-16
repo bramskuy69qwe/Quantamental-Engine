@@ -206,6 +206,27 @@
 
       <!-- ── Amounts + Model ──────────────────────────────────────────── -->
       <div class="card card-p8" style="margin-bottom:6px;">
+        {# v2.7 5.1: model-library picker. A REGULAR persistent form field —
+           model_id re-rides every recalc, so a superseding calc keeps its
+           model. Selecting fetches /calculator/prefill/{id} and fills the
+           mappable preset fields: the regime toggle (VISIBLE checkbox AND
+           its hidden input — P4 audit), the size override, and the
+           free-text model name when empty. Deliberately NOT mapped:
+           risk_pct / tp+sl methodology / sizing_rule (no form fields —
+           engine-level or informational) and window_seconds (the preset
+           key is the MATCHER window; the form select is the exec-link
+           override — conflating the two is the T215 column-duality trap).
+           ?model_id= from the P4 "Load into Calculator" anchor is consumed
+           on page load (select + prefill). #}
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;flex-wrap:wrap;">
+          <label class="lbl" style="margin-bottom:0;">Model (library):</label>
+          <select name="model_id" id="model-picker" tabindex="13"
+                  style="height:24px;font-size:.65rem;min-width:160px;"
+                  onchange="applyModelPrefill(this.value)">
+            <option value="">— none —</option>
+          </select>
+          <span id="model-prefill-status" style="font-size:.6rem;color:var(--sub);"></span>
+        </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
           <div>
             <label class="lbl" style="display:block;margin-bottom:3px;">TP Amount (%)</label>
@@ -224,6 +245,64 @@
             <input type="text" name="model_desc" tabindex="8" placeholder="optional notes" />
           </div>
         </div>
+        <script>
+        async function loadModelPicker(){
+          try{
+            var r = await fetch('/api/models');
+            if(!r.ok) return;
+            var models = await r.json();
+            var sel = document.getElementById('model-picker');
+            models.forEach(function(m){
+              var o = document.createElement('option');
+              o.value = m.id; o.textContent = m.name;
+              sel.appendChild(o);
+            });
+            /* v2.7 5.1 (P4 audit carry-forward): consume ?model_id= from the
+               Load-into-Calculator anchor — select + trigger the prefill.
+               Fallback (P5 audit): restore the SAVED picker value (value
+               only, no prefill re-run — restoreCalcState already restored
+               the text fields; the options load async, so this can't live
+               in restoreCalcState itself). Query param wins. */
+            var qid = new URLSearchParams(window.location.search).get('model_id');
+            if(qid && sel.querySelector('option[value="'+CSS.escape(qid)+'"]')){
+              sel.value = qid;
+              applyModelPrefill(qid);
+            } else {
+              try{
+                var _s = JSON.parse(localStorage.getItem('calc_state')||'{}');
+                if(_s.modelId && sel.querySelector('option[value="'+CSS.escape(_s.modelId)+'"]')){
+                  sel.value = _s.modelId;
+                }
+              }catch(e){}
+            }
+          }catch(e){/* picker stays empty — calculator works without it */}
+        }
+        async function applyModelPrefill(id){
+          var status = document.getElementById('model-prefill-status');
+          if(!id){ status.textContent=''; return; }
+          try{
+            var r = await fetch('/calculator/prefill/'+id);
+            if(!r.ok){ status.textContent='prefill unavailable'; return; }
+            var d = await r.json();
+            var rp = d.risk_preset || {};
+            if('apply_regime_multiplier' in rp){
+              var cb = document.getElementById('regime-checkbox');
+              cb.checked = !!rp.apply_regime_multiplier;
+              /* the toggle's onchange only fires on user clicks — set the
+                 hidden input too or UI and submitted value diverge */
+              document.getElementById('apply_regime_val').value = cb.checked ? '1' : '0';
+            }
+            if(rp.size_override_default != null){
+              var so = document.getElementById('size-override-input');
+              if(so) so.value = rp.size_override_default;
+            }
+            var mn = document.querySelector('[name="model_name"]');
+            if(mn && !mn.value) mn.value = d.name;
+            status.textContent = 'preset loaded: ' + d.name;
+          }catch(e){ status.textContent = 'prefill failed'; }
+        }
+        loadModelPicker();
+        </script>
         {# P8.T4b (spec §10.1): operator SIZE override (contracts). Blank → the
            engine-recommended size is used. When set, the calc recomputes
            notional / profit / loss / exposure / eligibility for this size and
@@ -892,6 +971,10 @@ function clearCalculator(){
   document.querySelector('[name="tp_amount_pct"]').value='100';document.querySelector('[name="sl_amount_pct"]').value='100';
   var _tplr=document.getElementById('tp-ladder-rows');if(_tplr){_tplr.innerHTML='';updateTpLadderSum();}
   document.querySelector('[name="model_name"]').value='';document.querySelector('[name="model_desc"]').value='';
+  /* v2.7 5.1 (P5 audit): Clear must drop the picker too — otherwise the
+     next calc silently re-tags the previous model_id with empty text. */
+  var _mp=document.getElementById('model-picker');if(_mp)_mp.value='';
+  var _mps=document.getElementById('model-prefill-status');if(_mps)_mps.textContent='';
   document.getElementById('price-preview').innerHTML='TP: — &nbsp;|&nbsp; SL: —';document.getElementById('pct-preview').innerHTML='TP: — &nbsp;|&nbsp; SL: —';
   ['ss-ticker','ss-entry','ss-tp','ss-sl','ss-size'].forEach(function(id){document.getElementById(id).value='—';});
   _sizeUnit='notional';setSizeUnit('notional');setOrderType('market');setTpSlMode('price');
@@ -905,7 +988,7 @@ function clearCalculator(){
 
 // ── State persistence ─────────────────────────────────────────────────────
 function saveCalcState(){
-  try{localStorage.setItem('calc_state',JSON.stringify({orderType:_orderType,ticker:document.getElementById('ticker-input').value,limitPrice:document.getElementById('limit-price').value,tpslMode:_tpslMode,side:_side,tpPrice:document.getElementById('tp-price-input').value,slPrice:document.getElementById('sl-price-input').value,tpPct:document.getElementById('tp-pct-input').value,slPct:document.getElementById('sl-pct-input').value,tpAmountPct:document.querySelector('[name="tp_amount_pct"]').value,slAmountPct:document.querySelector('[name="sl_amount_pct"]').value,modelName:document.querySelector('[name="model_name"]').value,modelDesc:document.querySelector('[name="model_desc"]').value,sizeUnit:_sizeUnit}));
+  try{localStorage.setItem('calc_state',JSON.stringify({orderType:_orderType,ticker:document.getElementById('ticker-input').value,limitPrice:document.getElementById('limit-price').value,tpslMode:_tpslMode,side:_side,tpPrice:document.getElementById('tp-price-input').value,slPrice:document.getElementById('sl-price-input').value,tpPct:document.getElementById('tp-pct-input').value,slPct:document.getElementById('sl-pct-input').value,tpAmountPct:document.querySelector('[name="tp_amount_pct"]').value,slAmountPct:document.querySelector('[name="sl_amount_pct"]').value,modelName:document.querySelector('[name="model_name"]').value,modelDesc:document.querySelector('[name="model_desc"]').value,modelId:document.getElementById('model-picker')?document.getElementById('model-picker').value:'',sizeUnit:_sizeUnit}));
   if(_hasCalculated)sessionStorage.setItem('calc_result',document.getElementById('calc-result').innerHTML);}catch(e){}
 }
 function restoreCalcState(){

@@ -393,6 +393,10 @@ def _build_row(
         # "manual") — consistent with the live close path's enum + the P0.T5
         # backfill (manual→MANUAL_OTHER).
         "exit_reason":          "MANUAL_OTHER",
+        # v2.7 5.4: left empty HERE (this builder is pure, no DB access) —
+        # insert_closed_position resolves model_id + model_name from
+        # calc_id at write time (the choke-point enrichment), so rebuilt
+        # rows carry model attribution when their calc is tagged.
         "model_name":           "",
         "source":               "rebuilt_from_fills",
         "calc_id":              calc_id,

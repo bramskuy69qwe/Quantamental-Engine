@@ -30,6 +30,9 @@
         {{ sort_th("Close",      "exit_time_ms",   ep, tid, sort_by, sort_dir, qs) }}
         {{ sort_th("Symbol",     "symbol",         ep, tid, sort_by, sort_dir, qs) }}
         {{ sort_th("Dir",        "direction",       ep, tid, sort_by, sort_dir, qs) }}
+        {# v2.7 5.3: the model stamp (5.4 writes it from the primary calc;
+           free-text names on legacy rows render the same way). #}
+        {{ sort_th("Model",      "model_name",      ep, tid, sort_by, sort_dir, qs) }}
         {# #2 (debug 2026-06-08): calc-linkage "Plan" badge — on-plan / amended /
            off-plan for calc-linked closes; "—" for unlinked/legacy rows. #}
         <th>Plan</th>
@@ -58,6 +61,7 @@
           <td class="td-ts">{{ ms_to_local(r.exit_time_ms) }}</td>
           <td class="td-symbol">{{ r.symbol }}</td>
           <td class="{{ 'pos-long' if r.direction == 'LONG' else 'pos-short' }}">{{ r.direction }}</td>
+          <td class="td-sub" title="{{ r.model_name }}">{{ r.model_name or '—' }}</td>
           {# #2: Plan badge — rendered only for calc-linked rows (deviation_badge
              is "" for unlinked/legacy, which the macro skips → show a "—"). #}
           <td>{% if r.calc_id %}{{ deviation_badge(r.deviation_badge, r.size_delta_pct, r.cumulative_amendment_count, r.tpsl_amended) }}{% else %}<span class="td-sub">—</span>{% endif %}</td>

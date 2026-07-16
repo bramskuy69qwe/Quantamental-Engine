@@ -121,7 +121,7 @@ class TradesMixin:
                 """INSERT INTO pre_trade_log (
                     account_id, timestamp, ticker, average, side, one_percent_depth, individual_risk,
                     tp_price, tp_amount_pct, tp_usdt, sl_price, sl_amount_pct, sl_usdt,
-                    model_name, model_desc, risk_usdt, atr_c, atr_category,
+                    model_name, model_desc, model_id, risk_usdt, atr_c, atr_category,
                     est_slippage, effective_entry, size, notional,
                     est_profit, est_loss, est_r, est_exposure, eligible, calc_id,
                     link_window_seconds_override,
@@ -132,7 +132,7 @@ class TradesMixin:
                 ) VALUES (
                     :account_id, :timestamp, :ticker, :average, :side, :one_percent_depth, :individual_risk,
                     :tp_price, :tp_amount_pct, :tp_usdt, :sl_price, :sl_amount_pct, :sl_usdt,
-                    :model_name, :model_desc, :risk_usdt, :atr_c, :atr_category,
+                    :model_name, :model_desc, :model_id, :risk_usdt, :atr_c, :atr_category,
                     :est_slippage, :effective_entry, :size, :notional,
                     :est_profit, :est_loss, :est_r, :est_exposure, :eligible, :calc_id,
                     :link_window_seconds_override,
@@ -157,6 +157,11 @@ class TradesMixin:
                     "sl_usdt":           row.get("sl_usdt", 0),
                     "model_name":        row.get("model_name", ""),
                     "model_desc":        row.get("model_desc", ""),
+                    # v2.7 5.2: the model-library FK (nullable — a model
+                    # need not be selected). NB the corr-log db_write tap
+                    # payload below is FROZEN (pinned) — model_id rides the
+                    # row only, not the tap.
+                    "model_id":          row.get("model_id"),
                     "risk_usdt":         row.get("risk_usdt", 0),
                     "atr_c":             str(row.get("atr_c", "")),
                     "atr_category":      row.get("atr_category", ""),

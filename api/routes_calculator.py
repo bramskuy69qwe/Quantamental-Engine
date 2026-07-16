@@ -22,6 +22,19 @@ router = APIRouter()
 MAX_TP_LEVELS = 10
 
 
+def _parse_model_id(raw: str) -> "int | None":
+    """v2.7 5.2: picker value → int model id. Blank/0/negative → None
+    (no model). Non-numeric → ValueError (the 400 error-fragment lane)."""
+    s = (raw or "").strip()
+    if not s:
+        return None
+    try:
+        val = int(s)
+    except ValueError:
+        raise ValueError("model_id must be an integer")
+    return val if val > 0 else None
+
+
 def _parse_tp_levels(raw):
     """Parse + validate the TP-ladder JSON (P8.T4c).
 
@@ -151,6 +164,10 @@ async def calculate_risk(
     # P8.T4c (spec §10.1): optional multi-TP ladder, a JSON array of
     # {price, size_pct}. Blank → single-TP (tp_price). Validated below.
     tp_levels: str = Form(""),
+    # v2.7 5.2: the model-library picker (a regular persistent form field
+    # — re-rides every recalc so a superseding calc keeps its model).
+    # Blank → no model selected.
+    model_id: str = Form(""),
 ):
     ticker = ticker.upper().strip()
     ws_manager.set_calculator_symbol(ticker)
@@ -222,6 +239,14 @@ async def calculate_risk(
             f'<div class="alert alert-error">{exc}</div>', status_code=400,
         )
 
+    # v2.7 5.2: parse the optional model picker value before any work.
+    try:
+        model_id_val = _parse_model_id(model_id)
+    except ValueError as exc:
+        return HTMLResponse(
+            f'<div class="alert alert-error">{exc}</div>', status_code=400,
+        )
+
     try:
         await fetch_orderbook(ticker)
         if ticker not in app_state.ohlcv_cache:
@@ -248,6 +273,11 @@ async def calculate_risk(
     # + est_profit use the single tp_price (the UI feeds TP1 there if the
     # single TP field is blank). Per-rung analytics are a later phase.
     calc["tp_levels"] = tp_levels_parsed
+    # v2.7 5.2: attach the model-library FK (the tp_levels post-attach
+    # idiom — run_risk_calculator's signature stays untouched by design;
+    # plan rev 2). insert_pre_trade_log persists pre_trade_log.model_id;
+    # None = no model selected.
+    calc["model_id"] = model_id_val
 
     if auto_refresh != "1":
         await event_bus.publish("risk:risk_calculated", calc)

@@ -164,6 +164,42 @@ class ModelsMixin:
             result.append(d)
         return result
 
+    async def get_model_stamp_for_calc(self, calc_id: str) -> Optional[Dict[str, Any]]:
+        """(model_id, model_name) close-row stamp from a calc's
+        pre_trade_log row (v2.7 plan 5.4).
+
+        model_name resolution: the row's own free text wins (the operator
+        typed it at plan time); when empty and the row carries model_id,
+        fall back to the library name via get_model_for_calc (which
+        handles the dangling-id "(deleted model)" case). Returns None
+        when the calc is unknown / empty — callers keep their legacy
+        fallback (the close path's shortfall heuristic).
+        """
+        if not calc_id:
+            return None
+        async with self._conn.execute(
+            "SELECT model_id, model_name FROM pre_trade_log "
+            "WHERE calc_id=? ORDER BY id DESC LIMIT 1",
+            (calc_id,),
+        ) as cur:
+            row = await cur.fetchone()
+        if not row:
+            return None
+        model_id, free_text = row[0], row[1] or ""
+        name = free_text
+        if not name and model_id is not None:
+            res = await self.get_model_for_calc(calc_id)
+            name = res["name"] if res else ""
+        if model_id is None and not name:
+            # Newest row is untagged AND unnamed — align with the sibling's
+            # dedup rule (newest TAGGED row wins over a newer untagged one)
+            # before giving up (P5 audit NIT-6).
+            res = await self.get_model_for_calc(calc_id)
+            if res:
+                return {"model_id": res["model_id"], "model_name": res["name"]}
+            return None
+        return {"model_id": model_id, "model_name": name}
+
     async def get_model_for_calc(self, calc_id: str) -> Optional[Dict[str, Any]]:
         """Resolve the model tagged on a calc's pre_trade_log row.
 

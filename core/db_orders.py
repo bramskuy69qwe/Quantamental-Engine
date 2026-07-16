@@ -494,13 +494,46 @@ class OrdersMixin:
         except Exception:
             pass  # if the read fails, fall through to caller-supplied values
 
+        # ── v2.7 5.4: model stamp from the row's calc (choke-point
+        # enrichment INSTEAD OF per-writer stamping BECAUSE every close-row
+        # writer funnels through this INSERT — live close path, the
+        # rebuild-from-fills lane, and future writers get it in one site).
+        # Never overrides caller values: model_id fills only when None,
+        # model_name only when empty. The live close path BLANKS the
+        # shortfall-heuristic name whenever the position has a calc (the
+        # order_manager gate — P5 audit MED-1), so a caller-supplied name
+        # reaching here is either the calc-less fallback or a deliberate
+        # write; the plan's heuristic-only-when-no-calc precedence holds.
+        # The calc here is the junction-primary calc on the live path
+        # (T2.6) and the grouping calc on rebuilds. Model columns are
+        # deliberately RE-DERIVED, not preserved, on INSERT OR REPLACE —
+        # the stamp travels with calc_id exactly like the close row's own
+        # calc attribution (a calc-losing REPLACE regresses both together).
+        model_id_val = row.get("model_id")
+        model_name_val = row.get("model_name", "")
+        if row.get("calc_id") and (model_id_val is None or not model_name_val):
+            try:
+                stamp = await self.get_model_stamp_for_calc(row["calc_id"])
+            except Exception:
+                stamp = None  # best-effort: never block a close-row write
+                log.debug(
+                    "model stamp lookup failed for calc %s (close row %s)",
+                    row.get("calc_id"), row.get("terminal_position_id"),
+                    exc_info=True,
+                )
+            if stamp:
+                if model_id_val is None:
+                    model_id_val = stamp["model_id"]
+                if not model_name_val:
+                    model_name_val = stamp["model_name"]
+
         sql = """
             INSERT OR REPLACE INTO closed_positions (
                 account_id, exchange_position_id, terminal_position_id,
                 symbol, direction, quantity, entry_price, exit_price,
                 entry_time_ms, exit_time_ms, realized_pnl, total_fees,
                 net_pnl, funding_fees, mfe, mae, backfill_completed, hold_time_ms,
-                exit_reason, model_name, notes,
+                exit_reason, model_name, model_id, notes,
                 shortfall_entry, shortfall_exit, source, calc_id,
                 tp_price, sl_price, lifecycle_id,
                 entry_px_delta_pct, size_delta_pct, exit_vs_target_pct,
@@ -513,7 +546,7 @@ class OrdersMixin:
                 :symbol, :direction, :quantity, :entry_price, :exit_price,
                 :entry_time_ms, :exit_time_ms, :realized_pnl, :total_fees,
                 :net_pnl, :funding_fees, :mfe, :mae, :backfill_completed, :hold_time_ms,
-                :exit_reason, :model_name, :notes,
+                :exit_reason, :model_name, :model_id, :notes,
                 :shortfall_entry, :shortfall_exit, :source, :calc_id,
                 :tp_price, :sl_price, :lifecycle_id,
                 :entry_px_delta_pct, :size_delta_pct, :exit_vs_target_pct,
@@ -544,7 +577,8 @@ class OrdersMixin:
                 "backfill_completed":   preserved_backfill,
                 "hold_time_ms":         row.get("hold_time_ms", 0),
                 "exit_reason":          preserved_exit_reason,
-                "model_name":           row.get("model_name", ""),
+                "model_name":           model_name_val,
+                "model_id":             model_id_val,
                 "notes":                row.get("notes", ""),
                 "shortfall_entry":      row.get("shortfall_entry", 0),
                 "shortfall_exit":       row.get("shortfall_exit", 0),
