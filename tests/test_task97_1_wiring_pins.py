@@ -56,16 +56,8 @@ def test_api_backtest_run_calls_validate_date_range_wiring():
     )
 
 
-def test_api_qt_import_calls_validate_date_range_wiring():
-    """HIGH-022 wiring pin: api_qt_import must call _validate_date_range."""
-    from api import routes_backtest
-
-    fn_node = _find_function_node(routes_backtest, "api_qt_import")
-    assert _function_calls(fn_node, "_validate_date_range") >= 1, (
-        "HIGH-022 wiring regression: api_qt_import no longer calls "
-        "_validate_date_range. Malformed/inverted/over-max date ranges in "
-        "Quantower-import payloads will no longer be rejected at the boundary."
-    )
+# v2.7 P6 (task 6.1): the Quantower-JSON-importer wiring pin was deleted
+# WITH its route — the model library's adapter upload supersedes it.
 
 
 # ── MED-036 wiring pin ───────────────────────────────────────────────────────

@@ -30,7 +30,8 @@ class TestBacktestDateRangeValidation:
         assert _validate_date_range("2024-01-01", "2024-12-31") is None
 
     def test_empty_strings_short_circuit(self):
-        """qt-import path uses date_from/date_to as metadata; empty is allowed."""
+        """Empty dates short-circuit to None — the metadata-style lane (used
+        by the Quantower JSON importer until v2.7 P6 retired it)."""
         from api.routes_backtest import _validate_date_range
         assert _validate_date_range("", "") is None
         assert _validate_date_range("2025-01-01", "") is None

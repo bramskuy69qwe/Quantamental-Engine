@@ -9,11 +9,13 @@
   <div style="display:flex;flex-direction:column;gap:6px;">
 
     <!-- Tab switcher -->
+    {# v2.7 P6 (tasks 6.2/6.3): the QT Import tab (superseded by the model
+       library's adapter upload) and the Models tab (superseded by /models)
+       were retired here. The Run panel's model-config selector STAYS — a
+       backtest-run feature, not a management surface. #}
     <div class="tabs-line" style="margin-bottom:0;">
       <button onclick="showPanel('run')"    id="bt-tab-run"    class="tab-btn active">Run</button>
       <button onclick="showPanel('fetch')"  id="bt-tab-fetch"  class="tab-btn">Fetch Data</button>
-      <button onclick="showPanel('qt')"     id="bt-tab-qt"     class="tab-btn">QT Import</button>
-      <button onclick="showPanel('models')" id="bt-tab-models" class="tab-btn">Models</button>
     </div>
 
     <!-- ── Run Backtest ────────────────────────────────────────────────── -->
@@ -147,72 +149,9 @@
       </div>
     </div>
 
-    <!-- ── Quantower Import ─────────────────────────────────────────────── -->
-    <div id="panel-qt" class="card card-p8 hidden">
-      <span class="sec-lbl">Import Quantower Results</span>
-      <p style="font-size:.7rem;color:var(--sub);margin-bottom:10px;line-height:1.5;">
-        Paste the JSON export from Quantower Strategy Manager, or use the
-        <span style="color:var(--blue);font-family:var(--font-mono);">BacktestUploader</span> plugin button.
-      </p>
-      <div style="display:flex;flex-direction:column;gap:7px;">
-        <div><label class="lbl" style="display:block;margin-bottom:3px;">Session Name</label><input type="text" id="qt-name" value="Quantower Import" /></div>
-        <div>
-          <label class="lbl" style="display:block;margin-bottom:3px;">JSON Payload</label>
-          <textarea id="qt-json" rows="7" style='background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:6px 8px;font-size:.72rem;font-family:var(--font-mono);resize:vertical;width:100%;height:auto;' placeholder='{"trades":[...],"summary":{}}'></textarea>
-        </div>
-        <button onclick="submitQtImport()" class="btn btn-primary btn-md">Import</button>
-        <p id="qt-status" style="font-size:.65rem;color:var(--sub);text-align:center;"></p>
-      </div>
-    </div>
-
-    <!-- ── Models ──────────────────────────────────────────────────────── -->
-    <div id="panel-models" class="card card-p8 hidden">
-      <span class="sec-lbl">Add / Edit Model</span>
-      <form id="model-form" onsubmit="submitModel(event)" style="display:flex;flex-direction:column;gap:7px;">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
-          <div><label class="lbl" style="display:block;margin-bottom:3px;">Model Name</label><input type="text" id="mdl-name" placeholder="e.g. EMA Trend v2" required /></div>
-          <div><label class="lbl" style="display:block;margin-bottom:3px;">Type</label>
-            <select id="mdl-type"><option value="both">Both</option><option value="macro">Macro</option><option value="micro">Micro</option></select></div>
-        </div>
-        <div><label class="lbl" style="display:block;margin-bottom:3px;">Description</label>
-          <textarea id="mdl-desc" rows="2" style="background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:5px 8px;font-size:.78rem;resize:vertical;width:100%;height:auto;" placeholder="Brief description…"></textarea></div>
-
-        <span style="font-size:.6rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--sub);">Signals</span>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
-          <div><label class="lbl" style="display:block;margin-bottom:3px;">EMA Fast</label><input type="number" id="mdl-ema-fast" value="20" min="2" /></div>
-          <div><label class="lbl" style="display:block;margin-bottom:3px;">EMA Slow</label><input type="number" id="mdl-ema-slow" value="50" min="2" /></div>
-          <div><label class="lbl" style="display:block;margin-bottom:3px;">ATR SL Mult</label><input type="number" id="mdl-atr-sl" value="1.5" step="0.1" min="0.1" /></div>
-          <div><label class="lbl" style="display:block;margin-bottom:3px;">ATR TP Mult</label><input type="number" id="mdl-atr-tp" value="3.0" step="0.1" min="0.1" /></div>
-          <div><label class="lbl" style="display:block;margin-bottom:3px;">Min ATR-C</label><input type="number" id="mdl-min-atr" value="0.2" step="0.05" min="0" max="1" /></div>
-          <div><label class="lbl" style="display:block;margin-bottom:3px;">Direction</label>
-            <select id="mdl-direction"><option value="both">Both</option><option value="long">Long only</option><option value="short">Short only</option></select></div>
-        </div>
-
-        <span style="font-size:.6rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--sub);">Risk</span>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;">
-          <div><label class="lbl" style="display:block;margin-bottom:3px;">Risk / Trade (%)</label><input type="number" id="mdl-risk-pct" value="1.0" step="0.1" min="0.1" max="10" /></div>
-          <div><label class="lbl" style="display:block;margin-bottom:3px;">Max Positions</label><input type="number" id="mdl-max-pos" value="5" min="1" max="20" /></div>
-          <div><label class="lbl" style="display:block;margin-bottom:3px;">Max Exposure</label><input type="number" id="mdl-max-exp" value="3.0" step="0.5" min="0.5" max="20" /></div>
-        </div>
-
-        <span style="font-size:.6rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--sub);">Regime</span>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
-          <div><label class="lbl" style="display:block;margin-bottom:3px;">Max VIX</label><input type="number" id="mdl-max-vix" value="30" step="1" min="0" /></div>
-          <div><label class="lbl" style="display:block;margin-bottom:3px;">Regime Multiplier</label><input type="number" id="mdl-regime-mult" value="1.0" step="0.1" min="0.1" max="2.0" /></div>
-        </div>
-
-        <input type="hidden" id="mdl-edit-id" value="" />
-        <div style="display:flex;gap:6px;margin-top:4px;">
-          <button type="submit" class="btn btn-primary btn-md" style="flex:1;">Save Model</button>
-          <button type="button" onclick="clearModelForm()" class="btn btn-secondary btn-md" style="flex:1;">Clear</button>
-        </div>
-        <p id="model-status" style="font-size:.65rem;color:var(--sub);text-align:center;"></p>
-      </form>
-    </div>
-
   </div>
 
-  <!-- ── Right: sessions + results / models list ─────────────────────────── -->
+  <!-- ── Right: sessions + results ───────────────────────────────────────── -->
   <div style="display:flex;flex-direction:column;gap:6px;">
 
     <!-- Sessions -->
@@ -235,22 +174,16 @@
       </div>
     </div>
 
-    <!-- Models list -->
-    <div id="models-container" class="hidden card card-p8">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-        <span class="sec-lbl" style="margin-bottom:0;">Saved Models</span>
-        <button onclick="loadModels()" class="btn btn-ghost btn-sm">↺ Refresh</button>
-      </div>
-      <div id="models-list" style="color:var(--muted);font-size:.78rem;">Loading...</div>
-    </div>
-
   </div>
 </div>
 
 <script>
 // ── Panel switching ────────────────────────────────────────────────────────
+// v2.7 P6: 'qt' + 'models' panels retired (tasks 6.2/6.3) — the list is
+// down to the two surviving panels and the sessions container is always
+// visible (it only hid for the removed Models pane).
 function showPanel(name){
-  ['run','fetch','qt','models'].forEach(function(p){
+  ['run','fetch'].forEach(function(p){
     var panel=document.getElementById('panel-'+p);
     var tab=document.getElementById('bt-tab-'+p);
     if(panel) panel.classList.add('hidden');
@@ -260,10 +193,6 @@ function showPanel(name){
   var activeTab=document.getElementById('bt-tab-'+name);
   if(active) active.classList.remove('hidden');
   if(activeTab) activeTab.classList.add('active');
-  var sess=document.getElementById('sessions-container');
-  var mods=document.getElementById('models-container');
-  if(name==='models'){ sess.classList.add('hidden'); mods.classList.remove('hidden'); loadModels(); }
-  else { sess.classList.remove('hidden'); mods.classList.add('hidden'); }
 }
 
 // ── Run Backtest ──────────────────────────────────────────────────────────
@@ -341,19 +270,6 @@ function renderFetchJobs(){
   }).join('');
 }
 
-// ── QT Import ────────────────────────────────────────────────────────────
-async function submitQtImport(){
-  var name=document.getElementById('qt-name').value,raw=document.getElementById('qt-json').value,status=document.getElementById('qt-status');
-  var payload; try{ payload=JSON.parse(raw); }catch(e){ status.textContent='Invalid JSON'; return; }
-  payload.session_name=name; status.textContent='Importing...';
-  try{
-    var r=await fetch('/api/backtest/qt-import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-    var d=await r.json();
-    status.textContent=d.session_id?'Imported '+d.trade_count+' trades → session #'+d.session_id:(d.error||'Error');
-    if(d.session_id){ showToast('Imported '+d.trade_count+' trades','success'); loadSessions(); }
-  }catch(err){ status.textContent=err.message; }
-}
-
 // ── Sessions ──────────────────────────────────────────────────────────────
 async function loadSessions(){
   var el=document.getElementById('sessions-list');
@@ -403,40 +319,17 @@ async function loadResults(id,name){
   document.getElementById('results-content').innerHTML=await r.text();
 }
 
-// ── Models ────────────────────────────────────────────────────────────────
+// ── Models (Run-panel config selector ONLY) ────────────────────────────────
+// v2.7 P6 (task 6.3): the management surface (form/list/tab) moved to
+// /models — the model library. What SURVIVES here is the Run panel's
+// #model-selector + loadModelConfig: prefill the BACKTEST form from a
+// saved model's legacy config.signals/risk blob (a run feature, not a
+// management surface; /api/models stays the data source).
 var _allModels=[];
 async function loadModels(){
-  var el=document.getElementById('models-list');
   try{
-    var r=await fetch('/api/models');_allModels=await r.json();renderModelsList();populateModelSelector();
-  }catch(err){ el.innerHTML='<div class="alert alert-error">'+err.message+'</div>'; }
-}
-function renderModelsList(){
-  var el=document.getElementById('models-list');
-  if(!_allModels.length){ el.innerHTML='<div style="color:var(--muted);font-size:.72rem;padding:12px 0;text-align:center;">No models defined. Create one using the form.</div>'; return; }
-  var typeColor={macro:'var(--blue)',micro:'var(--purple)',both:'var(--amber)'};
-  el.innerHTML=_allModels.map(function(m){
-    var cfg=m.config||{},sig=cfg.signals||{},risk=cfg.risk||{};
-    return '<div style="border:1px solid var(--border);border-radius:4px;padding:8px 10px;margin-bottom:5px;transition:border-color .1s;" onmouseover="this.style.borderColor=\'var(--bfoc)\'" onmouseout="this.style.borderColor=\'var(--border)\'">'
-      +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">'
-        +'<div style="display:flex;align-items:center;gap:6px;">'
-          +'<span style="font-weight:700;color:var(--text);">'+m.name+'</span>'
-          +'<span class="badge" style="background:var(--panel);color:'+typeColor[m.type]+';border:1px solid var(--border);">'+m.type+'</span>'
-        +'</div>'
-        +'<div style="display:flex;gap:4px;">'
-          +'<button onclick="editModel('+m.id+')" class="btn btn-ghost btn-sm">Edit</button>'
-          +'<button onclick="deleteModel('+m.id+')" class="btn btn-danger btn-sm">✕</button>'
-        +'</div>'
-      +'</div>'
-      +(m.description?'<div style="font-size:.65rem;color:var(--sub);margin-bottom:4px;">'+m.description+'</div>':'')
-      +'<div style="display:flex;gap:10px;font-size:.65rem;color:var(--muted);font-family:var(--font-mono);">'
-        +(sig.trend_ema_fast?'<span>EMA '+sig.trend_ema_fast+'/'+sig.trend_ema_slow+'</span>':'')
-        +(sig.atr_sl_mult?'<span>SL '+sig.atr_sl_mult+'×ATR</span>':'')
-        +(sig.atr_tp_mult?'<span>TP '+sig.atr_tp_mult+'×ATR</span>':'')
-        +(risk.individual_risk_per_trade?'<span>Risk '+(risk.individual_risk_per_trade*100).toFixed(1)+'%</span>':'')
-      +'</div>'
-      +'</div>';
-  }).join('');
+    var r=await fetch('/api/models');_allModels=await r.json();populateModelSelector();
+  }catch(err){/* selector stays empty — the run form works without it */}
 }
 function populateModelSelector(){
   var sel=document.getElementById('model-selector');
@@ -458,49 +351,6 @@ function loadModelConfig(modelId){
   if(risk.max_position_count) f.max_positions.value=risk.max_position_count;
   showToast('Loaded: '+m.name,'info');
 }
-async function submitModel(e){
-  e.preventDefault();
-  var editId=document.getElementById('mdl-edit-id').value;
-  var direction=document.getElementById('mdl-direction').value;
-  var body={name:document.getElementById('mdl-name').value.trim(),type:document.getElementById('mdl-type').value,description:document.getElementById('mdl-desc').value.trim(),
-    config:{
-      signals:{trend_ema_fast:parseInt(document.getElementById('mdl-ema-fast').value)||20,trend_ema_slow:parseInt(document.getElementById('mdl-ema-slow').value)||50,atr_sl_mult:parseFloat(document.getElementById('mdl-atr-sl').value)||1.5,atr_tp_mult:parseFloat(document.getElementById('mdl-atr-tp').value)||3.0,min_atr_c:parseFloat(document.getElementById('mdl-min-atr').value)||0,direction:direction,allow_long:direction!=='short',allow_short:direction!=='long'},
-      risk:{individual_risk_per_trade:parseFloat(document.getElementById('mdl-risk-pct').value)/100||0.01,max_position_count:parseInt(document.getElementById('mdl-max-pos').value)||5,max_exposure:parseFloat(document.getElementById('mdl-max-exp').value)||3.0},
-      regime:{max_vix:parseFloat(document.getElementById('mdl-max-vix').value)||30,regime_multiplier:parseFloat(document.getElementById('mdl-regime-mult').value)||1.0},
-    }};
-  if(!body.name){document.getElementById('model-status').textContent='Name is required';return;}
-  var status=document.getElementById('model-status');
-  try{
-    var url=editId?'/api/models/'+editId:'/api/models',method=editId?'PUT':'POST';
-    var r=await fetch(url,{method:method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    var d=await r.json();
-    if(d.error){status.textContent=d.error;}
-    else{status.textContent=editId?'Model updated':'Model saved (#'+d.model_id+')';showToast((editId?'Updated: ':'Saved: ')+body.name,'success');clearModelForm();loadModels();}
-  }catch(err){status.textContent=err.message;}
-}
-async function editModel(id){
-  var m=_allModels.find(function(x){return x.id==id;});if(!m)return;
-  var cfg=m.config||{},sig=cfg.signals||{},risk=cfg.risk||{},regime=cfg.regime||{};
-  document.getElementById('mdl-edit-id').value=m.id;document.getElementById('mdl-name').value=m.name;document.getElementById('mdl-type').value=m.type;document.getElementById('mdl-desc').value=m.description||'';
-  document.getElementById('mdl-ema-fast').value=sig.trend_ema_fast||20;document.getElementById('mdl-ema-slow').value=sig.trend_ema_slow||50;
-  document.getElementById('mdl-atr-sl').value=sig.atr_sl_mult||1.5;document.getElementById('mdl-atr-tp').value=sig.atr_tp_mult||3.0;document.getElementById('mdl-min-atr').value=sig.min_atr_c||0.2;document.getElementById('mdl-direction').value=sig.direction||'both';
-  document.getElementById('mdl-risk-pct').value=risk.individual_risk_per_trade?(risk.individual_risk_per_trade*100).toFixed(1):'1.0';document.getElementById('mdl-max-pos').value=risk.max_position_count||5;document.getElementById('mdl-max-exp').value=risk.max_exposure||3.0;
-  document.getElementById('mdl-max-vix').value=regime.max_vix||30;document.getElementById('mdl-regime-mult').value=regime.regime_multiplier||1.0;
-  document.getElementById('model-status').textContent='Editing model #'+m.id;
-  showPanel('models');
-}
-async function deleteModel(id){ if(!confirm('Delete model #'+id+'?'))return; await fetch('/api/models/'+id,{method:'DELETE'}); showToast('Model deleted','info'); loadModels(); }
-function clearModelForm(){
-  ['mdl-edit-id','mdl-name','mdl-desc','mdl-micro-strategy'].forEach(function(id){var e=document.getElementById(id);if(e)e.value='';});
-  document.getElementById('mdl-type').value='both';document.getElementById('mdl-direction').value='both';
-  document.getElementById('mdl-ema-fast').value='20';document.getElementById('mdl-ema-slow').value='50';
-  document.getElementById('mdl-atr-sl').value='1.5';document.getElementById('mdl-atr-tp').value='3.0';
-  document.getElementById('mdl-min-atr').value='0.2';document.getElementById('mdl-risk-pct').value='1.0';
-  document.getElementById('mdl-max-pos').value='5';document.getElementById('mdl-max-exp').value='3.0';
-  document.getElementById('mdl-max-vix').value='30';document.getElementById('mdl-regime-mult').value='1.0';
-  document.getElementById('model-status').textContent='';
-}
-
 // ── Date range calendar ────────────────────────────────────────────────────
 var _btDateFrom='',_btDateTo='',_btCalViewYear,_btCalViewMonth,_btCalSelStart=null,_btCalSelEnd=null,_btCalPicking=0;
 function _btPad(n){return String(n).padStart(2,'0');}

@@ -13,7 +13,6 @@ from core.tz import now_in_account_tz
 from core.database import db
 from core.backtest_runner import BacktestRunner
 from core.ohlcv_fetcher import OHLCVFetcher
-from core import analytics as _an
 from api.helpers import templates, _ctx
 
 log = logging.getLogger("routes.backtest")
@@ -36,8 +35,9 @@ def _validate_date_range(date_from: str, date_to: str) -> Optional[str]:
     """HIGH-022 validation helper. Returns None if valid, else an error string.
 
     Accepts ISO-8601 date strings (`YYYY-MM-DD`). Empty strings short-circuit
-    to None (caller decides whether empty is acceptable — typical backtest
-    submission requires both fields, but qt-import treats them as metadata).
+    to None (caller decides whether empty is acceptable — backtest submission
+    requires both fields; the retired Quantower importer treated them as
+    metadata, which is why the empty lane exists).
     """
     if not date_from or not date_to:
         return None
@@ -210,62 +210,10 @@ async def api_backtest_session_delete(session_id: int):
     return JSONResponse({"status": "deleted"})
 
 
-@router.post("/api/backtest/qt-import", response_class=JSONResponse)
-async def api_qt_import(request: Request):
-    """Import Quantower microstructure backtest results."""
-    try:
-        body = await request.json()
-    except ValueError:
-        return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
-
-    session_name = body.get("session_name", "Quantower Import")
-    date_from    = body.get("date_from", "")
-    date_to      = body.get("date_to", "")
-    raw_trades   = body.get("trades", [])
-    qt_summary   = body.get("summary", {})
-
-    # HIGH-022: bound the date range. Qt-import doesn't actually run a backtest
-    # but the metadata is stored alongside the trades; reject malformed ranges
-    # at the boundary rather than letting them propagate into analytics.
-    err = _validate_date_range(date_from, date_to)
-    if err:
-        return JSONResponse({"error": err}, status_code=400)
-
-    session_id = await db.create_backtest_session(
-        name=session_name, session_type="microstructure",
-        date_from=date_from, date_to=date_to,
-        config={"source": "quantower", "strategy": body.get("strategy", "")},
-    )
-
-    trades = [
-        {
-            "symbol":      t.get("symbol", ""),
-            "side":        t.get("side", ""),
-            "entry_dt":    t.get("entry_dt", ""),
-            "exit_dt":     t.get("exit_dt", ""),
-            "entry_price": float(t.get("entry_price", 0)),
-            "exit_price":  float(t.get("exit_price", 0)),
-            "size_usdt":   float(t.get("size_usdt", 0)),
-            "r_multiple":  float(t.get("pnl_r", 0)),
-            "pnl_usdt":    float(t.get("pnl_usdt", t.get("size_usdt", 0) * t.get("pnl_r", 0))),
-            "regime_label": "",
-            "exit_reason": t.get("exit_reason", ""),
-        }
-        for t in raw_trades
-    ]
-
-    r_vals  = [t["r_multiple"] for t in trades]
-    r_stats = _an.r_multiple_stats(r_vals)
-
-    summary = {
-        "source":           "quantower",
-        "total_trades":     len(trades),
-        "win_rate":         float(qt_summary.get("win_rate", r_stats.get("win_rate", 0))),
-        "total_r":          float(qt_summary.get("total_r", sum(r_vals))),
-        "avg_slippage_bps": float(qt_summary.get("avg_slippage_bps", 0)),
-        "r_stats":          r_stats,
-    }
-
-    await db.insert_backtest_trades(session_id, trades)
-    await db.finish_backtest_session(session_id, "completed", summary)
-    return JSONResponse({"session_id": session_id, "status": "imported", "trade_count": len(trades)})
+# v2.7 Phase 6 (task 6.1): the Quantower BACKTEST-RESULTS JSON importer
+# route (landmine L5 — a JSON upload, NOT the v2.6-removed plugin) was
+# retired here, superseded by the model library's per-app adapter upload
+# (POST /models/{model_id}/backtest-upload). Historical sessions it created
+# (type='microstructure', config/summary source 'quantower') remain in
+# backtest_sessions and still render — see the KEPT branch in
+# fragments/backtest/results.html.

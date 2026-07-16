@@ -280,7 +280,7 @@ CREATE TABLE IF NOT EXISTS backtest_sessions (
     config_json TEXT    NOT NULL DEFAULT '{}',
     summary_json TEXT   NOT NULL DEFAULT '{}',
     -- v2.7 Phase 1: imported 3rd-party runs. model_id NULL = engine-run
-    -- (or legacy qt-import) session; set = imported run for that model.
+    -- (or legacy Quantower-JSON import) session; set = imported run.
     -- FK-in-name-only — no REFERENCES (see the ALTER-block comment).
     -- NB idx_bt_sessions_model is deliberately NOT here: on a legacy DB
     -- this script runs BEFORE the ALTER loop adds model_id, so an index

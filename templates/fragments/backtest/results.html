@@ -22,6 +22,9 @@
 </div>
 
 <!-- Microstructure badge -->
+{# v2.7 P6 (task 6.4): KEPT deliberately after the Quantower JSON importer
+   was retired — historical type='microstructure' sessions remain in
+   backtest_sessions and must still render. Do not sweep this as dead. #}
 {% if session.type == 'microstructure' %}
 <div class="badge badge-info" style="margin-bottom:8px;padding:4px 10px;font-size:.7rem;">
   Quantower microstructure import — {{ smry.avg_slippage_bps|default(0)|round(2) }} bps avg slippage
