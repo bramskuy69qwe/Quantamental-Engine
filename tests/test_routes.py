@@ -66,6 +66,7 @@ API_ROUTES = [
     "/api/ready",
     "/manifest.json",
     "/service-worker.js",
+    "/api/models",  # v2.7 P3: JSON contract smoke
 ]
 
 
@@ -80,6 +81,10 @@ def test_api_returns_200(client, path):
 FRAGMENT_ROUTES = [
     "/fragments/ws_status",
     "/fragments/dashboard/exchange_info",
+    # v2.7 P3: model-library fragments (id-less GETs only — the
+    # id-parameterized ones are handler-tested in test_v27_phase3_*)
+    "/fragments/models/list",
+    "/fragments/models/form",
 ]
 
 

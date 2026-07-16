@@ -1,0 +1,17 @@
+{# Backtest-report upload form (v2.7 Phase 3; plan 4.5). Multipart —
+   the codebase's first UploadFile route. Vars: model, adapters
+   (list_backtest_adapters rows). Every response is 200 + the
+   backtest-list fragment (error banner included on failure). #}
+<form hx-post="/models/{{ model.id }}/backtest-upload"
+      hx-encoding="multipart/form-data"
+      hx-target="#model-backtest-list" hx-swap="innerHTML"
+      style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:.65rem;">
+  <select name="app_id" style="max-width:140px;">
+    {% for a in adapters %}
+    <option value="{{ a.app_id }}">{{ a.display_name }}</option>
+    {% endfor %}
+  </select>
+  <input type="file" name="file" required
+         accept="{{ adapters[0].accepted_extensions|join(',') if adapters else '' }}">
+  <button type="submit" class="btn btn-ghost btn-sm">Import report</button>
+</form>

@@ -1,0 +1,36 @@
+{# Imported backtest runs for one model (v2.7 Phase 3; plan 4.5).
+   Vars: runs (list_model_backtests rows, decoded), error (str, "" = none).
+   Request-independent — the upload route re-renders it directly. #}
+{% if error %}
+<div style="font-size:.65rem;color:var(--red);padding:6px 0;">{{ error }}</div>
+{% endif %}
+{% if not runs %}
+<p style="color:var(--muted);font-size:.65rem;">No imported backtests yet.</p>
+{% else %}
+<table>
+  <thead>
+    <tr>
+      <th>#</th><th>Name</th><th>Source</th><th>Net Profit</th>
+      <th>Win Rate</th><th>PF</th><th>Trades</th><th>Period</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for r in runs %}
+    {% set smry = r.summary %}
+    {% set np = smry.net_profit or 0 %}
+    <tr>
+      <td style="color:var(--muted);">{{ r.id }}</td>
+      <td>{{ r.name }}</td>
+      <td style="color:var(--muted);font-size:.65rem;">{{ r.source_app }}</td>
+      <td class="{{ 'pos-long' if np >= 0 else 'pos-short' }}">{{ fmt(np) }}</td>
+      <td>{{ ((smry.win_rate or 0) * 100)|round(1) }}%</td>
+      <td>{{ fmt(smry.profit_factor or 0) }}</td>
+      <td>{{ smry.total_trades or '—' }}</td>
+      <td style="color:var(--muted);font-size:.62rem;">
+        {{ (r.date_from or '—')[:10] }} → {{ (r.date_to or '—')[:10] }}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
