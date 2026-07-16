@@ -13,12 +13,20 @@ class BacktestMixin:
     async def create_backtest_session(
         self, name: str, session_type: str,
         date_from: str, date_to: str, config: Dict[str, Any],
+        model_id: Optional[int] = None, source_app: str = "",
     ) -> int:
-        """Insert a new backtest_sessions row; return new id."""
+        """Insert a new backtest_sessions row; return new id.
+
+        model_id / source_app (v2.7): set on imported 3rd-party runs
+        (via db_models.create_model_backtest); engine-run sessions leave
+        the defaults (model_id NULL).
+        """
         async with self._conn.execute(
-            """INSERT INTO backtest_sessions (name, type, status, date_from, date_to, config_json)
-               VALUES (?, ?, 'running', ?, ?, ?)""",
-            (name, session_type, date_from, date_to, _json.dumps(config)),
+            """INSERT INTO backtest_sessions
+               (name, type, status, date_from, date_to, config_json, model_id, source_app)
+               VALUES (?, ?, 'running', ?, ?, ?, ?, ?)""",
+            (name, session_type, date_from, date_to, _json.dumps(config),
+             model_id, source_app),
         ) as cur:
             new_id = cur.lastrowid
         await self._conn.commit()
@@ -48,9 +56,18 @@ class BacktestMixin:
         return d
 
     async def list_backtest_sessions(self, limit: int = 50) -> List[Dict[str, Any]]:
-        """Return up to limit backtest_sessions rows, newest first, with decoded dicts."""
+        """Return up to limit ENGINE-RUN sessions, newest first, decoded.
+
+        v2.7 (plan task 1.8): imported model runs (model_id IS NOT NULL)
+        are excluded — they render only in the model library. The Backtest
+        tab's templates read summary keys imported runs don't carry
+        (total_return_pct, r_stats.*, sortino) and treat max_drawdown as a
+        fraction, so surfacing them here would render zeros / garbage.
+        Use db_models.list_model_backtests(model_id) for imported runs.
+        """
         async with self._conn.execute(
-            "SELECT * FROM backtest_sessions ORDER BY id DESC LIMIT ?", (limit,)
+            "SELECT * FROM backtest_sessions WHERE model_id IS NULL "
+            "ORDER BY id DESC LIMIT ?", (limit,)
         ) as cur:
             rows = await cur.fetchall()
         result = []

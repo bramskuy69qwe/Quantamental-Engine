@@ -88,6 +88,9 @@ CREATE TABLE IF NOT EXISTS pre_trade_log (
     sl_usdt           REAL NOT NULL DEFAULT 0,
     model_name        TEXT NOT NULL DEFAULT '',
     model_desc        TEXT NOT NULL DEFAULT '',
+    -- v2.7 Phase 1: the FK the free-text model_name becomes (nullable —
+    -- a model need not be selected). FK-in-name-only; see ALTER block.
+    model_id          INTEGER DEFAULT NULL,
     risk_usdt         REAL NOT NULL DEFAULT 0,
     atr_c             TEXT NOT NULL DEFAULT '',
     atr_category      TEXT NOT NULL DEFAULT '',
@@ -275,7 +278,17 @@ CREATE TABLE IF NOT EXISTS backtest_sessions (
     date_from   TEXT    NOT NULL DEFAULT '',
     date_to     TEXT    NOT NULL DEFAULT '',
     config_json TEXT    NOT NULL DEFAULT '{}',
-    summary_json TEXT   NOT NULL DEFAULT '{}'
+    summary_json TEXT   NOT NULL DEFAULT '{}',
+    -- v2.7 Phase 1: imported 3rd-party runs. model_id NULL = engine-run
+    -- (or legacy qt-import) session; set = imported run for that model.
+    -- FK-in-name-only — no REFERENCES (see the ALTER-block comment).
+    -- NB idx_bt_sessions_model is deliberately NOT here: on a legacy DB
+    -- this script runs BEFORE the ALTER loop adds model_id, so an index
+    -- line here breaks boot ("no such column") — it lives in the
+    -- post-ALTER index block instead (executescript-before-ALTER
+    -- ordering trap; cf. the T160 install-ordering comment below).
+    model_id    INTEGER DEFAULT NULL,
+    source_app  TEXT    NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS backtest_trades (
@@ -310,7 +323,15 @@ CREATE TABLE IF NOT EXISTS potential_models (
     name        TEXT    NOT NULL DEFAULT '',
     type        TEXT    NOT NULL DEFAULT 'both',
     description TEXT    NOT NULL DEFAULT '',
-    config_json TEXT    NOT NULL DEFAULT '{}'
+    config_json TEXT    NOT NULL DEFAULT '{}',
+    -- v2.7 Phase 1 (model library): calculator risk preset + strategy
+    -- definition blobs. updated_at is nullable TEXT in BOTH this CREATE
+    -- and the ALTER twin below (identical shapes — SQLite forbids
+    -- non-constant defaults in ADD COLUMN); stamped by
+    -- update_potential_model, NULL = never updated.
+    risk_preset_json TEXT NOT NULL DEFAULT '{}',
+    strategy_json    TEXT NOT NULL DEFAULT '{}',
+    updated_at       TEXT
 );
 
 CREATE TABLE IF NOT EXISTS regime_signals (
@@ -452,6 +473,9 @@ CREATE TABLE IF NOT EXISTS closed_positions (
     source               TEXT    NOT NULL DEFAULT '',
     tp_price             REAL    DEFAULT NULL,
     sl_price             REAL    DEFAULT NULL,
+    -- v2.7 Phase 1: the primary calc's model, stamped at close (plan 5.4).
+    -- FK-in-name-only; NULL = no model / pre-v2.7 row.
+    model_id             INTEGER DEFAULT NULL,
     UNIQUE(account_id, terminal_position_id, exit_time_ms)
 );
 CREATE INDEX IF NOT EXISTS idx_closed_pos_ts     ON closed_positions (account_id, exit_time_ms DESC);
@@ -853,6 +877,26 @@ class DatabaseManager(
             # existence would seal on the first partial and break
             # scale-in lifecycle continuity.
             "ALTER TABLE positions_calcs ADD COLUMN sealed_ts INTEGER DEFAULT NULL",
+            # ── v2.7 Phase 1: model library ──────────────────────────────
+            # potential_models gains the risk-preset/strategy blobs +
+            # updated_at (nullable in BOTH CREATE and ALTER — SQLite
+            # forbids non-constant ADD COLUMN defaults; stamped by
+            # update_potential_model). The model_id columns are
+            # FK-IN-NAME-ONLY: no REFERENCES clause — potential_models
+            # lives in global.db while pre_trade_log/closed_positions are
+            # per-account/legacy tables (SQLite FKs cannot span DB files),
+            # so after a model delete the ids dangle BY DESIGN and readers
+            # LEFT JOIN with a "(deleted model)" fallback
+            # (db_models.get_model_for_calc). Standalone migrations
+            # 013/014_v2_7_model_library_*.sql cover split-DB setups
+            # (dual-track, migration-011 precedent).
+            "ALTER TABLE potential_models ADD COLUMN risk_preset_json TEXT NOT NULL DEFAULT '{}'",
+            "ALTER TABLE potential_models ADD COLUMN strategy_json TEXT NOT NULL DEFAULT '{}'",
+            "ALTER TABLE potential_models ADD COLUMN updated_at TEXT",
+            "ALTER TABLE backtest_sessions ADD COLUMN model_id INTEGER DEFAULT NULL",
+            "ALTER TABLE backtest_sessions ADD COLUMN source_app TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE pre_trade_log ADD COLUMN model_id INTEGER DEFAULT NULL",
+            "ALTER TABLE closed_positions ADD COLUMN model_id INTEGER DEFAULT NULL",
         ]:
             try:
                 await self._conn.execute(migration)
@@ -903,6 +947,15 @@ class DatabaseManager(
         await self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_fills_lifecycle "
             "ON fills (lifecycle_id)"
+        )
+        # v2.7 Phase 1: list_model_backtests + the Backtest-tab
+        # "model_id IS NULL" filter both hit this column. The CREATE
+        # block declares the COLUMN (fresh installs) but deliberately
+        # NOT this index — an in-script index dies on legacy DBs where
+        # the column only exists after the ALTER loop (T160 trap).
+        await self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_bt_sessions_model "
+            "ON backtest_sessions (model_id)"
         )
 
         # Task 160 (MED-024): UNIQUE index install is now done by
