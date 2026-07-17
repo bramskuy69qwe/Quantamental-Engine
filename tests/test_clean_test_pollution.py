@@ -17,6 +17,7 @@ import pytest
 from scripts.clean_test_pollution import (
     classify_trade_event,
     classify_engine_event,
+    classify_position_fill_snapshot,
     run_clean,
     REAL_EQUITY_MAX,
 )
@@ -89,6 +90,41 @@ class TestClassifyTradeEvent:
         strings are fixtures, not real calc_ids."""
         # 32 chars but uppercase -> not the real format -> TEST
         assert classify_trade_event("A" * 32, "calc_created", {}) == "TEST"
+
+
+# ── classify_position_fill_snapshot (v2.7 Task E) ────────────────────────────
+
+
+class TestClassifyPositionFillSnapshot:
+    @pytest.mark.parametrize("fid", ["70695852", "3383993467", "12345678"])
+    def test_numeric_fill_id_is_real(self, fid):
+        # real Binance tradeId — even on a test-set symbol
+        assert classify_position_fill_snapshot(fid, "BTCUSDT") == "REAL"
+
+    @pytest.mark.parametrize("fid", [
+        "tid-100", "tid-RL", "tid-partial", "binance-trade-99",
+        "O-CLOSE", "ord-1", "OID-7", "POS-old", "binance-order-1",
+    ])
+    def test_test_prefix_on_test_symbol_is_test(self, fid):
+        assert classify_position_fill_snapshot(fid, "BTCUSDT") == "TEST"
+        assert classify_position_fill_snapshot(fid, "ETHUSDT") == "TEST"
+        assert classify_position_fill_snapshot(fid, "") == "TEST"
+
+    @pytest.mark.parametrize("sym", ["SPCXUSDT", "VELVETUSDT", "XAUUSDT"])
+    def test_safety_net_real_symbol_downgrades_to_unknown(self, sym):
+        # a test-prefixed id on a genuinely-traded symbol is NEVER deleted
+        assert classify_position_fill_snapshot("tid-100", sym) == "UNKNOWN"
+
+    def test_production_synth_open_leg_is_kept(self):
+        # position_snapshot.py emits synth:<tradeId>:open for REAL reversal
+        # legs — must NOT be a delete signature
+        assert classify_position_fill_snapshot("synth:3383993467:open", "BTCUSDT") == "UNKNOWN"
+        assert classify_position_fill_snapshot("synth:70695852:open", "SPCXUSDT") == "UNKNOWN"
+
+    def test_empty_and_unknown_shapes_kept(self):
+        assert classify_position_fill_snapshot("", "BTCUSDT") == "UNKNOWN"
+        assert classify_position_fill_snapshot(None, "BTCUSDT") == "UNKNOWN"
+        assert classify_position_fill_snapshot("weird_id", "BTCUSDT") == "UNKNOWN"
 
 
 # ── classify_engine_event ────────────────────────────────────────────────────

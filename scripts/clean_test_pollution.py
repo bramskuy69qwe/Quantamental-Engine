@@ -1,6 +1,7 @@
 """
 Operator-controlled cleanup of TEST-pollution rows in the live
-per-account ``trade_events`` + ``engine_events`` logs.
+per-account ``trade_events`` + ``engine_events`` logs +
+``position_fill_snapshots``.
 
 Years of un-isolated tests (fixed forward 2026-06-04 by
 ``tests/conftest.py::_isolate_live_per_account_logs``) wrote synthetic
@@ -40,6 +41,29 @@ trade_events:
     DOWNGRADED to UNKNOWN (kept + flagged). Real trades never emitted
     trade_events anyway (they were backfilled), but this makes accidental
     real-symbol deletion impossible by construction.
+
+position_fill_snapshots (added v2.7 Task E — the leak the F5 session
+tripwire surfaced; ``OrderManager._snapshot_and_fix_isclose`` persisted
+fixture fills to the LIVE per-account DB via the un-guarded third
+``_resolve_db_path``):
+  KEEP (REAL):
+    - fill_id purely numeric                     (real Binance tradeId,
+                                                  8-10 digits observed)
+  DELETE (TEST):
+    - fill_id starts with ``tid-`` or            (reversal-split fixture;
+      ``binance-trade-``                          both grep-verified
+                                                  test-only — core/ never
+                                                  emits them) OR any of the
+                                                  trade_events synthetic
+                                                  prefixes (O-/ord-/OID-/
+                                                  binance-order-/POS-)
+  NOT a delete signature: ``synth:<id>:open`` — PRODUCTION emits this for
+    real reversal open-legs (position_snapshot.py:196), so it is KEPT
+    (UNKNOWN); there are zero such snapshot rows today.
+  SAFETY NET: a test-prefixed row whose symbol is a genuinely-traded real
+    symbol (not ''/BTCUSDT/ETHUSDT) is DOWNGRADED to UNKNOWN — real
+    per-symbol snapshots (SPCXUSDT/VELVET/… numeric ids) can never be
+    deleted by construction.
 
 engine_events:
   DELETE (TEST):
@@ -105,6 +129,13 @@ HEX32 = re.compile(r"^[0-9a-f]{32}\Z")
 NUMERIC_OID = re.compile(r"^\d+\Z")
 ALGO_OID = re.compile(r"^algo:\d+\Z")
 SYNTH_OID_PREFIXES = ("O-", "ord-", "OID-", "binance-order-", "POS-")
+
+# position_fill_snapshots test fill_id prefixes: the two reversal-split
+# fixture shapes (grep-verified test-only in core/) PLUS the shared
+# synthetic-order prefixes. NB ``synth:`` is DELIBERATELY excluded —
+# production emits ``synth:<tradeId>:open`` for real reversal legs
+# (position_snapshot.py:196), so it is not a delete signature.
+SNAPSHOT_TEST_PREFIXES = ("tid-", "binance-trade-") + SYNTH_OID_PREFIXES
 
 # The real account is a tiny (~$82) Binance-Futures account. Test fixtures
 # use peak_equity 1000 / 10500. 200 cleanly separates them with margin.
@@ -190,6 +221,33 @@ def classify_engine_event(event_type: str, payload: Dict) -> Decision:
     return "REAL"
 
 
+def classify_position_fill_snapshot(
+    fill_id: Optional[str], symbol: Optional[str]
+) -> Decision:
+    """Classify one position_fill_snapshots row. Pure function (unit-tested).
+
+    Numeric fill_id = real Binance tradeId (KEEP). A verified test-only
+    prefix on a test/empty symbol = TEST. Anything else — incl. the
+    production ``synth:<id>:open`` reversal open-leg — is KEPT as UNKNOWN.
+    """
+    fid = str(fill_id or "")
+    sym = str(symbol or "")
+
+    # ── REAL wins first ──
+    if NUMERIC_OID.match(fid):
+        return "REAL"
+
+    # ── TEST signature ──
+    if fid.startswith(SNAPSHOT_TEST_PREFIXES):
+        # safety net: never delete a snapshot on a genuinely-traded symbol
+        if sym not in TEST_OR_EMPTY_SYMBOLS:
+            return "UNKNOWN"
+        return "TEST"
+
+    # synth:<id>:open (production), empty, or any other shape → keep + flag
+    return "UNKNOWN"
+
+
 # ── Table scan ───────────────────────────────────────────────────────────────
 
 
@@ -264,6 +322,34 @@ def _scan_engine_events(conn: sqlite3.Connection) -> Dict:
     }
 
 
+def _scan_position_fill_snapshots(conn: sqlite3.Connection) -> Dict:
+    rows = conn.execute(
+        "SELECT id, fill_id, symbol FROM position_fill_snapshots"
+    ).fetchall()
+    test_ids: List[int] = []
+    real = 0
+    unknown_rows: List[Tuple] = []
+    del_buckets: Dict[Tuple, int] = {}
+    for r in rows:
+        d = classify_position_fill_snapshot(r["fill_id"], r["symbol"])
+        if d == "TEST":
+            test_ids.append(int(r["id"]))
+            fid = str(r["fill_id"] or "")
+            prefix = next((p for p in SNAPSHOT_TEST_PREFIXES if fid.startswith(p)), "?")
+            bk = (prefix, str(r["symbol"] or "<none>"))
+            del_buckets[bk] = del_buckets.get(bk, 0) + 1
+        elif d == "REAL":
+            real += 1
+        else:
+            unknown_rows.append(
+                (int(r["id"]), r["fill_id"], str(r["symbol"] or ""))
+            )
+    return {
+        "total": len(rows), "test_ids": test_ids, "real": real,
+        "unknown_rows": unknown_rows, "del_buckets": del_buckets,
+    }
+
+
 def delete_ids(conn: sqlite3.Connection, table: str, ids: List[int]) -> int:
     """Delete rows by id (single transaction, batched for the param limit)."""
     if not ids:
@@ -308,6 +394,17 @@ def _report_engine_events(s: Dict) -> None:
         print(f"    {bk[0]:<24} {bk[1]:<20} {c}")
 
 
+def _report_position_fill_snapshots(s: Dict) -> None:
+    print("\n" + "=" * 72)
+    print("position_fill_snapshots")
+    print("=" * 72)
+    print(f"  total={s['total']}  DELETE(test)={len(s['test_ids'])}  "
+          f"KEEP(real)={s['real']}  UNKNOWN(kept)={len(s['unknown_rows'])}")
+    print("\n  -- DELETE by (fill_id prefix, symbol) --")
+    for bk, c in sorted(s["del_buckets"].items(), key=lambda x: -x[1]):
+        print(f"    {bk[0]:<18} {bk[1]:<10} {c}")
+
+
 def _report_unknown(name: str, unknown_rows: List[Tuple]) -> None:
     if not unknown_rows:
         return
@@ -329,7 +426,7 @@ def run_clean(
     verbose: bool = True,
 ) -> Dict:
     """Programmable entrypoint (called by main + tests)."""
-    tables = tables or ["trade_events", "engine_events"]
+    tables = tables or ["trade_events", "engine_events", "position_fill_snapshots"]
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     summary: Dict = {"db": db_path, "applied": apply, "tables": {}}
@@ -337,6 +434,8 @@ def run_clean(
     scanners: Dict[str, Tuple[Callable, Callable]] = {
         "trade_events": (_scan_trade_events, _report_trade_events),
         "engine_events": (_scan_engine_events, _report_engine_events),
+        "position_fill_snapshots": (
+            _scan_position_fill_snapshots, _report_position_fill_snapshots),
     }
 
     if verbose:
@@ -393,8 +492,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     parser.add_argument("--apply", action="store_true",
                         help="Delete test rows (default: dry-run, no writes).")
-    parser.add_argument("--table", choices=["trade_events", "engine_events"],
-                        default=None, help="Restrict to one table.")
+    parser.add_argument(
+        "--table",
+        choices=["trade_events", "engine_events", "position_fill_snapshots"],
+        default=None, help="Restrict to one table.")
     parser.add_argument("--db", default=DEFAULT_DB_PATH,
                         help=f"DB path (default: {DEFAULT_DB_PATH}).")
     args = parser.parse_args(argv)
