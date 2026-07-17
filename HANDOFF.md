@@ -1,11 +1,80 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-07-16 (**v2.6 QUANTOWER-PLUGIN REMOVAL is COMPLETE + AUDITED + DEBUGGED + PUSHED** — 6 phases shipped, then holistically audited: 15 findings, **all 15 closed**. Engine live-verified. **Next program = v2.7 model library** — see ▶ NEXT SESSION.)
-**Branch**: **`v2.6/remove-quantower-plugin`** — **PUSHED, in sync with origin** (P1-6 + the 4 audit commits). Forked off `3a55f3e` (the `v2.5/usertrades-backfill-fix` tip). Verify `git status -sb` at session start.
-**Tests**: full suite **3943 passed / 7 skipped / 3 deselected / 0 xfailed** — green (~4:40). Run SOLO. (Was 3939 pre-audit: +8 new singleton-seam pins, −4 removed plugin tests.) ⚠ A **transient `concurrent_log_handler` flush timeout** has been seen once (0 lingering pythons after; re-run clean) — the CLAUDE.md test-hang class; re-run once before treating it as real.
-**Engine**: **LAUNCHES FINE** (operator-verified 2026-07-16) — exchange-only, Binance-direct HEDGE, observe-only, force-kill safe. Start: `.venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000` (**no `--reload`**). ⚠ **HARD PRECONDITION — SYNCED OS CLOCK**: a drifted clock → `-1021 Timestamp ahead` on signed Binance REST → the startup fetches stall in weight-tracker throttling and the engine hangs forever on the "Connecting to exchange…" overlay (never flips `is_initializing=False`). **`w32tm /resync` BEFORE starting.** This WAS the "connecting endlessly" incident this session and the resync fixed it — NOT a v2.6 bug (incident note below).
+**Date**: 2026-07-17 (**v2.7 MODEL LIBRARY is COMPLETE — P1–P6 shipped in one session (2026-07-16/17) + PUSHED.** Every phase: full-suite gate SOLO + 2 independent read-only audits + folds pre-commit. **Next = operator live-verify, then the next program is the operator's call** — see ▶ NEXT SESSION.)
+**Branch**: **`v2.7/model-library`** — **PUSHED, in sync with origin at `0d90f32`**. Forked off `e05e359` (the v2.6 tip). `main` is ~265 commits behind and a strict ancestor (pure fast-forward — optional operator step). Verify `git status -sb` at session start.
+**Tests**: full suite **4027 passed / 7 skipped / 3 deselected** — green (~5:00). Run SOLO. (Was 3943 at the v2.6 baseline; +84 net across the program's 6 phases.)
+**Engine**: start `.venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000` (**no `--reload`**). ⚠ **HARD PRECONDITION — SYNCED OS CLOCK** (`w32tm /resync` BEFORE starting): a drifted clock → `-1021 Timestamp ahead` → startup fetches stall in weight-tracker throttling → the engine hangs on the "Connecting to exchange…" overlay (the resolved 2026-07-16 incident, note in the v2.6 historical block).
 
-## ▶ STATUS 2026-07-16 — v2.6 COMPLETE + AUDITED (15/15 findings CLOSED) + PUSHED
+## ▶ STATUS 2026-07-17 — v2.7 MODEL LIBRARY COMPLETE (P1–P6, all audited, PUSHED)
+
+The v2.7 program (`docs/design/v2.7_model_library_plan.md`, **Status: EXECUTED** — rev 2 after a
+6-agent plan audit folded 24 findings pre-execution): a DB-backed library of reusable,
+exchange-agnostic models + a per-app backtest-import adapter framework (MultiCharts first) +
+calculator pre-fill + close-time model tagging + retirement of the superseded surfaces.
+Minimal UI by design — v3.0 rebuilds the presentation layer. Memory: [[project-v27-model-library]].
+
+| Commit | Phase | What |
+|---|---|---|
+| `fd085e1` | plan | rev 2 — 6-agent audit folded (1.7 redesigned to `get_model_for_calc`; +1.8 backtest-tab filter; +5.4 close-stamp; +Phase 6) |
+| `574bb37` | 1 | schema + DB layer (CREATE/ALTER twins; dual-track migrations 013/014; atomic `create_model_backtest`; gate 3956) |
+| `d24b754` | 2 | `core/backtest_adapters/` + MultiCharts parser built against the REAL `@ES` export; 10 KB synthetic fixture (gate 3973) |
+| `06f5f4a` | 3 | routes: JSON CRUD + fragments + the codebase's FIRST multipart upload + prefill; 5 fragment templates (gate 4003) |
+| `6478e03` | 4 | `/models` page + nav/page_meta + Load-into-Calculator anchor (gate 4008) |
+| `c914ccf` | 5 | calculator picker (+`?model_id=` consumption) → `pre_trade_log.model_id` → close-row stamp + history Model column (gate 4021) |
+| `0d90f32` | 6 | retirement: Quantower JSON importer (L5) + old Models sub-tab GONE; Run-panel config selector + microstructure render KEPT (gate 4027) |
+
+**Key facts / landmines for future sessions:**
+- **Attribution rules**: position→model resolution goes `PositionIdentity.position_primary_calc`
+  → `get_model_stamp_for_calc` (row free-text wins → FK-join name → "(deleted model)"). The
+  close-row stamp is CHOKE-POINT enrichment in `insert_closed_position` (covers live + rebuild +
+  scripts); the order_manager gate BLANKS the shortfall-heuristic name whenever the position has
+  a calc (T234 collision can't mismatch the stamp). Model columns are re-derived, not preserved,
+  on REPLACE — the stamp travels with `calc_id`.
+- **FK policy**: every `model_id` column is FK-in-name-only (cross-file FK impossible —
+  `potential_models` lives in global scope); ids dangle by design after a model delete; readers
+  LEFT JOIN + "(deleted model)".
+- **Backtest tab**: `list_backtest_sessions` filters `model_id IS NULL` — imported model runs
+  render ONLY in the model library. Historical `type='microstructure'` (Quantower JSON) sessions
+  still render via the KEPT `results.html` branch (anchor-commented; do not sweep as dead).
+  The Run panel's `#model-selector`/`loadModelConfig` (legacy `config.signals/risk` prefill of
+  the RUN form) deliberately SURVIVES the P6 retirement — read-only, fed by `/api/models`.
+- **Gotchas learned (pinned by tests)**: indexes on ALTER-added columns must live in the
+  post-ALTER block, NEVER inside `_CREATE_STATEMENTS` (executescript runs first — legacy DBs die
+  at boot; `test_initialize_upgrades_legacy_shaped_db`). MultiCharts real-file facts: trades
+  header on ROW 3 (scan, don't hardcode), `Max Strategy Drawdown`/`(%)`/trade `Drawdown ($)`
+  signed-NEGATIVE, `Profit Factor` cell signed-negative → RECOMPUTE from gross, `Point Value` is
+  the string `"$50"`, the `.xml` export IS an OOXML zip (sniff PK bytes). Percent-string cells
+  convert to fractions (silent-100x guard). Route tests: append GETs to `test_routes.py` lists /
+  call handlers directly — never a second TestClient (LOW-023).
+- ⚠ **Test-infra disclosure**: `test_routes`' TestClient lifespan runs the migration runner
+  against the REAL `data/` dir — this session's runs applied migrations 013/014 to the live
+  `global.db` + per-account DB (additive columns only; `risk_engine.db` untouched). Pre-existing
+  isolation gap, not v2.7-introduced — hardening candidate for a future task.
+- **Corr-log**: untouched — model writers are not money-path (spec §5.5/E22 closed list); the
+  `insert_pre_trade_log` db_write tap payload verified byte-identical (frozen pins).
+
+## ▶ NEXT SESSION — operator live-verify, then next program (operator's call)
+
+1. **Live dogfood v2.7 (plan §5 items 5+7)**: `w32tm /resync` → start engine → open `/models` →
+   create a model with a risk preset → import the real `@ES` MultiCharts report (both the `.xlsx`
+   and renamed `.xml` should work) → "Load into Calculator" → confirm the picker+preset prefill →
+   submit a plan → confirm `pre_trade_log.model_id` set → after a close, the Model column in
+   Position History shows the name (free text left EMPTY is the acceptance shape). Also confirm
+   the Backtest tab still renders engine sessions + historical Quantower rows, and the model
+   library is the only management surface.
+2. **Deferred by design (recorded in the plan's executed notes)**: v3 styling/equity-chart polish,
+   extra adapters, §6-3b Settings auto-seed, the post-create stale-form UX (oob detail swap),
+   `calc:position_closed.model_names` heuristic-sourced (deferred-opportunistic), browser-level
+   JS tests (post-v3, Track-2 doctrine).
+3. **Optional**: fast-forward `main` to the v2.7 tip; push `archive/quantower-plugin` (still
+   local-only).
+4. **Next program candidates**: v3.0 ground-up UI rebuild (`docs/design/v3.0_models_tab_design_prompt.md`)
+   — the durable backend it will be rebuilt against is now in place; or the parked reconciler
+   residuals / startup-REST-throttling item (v2.6 block below). Operator decides.
+
+## ★ HISTORICAL (below — superseded by the v2.7-COMPLETE status above)
+
+## ★ HISTORICAL — v2.6 STATUS 2026-07-16 — COMPLETE + AUDITED (15/15 findings CLOSED) + PUSHED
 
 The v2.6 program (`docs/design/v2.6_remove_quantower_plugin_plan.md`) is DONE — the engine is now **exchange-only** (Binance-direct); the Quantower plugin, its bridge, routes, `PLATFORM_TOKEN` auth, platform UI, and the C# project are gone. Every phase followed the discipline: verify-first (plan line-refs were pinned pre-reconciler — they drifted, always re-grep) → targeted + full-suite gate SOLO → 2 independent read-only audits → fold findings → ONE commit → STOP. Memory: [[project-v26-quantower-removal]].
 
@@ -27,7 +96,7 @@ The v2.6 program (`docs/design/v2.6_remove_quantower_plugin_plan.md`) is DONE �
 - **Named per-phase deviations (full text in commit bodies):** P4 deferred tasks 4.2 (`PLATFORM_TOKEN`) + 4.3 (QT maps) to P5 — both consumed only by the P5-deleted modules, and the QT maps' MODULE-LEVEL import in `platform_bridge` would break boot (via `api/router.py → routes_platform → platform_bridge`) if removed early. P2 kept `monitoring._check_plugin_connection_sync` (folded read→False) + its 3 tests rather than deleting — **superseded: the audit DELETED the method + all 3 tests in `c418268`** (Check 6 could never fire). Obsolete plugin tests were removed per-phase (P2 standby regression; P4 7 plugin-UI tests in test_task121/time_sync/phase8_deferred; P5 `TestPlatformFrames` + `TestNoDbConnInExecutingCode`).
 - ~~**DEFERRED / opportunistic:** the corr-log `platform_*` categories are producer-less dead-but-present~~ → **DONE 2026-07-16 (v2.6 audit, spec erratum E37)**: `CAT_PLATFORM_FILL/SNAPSHOT/HELLO/PUSH` REMOVED from `core/correlation_log.py`; **registry is now 42, not 46**. The snapshot pin (`test_correlation_log_spine.py::test_registry_snapshot_ha3`) moved in the same commit — they must always move together. The spec's plugin surface (§3.2 `wsp` entry point, §4 `component`+`peer` sets, §5.4 rows, §10 criterion #1) is purged, E34 closed not-applicable, E36's count superseded. §4's "no dead peers" audit rule HOLDS AGAIN with no carve-out — independently verified: all 10 surviving peers are emitter-reachable, `quantower` is zero.
 
-## ▶ AUDIT 2026-07-16 — 15 findings, ALL CLOSED (4 commits, each gate-green + agent-audited)
+## ★ HISTORICAL — v2.6 AUDIT 2026-07-16 — 15 findings, ALL CLOSED (4 commits, each gate-green + agent-audited)
 
 | Commit | Closes | What |
 |---|---|---|
@@ -42,7 +111,7 @@ The v2.6 program (`docs/design/v2.6_remove_quantower_plugin_plan.md`) is DONE �
 
 **Boot path: CLEAN.** The operator live-started the engine (clock synced) — the one class the `import main` smokes could never reach. Nothing found.
 
-## ▶ NEXT SESSION — v2.7 model library (operator-gated)
+## ★ HISTORICAL — the v2.7 program pointer (EXECUTED — see the top block)
 
 v2.6 is closed. Next program: **`docs/design/v2.7_model_library_plan.md`**. Retire `/api/backtest/qt-import` (landmine L5 — the Quantower BACKTEST-RESULTS file upload, NOT the plugin) as part of it. **→ DONE: v2.7 shipped P1–P6 2026-07-16 (branch `v2.7/model-library`); L5 retired in P6.**
 
