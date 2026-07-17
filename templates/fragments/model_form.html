@@ -6,8 +6,10 @@
 {% set m = model or {} %}
 {% set rp = m.get('risk_preset', {}) if m else {} %}
 {% set st = m.get('strategy', {}) if m else {} %}
+{# hx-disabled-elt: double-click created duplicate models (Task C, F14). #}
 <form hx-post="{{ '/models/' ~ m.id ~ '/update' if m else '/models' }}"
       hx-target="#model-form-status" hx-swap="innerHTML"
+      hx-disabled-elt="find button[type='submit']"
       style="display:flex;flex-direction:column;gap:8px;font-size:.68rem;">
   <div style="font-size:.8rem;font-weight:700;">{{ 'Edit model' if m else 'New model' }}</div>
 

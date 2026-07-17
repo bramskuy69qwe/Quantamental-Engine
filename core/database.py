@@ -957,6 +957,27 @@ class DatabaseManager(
             "CREATE INDEX IF NOT EXISTS idx_bt_sessions_model "
             "ON backtest_sessions (model_id)"
         )
+        # v2.7 Task C (holistic-audit F9): imported backtest runs are
+        # SYNCHRONOUS — a status='running' row with model_id set can only
+        # mean the process died mid-import (power loss between the
+        # session commit and finish). Without this sweep it renders
+        # forever as an indistinguishable 0-stat run (the silent-drift
+        # class). Engine-run sessions (model_id NULL) are out of scope:
+        # pre-existing surface with a visible status column. This sweep
+        # is the RECOVERY answer — chosen INSTEAD OF an explicit
+        # BEGIN..COMMIT around the import BECAUSE explicit transactions
+        # on the SHARED aiosqlite conn risk nested-txn errors when
+        # interleaved writers commit (see db_models.create_model_backtest).
+        cur = await self._conn.execute(
+            "UPDATE backtest_sessions SET status='failed' "
+            "WHERE model_id IS NOT NULL AND status='running'"
+        )
+        if cur.rowcount:
+            log.warning(
+                "Marked %d interrupted imported backtest run(s) as failed "
+                "(process died mid-import)", cur.rowcount,
+            )
+        await self._conn.commit()
 
         # Task 160 (MED-024): UNIQUE index install is now done by
         # _CREATE_STATEMENTS (canonical schema). Duplicate pre-check

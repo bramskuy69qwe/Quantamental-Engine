@@ -117,6 +117,16 @@ class ModelsMixin:
         {session_name, summary: dict, trades: [dict], equity_curve:
         [dict]}. date_from/date_to come from summary.period_start/_end.
         Returns the new backtest_sessions id (status 'completed').
+
+        Transactional shape (v2.7 Task C, audit F9): the four steps
+        commit INDEPENDENTLY on the shared conn — deliberate. An explicit
+        BEGIN..COMMIT would risk nested-transaction errors the moment an
+        interleaved writer commits (single shared aiosqlite conn, no
+        isolation-level override). The failure lanes are covered instead:
+        in-process failure → the except below deletes the session
+        (CASCADE clears children); process DEATH mid-import → the
+        initialize() boot sweep marks the orphaned 'running' session
+        'failed' (rendered as FAILED in the run list).
         """
         summary = normalized.get("summary") or {}
         session_id = await self.create_backtest_session(

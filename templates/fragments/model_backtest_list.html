@@ -20,7 +20,12 @@
     {% set np = smry.net_profit or 0 %}
     <tr>
       <td style="color:var(--muted);">{{ r.id }}</td>
-      <td>{{ r.name }}</td>
+      {# v2.7 Task C (audit F9): a non-completed run must be VISIBLY
+         distinct — an interrupted import previously rendered as an
+         indistinguishable 0-stat row. #}
+      <td>{{ r.name }}{% if r.status and r.status != 'completed' %}
+        <span style="color:var(--red);font-size:.6rem;font-weight:700;">{{ r.status|upper }}</span>
+      {%- endif %}</td>
       <td style="color:var(--muted);font-size:.65rem;">{{ r.source_app }}</td>
       <td class="{{ 'pos-long' if np >= 0 else 'pos-short' }}">{{ fmt(np) }}</td>
       <td>{{ ((smry.win_rate or 0) * 100)|round(1) }}%</td>

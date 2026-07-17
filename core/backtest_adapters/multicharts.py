@@ -37,6 +37,7 @@ the parse branch then — with its fixture.
 from __future__ import annotations
 
 import logging
+import math
 import xml.etree.ElementTree as ET
 from dataclasses import asdict  # noqa: F401  (re-exported convenience for callers)
 from datetime import datetime, timedelta
@@ -55,6 +56,16 @@ from core.backtest_adapters.registry import register_backtest_adapter
 log = logging.getLogger("backtest_adapters.multicharts")
 
 _EXCEL_EPOCH = datetime(1899, 12, 30)
+
+
+def _to_int(value: "float | None", fallback: int) -> int:
+    """Non-finite-safe int coercion (v2.7 Task C, F7): None/nan/inf →
+    fallback; everything else truncates. NB deliberate semantics change
+    vs the old `int(x or fallback)`: a literal 0 cell now yields 0
+    (faithful) instead of falling back."""
+    if value is None or not math.isfinite(value):
+        return fallback
+    return int(value)
 
 
 def _to_iso(value: Any) -> str:
@@ -171,6 +182,26 @@ class MultiChartsAdapter:
                 session_name=session_name,
                 settings=settings,
             )
+        except BacktestAdapterError:
+            raise
+        except Exception as e:
+            # v2.7 Task C (holistic-audit F7): defense-in-depth for the read
+            # body. In the INSTALLED openpyxl the known adversarial shapes
+            # (chartsheet under a data-sheet name, truncated sheet XML)
+            # happen to raise at load_workbook and hit the open guard above
+            # — but only row CONTENT parsing is deferred-by-contract, so a
+            # version/shape that defers further would surface here and
+            # escape the route's `except ValueError` as a 500. The wrap
+            # also converts genuine adapter bugs into operator banners —
+            # log loudly so the traceback isn't lost (observability rule).
+            log.warning(
+                "[multicharts] workbook read failed post-open: %s",
+                e, exc_info=True,
+            )
+            raise BacktestAdapterError(
+                "Failed reading the workbook (corrupt sheet data, unexpected "
+                f"sheet type, or malformed cells): {type(e).__name__}: {e}"
+            ) from e
         finally:
             wb.close()
 
@@ -301,20 +332,32 @@ class MultiChartsAdapter:
         for row in wb["Strategy Analysis"].iter_rows(max_col=2, values_only=True):
             if row[0] is not None and len(row) > 1 and row[1] is not None:
                 labels[str(row[0]).strip()] = row[1]
+        if not labels:
+            # v2.7 Task C (holistic-audit F10): a layout variant that parses
+            # ZERO pairs previously produced a silent, plausible-looking
+            # summary. Tolerance contract says sparse ≠ loud, but zero
+            # deserves a signal.
+            log.warning(
+                "[multicharts] Strategy Analysis parsed ZERO label/value "
+                "pairs — summary falls back to trade-derived basics"
+            )
 
         def num(label) -> Optional[float]:
             return _to_float(labels.get(label))
 
+        fallback = self._summary_from_trades(trades)
         gross_profit = num("Gross Profit")
         gross_loss = num("Gross Loss")
         if gross_profit is not None and gross_loss:
             # MC reports Profit Factor signed-negative — recompute unsigned.
             profit_factor = gross_profit / abs(gross_loss)
         else:
+            # F10 fallback symmetry: prefer the cell, else the
+            # trades-derived PF (was hard-coded 0.0 one line after the
+            # fallback had computed the true value).
             pf_cell = num("Profit Factor")
-            profit_factor = abs(pf_cell) if pf_cell is not None else 0.0
-
-        fallback = self._summary_from_trades(trades)
+            profit_factor = abs(pf_cell) if pf_cell is not None \
+                else fallback.profit_factor
         net_profit = num("Net Profit")
         win_rate = num("% Profitable")
         max_dd = num("Max Strategy Drawdown")
@@ -329,7 +372,12 @@ class MultiChartsAdapter:
             max_drawdown=abs(max_dd) if max_dd is not None else 0.0,
             max_drawdown_pct=abs(max_dd_pct) if max_dd_pct is not None else 0.0,
             sharpe=sharpe if sharpe is not None else 0.0,
-            total_trades=int(num("Total # of Trades") or fallback.total_trades),
+            # F7 int-cast guard: int(inf) raises OverflowError (escaped the
+            # route's ValueError catch), int(nan) a cryptic ValueError —
+            # and nan is TRUTHY so `or fallback` never engaged. Clean
+            # fallback instead of a banner.
+            total_trades=_to_int(num("Total # of Trades"),
+                                 fallback.total_trades),
         )
 
     @staticmethod

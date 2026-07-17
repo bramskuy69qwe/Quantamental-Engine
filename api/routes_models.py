@@ -26,6 +26,7 @@ Response conventions:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 from dataclasses import asdict
@@ -431,6 +432,15 @@ async def upload_model_backtest(
 
     if not await db.get_potential_model(model_id):
         return await _list_response("Model not found.")
+    # v2.7 Task C (holistic-audit F14): reject on the parser-measured
+    # UploadFile.size (starlette tallies it while spooling the received
+    # part to disk) BEFORE read() materializes it into RAM. The
+    # post-read check stays as the belt — size can be None.
+    if file.size and file.size > MAX_UPLOAD_BYTES:
+        return await _list_response(
+            f"File too large ({file.size // (1024 * 1024)} MB > "
+            f"{MAX_UPLOAD_BYTES // (1024 * 1024)} MB)."
+        )
     raw = await file.read()
     if not raw:
         return await _list_response("Empty file.")
@@ -441,7 +451,12 @@ async def upload_model_backtest(
         )
     try:
         adapter = get_backtest_adapter(app_id)  # unknown app_id: ValueError
-        result = adapter.parse(raw, file.filename or "")
+        # v2.7 Task C (holistic-audit F8): the parse is synchronous openpyxl
+        # CPU work — ~100-500ms for the real export, seconds at the cap —
+        # on the SAME event loop that processes Binance WS fills. Off-loop
+        # per the house idiom (asyncio.to_thread — cf. order_enrichment,
+        # context_query, link_actions).
+        result = await asyncio.to_thread(adapter.parse, raw, file.filename or "")
     except ValueError as exc:  # includes BacktestAdapterError
         return await _list_response(str(exc))
 
