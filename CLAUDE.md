@@ -83,6 +83,59 @@ failure is silent at file-level greps but loud the moment the template
 is loaded. Same discipline applies to template-touching primitives
 (`templates/primitives/`).
 
+### Test isolation from live operator data (v2.7 Task E)
+
+The suite runs in the SAME working tree as the operator's live
+`data/` directory. Three standing mechanisms keep tests off it:
+
+1. **Lifespan gates in `main.py`** — under pytest (`"pytest" in
+   sys.modules`) the app lifespan SKIPS the SQL/data migration
+   runners and `start_background_tasks()` (15 live schedulers with
+   real API keys), and the rotating JSON log handler is not attached
+   to the root logger. `main.TEST_LIFESPAN_GATED` flips True when the
+   gates fire; `tests/test_routes.py::TestF5IsolationPins` pins all
+   three. Do not add lifespan steps that touch `data/` outside these
+   gates.
+2. **Singleton rebinds at fixture time, not config patches.**
+   `DatabaseManager` bakes `config.DB_PATH` at construction — in a
+   full-suite run an alphabetically-earlier import constructs the
+   singleton BEFORE any module-level `config.DB_PATH` patch runs, so
+   such patches silently isolate nothing (the original F5 finding).
+   Rebind the singleton's `path` ATTRIBUTE (see test_routes' client
+   fixture) or instantiate your own `DatabaseManager(path=...)`.
+3. **Conftest guards + tripwire** — runtime-resolver patches guard
+   the per-account event logs, the correlation-log dir, and
+   `core.audit`'s hardcoded live path; a SESSION-scoped tripwire
+   hashes the live DB files + engine logs and raises a pytest
+   WARNING naming any file whose CONTENT changed during the run.
+   Treat that warning as a finding (unless the live engine was
+   running alongside the suite — the message disambiguates).
+
+**Do NOT re-attempt a session-wide `config.DATA_DIR` redirect**: it
+was tried and broke 36 tests (many tests read OTHER live DBs off
+`config.DATA_DIR` at runtime; an empty tmp gives `OperationalError`)
+— recorded in `tests/conftest.py::_isolate_live_per_account_logs`'s
+docstring. Full synthetic-data-dir isolation would first need a
+seeded split-DB layout; until then the surgical guards above are the
+supported shape.
+
+### Schema-change trap: executescript runs before ALTER (v2.7 P1)
+
+Indexes (or any statement) referencing ALTER-added columns must live
+in the post-ALTER block of `database.initialize()`, NEVER inside
+`_CREATE_STATEMENTS` — `executescript` runs first, so a legacy-shaped
+DB (fresh per-account shadow DBs are exactly that) dies at boot with
+"no such column". Pinned by `test_initialize_upgrades_legacy_shaped_db`.
+
+### Deviations belong in plan executed-notes, not only commit bodies
+
+When implementation deviates from a plan row (shape, count, mechanism),
+annotate the PLAN ROW in the same commit ("shipped-state note: X
+instead of Y because Z"). A deviation recorded only in the commit
+message rots invisibly — the next session re-reads the plan, not the
+log (the v2.7 holistic audit filed F13 for exactly this: two P2 plan
+rows contradicted shipped state until Task D annotated them).
+
 ### Audit-time environment verification
 
 Browser-driven audit sessions (Claude in Chrome, Cowork, or similar)
@@ -225,8 +278,8 @@ Practical checklist when starting a fix task:
 5. The corrected-mechanism fix is usually smaller, more surgical, and
    has fewer regression surfaces than the spec-recommended one.
 
-**Calibration examples** (audit-impact-imprecision pattern, 9 examples
-as of Task 152):
+**Calibration examples** (audit-impact-imprecision pattern, 10 examples
+as of v2.7 Task E):
 
 - **Task 139 (FE-HIGH-009)**: filing framed Calculator countdown bug
   as semantic-tracking mismatch ("widget tracks last-submitted calc
@@ -255,6 +308,16 @@ as of Task 152):
   rather than mechanism. **Pattern**: when a filing tags a finding
   cluster as "family", verify mechanism overlap before trusting the
   leverage claim. Loose "same family" tags are hints, not proofs.
+
+- **v2.7 Task E (F5)**: filing recommended "session-scoped DB/DATA_DIR
+  binding before any singleton import". Investigation found the
+  session-wide redirect EMPIRICALLY tried-and-broken (36 read-coupled
+  tests, recorded in conftest's own docstring) and that binding order
+  doesn't cure empty-tmp read coupling. Shipped the surgical shape
+  instead: singleton `path` rebind at fixture time + pytest lifespan
+  gates + resolver guards + a content-hash tripwire. The filed
+  SYMPTOM (live-DB exposure) was fully real — live per-account DB and
+  both engine logs were observed changing mid-gate the same day.
 
 **Implication for fix-task specs**: when a spec lists a recommended
 fix, treat it as auxiliary information. The fix-task report should

@@ -18,6 +18,7 @@ except ImportError:
 
 import logging
 import os
+import sys
 import time
 from contextlib import asynccontextmanager
 
@@ -52,18 +53,36 @@ logging.basicConfig(
 # is a drop-in replacement that coordinates via OS-level file locks
 # (msvcrt on Windows, fcntl on Unix). maxBytes / backupCount / encoding match
 # the prior configuration verbatim.
-os.makedirs(config.LOGS_DIR, exist_ok=True)
+# F5 (v2.7 holistic audit, Task E): under pytest this module-import side
+# effect appended every suite run's log lines to the LIVE
+# data/logs/risk_engine.jsonl (and held a Windows file lock on it). The
+# handler OBJECT still exists — MED-045 pins isinstance on
+# main._json_handler — but under pytest it targets a throwaway temp file
+# and is NOT attached to the root logger (caplog is unaffected either way).
+_TESTING = "pytest" in sys.modules
+if _TESTING:
+    import tempfile
+    _log_target = os.path.join(
+        tempfile.mkdtemp(prefix="qre-test-logs-"), "risk_engine.jsonl")
+else:
+    os.makedirs(config.LOGS_DIR, exist_ok=True)
+    _log_target = config.LOG_FILE
 from concurrent_log_handler import ConcurrentRotatingFileHandler
 from core.log_formatter import JsonFormatter
 _json_handler = ConcurrentRotatingFileHandler(
-    config.LOG_FILE,
+    _log_target,
     maxBytes=10 * 1024 * 1024,
     backupCount=5,
     encoding="utf-8",
     use_gzip=False,  # match prior behavior — flip later if rotated-log size becomes a concern
 )
 _json_handler.setFormatter(JsonFormatter())
-logging.getLogger().addHandler(_json_handler)
+if not _TESTING:
+    logging.getLogger().addHandler(_json_handler)
+
+# F5: set True by the lifespan when the pytest gates actually fire —
+# tests/test_routes.py pins this (a deleted gate turns the pin red).
+TEST_LIFESPAN_GATED = False
 
 log = logging.getLogger("main")
 
@@ -87,13 +106,28 @@ async def lifespan(app: FastAPI):
     # ── SQLite init (fast — local file) ──────────────────────────────────────
     await db.initialize()
 
-    # ── SQL migrations (post-split only — no-op if marker absent) ────────────
-    from core.migrations.runner import run_all as _run_migrations
-    _run_migrations()
-
-    # ── Data migrations (threshold conversion from legacy account_params) ────
-    from core.migrations.convert_thresholds import convert_thresholds as _convert_thresholds
-    _convert_thresholds()
+    # ── SQL + data migrations — GATED OUT under pytest (F5, Task E) ──────────
+    # Both resolve config.DATA_DIR at RUNTIME and open the LIVE split DBs
+    # (runner: global.db + per_account/*.db; convert_thresholds: a WRITABLE
+    # per-account connection). Under a TestClient lifespan they therefore
+    # migrated/touched operator data on every full-suite run — the exact
+    # F5 exposure. Tests that exercise the migrations do so directly
+    # against their own temp dirs (test_threshold_conversion, the
+    # migration test files); the ONE in-process TestClient lifespan
+    # (test_routes, LOW-023) needs neither.
+    global TEST_LIFESPAN_GATED
+    if _TESTING:
+        TEST_LIFESPAN_GATED = True
+        log.warning(
+            "pytest detected — F5 test-lifespan gates active: skipping "
+            "SQL/data migrations and background schedulers (live-DB and "
+            "live-mutation vectors stay untouched)"
+        )
+    else:
+        from core.migrations.runner import run_all as _run_migrations
+        _run_migrations()
+        from core.migrations.convert_thresholds import convert_thresholds as _convert_thresholds
+        _convert_thresholds()
 
     # ── Load account registry (fast — local DB) ──────────────────────────────
     await account_registry.load_all()
@@ -118,7 +152,11 @@ async def lifespan(app: FastAPI):
         log.info(f"Crash recovery: restored equity={app_state.account_state.total_equity:.2f} USDT from last DB snapshot")
 
     # ── Background tasks (Binance REST/WS, schedulers, monitoring) ───────────
-    start_background_tasks()
+    # F5 (Task E): NOT under pytest — this starts 15 live schedulers with
+    # the operator's real API keys (calc-expiry / stale-order /
+    # session-reaper are live-mutation vectors on the operator's account).
+    if not _TESTING:
+        start_background_tasks()
 
     log.info(f"{config.PROJECT_NAME} accepting connections at http://localhost:8000")
     yield

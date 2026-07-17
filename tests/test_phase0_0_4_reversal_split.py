@@ -208,13 +208,33 @@ class TestSnapshotSplitsEmptyOnNonReversal:
 
 
 @pytest_asyncio.fixture
-async def test_db():
+async def test_db(monkeypatch):
     from core.database import DatabaseManager
+    import core.db_account_settings as _dbas
 
     tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
     tmp.close()
     db = DatabaseManager(path=tmp.name)
     await db.initialize()
+    # F5 (v2.7 holistic audit, Task E): process_fill →
+    # _snapshot_and_fix_isclose persists the fill snapshot to the
+    # PER-ACCOUNT DB via db_account_settings._resolve_db_path — a cross-DB
+    # write SEPARATE from self._db (position_fill_snapshots lives in the
+    # per-account split DB, migration 010, not DatabaseManager's base
+    # schema). Unpatched, account_id=1 resolved to the operator's LIVE
+    # per-account DB and appended a real row (surfaced by the conftest
+    # live-data tripwire). Route it into this temp DB instead; if the
+    # migration-only table is absent here the persist no-ops through the
+    # order_manager `except Exception` — the same tolerance production
+    # uses when the per-account DB is unavailable — and the tests assert
+    # on fills (self._db), not snapshots. This is the third resolver of
+    # the _resolve_db_path family; the two log resolvers are guarded in
+    # conftest, and the session tripwire is the regression net for the
+    # whole class.
+    monkeypatch.setattr(
+        _dbas, "_resolve_db_path",
+        lambda account_id, data_dir=None: tmp.name,
+    )
     yield db
     await db.close()
     try:
@@ -238,6 +258,28 @@ async def order_manager(test_db):
     # the deferred path — the 2-second call_later schedules into the
     # event loop and is cancelled when the fixture tears down.
     yield om
+
+
+@pytest.mark.asyncio
+async def test_snapshot_resolver_isolated_from_live_db(test_db):
+    """F5 hard pin (v2.7 holistic audit, Task E — folds both audits' top
+    nit): the ``test_db`` fixture MUST reroute
+    ``db_account_settings._resolve_db_path`` away from the operator's live
+    per-account DB. Without it, ``process_fill`` →
+    ``_snapshot_and_fix_isclose`` persists a ``position_fill_snapshots``
+    row to ``data/per_account/*.db`` (the leak the session tripwire
+    caught). Deleting the fixture monkeypatch turns this red — a
+    red-on-regression net for the class the tripwire only WARNS about."""
+    import core.db_account_settings as _dbas
+
+    resolved = os.path.abspath(_dbas._resolve_db_path(1))
+    assert resolved == os.path.abspath(test_db.path), (
+        "the snapshot resolver is not isolated to the temp DB"
+    )
+    assert os.path.join("data", "per_account") not in resolved, (
+        "F5 regression: the snapshot resolver points at the LIVE "
+        f"per-account DB ({resolved})"
+    )
 
 
 async def _all_fills(db, account_id=1):

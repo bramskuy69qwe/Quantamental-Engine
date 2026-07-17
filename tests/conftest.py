@@ -1,6 +1,9 @@
+import glob
+import hashlib
 import sys
 import os
 import sqlite3
+import warnings
 
 import pytest
 
@@ -67,6 +70,28 @@ def _isolate_live_per_account_logs(monkeypatch, tmp_path):
     hot paths). The transactional tables (``closed_positions``, ``orders``,
     ``fills`` …) live in ``config.DB_PATH`` and are already isolated by the
     tests that patch ``config.DB_PATH`` themselves.
+
+    ⚠ THIRD RESOLVER OF THIS FAMILY, DELIBERATELY NOT REDIRECT-GUARDED
+    HERE (v2.7 Task E; both holistic-audit passes flagged it):
+    ``core.db_account_settings._resolve_db_path`` is the SHARED
+    transactional per-account resolver (also imported by
+    ``data_cache`` / ``order_manager`` / ``calc_correlation`` /
+    ``schedulers`` / ``equity_gap_detector``). It is NOT redirected to
+    ``_ISO_SCHEMA`` like the two log resolvers above BECAUSE its callers
+    touch many tables AND read real account rows — a minimal-schema
+    redirect would ``OperationalError`` on the reads (the empty-DATA_DIR
+    redirect that broke 36 tests, above, is the same failure shape), and
+    a full-data copy reintroduces cross-test accumulation. So the class
+    is guarded structurally per-test (each test that drives the
+    transactional layer isolates its own DB / DATA_DIR) and caught
+    globally by the SESSION content-hash tripwire
+    (``_live_data_dir_tripwire``). The one live-write site the tripwire
+    surfaced — ``OrderManager._snapshot_and_fix_isclose`` persisting
+    ``position_fill_snapshots`` — is closed in
+    ``tests/test_phase0_0_4_reversal_split.py``'s ``test_db`` fixture and
+    hard-pinned by ``test_snapshot_resolver_isolated_from_live_db``. A
+    future unisolated writer through this resolver reopens the class:
+    the tripwire WARNS (naming the file) — treat that as a finding.
     """
     import config
     import core.trade_event_log as tel
@@ -98,6 +123,83 @@ def _isolate_live_per_account_logs(monkeypatch, tmp_path):
 
     monkeypatch.setattr(tel, "_resolve_db_path", _make_guard(tel._resolve_db_path))
     monkeypatch.setattr(evl, "_resolve_db_path", _make_guard(evl._resolve_db_path))
+
+
+@pytest.fixture(autouse=True)
+def _isolate_credential_audit_log(monkeypatch, tmp_path):
+    """Guard the live ``data/logs/audit.jsonl`` from test writes (F5,
+    v2.7 holistic audit Task E).
+
+    ``core.audit._AUDIT_PATH`` is a module-level HARDCODED live path (not
+    even config-derived) read at call time by ``log_event`` — connection /
+    account lifecycle tests were appending real audit rows there (observed:
+    live-file mtime bumped mid-gate on 2026-07-17). Same guard family as
+    ``_isolate_live_per_account_logs``: patch the module attribute to a
+    per-test throwaway."""
+    import core.audit as _audit
+    from pathlib import Path
+
+    monkeypatch.setattr(_audit, "_AUDIT_PATH", Path(tmp_path) / "audit.jsonl")
+
+
+def _hash_live_data_files():
+    """{path: sha256} of the live data-dir DB files + engine logs.
+
+    Content hashes, not mtimes — read-only sqlite connections can bump
+    mtime via WAL checkpointing on close, which is not a write in the
+    sense this tripwire polices."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    data = os.path.join(root, "data")
+    targets = (
+        [os.path.join(data, "risk_engine.db"),
+         os.path.join(data, "global.db"),
+         os.path.join(data, "logs", "risk_engine.jsonl"),
+         os.path.join(data, "logs", "audit.jsonl")]
+        + sorted(glob.glob(os.path.join(data, "per_account", "*.db")))
+    )
+    out = {}
+    for p in targets:
+        if not os.path.isfile(p):
+            continue
+        h = hashlib.sha256()
+        try:
+            with open(p, "rb") as f:
+                for chunk in iter(lambda: f.read(1 << 20), b""):
+                    h.update(chunk)
+            out[p] = h.hexdigest()
+        except OSError:
+            continue  # locked/unreadable — skip rather than fail the session
+    return out
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _live_data_dir_tripwire():
+    """SESSION tripwire: the test suite must leave the operator's live
+    data/ content byte-identical (F5, Task E — the durable detector the
+    audit said conftest lacked).
+
+    Hashes the live DB files + engine logs at session start and end; any
+    drift raises a loud pytest WARNING (surfaced in the run summary)
+    naming the changed files. WARNING and not a hard fail BECAUSE a live
+    engine running alongside the suite legitimately writes these files —
+    the message disambiguates. A clean run with the engine stopped must
+    be drift-free; treat any warning as a finding, not noise."""
+    before = _hash_live_data_files()
+    yield
+    after = _hash_live_data_files()
+    drifted = sorted(
+        set(k for k in before if after.get(k) != before[k])
+        | set(k for k in after if k not in before)
+    )
+    if drifted:
+        warnings.warn(
+            "F5 LIVE-DATA TRIPWIRE: live data/ content changed during this "
+            f"test session: {drifted}. Either a test wrote to operator data "
+            "(a bug — find and isolate it) OR the live engine was running "
+            "alongside the suite (expected drift; re-run with the engine "
+            "stopped to confirm).",
+            UserWarning,
+        )
 
 
 @pytest.fixture(scope="session", autouse=True)
