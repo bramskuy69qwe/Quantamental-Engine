@@ -152,6 +152,78 @@ async def test_json_create_validation(mdb):
 
 
 @pytest.mark.asyncio
+async def test_json_rejects_non_finite_numbers_anywhere(mdb):
+    """Holistic-audit F2: json.loads accepts NaN/Infinity/1e400 but
+    starlette's JSONResponse(allow_nan=False) 500s on render — ONE
+    poisoned model kills GET /api/models for the whole list. Reject at
+    the door. Door-guard-only is sufficient BECAUSE the only writers are
+    these now-guarded Python routes (browser JSON.stringify emits null
+    for NaN, so JS callers can't poison) — a read-side clamp would MASK
+    corrupt state, against the fail-loud rule."""
+    for poison in (
+        {"risk_preset": {"size_override_default": float("inf")}},
+        {"risk_preset": {"risk_pct": float("nan")}},
+        {"strategy": {"nested": {"deep": [1.0, float("inf")]}}},
+        {"config": {"a": float("nan")}},
+    ):
+        resp = await rm.api_create_model(_json_req({"name": "P", **poison}))
+        assert resp.status_code == 400, poison
+        assert "NaN or Infinity" in _jbody(resp)["error"]
+    assert await mdb.list_potential_models() == []
+
+    # Clean create still round-trips through the JSON renderer.
+    resp = await rm.api_create_model(_json_req(
+        {"name": "Clean", "risk_preset": {"risk_pct": 1.5}}))
+    assert _jbody(resp)["status"] == "created"
+    listed = _jbody(await rm.api_list_models())
+    assert listed[0]["risk_preset"] == {"risk_pct": 1.5}
+
+
+@pytest.mark.asyncio
+async def test_directly_poisoned_row_demonstrates_f2_blast_radius(mdb):
+    """The F2 MECHANISM, demonstrated (audit fold): a poisoned row
+    inserted BELOW the API (db-layer json.dumps has allow_nan=True)
+    makes the whole-list render raise — the loud failure the door guard
+    exists to prevent, and a tripwire if starlette's allow_nan behavior
+    ever changes."""
+    await mdb.create_potential_model(
+        "Poisoned", "both", "", {}, risk_preset={"r": float("nan")})
+    with pytest.raises(ValueError):
+        await rm.api_list_models()
+
+
+@pytest.mark.asyncio
+async def test_json_null_name_and_bad_types_are_400_not_500(mdb):
+    """F16 fold: {"name": null} previously passed validation (str(None)
+    = "None") then crashed at .strip() → 500."""
+    assert (await rm.api_create_model(
+        _json_req({"name": None}))).status_code == 400
+    assert (await rm.api_create_model(
+        _json_req({"name": "x", "description": 123}))).status_code == 400
+    mid = await mdb.create_potential_model("M", "both", "", {})
+    assert (await rm.api_update_model(
+        _json_req({"name": None}, method="PUT"), mid)).status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_form_size_override_rejects_non_finite(mdb):
+    """F2's form lane: nan/inf pass `<= 0` (the routes_calculator trap) —
+    must be rejected, not stored into risk_preset_json."""
+    for bad in ("nan", "inf", "-inf", "1e400"):
+        resp = await rm.create_model_form(_req(method="POST"), **_form_args(
+            name="X", size_override_default=bad))
+        assert resp.status_code == 200
+        assert "finite" in _html(resp), bad
+    # risk_pct's range check (0 < v <= 100) rejects nan/inf via chained
+    # comparison — pin it so a loosened range can't reopen F2 (audit NIT).
+    for bad in ("nan", "inf"):
+        resp = await rm.create_model_form(_req(method="POST"), **_form_args(
+            name="X", risk_pct=bad))
+        assert "Risk % must be in" in _html(resp), bad
+    assert await mdb.list_potential_models() == []
+
+
+@pytest.mark.asyncio
 async def test_json_put_validates_type_and_404s(mdb):
     mid = await mdb.create_potential_model("M", "both", "", {},
                                            risk_preset=PRESET)

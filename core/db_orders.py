@@ -86,6 +86,11 @@ class OrdersMixin:
         "exit_time_ms", "entry_time_ms", "symbol", "direction", "quantity",
         "entry_price", "exit_price", "realized_pnl", "net_pnl", "total_fees",
         "hold_time_ms", "exit_reason", "mfe", "mae", "tp_price", "sl_price",
+        # v2.7 holistic-audit F3: the P5 Model column's sort key. A sort_th
+        # column missing here 400s on every header click (route-side
+        # validate_sort_params) — template-wiring tests can't see this
+        # allowlist, so the template<->allowlist consistency test pins it.
+        "model_name",
     }
 
     # ── Write methods ───────────────────────────────────────────────────────

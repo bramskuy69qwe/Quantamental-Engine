@@ -27,6 +27,7 @@ Response conventions:
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import asdict
 from typing import Any, Dict, Optional, Tuple
 
@@ -73,15 +74,41 @@ async def api_get_model(model_id: int):
     return JSONResponse(_clean(model))
 
 
+def _has_non_finite(value: Any) -> bool:
+    """True when a NaN/Infinity float hides anywhere in a JSON-shaped value.
+
+    v2.7 holistic-audit F2: Python's json.loads accepts NaN/Infinity tokens
+    and parses 1e400 to inf, json.dumps stores them — but starlette's
+    JSONResponse renders with allow_nan=False, so ONE poisoned model 500s
+    GET /api/models for the ENTIRE list (both pickers silently empty).
+    Reject at the door instead.
+    """
+    if isinstance(value, float):
+        return not math.isfinite(value)
+    if isinstance(value, dict):
+        return any(_has_non_finite(v) for v in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_has_non_finite(v) for v in value)
+    return False
+
+
 def _validate_model_body(body: Dict[str, Any]) -> Optional[str]:
     """Shared create/update validation. Returns an error string or None."""
-    if not str(body.get("name", "")).strip():
+    name = body.get("name", "")
+    # F16 fold: {"name": null} previously PASSED (str(None)="None") then
+    # 500'd at .strip() in the route — reject non-strings here instead.
+    if not isinstance(name, str) or not name.strip():
         return "Name is required"
+    if not isinstance(body.get("description", ""), str):
+        return "Description must be a string"
     if body.get("type", "both") not in VALID_TYPES:
         return "Type must be macro, micro, or both"
     for key in ("risk_preset", "strategy", "config"):
-        if key in body and body[key] is not None and not isinstance(body[key], dict):
-            return f"{key} must be an object"
+        if key in body and body[key] is not None:
+            if not isinstance(body[key], dict):
+                return f"{key} must be an object"
+            if _has_non_finite(body[key]):
+                return f"{key} must not contain NaN or Infinity values"
     return None
 
 
@@ -246,8 +273,12 @@ def _parse_model_form(
             preset["window_seconds"] = wval
         if size_override_default.strip():
             sval = float(size_override_default)
-            if sval <= 0:
-                return "Size override must be > 0", {}, {}, {}
+            # v2.7 holistic-audit F2: nan/inf pass `<= 0` (NaN comparisons
+            # are False; inf > 0) — the exact trap routes_calculator guards
+            # with math.isfinite. A stored non-finite poisons every JSON
+            # endpoint reading this model (F2 blast radius).
+            if not math.isfinite(sval) or sval <= 0:
+                return "Size override must be a finite number > 0", {}, {}, {}
             preset["size_override_default"] = sval
     except ValueError:
         return "Risk %, window seconds and size override must be numeric", {}, {}, {}
