@@ -1197,15 +1197,40 @@ class TestModelNameGateV27:
         return om
 
     async def _run_close(self, om, db):
+        row, _bus = await self._run_close_with_bus(om, db)
+        return row
+
+    async def _run_close_with_bus(self, om, db):
+        """Like _run_close but with an awaitable publish_engine so the
+        Task D/F6 tests can assert the position:closed payload (the
+        emit sits in a try/except — a bare MagicMock silently no-ops)."""
         db.insert_closed_position = AsyncMock()
+        # The P6 idempotence dedup SELECT (close_row_is_new) must see "no
+        # existing row" or the §9 position:closed emit is gated off —
+        # MagicMock's auto async-CM otherwise returns a truthy fetchone.
+        db._conn.execute.return_value.__aenter__.return_value.fetchone = \
+            AsyncMock(return_value=None)
         trigger = self._make_fill(is_close=True)
         with patch("core.order_manager.app_state") as st, \
              patch("core.order_manager.event_bus") as bus:
             st.positions = []
             bus.publish = AsyncMock()
+            bus.publish_engine = AsyncMock()
             await om._build_close_row_for_fill(1, trigger)
         db.insert_closed_position.assert_called_once()
-        return db.insert_closed_position.call_args[0][0]
+        return db.insert_closed_position.call_args[0][0], bus
+
+    @staticmethod
+    def _closed_payload(bus):
+        """The position:closed engine-event payload from the captured bus."""
+        closed = [
+            c.args for c in bus.publish_engine.await_args_list
+            if len(c.args) >= 4 and c.args[2] == "closed"
+        ]
+        assert len(closed) == 1, (
+            f"expected exactly one position:closed emit, saw {len(closed)}"
+        )
+        return closed[0][3]
 
     @pytest.mark.asyncio
     async def test_gate_blanks_heuristic_name_when_calc_present(self):
@@ -1245,3 +1270,68 @@ class TestModelNameGateV27:
         row = await self._run_close(om, db)
         assert not row["calc_id"]
         assert row["model_name"] == "HeuristicName"
+
+    # ── Task D (holistic-audit F6): position:closed model_names ─────────
+    # Before the fix the event read the SAME local the P5 gate blanks, so
+    # exactly the calc-linked (tagged) positions emitted model_names=[] —
+    # and the webhook dispatcher forwards this payload externally.
+
+    def _fills_for_close(self, db):
+        db.get_position_fills = AsyncMock(return_value=[
+            {"quantity": 1.0, "price": 100.0, "fee": 0.1,
+             "timestamp_ms": 500, "calc_id": None},
+        ])
+        db.get_fills_by_order = AsyncMock(return_value=[
+            self._make_fill(is_close=True),
+        ])
+
+    @pytest.mark.asyncio
+    async def test_event_model_names_from_stamp_when_calc_present(self):
+        """A calc-linked close emits the calc's STAMPED model name (the
+        same resolution the closed row gets) — not [] and not the
+        blanked heuristic."""
+        db = _mock_db()
+        self._fills_for_close(db)
+        db.get_model_stamp_for_calc = AsyncMock(
+            return_value={"model_id": 7, "model_name": "Tagged Model"})
+        om = self._make_om(db, primary_calc=("calc-tagged", "lc-1"))
+        row, bus = await self._run_close_with_bus(om, db)
+        assert row["model_name"] == ""          # the gate is untouched
+        payload = self._closed_payload(bus)
+        assert payload["model_names"] == ["Tagged Model"]
+        db.get_model_stamp_for_calc.assert_awaited_once_with("calc-tagged")
+
+    @pytest.mark.asyncio
+    async def test_event_model_names_heuristic_when_calc_less(self):
+        """Calc-less positions keep the heuristic-window name in the
+        event — the only attribution they have."""
+        db = _mock_db()
+        self._fills_for_close(db)
+        db.get_model_stamp_for_calc = AsyncMock(return_value=None)
+        om = self._make_om(db, primary_calc=(None, None))
+        _row, bus = await self._run_close_with_bus(om, db)
+        assert self._closed_payload(bus)["model_names"] == ["HeuristicName"]
+        db.get_model_stamp_for_calc.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_event_model_names_empty_when_stamp_none(self):
+        """A linked calc with no model tag (stamp → None) emits [] —
+        never a fabricated name."""
+        db = _mock_db()
+        self._fills_for_close(db)
+        db.get_model_stamp_for_calc = AsyncMock(return_value=None)
+        om = self._make_om(db, primary_calc=("calc-untagged", "lc-1"))
+        _row, bus = await self._run_close_with_bus(om, db)
+        assert self._closed_payload(bus)["model_names"] == []
+
+    @pytest.mark.asyncio
+    async def test_event_emits_with_empty_names_when_stamp_read_fails(self):
+        """A stamp-read failure degrades model_names to [] but MUST NOT
+        suppress the position:closed event itself (the webhook feed)."""
+        db = _mock_db()
+        self._fills_for_close(db)
+        db.get_model_stamp_for_calc = AsyncMock(
+            side_effect=RuntimeError("db down"))
+        om = self._make_om(db, primary_calc=("calc-tagged", "lc-1"))
+        _row, bus = await self._run_close_with_bus(om, db)
+        assert self._closed_payload(bus)["model_names"] == []

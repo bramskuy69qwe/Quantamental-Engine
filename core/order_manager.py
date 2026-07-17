@@ -2961,8 +2961,17 @@ class OrderManager:
             # reconciles per-partial closed_positions rows) as a compat shim
             # (emit both; deprecate the flat one once subscribers migrate, §11).
             # Documented payload limits (match the data available at close):
-            #   - model_names = [primary's model_name] — model_name is sourced by
-            #     symbol+entry-window, not the primary calc (T234 known limit);
+            #   - model_names = [primary calc's stamped name] via
+            #     get_model_stamp_for_calc (same resolution as the closed row:
+            #     row free text wins → FK-join library name → "(deleted
+            #     model)"); the shortfall-window heuristic name feeds it only
+            #     on calc-less positions (the v2.7 P5 gate above blanks it
+            #     whenever a calc exists — Task D/F6: before this derivation
+            #     the event emitted [] for exactly the tagged positions, and
+            #     the webhook dispatcher forwards this payload externally).
+            #     Single-element by design: secondary contributing calcs'
+            #     models are not resolved (their ids are in
+            #     contributing_calc_ids for subscribers that care);
             #   - model_tags / hold_time_planned_ms / close_note have no source today;
             #   - mfe/mae are reconciler-computed AFTER close → None here (a
             #     subscriber reads the closed_positions row for the finalized pair).
@@ -2975,6 +2984,22 @@ class OrderManager:
             #     closed_positions row is the authoritative finalized value.
             try:
                 if is_final and close_row_is_new:
+                    # Task D (F6): the event's model name, post-insert. The P5
+                    # gate blanked `model_name` for calc-linked positions so
+                    # the insert-time choke point stamps the calc's model onto
+                    # the ROW — re-derive the same stamp here for the EVENT.
+                    # Inner try: a stamp-read failure degrades to [] (today's
+                    # shape) — it must not suppress the event itself.
+                    event_model_names = [model_name] if model_name else []
+                    if not event_model_names and close_calc_id:
+                        try:
+                            _stamp = await self._db.get_model_stamp_for_calc(
+                                close_calc_id,
+                            )
+                        except Exception:
+                            _stamp = None
+                        if _stamp and _stamp.get("model_name"):
+                            event_model_names = [_stamp["model_name"]]
                     await event_bus.publish_engine(
                         account_id, DOMAIN_POSITION, "closed", {
                             "position_id":                pos_id,
@@ -2983,7 +3008,7 @@ class OrderManager:
                             "contributing_calc_ids":      sorted(contributing_calc_ids),
                             "primary_calc_id":            close_calc_id,
                             "lifecycle_id":               close_lifecycle_id,
-                            "model_names":                [model_name] if model_name else [],
+                            "model_names":                event_model_names,
                             "model_tags":                 [],
                             "open_ts_ms":                 entry_time,
                             "close_ts_ms":                exit_time,

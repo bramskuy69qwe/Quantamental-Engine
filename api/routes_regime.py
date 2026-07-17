@@ -84,6 +84,11 @@ async def api_regime_backfill(request: Request):
         body = await request.json()
     except ValueError:
         return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+    # Task D fold (F16-residual class sweep): non-dict body → 400, not a
+    # 500 at body.get below.
+    if not isinstance(body, dict):
+        return JSONResponse(
+            {"error": "Body must be a JSON object"}, status_code=400)
 
     since_date = body.get("since_date", "2020-01-01")
     from core.tz import now_in_account_tz
@@ -171,6 +176,10 @@ async def api_regime_reclassify(request: Request):
     try:
         body = await request.json()
     except ValueError:
+        body = {}
+    # Task D fold (F16-residual class sweep): non-dict body degrades like
+    # this route's malformed-JSON lane (→ {}), not a 500 at body.get.
+    if not isinstance(body, dict):
         body = {}
     from_date = body.get("from_date", "")
     to_date   = body.get("to_date", "")

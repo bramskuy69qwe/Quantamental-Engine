@@ -145,6 +145,27 @@ async def frag_history_pre_trade(
         sort_by=sort_by, sort_dir=sort_dir, page=page, per_page=per_page,
         account_id=app_state.active_account_id,
     )
+    # v2.7 Task D (holistic-audit F11): the Model column read free text
+    # only, so picker-tagged calcs (model_id FK set, free text empty)
+    # rendered "—" — plan-time surface disagreed with the close-time
+    # stamp. Resolve display names with the SAME precedence as the
+    # close-row stamp (get_model_stamp_for_calc): row free text wins →
+    # FK-join library name → "(deleted model)" for dangling ids (FK
+    # policy: ids dangle by design after a model delete).
+    fk_ids = {
+        r["model_id"] for r in rows
+        if r.get("model_id") is not None
+        and not (r.get("model_name") or "").strip()
+    }
+    fk_names = await db.get_model_names_by_ids(fk_ids) if fk_ids else {}
+    for r in rows:
+        free_text = (r.get("model_name") or "").strip()
+        if free_text:
+            r["model_display"] = free_text
+        elif r.get("model_id") is not None:
+            r["model_display"] = fk_names.get(r["model_id"], "(deleted model)")
+        else:
+            r["model_display"] = ""
     total_pages = max(1, (total + per_page - 1) // per_page)
     return templates.TemplateResponse(
         request, "fragments/history/pre_trade_table.html",

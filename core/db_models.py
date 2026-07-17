@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json as _json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 log = logging.getLogger("database")
 
@@ -173,6 +173,36 @@ class ModelsMixin:
             d["summary"] = _json.loads(d.get("summary_json") or "{}")
             result.append(d)
         return result
+
+    async def get_model_names_by_ids(
+        self, model_ids: Iterable[int],
+    ) -> Dict[int, str]:
+        """{model_id: name} batch lookup for FK renderers (v2.7 Task D/F11).
+
+        Missing ids are simply absent — the FK policy is FK-in-name-only
+        (ids dangle by design after a model delete), so callers render
+        "(deleted model)" for ids not in the result. Empty input → {}.
+        Non-coercible ids are skipped (audit fold: a type-corrupted
+        model_id must degrade to the visible "(deleted model)" render,
+        not 500 the whole fragment at int()).
+        """
+        ids = []
+        for i in model_ids:
+            if i is None:
+                continue
+            try:
+                ids.append(int(i))
+            except (TypeError, ValueError):
+                continue
+        if not ids:
+            return {}
+        placeholders = ",".join("?" * len(ids))
+        async with self._conn.execute(
+            f"SELECT id, name FROM potential_models WHERE id IN ({placeholders})",
+            ids,
+        ) as cur:
+            rows = await cur.fetchall()
+        return {row["id"]: row["name"] for row in rows}
 
     async def get_model_stamp_for_calc(self, calc_id: str) -> Optional[Dict[str, Any]]:
         """(model_id, model_name) close-row stamp from a calc's

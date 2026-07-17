@@ -89,6 +89,10 @@ async def dd_enforcement_toggle(request: Request):
         body = await request.json()
     except Exception:
         body = {}
+    # Task D fold (F16-residual class sweep): non-dict body degrades like
+    # this route's malformed-JSON lane (-> {}), not a 500 at body.get.
+    if not isinstance(body, dict):
+        body = {}
 
     new_mode = body.get("mode", "").strip()
     confirm_name = body.get("account_name_confirm", "").strip()
@@ -270,6 +274,10 @@ async def calc_link_confirm(request: Request):
         body = await request.json()
     except Exception:
         body = {}
+    # Task D fold (F16-residual class sweep): non-dict body degrades like
+    # this route's malformed-JSON lane (-> {}), not a 500 at body.get.
+    if not isinstance(body, dict):
+        body = {}
 
     order_id = body.get("order_id")
     calc_id = (body.get("calc_id") or "").strip()
@@ -317,6 +325,10 @@ async def equity_backfill_trigger(request: Request):
     try:
         body = await request.json()
     except Exception:
+        body = {}
+    # Task D fold (F16-residual class sweep): non-dict body degrades like
+    # this route's malformed-JSON lane (-> {}), not a 500 at body.get.
+    if not isinstance(body, dict):
         body = {}
 
     aid = body.get("account_id", app_state.active_account_id)

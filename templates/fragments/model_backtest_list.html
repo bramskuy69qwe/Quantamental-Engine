@@ -35,6 +35,29 @@
         {{ (r.date_from or '—')[:10] }} → {{ (r.date_to or '—')[:10] }}
       </td>
     </tr>
+    {# v2.7 Task D (F12, plan §6-3b): read-only render of the imported
+       Settings-sheet params (persisted under summary_json.settings since
+       P3 but previously consumed by nothing). Native <details> — no JS,
+       collapsed by default; sorted for a stable render. #}
+    {# `is mapping` guard (audit fold): a hand-corrupted non-dict
+       settings value must skip the row, not crash at .items(). #}
+    {% set stg = smry.settings if smry.settings is mapping else {} %}
+    {% if stg %}
+    <tr>
+      <td colspan="8" style="padding:0 0 4px 0;border:0;">
+        <details style="font-size:.62rem;">
+          <summary style="cursor:pointer;color:var(--muted);">Settings ({{ stg|length }})</summary>
+          <table style="margin:4px 0 0 12px;">
+            <tbody>
+            {% for k, v in stg.items()|sort %}
+              <tr><td style="color:var(--muted);padding-right:10px;">{{ k }}</td><td>{{ v }}</td></tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </details>
+      </td>
+    </tr>
+    {% endif %}
   {% endfor %}
   </tbody>
 </table>

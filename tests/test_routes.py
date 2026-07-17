@@ -2,7 +2,16 @@
 Route smoke tests — every page and fragment endpoint returns 200.
 
 Uses FastAPI's TestClient (synchronous) so no running server needed.
-The app initializes against a temporary SQLite DB to avoid touching production data.
+
+⚠ ISOLATION CAVEAT (v2.7 holistic-audit F5; wording per Task D): the
+config.DB_PATH patch below only isolates SOLO runs of this module. In
+FULL-SUITE runs the `db` singleton has usually already bound the real
+path (alphabetically-earlier test files import it first), so the
+TestClient lifespan initializes the LIVE data/ DBs — the migration
+runner and the background schedulers included. Hardening (session-scoped
+DB/DATA_DIR binding before any singleton import + gating the runner and
+schedulers out of test lifespans) is Task E's scope — do not treat this
+module as isolated until that lands.
 """
 import os
 import sys

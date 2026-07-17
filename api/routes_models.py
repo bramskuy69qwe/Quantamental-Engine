@@ -113,9 +113,27 @@ def _validate_model_body(body: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+async def _json_object_body(request: Request) -> "Dict[str, Any] | None":
+    """The request body as a dict, or None when it isn't one.
+
+    Task D fold of the F16 residual: a valid-JSON-but-non-dict body
+    (list/string/number) previously reached _validate_model_body and
+    500'd at body.get(...); malformed JSON 500'd at request.json().
+    Both are caller errors — 400 at the door.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return None
+    return body if isinstance(body, dict) else None
+
+
 @router.post("/api/models", response_class=JSONResponse)
 async def api_create_model(request: Request):
-    body = await request.json()
+    body = await _json_object_body(request)
+    if body is None:
+        return JSONResponse(
+            {"error": "Body must be a JSON object"}, status_code=400)
     err = _validate_model_body(body)
     if err:
         return JSONResponse({"error": err}, status_code=400)
@@ -132,7 +150,10 @@ async def api_create_model(request: Request):
 
 @router.put("/api/models/{model_id}", response_class=JSONResponse)
 async def api_update_model(request: Request, model_id: int):
-    body = await request.json()
+    body = await _json_object_body(request)
+    if body is None:
+        return JSONResponse(
+            {"error": "Body must be a JSON object"}, status_code=400)
     # v2.7 3.1 fold: update now validates type (was a pre-existing hole —
     # PUT could persist arbitrary type values) and 404s on unknown ids.
     err = _validate_model_body(body)
@@ -461,8 +482,10 @@ async def upload_model_backtest(
         return await _list_response(str(exc))
 
     payload = asdict(result)
-    # §6-3b: persist the Settings-sheet params so the run detail can show
-    # them read-only — they ride summary_json (free-form).
+    # §6-3b: persist the Settings-sheet params read-only — they ride
+    # summary_json (free-form). Rendered as a collapsed <details> row in
+    # the run LIST (model_backtest_list.html; Task D/F12 — there is no
+    # separate run-detail view in the minimal v2.7 UI).
     payload["summary"]["settings"] = payload.pop("settings", {})
     try:
         await db.create_model_backtest(model_id, adapter.app_id, payload)

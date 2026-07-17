@@ -39,7 +39,6 @@ from __future__ import annotations
 import logging
 import math
 import xml.etree.ElementTree as ET
-from dataclasses import asdict  # noqa: F401  (re-exported convenience for callers)
 from datetime import datetime, timedelta
 from io import BytesIO
 from typing import Any, Dict, List, Optional, Tuple

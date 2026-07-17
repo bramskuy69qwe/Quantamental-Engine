@@ -69,7 +69,10 @@
             <span class="badge badge-limit">N</span>
             {% endif %}
           </td>
-          <td class="td-sub">{{ r.model_name or '—' }}</td>
+          {# v2.7 Task D (F11): model_display is route-resolved (free text
+             wins → model_id FK name → "(deleted model)"); the model_name
+             fallback keeps render contexts without the enrichment working. #}
+          <td class="td-sub">{{ r.model_display or r.model_name or '—' }}</td>
           <td class="notes-cell" id="notes-pt-{{ r.id }}">
             <span class="td-sub" style="cursor:pointer;"
                   onclick="editNote(this,{{ r.id }},'pre_trade')"

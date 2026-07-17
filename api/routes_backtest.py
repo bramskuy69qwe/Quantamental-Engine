@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -100,6 +100,11 @@ async def api_fetch_ohlcv(request: Request):
         body = await request.json()
     except ValueError:
         return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+    # Task D fold (F16-residual class sweep): a valid-JSON non-dict body
+    # (list/string/number) previously 500'd at body.get below.
+    if not isinstance(body, dict):
+        return JSONResponse(
+            {"error": "Body must be a JSON object"}, status_code=400)
 
     symbols   = body.get("symbols", [])
     timeframe = body.get("timeframe", "4h")
@@ -154,6 +159,11 @@ async def api_backtest_run(request: Request):
         cfg = await request.json()
     except ValueError:
         return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+    # Task D fold (F16-residual class sweep): non-dict body → 400, not a
+    # 500 at cfg.get below.
+    if not isinstance(cfg, dict):
+        return JSONResponse(
+            {"error": "Body must be a JSON object"}, status_code=400)
 
     name       = cfg.get("name", f"Backtest {now_in_account_tz(app_state.active_account_id).strftime('%Y-%m-%d %H:%M')}")
     date_from  = cfg.get("date_from", "")

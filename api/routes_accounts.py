@@ -545,6 +545,10 @@ async def dd_override(account_id: int, request: Request):
         body = await request.json()
     except Exception:
         body = {}
+    # Task D fold (F16-residual class sweep): non-dict body degrades like
+    # this route's malformed-JSON lane (-> {}), not a 500 at body.get.
+    if not isinstance(body, dict):
+        body = {}
     reason = (body.get("reason") or "").strip()
 
     # Validate reason
