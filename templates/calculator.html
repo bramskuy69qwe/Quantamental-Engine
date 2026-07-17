@@ -246,36 +246,76 @@
           </div>
         </div>
         <script>
+        function _intendedPickerValue(){
+          /* v2.7 Task B (holistic-audit F1): the value the picker SHOULD
+             carry, resolved SYNCHRONOUSLY — ?model_id= (the P4 anchor)
+             wins, else the saved calc_state.modelId. */
+          try{
+            var qid = new URLSearchParams(window.location.search).get('model_id');
+            if(qid) return qid;
+            var s = JSON.parse(localStorage.getItem('calc_state')||'{}');
+            if(s.modelId) return String(s.modelId);
+          }catch(e){}
+          return '';
+        }
+        /* v2.7 Task B (holistic-audit F1a — the restore-resubmit race): a
+           PROVISIONAL option carries the intended value synchronously, so
+           any early form submit (restoreCalcState's +200ms auto-resubmit,
+           history recall) serializes the right model_id even before
+           /api/models responds. Provisional-injection INSTEAD OF sequencing
+           the resubmit after the fetch BECAUSE it removes the timing
+           dependency entirely and keeps the restore UX unchanged. This also
+           closes F1b: saveCalcState can no longer clobber the saved
+           modelId with "" during the fetch window (the select already
+           holds the value). The fetch callback swaps in the real list; a
+           PAGE-LOAD-intended model that no longer exists drops to "" then.
+           NB the load-time fetch runs ONCE — a provisional injected LATER
+           (recallHistory of a since-deleted model) persists for the
+           session and its dangling id serializes; that is deliberate:
+           at recall time "deleted" is indistinguishable from "fetch
+           failed", clearing would break recall-tagging on failures, and
+           dangling ids are by-design readable ("(deleted model)"). On
+           fetch FAILURE the provisional selection stays — tagging remains
+           correct, only the dropdown is empty. Behavior change vs P5
+           (named): a ?model_id= naming a deleted model now clears instead
+           of falling back to the SAVED modelId — the anchor's intent
+           should not silently morph into a different model. */
+        (function(){
+          var intended = _intendedPickerValue();
+          if(!intended) return;
+          var sel = document.getElementById('model-picker');
+          var o = document.createElement('option');
+          o.value = intended; o.textContent = '(model #' + intended + ')';
+          o.dataset.provisional = '1';
+          sel.appendChild(o); sel.value = intended;
+        })();
         async function loadModelPicker(){
           try{
             var r = await fetch('/api/models');
             if(!r.ok) return;
             var models = await r.json();
+            /* validate BEFORE touching the provisionals — a malformed 200
+               must not strip the selection (audit NIT fold) */
+            if(!Array.isArray(models)) return;
             var sel = document.getElementById('model-picker');
+            sel.querySelectorAll('option[data-provisional]').forEach(function(o){ o.remove(); });
             models.forEach(function(m){
               var o = document.createElement('option');
               o.value = m.id; o.textContent = m.name;
               sel.appendChild(o);
             });
-            /* v2.7 5.1 (P4 audit carry-forward): consume ?model_id= from the
-               Load-into-Calculator anchor — select + trigger the prefill.
-               Fallback (P5 audit): restore the SAVED picker value (value
-               only, no prefill re-run — restoreCalcState already restored
-               the text fields; the options load async, so this can't live
-               in restoreCalcState itself). Query param wins. */
+            /* Re-apply the intended selection against the REAL list; the
+               ?model_id= anchor lane additionally triggers the prefill
+               (unchanged P4/P5 behavior). */
+            var intended = _intendedPickerValue();
             var qid = new URLSearchParams(window.location.search).get('model_id');
-            if(qid && sel.querySelector('option[value="'+CSS.escape(qid)+'"]')){
-              sel.value = qid;
-              applyModelPrefill(qid);
+            if(intended && sel.querySelector('option[value="'+CSS.escape(intended)+'"]')){
+              sel.value = intended;
+              if(qid) applyModelPrefill(qid);
             } else {
-              try{
-                var _s = JSON.parse(localStorage.getItem('calc_state')||'{}');
-                if(_s.modelId && sel.querySelector('option[value="'+CSS.escape(_s.modelId)+'"]')){
-                  sel.value = _s.modelId;
-                }
-              }catch(e){}
+              sel.value = '';
             }
-          }catch(e){/* picker stays empty — calculator works without it */}
+          }catch(e){/* provisional selection (if any) stays — see above */}
         }
         async function applyModelPrefill(id){
           var status = document.getElementById('model-prefill-status');
@@ -790,6 +830,7 @@ function saveToCalcHistory(){
     slAmountPct:document.querySelector('[name="sl_amount_pct"]').value,
     modelName:document.querySelector('[name="model_name"]').value,
     modelDesc:document.querySelector('[name="model_desc"]').value,
+    modelId:(document.getElementById('model-picker')||{}).value||'',
     sizeUnit:_sizeUnit};
   _calcHistory=_calcHistory.filter(h=>!(h.ticker===ticker&&h.entry===entry&&h.tp===tp&&h.sl===sl));
   _calcHistory.unshift(rec);if(_calcHistory.length>2)_calcHistory.length=2;
@@ -854,6 +895,23 @@ function recallHistory(idx){
   document.querySelector('[name="sl_amount_pct"]').value=h.slAmountPct||'100';
   document.querySelector('[name="model_name"]').value=h.modelName||'';
   document.querySelector('[name="model_desc"]').value=h.modelDesc||'';
+  /* v2.7 Task B (holistic-audit F1c): recall must reproduce the recalled
+     plan's tagging — set the picker from the STORED modelId instead of
+     inheriting whatever happens to be selected (silent cross-tagging +
+     supersede). An entry with NO modelId clears the picker; a modelId
+     whose option is absent gets a provisional option and KEEPS the id
+     (deleted-vs-fetch-failed is indistinguishable here; dangling ids are
+     by-design readable — see the picker-script comment). */
+  var _rp=document.getElementById('model-picker');
+  if(_rp){
+    var _want=h.modelId?String(h.modelId):'';
+    if(_want && !_rp.querySelector('option[value="'+CSS.escape(_want)+'"]')){
+      var _po=document.createElement('option');
+      _po.value=_want;_po.textContent='(model #'+_want+')';
+      _po.dataset.provisional='1';_rp.appendChild(_po);
+    }
+    _rp.value=_want;
+  }
   if(h.sizeUnit)_sizeUnit=h.sizeUnit;
   _hasCalculated=true;_calcTicker=h.ticker;updateOrderbook(h.ticker);
   // Update entry price display immediately

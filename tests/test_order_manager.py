@@ -1151,3 +1151,97 @@ class TestClosePositionSilentSwallow:
         from core.event_log import _VALID_EVENT_TYPES
         assert "close_row_build_failed" in _VALID_EVENT_TYPES
 
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# v2.7 Task B (holistic-audit F4): the P5 heuristic-name gate, pinned at the
+# order_manager layer. The audit proved ZERO tests turned red if
+# `if close_calc_id: model_name = ""` were deleted — every close-path test
+# mocked _compute_shortfall to an EMPTY name, and the P5 collision test
+# blanks the name itself (it pins the choke point, not the gate). These two
+# pins close that hole: a NON-empty heuristic name + a primary calc must
+# reach insert_closed_position BLANKED (the choke point then re-stamps from
+# the calc); with no calc anywhere, the heuristic name survives (fallback).
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestModelNameGateV27:
+    """F4 pins for the order_manager half of the P5 model-stamp fix."""
+
+    def _make_fill(self, qty=1.0, price=100.0, fee=0.1, is_close=False,
+                   ts=1000, exchange_order_id="OID-1", **extra):
+        return {
+            "quantity": qty,
+            "price": price,
+            "fee": fee,
+            "is_close": is_close,
+            "timestamp_ms": ts,
+            "exchange_order_id": exchange_order_id,
+            "terminal_position_id": "POS-GATE",
+            "exchange_position_id": "EXPOS-GATE",
+            "symbol": "BTCUSDT",
+            "ticker": "BTCUSDT",
+            "direction": "LONG",
+            "realized_pnl": 0.0,
+            "source": "test",
+            **extra,
+        }
+
+    def _make_om(self, db, primary_calc):
+        om = OrderManager(db)
+        om._determine_exit_reason = AsyncMock(return_value="MANUAL_OTHER")
+        # The T234 heuristic returns a NON-empty name — the shape every
+        # pre-existing test avoided (they all mocked "").
+        om._compute_shortfall = AsyncMock(
+            return_value={"model_name": "HeuristicName"})
+        om._position_primary_calc = AsyncMock(return_value=primary_calc)
+        return om
+
+    async def _run_close(self, om, db):
+        db.insert_closed_position = AsyncMock()
+        trigger = self._make_fill(is_close=True)
+        with patch("core.order_manager.app_state") as st, \
+             patch("core.order_manager.event_bus") as bus:
+            st.positions = []
+            bus.publish = AsyncMock()
+            await om._build_close_row_for_fill(1, trigger)
+        db.insert_closed_position.assert_called_once()
+        return db.insert_closed_position.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_gate_blanks_heuristic_name_when_calc_present(self):
+        """Deleting the gate turns this red: with a primary calc, the
+        heuristic name must NOT reach the close row (the insert-time
+        choke point stamps the calc's own model instead)."""
+        db = _mock_db()
+        db.get_position_fills = AsyncMock(return_value=[
+            {"quantity": 1.0, "price": 100.0, "fee": 0.1,
+             "timestamp_ms": 500, "calc_id": None},
+        ])
+        db.get_fills_by_order = AsyncMock(return_value=[
+            self._make_fill(is_close=True),
+        ])
+        om = self._make_om(db, primary_calc=("calc-tagged", "lc-1"))
+        row = await self._run_close(om, db)
+        assert row["calc_id"] == "calc-tagged"
+        assert row["model_name"] == "", (
+            "the P5 gate must blank the heuristic name when the position "
+            "has a calc — a window-collision name would otherwise block "
+            "or mismatch the primary calc's stamp (T234)"
+        )
+
+    @pytest.mark.asyncio
+    async def test_heuristic_name_survives_without_any_calc(self):
+        """The fallback lane: no junction primary, no open-fill calc —
+        the heuristic name is the only attribution and must survive."""
+        db = _mock_db()
+        db.get_position_fills = AsyncMock(return_value=[
+            {"quantity": 1.0, "price": 100.0, "fee": 0.1,
+             "timestamp_ms": 500, "calc_id": None},
+        ])
+        db.get_fills_by_order = AsyncMock(return_value=[
+            self._make_fill(is_close=True),
+        ])
+        om = self._make_om(db, primary_calc=(None, None))
+        row = await self._run_close(om, db)
+        assert not row["calc_id"]
+        assert row["model_name"] == "HeuristicName"

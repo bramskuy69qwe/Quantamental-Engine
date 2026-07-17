@@ -254,8 +254,14 @@ def test_calculator_picker_wiring_pins():
     assert 'name="model_id"' in src and 'id="model-picker"' in src
     # The picker is INSIDE #calc-form — that containment IS the
     # "supersede keeps its model" mechanism (a form field re-rides every
-    # recalc submit); scenario-level pinning is browser-territory.
-    assert src.index('id="calc-form"') < src.index('id="model-picker"')
+    # recalc submit). Real containment check (Task B fold — the old
+    # index-order proxy passed even with the picker AFTER </form>):
+    # HTML forbids nested forms, so the first </form> after the open tag
+    # closes #calc-form.
+    i_open = src.index('id="calc-form"')
+    i_close = src.index('</form>', i_open)
+    i_picker = src.index('id="model-picker"')
+    assert i_open < i_picker < i_close, "picker not inside #calc-form"
     # ?model_id= consumption (P4 audit carry-forward: the Load-into-
     # Calculator anchor degrades to a plain link without this).
     assert "URLSearchParams(window.location.search).get('model_id')" in src
@@ -266,6 +272,15 @@ def test_calculator_picker_wiring_pins():
     # P5 audit folds: Clear drops the picker; saved state carries modelId.
     assert "_mp.value=''" in src
     assert "modelId:" in src
+    # Task B (holistic-audit F1) pins: the provisional option makes the
+    # intended model_id serialize SYNCHRONOUSLY (kills the restore-
+    # resubmit race F1a and the save-clobber F1b); history recall
+    # restores the STORED modelId (F1c — no cross-tagging).
+    assert "_intendedPickerValue" in src
+    assert "dataset.provisional" in src
+    assert "option[data-provisional]" in src  # fetch swaps provisionals out
+    assert "h.modelId" in src                 # recallHistory restores it
+    assert src.count("modelId:") >= 2         # calc_state AND history records
 
 
 def test_model_sort_key_allowlisted_and_validates():
