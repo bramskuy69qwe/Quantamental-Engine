@@ -1,9 +1,51 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-07-17 (**v2.7 MODEL LIBRARY is COMPLETE — P1–P6 shipped in one session (2026-07-16/17) + PUSHED.** Every phase: full-suite gate SOLO + 2 independent read-only audits + folds pre-commit. **Next = operator live-verify, then the next program is the operator's call** — see ▶ NEXT SESSION.)
-**Branch**: **`v2.7/model-library`** — **PUSHED, in sync with origin at `0d90f32`**. Forked off `e05e359` (the v2.6 tip). `main` is ~265 commits behind and a strict ancestor (pure fast-forward — optional operator step). Verify `git status -sb` at session start.
-**Tests**: full suite **4027 passed / 7 skipped / 3 deselected** — green (~5:00). Run SOLO. (Was 3943 at the v2.6 baseline; +84 net across the program's 6 phases.)
+**Date**: 2026-07-17 (**v2.7 COMPLETE + HOLISTICALLY AUDITED; fix Tasks A/B/C SHIPPED, D/E OPEN** — see ▶ AUDIT STATUS. The program block below it stands.)
+**Branch**: **`v2.7/model-library`** — **PUSHED, in sync with origin through the audit-fix commits** (verify `git status -sb` at session start). Forked off `e05e359` (the v2.6 tip). `main` is 266+ commits behind and a strict ancestor (pure fast-forward — optional operator step).
+**Tests**: full suite **4046 passed / 7 skipped / 3 deselected** — green (~5:25). Run SOLO. (3943 v2.6 baseline → 4027 at program wrap → 4046 after fix Tasks A–C.)
 **Engine**: start `.venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000` (**no `--reload`**). ⚠ **HARD PRECONDITION — SYNCED OS CLOCK** (`w32tm /resync` BEFORE starting): a drifted clock → `-1021 Timestamp ahead` → startup fetches stall in weight-tracker throttling → the engine hangs on the "Connecting to exchange…" overlay (the resolved 2026-07-16 incident, note in the v2.6 historical block).
+
+## ▶ AUDIT STATUS 2026-07-17 — holistic program audit F1–F18; Tasks A–C SHIPPED, D–E NEXT
+
+**The ledger is the source of truth: `docs/audits/2026-07-17-v2.7-holistic-audit.md`** (6 parallel
+read-only agents over the whole program diff `e05e359..c0c2c37`; findings F1–F18 tiered, fix plan =
+Tasks A–E; incl. the F13 commit-message errata and the named accepted residues). Every fix task ran
+the house cycle: targeted + full gate SOLO + 2 independent audits + folds pre-commit.
+
+| Commit | Task | Closed | Gate |
+|---|---|---|---|
+| `329018e` | A | **F3** Model sort-header 400 (allowlist + a 7-table template↔allowlist class pin) · **F2** non-finite JSON poisoning (both doors + a direct-poison mechanism test) · F16 null-name/description 400s | 4033 |
+| `f03b24d` | B | **F1** calculator restore races (ONE mechanism: provisional-option injection — synchronous serialization; history stores/restores modelId) · **F4** the order_manager gate pins (mutation-kill DEMONSTRATED) · F13d real containment check | 4035 |
+| `85e7c1c` | C | **F7** parse body-wrap (logged; discriminating pin) · **F8** parse via asyncio.to_thread · **F9** boot sweep for interrupted imports + FAILED badge (txn shape = documented deliberate non-fix) · **F10** zero-label warn + PF fallback symmetry · **F14** double-submit/accept/size-precheck · the ledger doc | 4046 |
+
+**▶ NEXT = Task D — attribution surfaces + docs truth** (one commit, house cycle):
+1. **F6**: `calc:position_closed`'s `model_names` emits `[]` for exactly the calc-linked positions
+   (the P5 gate blanks the variable the event reads at `core/order_manager.py:~2986`) — and the
+   **webhook dispatcher forwards this payload externally**, so the P6 "no consumer" disposition was
+   internal-only. Fix = build `model_names` from the ENRICHED row / the stamp (post-insert), and
+   correct the stale comment at `~:2964`.
+2. **F11**: picker-tagged calcs render "—" in the Pre-Trade Log (`pre_trade_table.html:72` reads
+   free text only) — render via the `model_id` FK when free text is empty.
+3. **F12**: `summary_json["settings"]` is persisted but NOTHING renders it (§6-3b described as
+   shipped) — ship a tiny read-only render in the run list/detail OR re-document as deferred.
+4. **F13 residue**: P2 plan rows still contradict shipped state (2.4/§6-2 ElementTree "stays" →
+   detect-and-reject; 2.7 "~20 trades" → 10); `tests/test_routes.py` docstring falsely claims temp-DB
+   isolation (coordinate wording with Task E); plan §2 qt-import present-tense.
+5. **F15/F17 sweeps**: dead `asdict` noqa re-export in `multicharts.py`; `Tuple` unused in
+   `routes_backtest.py`; non-dict JSON body → 400 in `/api/models` (pre-existing 500); "~265"→266.
+
+**Then Task E — test-isolation hardening (F5, its own mini-program, dry-run discipline):**
+`test_routes`' `config.DB_PATH` patch is VOID in full-suite runs (the `db` singleton binds path at
+first import — alphabetically-earlier test files trigger it) → the TestClient lifespan initializes
+the LIVE `data/risk_engine.db`, the migration runner hits the live split DBs, and
+`start_background_tasks()` runs **15 live schedulers with the operator's real API keys** (calc-expiry
+/ stale-order / session-reaper are live-mutation vectors). Conftest guards cover none of it. Scope:
+session-scoped DB/DATA_DIR binding before any singleton import; gate the runner + schedulers out of
+test lifespans; root-logger handler guard; + the F18 CLAUDE.md notes (executescript-before-ALTER
+trap; lifespan-boot-touches-live-DB; deviations-into-plan-notes).
+
+**Still outstanding after D+E**: the operator live-verify checklist (unchanged, below) and the
+optional main fast-forward.
 
 ## ▶ STATUS 2026-07-17 — v2.7 MODEL LIBRARY COMPLETE (P1–P6, all audited, PUSHED)
 
