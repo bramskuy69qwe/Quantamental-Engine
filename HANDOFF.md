@@ -1,9 +1,53 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-07-21 (**green-gate program COMPLETE; v2.7 audit Tasks A–E ALL SHIPPED; next = v3.0 UI plan audit** — see ▶ STATUS 2026-07-21.)
-**Branch**: session work landed on worktree branch **`claude/nice-taussig-4dc2ef`** = `v2.7/model-library` tip `03f7236` + 3 linear commits (`dc9e963` dead-template sweep, `9ea7e30` provision_test_env, this wrap). `v2.7/model-library` itself is in sync with origin at `03f7236`. **Operator step: fast-forward/merge `v2.7/model-library` onto the session tip + push.** `main` remains far behind and a strict ancestor (optional fast-forward).
-**Tests**: **4112 passed / 7 skipped / 3 deselected** at the session tip (= 4092 at `03f7236` + 20 provision-guard tests). Run SOLO **on the `.venv` interpreter** — user-site Python lacks `pytest-timeout`, silently dropping the 30 s guardrail. Fresh worktree/clone: run `scripts/provision_test_env.py` FIRST (CLAUDE.md § "Fresh worktree / clone") — else ~110 `no such table` failures that are NOT a regression.
-**Engine**: start `.venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000` (**no `--reload`**). ⚠ **HARD PRECONDITION — SYNCED OS CLOCK** (`w32tm /resync` BEFORE starting): a drifted clock → `-1021 Timestamp ahead` → startup fetches stall in weight-tracker throttling → the engine hangs on the "Connecting to exchange…" overlay (the resolved 2026-07-16 incident, note in the v2.6 historical block).
+**Date**: 2026-07-21 (**naming hygiene SHIPPED; merge chain + PUSH DONE; next = v3.0 UI plan audit in a NEW session with the Claude design frontend MCP** — see ▶ STATUS "naming hygiene" below.)
+**Branch**: **`v2.7/model-library` at `92b753b` — IN SYNC with origin** (absorbed the green-gate worktree commits `dc9e963`/`9ea7e30`/`c2ad9d5` + the naming fix via fast-forward, pushed 2026-07-21). Redundant labels `v2.7/naming-hygiene` and `claude/nice-taussig-4dc2ef` (still checked out in its worktree) sit at/below the tip — optional tidy. `main` remains far behind and a strict ancestor (optional fast-forward).
+**Tests**: **4119 passed / 7 skipped / 3 deselected** at `92b753b` (= 4112 at the green-gate tip + 7 naming-hygiene pins). Run SOLO **on the `.venv` interpreter** — user-site Python lacks `pytest-timeout`, silently dropping the 30 s guardrail. Fresh worktree/clone: run `scripts/provision_test_env.py` FIRST (CLAUDE.md § "Fresh worktree / clone") — else ~110 `no such table` failures that are NOT a regression.
+**Engine**: **RUNNING** (started 2026-07-21 from this tree at `92b753b`, clock synced to 5 ms; serves the v2.7 identity — live-verified on `/`, `/manifest.json`, `/openapi.json`). Restart recipe: `.venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000` (**no `--reload`**). ⚠ **HARD PRECONDITION — SYNCED OS CLOCK** (`w32tm /resync` BEFORE starting; needs the w32time service, admin): a drifted clock → `-1021 Timestamp ahead` → startup fetches stall in weight-tracker throttling → the engine hangs on the "Connecting to exchange…" overlay (the resolved 2026-07-16 incident; recurred as a +4.9 s drift blocker 2026-07-21, operator-synced).
+
+## ▶ STATUS 2026-07-21 (later) — naming hygiene `92b753b` SHIPPED + merged + PUSHED; engine LIVE on the v2.7 identity; NEXT = v3.0 UI plan audit
+
+**Supersedes the green-gate block below on branch topology** (its "operator merges/pushes" step is
+DONE — `v2.7/model-library` fast-forwarded `03f7236 → 92b753b` and pushed; origin in sync).
+
+**The naming-hygiene task (`92b753b`, gate 4119/7/3, 2 independent audits clean, house cycle):**
+- **Identity is now config-only**: `config.py` `PROJECT_NAME_` / `PROJECT_VERSION_` (bumped
+  v2.4.1.1 → **v2.7**; it had been git-verified frozen since task 108 `4ecd75d`) + new
+  `PROJECT_SHORT_NAME` / `PROJECT_DESCRIPTION`. FastAPI metadata + the PWA manifest now derive
+  from config; templates/launch.bat already did. **The post-v3.0 product rename = a config.py
+  edit only** (+ `test_time_sync.py`'s ALL-CAPS shape pin on `PROJECT_NAME_` if the new name
+  isn't uppercase).
+- **De-trapped tests**: task-108's `startswith("v2.4.1")` exact-prefix pin RETIRED (it made every
+  version bump a red test — the mechanism behind the freeze); `test_project_meta.py` scans made
+  major-agnostic (the old `v2.`-anchored regexes would have gone blind at v3.0); +7 pins incl. a
+  monkeypatch end-to-end manifest wiring check.
+- **Service worker**: display strings de-branded (raw static file — cannot read config) + an
+  ADJACENT FUNCTIONAL FIX: `PRECACHE_URLS` pointed at the deleted `/static/manifest.json`; atomic
+  `cache.addAll` meant that one dead URL silently voided the ENTIRE pre-cache. Now `/manifest.json`
+  — PWA offline pre-cache works for the first time.
+- **Docs**: README Status v2.4-era → v2.7 truth; CLAUDE.md § "Release hygiene" (bump
+  `PROJECT_VERSION_` at program close; never exact-prefix-pin a version; never-rename list:
+  `qe-kdf-salt`, `risk_engine.*` filenames).
+- **Frontend live-verified** post-push: `/` renders "QUANTAMENTAL ENGINE v2.7" (zero v2.4.1.1),
+  manifest name/short_name/description correct, OpenAPI title + version 2.7. NB stale-display
+  causes are SERVING-layer: Jinja globals bake config at process import (restart required) and
+  the SW's offline fallback replays the last cached page when the engine is down. Installed-PWA
+  OS-level app name refreshes lazily from the manifest (cosmetic lag; reinstall if it lingers).
+
+**▶ NEXT SESSION = v3.0 UI plan audit** — the operator will open a NEW Claude Code session **with
+the Claude design frontend MCP connected** for this program. Charge: audit
+`docs/design/v3.0_models_tab_design_prompt.md` BEFORE any execution — multi-agent read-only PLAN
+audit, findings folded into the plan first (v2.7 rev-2 precedent: 6 agents, 24 findings folded).
+Base is pushed + green as the green-gate wrap required. Reminder for that session: v3.0 rebuilds
+the presentation layer (Track-2 doctrine — today's DOM is throwaway; browser-level tests come
+AFTER the new DOM stabilizes).
+
+**Open / opportunistic after this session:**
+1. **CHANGELOG backfill** — top entry is still v2.4.4; v2.5/v2.6/v2.7 entries were never written.
+2. **Branch tidy (post-push, optional)**: delete the `v2.7/naming-hygiene` label (== tip) and
+   retire the merged `claude/nice-taussig-4dc2ef` worktree + branch.
+3. Optional `main` fast-forward; ~678-row live per_account test-pollution DRY-RUN clean
+   (ledger § operator action); the v2.7 operator live-verify checklist (plan §5 items 5+7).
 
 ## ▶ STATUS 2026-07-21 — true green gate reproduced everywhere; provisioning tool shipped; NEXT = v3.0 UI plan audit
 
