@@ -119,6 +119,29 @@ docstring. Full synthetic-data-dir isolation would first need a
 seeded split-DB layout; until then the surgical guards above are the
 supported shape.
 
+### Fresh worktree / clone: red suite → provision data/ first
+
+A fresh worktree fails ~110 tests (`no such table: account_settings` /
+`pre_trade_log` / `engine_events` / `trade_events`): its `data/` lacks
+the split layout (`.split-complete-v1` marker + global/per_account
+DBs), so `db_router.split_done()` sends every resolver to an empty
+legacy fallback. NOT a regression — do not file findings off it. Run
+
+```
+.venv/Scripts/python.exe scripts/provision_test_env.py
+```
+
+once (refuses primary checkouts and live-shaped data; `--wipe` to
+reprovision), then run the gate with the `.venv` interpreter —
+user-site Python lacks `pytest-timeout`, so the 30 s guardrail
+silently vanishes there. Verified parity: worktree gate == main-tree
+gate (4092/7/3, 2026-07-21). The script also PREVENTS the fresh-DB
+credential seeds from materializing real `.env` keys (`config`
+attr blanking + scrub verification — an independent audit caught the
+seeds re-encrypting live keys into provisioned DBs via `load_dotenv`'s
+parent-directory walk). Read its docstring before modifying either
+seed path in `core/database.py`.
+
 ### Schema-change trap: executescript runs before ALTER (v2.7 P1)
 
 Indexes (or any statement) referencing ALTER-added columns must live
