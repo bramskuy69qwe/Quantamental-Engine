@@ -1,6 +1,6 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-07-22 (**v3.0 UI plan audit DONE — Meridian design imported + 6-agent audit folded into a new implementation plan; awaiting operator ratification of the two gating decisions before any execution** — see ▶ STATUS "v3.0 UI plan audit" directly below.)
+**Date**: 2026-07-22 (**v3.0 UI plan audit DONE + plan REV-1: operator RATIFIED §0 (React adopted, served as precompiled static JS) + reversed source-binding onto the model + re-sequenced to implement-and-wire ALL pages cockpit-first; plan-vs-frontend fidelity verified clean; NEXT = execute P0 (Foundation) on operator go** — see ▶ STATUS "v3.0 UI plan audit" directly below.)
 **Branch**: **`v2.7/model-library` at `92b753b` — IN SYNC with origin** (absorbed the green-gate worktree commits `dc9e963`/`9ea7e30`/`c2ad9d5` + the naming fix via fast-forward, pushed 2026-07-21). Redundant labels `v2.7/naming-hygiene` and `claude/nice-taussig-4dc2ef` (still checked out in its worktree) sit at/below the tip — optional tidy. `main` remains far behind and a strict ancestor (optional fast-forward).
 **Tests**: **4119 passed / 7 skipped / 3 deselected** at `92b753b` (= 4112 at the green-gate tip + 7 naming-hygiene pins). Run SOLO **on the `.venv` interpreter** — user-site Python lacks `pytest-timeout`, silently dropping the 30 s guardrail. Fresh worktree/clone: run `scripts/provision_test_env.py` FIRST (CLAUDE.md § "Fresh worktree / clone") — else ~110 `no such table` failures that are NOT a regression.
 **Engine**: **RUNNING** (started 2026-07-21 from this tree at `92b753b`, clock synced to 5 ms; serves the v2.7 identity — live-verified on `/`, `/manifest.json`, `/openapi.json`). Restart recipe: `.venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000` (**no `--reload`**). ⚠ **HARD PRECONDITION — SYNCED OS CLOCK** (`w32tm /resync` BEFORE starting; needs the w32time service, admin): a drifted clock → `-1021 Timestamp ahead` → startup fetches stall in weight-tracker throttling → the engine hangs on the "Connecting to exchange…" overlay (the resolved 2026-07-16 incident; recurred as a +4.9 s drift blocker 2026-07-21, operator-synced).
@@ -32,20 +32,43 @@ relaunched clean after the reset; all 6 are folded. **The plan**:
 rev-2 folded 24 findings pre-execution). The old `v3.0_models_tab_design_prompt.md`
 is banner-marked CONSUMED and points at the new plan.
 
-**★ TWO GATING DECISIONS the operator must ratify before P0 executes (plan §0):**
-1. **Decision A — stack.** The design prompt forbade "a heavy SPA framework" +
-   mandated Jinja/HTMX; the delivered Meridian is a **React 18 SPA**. Plan
-   RECOMMENDS **A2: adopt the React reference, served as AOT-precompiled static JS
-   from FastAPI** (React production UMD + vendored CDN deps + a one-shot esbuild
-   prebuild — **no standing Node server, no runtime `package.json`**; the repo has
-   none, confirmed). Alt A1 (port the visual language into Jinja + an islands layer)
-   ~doubles P0 and loses the tiling-workspace identity. **This choice determines
-   whether P0 ports primitives to JSX or to Jinja macros — nothing executes until
-   it's made.**
-2. **Decision B — serving** (contingent on A2): precompiled static JS + vendored
-   offline assets. Also §3: exchange-agnostic vs. the design's per-model "Source
-   Binding" — plan recommends treating symbol/point-value as **per-run provenance**,
-   keeping the model exchange-agnostic.
+**★ GATING DECISIONS — RATIFIED by operator 2026-07-22 (plan REV-1, §0):**
+1. **Decision A → A2 (React).** Adopt the Meridian React reference as v3.0's UI,
+   served as **AOT-precompiled static JS from FastAPI** (production UMD + vendored CDN
+   deps + one-shot esbuild — no standing Node server, no runtime `package.json`).
+2. **Decision B → precompiled static JS** + vendored offline assets.
+3. **§3 source-binding → REVERSED** from the audit's recommendation: **models DO carry
+   source binding** (backtest provenance — "where we backtested them"); the
+   exchange-agnostic invariant applies to the **live trading account**, not the model.
+   G-M4 (source_json + tags_json on `potential_models` + auto-seed from the import's
+   Settings) is IN as designed.
+
+**★ SEQUENCE — REV-1 (operator directive: implement AND backend-wire ALL pages,
+cockpit-first):** P0 Foundation → **P1 Dashboard** (forces the SSE live-data transport
+early) → **P2 Config** → **P3 Pre-Trade** (carries the halt→blur/freeze overlay) →
+**P4 History+Linkage** → **P5 Analytics** → **P6 Regime** → **P7 Models** (full
+render-as-is report; heaviest backend lift = adapter rebuild; can pull earlier since
+it's transport-independent) → **P8** retire Jinja + directive-#7 re-audit + JS-drift
+grep. One commit/phase, house cycle, Jinja serves as parity ref until each React page
+is accepted.
+
+**★ Directive-specific rulings folded into the plan:**
+- **#3 halt → freeze Pre-Trade**: the "positions frozen" fiction lives in TWO places
+  (notification banner `notifications.jsx:148` AND the Pre-Trade `<Banner>`
+  `pages.jsx:453`, hardcoded `const halt=null` at `:433`). Rewire both to real
+  `dd_state`/`weekly_pnl` SSE + a `halted` flag on `/api/state` (G-O2). Overlay
+  attaches to the Pre-Trade `<GridWorkspace>` (`pages.jsx:470`, wraps exactly its 7
+  panes); enforced-mode breach → blur+`pointer-events:none`+reason card; advisory →
+  warn only. Enforcement mode read from Config's DD Enforcement select
+  (`pages.jsx:1649`).
+- **#4 render-as-is**: G-M2 adapter rebuild must reproduce the uploaded MultiCharts
+  file faithfully (all sheets/columns/signs), stored verbatim in `report_json`.
+- **#7 re-audit**: P8 re-audits the plan vs. the BUILT frontend + fixes drift.
+
+**★ Plan-vs-frontend fidelity VERIFIED (2 agents):** all 23 descriptive plan claims
+about the Meridian frontend are ACCURATE — the plan is faithful. 3 nuances recorded in
+the ledger's "REV 1" section (persist wired only for dashboard+linkage today; "9 of 11
+Analytics" is a backend-binding count; `_synthReport` has a 2nd call site).
 
 **Headline audit findings folded into the plan:**
 - **HIGH — halt-state authority conflict.** The design persists a "TRADING HALTED ·
@@ -73,16 +96,10 @@ is banner-marked CONSUMED and points at the new plan.
   (frozen clock, random-walk tickers, `Math.random()` in the dash render path, seeded
   synth reports, localStorage halt, DEMO panel) are mapped file:line in the ledger.
 
-**Recommended phase sequence** (plan §5, one commit per phase, Jinja serves until each
-React page is operator-accepted): **P0** foundation (vendor deps + build/serve
-decision + port the shared primitive/token/chart/grid layer; Primitives page as the
-`/v3` proving ground) → **P1 Models** first (lowest coupling, design centerpiece,
-request/response only so it doesn't depend on the unproven live-data transport;
-sub-gated 1a Library / 1b Detail+Form / 1c Run-report+Import) → **P2** live-data SSE
-spike + Dashboard → **P3** Regime + Analytics → **P4** History + Linkage → **P5**
-Calculator (the 1100-line coupling monster, deliberately last; re-investigate the
-countdown race per CLAUDE.md, don't port it) → **P6** Config + Jinja retirement +
-the CLAUDE.md JS-drift grep.
+(The audit's ORIGINAL recommendation was Models-first; the operator's REV-1 directive
+re-sequenced to cockpit-first — see the "★ SEQUENCE — REV-1" line above, which is the
+one in force. The audit's Lens-6 Models-first rationale is preserved in the ledger for
+context.)
 
 **Not pushed** — `v3.0/ui-plan-audit` is local only; operator merge/push at their call.
 Memory: [[project-v3-ui-rebuild]].
