@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Meridian v3.0</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous"/>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/echarts@5.5.0/dist/echarts.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+  <!-- GridStack — tiling window manager (drag / resize / snap) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gridstack@10.3.1/dist/gridstack.min.css"/>
+  <script src="https://cdn.jsdelivr.net/npm/gridstack@10.3.1/dist/gridstack-all.js"></script>
+
+  <link rel="stylesheet" href="v25/tokens.css"/>
+
+  <style>
+    html, body { margin:0; padding:0; height:100%; background:#000; font-family:'Space Grotesk', system-ui, sans-serif; }
+    #root { height:100%; }
+    #boot { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:#000; color:#00e7ff; font-family:'JetBrains Mono', monospace; font-size:12px; letter-spacing:0.25em; }
+
+    /* ── GridStack tiling workspace ─────────────────────────────────── */
+    .grid-stack { background: var(--qe-bg); }
+    .grid-stack-item-content { inset:0; overflow:hidden; display:flex; flex-direction:column; }
+    .grid-stack-item-content > * { flex:1; min-height:0; }
+    .grid-stack .qe-pane-head { cursor:move; user-select:none; }
+    .grid-stack .qe-grip { display:none; }
+    .grid-stack-item.ui-draggable-dragging,
+    .grid-stack-item.ui-resizable-resizing { z-index:90 !important; }
+    .grid-stack-item.ui-draggable-dragging .grid-stack-item-content,
+    .grid-stack-item.ui-resizable-resizing .grid-stack-item-content {
+      box-shadow:0 10px 30px rgba(0,0,0,0.6); outline:1px solid var(--qe-cyan); outline-offset:-1px;
+    }
+    .grid-stack > .grid-stack-placeholder > .placeholder-content {
+      background:rgba(0,231,255,0.08); border:1px dashed var(--qe-cyan);
+    }
+    .grid-stack-item > .ui-resizable-handle { opacity:0 !important; }
+    .grid-stack[data-locked="1"] .qe-pane-head { cursor:default; }
+    .grid-stack[data-locked="1"] .ui-resizable-handle { display:none !important; }
+
+    /* ── Notification system ────────────────────────────────── */
+    .qe-notif-actions { opacity:0; transition:opacity .1s; }
+    .qe-notif-row:hover .qe-notif-actions { opacity:1; }
+    .qe-notif-row:hover .qe-notif-time { display:none; }
+    .qe-notif-row:hover { background:var(--qe-hover) !important; }
+    .qe-notif-ib { width:16px; height:16px; display:inline-flex; align-items:center; justify-content:center;
+      background:transparent; border:1px solid var(--qe-line); color:var(--qe-sub); cursor:pointer;
+      font-family:var(--qe-mono); font-size:0.62rem; line-height:1; padding:0; }
+    .qe-notif-ib:hover { border-color:var(--qe-line-2); color:var(--qe-text); background:var(--qe-active); }
+    .qe-notif-cta { height:16px; display:inline-flex; align-items:center; background:transparent;
+      border:1px solid var(--qe-line); color:var(--qe-sub); cursor:pointer; font-family:var(--qe-ui);
+      font-size:0.52rem; font-weight:600; letter-spacing:0.04em; line-height:1; padding:0 6px; white-space:nowrap; }
+    .qe-notif-cta:hover { border-color:var(--qe-cyan); color:var(--qe-cyan); background:var(--qe-bg-cyan); }
+    @keyframes qe-toast-in { from { opacity:0; transform:translateX(10px); } to { opacity:1; transform:translateX(0); } }
+    .qe-toast { animation:qe-toast-in .18s ease-out; }
+    @keyframes qe-toast-shrink { from { width:100%; } to { width:0%; } }
+    .qe-toast-bar { width:100%; animation:qe-toast-shrink 5.2s linear forwards; }
+
+    /* news-ticker styles live in v25/tokens.css (NewsTickerBar primitive) */
+
+    /* primitive-spec reference rows (Primitives page) */
+    .spec-row { display:grid; grid-template-columns:110px 1fr; gap:8px; align-items:start; padding:6px 0; border-bottom:1px dotted var(--qe-faint); }
+    .spec-row .l { font-family:var(--qe-mono); font-size:0.6rem; color:var(--qe-muted); letter-spacing:0.08em; text-transform:uppercase; }
+  </style>
+
+  <template id="__bundler_thumbnail">
+    <svg viewBox="0 0 120 80" xmlns="http://www.w3.org/2000/svg">
+      <rect width="120" height="80" fill="#000"/>
+      <rect x="6" y="6" width="108" height="8" fill="#0a0d14" stroke="#1a2740" stroke-width="0.5"/>
+      <rect x="10" y="8" width="14" height="4" fill="#00e7ff"/>
+      <rect x="6" y="18" width="50" height="34" fill="#0a0d14" stroke="#1a2740" stroke-width="0.5"/>
+      <rect x="60" y="18" width="54" height="34" fill="#0a0d14" stroke="#00e7ff" stroke-width="0.7"/>
+      <polyline points="62,46 68,40 74,42 80,36 86,38 92,34 98,30 104,32 110,26 113,28" fill="none" stroke="#00ff7f" stroke-width="1"/>
+      <rect x="6" y="56" width="108" height="18" fill="#0a0d14" stroke="#1a2740" stroke-width="0.5"/>
+      <text x="10" y="68" font-family="JetBrains Mono, monospace" font-size="5" fill="#00e7ff" font-weight="700">MERIDIAN</text>
+      <text x="60" y="68" font-family="JetBrains Mono, monospace" font-size="4" fill="#6a86a8">v3.0</text>
+    </svg>
+  </template>
+</head>
+<body>
+  <div id="root"><div id="boot"><span id="boot-spin" style="margin-right:10px; display:inline-flex; line-height:0;"><svg id="boot-sq" width="15" height="15" viewBox="0 0 10 10" fill="#00e7ff"><rect id="bs-TL" x="1" y="1" width="3" height="3"/><rect id="bs-TR" x="6" y="1" width="3" height="3"/><rect id="bs-BR" x="6" y="6" width="3" height="3"/><rect id="bs-BL" x="1" y="6" width="3" height="3"/></svg></span><span>MERIDIAN v3.0 — LOADING</span></div></div>
+  <script>
+    /* boot spinner — same centered square 2×2 braille the engine uses everywhere
+       (mirrors BrailleSquares / SQUARE_EDGES in primitives.jsx). Vanilla because React isn't up yet. */
+    (function () {
+      var edges = [['TL','TR'], ['TR','BR'], ['BR','BL'], ['BL','TL']], i = 0;
+      var iv = setInterval(function () {
+        var svg = document.getElementById('boot-sq');
+        if (!svg) { clearInterval(iv); return; }
+        var lit = edges[i = (i + 1) % edges.length];
+        ['TL','TR','BR','BL'].forEach(function (k) {
+          var r = document.getElementById('bs-' + k);
+          if (r) r.setAttribute('fill-opacity', lit.indexOf(k) >= 0 ? '1' : '0');
+        });
+      }, 120);
+    })();
+  </script>
+
+  <!-- order matters: primitives → charts → grid → nav+data → notifications → dash → pages → models (mc-es → data → lib → overview → report → detail → models) → link (data → primitives → linkage) → app shell -->
+  <script type="text/babel" src="v25/src/primitives.jsx"></script>
+  <script type="text/babel" src="v25/src/charts.jsx"></script>
+  <script type="text/babel" src="v25/src/grid-workspace.jsx"></script>
+  <script type="text/babel" src="v25/src/nav-and-data.jsx"></script>
+  <script type="text/babel" src="v25/src/notifications.jsx"></script>
+  <script type="text/babel" src="v25/src/dash-tiled.jsx"></script>
+  <script type="text/babel" src="v25/src/pages.jsx"></script>
+  <script type="text/babel" src="v25/src/pages-analytics-exec.jsx"></script>
+  <script type="text/babel" src="v25/src/pages-regime.jsx"></script>
+  <script type="text/babel" src="v25/src/pages-models-mc-es.jsx"></script>
+  <script type="text/babel" src="v25/src/pages-models-data.jsx"></script>
+  <script type="text/babel" src="v25/src/pages-models-lib.jsx"></script>
+  <script type="text/babel" src="v25/src/pages-models-overview.jsx"></script>
+  <script type="text/babel" src="v25/src/pages-models-report.jsx"></script>
+  <script type="text/babel" src="v25/src/pages-models-detail.jsx"></script>
+  <script type="text/babel" src="v25/src/pages-models.jsx"></script>
+  <script type="text/babel" src="v25/src/link-data.jsx"></script>
+  <script type="text/babel" src="v25/src/link-primitives.jsx"></script>
+  <script type="text/babel" src="v25/src/linkage.jsx"></script>
+  <script type="text/babel" src="v25/src/app-shell.jsx"></script>
+  <script>
+    // drop the boot splash once React has mounted into #root
+    (function () {
+      var tries = 0;
+      var iv = setInterval(function () {
+        var boot = document.getElementById('boot');
+        var root = document.getElementById('root');
+        if (!boot) { clearInterval(iv); return; }
+        if ((root && root.children.length > 1) || tries++ > 60) { boot.remove(); clearInterval(iv); }
+      }, 150);
+    })();
+  </script>
+</body>
+</html>

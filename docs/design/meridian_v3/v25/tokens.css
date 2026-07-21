@@ -1,0 +1,729 @@
+/* ────────────────────────────────────────────────────────────────────────
+   QE v2.5 — High-contrast hacker tokens
+   Pure black, sharp corners, neon accents. Standardized across all pages.
+   ──────────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* surfaces — pure black + flat panels */
+  --qe-bg:        #000000;
+  --qe-page:      #04060a;
+  --qe-card:      #0a0d14;
+  --qe-panel:     #0e131c;
+  --qe-hover:     #131a26;
+  --qe-active:    #1a2436;
+
+  /* lines & dividers — more visible against black */
+  --qe-line:      #36486a;
+  --qe-line-2:    #46587a;
+  --qe-line-foc:  #4a6aa0;
+
+  /* text — high contrast against pure black bg */
+  --qe-text:      #ffffff;
+  --qe-text-dim:  #e6eff8;
+  --qe-sub:       #b6c8df;
+  --qe-muted:     #8298b4;
+  --qe-faint:     #2c3a52;
+
+  /* neon accents — saturated, no pastels */
+  --qe-blue:      #2a8fff;
+  --qe-cyan:      #00e7ff;
+  --qe-green:     #00ff7f;
+  --qe-red:       #ff2d4a;
+  --qe-amber:     #ffae00;
+  --qe-magenta:   #ff2bcf;
+  --qe-purple:    #a87bff;
+  --qe-yellow:    #ffe600;
+
+  /* semantic wash backgrounds — dark + tinted, brighter for badges */
+  --qe-bg-green:  #002816;
+  --qe-bg-red:    #2a0a12;
+  --qe-bg-amber:  #281b00;
+  --qe-bg-cyan:   #001e2a;
+  --qe-bg-blue:   #001a3a;
+  --qe-bg-mag:    #1f0024;
+
+  /* fonts */
+  --qe-mono:      'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+  --qe-ui:        'Space Grotesk', 'Inter', ui-sans-serif, system-ui;
+
+  /* spacing scale */
+  --qe-1:  2px;
+  --qe-2:  4px;
+  --qe-3:  6px;
+  --qe-4:  8px;
+  --qe-5:  10px;
+  --qe-6:  12px;
+  --qe-7:  16px;
+  --qe-8:  20px;
+
+  /* standard pane gutter — equal gap between tiles AND at workspace edges (GridWorkspace) */
+  --qe-pane-gap: 4px;
+
+  /* type scale */
+  --qe-fs-xs:   0.55rem;   /* meta, tiny labels */
+  --qe-fs-sm:   0.6rem;    /* column headers, section labels */
+  --qe-fs-md:   0.68rem;   /* body */
+  --qe-fs-lg:   0.78rem;   /* primary numbers */
+  --qe-fs-xl:   0.94rem;   /* stat values */
+  --qe-fs-2xl:  1.5rem;    /* hero number */
+  --qe-fs-3xl:  2.2rem;    /* mega number */
+}
+
+/* ── Base reset ───────────────────────────────────────────────────────── */
+.qe-scope, .qe-scope * {
+  box-sizing: border-box;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+.qe-scope {
+  background: var(--qe-bg);
+  color: var(--qe-text);
+  font-family: var(--qe-ui);
+  font-size: 12px;
+  line-height: 1.3;
+}
+.qe-scope ::selection { background: var(--qe-blue); color: #fff; }
+
+/* mono / ui helpers */
+.qe-mono   { font-family: var(--qe-mono); font-variant-numeric: tabular-nums; font-weight: 500; }
+.qe-ui     { font-family: var(--qe-ui); }
+.qe-num    { font-family: var(--qe-mono); font-variant-numeric: tabular-nums; font-weight: 600; }
+.qe-up     { color: var(--qe-green); }
+.qe-dn     { color: var(--qe-red); }
+.qe-flat   { color: var(--qe-sub); }
+.qe-warn   { color: var(--qe-amber); }
+.qe-info   { color: var(--qe-cyan); }
+
+/* ── Labels ───────────────────────────────────────────────────────────── */
+.qe-lbl {
+  font-family: var(--qe-ui);
+  font-size: var(--qe-fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--qe-sub);
+  line-height: 1;
+}
+.qe-lbl-bracket::before { content: '['; color: var(--qe-muted); margin-right: 3px; }
+.qe-lbl-bracket::after  { content: ']'; color: var(--qe-muted); margin-left: 3px; }
+
+.qe-sec-lbl {
+  font-family: var(--qe-ui);
+  font-size: var(--qe-fs-sm);
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--qe-sub);
+  display: flex; align-items: center; gap: 8px;
+}
+.qe-sec-lbl .qe-sec-count {
+  font-family: var(--qe-mono);
+  font-weight: 700;
+  color: var(--qe-muted);
+  letter-spacing: 0.04em;
+}
+.qe-sec-lbl .qe-sec-rule {
+  flex: 1; height: 1px; background: var(--qe-line); opacity: 0.6;
+}
+
+/* ── Cards (sharp corners — no border-radius) ─────────────────────────── */
+.qe-card {
+  background: var(--qe-card);
+  border: 1px solid var(--qe-line);
+  padding: 6px 8px;
+  position: relative;
+}
+.qe-card-tight { padding: 4px 6px; }
+.qe-card-pad   { padding: 10px 12px; }
+.qe-card-flat  { background: transparent; border-color: var(--qe-line); }
+.qe-card-hot   { border-color: var(--qe-cyan); }
+
+/* corner ticks — terminal feel */
+.qe-card-ticks::before, .qe-card-ticks::after {
+  content: ''; position: absolute; width: 5px; height: 5px;
+  border-color: var(--qe-line-2);
+  border-style: solid; border-width: 0;
+  pointer-events: none;
+}
+.qe-card-ticks::before { top: -1px; left: -1px;  border-top-width:1px; border-left-width:1px;  }
+.qe-card-ticks::after  { top: -1px; right: -1px; border-top-width:1px; border-right-width:1px; }
+
+/* interactive card (model library) — row-hover language applied to a card */
+.qe-model-card { transition: border-color 0.1s, background 0.1s; }
+.qe-model-card:hover { border-color: var(--qe-line-2); background: var(--qe-hover); }
+
+/* ── Stat cell ────────────────────────────────────────────────────────── */
+.qe-stat { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.qe-stat .qe-stat-val {
+  font-family: var(--qe-mono);
+  font-size: var(--qe-fs-xl);
+  font-weight: 700;
+  color: var(--qe-text);
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+}
+.qe-stat .qe-stat-sub {
+  font-family: var(--qe-mono);
+  font-size: var(--qe-fs-xs);
+  color: var(--qe-sub);
+  line-height: 1;
+}
+
+/* hero (big number) */
+.qe-hero-val {
+  font-family: var(--qe-mono);
+  font-size: var(--qe-fs-3xl);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  color: var(--qe-text);
+}
+.qe-hero-val .qe-hero-cents { color: var(--qe-text-dim); font-weight: 600; }
+
+/* ── Status dot (single primitive for ALL status indicators) ──────────── */
+.qe-dot {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-family: var(--qe-mono); font-size: var(--qe-fs-sm);
+  font-weight: 700; letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+.qe-dot::before {
+  content: ''; width: 6px; height: 6px; flex-shrink: 0;
+  background: currentColor;
+}
+.qe-dot-sq::before { width: 5px; height: 5px; }
+.qe-dot-ok   { color: var(--qe-green); }
+.qe-dot-warn { color: var(--qe-amber); }
+.qe-dot-err  { color: var(--qe-red); }
+.qe-dot-info { color: var(--qe-cyan); }
+.qe-dot-off  { color: var(--qe-muted); }
+.qe-dot-off::before { box-shadow: none; opacity: 0.7; }
+
+/* ── Badges (sharp, monospace, tinted bg) ─────────────────────────────── */
+.qe-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 6px; font-family: var(--qe-mono);
+  font-size: var(--qe-fs-xs); font-weight: 700;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  white-space: nowrap; line-height: 1;
+  border: 1px solid currentColor;
+}
+.qe-badge-solid { color: #000 !important; border: none; }
+.qe-badge-ok    { color: var(--qe-green); background: var(--qe-bg-green); }
+.qe-badge-err   { color: var(--qe-red);   background: var(--qe-bg-red); }
+.qe-badge-warn  { color: var(--qe-amber); background: var(--qe-bg-amber); }
+.qe-badge-info  { color: var(--qe-cyan);  background: var(--qe-bg-cyan); }
+.qe-badge-blue  { color: var(--qe-blue);  background: var(--qe-bg-blue); }
+.qe-badge-mag   { color: var(--qe-magenta); background: var(--qe-bg-mag); }
+.qe-badge-mute  { color: var(--qe-sub);   background: var(--qe-faint); border-color: var(--qe-line); }
+
+/* regime badge variants */
+.qe-rg-trend { color: var(--qe-green); background: #001a0d; }
+.qe-rg-chop  { color: var(--qe-cyan);  background: #001218; }
+.qe-rg-neut  { color: var(--qe-sub);   background: #0a1320; }
+.qe-rg-def   { color: var(--qe-amber); background: #1a1100; }
+.qe-rg-panic { color: var(--qe-red);   background: #1a0006; }
+
+/* ── Buttons ──────────────────────────────────────────────────────────── */
+.qe-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: var(--qe-panel); color: var(--qe-text);
+  border: 1px solid var(--qe-line);
+  padding: 3px 9px; height: 22px;
+  font-family: var(--qe-ui); font-size: var(--qe-fs-md);
+  font-weight: 600; letter-spacing: 0.04em;
+  cursor: pointer; transition: background 0.08s, border-color 0.08s, color 0.08s;
+  white-space: nowrap; user-select: none;
+}
+.qe-btn:hover    { background: var(--qe-hover); border-color: var(--qe-line-2); }
+.qe-btn:active   { background: var(--qe-active); }
+.qe-btn-sm       { height: 18px; padding: 1px 6px; font-size: var(--qe-fs-sm); }
+/* horizontal scroll strip — children never wrap or clip; scrollbar hidden */
+.qe-hscroll{overflow-x:auto;overflow-y:hidden;scrollbar-width:none;white-space:nowrap}.qe-hscroll::-webkit-scrollbar{display:none}.qe-hscroll>*{flex-shrink:0}
+.qe-btn-lg       { height: 28px; padding: 5px 13px; font-size: var(--qe-fs-md); }
+.qe-btn-primary  { background: var(--qe-blue); color: #fff; border-color: var(--qe-blue); }
+.qe-btn-primary:hover { background: #4aa0ff; border-color: #4aa0ff; }
+.qe-btn-danger   { background: transparent; color: var(--qe-red); border-color: var(--qe-red); }
+.qe-btn-success  { background: transparent; color: var(--qe-green); border-color: var(--qe-green); }
+.qe-btn-ghost    { background: transparent; border-color: transparent; color: var(--qe-sub); }
+.qe-btn-ghost:hover { background: var(--qe-hover); color: var(--qe-text); }
+.qe-btn-on       { background: var(--qe-active); border-color: var(--qe-cyan); color: var(--qe-cyan); }
+
+/* ── Inputs ───────────────────────────────────────────────────────────── */
+.qe-input {
+  background: var(--qe-panel); color: var(--qe-text);
+  border: 1px solid var(--qe-line);
+  padding: 3px 7px; height: 22px;
+  font-family: var(--qe-mono); font-size: var(--qe-fs-md);
+  outline: none; width: 100%;
+}
+.qe-input:focus { border-color: var(--qe-cyan); }
+.qe-input::placeholder { color: var(--qe-muted); }
+.qe-select { appearance: none; padding-right: 18px;
+  background: var(--qe-panel) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='6' viewBox='0 0 8 6'><path d='M0 0l4 6 4-6z' fill='%236a86a8'/></svg>") no-repeat right 6px center;
+}
+
+/* ── Period selector (single primitive — REPLACES 4 ad-hoc versions) ──── */
+.qe-period {
+  display: inline-flex; border: 1px solid var(--qe-line);
+}
+.qe-period button {
+  background: transparent; border: none; color: var(--qe-sub);
+  font-family: var(--qe-mono); font-size: var(--qe-fs-sm);
+  font-weight: 600; letter-spacing: 0.04em;
+  padding: 2px 7px; cursor: pointer;
+  border-right: 1px solid var(--qe-line);
+  transition: color 0.08s, background 0.08s;
+}
+.qe-period button:last-child { border-right: none; }
+.qe-period button:hover { color: var(--qe-text); background: var(--qe-hover); }
+.qe-period button.on {
+  color: var(--qe-cyan); background: var(--qe-bg-cyan);
+}
+
+/* ── Gauge bar ────────────────────────────────────────────────────────── */
+.qe-gauge {
+  display: flex; flex-direction: column; gap: 3px; min-width: 0;
+}
+.qe-gauge-track {
+  height: 4px; background: var(--qe-faint); position: relative; overflow: hidden;
+}
+.qe-gauge-fill {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  background: var(--qe-cyan);
+}
+.qe-gauge-fill.ok    { background: var(--qe-cyan); }
+.qe-gauge-fill.warn  { background: var(--qe-amber); }
+.qe-gauge-fill.err   { background: var(--qe-red); }
+.qe-gauge-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+}
+.qe-gauge-foot {
+  display: flex; justify-content: space-between;
+  font-family: var(--qe-mono); font-size: var(--qe-fs-xs); color: var(--qe-muted);
+}
+
+/* tick marks on gauge for thresholds */
+.qe-gauge-tick {
+  position: absolute; top: -2px; bottom: -2px; width: 1px;
+  background: var(--qe-line-2);
+}
+
+/* ── Tables (standardized — REPLACES 3 history-table treatments) ──────── */
+.qe-table { width: 100%; border-collapse: collapse; }
+.qe-table thead th {
+  font-family: var(--qe-ui);
+  font-size: var(--qe-fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--qe-sub);
+  text-align: left;
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--qe-line);
+  background: var(--qe-panel);
+  white-space: nowrap;
+  position: sticky; top: 0;
+}
+.qe-table thead th.qe-sort { cursor: pointer; user-select: none; }
+.qe-table thead th.qe-sort:hover { color: var(--qe-text); }
+.qe-table thead th.qe-sort.on { color: var(--qe-cyan); }
+.qe-table thead th.r, .qe-table tbody td.r { text-align: right; }
+.qe-table thead th.c, .qe-table tbody td.c { text-align: center; }
+/* Column-alignment policy: interior columns (not first/last) are always
+   centered, so values read as columns rather than drifting to an edge.
+   Edge columns keep their declared alignment. Wins over .r by specificity,
+   and applies to hand-rolled .qe-table markup as well as the DataList primitive. */
+.qe-table thead th:not(:first-child):not(:last-child),
+.qe-table tbody td:not(:first-child):not(:last-child) { text-align: center; }
+.qe-table tbody td {
+  font-family: var(--qe-mono);
+  font-size: var(--qe-fs-md);
+  color: var(--qe-text);
+  font-weight: 500;
+  padding: 2px 6px;
+  border-bottom: 1px solid var(--qe-faint);
+  white-space: nowrap;
+}
+.qe-table tbody tr:hover td { background: var(--qe-hover); }
+.qe-table tbody tr.sel td { background: var(--qe-active); }
+.qe-table td.dim  { color: var(--qe-sub); }
+.qe-table td.mute { color: var(--qe-muted); }
+.qe-table td.sym  { color: var(--qe-cyan); font-weight: 700; }
+.qe-table td.up   { color: var(--qe-green); }
+.qe-table td.dn   { color: var(--qe-red); }
+.qe-table td.warn { color: var(--qe-amber); }
+
+/* ── Empty state (single primitive — REPLACES 7 ad-hoc treatments) ────── */
+.qe-empty {
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; padding: 16px 12px; gap: 4px;
+  color: var(--qe-muted);
+  border: 1px dashed var(--qe-line);
+  background: repeating-linear-gradient(45deg, transparent 0 6px, rgba(58,77,106,0.04) 6px 7px);
+}
+.qe-empty-glyph {
+  font-family: var(--qe-mono); font-size: 0.78rem;
+  color: var(--qe-muted); letter-spacing: 0.2em;
+}
+.qe-empty-msg { font-size: var(--qe-fs-md); color: var(--qe-sub); }
+.qe-empty-cta { margin-top: 4px; }
+.qe-empty.warn { border-color: var(--qe-amber); color: var(--qe-amber); background-color: rgba(255,174,0,0.02); }
+.qe-empty.info { border-color: var(--qe-cyan);  color: var(--qe-cyan);  background-color: rgba(0,231,255,0.02); }
+.qe-empty.err  { border-color: var(--qe-red);   color: var(--qe-red);   background-color: rgba(255,45,74,0.02); }
+
+/* ── Tabs ─────────────────────────────────────────────────────────────── */
+.qe-tabs {
+  display: flex; gap: 0; border-bottom: 1px solid var(--qe-line);
+}
+.qe-tabs button {
+  background: transparent; border: none; cursor: pointer;
+  font-family: var(--qe-ui); font-size: var(--qe-fs-md);
+  font-weight: 600; color: var(--qe-muted);
+  padding: 4px 10px; letter-spacing: 0.04em;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.qe-tabs button:hover { color: var(--qe-text-dim); }
+.qe-tabs button.on { color: var(--qe-cyan); border-bottom-color: var(--qe-cyan); }
+.qe-tabs button.on::before { content: ''; }
+
+/* ── Diff arrows + tick ───────────────────────────────────────────────── */
+.qe-tick { display: inline-block; width: 0; height: 0;
+  border-left: 4px solid transparent; border-right: 4px solid transparent;
+}
+.qe-tick-up { border-bottom: 5px solid var(--qe-green); }
+.qe-tick-dn { border-top:    5px solid var(--qe-red); }
+
+/* ── LiveValue · stale indicator ──────────────────────────────────────── */
+.qe-live-value { display: inline-block; padding: 0 1px; }
+.qe-live-stale {
+  color: var(--qe-muted) !important;
+  border-bottom: 1px dotted var(--qe-amber);
+  cursor: help;
+}
+.qe-live-stale::after { content: '·'; color: var(--qe-amber); margin-left: 4px; }
+
+/* live-flash animation for streaming numbers — subtle */
+@keyframes qe-flash-up { 0% { background: rgba(0,255,127,0.14); } 100% { background: transparent; } }
+@keyframes qe-flash-dn { 0% { background: rgba(255,45,74,0.14); } 100% { background: transparent; } }
+.qe-flash-up { animation: qe-flash-up 0.5s ease-out; }
+.qe-flash-dn { animation: qe-flash-dn 0.5s ease-out; }
+
+/* new-row fade-in for streaming log lines */
+@keyframes qe-fade-in {
+  0%   { opacity: 0; background: rgba(0,231,255,0.10); transform: translateY(-2px); }
+  100% { opacity: 1; background: transparent;          transform: translateY(0); }
+}
+
+/* scanline animation reserved for "live" surfaces */
+@keyframes qe-scan { 0% { transform: translateY(-100%); } 100% { transform: translateY(100vh); } }
+
+/* ── Grid utilities ───────────────────────────────────────────────────── */
+.qe-row { display: flex; align-items: center; gap: 8px; }
+.qe-col { display: flex; flex-direction: column; gap: 6px; }
+.qe-grow { flex: 1; min-width: 0; }
+.qe-divider-v { width: 1px; align-self: stretch; background: var(--qe-line); }
+.qe-divider-h { height: 1px; background: var(--qe-line); margin: 0; }
+
+/* ── Top bar / strip (used in nav + ticker) ───────────────────────────── */
+.qe-strip {
+  display: flex; align-items: center;
+  background: var(--qe-card); border: 1px solid var(--qe-line);
+  font-family: var(--qe-mono); font-size: var(--qe-fs-sm);
+}
+.qe-strip-cell {
+  display: flex; align-items: center; gap: 5px;
+  padding: 3px 8px; border-right: 1px solid var(--qe-line);
+  white-space: nowrap;
+}
+.qe-strip-cell:last-child { border-right: none; }
+.qe-strip-cell .lbl { color: var(--qe-sub); font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; font-size: var(--qe-fs-xs); }
+.qe-strip-cell .val { color: var(--qe-text); font-weight: 700; }
+
+/* ── Sparkline / chart container — keep sharp, no rounding ────────────── */
+.qe-chart { width: 100%; height: 100%; min-height: 80px; }
+
+/* ── Scrollbars — neon micro ──────────────────────────────────────────── */
+.qe-scope ::-webkit-scrollbar { width: 6px; height: 6px; }
+.qe-scope ::-webkit-scrollbar-track { background: var(--qe-bg); }
+.qe-scope ::-webkit-scrollbar-thumb { background: var(--qe-line); }
+.qe-scope ::-webkit-scrollbar-thumb:hover { background: var(--qe-cyan); }
+
+/* ── Command bar ──────────────────────────────────────────────────────── */
+.qe-cmd {
+  display: flex; align-items: center; gap: 8px;
+  background: #000; border: 1px solid var(--qe-cyan);
+  padding: 6px 10px; box-shadow: 0 0 0 1px rgba(0,231,255,0.15) inset, 0 -10px 30px -10px rgba(0,231,255,0.25);
+  font-family: var(--qe-mono); font-size: var(--qe-fs-md);
+}
+.qe-cmd::before {
+  content: '>'; color: var(--qe-cyan); font-weight: 700; margin-right: 2px;
+}
+.qe-cmd input {
+  background: transparent; border: none; outline: none;
+  color: var(--qe-text); font-family: var(--qe-mono);
+  font-size: var(--qe-fs-md); flex: 1; caret-color: var(--qe-cyan);
+}
+.qe-cmd-hint { color: var(--qe-muted); font-size: var(--qe-fs-xs); }
+.qe-cmd-key {
+  display: inline-block; padding: 1px 5px; border: 1px solid var(--qe-line);
+  color: var(--qe-sub); font-family: var(--qe-mono); font-size: var(--qe-fs-xs);
+}
+
+/* ── Resize handle hint (decorative) ──────────────────────────────────── */
+.qe-grip {
+  position: absolute; right: 1px; bottom: 1px; width: 4px; height: 4px;
+  background:
+    linear-gradient(135deg, transparent 50%, var(--qe-line-2) 50% 60%, transparent 60% 70%, var(--qe-line-2) 70% 80%, transparent 80%);
+  cursor: nwse-resize;
+}
+
+/* tighter table for dense panels */
+.qe-table.tight tbody td { padding: 1px 5px; font-size: var(--qe-fs-sm); line-height:1.25; }
+.qe-table.tight thead th { padding: 2px 5px; }
+
+/* ── RefreshButton + per-pane reload + loading spinner (primitives) ─────────
+   ONE reload control in every pane head: resting = circular-arrow SVG, while
+   reloading = the square braille loading spinner over a darken veil that clears
+   the foot. The same braille spinner (.qe-braille-sq / <Spinner>) is the engine's
+   single loading indicator everywhere. The Pane remounts its body on reload,
+   which also clears a caught error (PaneErrorBoundary). */
+.qe-refresh {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: none; padding: 0; cursor: pointer;
+  color: var(--qe-muted); line-height: 1; flex-shrink: 0; font-family: var(--qe-mono);
+  transition: color 0.1s;
+}
+.qe-refresh:hover { color: var(--qe-cyan); }
+.qe-refresh:active { color: var(--qe-text); }
+.qe-refresh.on:not(.err) .qe-refresh-ic { color: var(--qe-cyan); }
+.qe-refresh-ic { display: inline-block; font-size: 0.82rem; }
+/* circular-arrow reload SVG (resting glyph) — fills the 1em box, inherits color */
+.qe-refresh-ic .qe-reload-svg { display: block; width: 1.12em; height: 1.12em; }
+/* square-dot braille loading spinner — sharp dots, sized via font-size (1em box) */
+.qe-braille-sq { display: block; width: 0.9em; height: 0.9em; }
+.qe-pane-dots { flex-shrink: 0; }
+
+/* pane-head info slot — in a narrow pane the right-slot controls used to clip
+   invisibly (active PeriodSelector options could vanish). Keep the slot
+   scrollable instead (scrollbar hidden; trackpad / shift+wheel) so every
+   control stays reachable at any pane width. */
+.qe-pane-info { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.qe-pane-info::-webkit-scrollbar { display: none; height: 0; }
+
+/* reload veil — darken + RELOADING label over the body (stops above the foot) */
+.qe-pane-refresh {
+  position: absolute; inset: 20px 0 0 0; z-index: 6;
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  background: rgba(4,6,10,0.58);
+  color: var(--qe-cyan); font-family: var(--qe-mono);
+  font-size: 0.58rem; font-weight: 600; letter-spacing: 0.18em;
+}
+.qe-pane-refresh .qe-refresh-ic { font-size: 1rem; }
+
+/* ── DataList tools — search / sort / filter (primitive: DataList) ─────────
+   Sticky toolbar above the table; the sticky <thead> is offset beneath it via
+   an inline `top` set by the component. Compact, terminal-styled, sharp. */
+.qe-table thead th { z-index: 2; }              /* header sits above body rows */
+.qe-sort-caret {
+  margin-left: 4px; font-size: 0.6rem; line-height: 1;
+  color: var(--qe-cyan); vertical-align: baseline;
+}
+.qe-sort-caret.idle { color: var(--qe-faint); }
+.qe-table thead th.qe-sort:hover .qe-sort-caret.idle { color: var(--qe-muted); }
+
+.qe-dl-tools {
+  display: flex; align-items: center; flex-wrap: nowrap; gap: 6px;
+  height: 28px; box-sizing: border-box; padding: 0 6px; background: var(--qe-card);
+  border-bottom: 1px solid var(--qe-line);
+  position: sticky; top: 0; z-index: 5;
+  /* flex-shrink:0 is essential: the DataList toolbar, table and summary are the
+     three flex children of a `flex-direction:column` pane body. The toolbar's
+     min-content height is ~0, so without this flexbox collapses it to ~1px when
+     the pane is short — while the sticky <thead> keeps its fixed DL_TOOLS_H (28px)
+     offset, leaving the header floating mid-table over the first rows. Locking the
+     toolbar (and summary) height keeps that offset honest at any pane height. */
+  flex-shrink: 0;
+  overflow-x: auto; overflow-y: hidden;
+}
+.qe-dl-tools::-webkit-scrollbar { height: 0; }   /* keep the bar exactly 28px tall */
+.qe-dl-search {
+  display: flex; align-items: center; gap: 5px;
+  height: 20px; padding: 0 6px; flex: 0 1 200px; min-width: 120px;
+  background: var(--qe-panel); border: 1px solid var(--qe-line);
+}
+.qe-dl-search:focus-within { border-color: var(--qe-cyan); }
+.qe-dl-search-ic { color: var(--qe-muted); font-size: 0.74rem; line-height: 1; flex-shrink: 0; }
+.qe-dl-search input {
+  flex: 1; min-width: 0; height: 100%;
+  background: transparent; border: none; outline: none;
+  color: var(--qe-text); font-family: var(--qe-mono); font-size: var(--qe-fs-sm);
+}
+.qe-dl-search input::placeholder { color: var(--qe-muted); }
+.qe-dl-search button {
+  background: none; border: none; cursor: pointer; padding: 0;
+  color: var(--qe-muted); font-size: 0.72rem; line-height: 1; flex-shrink: 0;
+}
+.qe-dl-search button:hover { color: var(--qe-text); }
+
+.qe-dl-facet { display: inline-flex; align-items: center; gap: 5px; }
+.qe-dl-facet > span {
+  font-family: var(--qe-ui); font-size: var(--qe-fs-xs); font-weight: 700;
+  letter-spacing: 0.1em; text-transform: uppercase; color: var(--qe-muted);
+}
+.qe-dl-facet select {
+  width: auto; min-width: 56px; height: 20px; padding: 0 16px 0 6px;
+  font-family: var(--qe-mono); font-size: var(--qe-fs-sm);
+}
+
+.qe-dl-count {
+  font-family: var(--qe-mono); font-size: var(--qe-fs-xs);
+  color: var(--qe-muted); letter-spacing: 0.04em; white-space: nowrap;
+}
+.qe-dl-clear {
+  background: none; border: 1px solid var(--qe-line); cursor: pointer;
+  height: 18px; padding: 0 7px; color: var(--qe-sub);
+  font-family: var(--qe-ui); font-size: var(--qe-fs-xs); font-weight: 700; letter-spacing: 0.08em;
+}
+.qe-dl-clear:hover { border-color: var(--qe-cyan); color: var(--qe-cyan); }
+
+.qe-dl-empty {
+  padding: 12px 10px; text-align: center;
+  color: var(--qe-muted); font-family: var(--qe-mono); font-size: var(--qe-fs-sm);
+}
+.qe-dl-empty button {
+  background: none; border: none; cursor: pointer; padding: 0;
+  color: var(--qe-cyan); font-family: inherit; font-size: inherit;
+  text-decoration: underline; text-underline-offset: 2px;
+}
+
+/* List of Trades — entry/exit stacked cells routed through DataList. Top-align
+   every cell so single-value columns (P/L · Cum · Drawdown) line up with the
+   ENTRY (top) line of the paired cells. */
+.qe-mc-trades .qe-table td { vertical-align: top; }
+.qe-mc-stack {
+  display: flex; flex-direction: column; align-items: center; gap: 1px; line-height: 1.18;
+}
+
+/* ── FieldList (canonical key→value rows) ─────────────────────────────────
+   The vertical sibling of .qe-table: one record's fields stacked as
+   label → value rows. REPLACES the local VRow + 4 ad-hoc label/value variants
+   (Active Parameters ×2, Correlated Exposure, Performance Ratios).
+   Single-line rows lock to the 20px pane-head height for a shared rhythm. */
+.qe-fl { display: flex; flex-direction: column; }
+.qe-fl.qe-fl-2 { display: grid; grid-template-columns: 1fr 1fr; column-gap: 16px; }
+.qe-fl-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  column-gap: 10px;
+  min-height: 20px;                 /* = pane-head height */
+  border-bottom: 1px dotted var(--qe-faint);
+}
+.qe-fl-row.qe-fl-meta3 { grid-template-columns: 1fr auto auto; }
+.qe-fl.qe-fl-dense .qe-fl-row { min-height: 17px; }
+.qe-fl-l {
+  display: flex; flex-direction: column; justify-content: center;
+  min-width: 0; gap: 1px;
+  font-family: var(--qe-ui); font-size: var(--qe-fs-sm);
+  color: var(--qe-sub); text-transform: uppercase; letter-spacing: 0.06em;
+  line-height: 1.1;
+}
+.qe-fl-hint {
+  font-family: var(--qe-mono); font-size: 0.5rem; color: var(--qe-muted);
+  letter-spacing: 0; text-transform: none; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.qe-fl-v {
+  font-family: var(--qe-mono); font-size: var(--qe-fs-md); font-weight: 700;
+  color: var(--qe-text); text-align: right; white-space: nowrap;
+}
+.qe-fl-v.cyan  { color: var(--qe-cyan); }
+.qe-fl-v.green { color: var(--qe-green); }
+.qe-fl-v.red   { color: var(--qe-red); }
+.qe-fl-v.amber { color: var(--qe-amber); }
+.qe-fl-v.sub   { color: var(--qe-sub); }
+.qe-fl-m {
+  font-family: var(--qe-mono); font-size: var(--qe-fs-xs);
+  color: var(--qe-muted); white-space: nowrap;
+}
+.qe-fl-bar { grid-column: 1 / -1; height: 2px; background: var(--qe-faint); margin-top: 2px; }
+.qe-fl-bar > span { display: block; height: 100%; background: var(--qe-cyan); }
+/* emphasis / callout row — highlighted, no divider */
+.qe-fl-row.qe-fl-emph {
+  background: var(--qe-bg-cyan); padding: 0 7px; min-height: 22px;
+  border-bottom: none; margin-top: 2px;
+}
+.qe-fl-row.qe-fl-emph .qe-fl-l,
+.qe-fl-row.qe-fl-emph .qe-fl-v { color: var(--qe-cyan); }
+
+/* tag pill (used in command bar history) */
+.qe-tag {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-family: var(--qe-mono); font-size: var(--qe-fs-xs);
+  color: var(--qe-sub); background: var(--qe-panel);
+  padding: 1px 6px; border: 1px solid var(--qe-line);
+}
+
+/* glow underline for "live" text — static, no pulse */
+.qe-live {
+  position: relative;
+}
+.qe-live::after {
+  content: ''; position: absolute; left: 0; right: 0; bottom: -3px; height: 1px;
+  background: var(--qe-cyan); opacity: 0.55;
+}
+
+/* ── NewsTickerBar — footer marquee (primitive: NewsTickerBar) ────────── */
+.qe-newsticker {
+  display: flex; align-items: center; flex-shrink: 0;
+  height: 22px; background: var(--qe-bg);
+  border-top: 1px solid var(--qe-line);
+  font-family: var(--qe-mono); font-size: 0.62rem;
+  overflow: hidden;
+}
+.qe-newsticker-label {
+  display: inline-flex; align-items: center; gap: 5px;
+  flex-shrink: 0; height: 100%; padding: 0 9px;
+  background: var(--qe-page); color: var(--qe-cyan);
+  border-right: 1px solid var(--qe-line);
+  font-weight: 800; letter-spacing: 0.12em; font-size: 0.56rem;
+}
+.qe-newsticker-live {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--qe-green); flex-shrink: 0;
+}
+.qe-newsticker-track {
+  flex: 1; min-width: 0; overflow: hidden;
+  display: flex; align-items: center; position: relative;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%);
+          mask-image: linear-gradient(90deg, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%);
+}
+.qe-newsticker-run {
+  display: inline-flex; align-items: center; flex-shrink: 0;
+  white-space: nowrap; padding-left: 18px;
+  /* 1s hold (line shown still) then scroll one full run width, repeat.
+     duration = scroll(45s) + hold(1s); 1s / 46s ≈ 2.17% held at start. */
+  animation: qe-news-marquee 46s linear infinite;
+}
+.qe-newsticker-track:hover .qe-newsticker-run { animation-play-state: paused; }
+@media (prefers-reduced-motion: reduce) {
+  .qe-newsticker-run { animation: none; }
+}
+@keyframes qe-news-marquee {
+  0%, 2.17%  { transform: translateX(0); }
+  100%       { transform: translateX(-100%); }
+}
+.qe-newsticker-item { display: inline-flex; align-items: center; gap: 7px; padding-right: 18px; }
+.qe-newsticker-dot  { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.qe-newsticker-src  { color: var(--qe-cyan); font-weight: 700; font-size: 0.54rem; letter-spacing: 0.04em; }
+.qe-newsticker-head { color: var(--qe-text); font-weight: 600; }
+.qe-newsticker-tk   { color: var(--qe-muted); font-size: 0.54rem; letter-spacing: 0.02em; }
+.qe-newsticker-time { color: var(--qe-sub); font-size: 0.54rem; }
+.qe-newsticker-sep  { color: var(--qe-faint); font-size: 0.5rem; }
+.qe-newsticker-meta {
+  flex-shrink: 0; height: 100%; display: inline-flex; align-items: center;
+  padding: 0 9px; border-left: 1px solid var(--qe-line);
+  color: var(--qe-muted); font-size: 0.5rem; letter-spacing: 0.06em;
+}
