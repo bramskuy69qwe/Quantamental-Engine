@@ -1,11 +1,23 @@
 # Handoff — next Claude Code session
 
 **Date**: 2026-07-22 (**v3.0 UI plan audit DONE + plan REV-1: operator RATIFIED §0 (React adopted, served as precompiled static JS) + reversed source-binding onto the model + re-sequenced to implement-and-wire ALL pages cockpit-first; plan-vs-frontend fidelity verified clean; NEXT = execute P0 (Foundation) on operator go** — see ▶ STATUS "v3.0 UI plan audit" directly below.)
-**Branch**: **`v2.7/model-library` at `92b753b` — IN SYNC with origin** (absorbed the green-gate worktree commits `dc9e963`/`9ea7e30`/`c2ad9d5` + the naming fix via fast-forward, pushed 2026-07-21). Redundant labels `v2.7/naming-hygiene` and `claude/nice-taussig-4dc2ef` (still checked out in its worktree) sit at/below the tip — optional tidy. `main` remains far behind and a strict ancestor (optional fast-forward).
-**Tests**: **4119 passed / 7 skipped / 3 deselected** at `92b753b` (= 4112 at the green-gate tip + 7 naming-hygiene pins). Run SOLO **on the `.venv` interpreter** — user-site Python lacks `pytest-timeout`, silently dropping the 30 s guardrail. Fresh worktree/clone: run `scripts/provision_test_env.py` FIRST (CLAUDE.md § "Fresh worktree / clone") — else ~110 `no such table` failures that are NOT a regression.
+**Branch**: **`v3.0/ui-plan-audit` at `7ce722c` — LOCAL ONLY (unpushed), 3 commits, DOCS-ONLY** (`5a24c66` Meridian design import · `a8c07dd` 6-agent audit + plan · `7ce722c` plan REV-1). Forked off `5d2fe17` (the v2.7 naming-hygiene wrap). No code/tests/engine touched this session. The v2.7 line (`v2.7/model-library` at `92b753b`, pushed + in sync with origin) is the base; `main` remains a strict ancestor (optional fast-forward). **Operator merges/pushes v3.0 at their call.**
+**Tests**: **NOT re-run this session** (docs-only branch — nothing to gate). Last green = **4119 passed / 7 skipped / 3 deselected** at the v2.7 base. When P0+ starts touching code: run SOLO **on the `.venv` interpreter** (user-site Python lacks `pytest-timeout` → silently drops the 30 s guardrail). Fresh worktree/clone: run `scripts/provision_test_env.py` FIRST (CLAUDE.md § "Fresh worktree / clone") — else ~110 `no such table` failures that are NOT a regression.
 **Engine**: **RUNNING** (started 2026-07-21 from this tree at `92b753b`, clock synced to 5 ms; serves the v2.7 identity — live-verified on `/`, `/manifest.json`, `/openapi.json`). Restart recipe: `.venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000` (**no `--reload`**). ⚠ **HARD PRECONDITION — SYNCED OS CLOCK** (`w32tm /resync` BEFORE starting; needs the w32time service, admin): a drifted clock → `-1021 Timestamp ahead` → startup fetches stall in weight-tracker throttling → the engine hangs on the "Connecting to exchange…" overlay (the resolved 2026-07-16 incident; recurred as a +4.9 s drift blocker 2026-07-21, operator-synced).
 
-## ▶ STATUS 2026-07-22 — v3.0 UI PLAN AUDIT DONE (Meridian imported + audit folded into a plan); NEXT = operator ratifies §0, then execute P0
+## ▶ STATUS 2026-07-22 — v3.0 UI PLAN AUDIT DONE + REV-1 RATIFIED; NEXT SESSION = execute P0 (Foundation)
+
+**▶▶ NEXT SESSION STARTS HERE.** Read, in order: (1) `docs/design/v3.0_ui_rebuild_plan.md`
+(the plan, REV-1 — §0 decisions, §5 phase sequence, §1-§4 architecture/gaps/mock-strip),
+(2) `docs/audits/2026-07-22-v3.0-ui-plan-audit.md` (the 6-lens ledger + the REV-1
+fidelity section) as needed, (3) the design reference under `docs/design/meridian_v3/`.
+Then **execute P0 (Foundation)** per plan §5 under the house cycle (one commit, gate SOLO
+on `.venv` once code exists, ≥1 independent audit, fold, STOP for operator acceptance).
+**One OPEN question for the operator** (flagged, not decided): Models sits at P7 to honor
+the cockpit-first directive, but its parser rebuild (G-M2) is the heaviest backend lift
+and is transport-independent — offer to pull it earlier. **Do NOT re-open §0** (ratified)
+or re-litigate the sequence (operator-directed).
+
 
 **Branch `v3.0/ui-plan-audit`** (forked off `5d2fe17`, the naming-hygiene wrap;
 NOT off `v2.7/model-library`'s tip label — same commit). Two commits:
