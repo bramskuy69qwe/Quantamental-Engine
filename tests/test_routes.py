@@ -126,8 +126,23 @@ def test_manifest_is_valid_json(client):
     resp = client.get("/manifest.json")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["short_name"] == "QRE"
+    # Compare against config, not a literal — the manifest identity is
+    # config-wired (naming-hygiene task), so a product rename must not
+    # turn this test into a stale pin.
+    assert data["short_name"] == config.PROJECT_SHORT_NAME
+    assert data["name"] == config.PROJECT_NAME
     assert "icons" in data
+
+
+def test_manifest_reflects_config_identity(client, monkeypatch):
+    """End-to-end wiring pin (naming-hygiene audit fold): the equality
+    assert above is tautological when a hardcoded literal happens to
+    EQUAL config — force divergence to prove the route reads config at
+    request time."""
+    monkeypatch.setattr(config, "PROJECT_SHORT_NAME", "PINCHK")
+    resp = client.get("/manifest.json")
+    assert resp.status_code == 200
+    assert resp.json()["short_name"] == "PINCHK"
 
 
 def test_service_worker_has_correct_header(client):

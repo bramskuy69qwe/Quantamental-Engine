@@ -181,15 +181,20 @@ class TestAccountDetailTemplateCompiles:
 
 class TestVersionBump:
     def test_project_version_no_longer_stale(self):
-        """FE-LOW-001 pin: PROJECT_VERSION_ must not be the stale 'v2.4'.
-        Catches a future regression where someone reverts the bump."""
+        """FE-LOW-001 pin, generalized (2026-07-21 naming-hygiene task).
+
+        The original second assertion — startswith("v2.4.1") — pinned the
+        EXACT release prefix, which made this pin a bump-blocker: any
+        later version went red. PROJECT_VERSION_ in fact sat frozen at
+        v2.4.1.1 (set at task 108, git-verified never bumped) through the
+        v2.5-v2.7 programs. Keep only the durable half: the v2.4 era is
+        permanently over, so any regression BACK into it is a
+        stale-version bug. Version-shape pins live in
+        test_project_meta.py; never re-pin an exact version prefix here."""
         import config
-        assert config.PROJECT_VERSION_ != "v2.4", (
-            "FE-LOW-001 regression: PROJECT_VERSION_ reverted to stale 'v2.4'. "
-            "Should be at least v2.4.1.x for any post-v2.4.0 build."
-        )
-        assert config.PROJECT_VERSION_.startswith("v2.4.1"), (
-            f"Expected v2.4.1.x; got {config.PROJECT_VERSION_!r}"
+        assert not config.PROJECT_VERSION_.startswith("v2.4"), (
+            "FE-LOW-001 regression: PROJECT_VERSION_ reverted to the stale "
+            f"v2.4 era; got {config.PROJECT_VERSION_!r}"
         )
 
 

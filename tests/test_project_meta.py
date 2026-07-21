@@ -17,8 +17,27 @@ class TestCanonicalSource:
         assert isinstance(config.PROJECT_VERSION_, str)
         assert config.PROJECT_VERSION_.startswith("v")
 
+    def test_project_version_shape(self):
+        """Version must parse as v<major>.<minor>[.<patch>...] — shape pin
+        only. The VALUE is deliberately unpinned here: an exact-prefix pin
+        (test_task108's retired startswith('v2.4.1') assertion) failed any
+        bump, and the display version in fact sat at v2.4.1.1 through the
+        v2.5-v2.7 programs."""
+        import re
+        assert re.fullmatch(r"v\d+\.\d+(\.\d+)*", config.PROJECT_VERSION_), (
+            f"PROJECT_VERSION_ {config.PROJECT_VERSION_!r} is not v<major>.<minor>[.…]"
+        )
+
     def test_full_name_combines_both(self):
         assert config.PROJECT_NAME == f"{config.PROJECT_NAME_} {config.PROJECT_VERSION_}"
+
+    def test_pwa_identity_constants(self):
+        """PWA manifest identity lives in config (naming-hygiene task):
+        short_name spec guidance is ≤ 12 chars."""
+        assert isinstance(config.PROJECT_SHORT_NAME, str)
+        assert 0 < len(config.PROJECT_SHORT_NAME) <= 12
+        assert isinstance(config.PROJECT_DESCRIPTION, str)
+        assert len(config.PROJECT_DESCRIPTION) > 0
 
 
 class TestTemplateGlobalsWired:
@@ -44,9 +63,12 @@ class TestNoHardcodedVersionInRuntime:
     ]
 
     @pytest.mark.parametrize("filepath", RUNTIME_FILES)
-    def test_no_hardcoded_v2_dot(self, filepath):
-        """No runtime file should contain a hardcoded 'v2.X' version string
-        literal outside of the canonical config.PROJECT_VERSION_ definition."""
+    def test_no_hardcoded_version_literal(self, filepath):
+        """No runtime file should contain a hardcoded 'vN.N' version string
+        literal outside of the canonical config.PROJECT_VERSION_ definition.
+
+        Naming-hygiene task: the scan was 'v2\\.'-prefixed, so it would have
+        silently stopped guarding at the first v3.x bump. Now major-agnostic."""
         if not os.path.exists(filepath):
             pytest.skip(f"{filepath} not found")
         lines = open(filepath, encoding="utf-8").read().split("\n")
@@ -60,10 +82,21 @@ class TestNoHardcodedVersionInRuntime:
             # perfectly, but standalone version refs in docstrings are ok)
             if stripped.startswith('"""') or stripped.startswith("'''"):
                 continue
-            # Look for quoted version strings: "v2.X" or 'v2.X'
-            matches = re.findall(r'''["']v2\.\d+["']''', line)
+            # Look for quoted version strings: "vN.N" or 'vN.N'
+            matches = re.findall(r'''["']v\d+\.\d+["']''', line)
             assert len(matches) == 0, \
                 f"{filepath}:{i} has hardcoded version literal: {matches}"
+
+    def test_fastapi_version_derives_from_config(self):
+        """main.py's FastAPI(version=...) must derive from config, not a
+        literal. The old literal ("2.1.0") had NO leading 'v', so the quoted
+        vN.N scan above could never catch this form — pin the wiring itself."""
+        content = open("main.py", encoding="utf-8").read()
+        assert "version=config.PROJECT_VERSION_" in content, (
+            "FastAPI version must derive from config.PROJECT_VERSION_ "
+            "(a numeric literal here goes stale invisibly — it read '2.1.0' "
+            "while the displayed product version was v2.4.1.1)"
+        )
 
 
 class TestStartupOverlayUsesConfig:
@@ -76,7 +109,7 @@ class TestStartupOverlayUsesConfig:
         assert "project_name_" in block or "project_version_" in block, \
             "Startup overlay should use {{ project_name_ }} / {{ project_version_ }}"
         import re
-        matches = re.findall(r'v2\.\d+', block)
+        matches = re.findall(r'v\d+\.\d+', block)
         assert len(matches) == 0, \
             f"Startup overlay has hardcoded version: {matches}"
 
@@ -96,7 +129,7 @@ class TestLauncherReadsConfig:
             pytest.skip("launch.bat not found")
         content = open("launch.bat", encoding="utf-8").read()
         import re
-        matches = re.findall(r'v2\.\d+', content)
+        matches = re.findall(r'v\d+\.\d+', content)
         assert len(matches) == 0, \
             f"launch.bat has hardcoded version: {matches}"
 
@@ -112,6 +145,13 @@ class TestManifestServedDynamically:
         content = open("main.py", encoding="utf-8").read()
         assert "config.PROJECT_NAME" in content
 
+    def test_manifest_identity_from_config(self):
+        """short_name/description were literals in the manifest route until
+        the naming-hygiene task — a rename would have left them stale."""
+        content = open("main.py", encoding="utf-8").read()
+        assert "config.PROJECT_SHORT_NAME" in content
+        assert "config.PROJECT_DESCRIPTION" in content
+
 
 class TestServiceWorkerNoVersion:
     """service-worker.js comment has no hardcoded version."""
@@ -121,6 +161,24 @@ class TestServiceWorkerNoVersion:
             pytest.skip("service-worker.js not found")
         content = open("static/service-worker.js", encoding="utf-8").read()
         import re
-        matches = re.findall(r'v2\.\d+', content)
+        matches = re.findall(r'v\d+\.\d+', content)
         assert len(matches) == 0, \
             f"service-worker.js has hardcoded version: {matches}"
+
+    def test_no_brand_name_in_display_strings(self):
+        """The SW is served as a raw static file (FileResponse) and cannot
+        read config — its user-visible strings are deliberately brand-free
+        so a product rename can't strand them (naming-hygiene task)."""
+        content = open("static/service-worker.js", encoding="utf-8").read()
+        assert "Quantamental" not in content, (
+            "service-worker.js hardcodes the product name; keep its display "
+            "strings brand-free (it cannot read config.PROJECT_NAME)"
+        )
+
+    def test_precache_uses_manifest_route(self):
+        """The manifest is served by a route (/manifest.json), not from
+        /static/. The old /static/manifest.json pre-cache entry 404'd, and
+        cache.addAll is atomic — one dead URL voided the entire pre-cache."""
+        content = open("static/service-worker.js", encoding="utf-8").read()
+        assert "'/manifest.json'" in content
+        assert "/static/manifest.json" not in content

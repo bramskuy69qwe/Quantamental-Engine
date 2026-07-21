@@ -57,25 +57,31 @@ full adapter inventory.
 | Data processing | pandas, numpy |
 | Encryption | cryptography (Fernet, AES-256 for API keys) |
 | HTTP client | httpx (async) |
-| Testing | pytest + pytest-asyncio (1247 tests) |
+| Testing | pytest + pytest-asyncio + pytest-timeout (4,100+ tests) |
 
 ---
 
 ## Status
 
-- **Current**: v2.4 (in audit phase — 1247 tests passing)
+- **Current**: v2.7 (model library — complete, holistically audited)
+  - DB-backed library of reusable, exchange-agnostic models; backtest-import
+    adapter framework (MultiCharts first); calculator pre-fill + close-time
+    model tagging
+  - v2.6: Quantower plugin removed — the engine is exchange-direct only
+    (observe-only Binance WS)
+  - v2.5 arc: correlation-log observability spine (registry now 42
+    categories), linkage battery (62 pins), attribution reconciler
+    (`core/position_identity.py`)
   - SSE-driven dashboard with HTMX morphing (flicker-free updates)
-  - Multi-exchange: Binance, Bybit, MEXC (read-only via capability flags)
-  - History page redesign: 3-card layout, fill drawer, exec link, trade events log
-  - Per-account timezone, analytics periods, strategy presets
-  - Rate-limit architecture (weight tracker, fan-out coordination)
-  - `calc_id` propagation for slippage tracking and fills↔pre_trade_log matching
-  - Observability: `engine_events` + `trade_events` audit trail
-- **Previous**: v2.3.1 (audit complete, 6 buckets closed, 40 findings resolved)
-- **Next**: v2.5 (backtesting subsystem, defensive ML)
+  - Observability: `engine_events` + `trade_events` + correlation log
+- **Next**: v3.0 (ground-up UI rebuild —
+  [docs/design/v3.0_models_tab_design_prompt.md](docs/design/v3.0_models_tab_design_prompt.md))
 
-See [v2.4.md](v2.4.md) for spec + implementation status, and
-[v2.5-v2.7_roadmap.md](v2.5-v2.7_roadmap.md) for downstream phases.
+The displayed product version is `PROJECT_VERSION_` in [config.py](config.py)
+— the single source of truth, bumped at program close (see CLAUDE.md
+§ "Release hygiene"). Historical specs: [v2.4.md](v2.4.md),
+[v2.5-v2.7_roadmap.md](v2.5-v2.7_roadmap.md); current designs live in
+`docs/design/`.
 
 ---
 

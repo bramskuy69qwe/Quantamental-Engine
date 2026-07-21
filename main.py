@@ -173,7 +173,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=config.PROJECT_NAME,
-    version="2.1.0",
+    # OpenAPI version tracks the product version (display "v" prefix stripped).
+    version=config.PROJECT_VERSION_.lstrip("v"),
     lifespan=lifespan,
 )
 
@@ -255,8 +256,8 @@ async def pwa_manifest():
     return JSONResponse(
         {
             "name": config.PROJECT_NAME,
-            "short_name": "QRE",
-            "description": "Pre-trade gatekeeper for discretionary crypto futures trading",
+            "short_name": config.PROJECT_SHORT_NAME,
+            "description": config.PROJECT_DESCRIPTION,
             "start_url": "/",
             "display": "standalone",
             "background_color": "#07080f",

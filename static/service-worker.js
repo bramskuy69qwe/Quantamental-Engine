@@ -1,5 +1,7 @@
 /**
- * Quantamental Engine — Service Worker
+ * Service Worker
+ * (Deliberately brand-free: this file is served as a raw static asset
+ * — FileResponse in main.py — so it cannot read config.PROJECT_NAME.)
  *
  * Strategy:
  *   /api/*, /fragments/*, /ws/* → Network-first (live data must be fresh)
@@ -9,9 +11,14 @@
 
 const CACHE_NAME = 'qre-v1';
 
-// Static assets to pre-cache on install
+// Static assets to pre-cache on install.
+// NB the manifest is served by a ROUTE (/manifest.json — main.py), not from
+// the static dir: the old entry pointed at the deleted static copy and
+// 404'd, and because cache.addAll is atomic that single dead URL silently
+// voided the WHOLE pre-cache (the .catch below swallowed it). Fixed in the
+// naming-hygiene task; pinned by tests/test_project_meta.py.
 const PRECACHE_URLS = [
-  '/static/manifest.json',
+  '/manifest.json',
   '/static/icon-192.png',
   '/static/icon-512.png',
 ];
@@ -104,7 +111,7 @@ async function networkFirst(request) {
         'display:flex;align-items:center;justify-content:center;height:100vh;' +
         'flex-direction:column}h1{font-size:1.5rem;margin-bottom:.5rem}' +
         'p{color:#96b4d0;font-size:.9rem}</style></head><body>' +
-        '<h1>Offline</h1><p>Quantamental Engine is not reachable. ' +
+        '<h1>Offline</h1><p>The engine is not reachable. ' +
         'Check that uvicorn is running.</p></body></html>',
         { headers: { 'Content-Type': 'text/html' } }
       );

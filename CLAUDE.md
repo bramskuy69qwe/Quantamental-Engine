@@ -489,3 +489,36 @@ into "shipped clean cleanup". Apply it to any future destructive
 operator script (`scripts/dedup_fills.py`,
 `scripts/rebuild_closed_positions.py`, future migration scripts,
 etc.).
+
+### Release hygiene — bump the displayed version at program close
+
+`config.PROJECT_VERSION_` (with `PROJECT_NAME_` / `PROJECT_SHORT_NAME` /
+`PROJECT_DESCRIPTION`) is the single source of truth for the displayed
+product identity — page titles, header/footer, startup overlay, FastAPI
+metadata, the PWA manifest, and the launch.bat window title all derive
+from it. **At each program close, bump `PROJECT_VERSION_` and refresh
+the README Status block in the wrap commit.**
+
+Why this section exists (2026-07-21 naming audit): the displayed
+version sat frozen at v2.4.1.1 through the entire v2.5–v2.7 arc
+(git-verified: set at task 108, `4ecd75d` 2026-05-18, never touched
+again until the naming-hygiene fix). Two contributing conditions,
+both fixed but both re-creatable:
+
+1. **Nothing in the close discipline named the bump** — branch names
+   carried each program's version; no checklist item covered the
+   config constant.
+2. **An exact-prefix test pin would have failed any bump** — task
+   108's `startswith("v2.4.1")` assertion turned every later version
+   into a red test. Never re-pin an exact version prefix in a test;
+   durable shape pins live in `tests/test_project_meta.py` (which is
+   also deliberately major-agnostic — its scans were once
+   `v2.`-prefixed and would have stopped guarding at v3.0).
+
+Identity strings that must NEVER ride a rename: the KDF domain salt
+`b"qe-kdf-salt-v2:"` in `core/crypto.py` (changing it breaks decryption
+of every stored credential), the `risk_engine.db` / `risk_engine.jsonl`
+data filenames (a rename is a data migration, not cosmetics), and
+historical docs/CHANGELOG/audit files. The post-v3.0 product rename is
+a `config.py`-only change — plus `test_time_sync.py`'s
+uppercase-shape pin on `PROJECT_NAME_` if the new name isn't ALL-CAPS.

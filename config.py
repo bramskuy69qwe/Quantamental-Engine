@@ -34,9 +34,16 @@ def _bounded_float_env(name: str, default: str, *, lo: float, hi: float) -> floa
     return v
 
 # ── Project identity ─────────────────────────────────────────────────────────
+# Single source of truth for the displayed product identity: Jinja globals
+# (api/helpers.py), FastAPI metadata + the PWA manifest (main.py), the
+# launch.bat window title. Bump PROJECT_VERSION_ at program close
+# (CLAUDE.md § "Release hygiene"); a product rename is a change HERE only.
 PROJECT_NAME_    = "QUANTAMENTAL ENGINE"
-PROJECT_VERSION_ = "v2.4.1.1"
+PROJECT_VERSION_ = "v2.7"
 PROJECT_NAME     = f"{PROJECT_NAME_} {PROJECT_VERSION_}"
+# PWA identity (main.py /manifest.json route). short_name ≤ 12 chars.
+PROJECT_SHORT_NAME  = "QRE"
+PROJECT_DESCRIPTION = "Pre-trade gatekeeper for discretionary crypto futures trading"
 
 # ── Exchange ──────────────────────────────────────────────────────────────────
 # NOTE: BINANCE_API_KEY / BINANCE_API_SECRET are kept for the one-time seed
