@@ -1,9 +1,93 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-07-21 (**naming hygiene SHIPPED; merge chain + PUSH DONE; next = v3.0 UI plan audit in a NEW session with the Claude design frontend MCP** — see ▶ STATUS "naming hygiene" below.)
+**Date**: 2026-07-22 (**v3.0 UI plan audit DONE — Meridian design imported + 6-agent audit folded into a new implementation plan; awaiting operator ratification of the two gating decisions before any execution** — see ▶ STATUS "v3.0 UI plan audit" directly below.)
 **Branch**: **`v2.7/model-library` at `92b753b` — IN SYNC with origin** (absorbed the green-gate worktree commits `dc9e963`/`9ea7e30`/`c2ad9d5` + the naming fix via fast-forward, pushed 2026-07-21). Redundant labels `v2.7/naming-hygiene` and `claude/nice-taussig-4dc2ef` (still checked out in its worktree) sit at/below the tip — optional tidy. `main` remains far behind and a strict ancestor (optional fast-forward).
 **Tests**: **4119 passed / 7 skipped / 3 deselected** at `92b753b` (= 4112 at the green-gate tip + 7 naming-hygiene pins). Run SOLO **on the `.venv` interpreter** — user-site Python lacks `pytest-timeout`, silently dropping the 30 s guardrail. Fresh worktree/clone: run `scripts/provision_test_env.py` FIRST (CLAUDE.md § "Fresh worktree / clone") — else ~110 `no such table` failures that are NOT a regression.
 **Engine**: **RUNNING** (started 2026-07-21 from this tree at `92b753b`, clock synced to 5 ms; serves the v2.7 identity — live-verified on `/`, `/manifest.json`, `/openapi.json`). Restart recipe: `.venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000` (**no `--reload`**). ⚠ **HARD PRECONDITION — SYNCED OS CLOCK** (`w32tm /resync` BEFORE starting; needs the w32time service, admin): a drifted clock → `-1021 Timestamp ahead` → startup fetches stall in weight-tracker throttling → the engine hangs on the "Connecting to exchange…" overlay (the resolved 2026-07-16 incident; recurred as a +4.9 s drift blocker 2026-07-21, operator-synced).
+
+## ▶ STATUS 2026-07-22 — v3.0 UI PLAN AUDIT DONE (Meridian imported + audit folded into a plan); NEXT = operator ratifies §0, then execute P0
+
+**Branch `v3.0/ui-plan-audit`** (forked off `5d2fe17`, the naming-hygiene wrap;
+NOT off `v2.7/model-library`'s tip label — same commit). Two commits:
+- **`5a24c66`** — imported the **Meridian v3.0** React design reference into
+  `docs/design/meridian_v3/` (23 files, the full app dependency closure:
+  `Meridian v3.0.html` + `DESIGN.md` + `v25/tokens.css` + 20 JSX modules). Fetched
+  via the design MCP (`DesignSync` — **main-loop only; subagents cannot see the
+  tool**, verified). Deliberately skipped the design-canvas scratch (screens/,
+  uploads/, v25/index.html + design-canvas.jsx, the dash-tape/dash-command/
+  dash-split-rail/pages-regime-v2 alternates, the History-blotter/refresh-control
+  explorations) — recoverable in the design project. **Verified live**: served over
+  localhost HTTP (file:// blocks Babel's XHR of the external `src` scripts — CORS,
+  not an import defect), the app boots and renders Dashboard + Models incl. the real
+  parsed @ES MultiCharts run.
+- **this wrap commit** — the audit + the plan (docs only; **tests NOT re-run —
+  docs-only branch**, engine untouched).
+
+**The audit** (`docs/audits/2026-07-22-v3.0-ui-plan-audit.md`): **6 parallel
+read-only agents**, each a lens (Models data-contract · other-pages data-contract ·
+architecture/feasibility · design internal-consistency + mock-traps · plan-doc
+staleness/scope · phasing/risk). Two agents died mid-run on a session limit and were
+relaunched clean after the reset; all 6 are folded. **The plan**:
+`docs/design/v3.0_ui_rebuild_plan.md` (folds every finding; house precedent = v2.7
+rev-2 folded 24 findings pre-execution). The old `v3.0_models_tab_design_prompt.md`
+is banner-marked CONSUMED and points at the new plan.
+
+**★ TWO GATING DECISIONS the operator must ratify before P0 executes (plan §0):**
+1. **Decision A — stack.** The design prompt forbade "a heavy SPA framework" +
+   mandated Jinja/HTMX; the delivered Meridian is a **React 18 SPA**. Plan
+   RECOMMENDS **A2: adopt the React reference, served as AOT-precompiled static JS
+   from FastAPI** (React production UMD + vendored CDN deps + a one-shot esbuild
+   prebuild — **no standing Node server, no runtime `package.json`**; the repo has
+   none, confirmed). Alt A1 (port the visual language into Jinja + an islands layer)
+   ~doubles P0 and loses the tiling-workspace identity. **This choice determines
+   whether P0 ports primitives to JSX or to Jinja macros — nothing executes until
+   it's made.**
+2. **Decision B — serving** (contingent on A2): precompiled static JS + vendored
+   offline assets. Also §3: exchange-agnostic vs. the design's per-model "Source
+   Binding" — plan recommends treating symbol/point-value as **per-run provenance**,
+   keeping the model exchange-agnostic.
+
+**Headline audit findings folded into the plan:**
+- **HIGH — halt-state authority conflict.** The design persists a "TRADING HALTED ·
+  positions frozen" banner in `localStorage` with a client countdown, but the engine
+  is **advisory-only** (log/calculator-block; it's a pre-trade gatekeeper, never in
+  the order path). The banner is fiction → rewire to real `dd_state`/`weekly_pnl`
+  SSE + corrected copy. This is a correctness fix, not a port choice.
+- **The biggest Models gap is the PARSER, not the UI.** The MultiCharts adapter reads
+  only cols A/B of one sheet + keeps ~9 scalars; the design renders the full report
+  (All/Long/Short grid, 8 ratios, Trade Analysis, hourly Periodical, per-trade
+  run-up) — **all parseable from the file already uploaded but discarded**. G-M1
+  (per-run `report_json` store + endpoint) + G-M2 (adapter rebuild) is P1's critical
+  path.
+- **Most non-Models surface is already SERVED** — Pre-Trade, History, all Regime,
+  Config accounts/connections, 9/11 Analytics tabs, the whole Linkage cockpit bind
+  to existing endpoints. Concentrated gaps only: Dashboard Engine-Log live feed,
+  Analytics Execution-Quality/Distributions tabs, Linkage funding-book JSON, the
+  notification taxonomy (6 claimed / 4 produced). All enumerated per-phase in plan §2.
+- **PREMISE CORRECTION** the phasing agent caught: the Linkage per-criterion match
+  diff **already has a full backend** (`routes_orders.py:524-557` + `calc_correlation`
+  + `match_audit`) — Linkage is a lower-risk target than assumed.
+- **Serving/transport**: precompile to static JS; live data over **SSE** (engine
+  already exposes it; `LiveValue` is SSE-shaped); add no browser WebSocket. Vendor all
+  CDN deps (localhost/offline doctrine + PWA precache). Mock devices to STRIP
+  (frozen clock, random-walk tickers, `Math.random()` in the dash render path, seeded
+  synth reports, localStorage halt, DEMO panel) are mapped file:line in the ledger.
+
+**Recommended phase sequence** (plan §5, one commit per phase, Jinja serves until each
+React page is operator-accepted): **P0** foundation (vendor deps + build/serve
+decision + port the shared primitive/token/chart/grid layer; Primitives page as the
+`/v3` proving ground) → **P1 Models** first (lowest coupling, design centerpiece,
+request/response only so it doesn't depend on the unproven live-data transport;
+sub-gated 1a Library / 1b Detail+Form / 1c Run-report+Import) → **P2** live-data SSE
+spike + Dashboard → **P3** Regime + Analytics → **P4** History + Linkage → **P5**
+Calculator (the 1100-line coupling monster, deliberately last; re-investigate the
+countdown race per CLAUDE.md, don't port it) → **P6** Config + Jinja retirement +
+the CLAUDE.md JS-drift grep.
+
+**Not pushed** — `v3.0/ui-plan-audit` is local only; operator merge/push at their call.
+Memory: [[project-v3-ui-rebuild]].
+
+---
 
 ## ▶ STATUS 2026-07-21 (later) — naming hygiene `92b753b` SHIPPED + merged + PUSHED; engine LIVE on the v2.7 identity; NEXT = v3.0 UI plan audit
 
