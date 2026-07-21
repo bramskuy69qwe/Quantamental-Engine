@@ -1,0 +1,5 @@
+# Build-only dependencies — never committed. The BUILD OUTPUT (static/v3/,
+# static/vendor/) and the build inputs (package.json, package-lock.json,
+# build.mjs, src/) ARE committed; node_modules is reconstructable via
+# `npm install` (package-lock pins the exact tree).
+node_modules/

@@ -1,0 +1,96 @@
+{#-
+  v3.0 React UI shell (P0 Foundation).
+
+  Standalone — deliberately does NOT {% extends "base.html" %}: the React app
+  (static/v3/app.<hash>.js) owns the whole viewport and re-implements/bridges the
+  chrome it needs. Served by api/routes_v3.py at /v3. All runtime deps are
+  vendored under /static/vendor/ (offline doctrine — no CDN). Asset filenames are
+  content-hashed (v3.app/tokens/shell come from static/v3/manifest.json via the
+  route) so the root-scoped, cache-first service worker can never stale-serve the
+  app bundle or its CSS. This shell registers no SW of its own — BUT base.html's
+  root-scoped SW still controls /static/*, so the unhashed /static/vendor/* deps
+  can be served stale by it until CACHE_NAME bumps; scoping /v3 away from that SW
+  (or hashing the vendored files) is deferred coexistence work (plan §1.4/§1.5).
+-#}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>{{ project_name_ }} · v3</title>
+
+  {% if v3.app %}
+  {#- vendored fonts + deps (offline; no CDN) -#}
+  <link rel="stylesheet" href="/static/vendor/fonts/fonts.css"/>
+  <link rel="stylesheet" href="/static/vendor/gridstack.min.css"/>
+  <link rel="stylesheet" href="/static/v3/{{ v3.tokens }}"/>
+  <link rel="stylesheet" href="/static/v3/{{ v3.shell }}"/>
+  {% endif %}
+
+  <style>
+    html, body { margin:0; padding:0; height:100%; background:#000; font-family:'Space Grotesk', system-ui, sans-serif; }
+    #root { height:100%; }
+    #boot { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:#000; color:#00e7ff; font-family:'JetBrains Mono', monospace; font-size:12px; letter-spacing:0.25em; }
+    #boot-err { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:#000; color:#ff2d4a; font-family:'JetBrains Mono', monospace; font-size:13px; text-align:center; padding:24px; line-height:1.8; }
+  </style>
+</head>
+<body>
+  {% if v3.app %}
+  <div id="root"><div id="boot"><span id="boot-spin" style="margin-right:10px; display:inline-flex; line-height:0;"><svg id="boot-sq" width="15" height="15" viewBox="0 0 10 10" fill="#00e7ff"><rect id="bs-TL" x="1" y="1" width="3" height="3"/><rect id="bs-TR" x="6" y="1" width="3" height="3"/><rect id="bs-BR" x="6" y="6" width="3" height="3"/><rect id="bs-BL" x="1" y="6" width="3" height="3"/></svg></span><span>{{ project_name_ }} v3 — LOADING</span></div></div>
+
+  <script>
+    /* boot spinner — the centered square 2×2 braille the engine uses everywhere
+       (mirrors BrailleSquares in primitives.jsx). Vanilla because React isn't up yet. */
+    (function () {
+      var edges = [['TL','TR'], ['TR','BR'], ['BR','BL'], ['BL','TL']], i = 0;
+      var iv = setInterval(function () {
+        var svg = document.getElementById('boot-sq');
+        if (!svg) { clearInterval(iv); return; }
+        var lit = edges[i = (i + 1) % edges.length];
+        ['TL','TR','BR','BL'].forEach(function (k) {
+          var r = document.getElementById('bs-' + k);
+          if (r) r.setAttribute('fill-opacity', lit.indexOf(k) >= 0 ? '1' : '0');
+        });
+      }, 120);
+    })();
+  </script>
+
+  {#- engine bootstrap: product identity + active account for the SSE adapter.
+      active_account_id comes from _ctx (helpers.py); the app reads window.QE_BOOTSTRAP. -#}
+  <script>
+    window.QE_BOOTSTRAP = {
+      projectName: {{ project_name_ | tojson }},
+      projectShortName: {{ project_short_name | tojson }},
+      projectVersion: {{ project_version_ | tojson }},
+      activeAccountId: {{ active_account_id | tojson }}
+    };
+  </script>
+
+  {#- vendored globals FIRST (React/ReactDOM/ECharts/GridStack), then the precompiled bundle -#}
+  <script src="/static/vendor/react.production.min.js"></script>
+  <script src="/static/vendor/react-dom.production.min.js"></script>
+  <script src="/static/vendor/echarts.min.js"></script>
+  <script src="/static/vendor/gridstack-all.js"></script>
+  <script src="/static/v3/{{ v3.app }}"></script>
+
+  <script>
+    /* drop the boot splash once React has mounted into #root */
+    (function () {
+      var tries = 0;
+      var iv = setInterval(function () {
+        var boot = document.getElementById('boot');
+        var root = document.getElementById('root');
+        if (!boot) { clearInterval(iv); return; }
+        if ((root && root.children.length > 1) || tries++ > 60) { boot.remove(); clearInterval(iv); }
+      }, 150);
+    })();
+  </script>
+  {% else %}
+  <div id="boot-err">
+    v3 bundle not built.<br/>
+    Run <code>npm run build</code> in <code>frontend/</code> to generate
+    <code>static/v3/</code>, then reload.
+  </div>
+  {% endif %}
+</body>
+</html>

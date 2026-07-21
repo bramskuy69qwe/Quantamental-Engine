@@ -28,6 +28,7 @@ from api.routes_context     import router as context_router
 from api.routes_export      import router as export_router
 from api.routes_notifications import router as notifications_router
 from api.routes_auth         import router as auth_router
+from api.routes_v3           import router as v3_router
 
 router = APIRouter()
 router.include_router(dashboard_router)
@@ -50,3 +51,4 @@ router.include_router(context_router)
 router.include_router(export_router)
 router.include_router(notifications_router)
 router.include_router(auth_router)
+router.include_router(v3_router)

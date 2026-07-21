@@ -1,0 +1,19 @@
+{
+  "name": "quantamental-engine-v3-frontend",
+  "version": "3.0.0",
+  "private": true,
+  "type": "module",
+  "description": "BUILD-ONLY workspace for the v3.0 React UI. esbuild precompiles the JSX under src/ to static/v3/, and the vendored runtime deps are copied to static/vendor/. NOTHING here runs at engine runtime — FastAPI serves the precompiled output statically. node_modules is gitignored; the vendored assets + precompiled bundle are committed. See build.mjs.",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "@fontsource/jetbrains-mono": "^5.1.1",
+    "@fontsource/space-grotesk": "^5.1.1",
+    "echarts": "5.5.1",
+    "esbuild": "^0.24.2",
+    "gridstack": "10.3.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  }
+}

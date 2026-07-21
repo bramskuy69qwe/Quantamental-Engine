@@ -1,0 +1,50 @@
+/* v3.0 shell CSS — app-level styles the React tree relies on but that live
+   outside tokens.css: the GridStack tiling workspace chrome, the notification
+   system, and the Primitives-page spec rows. Ported verbatim from the Meridian
+   reference shell (docs/design/meridian_v3/Meridian v3.0.html <style> block).
+   The html/body/#root/#boot base reset stays inline in templates/v3.html so the
+   boot splash is styled before this stylesheet resolves. Consumes --qe-* tokens
+   from tokens.css (load tokens.css first). */
+
+/* ── GridStack tiling workspace ─────────────────────────────────── */
+.grid-stack { background: var(--qe-bg); }
+.grid-stack-item-content { inset:0; overflow:hidden; display:flex; flex-direction:column; }
+.grid-stack-item-content > * { flex:1; min-height:0; }
+.grid-stack .qe-pane-head { cursor:move; user-select:none; }
+.grid-stack .qe-grip { display:none; }
+.grid-stack-item.ui-draggable-dragging,
+.grid-stack-item.ui-resizable-resizing { z-index:90 !important; }
+.grid-stack-item.ui-draggable-dragging .grid-stack-item-content,
+.grid-stack-item.ui-resizable-resizing .grid-stack-item-content {
+  box-shadow:0 10px 30px rgba(0,0,0,0.6); outline:1px solid var(--qe-cyan); outline-offset:-1px;
+}
+.grid-stack > .grid-stack-placeholder > .placeholder-content {
+  background:rgba(0,231,255,0.08); border:1px dashed var(--qe-cyan);
+}
+.grid-stack-item > .ui-resizable-handle { opacity:0 !important; }
+.grid-stack[data-locked="1"] .qe-pane-head { cursor:default; }
+.grid-stack[data-locked="1"] .ui-resizable-handle { display:none !important; }
+
+/* ── Notification system ────────────────────────────────── */
+.qe-notif-actions { opacity:0; transition:opacity .1s; }
+.qe-notif-row:hover .qe-notif-actions { opacity:1; }
+.qe-notif-row:hover .qe-notif-time { display:none; }
+.qe-notif-row:hover { background:var(--qe-hover) !important; }
+.qe-notif-ib { width:16px; height:16px; display:inline-flex; align-items:center; justify-content:center;
+  background:transparent; border:1px solid var(--qe-line); color:var(--qe-sub); cursor:pointer;
+  font-family:var(--qe-mono); font-size:0.62rem; line-height:1; padding:0; }
+.qe-notif-ib:hover { border-color:var(--qe-line-2); color:var(--qe-text); background:var(--qe-active); }
+.qe-notif-cta { height:16px; display:inline-flex; align-items:center; background:transparent;
+  border:1px solid var(--qe-line); color:var(--qe-sub); cursor:pointer; font-family:var(--qe-ui);
+  font-size:0.52rem; font-weight:600; letter-spacing:0.04em; line-height:1; padding:0 6px; white-space:nowrap; }
+.qe-notif-cta:hover { border-color:var(--qe-cyan); color:var(--qe-cyan); background:var(--qe-bg-cyan); }
+@keyframes qe-toast-in { from { opacity:0; transform:translateX(10px); } to { opacity:1; transform:translateX(0); } }
+.qe-toast { animation:qe-toast-in .18s ease-out; }
+@keyframes qe-toast-shrink { from { width:100%; } to { width:0%; } }
+.qe-toast-bar { width:100%; animation:qe-toast-shrink 5.2s linear forwards; }
+
+/* news-ticker styles live in tokens.css (NewsTickerBar primitive) */
+
+/* primitive-spec reference rows (Primitives page) */
+.spec-row { display:grid; grid-template-columns:110px 1fr; gap:8px; align-items:start; padding:6px 0; border-bottom:1px dotted var(--qe-faint); }
+.spec-row .l { font-family:var(--qe-mono); font-size:0.6rem; color:var(--qe-muted); letter-spacing:0.08em; text-transform:uppercase; }
