@@ -1,9 +1,55 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-07-17 (**v2.7 COMPLETE + HOLISTICALLY AUDITED; fix Tasks A/B/C SHIPPED, D/E OPEN** — see ▶ AUDIT STATUS. The program block below it stands.)
-**Branch**: **`v2.7/model-library`** — **PUSHED, in sync with origin through the audit-fix commits** (verify `git status -sb` at session start). Forked off `e05e359` (the v2.6 tip). `main` is 266+ commits behind and a strict ancestor (pure fast-forward — optional operator step).
-**Tests**: full suite **4046 passed / 7 skipped / 3 deselected** — green (~5:25). Run SOLO. (3943 v2.6 baseline → 4027 at program wrap → 4046 after fix Tasks A–C.)
+**Date**: 2026-07-21 (**green-gate program COMPLETE; v2.7 audit Tasks A–E ALL SHIPPED; next = v3.0 UI plan audit** — see ▶ STATUS 2026-07-21.)
+**Branch**: session work landed on worktree branch **`claude/nice-taussig-4dc2ef`** = `v2.7/model-library` tip `03f7236` + 3 linear commits (`dc9e963` dead-template sweep, `9ea7e30` provision_test_env, this wrap). `v2.7/model-library` itself is in sync with origin at `03f7236`. **Operator step: fast-forward/merge `v2.7/model-library` onto the session tip + push.** `main` remains far behind and a strict ancestor (optional fast-forward).
+**Tests**: **4112 passed / 7 skipped / 3 deselected** at the session tip (= 4092 at `03f7236` + 20 provision-guard tests). Run SOLO **on the `.venv` interpreter** — user-site Python lacks `pytest-timeout`, silently dropping the 30 s guardrail. Fresh worktree/clone: run `scripts/provision_test_env.py` FIRST (CLAUDE.md § "Fresh worktree / clone") — else ~110 `no such table` failures that are NOT a regression.
 **Engine**: start `.venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000` (**no `--reload`**). ⚠ **HARD PRECONDITION — SYNCED OS CLOCK** (`w32tm /resync` BEFORE starting): a drifted clock → `-1021 Timestamp ahead` → startup fetches stall in weight-tracker throttling → the engine hangs on the "Connecting to exchange…" overlay (the resolved 2026-07-16 incident, note in the v2.6 historical block).
+
+## ▶ STATUS 2026-07-21 — true green gate reproduced everywhere; provisioning tool shipped; NEXT = v3.0 UI plan audit
+
+**Supersedes the ▶ AUDIT STATUS block below**: Tasks **D (`76b01d7`) and E (`fefc54a`) SHIPPED**
+2026-07-17 (+ `03f7236` clean_test_pollution extension for the Task-E position_fill_snapshots leak).
+Holistic-audit ledger F1–F18 fully dispositioned; the block below is history.
+
+**This session** (worktree `nice-taussig-4dc2ef`, operator-driven "accomplish the true green gate"):
+
+| Commit | What |
+|---|---|
+| `dc9e963` | dead `templates/fragments/history_tables.html` deleted (Task D sweep). Caveat that cost the prior session: the worktree was CREATED ON A WRONG BASE (`cb28563`, v2.4.4) — re-pointed onto the v2.7 tip before committing; deletion proven inert via identical before/after full-suite counts. |
+| `9ea7e30` | **`scripts/provision_test_env.py`** + `tests/test_provision_test_env.py` (20 pins) + CLAUDE.md § "Fresh worktree / clone". |
+
+**Root cause of the fresh-worktree red suite** (~110 failures, all `no such table:`
+account_settings / pre_trade_log / engine_events / trade_events): the worktree `data/` lacks the
+SPLIT LAYOUT — `db_router` bakes `SPLIT_MARKER` off `config.DATA_DIR` and
+`db_account_settings._resolve_db_path` short-circuits to the legacy `risk_engine.db` fallback
+whenever `split_done()` is False, even when the test patched `config.DATA_DIR` to a perfect tmp
+split layout. Interpreter ruled out (identical 110 on user-site Python and the venv).
+
+**Gate evidence chain** (all solo, `.venv` interpreter): main tree **4092/7/3** green (no tripwire
+findings, live data mtime-verified untouched) → worktree pre-provision baseline 110 failed →
+post-provision **4092/7/3** → post-credential-scrub **4092/7/3** (green is credential-independent)
+→ final gate on the environment the committed script itself produced **4112/7/3**.
+
+**Independent-audit catch (HIGH, remediated)**: the first provision run re-encrypted the operator's
+real `.env` keys into worktree DBs — `config.py`'s bare `load_dotenv()` parent-walks a worktree into
+the MAIN tree's live `.env`, then `core/database.py`'s fresh-DB seeds (v1.3-seed on `accounts`,
+`_migrate_env_connections` on `connections`) encrypt `BINANCE_*`/FRED/FINNHUB/COINGECKO into every
+empty DB `initialize()` touches. Scrubbed everywhere; the shipped script PREVENTS it (blanks the
+`config` credential attrs pre-init — live-verified "prevention held") and a source-pin test goes red
+if `database.py` grows a new seed not covered by `CREDENTIAL_ATTRS`.
+
+**Unfiled observations for a future ledger pass** (surfaced, operator-gated — NOT filed):
+1. The main-tree gate run touched live `global.db`'s WAL/shm (0-byte, no content committed) — the
+   suite opens live DBs write-mode even when writing nothing.
+2. The `.env` parent-walk + auto-credential-seed pair means ANY fresh-DB `initialize()` on this
+   machine absorbs real keys (the provisioning tool guards itself; the seed paths remain) —
+   hardening candidate.
+
+**▶ NEXT SESSION = v3.0 UI plan audit**: `docs/design/v3.0_models_tab_design_prompt.md` — v2.7
+shipped minimal-UI by design; v3.0 rebuilds the presentation layer. House precedent: multi-agent
+read-only PLAN audit with findings folded into the plan BEFORE execution (v2.7's rev-2 plan audit
+folded 24 findings — reuse that shape). Housekeeping first: operator merges/pushes the session
+branch (header ▲), then the plan audit starts from a pushed, green base.
 
 ## ▶ AUDIT STATUS 2026-07-17 — holistic program audit F1–F18; Tasks A–C SHIPPED, D–E NEXT
 
