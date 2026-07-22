@@ -2359,6 +2359,463 @@ Object.assign(window, { QE_SSE, useSSEChannel, useLiveId });
 
 ;
 
+/* ==== dash-tiled.jsx ==== */
+const QE_DASH = /* @__PURE__ */ function() {
+  const state = {
+    equity: {},
+    risk: {},
+    journal: {},
+    regime: null,
+    positions: [],
+    // snapshot rows; SSE position_update refreshes upnl/pct
+    st: {},
+    // /api/state (halted, blocked, dd_state, weekly_pnl_state, …)
+    macro: [],
+    // /api/regime/signals/latest
+    log: [],
+    // engine-log lines, newest-first for the prepend feed
+    logCursor: 0,
+    loaded: false
+  };
+  const subs = /* @__PURE__ */ new Set();
+  const notify = () => subs.forEach((f) => {
+    try {
+      f();
+    } catch (e) {
+    }
+  });
+  async function _json(url) {
+    const r = await fetch(url, { headers: { Accept: "application/json" } });
+    if (!r.ok) throw new Error(url + " " + r.status);
+    return r.json();
+  }
+  async function loadSnapshot() {
+    try {
+      const s = await _json("/api/dashboard/snapshot");
+      state.equity = s.equity || {};
+      state.risk = s.risk || {};
+      state.journal = s.journal || {};
+      state.regime = s.regime || null;
+      if (Array.isArray(s.positions)) state.positions = s.positions;
+      state.loaded = true;
+      notify();
+    } catch (e) {
+    }
+  }
+  async function loadState() {
+    try {
+      state.st = await _json("/api/state");
+      notify();
+    } catch (e) {
+    }
+  }
+  async function loadMacro() {
+    try {
+      const m = await _json("/api/regime/signals/latest");
+      state.macro = m.signals || [];
+      notify();
+    } catch (e) {
+    }
+  }
+  async function loadLog() {
+    try {
+      const d = await _json("/api/engine/log?since=" + state.logCursor + "&limit=60");
+      const lines = d.lines || [];
+      if (lines.length) {
+        state.log = [...lines.slice().reverse(), ...state.log].slice(0, 60);
+        state.logCursor = d.latest_id || state.logCursor;
+        notify();
+      } else if (d.latest_id != null) {
+        state.logCursor = d.latest_id;
+      }
+    } catch (e) {
+    }
+  }
+  function _wireSSE() {
+    if (typeof window.QE_SSE === "undefined") return;
+    window.QE_SSE.onChannel("equity_update", (p) => {
+      state.equity = {
+        ...state.equity,
+        total_equity: p.total_equity != null ? p.total_equity : state.equity.total_equity,
+        available_margin: p.available_margin != null ? p.available_margin : state.equity.available_margin,
+        unrealized_pnl: p.unrealized_pnl != null ? p.unrealized_pnl : state.equity.unrealized_pnl
+      };
+      notify();
+    });
+    window.QE_SSE.onChannel("position_update", (p) => {
+      const list = Array.isArray(p.positions) ? p.positions : [];
+      const prev = {};
+      state.positions.forEach((r) => {
+        prev[r.sym] = r;
+      });
+      state.positions = list.map((x) => {
+        const r = prev[x.symbol] || {};
+        const upnl = x.upnl != null ? x.upnl : r.upnl;
+        const notional = r.notional || 0;
+        const pct = notional ? +(upnl / Math.abs(notional) * 100).toFixed(2) : r.pct || 0;
+        return {
+          ...r,
+          sym: x.symbol,
+          side: x.side != null ? x.side : r.side,
+          size: x.size != null ? x.size : r.size,
+          upnl,
+          pct
+        };
+      });
+      notify();
+    });
+    window.QE_SSE.onChannel("dd_state", (p) => {
+      state.st = {
+        ...state.st,
+        dd_state: p.to != null ? p.to : state.st.dd_state,
+        drawdown: p.drawdown != null ? p.drawdown : state.st.drawdown
+      };
+      notify();
+    });
+  }
+  let started = false, wired = false;
+  const _timers = [];
+  function start() {
+    if (!wired) {
+      _wireSSE();
+      wired = true;
+    }
+    if (started) return;
+    started = true;
+    loadSnapshot();
+    loadState();
+    loadMacro();
+    loadLog();
+    _timers.push(setInterval(loadState, 5e3));
+    _timers.push(setInterval(loadLog, 4e3));
+    _timers.push(setInterval(loadMacro, 6e4));
+    _timers.push(setInterval(loadSnapshot, 15e3));
+  }
+  function stop() {
+    _timers.forEach(clearInterval);
+    _timers.length = 0;
+    started = false;
+  }
+  return { start, stop, get: () => state, subscribe(fn) {
+    subs.add(fn);
+    return () => subs.delete(fn);
+  } };
+}();
+const useDash = () => {
+  const [, force] = React.useReducer((x) => x + 1, 0);
+  React.useEffect(() => QE_DASH.subscribe(force), []);
+  return QE_DASH.get();
+};
+const _n = (v, d = 2) => v == null || isNaN(v) ? "\u2014" : (+v).toFixed(d);
+const _sn = (v, d = 2) => v == null || isNaN(v) ? "\u2014" : (v >= 0 ? "+" : "") + (+v).toFixed(d);
+const _loc = (v, d = 2) => v == null || isNaN(v) ? "\u2014" : (+v).toLocaleString(void 0, { minimumFractionDigits: d, maximumFractionDigits: d });
+const EquityHero = () => {
+  const d = useDash();
+  const v = d.equity.total_equity;
+  const [int, dec] = (v != null && !isNaN(v) ? (+v).toFixed(2) : "0.00").split(".");
+  return /* @__PURE__ */ React.createElement("div", { className: "qe-hero-val", style: { fontSize: "1.9rem" } }, /* @__PURE__ */ React.createElement(LiveValue, { id: "acct.eq.int", value: +int, format: (x) => x.toLocaleString() }), /* @__PURE__ */ React.createElement("span", { className: "qe-hero-cents" }, ".", /* @__PURE__ */ React.createElement(LiveValue, { id: "acct.eq.cents", value: dec, format: (x) => x })), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.36em", color: "var(--qe-sub)", fontWeight: 600, marginLeft: 8, verticalAlign: "middle" } }, "USDT"));
+};
+const DeltaPct = ({ id, value, suffix = "%" }) => {
+  const v = value;
+  const dir = v == null ? "flat" : v > 1e-3 ? "up" : v < -1e-3 ? "dn" : "flat";
+  const col = dir === "up" ? "var(--qe-green)" : dir === "dn" ? "var(--qe-red)" : "var(--qe-sub)";
+  return /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: col, fontSize: "var(--qe-fs-md)", fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 4 } }, dir === "up" ? /* @__PURE__ */ React.createElement("span", { className: "qe-tick qe-tick-up" }) : dir === "dn" ? /* @__PURE__ */ React.createElement("span", { className: "qe-tick qe-tick-dn" }) : null, /* @__PURE__ */ React.createElement(LiveValue, { id, value: v == null ? 0 : v, format: (x) => _sn(x) + suffix, style: { color: col, fontWeight: 700 } }));
+};
+const _findPos = (positions, sym) => positions.find((p) => p.sym === sym) || {};
+const PosMark = ({ r }) => {
+  const d = useDash();
+  const p = _findPos(d.positions, r.sym);
+  return /* @__PURE__ */ React.createElement(LiveValue, { id: `pos.${r.sym}.mark`, value: p.mark != null ? p.mark : 0, format: (x) => _loc(x, 2), style: { color: "var(--qe-text)", fontWeight: 700 } });
+};
+const PosPnl = ({ r }) => {
+  const d = useDash();
+  const p = _findPos(d.positions, r.sym);
+  const pnl = p.upnl != null ? p.upnl : 0;
+  return /* @__PURE__ */ React.createElement(LiveValue, { id: `pos.${r.sym}.pnl`, value: pnl, format: (x) => _sn(x), style: { color: pnl >= 0 ? "var(--qe-green)" : "var(--qe-red)", fontWeight: 700 } });
+};
+const PosPct = ({ r }) => {
+  const d = useDash();
+  const p = _findPos(d.positions, r.sym);
+  const pct = p.pct != null ? p.pct : 0;
+  return /* @__PURE__ */ React.createElement(LiveValue, { id: `pos.${r.sym}.pct`, value: pct, format: (x) => _sn(x) + "%", style: { color: pct >= 0 ? "var(--qe-green)" : "var(--qe-red)", fontWeight: 600 } });
+};
+const PosMfeMae = ({ r }) => {
+  const mfe = r.mfe, mae = r.mae;
+  return /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.6rem" } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-green)" } }, mfe == null ? "\u2014" : "+" + (+mfe).toFixed(2)), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, " / "), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-red)" } }, mae == null ? "\u2014" : (+mae).toFixed(2)));
+};
+const PosUnrealSum = () => {
+  const d = useDash();
+  const s = d.positions.reduce((a, p) => a + (p.upnl || 0), 0);
+  return /* @__PURE__ */ React.createElement("span", { style: { color: s >= 0 ? "var(--qe-green)" : "var(--qe-red)" } }, "\u03A3 unrealized ", _sn(s), " USDT");
+};
+const EquityStatsPane = () => {
+  const d = useDash();
+  const eq = d.equity;
+  const blocks = [
+    ["Available", eq.available_margin],
+    ["Margin Used", eq.margin_used],
+    ["Unrealized", eq.unrealized_pnl],
+    ["BOD Equity", eq.bod_equity],
+    ["SOW Equity", eq.sow_equity],
+    ["Max Eq (BOD)", eq.max_equity],
+    ["Min Eq (BOD)", eq.min_equity]
+  ];
+  return /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "Equity",
+      style: { height: "100%" },
+      right: /* @__PURE__ */ React.createElement(Badge, { tone: "ok" }, "LIVE"),
+      foot: { tone: "info", id: 1841, msg: `equity ${_n(eq.total_equity)} \xB7 margin ${_n(eq.available_margin)}`, ms: 8 }
+    },
+    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Total"), /* @__PURE__ */ React.createElement(EquityHero, null)), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Daily"), /* @__PURE__ */ React.createElement(DeltaPct, { id: "eq.daily", value: eq.daily_pnl_pct })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Weekly"), /* @__PURE__ */ React.createElement(DeltaPct, { id: "eq.weekly", value: eq.weekly_pnl_pct })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Unrealized"), /* @__PURE__ */ React.createElement(LiveValue, { id: "eq.unreal", value: eq.unrealized_pnl == null ? 0 : eq.unrealized_pnl, format: (x) => _sn(x), style: { color: (eq.unrealized_pnl || 0) >= 0 ? "var(--qe-green)" : "var(--qe-red)", fontWeight: 700, fontSize: "var(--qe-fs-md)" } })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Available"), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontWeight: 700 } }, _n(eq.available_margin)))), /* @__PURE__ */ React.createElement("div", { className: "qe-divider-h" }), /* @__PURE__ */ React.createElement(FieldList, { cols: 2, dense: true, rows: blocks.map(([label, v]) => ({ label, value: _n(v) })) }))
+  );
+};
+const EquityOhlcChart = React.memo(function EquityOhlcChart2({ tf }) {
+  const [data, setData] = React.useState([]);
+  React.useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const r = await fetch("/api/dashboard/equity_ohlc?tf=" + tf, { headers: { Accept: "application/json" } });
+        if (!r.ok) return;
+        const j = await r.json();
+        const rows = (j.candles || []).map((c) => [c.x, c.o, c.c, c.l, c.h]);
+        if (alive) setData(rows);
+      } catch (e) {
+      }
+    };
+    load();
+    const id = setInterval(load, 5e3);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [tf]);
+  return data.length ? /* @__PURE__ */ React.createElement(CandlestickChart, { data }) : /* @__PURE__ */ React.createElement(EmptyState, { tone: "neutral", glyph: "\u3030", msg: "Loading equity\u2026" });
+});
+const EquityCurvePane = () => {
+  const [tf, setTf] = React.useState("1h");
+  const d = useDash();
+  const c = d.equity.total_equity;
+  return /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "Equity Curve",
+      hot: true,
+      tag: "OHLC",
+      style: { height: "100%" },
+      right: /* @__PURE__ */ React.createElement(PeriodSelector, { options: [["1h", "1H"], ["4h", "4H"], ["1d", "1D"], ["1w", "1W"]], value: tf, onChange: setTf }),
+      foot: { tone: "info", id: 1842, msg: `equity_ohlc \xB7 last C=${_n(c)} \xB7 tf=${tf}`, ms: 12 },
+      bodyStyle: { padding: 6 }
+    },
+    /* @__PURE__ */ React.createElement("div", { style: { height: "100%", display: "flex", flexDirection: "column" } }, /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.62rem", display: "flex", gap: 14, flexWrap: "wrap", padding: "2px 4px", alignItems: "baseline" } }, /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "C"), " ", /* @__PURE__ */ React.createElement(LiveValue, { id: "ohlc.c", value: c == null ? 0 : c, format: (x) => "$" + _n(x), style: { color: "var(--qe-text)", fontWeight: 700 } })), /* @__PURE__ */ React.createElement("span", { style: { marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 4 } }, /* @__PURE__ */ React.createElement("span", { className: "qe-live", style: { color: "var(--qe-cyan)" } }, "streaming"))), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0 } }, /* @__PURE__ */ React.createElement(EquityOhlcChart, { tf })))
+  );
+};
+const _stateTone = (s) => s === "limit" ? "err" : s === "warning" ? "warn" : "ok";
+const _stateLabel = (s) => s === "limit" ? "LIMIT" : s === "warning" ? "WARN" : "OK";
+const RiskMonitorPane = () => {
+  const d = useDash();
+  const rk = d.risk, st = d.st;
+  const ddState = st.dd_state || rk.dd_state || "ok";
+  const enforced = st.dd_enforcement_mode === "enforced";
+  return /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "Risk Monitor",
+      style: { height: "100%" },
+      right: /* @__PURE__ */ React.createElement(Badge, { tone: enforced ? "err" : "info" }, enforced ? "ENFORCED" : "ADVISORY"),
+      foot: { tone: _stateTone(ddState), id: 1843, msg: `exp ${_n(rk.exposure_pct)}% \xB7 dd ${_n(rk.drawdown_pct)}% (cap ${_n(rk.max_dd_pct)}%) \xB7 ${enforced ? "enforced" : "advisory"}`, ms: 3 }
+    },
+    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 14 } }, /* @__PURE__ */ React.createElement(Gauge, { label: "Net Exposure", value: rk.exposure_pct != null ? rk.exposure_pct / 100 : 0, max: (rk.max_exposure_pct || 500) / 100, current: rk.exposure_pct != null ? _n(rk.exposure_pct / 100, 2) + "\xD7" : "\u2014", maxLabel: `${_n(rk.max_exposure_pct / 100, 1)}\xD7 cap` }), /* @__PURE__ */ React.createElement(Gauge, { label: "Drawdown 30d", value: Math.min(rk.drawdown_pct || 0, rk.max_dd_pct || 10), max: rk.max_dd_pct || 10, current: _n(rk.drawdown_pct) + "%", maxLabel: `${_n(rk.max_dd_pct)}% limit`, ticks: [5, 8] }), /* @__PURE__ */ React.createElement(Gauge, { label: "Positions", value: rk.positions_open || 0, max: rk.positions_max || 20, current: `${rk.positions_open || 0}/${rk.positions_max || 20}`, maxLabel: "capacity" }), /* @__PURE__ */ React.createElement("div", { className: "qe-divider-h" }), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "DD STATE"), /* @__PURE__ */ React.createElement(Badge, { tone: _stateTone(ddState) }, enforced && ddState === "limit" ? "HALTED" : _stateLabel(ddState))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "WEEKLY"), /* @__PURE__ */ React.createElement(Badge, { tone: _stateTone(st.weekly_pnl_state || rk.weekly_pnl_state) }, _stateLabel(st.weekly_pnl_state || rk.weekly_pnl_state)))), (rk.funding_lines || []).length > 0 && /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-muted)" } }, (rk.funding_lines || []).join(" \xB7 ")))
+  );
+};
+const OpenPositionsPane = () => {
+  const d = useDash();
+  const rows = d.positions;
+  const longs = rows.filter((r) => (r.side || "").toLowerCase().startsWith("l")).length;
+  return /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "Open Positions",
+      count: rows.length,
+      style: { height: "100%" },
+      right: /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", title: "Size a new position in Pre-Trade", onClick: () => window.qeNav && window.qeNav("Pre-Trade") }, "+ Calc"),
+      foot: { tone: "info", id: 1844, msg: `reconciler \xB7 ${rows.length} positions`, ms: 42 },
+      bodyStyle: { padding: 0, display: "flex", flexDirection: "column" }
+    },
+    /* @__PURE__ */ React.createElement(
+      DataList,
+      {
+        selKey: "sym",
+        columns: [
+          { key: "sym", label: "SYM", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, r.sym) },
+          { key: "side", label: "SIDE", render: (r) => {
+            const l = (r.side || "").toLowerCase().startsWith("l");
+            return /* @__PURE__ */ React.createElement(Badge, { tone: l ? "ok" : "err" }, l ? "LONG" : "SHORT");
+          } },
+          { key: "size", label: "SIZE", align: "right", render: (r) => _loc(r.size, 3) },
+          { key: "entry", label: "ENTRY", align: "right", cell: "dim", render: (r) => _loc(r.entry, 2) },
+          { key: "mark", label: "MARK", align: "right", render: (r) => /* @__PURE__ */ React.createElement(PosMark, { r }) },
+          { key: "pnl", label: "PnL", align: "right", render: (r) => /* @__PURE__ */ React.createElement(PosPnl, { r }) },
+          { key: "pct", label: "%", align: "right", render: (r) => /* @__PURE__ */ React.createElement(PosPct, { r }) },
+          { key: "tpsl", label: "TP / SL", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.6rem" } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-green)" } }, r.tp == null ? "\u2014" : _loc(r.tp, 2)), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, " / "), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-red)" } }, r.sl == null ? "\u2014" : _loc(r.sl, 2))) },
+          { key: "mm", label: "MFE/MAE", align: "right", render: (r) => /* @__PURE__ */ React.createElement(PosMfeMae, { r }) }
+        ],
+        rows,
+        emptyMsg: "No open positions",
+        summary: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", null, rows.length, " / ", d.risk.positions_max || 20, " positions \xB7 ", longs, " long \xB7 ", rows.length - longs, " short"), /* @__PURE__ */ React.createElement(PosUnrealSum, null))
+      }
+    )
+  );
+};
+const MacroSignalsPane = () => {
+  const d = useDash();
+  const sigs = d.macro;
+  return /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "Macro Signals",
+      count: sigs.length,
+      style: { height: "100%" },
+      foot: { tone: "info", id: 1845, msg: "regime signals \xB7 fred / yfinance / binance", ms: 118 }
+    },
+    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, sigs.length === 0 && /* @__PURE__ */ React.createElement(EmptyState, { tone: "warn", glyph: "\u2205", msg: "No signal data", hint: "Run regime backfill to populate." }), sigs.map((s) => /* @__PURE__ */ React.createElement("div", { key: s.key, style: { display: "grid", gridTemplateColumns: "84px 1fr 56px", alignItems: "center", gap: 6, padding: "3px 0", borderBottom: "1px dotted var(--qe-faint)" } }, /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.6rem", color: "var(--qe-sub)", letterSpacing: "0.04em" } }, s.key), /* @__PURE__ */ React.createElement(LiveValue, { id: `sig.${s.key}`, value: s.v == null ? 0 : s.v, format: (x) => s.v == null ? "\u2014" : (+x).toFixed(2), style: { fontSize: "0.68rem", fontWeight: 700, textAlign: "right", display: "block" } }), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.56rem", textAlign: "right", color: s.tone === "up" ? "var(--qe-green)" : s.tone === "dn" ? "var(--qe-red)" : "var(--qe-muted)" } }, s.d == null ? "" : _sn(s.d)))))
+  );
+};
+const MonthlyPane = () => {
+  const d = useDash();
+  const j = d.journal;
+  return /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "Monthly Analytics Preview",
+      style: { height: "100%" },
+      foot: { tone: (j.monthly_pnl || 0) < 0 ? "warn" : "ok", id: 1846, msg: `${j.month_label || "\u2014"} \xB7 pnl ${_sn(j.monthly_pnl)} \xB7 ${j.trade_count || 0} trades \xB7 winrate ${_n(j.win_rate)}%`, ms: 6 }
+    },
+    /* @__PURE__ */ React.createElement("div", { style: { padding: "4px 6px" } }, /* @__PURE__ */ React.createElement(FieldList, { rows: [
+      { label: "Period PnL", value: /* @__PURE__ */ React.createElement(React.Fragment, null, _sn(j.monthly_pnl), " ", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)", fontSize: "0.6rem" } }, "(", _sn(j.monthly_pnl_pct), "%)")), color: (j.monthly_pnl || 0) < 0 ? "red" : "green" },
+      { label: "QTD", value: /* @__PURE__ */ React.createElement(React.Fragment, null, _sn(j.quarterly_pnl), " ", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)", fontSize: "0.6rem" } }, "(", _sn(j.quarterly_pnl_pct), "%)")) },
+      { label: "YTD", value: /* @__PURE__ */ React.createElement(React.Fragment, null, _sn(j.yearly_pnl), " ", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)", fontSize: "0.6rem" } }, "(", _sn(j.yearly_pnl_pct), "%)")) },
+      { label: "Trades", value: /* @__PURE__ */ React.createElement(React.Fragment, null, j.trade_count || 0, " ", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-green)", fontSize: "0.62rem" } }, "\xB7", j.win_count || 0, "W"), " ", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-red)", fontSize: "0.62rem" } }, "\xB7", j.loss_count || 0, "L")) },
+      { label: "Winrate / R", value: `${_n(j.win_rate)}% / ${_n(j.avg_rr)}R` },
+      { label: "Max DD", value: `-${_n(j.max_dd_month)}%`, color: "red" }
+    ] }))
+  );
+};
+const ActiveParamsPane = () => {
+  const d = useDash();
+  const p = d.journal.params || {};
+  const rows = [
+    { label: "Risk / trade", value: _n((p.individual_risk_per_trade || 0) * 100) + "%", color: "cyan" },
+    { label: "Max W-loss", value: _n((p.max_weekly_loss_pct || 0) * 100) + "%" },
+    { label: "Max DD", value: _n((p.max_drawdown_pct || 0) * 100) + "%" },
+    { label: "Max exposure", value: _n(p.max_exposure_multiple, 1) + "\xD7" },
+    { label: "Max positions", value: String(p.max_open_positions != null ? p.max_open_positions : "\u2014") },
+    { label: "Max corr.", value: _n((p.max_correlated_exposure || 0) * 100) + "%" }
+  ];
+  return /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "Active Parameters",
+      tag: "VIEW",
+      style: { height: "100%" },
+      right: /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-ghost", title: "Edit risk parameters in Configuration", onClick: () => window.qeNav && window.qeNav("Config") }, "Edit"),
+      foot: { tone: "sub", id: 1847, msg: "risk params \xB7 from account config", ms: 1 }
+    },
+    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, /* @__PURE__ */ React.createElement(FieldList, { rows }))
+  );
+};
+const EngineLogBody = () => {
+  const d = useDash();
+  const rows = d.log;
+  return /* @__PURE__ */ React.createElement("div", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.62rem", lineHeight: 1.5 } }, rows.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { color: "var(--qe-muted)" } }, "\u2014 no recent engine events \u2014"), rows.map((l, i) => /* @__PURE__ */ React.createElement("div", { key: `${l.id}-${i}`, style: { display: "grid", gridTemplateColumns: "56px 44px 1fr", gap: 6, opacity: i === 0 ? 1 : Math.max(0.45, 1 - i * 0.06) } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, l.t), /* @__PURE__ */ React.createElement("span", { style: { color: l.tone === "ok" ? "var(--qe-green)" : l.tone === "info" ? "var(--qe-cyan)" : l.tone === "err" ? "var(--qe-red)" : l.tone === "warn" ? "var(--qe-amber)" : "var(--qe-sub)" } }, "[", l.tag, "]"), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-text-dim)" } }, l.msg))));
+};
+const TiledGrid = React.memo(function TiledGrid2() {
+  return /* @__PURE__ */ React.createElement(GridWorkspace, { persistId: "dashboard" }, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 8, h: 8, minW: 6, minH: 6 }, /* @__PURE__ */ React.createElement(EquityStatsPane, null)), /* @__PURE__ */ React.createElement(GridItem, { x: 8, y: 0, w: 16, h: 8, minW: 8, minH: 6 }, /* @__PURE__ */ React.createElement(EquityCurvePane, null)), /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 8, w: 6, h: 8, minW: 4, minH: 6 }, /* @__PURE__ */ React.createElement(RiskMonitorPane, null)), /* @__PURE__ */ React.createElement(GridItem, { x: 6, y: 8, w: 12, h: 8, minW: 8, minH: 6 }, /* @__PURE__ */ React.createElement(OpenPositionsPane, null)), /* @__PURE__ */ React.createElement(GridItem, { x: 18, y: 8, w: 6, h: 8, minW: 4, minH: 6 }, /* @__PURE__ */ React.createElement(MacroSignalsPane, null)), /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 16, w: 12, h: 8, minW: 8, minH: 6 }, /* @__PURE__ */ React.createElement(MonthlyPane, null)), /* @__PURE__ */ React.createElement(GridItem, { x: 12, y: 16, w: 6, h: 8, minW: 4, minH: 6 }, /* @__PURE__ */ React.createElement(ActiveParamsPane, null)), /* @__PURE__ */ React.createElement(GridItem, { x: 18, y: 16, w: 6, h: 8, minW: 4, minH: 6 }, /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "Engine Log",
+      tag: "LIVE",
+      style: { height: "100%" },
+      right: /* @__PURE__ */ React.createElement(StatusDot, { tone: "ok", label: "LOG" }),
+      foot: { tone: "ok", id: 1848, msg: "engine_events tail \xB7 /api/engine/log", ms: 0 },
+      bodyStyle: { padding: "4px 6px", fontFamily: "var(--qe-mono)" }
+    },
+    /* @__PURE__ */ React.createElement(EngineLogBody, null)
+  )));
+});
+const DashHeaderDots = () => {
+  const d = useDash();
+  const st = d.st, rg = d.regime;
+  const sse = typeof window.QE_SSE !== "undefined" ? window.QE_SSE.status() : "idle";
+  const wsTone = sse === "open" ? "ok" : sse === "error" ? "err" : "warn";
+  const gateHalted = !!st.halted;
+  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(StatusDot, { tone: wsTone, label: "STREAM", value: sse === "open" ? "live" : sse }), /* @__PURE__ */ React.createElement(StatusDot, { tone: "info", label: "REGIME", value: rg && rg.label ? `${rg.label} \xD7${_n(rg.multiplier, 1)}` : "\u2014" }), /* @__PURE__ */ React.createElement(StatusDot, { tone: gateHalted ? "err" : "ok", label: "GATE", value: gateHalted ? "HALTED" : "READY" }));
+};
+const DashHaltBanner = () => {
+  const d = useDash();
+  const st = d.st;
+  if (st.halted) {
+    return /* @__PURE__ */ React.createElement(
+      Banner,
+      {
+        tone: "err",
+        tag: "HALT",
+        title: "TRADING HALTED \u2014 new entries blocked",
+        detail: st.halt_reason || "DD limit breached \xB7 enforced mode"
+      }
+    );
+  }
+  if (st.blocked) {
+    return /* @__PURE__ */ React.createElement(
+      Banner,
+      {
+        tone: "warn",
+        tag: "LIMIT",
+        title: "At risk limit \u2014 advisory",
+        detail: "A drawdown/weekly-loss limit is at cap; advisory mode does not auto-halt."
+      }
+    );
+  }
+  return null;
+};
+const WatchlistTape = () => {
+  const d = useDash();
+  const rows = d.positions;
+  return /* @__PURE__ */ React.createElement("div", { style: {
+    display: "flex",
+    alignItems: "center",
+    gap: 0,
+    background: "var(--qe-bg)",
+    borderBottom: "1px solid var(--qe-line)",
+    padding: "0 4px",
+    height: 22,
+    flexShrink: 0,
+    fontFamily: "var(--qe-mono)",
+    fontSize: "0.62rem",
+    overflow: "hidden",
+    whiteSpace: "nowrap"
+  } }, rows.length === 0 && /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)", padding: "0 9px" } }, "no open positions"), rows.map((r, i) => /* @__PURE__ */ React.createElement("span", { key: r.sym, style: { display: "inline-flex", alignItems: "baseline", gap: 5, padding: "0 9px", borderRight: i < rows.length - 1 ? "1px solid var(--qe-faint)" : "none" } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, (r.sym || "").replace("USDT", "")), /* @__PURE__ */ React.createElement(LiveValue, { id: `tape.${r.sym}`, value: r.mark != null ? r.mark : 0, format: (x) => _loc(x, 2), style: { color: "var(--qe-text)", fontWeight: 600 } }), /* @__PURE__ */ React.createElement(LiveValue, { id: `tape.${r.sym}.pct`, value: r.pct != null ? r.pct : 0, format: (x) => _sn(x) + "%", style: { fontSize: "0.56rem", fontWeight: 600, color: (r.pct || 0) >= 0 ? "var(--qe-green)" : "var(--qe-red)" } }))));
+};
+const DashTiled = () => {
+  React.useEffect(() => {
+    QE_DASH.start();
+    return () => QE_DASH.stop();
+  }, []);
+  return /* @__PURE__ */ React.createElement("div", { className: "qe-scope", "data-screen-label": "01 Dashboard", style: {
+    width: "100%",
+    height: "100%",
+    background: "var(--qe-bg)",
+    display: "flex",
+    flexDirection: "column",
+    overflow: "hidden"
+  } }, /* @__PURE__ */ React.createElement(TopNavStd, { page: "Dashboard", variant: "line", dense: true }), /* @__PURE__ */ React.createElement(PageHeader, { title: "Dashboard", subtitle: "live positions \xB7 equity \xB7 risk \xB7 open orders" }, /* @__PURE__ */ React.createElement(DashHeaderDots, null)), /* @__PURE__ */ React.createElement(DashHaltBanner, null), /* @__PURE__ */ React.createElement(WatchlistTape, null), /* @__PURE__ */ React.createElement(TiledGrid, null), /* @__PURE__ */ React.createElement(StatusFooter, null));
+};
+Object.assign(window, { DashTiled, QE_DASH });
+
+;
+
 /* ==== app-shell.jsx ==== */
 const LiveValueDemo = ({ id, base, jitter = 2, fmt, style }) => {
   const [v, setV] = React.useState(base);
@@ -2520,7 +2977,8 @@ const _PagePlaceholder = (name, phase) => function PagePlaceholder() {
   return /* @__PURE__ */ React.createElement("div", { className: "qe-scope", style: { width: "100%", height: "100%", background: "var(--qe-bg)", display: "flex", flexDirection: "column", overflow: "hidden" } }, /* @__PURE__ */ React.createElement(TopNavStd, { page: name, variant: "line", dense: true }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", fontFamily: "var(--qe-mono)" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "1.1rem", fontWeight: 700, color: "var(--qe-text)", letterSpacing: "0.06em" } }, name), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 8, fontSize: "0.6rem", color: "var(--qe-muted)", letterSpacing: "0.14em" } }, "REACT PORT \xB7 ", phase))), /* @__PURE__ */ React.createElement(StatusFooter, null));
 };
 const QE_PAGES = {
-  Dashboard: _PagePlaceholder("Dashboard", "P1"),
+  Dashboard: DashTiled,
+  // P1 — real page (dash-tiled.jsx)
   "Pre-Trade": _PagePlaceholder("Pre-Trade", "P3"),
   Linkage: _PagePlaceholder("Linkage", "P4"),
   History: _PagePlaceholder("History", "P4"),
@@ -2543,7 +3001,7 @@ const App = () => {
       if (QE_PAGES[s]) return s;
     } catch (e) {
     }
-    return "Primitives";
+    return "Dashboard";
   });
   window.qeNav = (p) => {
     if (QE_PAGES[p]) setPage(p);

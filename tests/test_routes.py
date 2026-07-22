@@ -92,6 +92,12 @@ API_ROUTES = [
     "/manifest.json",
     "/service-worker.js",
     "/api/models",  # v2.7 P3: JSON contract smoke
+    # v3.0 P1 backend gaps (JSON contract smoke):
+    "/api/state",
+    "/api/dashboard/snapshot",
+    "/api/engine/log",
+    "/api/regime/signals/latest",
+    "/notifications/poll",
 ]
 
 
@@ -110,6 +116,9 @@ FRAGMENT_ROUTES = [
     # id-parameterized ones are handler-tested in test_v27_phase3_*)
     "/fragments/models/list",
     "/fragments/models/form",
+    # v3.0 P1: journal_stats now renders via the shared _journal_stats_context
+    # builder (also feeding /api/dashboard/snapshot) — parity smoke.
+    "/fragments/dashboard/journal_stats",
 ]
 
 
@@ -118,6 +127,52 @@ def test_fragment_returns_200(client, path):
     resp = client.get(path)
     assert resp.status_code == 200, f"{path} returned {resp.status_code}"
     assert "text/html" in resp.headers.get("content-type", "")
+
+
+# ── v3.0 P1 backend-gap JSON contracts ──────────────────────────────────────
+
+def test_api_state_has_halt_surface(client):
+    """G-O2: /api/state exposes the DD-gate-derived halt surface (corrected —
+    halt is DD-enforced-only; weekly_pnl is advisory)."""
+    data = client.get("/api/state").json()
+    for k in ("halted", "blocked", "halt_reason", "dd_enforcement_mode",
+              "weekly_pnl_enforcement_mode", "dd_manually_unblocked"):
+        assert k in data, f"/api/state missing {k}"
+    assert isinstance(data["halted"], bool)
+    assert isinstance(data["blocked"], bool)
+
+
+def test_dashboard_snapshot_shape(client):
+    """G-O12: /api/dashboard/snapshot aggregates the tile sections."""
+    data = client.get("/api/dashboard/snapshot").json()
+    for k in ("equity", "risk", "positions", "journal", "regime"):
+        assert k in data, f"snapshot missing {k}"
+    assert isinstance(data["positions"], list)
+    assert "total_equity" in data["equity"]
+    assert "dd_state" in data["risk"]
+    assert "month_label" in data["journal"]  # shared builder wired
+
+
+def test_engine_log_shape(client):
+    """G-O1: engine-log tail returns {lines, latest_id}."""
+    data = client.get("/api/engine/log").json()
+    assert isinstance(data.get("lines"), list)
+    assert "latest_id" in data
+
+
+def test_macro_signals_latest_shape(client):
+    """G-O5: the 6 real regime signals in tile shape (values may be None)."""
+    data = client.get("/api/regime/signals/latest").json()
+    assert isinstance(data.get("signals"), list)
+    keys = {s["key"] for s in data["signals"]}
+    assert {"VIX", "10Y", "BTC.OI", "FUND·BTC"}.issubset(keys)
+
+
+def test_notifications_poll_shape(client):
+    """G-O3: poll returns {notifications, latest_id} (init cursor form)."""
+    data = client.get("/notifications/poll?since=-1").json()
+    assert isinstance(data.get("notifications"), list)
+    assert "latest_id" in data
 
 
 # ── PWA static assets ───────────────────────────────────────────────────────

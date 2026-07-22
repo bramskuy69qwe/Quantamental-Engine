@@ -52,6 +52,35 @@ def _message(ntype: str, p: Dict[str, Any]) -> str:
     return ntype.replace("_", " ")
 
 
+# v3.0 P1 (G-O3): notification-type -> (design category, priority) for the
+# React notification center. Only the 4 real producer types are mapped; any
+# other type falls back to SYSTEM/routine. Adding REGIME/NEWS/SYSTEM/FILLS
+# producers is deferred out of P1.
+_TYPE_UI: Dict[str, Tuple[str, str]] = {
+    "calc_expired":             ("LINK",  "routine"),
+    "position_size_drift":      ("LINK",  "risk"),
+    "position_liquidated":      ("RISK",  "risk"),
+    "duplicate_order_detected": ("FILLS", "risk"),
+}
+
+
+def ui_event(entry: Dict[str, Any]) -> Dict[str, Any]:
+    """Enrich a notification entry with the v3.0 UI event shape (G-O3):
+    ``{ch, pri, head, detail, ts}`` ALONGSIDE the legacy ``{id, type, message,
+    ts_ms}`` (the base.html poller keeps working — it reads the legacy keys and
+    ignores the rest). ``head`` = the compact message line; ``detail`` is left
+    empty for P1 (a richer head/detail split is a later refinement)."""
+    ch, pri = _TYPE_UI.get(entry.get("type", ""), ("SYSTEM", "routine"))
+    return {
+        **entry,
+        "ch": ch,
+        "pri": pri,
+        "head": entry.get("message", ""),
+        "detail": "",
+        "ts": entry.get("ts_ms"),
+    }
+
+
 class NotificationCenter:
     """Per-account ring buffer of notifiable events, keyed by a global
     monotonic id so a browser can poll for "everything since id N"."""

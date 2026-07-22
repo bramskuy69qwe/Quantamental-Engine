@@ -198,3 +198,43 @@ def query_events(
         return [dict(r) for r in rows]
     finally:
         conn.close()
+
+
+def query_events_since(
+    account_id: int,
+    *,
+    since_id: int = 0,
+    limit: int = 100,
+    data_dir: Optional[str] = None,
+) -> list[dict]:
+    """Tail ``engine_events`` by monotonic ``id`` cursor (v3.0 P1, G-O1).
+
+    The ``id`` is the reliable cursor — ``timestamp`` is a TEXT ISO string and
+    can tie at sub-second. Returns rows **oldest-first** so the Engine-Log tile
+    can prepend in one pass.
+
+    - ``since_id > 0``: rows with ``id > since_id`` (the incremental poll).
+    - ``since_id <= 0``: the most-recent ``limit`` rows (the initial seed),
+      still returned oldest-first.
+    """
+    db_path = _resolve_db_path(account_id, data_dir)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        cols = "id, event_type, payload_json, timestamp, source"
+        if since_id and since_id > 0:
+            rows = conn.execute(
+                f"SELECT {cols} FROM engine_events "
+                "WHERE account_id = ? AND id > ? ORDER BY id ASC LIMIT ?",
+                (account_id, since_id, limit),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        # seed: newest `limit` rows, reversed to oldest-first
+        rows = conn.execute(
+            f"SELECT {cols} FROM engine_events "
+            "WHERE account_id = ? ORDER BY id DESC LIMIT ?",
+            (account_id, limit),
+        ).fetchall()
+        return [dict(r) for r in reversed(rows)]
+    finally:
+        conn.close()

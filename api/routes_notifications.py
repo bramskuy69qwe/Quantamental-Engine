@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 
 from core.state import app_state
 from core.database import db
-from core.notifications import notification_center
+from core.notifications import notification_center, ui_event
 
 log = logging.getLogger("routes.notifications")
 router = APIRouter()
@@ -36,4 +36,8 @@ async def notifications_poll(since: int = -1):
     except Exception:
         log.debug("notifications_poll config read failed; not filtering", exc_info=True)
     items, latest = notification_center.poll(aid, since, subscribed)
-    return JSONResponse({"notifications": items, "latest_id": latest})
+    # G-O3: enrich with the v3.0 UI event shape ({ch,pri,head,detail,ts}); the
+    # legacy {id,type,message,ts_ms} keys are preserved so base.html still works.
+    return JSONResponse(
+        {"notifications": [ui_event(it) for it in items], "latest_id": latest}
+    )

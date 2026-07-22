@@ -165,6 +165,51 @@ async def api_regime_signals(signal_name: str = "", from_date: str = "", to_date
     return JSONResponse(data.get(signal_name, []))
 
 
+# ── Macro-signals snapshot tile (v3.0 P1, G-O5) ──────────────────────────
+# The 6 REAL engine signals (core.regime_classifier.ALL_SIGNALS) → the
+# Dashboard Macro Signals tile shape {key,name,v,d,tone}. The design's fuller
+# crypto strip (BTC.D/USDT.D/DXY/mcap/GOLD/WTI) has NO engine source and is
+# scoped out of the P1 tile.
+_MACRO_SIGNAL_KEYS = {
+    "vix_close":      "VIX",
+    "us10y_yield":    "10Y",
+    "hy_spread":      "HY",
+    "btc_rvol_ratio": "RVOL·1D",
+    "agg_oi_change":  "BTC.OI",
+    "avg_funding":    "FUND·BTC",
+}
+
+
+@router.get("/api/regime/signals/latest", response_class=JSONResponse)
+async def api_regime_signals_latest():
+    """Latest value + prior-point delta for the 6 real regime signals in the
+    Dashboard Macro Signals tile shape (v3.0 P1, G-O5). Same regime_signals
+    history the regime page reads; last two points per signal for value+delta."""
+    from core.regime_classifier import ALL_SIGNALS
+    from core.tz import now_in_account_tz
+    from datetime import timedelta
+    today = now_in_account_tz(app_state.active_account_id).date()
+    from_date = (today - timedelta(days=30)).isoformat()
+    to_date = today.isoformat()
+    try:
+        data = await db.get_regime_signals(list(ALL_SIGNALS), from_date, to_date)
+    except Exception as e:
+        log.warning("[api_regime_signals_latest] query failed: %s", e)
+        data = {}
+    out = []
+    for name in ALL_SIGNALS:
+        key = _MACRO_SIGNAL_KEYS.get(name, name)
+        pts = data.get(name, [])
+        if not pts:
+            out.append({"key": key, "name": name, "v": None, "d": None, "tone": "flat"})
+            continue
+        v = pts[-1]["value"]
+        d = (v - pts[-2]["value"]) if len(pts) >= 2 else 0.0
+        tone = "up" if d > 0 else ("dn" if d < 0 else "flat")
+        out.append({"key": key, "name": name, "v": round(v, 4), "d": round(d, 4), "tone": tone})
+    return JSONResponse({"signals": out})
+
+
 @router.get("/api/regime/coverage", response_class=JSONResponse)
 async def api_regime_coverage():
     coverage = await db.get_all_signal_coverage()

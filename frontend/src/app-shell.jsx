@@ -580,7 +580,7 @@ const _PagePlaceholder = (name, phase) => function PagePlaceholder() {
 
 /* ── App router ───────────────────────────────────────────────────────── */
 const QE_PAGES = {
-  Dashboard:  _PagePlaceholder('Dashboard', 'P1'),
+  Dashboard:  DashTiled,   // P1 — real page (dash-tiled.jsx)
   'Pre-Trade': _PagePlaceholder('Pre-Trade', 'P3'),
   Linkage:    _PagePlaceholder('Linkage', 'P4'),
   History:    _PagePlaceholder('History', 'P4'),
@@ -601,7 +601,7 @@ const App = () => {
     const fromHash = readHashPage();
     if (fromHash) return fromHash;
     try { const s = localStorage.getItem('qe.page'); if (QE_PAGES[s]) return s; } catch (e) {}
-    return 'Primitives';   // P0 default = the proving ground; P1 restores 'Dashboard'
+    return 'Dashboard';   // P1: Dashboard is the default landing page
   });
 
   // Expose the global navigator immediately so TopNavStd clicks route on first paint.
