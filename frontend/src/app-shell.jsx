@@ -587,7 +587,7 @@ const QE_PAGES = {
   Analytics:  _PagePlaceholder('Analytics', 'P5'),
   Models:     _PagePlaceholder('Models', 'P7'),
   Regime:     _PagePlaceholder('Regime', 'P6'),
-  Config:     _PagePlaceholder('Config', 'P2'),
+  Config:     ConfigPage,  // P2 — real page (pages-config.jsx)
   Primitives: PrimitivesPage,
 };
 

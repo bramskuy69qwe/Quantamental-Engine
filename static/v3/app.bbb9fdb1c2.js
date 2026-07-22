@@ -2816,6 +2816,601 @@ Object.assign(window, { DashTiled, QE_DASH });
 
 ;
 
+/* ==== pages-config.jsx ==== */
+const _cfgJson = async (url) => {
+  const r = await fetch(url, { headers: { Accept: "application/json" } });
+  if (!r.ok) throw new Error(url + " " + r.status);
+  return r.json();
+};
+const _cfgStrip = (html) => {
+  try {
+    return (new DOMParser().parseFromString(html || "", "text/html").body.textContent || "").trim();
+  } catch (e) {
+    return (html || "").trim();
+  }
+};
+const _cfgFriendly = (raw) => {
+  const t = (raw || "").trim();
+  if (t.startsWith("{") || t.startsWith("[")) {
+    try {
+      const j = JSON.parse(t);
+      const det = j && j.detail;
+      if (Array.isArray(det)) {
+        return det.map(
+          (d) => (d.loc && d.loc.length ? d.loc[d.loc.length - 1] + ": " : "") + (d.msg || d.type || "invalid")
+        ).join(" \xB7 ");
+      }
+      if (typeof det === "string") return det;
+      if (j && j.error) return j.error;
+    } catch (e) {
+    }
+  }
+  return t;
+};
+const _cfgPostForm = async (url, fields, method = "POST") => {
+  const body = new URLSearchParams();
+  Object.entries(fields || {}).forEach(([k, v]) => {
+    if (v != null) body.append(k, v);
+  });
+  const r = await fetch(url, {
+    method,
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString()
+  });
+  return { ok: r.ok, text: _cfgFriendly(_cfgStrip(await r.text())) };
+};
+const _cfgPostJson = async (url, payload) => {
+  const r = await fetch(url, {
+    method: "POST",
+    headers: payload != null ? { "Content-Type": "application/json" } : {},
+    body: payload != null ? JSON.stringify(payload) : void 0
+  });
+  let data = null;
+  try {
+    data = await r.json();
+  } catch (e) {
+  }
+  return { ok: r.ok, data };
+};
+const _cfgPct = (v) => v == null || isNaN(v) ? "\u2014" : (+v * 100).toFixed(1).replace(/\.0$/, "") + "%";
+const _cfgUptime = (s) => {
+  if (s == null || isNaN(s)) return "\u2014";
+  s = Math.floor(+s);
+  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  return (d ? d + "d " : "") + h + "h " + String(m).padStart(2, "0") + "m";
+};
+const CfgMsgLine = ({ msg }) => msg ? /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: {
+  fontSize: "0.62rem",
+  marginTop: 6,
+  color: msg.tone === "ok" ? "var(--qe-green)" : msg.tone === "err" ? "var(--qe-red)" : "var(--qe-sub)"
+} }, msg.text) : null;
+const CfgAccountForm = ({ account, detail, onReload }) => {
+  const p = detail.params || {};
+  const s = detail.settings || {};
+  const [form, setForm] = React.useState(() => ({
+    exchange: account.exchange || "",
+    market_type: account.market_type || "future",
+    environment: account.environment || "live",
+    api_key: "",
+    api_secret: "",
+    broker_account_id: account.broker_account_id || "",
+    individual_risk_per_trade: p.individual_risk_per_trade != null ? String(p.individual_risk_per_trade) : "",
+    max_w_loss_percent: p.max_w_loss_percent != null ? String(p.max_w_loss_percent) : "",
+    max_dd_percent: p.max_dd_percent != null ? String(p.max_dd_percent) : "",
+    max_exposure: p.max_exposure != null ? String(p.max_exposure) : "",
+    max_position_count: p.max_position_count != null ? String(p.max_position_count) : "",
+    max_correlated_exposure: p.max_correlated_exposure != null ? String(p.max_correlated_exposure) : ""
+  }));
+  const [busy, setBusy] = React.useState(null);
+  const [msg, setMsg] = React.useState(null);
+  const set = (k) => (e) => {
+    const v = e.target.value;
+    setForm((f) => ({ ...f, [k]: v }));
+  };
+  const doSave = async () => {
+    setBusy("save");
+    setMsg(null);
+    try {
+      const r = await _cfgPostForm(`/accounts/${account.id}/update`, {
+        exchange: form.exchange.trim() || null,
+        market_type: form.market_type,
+        environment: form.environment,
+        broker_account_id: form.broker_account_id,
+        // blank = keep current (endpoint ignores falsy credentials); trimmed so
+        // an accidental whitespace-only paste can't overwrite a stored key
+        api_key: form.api_key.trim() || null,
+        api_secret: form.api_secret.trim() || null,
+        individual_risk_per_trade: form.individual_risk_per_trade.trim() || null,
+        max_w_loss_percent: form.max_w_loss_percent.trim() || null,
+        max_dd_percent: form.max_dd_percent.trim() || null,
+        max_exposure: form.max_exposure.trim() || null,
+        max_position_count: form.max_position_count.trim() || null,
+        max_correlated_exposure: form.max_correlated_exposure.trim() || null
+      });
+      const ok = r.ok && /saved/i.test(r.text);
+      setMsg({ text: r.text || (r.ok ? "Saved." : "save failed"), tone: ok ? "ok" : "err" });
+      if (ok) {
+        setForm((f) => ({ ...f, api_key: "", api_secret: "" }));
+        onReload(true);
+      }
+    } catch (e) {
+      setMsg({ text: "save failed \u2014 engine unreachable?", tone: "err" });
+    }
+    setBusy(null);
+  };
+  const doTest = async () => {
+    setBusy("test");
+    setMsg(null);
+    try {
+      const r = await _cfgPostJson(`/accounts/${account.id}/test`);
+      const d = r.data || {};
+      setMsg(d.ok ? { text: `connection OK \xB7 ${d.latency_ms} ms` + (d.fees_updated ? ` \xB7 fees ${d.maker_fee}/${d.taker_fee}` : ""), tone: "ok" } : { text: d.error || "connection test failed", tone: "err" });
+    } catch (e) {
+      setMsg({ text: "test failed \u2014 engine unreachable?", tone: "err" });
+    }
+    setBusy(null);
+  };
+  const doActivate = async () => {
+    if (!window.confirm("Activate this account? This will restart the exchange connection (WS teardown + reinit).")) return;
+    setBusy("activate");
+    setMsg(null);
+    try {
+      const r = await _cfgPostJson(`/accounts/${account.id}/activate`);
+      const d = r.data || {};
+      if (d.status === "ok") {
+        setMsg({ text: d.message === "already active" ? "already active" : `activated \xB7 ${d.name || account.name}`, tone: "ok" });
+        onReload(true);
+      } else {
+        setMsg({ text: d.error || "activate failed", tone: "err" });
+      }
+    } catch (e) {
+      setMsg({ text: "activate failed \u2014 engine unreachable?", tone: "err" });
+    }
+    setBusy(null);
+  };
+  const envTone = account.environment === "live" ? "err" : account.environment === "testnet" ? "info" : "blue";
+  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.9rem", fontWeight: 700 } }, account.name), account.is_active ? /* @__PURE__ */ React.createElement(Badge, { tone: "ok" }, "Active") : null, /* @__PURE__ */ React.createElement(Badge, { tone: envTone }, (account.environment || "live").toUpperCase()), /* @__PURE__ */ React.createElement("div", { className: "qe-grow" }), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", onClick: doTest, disabled: !!busy }, busy === "test" ? /* @__PURE__ */ React.createElement(Spinner, { size: "0.7rem", label: "testing" }) : "Test Connection")), /* @__PURE__ */ React.createElement(SecLbl, { rule: true }, "Credentials"), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Exchange"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.exchange, onChange: set("exchange"), placeholder: "binance" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Market Type"), /* @__PURE__ */ React.createElement("select", { className: "qe-input qe-select", value: form.market_type, onChange: set("market_type") }, /* @__PURE__ */ React.createElement("option", { value: "future" }, "USD-M Futures"), /* @__PURE__ */ React.createElement("option", { value: "spot" }, "Spot"))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Environment"), /* @__PURE__ */ React.createElement("select", { className: "qe-input qe-select", value: form.environment, onChange: set("environment") }, /* @__PURE__ */ React.createElement("option", { value: "live" }, "Live"), /* @__PURE__ */ React.createElement("option", { value: "paper" }, "Paper"), /* @__PURE__ */ React.createElement("option", { value: "testnet" }, "Testnet"))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "API Key"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", type: "password", value: form.api_key, onChange: set("api_key"), placeholder: "Leave blank to keep current" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "API Secret"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", type: "password", value: form.api_secret, onChange: set("api_secret"), placeholder: "Leave blank to keep current" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Broker Account ID"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.broker_account_id, onChange: set("broker_account_id") }))), /* @__PURE__ */ React.createElement(SecLbl, { rule: true }, "Risk Parameters \xB7 sizing (account_params)"), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Risk / Trade (fraction)"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.individual_risk_per_trade, onChange: set("individual_risk_per_trade"), placeholder: "0.01" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Weekly Loss (fraction)"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_w_loss_percent, onChange: set("max_w_loss_percent"), placeholder: "0.05" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Drawdown (fraction)"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_dd_percent, onChange: set("max_dd_percent"), placeholder: "0.10" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Exposure \xD7"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_exposure, onChange: set("max_exposure"), placeholder: "5.0" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Positions"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_position_count, onChange: set("max_position_count"), placeholder: "10" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Corr. Exposure (fraction)"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_correlated_exposure, onChange: set("max_correlated_exposure"), placeholder: "0.50" }))), /* @__PURE__ */ React.createElement(SecLbl, { rule: true, right: /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)", fontSize: "0.54rem" } }, "READ-ONLY \xB7 set via Presets tab") }, "Enforcement & Recovery \xB7 DD posture (account_settings)"), /* @__PURE__ */ React.createElement(FieldList, { cols: 2, rows: [
+    { label: "Strategy preset", value: (s.strategy_preset || "custom").toUpperCase(), color: "cyan" },
+    { label: "DD window", value: s.dd_rolling_window_days != null ? s.dd_rolling_window_days + "d" : "\u2014" },
+    { label: "DD warn", value: _cfgPct(s.dd_warning_threshold), color: "amber" },
+    { label: "DD limit", value: _cfgPct(s.dd_limit_threshold), color: "red" },
+    { label: "DD recovery", value: _cfgPct(s.dd_recovery_threshold), color: "green" },
+    { label: "DD enforcement", value: (s.dd_enforcement_mode || "\u2014").toUpperCase() },
+    { label: "Weekly warn", value: _cfgPct(s.weekly_pnl_warning_threshold), color: "amber" },
+    { label: "Weekly limit", value: _cfgPct(s.weekly_pnl_limit_threshold), color: "red" },
+    { label: "Weekly enforcement", value: (s.weekly_pnl_enforcement_mode || "\u2014").toUpperCase() }
+  ] }), /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-muted)", margin: "6px 0 10px", lineHeight: 1.5 } }, "The DD gate reads THIS store. Values are written by preset Apply (Presets tab). The advisory\u2192enforced flip ships with its name-confirm safety gate in a later phase."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 8, alignItems: "center" } }, /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-primary", onClick: doSave, disabled: !!busy }, busy === "save" ? /* @__PURE__ */ React.createElement(Spinner, { size: "0.7rem", label: "saving" }) : "Save"), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      className: "qe-btn",
+      onClick: doActivate,
+      disabled: !!busy || !!account.is_active,
+      title: account.is_active ? "Already the active account" : "Switch the engine to this account"
+    },
+    busy === "activate" ? /* @__PURE__ */ React.createElement(Spinner, { size: "0.7rem", label: "switching" }) : "Activate"
+  ), /* @__PURE__ */ React.createElement("div", { className: "qe-grow" }), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      className: "qe-btn qe-btn-danger",
+      disabled: true,
+      title: "Not wired in P2 \u2014 delete via the current /config page"
+    },
+    "Delete Account"
+  )), /* @__PURE__ */ React.createElement(CfgMsgLine, { msg }));
+};
+const CfgAccountsTab = () => {
+  const [accounts, setAccounts] = React.useState(null);
+  const [acct, setAcct] = React.useState(null);
+  const [detail, setDetail] = React.useState(null);
+  const acctRef = React.useRef(null);
+  const loadAccounts = React.useCallback(async (keepSelection) => {
+    try {
+      const rows = await _cfgJson("/accounts");
+      setAccounts(rows);
+      setAcct((cur) => {
+        if (keepSelection && cur != null && rows.some((a) => a.id === cur)) return cur;
+        const act = rows.find((a) => a.is_active) || rows[0];
+        return act ? act.id : null;
+      });
+    } catch (e) {
+      setAccounts([]);
+    }
+  }, []);
+  React.useEffect(() => {
+    loadAccounts(false);
+  }, [loadAccounts]);
+  React.useEffect(() => {
+    acctRef.current = acct;
+    if (acct == null) return;
+    setDetail(null);
+    let alive = true;
+    _cfgJson("/api/config/account/" + acct).then((d) => {
+      if (alive) setDetail(d);
+    }).catch(() => {
+      if (alive) setDetail({ params: {}, settings: {} });
+    });
+    return () => {
+      alive = false;
+    };
+  }, [acct]);
+  const reload = (accountsToo) => {
+    if (accountsToo) loadAccounts(true);
+    const target = acct;
+    if (target != null) {
+      _cfgJson("/api/config/account/" + target).then((d) => {
+        if (acctRef.current === target && d.account_id === target) setDetail(d);
+      }).catch(() => {
+      });
+    }
+  };
+  const sel = (accounts || []).find((a) => a.id === acct);
+  return /* @__PURE__ */ React.createElement(GridWorkspace, null, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 6, h: 20, minW: 4, minH: 6 }, /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "Accounts",
+      count: accounts ? accounts.length : null,
+      style: { height: "100%" },
+      onRefresh: () => loadAccounts(true)
+    },
+    accounts == null ? /* @__PURE__ */ React.createElement(Spinner, { label: "loading" }) : !accounts.length ? /* @__PURE__ */ React.createElement(EmptyState, { tone: "warn", glyph: "\u2205", msg: "No accounts", hint: "Engine unreachable, or no accounts configured." }) : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4 } }, accounts.map((a) => /* @__PURE__ */ React.createElement(Card, { key: a.id, tight: true, style: {
+      cursor: "pointer",
+      borderColor: acct === a.id ? "var(--qe-cyan)" : "var(--qe-line)",
+      background: acct === a.id ? "var(--qe-active)" : "var(--qe-card)"
+    }, onClick: () => setAcct(a.id) }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center" } }, /* @__PURE__ */ React.createElement(StatusDot, { tone: a.is_active ? "ok" : "off", label: "" }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.72rem", fontWeight: 700, color: "var(--qe-text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, a.name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.58rem", color: "var(--qe-sub)", fontFamily: "var(--qe-mono)" } }, a.exchange, " \xB7 ", a.market_type)), /* @__PURE__ */ React.createElement(Badge, { tone: a.environment === "live" ? "err" : a.environment === "testnet" ? "info" : "blue" }, (a.environment || "live").toUpperCase())))), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        className: "qe-btn qe-btn-primary qe-btn-sm",
+        disabled: true,
+        title: "Not wired in P2 \u2014 add accounts via the current /config page",
+        style: { marginTop: 4, justifyContent: "center" }
+      },
+      "+ Add Account"
+    ))
+  )), /* @__PURE__ */ React.createElement(GridItem, { x: 6, y: 0, w: 18, h: 20, minW: 8, minH: 6 }, /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "Account Settings",
+      style: { height: "100%" },
+      bodyStyle: { overflow: "auto" },
+      onRefresh: () => reload(true)
+    },
+    !sel ? /* @__PURE__ */ React.createElement(EmptyState, { tone: "neutral", glyph: "\u25C7", msg: "No account selected" }) : detail == null ? /* @__PURE__ */ React.createElement(Spinner, { label: "loading" }) : /* @__PURE__ */ React.createElement(CfgAccountForm, { key: sel.id, account: sel, detail, onReload: reload })
+  )));
+};
+const CfgConnectionsTab = () => {
+  const [conns, setConns] = React.useState(null);
+  const [drafts, setDrafts] = React.useState({});
+  const [editing, setEditing] = React.useState(null);
+  const [busyP, setBusyP] = React.useState(null);
+  const [msg, setMsg] = React.useState(null);
+  const [add, setAdd] = React.useState({ provider: "", label: "", key: "" });
+  const load = React.useCallback(async () => {
+    try {
+      setConns((await _cfgJson("/api/connections")).connections || []);
+    } catch (e) {
+      setConns([]);
+    }
+  }, []);
+  React.useEffect(() => {
+    load();
+  }, [load]);
+  const upsert = async (provider, label, key) => {
+    if (!key || !key.trim()) {
+      setMsg({ text: `${label}: enter an API key first`, tone: "err" });
+      return false;
+    }
+    setBusyP(provider);
+    setMsg(null);
+    let saved = false;
+    try {
+      const r = await _cfgPostForm("/connections", { provider, label, api_key: key.trim() });
+      if (r.ok) {
+        saved = true;
+        setMsg({ text: `${label}: key saved`, tone: "ok" });
+        setDrafts((d) => ({ ...d, [provider]: "" }));
+        setEditing(null);
+        await load();
+      } else {
+        setMsg({ text: `${label}: save failed \u2014 ${r.text || "error"}`, tone: "err" });
+      }
+    } catch (e) {
+      setMsg({ text: `${label}: save failed \u2014 engine unreachable?`, tone: "err" });
+    }
+    setBusyP(null);
+    return saved;
+  };
+  const test = async (provider, label) => {
+    setBusyP(provider);
+    setMsg(null);
+    try {
+      const r = await fetch(`/connections/${encodeURIComponent(provider)}/test`, { method: "POST" });
+      const text = _cfgStrip(await r.text());
+      setMsg({ text: `${label}: ${text}`, tone: text.startsWith("\u2713") ? "ok" : "err" });
+    } catch (e) {
+      setMsg({ text: `${label}: test failed \u2014 engine unreachable?`, tone: "err" });
+    }
+    setBusyP(null);
+  };
+  const remove = async (provider, label) => {
+    if (!window.confirm(`Remove ${label} connection?`)) return;
+    setBusyP(provider);
+    setMsg(null);
+    try {
+      const r = await fetch(`/connections/${encodeURIComponent(provider)}`, { method: "DELETE" });
+      setMsg(r.ok ? { text: `${label}: removed`, tone: "ok" } : { text: `${label}: remove failed`, tone: "err" });
+      await load();
+    } catch (e) {
+      setMsg({ text: `${label}: remove failed \u2014 engine unreachable?`, tone: "err" });
+    }
+    setBusyP(null);
+  };
+  const keyInput = (c) => /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      className: "qe-input",
+      type: "password",
+      placeholder: "API Key",
+      value: drafts[c.provider] || "",
+      onChange: (e) => {
+        const v = e.target.value;
+        setDrafts((d) => ({ ...d, [c.provider]: v }));
+      },
+      onClick: (e) => e.stopPropagation(),
+      style: { width: 200, height: 22, fontSize: "0.62rem" }
+    }
+  );
+  return /* @__PURE__ */ React.createElement(GridWorkspace, null, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 24, h: 20, minW: 10, minH: 6 }, /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "Data & Exchange Connections",
+      count: conns ? conns.length : null,
+      style: { height: "100%" },
+      bodyStyle: { padding: 0 },
+      onRefresh: load
+    },
+    conns == null ? /* @__PURE__ */ React.createElement("div", { style: { padding: 10 } }, /* @__PURE__ */ React.createElement(Spinner, { label: "loading" })) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(
+      DataList,
+      {
+        dense: false,
+        selKey: "provider",
+        tools: false,
+        emptyMsg: "no connections",
+        columns: [
+          { key: "label", label: "PROVIDER", render: (c) => /* @__PURE__ */ React.createElement("span", { style: { fontWeight: 700 } }, c.label) },
+          { key: "provider", label: "ID", render: (c) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)", fontFamily: "var(--qe-mono)" } }, c.provider) },
+          { key: "status", label: "STATUS", render: (c) => c.has_key ? /* @__PURE__ */ React.createElement(StatusDot, { tone: "ok", label: "CONNECTED" }) : /* @__PURE__ */ React.createElement(StatusDot, { tone: "off", label: "NOT SET" }) },
+          { key: "key", label: "KEY", render: (c) => c.has_key && editing !== c.provider ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)", fontFamily: "var(--qe-mono)" } }, c.api_key_hint || "\u2022\u2022\u2022\u2022\u2022\u2022") : keyInput(c) },
+          { key: "act", label: "", align: "right", render: (c) => {
+            const busy = busyP === c.provider;
+            if (!c.has_key || editing === c.provider) {
+              return /* @__PURE__ */ React.createElement("span", { style: { display: "inline-flex", gap: 4 } }, /* @__PURE__ */ React.createElement(
+                "button",
+                {
+                  className: "qe-btn qe-btn-sm qe-btn-primary",
+                  disabled: busy,
+                  onClick: (e) => {
+                    e.stopPropagation();
+                    upsert(c.provider, c.label, drafts[c.provider]);
+                  }
+                },
+                busy ? /* @__PURE__ */ React.createElement(Spinner, { size: "0.62rem" }) : "Save"
+              ), c.has_key ? /* @__PURE__ */ React.createElement(
+                "button",
+                {
+                  className: "qe-btn qe-btn-sm qe-btn-ghost",
+                  disabled: busy,
+                  onClick: (e) => {
+                    e.stopPropagation();
+                    setEditing(null);
+                  }
+                },
+                "Cancel"
+              ) : null);
+            }
+            return /* @__PURE__ */ React.createElement("span", { style: { display: "inline-flex", gap: 4 } }, /* @__PURE__ */ React.createElement(
+              "button",
+              {
+                className: "qe-btn qe-btn-sm",
+                disabled: busy,
+                onClick: (e) => {
+                  e.stopPropagation();
+                  test(c.provider, c.label);
+                }
+              },
+              busy ? /* @__PURE__ */ React.createElement(Spinner, { size: "0.62rem" }) : "Test"
+            ), /* @__PURE__ */ React.createElement(
+              "button",
+              {
+                className: "qe-btn qe-btn-sm qe-btn-ghost",
+                disabled: busy,
+                onClick: (e) => {
+                  e.stopPropagation();
+                  setEditing(c.provider);
+                }
+              },
+              "Edit"
+            ), /* @__PURE__ */ React.createElement(
+              "button",
+              {
+                className: "qe-btn qe-btn-sm qe-btn-danger",
+                disabled: busy,
+                onClick: (e) => {
+                  e.stopPropagation();
+                  remove(c.provider, c.label);
+                }
+              },
+              "Remove"
+            ));
+          } }
+        ],
+        rows: conns
+      }
+    ), /* @__PURE__ */ React.createElement("div", { style: { padding: "8px 10px", borderTop: "1px solid var(--qe-line)" } }, /* @__PURE__ */ React.createElement(Lbl, null, "+ Add custom provider"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", marginTop: 4 } }, /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        className: "qe-input",
+        placeholder: "provider id (e.g. alphavantage)",
+        value: add.provider,
+        onChange: (e) => {
+          const v = e.target.value;
+          setAdd((a) => ({ ...a, provider: v }));
+        },
+        style: { maxWidth: 180 }
+      }
+    ), /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        className: "qe-input",
+        placeholder: "label",
+        value: add.label,
+        onChange: (e) => {
+          const v = e.target.value;
+          setAdd((a) => ({ ...a, label: v }));
+        },
+        style: { maxWidth: 180 }
+      }
+    ), /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        className: "qe-input",
+        type: "password",
+        placeholder: "API key",
+        value: add.key,
+        onChange: (e) => {
+          const v = e.target.value;
+          setAdd((a) => ({ ...a, key: v }));
+        },
+        style: { maxWidth: 220 }
+      }
+    ), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        className: "qe-btn qe-btn-sm qe-btn-primary",
+        disabled: !add.provider.trim() || !add.label.trim() || !add.key.trim() || !!busyP,
+        onClick: () => upsert(add.provider.trim(), add.label.trim(), add.key).then((ok) => {
+          if (ok) setAdd({ provider: "", label: "", key: "" });
+        })
+      },
+      "Add"
+    )), /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-muted)", marginTop: 6 } }, "Keys are encrypted at rest with AES-256 (Fernet)."), /* @__PURE__ */ React.createElement(CfgMsgLine, { msg })))
+  )));
+};
+const CfgPresetsTab = () => {
+  const [cat, setCat] = React.useState(null);
+  const [active, setActive] = React.useState(null);
+  const [current, setCurrent] = React.useState("");
+  const [busy, setBusy] = React.useState(null);
+  const [msg, setMsg] = React.useState(null);
+  const load = React.useCallback(async () => {
+    try {
+      const [pc, accounts] = await Promise.all([_cfgJson("/api/config/presets"), _cfgJson("/accounts")]);
+      setCat(pc.presets || []);
+      const act = (accounts || []).find((a) => a.is_active) || null;
+      setActive(act);
+      if (act) {
+        try {
+          const d = await _cfgJson("/api/config/account/" + act.id);
+          setCurrent((d.settings || {}).strategy_preset || "");
+        } catch (e) {
+          setCurrent("");
+        }
+      }
+    } catch (e) {
+      setCat([]);
+    }
+  }, []);
+  React.useEffect(() => {
+    load();
+  }, [load]);
+  const apply = async (name) => {
+    const target = active ? active.name : "the active account";
+    if (!window.confirm(
+      `Apply preset ${name.toUpperCase()} to ${target}?
+
+FULL apply \u2014 writes BOTH risk stores:
+\xB7 DD posture (window / warn / limit / recovery + analytics period)
+\xB7 sizing envelope (risk/trade, weekly loss, max DD, exposure, positions, corr. cap)
+
+Enforcement mode is NOT changed.`
+    )) return;
+    setBusy(name);
+    setMsg(null);
+    try {
+      const r = await _cfgPostJson("/api/config/apply-preset", { preset: name });
+      if (r.ok && r.data && r.data.status === "ok") {
+        setMsg({ text: `preset ${name.toUpperCase()} applied to ${target}`, tone: "ok" });
+        await load();
+      } else {
+        setMsg({ text: r.data && r.data.error || "apply failed", tone: "err" });
+      }
+    } catch (e) {
+      setMsg({ text: "apply failed \u2014 engine unreachable?", tone: "err" });
+    }
+    setBusy(null);
+  };
+  const fRow = (l, v, color) => /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between" } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, l), /* @__PURE__ */ React.createElement("span", { style: { fontWeight: 700, color: color || "var(--qe-text)" } }, v));
+  return /* @__PURE__ */ React.createElement(GridWorkspace, null, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 24, h: 16, minW: 10, minH: 6 }, /* @__PURE__ */ React.createElement(Pane, { title: "Risk Presets", style: { height: "100%" }, bodyStyle: { overflow: "auto" }, onRefresh: load }, /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.6rem", color: "var(--qe-sub)", marginBottom: 8, lineHeight: 1.5 } }, "Apply is FULL: writes the DD posture (account_settings \u2014 the store the DD gate reads) AND the sizing envelope (account_params). Applies to the active account", active ? /* @__PURE__ */ React.createElement("span", null, " \u2014 ", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, active.name)) : null, ". Enforcement mode never changes here."), cat == null ? /* @__PURE__ */ React.createElement(Spinner, { label: "loading" }) : !cat.length ? /* @__PURE__ */ React.createElement(EmptyState, { tone: "warn", glyph: "\u2205", msg: "No presets", hint: "Engine unreachable?" }) : /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 6 } }, cat.map((p) => {
+    const dd = p.dd || {}, sz = p.sizing || {};
+    const isCur = current === p.name;
+    return /* @__PURE__ */ React.createElement(Card, { key: p.name, ticks: true }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 6, marginBottom: 4 } }, /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.78rem", fontWeight: 700, color: "var(--qe-cyan)", letterSpacing: "0.08em" } }, p.name.replace("_", " ").toUpperCase()), isCur ? /* @__PURE__ */ React.createElement(Badge, { tone: "info" }, "CURRENT") : null), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4, fontSize: "0.66rem", fontFamily: "var(--qe-mono)" } }, fRow("DD window", dd.dd_rolling_window_days != null ? dd.dd_rolling_window_days + "d" : "\u2014"), fRow("warn", _cfgPct(dd.dd_warning_threshold), "var(--qe-amber)"), fRow("limit", _cfgPct(dd.dd_limit_threshold), "var(--qe-red)"), fRow("recovery", _cfgPct(dd.dd_recovery_threshold), "var(--qe-green)"), fRow("period", dd.analytics_default_period || "\u2014"), /* @__PURE__ */ React.createElement("div", { style: { borderTop: "1px solid var(--qe-line)", margin: "3px 0" } }), fRow("risk/trade", _cfgPct(sz.individual_risk_per_trade), "var(--qe-cyan)"), fRow("wk loss cap", _cfgPct(sz.max_w_loss_percent)), fRow("max DD cap", _cfgPct(sz.max_dd_percent)), fRow("exposure", sz.max_exposure != null ? sz.max_exposure + "\xD7" : "\u2014"), fRow("positions", sz.max_position_count != null ? String(sz.max_position_count) : "\u2014"), fRow("corr. cap", _cfgPct(sz.max_correlated_exposure))), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        className: "qe-btn qe-btn-sm",
+        disabled: !!busy,
+        style: { width: "100%", marginTop: 8, justifyContent: "center" },
+        onClick: () => apply(p.name)
+      },
+      busy === p.name ? /* @__PURE__ */ React.createElement(Spinner, { size: "0.62rem", label: "applying" }) : "Apply Preset"
+    ));
+  })), /* @__PURE__ */ React.createElement(CfgMsgLine, { msg }))));
+};
+const CfgSystemTab = () => {
+  const [sys, setSys] = React.useState(null);
+  const load = React.useCallback(async () => {
+    try {
+      setSys(await _cfgJson("/api/system"));
+    } catch (e) {
+      setSys({});
+    }
+  }, []);
+  React.useEffect(() => {
+    load();
+  }, [load]);
+  const c = sys && sys.cadences || {};
+  return /* @__PURE__ */ React.createElement(GridWorkspace, null, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 24, h: 12, minW: 10, minH: 5 }, /* @__PURE__ */ React.createElement(Pane, { title: "System", style: { height: "100%" }, bodyStyle: { overflow: "auto" }, onRefresh: load }, sys == null ? /* @__PURE__ */ React.createElement(Spinner, { label: "loading" }) : !sys.version ? /* @__PURE__ */ React.createElement(EmptyState, { tone: "warn", glyph: "\u2205", msg: "Engine unreachable", hint: "/api/system did not answer." }) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(SecLbl, { rule: true, right: /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)", fontSize: "0.54rem" } }, "READ-ONLY \xB7 G-O8") }, "Engine"), /* @__PURE__ */ React.createElement(FieldList, { cols: 2, rows: [
+    { label: "Engine", value: sys.short_name || sys.name || "\u2014" },
+    { label: "Version", value: sys.version || "\u2014", color: "cyan" },
+    { label: "Pub/Sub backend", value: sys.bus_backend || "\u2014" },
+    { label: "Uptime", value: _cfgUptime(sys.uptime_s), color: "green" },
+    { label: "Started", value: sys.started_at || "\u2014" }
+  ] }), /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.58rem", color: "var(--qe-sub)", margin: "4px 0 10px" } }, sys.description || ""), /* @__PURE__ */ React.createElement(SecLbl, { rule: true }, "Poll cadences"), /* @__PURE__ */ React.createElement(FieldList, { cols: 2, rows: [
+    { label: "Dashboard poll", value: c.dashboard_poll_s != null ? c.dashboard_poll_s + "s" : "\u2014" },
+    { label: "Calculator poll", value: c.calculator_poll_s != null ? c.calculator_poll_s + "s" : "\u2014" },
+    { label: "History poll", value: c.history_poll_s != null ? c.history_poll_s + "s" : "\u2014" },
+    { label: "WS status poll", value: c.ws_status_poll_s != null ? c.ws_status_poll_s + "s" : "\u2014" },
+    { label: "WS ping", value: c.ws_ping_s != null ? c.ws_ping_s + "s" : "\u2014" }
+  ] })))));
+};
+const ConfigPage = () => {
+  const [tab, setTab] = React.useState("accounts");
+  return /* @__PURE__ */ React.createElement("div", { className: "qe-scope", "data-screen-label": "08 Config", style: {
+    width: "100%",
+    height: "100%",
+    background: "var(--qe-bg)",
+    display: "flex",
+    flexDirection: "column",
+    overflow: "hidden"
+  } }, /* @__PURE__ */ React.createElement(TopNavStd, { page: "Config", variant: "line", dense: true }), /* @__PURE__ */ React.createElement(PageHeader, { title: "Configuration", subtitle: "accounts \xB7 connections \xB7 risk parameters \xB7 presets" }), /* @__PURE__ */ React.createElement(TabStrip, { value: tab, onChange: setTab, tabs: [
+    ["accounts", "Accounts"],
+    ["connections", "Connections"],
+    ["presets", "Presets"],
+    ["system", "System"]
+  ] }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "auto" } }, tab === "accounts" && /* @__PURE__ */ React.createElement(CfgAccountsTab, null), tab === "connections" && /* @__PURE__ */ React.createElement(CfgConnectionsTab, null), tab === "presets" && /* @__PURE__ */ React.createElement(CfgPresetsTab, null), tab === "system" && /* @__PURE__ */ React.createElement(CfgSystemTab, null)), /* @__PURE__ */ React.createElement(StatusFooter, null));
+};
+Object.assign(window, { ConfigPage });
+
+;
+
 /* ==== app-shell.jsx ==== */
 const LiveValueDemo = ({ id, base, jitter = 2, fmt, style }) => {
   const [v, setV] = React.useState(base);
@@ -2985,7 +3580,8 @@ const QE_PAGES = {
   Analytics: _PagePlaceholder("Analytics", "P5"),
   Models: _PagePlaceholder("Models", "P7"),
   Regime: _PagePlaceholder("Regime", "P6"),
-  Config: _PagePlaceholder("Config", "P2"),
+  Config: ConfigPage,
+  // P2 — real page (pages-config.jsx)
   Primitives: PrimitivesPage
 };
 const readHashPage = () => {

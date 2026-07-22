@@ -528,6 +528,8 @@ async def update_account_detail(
         except Exception:
             pass
 
+    # v3.0 P2: the React Config page detects success via /saved/i on this span
+    # (frontend/src/pages-config.jsx doSave) — keep "Saved" in the success copy.
     return HTMLResponse('<span style="color:var(--green);font-size:.65rem;">Saved.</span>')
 
 

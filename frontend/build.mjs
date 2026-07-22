@@ -50,6 +50,7 @@ const JSX_ORDER = [
   'notifications.jsx',
   'sse-adapter.js',           // SSE client-adapter skeleton (§1.2)
   'dash-tiled.jsx',           // P1 — Dashboard page (wired to snapshot + SSE)
+  'pages-config.jsx',         // P2 — Config page (accounts/connections/presets/system)
   // ── remaining page modules land here in their phases (pages, models, …) ──
   'app-shell.jsx',            // MUST be last
 ];
