@@ -20,6 +20,10 @@ from api.cache import _ensure_funding_rates, get_funding_lines, _maybe_backfill_
 log = logging.getLogger("routes.dashboard")
 router = APIRouter()
 
+# v3.0 P2 (G-O8): process start for /api/system uptime (captured at import).
+_PROCESS_START_MONO = _time.monotonic()
+_PROCESS_START_WALL = _time.time()
+
 # ── Cached recent orders (avoid DB query every 1s dashboard poll) ─────────
 _recent_orders_cache: list = []
 _recent_orders_ts: float = 0.0
@@ -543,6 +547,29 @@ async def api_monitoring_events():
         }
         for ev in svc.get_active_events()
     ])
+
+
+@router.get("/api/system")
+async def api_system():
+    """Engine identity + runtime facts for the Config System tab (v3.0 P2, G-O8);
+    also feeds the StatusFooter uptime (G-O9). Uptime is process-import-relative —
+    acceptable for a localhost single-tenant footer (CLAUDE.md Task 163)."""
+    return JSONResponse({
+        "name":        config.PROJECT_NAME_,
+        "short_name":  config.PROJECT_SHORT_NAME,
+        "version":     config.PROJECT_VERSION_,
+        "description": config.PROJECT_DESCRIPTION,
+        "bus_backend": config.PUBSUB_BACKEND,
+        "uptime_s":    round(_time.monotonic() - _PROCESS_START_MONO, 1),
+        "started_at":  _PROCESS_START_WALL,
+        "cadences": {
+            "dashboard_poll_s":  config.DASHBOARD_POLL_INTERVAL,
+            "calculator_poll_s": config.CALCULATOR_POLL_INTERVAL,
+            "history_poll_s":    config.HISTORY_POLL_INTERVAL,
+            "ws_status_poll_s":  config.WS_STATUS_POLL_INTERVAL,
+            "ws_ping_s":         config.WS_PING_INTERVAL,
+        },
+    })
 
 
 @router.get("/api/state")

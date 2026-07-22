@@ -44,6 +44,37 @@ STRATEGY_PRESETS: Dict[str, Dict[str, Any]] = {
 }
 
 
+# v3.0 P2 (preset "Apply" = full): the SIZING envelope each preset writes to
+# ``account_params`` (alongside the DD posture in STRATEGY_PRESETS above). Kept
+# here so all preset config lives in one place; the route composes the two
+# writers. These are the sizing knobs the Config preset cards imply. ``custom``
+# leaves sizing untouched. Fractions where the param is a fraction (risk/trade,
+# weekly-loss, drawdown, correlated-exposure); multiples/counts otherwise.
+PRESET_PARAMS: Dict[str, Dict[str, float]] = {
+    "scalping": {
+        "individual_risk_per_trade": 0.005, "max_w_loss_percent": 0.04,
+        "max_dd_percent": 0.08, "max_exposure": 3.0,
+        "max_position_count": 8, "max_correlated_exposure": 0.40,
+    },
+    "day_trading": {
+        "individual_risk_per_trade": 0.01, "max_w_loss_percent": 0.05,
+        "max_dd_percent": 0.10, "max_exposure": 5.0,
+        "max_position_count": 10, "max_correlated_exposure": 0.50,
+    },
+    "swing": {
+        "individual_risk_per_trade": 0.01, "max_w_loss_percent": 0.06,
+        "max_dd_percent": 0.12, "max_exposure": 5.0,
+        "max_position_count": 6, "max_correlated_exposure": 0.50,
+    },
+    "position": {
+        "individual_risk_per_trade": 0.015, "max_w_loss_percent": 0.08,
+        "max_dd_percent": 0.15, "max_exposure": 4.0,
+        "max_position_count": 5, "max_correlated_exposure": 0.40,
+    },
+    "custom": {},
+}
+
+
 def apply_preset(
     account_id: int,
     preset_name: str,

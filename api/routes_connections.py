@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Form
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from core.connections import connections_manager, KNOWN_PROVIDERS
 from core.security import SensitiveStr
@@ -14,6 +14,27 @@ from core.security import SensitiveStr
 log = logging.getLogger("routes_connections")
 
 router = APIRouter(tags=["connections"])
+
+
+@router.get("/api/connections")
+async def api_connections():
+    """JSON mirror of the connections list for the v3.0 React Config (v3.0 P2).
+    Merges configured connections with the KNOWN_PROVIDERS catalog so
+    unconfigured providers show as empty slots — same shape the Jinja fragment
+    renders: [{provider, label, api_key_hint, is_active, has_key}]."""
+    configured = connections_manager.list_connections()
+    seen = {c["provider"] for c in configured}
+    items = list(configured)
+    for kp in KNOWN_PROVIDERS:
+        if kp["provider"] not in seen:
+            items.append({
+                "provider":     kp["provider"],
+                "label":        kp["label"],
+                "api_key_hint": "",
+                "is_active":    0,
+                "has_key":      False,
+            })
+    return JSONResponse({"connections": items})
 
 
 @router.get("/fragments/connections")

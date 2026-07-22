@@ -8,7 +8,7 @@ import logging
 import math
 
 from fastapi import APIRouter, Request, Form
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from core.state import app_state
 from core.database import db
@@ -21,6 +21,90 @@ router = APIRouter(tags=["config"])
 @router.get("/config", response_class=HTMLResponse)
 async def config_page(request: Request):
     return templates.TemplateResponse(request, "config.html", _ctx(request))
+
+
+# ── v3.0 P2: JSON config surface for the React Config page ────────────────
+@router.get("/api/config/account/{account_id}")
+async def api_config_account(account_id: int):
+    """Risk params + DD/weekly settings for the React Config detail form (v3.0
+    P2). Account display fields come from GET /accounts; this adds the two risk
+    stores (account_params sizing + account_settings DD/weekly posture)."""
+    from core.account_registry import account_registry
+    from core.db_account_settings import get_account_settings
+    params = account_registry.get_account_params(account_id)
+    try:
+        s = get_account_settings(account_id)
+        settings = {f: getattr(s, f) for f in (
+            "dd_rolling_window_days", "dd_warning_threshold", "dd_limit_threshold",
+            "dd_recovery_threshold", "dd_enforcement_mode",
+            "weekly_pnl_warning_threshold", "weekly_pnl_limit_threshold",
+            "weekly_pnl_enforcement_mode", "strategy_preset",
+        )}
+    except Exception:
+        settings = {}
+    return JSONResponse({"account_id": account_id, "params": params, "settings": settings})
+
+
+@router.post("/api/config/apply-preset")
+async def api_config_apply_preset(request: Request):
+    """Apply a strategy preset to the ACTIVE account (v3.0 P2 — FULL scope): write
+    BOTH the DD posture (account_settings via strategy_presets.apply_preset) AND
+    the sizing envelope (account_params via the validated param-save path).
+    EXCLUDES the enforcement-mode flip (that keeps its own confirm gate)."""
+    from core.strategy_presets import apply_preset, STRATEGY_PRESETS, PRESET_PARAMS
+    from core.account_registry import account_registry
+    from core.state import validate_params
+    try:
+        body = await request.json()
+    except ValueError:
+        return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "Body must be a JSON object"}, status_code=400)
+    preset = str(body.get("preset", "")).strip().lower()
+    if preset not in STRATEGY_PRESETS:
+        return JSONResponse(
+            {"error": f"Unknown preset {preset!r}", "valid": sorted(STRATEGY_PRESETS)},
+            status_code=400)
+    aid = app_state.active_account_id
+    # 1) DD posture -> account_settings (reuse the tested writer)
+    try:
+        apply_preset(aid, preset)
+    except Exception as e:
+        log.warning("[apply-preset] settings write failed: %s", e)
+        return JSONResponse({"error": f"settings write failed: {e}"}, status_code=500)
+    # 2) sizing envelope -> account_params (validated; publishes risk:params_updated)
+    sizing = {k: float(v) for k, v in PRESET_PARAMS.get(preset, {}).items()}
+    applied_params = {}
+    if sizing:
+        errors = validate_params(sizing)
+        if errors:
+            return JSONResponse({"error": "; ".join(errors)}, status_code=400)
+        existing = account_registry.get_account_params(aid)
+        existing.update(sizing)
+        await account_registry.update_account_params(aid, existing)
+        applied_params = sizing
+        app_state.params.update(sizing)
+        from core.event_bus import event_bus
+        await event_bus.publish("risk:params_updated", {"ts": "preset_apply"})
+    return JSONResponse({
+        "status":   "ok",
+        "preset":   preset,
+        "settings": STRATEGY_PRESETS.get(preset, {}),
+        "params":   applied_params,
+    })
+
+
+@router.get("/api/config/presets")
+async def api_config_presets():
+    """The strategy-preset catalog for the React Config Presets tab (v3.0 P2):
+    the DD posture (STRATEGY_PRESETS) + the sizing envelope (PRESET_PARAMS) per
+    preset. Static config metadata; Apply is POST /api/config/apply-preset."""
+    from core.strategy_presets import STRATEGY_PRESETS, PRESET_PARAMS
+    presets = [
+        {"name": name, "dd": STRATEGY_PRESETS.get(name, {}), "sizing": PRESET_PARAMS.get(name, {})}
+        for name in ("scalping", "day_trading", "swing", "position")
+    ]
+    return JSONResponse({"presets": presets})
 
 
 # ── P8.T8 (plan §8.9 / spec §3.3): per-account config_json editor ────────────

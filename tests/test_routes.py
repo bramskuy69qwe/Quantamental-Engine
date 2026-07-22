@@ -98,6 +98,11 @@ API_ROUTES = [
     "/api/engine/log",
     "/api/regime/signals/latest",
     "/notifications/poll",
+    # v3.0 P2 Config backend gaps (JSON contract smoke):
+    "/api/system",
+    "/api/connections",
+    "/api/config/account/1",
+    "/api/config/presets",
 ]
 
 
@@ -173,6 +178,36 @@ def test_notifications_poll_shape(client):
     data = client.get("/notifications/poll?since=-1").json()
     assert isinstance(data.get("notifications"), list)
     assert "latest_id" in data
+
+
+# ── v3.0 P2 Config backend gaps ──────────────────────────────────────────────
+
+def test_system_shape(client):
+    """G-O8: /api/system exposes engine identity + runtime facts."""
+    data = client.get("/api/system").json()
+    for k in ("name", "version", "bus_backend", "uptime_s", "cadences"):
+        assert k in data, f"/api/system missing {k}"
+    assert data["version"] == config.PROJECT_VERSION_  # config-wired, not a literal
+
+
+def test_connections_shape(client):
+    """P2: JSON connections mirror merges configured + known providers."""
+    data = client.get("/api/connections").json()
+    conns = data.get("connections")
+    assert isinstance(conns, list) and conns
+    assert {"provider", "label", "has_key"} <= set(conns[0])
+
+
+def test_config_account_shape(client):
+    """P2: account detail exposes the two risk stores (read-only)."""
+    data = client.get("/api/config/account/1").json()
+    assert isinstance(data.get("params"), dict)
+    assert "settings" in data
+
+# NB: apply-preset is a WRITE that the account_settings writer resolves against
+# config.DATA_DIR (the LIVE per-account DB) — the TestClient's temp-DB rebind does
+# NOT isolate it (the F5 gap). So it is NOT exercised here; its composition is
+# unit-tested with stubbed writers in tests/test_p2_config.py (no live write).
 
 
 # ── PWA static assets ───────────────────────────────────────────────────────
