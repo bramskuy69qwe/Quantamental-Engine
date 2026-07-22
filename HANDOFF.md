@@ -1,9 +1,62 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-07-22 (**v3.0 UI plan audit DONE + plan REV-1: operator RATIFIED §0 (React adopted, served as precompiled static JS) + reversed source-binding onto the model + re-sequenced to implement-and-wire ALL pages cockpit-first; plan-vs-frontend fidelity verified clean; NEXT = execute P0 (Foundation) on operator go** — see ▶ STATUS "v3.0 UI plan audit" directly below.)
-**Branch**: **`v3.0/ui-plan-audit` at `7ce722c` — LOCAL ONLY (unpushed), 3 commits, DOCS-ONLY** (`5a24c66` Meridian design import · `a8c07dd` 6-agent audit + plan · `7ce722c` plan REV-1). Forked off `5d2fe17` (the v2.7 naming-hygiene wrap). No code/tests/engine touched this session. The v2.7 line (`v2.7/model-library` at `92b753b`, pushed + in sync with origin) is the base; `main` remains a strict ancestor (optional fast-forward). **Operator merges/pushes v3.0 at their call.**
-**Tests**: **NOT re-run this session** (docs-only branch — nothing to gate). Last green = **4119 passed / 7 skipped / 3 deselected** at the v2.7 base. When P0+ starts touching code: run SOLO **on the `.venv` interpreter** (user-site Python lacks `pytest-timeout` → silently drops the 30 s guardrail). Fresh worktree/clone: run `scripts/provision_test_env.py` FIRST (CLAUDE.md § "Fresh worktree / clone") — else ~110 `no such table` failures that are NOT a regression.
-**Engine**: **RUNNING** (started 2026-07-21 from this tree at `92b753b`, clock synced to 5 ms; serves the v2.7 identity — live-verified on `/`, `/manifest.json`, `/openapi.json`). Restart recipe: `.venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000` (**no `--reload`**). ⚠ **HARD PRECONDITION — SYNCED OS CLOCK** (`w32tm /resync` BEFORE starting; needs the w32time service, admin): a drifted clock → `-1021 Timestamp ahead` → startup fetches stall in weight-tracker throttling → the engine hangs on the "Connecting to exchange…" overlay (the resolved 2026-07-16 incident; recurred as a +4.9 s drift blocker 2026-07-21, operator-synced).
+**Date**: 2026-07-22 (**v3.0 EXECUTION session — P0 Foundation + P1 Dashboard SHIPPED & committed; P2 Config BACKEND done & committed WIP; the P2 FRONTEND port is the NEXT unit of work.** See ▶ STATUS "v3.0 EXECUTION" directly below. A live-DB incident this session was caught + FULLY restored — details in the P2 block.)
+**Branch**: **`v3.0/ui-plan-audit` — LOCAL ONLY (unpushed).** Session commits on top of the plan-audit docs (`9e9e5f4`): `b14b3b3` render-as-is clarify · **`1221b16` P0 Foundation** · **`8b23417` P1 Dashboard** · **`35ffff1` P2 Config backend (WIP — frontend pending)**. Base = the v2.7 line (`92b753b`, pushed). **Operator merges/pushes v3.0 at their call.**
+**Tests**: **4164 passed / 7 skipped / 3 deselected** (SOLO, `.venv`, last run this session; NO F5 tripwire). ALWAYS run SOLO on the **`.venv`** interpreter (user-site Python lacks `pytest-timeout` → drops the 30 s guardrail). Fresh worktree/clone: run `scripts/provision_test_env.py` FIRST (CLAUDE.md § "Fresh worktree / clone").
+**Engine**: **STOPPED** (no python processes as of this wrap). **Must be restarted to live-verify `/v3`** — it will NOT serve the new v3/dashboard/config/regime/connections routes until restart. Recipe — **SYNCED OS CLOCK FIRST** (`w32tm /resync`; a drifted clock → `-1021 Timestamp ahead` → the "Connecting to exchange…" hang): `.venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000` (**no `--reload`**).
+
+## ▶ STATUS 2026-07-22 (v3.0 EXECUTION) — P0 + P1 SHIPPED; P2 backend WIP; NEXT = P2 frontend port
+
+**▶▶ NEXT SESSION STARTS HERE.** The v3.0 UI rebuild is EXECUTING against
+`docs/design/v3.0_ui_rebuild_plan.md` (REV-1). Phases march P0→P8, **one commit each**,
+house cycle: build → gate SOLO on `.venv` → ≥1 independent read-only audit → fold →
+STOP for operator acceptance. **Immediate next unit = the P2 (Config) FRONTEND port**
+— the P2 backend is already committed (`35ffff1`).
+
+**Program state:**
+| Phase | State |
+|---|---|
+| P0 Foundation | **SHIPPED `1221b16`** — precompiled React `/v3` (esbuild, vendored offline deps under `static/vendor/`, content-hashed bundle + `static/v3/manifest.json`; build in `frontend/`, `npm run build`), shared primitive/token/chart/grid layer, Primitives proving ground, SSE client-adapter skeleton (`frontend/src/sse-adapter.js`, `window.QE_SSE`), `frontend/DESIGN.md`. 2 audits clean. |
+| P1 Dashboard | **SHIPPED `8b23417`** — `frontend/src/dash-tiled.jsx` wired: `/api/dashboard/snapshot` (initial) + SSE (`equity_update`/`position_update`/`dd_state`; no-flicker leaf `LiveValue`s; `TiledGrid` stays `React.memo`) + polls (state 5s / engine-log 4s / macro 60s / snapshot 15s). 5 backend gaps G-O1/O2/O3/O5 + snapshot. Mocks stripped; watchlist→open positions; halt banner on real `/api/state`. 2 audits, HIGH+MED+4×LOW folded. |
+| **P2 Config** | **BACKEND `35ffff1` (WIP); FRONTEND PENDING.** 5 JSON endpoints: `/api/system`, `/api/connections`, `/api/config/account/{id}`, `POST /api/config/apply-preset` (FULL), `/api/config/presets`. Operator decisions: **preset Apply = FULL** (DD thresholds + sizing), **enforcement flip = display-only/deferred**. **NEXT:** port `ConfigPage` (design `pages.jsx:1562-1746` → `frontend/src/pages-config.jsx`), 4 tabs (Accounts/Connections/Presets/System), wire reads + safe writes (activate `POST /accounts/{id}/activate` · save-params `POST /accounts/{id}/update` form-encoded · connections add/test/delete existing HTML endpoints · apply-preset · presets catalog · system), **DD-Enforcement select DISPLAY-only**, strip the inline mock literals; add to `build.mjs` `JSX_ORDER` (before `app-shell`) + swap `app-shell` `QE_PAGES.Config`; rebuild; gate + audit + the COMPLETING P2 commit. |
+| P3 Pre-Trade | not started — carries the halt→blur/freeze overlay (§1.3); re-derive the countdown/PENDING mechanism per CLAUDE.md, don't port blindly. |
+| P4 History+Linkage · P5 Analytics · P6 Regime · P7 Models · P8 retire+re-audit | not started (plan §5; P7 Models = the generic lossless MultiCharts capture, `b14b3b3`). |
+
+**★ P2 KEY FACTS (frontend port):**
+- **Two disjoint risk stores** — `account_params` (sizing knobs; write via
+  `POST /accounts/{id}/update`, form-encoded, `validate_params` + publishes
+  `risk:params_updated`) vs `account_settings` (DD/weekly enforcement modes + absolute
+  thresholds — the store the REAL DD gate reads). The full preset writes BOTH.
+- **DD-enforcement flip is DEFERRED (display-only)** — read `dd_enforcement_mode` from
+  `/api/config/account/{id}` `settings`; do NOT wire the write (its `advisory→enforced`
+  flip needs the name-confirm safety gate — a later phase).
+- ConfigPage is entirely inline-mock (no Math.random); reached via the **gear button**
+  (not top nav; DESIGN.md §9).
+
+**★ LIVE-DB INCIDENT (this session — RESOLVED, no residual):** a draft P2 test POSTed
+`/api/config/apply-preset {swing}` **through the shared TestClient**, which wrote the
+swing preset onto **LIVE account 1's `account_settings`** — that writer resolves
+`config.DATA_DIR` (live), which the temp-DB rebind does NOT isolate (**F5**). The F5
+content-hash tripwire caught it. Restored the 6 overwritten fields from
+`data/per_account/*.bak_pollution_20260605` (account 1 is CUSTOM / no preset: window 30 /
+warn 0.08 / limit 0.095 / recovery 0.50 / analytics monthly); verified via
+`get_account_settings`; pre-restore safety `.bak_pre_p2_restore_*` kept. Engine stopped +
+mode advisory ⇒ **no trading impact**. The write-test was removed + replaced with a
+stubbed-writer unit test (`tests/test_p2_config.py`). **LESSON (new memory
+`no-write-tests-through-shared-testclient`): NEVER POST a write-endpoint through the
+`test_routes` client — settings/config writers bypass the temp-DB rebind and mutate live
+operator data; stub the writers. Only READS are TestClient-safe.**
+
+**★ Standing execution facts:** Jinja UI is the live parity ref until each React page is
+operator-accepted (never retire a template before its React twin is accepted); the SHARED
+nav/workspace-bar/status-footer chrome (`nav-and-data.jsx`) still shows the P0 placeholder
+random-walk (cross-page residual — a small shared `/api/state`+SSE adapter feeding the
+chrome on every page is a follow-up, NOT bolted onto Dashboard/Config-only data);
+SSE payloads carry no `mark`/daily-%/weekly-% (those refresh at the 15s snapshot);
+DesignSync MCP is main-loop only (subagents can't see it). Memory: [[project-v3-ui-rebuild]].
+
+(The block below — "▶ STATUS 2026-07-22 — v3.0 UI PLAN AUDIT DONE" — is the plan-audit
+session that PRECEDED this execution; it remains as history.)
 
 ## ▶ STATUS 2026-07-22 — v3.0 UI PLAN AUDIT DONE + REV-1 RATIFIED; NEXT SESSION = execute P0 (Foundation)
 
