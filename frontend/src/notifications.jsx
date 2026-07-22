@@ -40,7 +40,7 @@ const N_SCENARIOS = {
   risk: () => _rnd([
     { ch: 'RISK', pri: 'risk', head: `Weekly loss ${78 + Math.floor(Math.random() * 12)}% of limit`, detail: `−$${(3.10 + Math.random() * 0.6).toFixed(2)} of −$4.11 · 1 more stop trips the cap` },
     { ch: 'RISK', pri: 'risk', head: `Daily drawdown ${_px(3.5 + Math.random(), 1)}% — approaching 5.0% cap`, detail: 'position sizing throttled to ×0.5' }]),
-  halt: () => ({ ch: 'RISK', pri: 'halt', head: 'TRADING HALTED — hard-stop breached', detail: 'Realized DD 5.04% > 5.00% cap · all positions frozen' }),
+  halt: () => ({ ch: 'RISK', pri: 'halt', head: 'CALCULATOR BLOCKED — hard-stop breached', detail: 'Realized DD 5.04% > 5.00% cap · new entries gated · open positions unaffected' }),
   link: () => { const nl = (window.L_NEEDS_LINK || []).filter(o => o.status === 'NEEDS_MANUAL_REVIEW' || o.status === 'UNLINKED').length || 5;
     const nc = (window.L_CLOSES || []).filter(c => c.pending_reason).length || 3;
     return { ch: 'LINK', pri: 'risk', head: `Calc link window closes in 0${2 + Math.floor(Math.random() * 4)}:${10 + Math.floor(Math.random() * 49)}`, detail: `triage ${nl + nc} open · ${nl} orders below 6/6 · ${nc} closes to review` }; },
@@ -141,8 +141,8 @@ const NotifBanner = () => {
   return (
     <Banner tone="err" tag="HALT"
       time={ctx.haltAt > 0 ? fmtHaltAt(ctx.haltAt) : null}
-      title="TRADING HALTED"
-      detail={<React.Fragment>hard-stop 5.04% &gt; 5.00% cap · positions frozen · <span style={{ color:'var(--qe-sub)' }}>{grass}</span></React.Fragment>}
+      title="CALCULATOR BLOCKED"
+      detail={<React.Fragment>hard-stop breached · new entries gated · open positions unaffected · <span style={{ color:'var(--qe-sub)' }}>{grass}</span></React.Fragment>}
       releaseIn={fmtHaltLeft(rem)}/>
   );
 };

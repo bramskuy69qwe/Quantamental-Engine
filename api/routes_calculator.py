@@ -5,7 +5,7 @@ import logging
 import math
 
 from fastapi import APIRouter, Request, Form
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from core.state import app_state
 from core.risk_engine import run_risk_calculator
@@ -20,6 +20,21 @@ router = APIRouter()
 
 # P8.T4c (spec §10.1 / §3 schema): TP-ladder cap. Each level is {price, size_pct}.
 MAX_TP_LEVELS = 10
+
+
+def _json_safe(obj):
+    """Recursive non-finite guard for JSON responses (v3.0 P3, the F2
+    'both doors' discipline): json.dumps emits bare NaN/Infinity tokens —
+    INVALID JSON that blows up the browser's JSON.parse. Inputs are
+    finite-guarded at the door, but computed fields could in principle go
+    non-finite; collapse them to null rather than poisoning the payload."""
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    return obj
 
 
 def _parse_model_id(raw: str) -> "int | None":
@@ -168,6 +183,12 @@ async def calculate_risk(
     # — re-rides every recalc so a superseding calc keeps its model).
     # Blank → no model selected.
     model_id: str = Form(""),
+    # v3.0 P3: ?format=json → the React Pre-Trade page gets the calc dict
+    # as JSON instead of the calc_result.html fragment. Same compute path,
+    # same persistence gate; error exits stay HTML (the React client
+    # strips them to text — the P2 convention). Query param, NOT a form
+    # field, so the form contract (and its pins) is untouched.
+    format: str = "",
 ):
     ticker = ticker.upper().strip()
     ws_manager.set_calculator_symbol(ticker)
@@ -282,6 +303,9 @@ async def calculate_risk(
     if auto_refresh != "1":
         await event_bus.publish("risk:risk_calculated", calc)
 
+    if format == "json":
+        return JSONResponse(_json_safe(calc))
+
     return templates.TemplateResponse(
         request, "fragments/calc_result.html",
         _ctx(request, calc=calc),
@@ -290,7 +314,7 @@ async def calculate_risk(
 
 @router.get("/calculator/link-window-status/{calc_id}", response_class=HTMLResponse)
 async def calculator_link_window_status(
-    request: Request, calc_id: str, t0: int = 0,
+    request: Request, calc_id: str, t0: int = 0, format: str = "",
 ):
     """HIGH-027 (Task 104b): countdown fragment renderer.
 
@@ -327,6 +351,23 @@ async def calculator_link_window_status(
     PENDING_TIMEOUT_MS = 5000
 
     aid = app_state.active_account_id
+
+    # v3.0 P3 output shim: one state machine, two renderings. ?format=json
+    # (the React Pre-Trade page) gets the lw dict verbatim + calc_id (+ t0
+    # for the PENDING chain); default renders the htmx fragment. Every
+    # state exit below routes through this closure — the state logic and
+    # its pinned literals stay in THIS function body (test_task146 pins
+    # scan it).
+    def _out(lw: dict, t0_echo: "int | None" = None):
+        if format == "json":
+            body = {**lw, "calc_id": calc_id}
+            if t0_echo is not None:
+                body["t0"] = t0_echo
+            return JSONResponse(body)
+        ctx = (_ctx(request, calc_id=calc_id, lw=lw) if t0_echo is None
+               else _ctx(request, calc_id=calc_id, t0=t0_echo, lw=lw))
+        return templates.TemplateResponse(
+            request, "fragments/link_window_countdown.html", ctx)
 
     # HIGH-002 (Task 144) — refactored to db.get_pretrade_timestamp_for_link_window.
     pretrade = await _db.get_pretrade_timestamp_for_link_window(
@@ -372,27 +413,21 @@ async def calculator_link_window_status(
             # Exceeded timeout — surface as ERROR. Terminal state
             # (no hx-trigger); polling stops; user retries via the
             # Calculate button.
-            return templates.TemplateResponse(
-                request, "fragments/link_window_countdown.html",
-                _ctx(request, calc_id=calc_id, lw={
-                    "status": "ERROR",
-                    "effective_window_s": account_window,
-                    "remaining_s": 0,
-                    "expires_at_ms": None,
-                }),
-            )
-        else:
-            # Within timeout window — preserve t0 for the next poll.
-            t0_to_echo = t0
-        return templates.TemplateResponse(
-            request, "fragments/link_window_countdown.html",
-            _ctx(request, calc_id=calc_id, t0=t0_to_echo, lw={
-                "status": "PENDING",
+            return _out({
+                "status": "ERROR",
                 "effective_window_s": account_window,
                 "remaining_s": 0,
                 "expires_at_ms": None,
-            }),
-        )
+            })
+        else:
+            # Within timeout window — preserve t0 for the next poll.
+            t0_to_echo = t0
+        return _out({
+            "status": "PENDING",
+            "effective_window_s": account_window,
+            "remaining_s": 0,
+            "expires_at_ms": None,
+        }, t0_echo=t0_to_echo)
 
     # Auto-link surfaced (debug 2026-06-08): once the matcher links this calc its
     # status flips to 'matched'/'linked'. Show a terminal LINKED state instead of
@@ -401,15 +436,12 @@ async def calculator_link_window_status(
     # operator never sees the link land. (LINKED_CONFIRMED above is a DIFFERENT
     # signal: an exec-link-confirmed fill, not the matcher's auto-link.)
     if (await _db.get_calc_status(calc_id=calc_id, account_id=aid)) in ("matched", "linked"):
-        return templates.TemplateResponse(
-            request, "fragments/link_window_countdown.html",
-            _ctx(request, calc_id=calc_id, lw={
-                "status": "LINKED",
-                "effective_window_s": account_window,
-                "remaining_s": 0,
-                "expires_at_ms": None,
-            }),
-        )
+        return _out({
+            "status": "LINKED",
+            "effective_window_s": account_window,
+            "remaining_s": 0,
+            "expires_at_ms": None,
+        })
 
     pretrade_ts_ms: int | None = None
     if pretrade.get("timestamp"):
@@ -428,10 +460,7 @@ async def calculator_link_window_status(
         exec_link_confirmed=confirmed,
     )
 
-    return templates.TemplateResponse(
-        request, "fragments/link_window_countdown.html",
-        _ctx(request, calc_id=calc_id, lw=status),
-    )
+    return _out(status)
 
 
 @router.post("/calculator/cancel/{calc_id}", response_class=HTMLResponse)
@@ -499,3 +528,39 @@ async def calculator_refresh(request: Request, ticker: str):
         request, "fragments/orderbook.html",
         {"ticker": ticker, "bids": bids, "asks": asks},
     )
+
+
+# ── v3.0 P3: JSON mirrors for the React Pre-Trade page ────────────────────
+@router.get("/api/calculator/orderbook/{ticker}")
+async def api_calculator_orderbook(ticker: str):
+    """JSON mirror of calculator_refresh — top-5 depth for the Live
+    Orderbook pane (2s poll). Same fetch + cache read; rows pass through
+    as the cache holds them ([[price, qty], …])."""
+    ticker = ticker.upper()
+    try:
+        await fetch_orderbook(ticker)
+    except Exception:
+        pass
+    ob = app_state.orderbook_cache.get(ticker, {})
+    return JSONResponse(_json_safe({
+        "ticker": ticker,
+        "bids":   ob.get("bids", [])[:5],
+        "asks":   ob.get("asks", [])[:5],
+    }))
+
+
+@router.get("/api/calculator/context")
+async def api_calculator_context():
+    """Page-load context for the React Pre-Trade page (v3.0 P3): the
+    account-level match window (what GET /calculator bakes into the Jinja
+    page) + the link-window bounds for the override select."""
+    from core.account_config import read_account_config_async
+    from core.exec_link import (
+        DEFAULT_LINK_WINDOW_SECONDS, MAX_LINK_WINDOW_SECONDS,
+    )
+    cfg = await read_account_config_async(db, app_state.active_account_id)
+    return JSONResponse({
+        "window_seconds":              cfg.window_seconds,
+        "default_link_window_seconds": DEFAULT_LINK_WINDOW_SECONDS,
+        "max_link_window_seconds":     MAX_LINK_WINDOW_SECONDS,
+    })

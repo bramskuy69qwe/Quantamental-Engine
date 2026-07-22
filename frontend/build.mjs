@@ -51,6 +51,7 @@ const JSX_ORDER = [
   'sse-adapter.js',           // SSE client-adapter skeleton (§1.2)
   'dash-tiled.jsx',           // P1 — Dashboard page (wired to snapshot + SSE)
   'pages-config.jsx',         // P2 — Config page (accounts/connections/presets/system)
+  'pages-pretrade.jsx',       // P3 — Pre-Trade page (calc JSON mirror + §1.3 freeze overlay)
   // ── remaining page modules land here in their phases (pages, models, …) ──
   'app-shell.jsx',            // MUST be last
 ];

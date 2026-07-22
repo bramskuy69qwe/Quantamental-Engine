@@ -496,7 +496,7 @@ data: 93580.40`}</pre>
           <div className="spec-row">
             <span className="l">Banner · alert</span>
             <div style={{width:'100%', border:'1px solid var(--qe-line)'}}>
-              <Banner tone="err" tag="HALT" title="TRADING HALTED" detail="Daily hard-stop 5.04% > 5.00% cap · positions frozen" time="14:31:06" releaseIn="0d 19h 21m 16s"/>
+              <Banner tone="err" tag="HALT" title="CALCULATOR BLOCKED" detail="Daily hard-stop 5.04% > 5.00% cap · new entries gated" time="14:31:06" releaseIn="0d 19h 21m 16s"/>
             </div>
           </div>
           <div className="spec-row">
@@ -504,7 +504,7 @@ data: 93580.40`}</pre>
             <div style={{display:'flex', gap:10, flexWrap:'wrap'}}>
               <Toast tone="ok"   tag="FILLS" time="14:31:06" title="FILLED · BUY 0.0420 BTC" detail="@ 93,580.4 · order #A1903"/>
               <Toast tone="warn" tag="RISK"  time="14:30:18" title="Weekly loss 78% of limit" detail="−$1,840 of −$2,360"/>
-              <Toast tone="err"  tag="RISK"  time="14:31:06" title="TRADING HALTED — hard-stop breached" detail="DD 5.04% > 5.00% cap"/>
+              <Toast tone="err"  tag="RISK"  time="14:31:06" title="CALCULATOR BLOCKED — hard-stop breached" detail="DD 5.04% > 5.00% cap"/>
             </div>
           </div>
           <div className="spec-row">
@@ -581,7 +581,7 @@ const _PagePlaceholder = (name, phase) => function PagePlaceholder() {
 /* ── App router ───────────────────────────────────────────────────────── */
 const QE_PAGES = {
   Dashboard:  DashTiled,   // P1 — real page (dash-tiled.jsx)
-  'Pre-Trade': _PagePlaceholder('Pre-Trade', 'P3'),
+  'Pre-Trade': PreTradePage,  // P3 — real page (pages-pretrade.jsx)
   Linkage:    _PagePlaceholder('Linkage', 'P4'),
   History:    _PagePlaceholder('History', 'P4'),
   Analytics:  _PagePlaceholder('Analytics', 'P5'),

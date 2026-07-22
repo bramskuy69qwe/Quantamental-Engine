@@ -1,20 +1,22 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-07-22 (**v3.0 EXECUTION — P0+P1 SHIPPED; P2 Config COMPLETE (backend `35ffff1` + the frontend-port commit); NEXT = P3 Pre-Trade.** A live-DB incident earlier this session was caught + FULLY restored — details in the P2 block.)
-**Branch**: **`v3.0/ui-plan-audit` — LOCAL ONLY (unpushed).** Session commits on top of the plan-audit docs (`9e9e5f4`): `b14b3b3` render-as-is clarify · **`1221b16` P0 Foundation** · **`8b23417` P1 Dashboard** · **`35ffff1` P2 Config backend** · **the P2 frontend-port commit (HEAD)**. Base = the v2.7 line (`92b753b`, pushed). **Operator merges/pushes v3.0 at their call.**
-**Tests**: **4164 passed / 7 skipped / 3 deselected** (SOLO, `.venv`, full gate this session pre-audit-fold; folds were JSX-only + one Python comment, targeted 55 green post-fold; NO F5 tripwire). ALWAYS run SOLO on the **`.venv`** interpreter (user-site Python lacks `pytest-timeout` → drops the 30 s guardrail). Fresh worktree/clone: run `scripts/provision_test_env.py` FIRST (CLAUDE.md § "Fresh worktree / clone").
+**Date**: 2026-07-22 (**v3.0 EXECUTION — P0+P1+P2+P3 SHIPPED; NEXT = P4 History+Linkage.** A live-DB incident earlier this session was caught + FULLY restored — details in the P2 block.)
+**Branch**: **`v3.0/ui-plan-audit` — LOCAL ONLY (unpushed).** Session commits on top of the plan-audit docs (`9e9e5f4`): `b14b3b3` render-as-is clarify · **`1221b16` P0 Foundation** · **`8b23417` P1 Dashboard** · **`35ffff1` P2 Config backend** · **`cca3eb7` P2 Config frontend** · `9e85249` launch-v3.bat · **the P3 Pre-Trade commit (HEAD)**. Base = the v2.7 line (`92b753b`, pushed). **Operator merges/pushes v3.0 at their call.**
+**Tests**: **4177 passed / 7 skipped / 3 deselected** (SOLO, `.venv`, full gate at P3 pre-audit-fold; the folds were frontend-JSX-only, targeted 61 green post-fold; NO F5 tripwire). ALWAYS run SOLO on the **`.venv`** interpreter (user-site Python lacks `pytest-timeout` → drops the 30 s guardrail). Fresh worktree/clone: run `scripts/provision_test_env.py` FIRST (CLAUDE.md § "Fresh worktree / clone").
 **Engine**: **STOPPED** (no python processes as of this wrap). **Must be restarted to live-verify `/v3`** — it will NOT serve the new v3/dashboard/config/regime/connections routes until restart. Recipe — **SYNCED OS CLOCK FIRST** (`w32tm /resync`; a drifted clock → `-1021 Timestamp ahead` → the "Connecting to exchange…" hang): `.venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000` (**no `--reload`**).
 
-## ▶ STATUS 2026-07-22 (v3.0 EXECUTION) — P0 + P1 + P2 SHIPPED; NEXT = P3 Pre-Trade
+## ▶ STATUS 2026-07-22 (v3.0 EXECUTION) — P0 + P1 + P2 + P3 SHIPPED; NEXT = P4 History+Linkage
 
 **▶▶ NEXT SESSION STARTS HERE.** The v3.0 UI rebuild is EXECUTING against
 `docs/design/v3.0_ui_rebuild_plan.md` (REV-1). Phases march P0→P8, **one commit each**,
 house cycle: build → gate SOLO on `.venv` → ≥1 independent read-only audit → fold →
-STOP for operator acceptance. **Immediate next unit = P3 (Pre-Trade / Calculator)** —
-the coupling monster; carries the halt→blur/freeze overlay (plan §1.3); re-derive the
-countdown/PENDING mechanism per CLAUDE.md re-investigation discipline, do NOT port the
-Jinja countdown blindly. Operator acceptance of P2 (live-verify `/v3` → gear → Config)
-is still pending — engine must be restarted first (header recipe).
+STOP for operator acceptance. **Immediate next unit = P4 (History + Linkage)** — plan
+§5 row P4: G-O6 funding-book JSON + G-O7 lifecycle fields land one step ahead of the
+UI; the needs-link diff + reason picker already have full backends (the premise
+correction — `routes_orders.py:524-557` + `calc_correlation` + `match_audit`).
+Operator acceptance of P2 (gear → Config) AND P3 (`/v3` → Pre-Trade: calc → countdown
+→ auto-refresh → copy cells; halt overlay needs an enforced-mode DD breach to fire)
+is still pending — engine must be restarted first (header recipe; or launch-v3.bat).
 
 **Program state:**
 | Phase | State |
@@ -22,7 +24,7 @@ is still pending — engine must be restarted first (header recipe).
 | P0 Foundation | **SHIPPED `1221b16`** — precompiled React `/v3` (esbuild, vendored offline deps under `static/vendor/`, content-hashed bundle + `static/v3/manifest.json`; build in `frontend/`, `npm run build`), shared primitive/token/chart/grid layer, Primitives proving ground, SSE client-adapter skeleton (`frontend/src/sse-adapter.js`, `window.QE_SSE`), `frontend/DESIGN.md`. 2 audits clean. |
 | P1 Dashboard | **SHIPPED `8b23417`** — `frontend/src/dash-tiled.jsx` wired: `/api/dashboard/snapshot` (initial) + SSE (`equity_update`/`position_update`/`dd_state`; no-flicker leaf `LiveValue`s; `TiledGrid` stays `React.memo`) + polls (state 5s / engine-log 4s / macro 60s / snapshot 15s). 5 backend gaps G-O1/O2/O3/O5 + snapshot. Mocks stripped; watchlist→open positions; halt banner on real `/api/state`. 2 audits, HIGH+MED+4×LOW folded. |
 | **P2 Config** | **SHIPPED** — backend `35ffff1` (5 JSON endpoints: `/api/system` G-O8, `/api/connections`, `/api/config/account/{id}`, `POST /api/config/apply-preset` FULL, `/api/config/presets`; operator decisions: **preset Apply = FULL**, **enforcement flip = display-only/deferred**) + the frontend-port commit: `frontend/src/pages-config.jsx`, 4 tabs wired (account update form-encoded + activate + test · connections add/test/delete via the existing HTML endpoints, responses stripped to text · confirm-gated FULL preset Apply · read-only System), DD/weekly posture DISPLAY-only, mocks stripped, Add/Delete Account deliberately NOT wired (disabled — safe-writes scope; Jinja `/config` stays the management surface). **2 independent audits: SHIP-WITH-NITS ×2, 0 CRIT/HIGH; folded**: MED-1 cross-account reload guard (endpoint-echoed `account_id` + `acctRef`), MED-2 accounts-list refresh after save, add-form clear only on success, presets catch scoping, "Save" relabel (POST /connections doesn't test), 422-JSON prettifier, credential trim, ↻ onRefresh on both Accounts panes, "Saved." anchor comment in `routes_accounts.py`. **Accepted residues (named)**: Spot market-type option 400s by design (Jinja parity; only linear_perpetual adapters registered); update-endpoint partial-write-before-params-validation masking (pre-existing backend semantics, shared with Jinja — ledger candidate). Deviations recorded in the plan's **P2 SHIPPED-STATE** note. |
-| P3 Pre-Trade | not started — carries the halt→blur/freeze overlay (§1.3); re-derive the countdown/PENDING mechanism per CLAUDE.md, don't port blindly. |
+| **P3 Pre-Trade** | **SHIPPED** (the P3 commit) — backend: `?format=json` doors on `POST /calculator/calculate` (success-only; error exits stay HTML) + the countdown route (in-route `_out` shim, Task-139/146 literals intact in the pinned scan window) + `GET /api/calculator/orderbook/{t}` + `/api/calculator/context` + `_json_safe` (F2 discipline); 13 pins `tests/test_p3_pretrade.py`. Frontend `pages-pretrade.jsx`: full calc form (TP ladder / size override / model picker + `?model_id=` handoff + prefill-on-change / link override / match window), countdown chip = the PENDING(1s+t0)→stable(5s)→terminal machine w/ receipt-anchored local tick, auto-refresh w/ persistence-suppressor + cross-ticker guard, 1 Hz price poll (drives backend calc-symbol sub), **§1.3 overlay exact** (enforced→blur/freeze/scrim card; advisory→warn banner; corrected copy). "positions frozen" fiction PURGED bundle-wide (notifications.jsx + app-shell demo). **2 audits (SHIP-WITH-NITS · DO-NOT-SHIP→fixed): both HIGHs + all MEDs + LOW sweep folded pre-commit** (manual-only result cache; cross-ticker guard; queued manual; picker prefill; STOP=TAKER badge; interval stabilization; skew-immune countdown; …). Residues named in the plan's P3 SHIPPED-STATE note. |
 | P4 History+Linkage · P5 Analytics · P6 Regime · P7 Models · P8 retire+re-audit | not started (plan §5; P7 Models = the generic lossless MultiCharts capture, `b14b3b3`). |
 
 **★ P2 KEY FACTS (shipped shape — still binding for later phases):**
