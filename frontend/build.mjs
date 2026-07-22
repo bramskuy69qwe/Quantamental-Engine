@@ -52,6 +52,9 @@ const JSX_ORDER = [
   'dash-tiled.jsx',           // P1 — Dashboard page (wired to snapshot + SSE)
   'pages-config.jsx',         // P2 — Config page (accounts/connections/presets/system)
   'pages-pretrade.jsx',       // P3 — Pre-Trade page (calc JSON mirror + §1.3 freeze overlay)
+  'link-primitives.jsx',      // P4 — linkage vocabulary (badges, diff, countdown)
+  'pages-linkage.jsx',        // P4 — Linkage triage board (needs_review + mirrors)
+  'pages-history.jsx',        // P4 — History page (JSON doors + drilldown)
   // ── remaining page modules land here in their phases (pages, models, …) ──
   'app-shell.jsx',            // MUST be last
 ];

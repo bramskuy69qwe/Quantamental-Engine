@@ -1,13 +1,25 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-07-22/23 (**v3.0 EXECUTION — P0-P3 SHIPPED; P4 BACKEND committed (WIP); NEXT = the P4 FRONTEND port (History + Linkage pages).** A live-DB incident earlier in the arc was caught + FULLY restored — details in the P2 block.)
+**Date**: 2026-07-23 (**v3.0 EXECUTION — P0-P4 SHIPPED (P4 = backend `319daa3` + the frontend commit at HEAD); NEXT = P5 Analytics.** A live-DB incident earlier in the arc was caught + FULLY restored — details in the P2 block.)
 **Branch**: **`v3.0/ui-plan-audit` — LOCAL ONLY (unpushed).** Session commits on top of the plan-audit docs (`9e9e5f4`): `b14b3b3` render-as-is clarify · **`1221b16` P0 Foundation** · **`8b23417` P1 Dashboard** · **`35ffff1` P2 Config backend** · **`cca3eb7` P2 Config frontend** · `9e85249` launch-v3.bat · **the P3 Pre-Trade commit (HEAD)**. Base = the v2.7 line (`92b753b`, pushed). **Operator merges/pushes v3.0 at their call.**
 **Tests**: **4177 passed / 7 skipped / 3 deselected** (SOLO, `.venv`, full gate at P3 pre-audit-fold; the folds were frontend-JSX-only, targeted 61 green post-fold; NO F5 tripwire). ALWAYS run SOLO on the **`.venv`** interpreter (user-site Python lacks `pytest-timeout` → drops the 30 s guardrail). Fresh worktree/clone: run `scripts/provision_test_env.py` FIRST (CLAUDE.md § "Fresh worktree / clone").
 **Engine**: **STOPPED** (no python processes as of this wrap). **Must be restarted to live-verify `/v3`** — it will NOT serve the new v3/dashboard/config/regime/connections routes until restart. Recipe — **SYNCED OS CLOCK FIRST** (`w32tm /resync`; a drifted clock → `-1021 Timestamp ahead` → the "Connecting to exchange…" hang): `.venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000` (**no `--reload`**).
 
-## ▶ STATUS 2026-07-23 (v3.0 EXECUTION) — P0-P3 SHIPPED; P4 BACKEND COMMITTED (WIP); NEXT = P4 FRONTEND
+## ▶ STATUS 2026-07-23 (v3.0 EXECUTION) — P0-P4 SHIPPED; NEXT = P5 Analytics
 
-**▶▶ NEXT SESSION STARTS HERE.** The v3.0 UI rebuild is EXECUTING against
+**▶▶ NEXT SESSION: P5 Analytics** (plan §5 row P5 — G-O4
+`/fragments/analytics/execution` + `/distributions` backends land first, then the
+11-tab React Analytics page; 9/11 tabs already served). **P4 FRONTEND SHIPPED
+(HEAD)**: `link-primitives.jsx` (lpPx magnitude rule; DevBadge ±0.1% deadband) +
+`pages-linkage.jsx` (needs_review inbox + 3-leg diff + reason picker; monitors on
+the /api/linkage/* mirrors; SSE uPnL merge; actions POST the choke-pointed
+endpoints with alert-class failure discrimination) + `pages-history.jsx` (5 tabs
+on the ?format=json doors, server paging/search/date presets, drilldown =
+position_fills door + /context amendments, close-reason modal, page-scope
+CSV/summary). Audit SHIP-WITH-NITS: HIGH (events ISO timestamp) + MED×2
+(alert-class ok/fail collapse; drill stale guard) + LOWs folded; named residues in
+file headers (no server column-sort; ctx.events + Export-Audit not ported — P8).
+Bundle `9b8d89193f`. The OLD ▶▶ P4-frontend charge block below is DONE — history. The v3.0 UI rebuild is EXECUTING against
 `docs/design/v3.0_ui_rebuild_plan.md` (REV-1); house cycle per phase. **The P4 backend
 is committed (G-O6 + G-O7 + all JSON doors — see the plan's "P4 BACKEND SHIPPED-STATE"
 note for the full endpoint map). Immediate next unit = the P4 FRONTEND port:**

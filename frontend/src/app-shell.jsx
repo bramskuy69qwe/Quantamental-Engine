@@ -582,8 +582,8 @@ const _PagePlaceholder = (name, phase) => function PagePlaceholder() {
 const QE_PAGES = {
   Dashboard:  DashTiled,   // P1 — real page (dash-tiled.jsx)
   'Pre-Trade': PreTradePage,  // P3 — real page (pages-pretrade.jsx)
-  Linkage:    _PagePlaceholder('Linkage', 'P4'),
-  History:    _PagePlaceholder('History', 'P4'),
+  Linkage:    LinkagePage,    // P4 — real page (pages-linkage.jsx)
+  History:    HistoryPage,    // P4 — real page (pages-history.jsx)
   Analytics:  _PagePlaceholder('Analytics', 'P5'),
   Models:     _PagePlaceholder('Models', 'P7'),
   Regime:     _PagePlaceholder('Regime', 'P6'),

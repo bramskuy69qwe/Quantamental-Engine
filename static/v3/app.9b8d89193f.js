@@ -4171,6 +4171,697 @@ Object.assign(window, { PreTradePage });
 
 ;
 
+/* ==== link-primitives.jsx ==== */
+const lpPx = (v) => {
+  if (v == null || isNaN(v)) return "\u2014";
+  const a = Math.abs(+v);
+  const d = a >= 1e3 ? 2 : a >= 1 ? 4 : 6;
+  return (+v).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+};
+const lpUsd = (v, d = 2) => v == null || isNaN(v) ? "\u2014" : (v >= 0 ? "+" : "\u2212") + Math.abs(v).toFixed(d);
+const lpPct = (v, d = 2) => v == null || isNaN(v) ? "\u2014" : (v >= 0 ? "+" : "\u2212") + Math.abs(v).toFixed(d) + "%";
+const lpSgn = (v) => v > 0 ? "var(--qe-green)" : v < 0 ? "var(--qe-red)" : "var(--qe-sub)";
+const lpClock = (s) => {
+  if (s == null) return "\u2014";
+  if (s <= 0) return "expired";
+  const m = Math.floor(s / 60), ss = Math.floor(s % 60);
+  return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}:${String(ss).padStart(2, "0")}`;
+};
+const useLpCountdown = (expiryMs) => {
+  const [, force] = React.useReducer((x) => x + 1, 0);
+  React.useEffect(() => {
+    const i = setInterval(force, 1e3);
+    return () => clearInterval(i);
+  }, []);
+  return expiryMs != null ? Math.round((expiryMs - Date.now()) / 1e3) : null;
+};
+const CalcCountdown = ({ expiry, window: win = 300 }) => {
+  const s = useLpCountdown(expiry);
+  if (s == null) return /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-muted)", fontSize: "0.6rem" } }, "\u2014");
+  const tone = s <= 0 ? "var(--qe-red)" : s <= 60 ? "var(--qe-amber)" : "var(--qe-green)";
+  const pct = Math.max(0, Math.min(100, s / (win || 300) * 100));
+  const r = 4, sw = 3, c = 2 * Math.PI * r, off = c * (1 - pct / 100);
+  return /* @__PURE__ */ React.createElement("span", { style: { display: "inline-flex", alignItems: "center", justifyContent: "flex-end", gap: 5, verticalAlign: "middle" }, title: `window ${win}s` }, /* @__PURE__ */ React.createElement("svg", { width: "11", height: "11", viewBox: "0 0 11 11", style: { transform: "rotate(-90deg)", flexShrink: 0, display: "block" } }, /* @__PURE__ */ React.createElement("circle", { cx: "5.5", cy: "5.5", r, fill: "none", stroke: "var(--qe-faint)", strokeWidth: sw }), /* @__PURE__ */ React.createElement(
+    "circle",
+    {
+      cx: "5.5",
+      cy: "5.5",
+      r,
+      fill: "none",
+      stroke: tone,
+      strokeWidth: sw,
+      strokeDasharray: c,
+      strokeDashoffset: off,
+      style: { transition: "stroke-dashoffset 1s linear" }
+    }
+  )), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: tone, fontWeight: 700, fontSize: "0.6rem", lineHeight: "11px" } }, lpClock(s)));
+};
+const LP_LINK_META = {
+  LINKED: { v1: "LINKED", v3: "LINKED", tone: "ok", col: "var(--qe-green)" },
+  NEEDS_MANUAL_REVIEW: { v1: "NEEDS REVIEW", v3: "REVIEW", tone: "warn", col: "var(--qe-amber)" },
+  UNLINKED: { v1: "UNLINKED", v3: "UNLINKED", tone: "err", col: "var(--qe-red)" },
+  UNPLANNED: { v1: "UNPLANNED", v3: "UNPLAN", tone: "blue", col: "var(--qe-blue)" }
+};
+const LinkBadge = ({ status, variant = 1 }) => {
+  const m = LP_LINK_META[status];
+  if (!m) return null;
+  if (variant === 3) {
+    return /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.56rem", fontWeight: 700, color: m.col, letterSpacing: "0.08em" } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "["), m.v3, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "]"));
+  }
+  return /* @__PURE__ */ React.createElement(Badge, { tone: m.tone }, m.v1);
+};
+const LP_DEV_META = {
+  green: { label: "ON-PLAN", col: "var(--qe-green)" },
+  yellow: { label: "AMENDED", col: "var(--qe-amber)" },
+  red: { label: "OFF-PLAN", col: "var(--qe-red)" }
+};
+const DevBadge = ({ pos }) => {
+  const m = LP_DEV_META[pos.deviation_badge];
+  if (!m) return /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014");
+  const drift = Math.abs(pos.tp_drift_pct || 0) >= 0.1 ? `tp ${lpPct(pos.tp_drift_pct)}` : Math.abs(pos.sl_drift_pct || 0) >= 0.1 ? `sl ${lpPct(pos.sl_drift_pct)}` : null;
+  const desc = pos.deviation_badge === "red" && !pos.calc_id ? "no calc" : drift;
+  const title = `size \u0394 ${lpPct(pos.size_delta_pct)} \xB7 ${pos.amendment_count || 0} amendment${(pos.amendment_count || 0) === 1 ? "" : "s"}${pos.tpsl_amended ? " \xB7 TP/SL amended" : ""}`;
+  return /* @__PURE__ */ React.createElement("span", { title, style: { display: "inline-flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" } }, /* @__PURE__ */ React.createElement("span", { className: "qe-badge", style: { color: m.col, borderColor: m.col, background: "transparent", padding: "1px 5px", fontSize: "0.52rem" } }, m.label), desc && /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.55rem", color: m.col, fontWeight: 600 } }, desc), (pos.amendment_count || 0) > 0 && /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.52rem", color: "var(--qe-muted)" } }, "\u270E", pos.amendment_count));
+};
+const LP_EXIT_REASONS = {
+  TP_PLANNED: { label: "TP \xB7 plan", tone: "ok" },
+  TP_AMENDED: { label: "TP \xB7 amended", tone: "warn" },
+  SL_PLANNED: { label: "SL \xB7 plan", tone: "err" },
+  SL_AMENDED: { label: "SL \xB7 amended", tone: "warn" },
+  TP_LADDER_COMPLETE: { label: "TP ladder", tone: "ok" },
+  MIXED: { label: "Mixed", tone: "warn" },
+  MANUAL_INTERVENTION: { label: "Intervention", tone: "mag" },
+  MANUAL_DISCIPLINE_BREAK: { label: "Discipline", tone: "err" },
+  MANUAL_NEW_OPPORTUNITY: { label: "New opp", tone: "blue" },
+  MANUAL_OTHER: { label: "Manual", tone: "mute" },
+  LIQUIDATION: { label: "Liquidation", tone: "err" },
+  ADL: { label: "ADL", tone: "err" },
+  EXPIRED: { label: "Expired", tone: "mute" }
+};
+const LP_MANUAL_REASONS = [
+  { key: "MANUAL_INTERVENTION", label: "Intervention", hint: "Judgement call \u2014 exited against the plan deliberately" },
+  { key: "MANUAL_DISCIPLINE_BREAK", label: "Discipline break", hint: "Fear / impatience \u2014 broke the plan, logging it honestly" },
+  { key: "MANUAL_NEW_OPPORTUNITY", label: "New opportunity", hint: "Freed capital for a better setup" },
+  { key: "MANUAL_OTHER", label: "Other", hint: "Free-text rationale below" }
+];
+const ExitBadge = ({ reason, note, pending }) => {
+  if (!reason || pending) return /* @__PURE__ */ React.createElement(Badge, { tone: "warn" }, "SET REASON");
+  const m = LP_EXIT_REASONS[reason] || { label: reason, tone: "mute" };
+  return /* @__PURE__ */ React.createElement("span", { style: { display: "inline-flex", alignItems: "center", gap: 3 } }, /* @__PURE__ */ React.createElement(Badge, { tone: m.tone }, m.label), note && /* @__PURE__ */ React.createElement("span", { title: note, style: { color: "var(--qe-muted)", fontSize: "0.6rem" } }, "\u270E"));
+};
+const lpCritRows = (order, cand) => [
+  { k: "Ticker", calc: cand.ticker, order: order.symbol, ok: true },
+  { k: "Direction", calc: (cand.side || "").toUpperCase(), order: (order.side || "").toUpperCase(), ok: true },
+  { k: "In-window", calc: cand.age_hours != null ? `${(+cand.age_hours).toFixed(1)}h ago` : "\u2014", order: "loose 168h", ok: true },
+  {
+    k: "Entry",
+    calc: lpPx(cand.effective_entry),
+    order: lpPx(order.price),
+    ok: !!cand.entry_match,
+    diff: cand.entry_drift_pct != null ? lpPct(cand.entry_drift_pct * 100) : ""
+  },
+  {
+    k: "Take-profit",
+    calc: lpPx(cand.tp_price),
+    order: lpPx(order.tp_trigger_price),
+    ok: !!cand.tp_match,
+    diff: cand.tp_drift_pct != null ? lpPct(cand.tp_drift_pct * 100) : ""
+  },
+  {
+    k: "Stop-loss",
+    calc: lpPx(cand.sl_price),
+    order: lpPx(order.sl_trigger_price),
+    ok: !!cand.sl_match,
+    diff: cand.sl_drift_pct != null ? lpPct(cand.sl_drift_pct * 100) : ""
+  }
+];
+const lpScore = (cand) => 3 + (cand.entry_match ? 1 : 0) + (cand.tp_match ? 1 : 0) + (cand.sl_match ? 1 : 0);
+const MatchDiff = ({ order, candidate }) => /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 1 } }, lpCritRows(order, candidate).map((c) => /* @__PURE__ */ React.createElement("div", { key: c.k, style: {
+  display: "grid",
+  gridTemplateColumns: "76px 1fr 1fr 52px 18px",
+  alignItems: "center",
+  gap: 6,
+  padding: "2px 6px",
+  background: c.ok ? "transparent" : "var(--qe-bg-red)",
+  borderLeft: `2px solid ${c.ok ? "var(--qe-green)" : "var(--qe-red)"}`,
+  fontFamily: "var(--qe-mono)",
+  fontSize: "0.58rem"
+} }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, c.k), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-text)" } }, c.calc), /* @__PURE__ */ React.createElement("span", { style: { color: c.ok ? "var(--qe-text)" : "var(--qe-red)" } }, c.order), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)", fontSize: "0.52rem" } }, c.diff || ""), /* @__PURE__ */ React.createElement("span", { style: { color: c.ok ? "var(--qe-green)" : "var(--qe-red)", fontWeight: 700, textAlign: "right", fontSize: "0.78rem", lineHeight: 1 } }, c.ok ? "\u25CF" : "\u25CB"))));
+const FundingWho = ({ pays }) => pays === "you" ? /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-red)", fontSize: "0.58rem", fontWeight: 700 } }, "PAY") : /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-green)", fontSize: "0.58rem", fontWeight: 700 } }, "EARN");
+Object.assign(window, {
+  lpPx,
+  lpUsd,
+  lpPct,
+  lpSgn,
+  lpClock,
+  useLpCountdown,
+  CalcCountdown,
+  LinkBadge,
+  DevBadge,
+  ExitBadge,
+  MatchDiff,
+  FundingWho,
+  LP_EXIT_REASONS,
+  LP_MANUAL_REASONS,
+  LP_LINK_META,
+  LP_DEV_META,
+  lpCritRows,
+  lpScore
+});
+
+;
+
+/* ==== pages-linkage.jsx ==== */
+const _lkForm = async (url, fields, method = "POST") => {
+  const body = new URLSearchParams();
+  Object.entries(fields || {}).forEach(([k, v]) => {
+    if (v != null) body.append(k, v);
+  });
+  const r = await fetch(url, {
+    method,
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString()
+  });
+  const raw = await r.text();
+  return {
+    ok: r.ok && !/alert-(error|warning)/.test(raw),
+    text: _ptStrip(raw)
+  };
+};
+const LkLinkResolver = ({ item, onDone }) => {
+  const cands = item.candidates || [];
+  const [selCand, setSelCand] = React.useState(cands[0] && cands[0].calc_id);
+  const [busy, setBusy] = React.useState(false);
+  const [msg, setMsg] = React.useState(null);
+  const cand = cands.find((c) => c.calc_id === selCand) || cands[0];
+  const act = async (kind) => {
+    const label = kind === "link" ? `Link order #${item.id} to ${cand.calc_id}?` : `Mark order #${item.id} UNPLANNED?`;
+    if (!window.confirm(label)) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = kind === "link" ? await _lkForm(`/orders/${item.id}/manual_link`, { calc_id: cand.calc_id }) : await _lkForm(`/orders/${item.id}/mark_unplanned`, {});
+      setMsg({ text: r.text || (r.ok ? "done" : "failed"), ok: r.ok });
+      if (r.ok) onDone(r.text || (kind === "link" ? `#${item.id} linked to ${cand.calc_id}` : `#${item.id} marked UNPLANNED`));
+    } catch (e) {
+      setMsg({ text: "action failed \u2014 engine unreachable?", ok: false });
+    }
+    setBusy(false);
+  };
+  return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", minHeight: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 7, marginBottom: 6 } }, /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-cyan)", fontWeight: 700, fontSize: "0.72rem" } }, item.symbol), /* @__PURE__ */ React.createElement(Badge, { tone: (item.side || "").toUpperCase() === "BUY" || (item.side || "").toUpperCase() === "LONG" ? "ok" : "err" }, (item.side || "").toUpperCase()), /* @__PURE__ */ React.createElement(LinkBadge, { status: item.link_status }), /* @__PURE__ */ React.createElement("div", { className: "qe-grow" }), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.52rem", color: "var(--qe-muted)" } }, /* @__PURE__ */ React.createElement(PtAge, { ts: item.created_at_ms }))), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "5px 10px", padding: "6px 8px", border: "1px solid var(--qe-line)", marginBottom: 8 } }, /* @__PURE__ */ React.createElement(KV, { l: "Order", v: "#" + (item.exchange_order_id || item.id) }), /* @__PURE__ */ React.createElement(KV, { l: "Type", v: (item.order_type || "").toUpperCase() }), /* @__PURE__ */ React.createElement(KV, { l: "Price", v: lpPx(item.price), color: "var(--qe-cyan)" }), /* @__PURE__ */ React.createElement(KV, { l: "TP", v: lpPx(item.tp_trigger_price), color: "var(--qe-green)" }), /* @__PURE__ */ React.createElement(KV, { l: "SL", v: lpPx(item.sl_trigger_price), color: "var(--qe-red)" }), /* @__PURE__ */ React.createElement(KV, { l: "Status", v: item.link_status })), !cands.length ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(EmptyState, { tone: "warn", glyph: "\u2205", msg: "No candidate calcs in window", hint: "Mark unplanned or wait for a fresh calc." }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "flex-end", paddingTop: 8 } }, /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-ghost", disabled: busy, onClick: () => act("unplanned") }, "UNPLANNED"))) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "qe-lbl", style: { margin: "2px 0 5px" } }, "Candidate calcs \xB7 ", cands.length), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 6 } }, cands.map((c) => {
+    const on = c.calc_id === selCand;
+    return /* @__PURE__ */ React.createElement("button", { key: c.calc_id, onClick: () => setSelCand(c.calc_id), style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 5,
+      padding: "3px 8px",
+      cursor: "pointer",
+      background: on ? "var(--qe-active)" : "var(--qe-panel)",
+      border: `1px solid ${on ? "var(--qe-cyan)" : "var(--qe-line)"}`
+    } }, /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.58rem", color: "var(--qe-cyan)", fontWeight: 700 } }, String(c.calc_id).slice(-6)), /* @__PURE__ */ React.createElement(Badge, { tone: "warn" }, lpScore(c), " / 6"), c.status === "released" ? /* @__PURE__ */ React.createElement(Badge, { tone: "mag" }, "REPLACEMENT") : null);
+  })), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "76px 1fr 1fr 52px 18px", gap: 6, padding: "0 6px 2px", fontFamily: "var(--qe-mono)", fontSize: "0.5rem", color: "var(--qe-muted)", letterSpacing: "0.06em" } }, /* @__PURE__ */ React.createElement("span", null, "CRITERION"), /* @__PURE__ */ React.createElement("span", null, "CALC ", String(cand.calc_id).slice(-6)), /* @__PURE__ */ React.createElement("span", null, "ORDER #", item.id), /* @__PURE__ */ React.createElement("span", null, "DIFF"), /* @__PURE__ */ React.createElement("span", { style: { textAlign: "right" } }, "OK")), /* @__PURE__ */ React.createElement(MatchDiff, { order: item, candidate: cand }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, paddingTop: 8 } }, /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.52rem", color: "var(--qe-muted)" } }, lpScore(cand), " / 6 \u2014 ", lpScore(cand) === 6 ? "eligible" : "below 6/6 threshold"), /* @__PURE__ */ React.createElement("div", { className: "qe-grow" }), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-ghost", disabled: busy, onClick: () => act("unplanned") }, "UNPLANNED"), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-success", disabled: busy, title: `Link ${cand.calc_id}`, onClick: () => act("link") }, busy ? /* @__PURE__ */ React.createElement(Spinner, { size: "0.62rem" }) : "Link"))), msg ? /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.58rem", marginTop: 6, color: msg.ok ? "var(--qe-green)" : "var(--qe-red)" } }, msg.text) : null);
+};
+const LkReasonResolver = ({ item, onDone }) => {
+  const [pick, setPick] = React.useState(null);
+  const [note, setNote] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [msg, setMsg] = React.useState(null);
+  const save = async () => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await _lkForm(`/history/close_reason/${item.id}`, { exit_reason: pick, close_note: note }, "PUT");
+      setMsg({ text: r.ok ? "reason saved" : r.text || "save failed", ok: r.ok });
+      if (r.ok) onDone(`${item.symbol} close \u2192 ${(LP_EXIT_REASONS[pick] || {}).label || pick}`);
+    } catch (e) {
+      setMsg({ text: "save failed \u2014 engine unreachable?", ok: false });
+    }
+    setBusy(false);
+  };
+  return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", minHeight: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 7, marginBottom: 6 } }, /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-cyan)", fontWeight: 700, fontSize: "0.72rem" } }, item.symbol), /* @__PURE__ */ React.createElement(Badge, { tone: item.direction === "LONG" ? "ok" : "err" }, item.direction), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontWeight: 700, color: lpSgn(item.net_pnl) } }, lpUsd(item.net_pnl))), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "5px 10px", padding: "6px 8px", border: "1px solid var(--qe-line)", marginBottom: 8 } }, /* @__PURE__ */ React.createElement(KV, { l: "Entry", v: lpPx(item.entry_price) }), /* @__PURE__ */ React.createElement(KV, { l: "Exit", v: lpPx(item.exit_price) }), /* @__PURE__ */ React.createElement(KV, { l: "Funding", v: lpUsd(item.funding_fees, 3), color: lpSgn(item.funding_fees) })), /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.54rem", color: "var(--qe-muted)", marginBottom: 7 } }, "No calc matched this close \u2014 categorize it (optional, never blocks)."), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5, marginBottom: 8 } }, LP_MANUAL_REASONS.map((r) => /* @__PURE__ */ React.createElement("button", { key: r.key, onClick: () => setPick(r.key), style: {
+    textAlign: "left",
+    padding: "6px 8px",
+    cursor: "pointer",
+    background: pick === r.key ? "var(--qe-active)" : "var(--qe-panel)",
+    border: `1px solid ${pick === r.key ? "var(--qe-cyan)" : "var(--qe-line)"}`
+  } }, /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.6rem", fontWeight: 700, color: pick === r.key ? "var(--qe-cyan)" : "var(--qe-text)" } }, r.label), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.5rem", color: "var(--qe-muted)", marginTop: 2, lineHeight: 1.3 } }, r.hint)))), /* @__PURE__ */ React.createElement("input", { className: "qe-input", placeholder: "optional note\u2026", value: note, onChange: (e) => setNote(e.target.value) }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "flex-end", gap: 6, marginTop: 8 } }, /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-primary", disabled: !pick || busy, style: { opacity: pick ? 1 : 0.45 }, onClick: save }, busy ? /* @__PURE__ */ React.createElement(Spinner, { size: "0.62rem" }) : "Save")), msg ? /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.58rem", marginTop: 6, color: msg.ok ? "var(--qe-green)" : "var(--qe-red)" } }, msg.text) : null);
+};
+const LinkagePage = () => {
+  const [needs, setNeeds] = React.useState(null);
+  const [positions, setPositions] = React.useState(null);
+  const [calcs, setCalcs] = React.useState(null);
+  const [funding, setFunding] = React.useState(null);
+  const [closes, setCloses] = React.useState(null);
+  const [sel, setSel] = React.useState(null);
+  const [toast, setToast] = React.useState(null);
+  const load = React.useCallback((which) => {
+    const get = (url, fn, pick) => _ptJson(url).then((d) => fn(pick ? d[pick] : d)).catch(() => {
+    });
+    if (!which || which === "fast") {
+      get("/orders/needs_review", setNeeds, "orders");
+      get("/api/linkage/positions", setPositions, "positions");
+      get("/api/linkage/calcs", setCalcs, "calcs");
+    }
+    if (!which || which === "slow") {
+      get("/api/linkage/funding", setFunding);
+      get("/api/linkage/closes", setCloses, "closes");
+    }
+  }, []);
+  React.useEffect(() => {
+    load();
+    const t1 = setInterval(() => load("fast"), 5e3);
+    const t2 = setInterval(() => load("slow"), 3e4);
+    return () => {
+      clearInterval(t1);
+      clearInterval(t2);
+    };
+  }, [load]);
+  React.useEffect(() => {
+    if (typeof window.QE_SSE === "undefined") return;
+    return window.QE_SSE.onChannel("position_update", (p) => {
+      const list = Array.isArray(p.positions) ? p.positions : [];
+      setPositions((prev) => {
+        if (!prev) return prev;
+        const by = {};
+        list.forEach((x) => {
+          by[x.symbol] = x;
+        });
+        return prev.map((r) => {
+          const u = by[r.symbol];
+          return u && u.upnl != null ? { ...r, upnl: u.upnl } : r;
+        });
+      });
+    });
+  }, []);
+  const flash = (m) => {
+    setToast(m);
+    setTimeout(() => setToast(null), 2600);
+  };
+  const inbox = [
+    ...(needs || []).map((o) => ({ ...o, kind: "link", key: "L" + o.id })),
+    ...(closes || []).filter((c) => c.pending_reason).map((c) => ({ ...c, kind: "close", key: "C" + c.id }))
+  ];
+  const active = inbox.find((i) => i.key === sel) || inbox[0];
+  const resolveDone = (m) => {
+    flash(m);
+    setSel(null);
+    load();
+  };
+  const posCols = [
+    { key: "symbol", label: "Sym", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, (r.symbol || "").replace("USDT", "")) },
+    { key: "direction", label: "Side", render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: r.direction === "LONG" ? "ok" : "err" }, (r.direction || " ")[0]) },
+    { key: "size", label: "Size", align: "right" },
+    { key: "entry", label: "Entry", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, lpPx(r.entry)) },
+    { key: "mark", label: "Mark", align: "right", render: (r) => lpPx(r.mark) },
+    { key: "upnl", label: "uPnL", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: lpSgn(r.upnl), fontWeight: 700 } }, lpUsd(r.upnl)) },
+    { key: "tpsl", label: "TP / SL", align: "right", sort: false, render: (r) => /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.56rem" } }, /* @__PURE__ */ React.createElement("span", { className: "qe-up" }, r.tp_live ? lpPx(r.tp_live) : "\u2014"), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, " / "), /* @__PURE__ */ React.createElement("span", { className: "qe-dn" }, r.sl_live ? lpPx(r.sl_live) : "\u2014")) },
+    { key: "link_status", label: "Link", render: (r) => /* @__PURE__ */ React.createElement(LinkBadge, { status: r.link_status }) },
+    { key: "dev", label: "Plan deviation", sort: false, render: (r) => /* @__PURE__ */ React.createElement(DevBadge, { pos: r }) }
+  ];
+  const calcCols = [
+    { key: "ticker", label: "Sym", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, (r.ticker || "").replace("USDT", "")) },
+    { key: "side", label: "Side", render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: (r.side || "").toLowerCase() === "long" ? "ok" : "err" }, (r.side || " ")[0].toUpperCase()) },
+    { key: "average", label: "Entry", align: "right", render: (r) => lpPx(r.average) },
+    { key: "tp_price", label: "TP", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { className: "qe-up" }, lpPx(r.tp_price)) },
+    { key: "sl_price", label: "SL", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { className: "qe-dn" }, lpPx(r.sl_price)) },
+    { key: "cd", label: "Link window", align: "right", sort: false, render: (r) => /* @__PURE__ */ React.createElement(CalcCountdown, { expiry: r.expiry_ms, window: r.window_seconds }) },
+    { key: "act", label: "", align: "right", sort: false, render: (r) => /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        className: "qe-btn qe-btn-sm qe-btn-ghost",
+        title: "Cancel this calc",
+        onClick: async (e) => {
+          e.stopPropagation();
+          if (!window.confirm(`Cancel calc ${String(r.calc_id).slice(-8)}?`)) return;
+          try {
+            const res = await _lkForm(`/calculator/cancel/${r.calc_id}`, {});
+            flash(res.text || "cancel sent");
+            load("fast");
+          } catch (err) {
+            flash("cancel failed");
+          }
+        }
+      },
+      "\u2715"
+    ) }
+  ];
+  const fundCols = [
+    { key: "symbol", label: "Sym", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, (r.symbol || "").replace("USDT", "")) },
+    { key: "direction", label: "Side", render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: r.direction === "LONG" ? "ok" : "err" }, (r.direction || " ")[0]) },
+    { key: "rate", label: "Rate", align: "right", render: (r) => r.rate == null ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014") : /* @__PURE__ */ React.createElement("span", { style: { color: r.rate >= 0 ? "var(--qe-amber)" : "var(--qe-green)" } }, (r.rate * 100).toFixed(4), "%") },
+    { key: "pays", label: "Flow", render: (r) => r.rate == null ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014") : /* @__PURE__ */ React.createElement(FundingWho, { pays: r.pays }) },
+    { key: "est_next", label: "Est", align: "right", render: (r) => r.rate == null ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014") : /* @__PURE__ */ React.createElement("span", { style: { color: lpSgn(r.est_next), fontSize: "0.56rem" } }, lpUsd(r.est_next, 4)) },
+    { key: "cum", label: "Cum", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: lpSgn(r.cum) } }, lpUsd(r.cum, 3)) }
+  ];
+  const closeCols = [
+    { key: "symbol", label: "Sym", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, (r.symbol || "").replace("USDT", "")) },
+    { key: "direction", label: "Side", render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: r.direction === "LONG" ? "ok" : "err" }, (r.direction || " ")[0]) },
+    { key: "entry_price", label: "Entry", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, lpPx(r.entry_price)) },
+    { key: "exit_price", label: "Exit", align: "right", render: (r) => lpPx(r.exit_price) },
+    { key: "net_pnl", label: "PnL", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: lpSgn(r.net_pnl), fontWeight: 700 } }, lpUsd(r.net_pnl)) },
+    { key: "exit_reason", label: "Exit reason", render: (r) => /* @__PURE__ */ React.createElement(ExitBadge, { reason: r.exit_reason, note: r.close_note, pending: r.pending_reason }) },
+    { key: "funding_fees", label: "Fund", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: lpSgn(r.funding_fees), fontSize: "0.56rem" } }, lpUsd(r.funding_fees, 3)) }
+  ];
+  return /* @__PURE__ */ React.createElement("div", { className: "qe-scope", "data-screen-label": "03 Linkage", style: { width: "100%", height: "100%", background: "var(--qe-bg)", display: "flex", flexDirection: "column", position: "relative" } }, /* @__PURE__ */ React.createElement(TopNavStd, { page: "Linkage", variant: "line", dense: true }), /* @__PURE__ */ React.createElement(PageHeader, { title: "Linkage", subtitle: "calc-linkage workspace \xB7 manual link \xB7 close reasons \xB7 positions \xB7 funding" }, /* @__PURE__ */ React.createElement(StatusDot, { tone: inbox.length ? "warn" : "ok", label: "QUEUE", value: `${inbox.length} open` })), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column" } }, /* @__PURE__ */ React.createElement(GridWorkspace, { persistId: "linkage" }, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 9, h: 24, minW: 6, minH: 10 }, /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "MANUAL LINK \u2014 NEEDS REVIEW",
+      right: /* @__PURE__ */ React.createElement(Badge, { tone: inbox.length ? "warn" : "ok" }, inbox.length),
+      bodyStyle: { padding: 0, display: "flex", flexDirection: "column" }
+    },
+    needs == null ? /* @__PURE__ */ React.createElement("div", { style: { padding: 10 } }, /* @__PURE__ */ React.createElement(Spinner, { label: "loading" })) : !inbox.length ? /* @__PURE__ */ React.createElement("div", { style: { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 10 } }, /* @__PURE__ */ React.createElement(EmptyState, { tone: "info", glyph: "\u2713", msg: "Inbox clear", hint: "Every order is linked and every close is categorized." })) : /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "162px 1fr" } }, /* @__PURE__ */ React.createElement("div", { style: { overflow: "auto", borderRight: "1px solid var(--qe-line)" } }, inbox.map((item) => {
+      const on = active && item.key === active.key;
+      const accent = item.kind === "link" ? "var(--qe-amber)" : "var(--qe-magenta)";
+      return /* @__PURE__ */ React.createElement("div", { key: item.key, onClick: () => setSel(item.key), style: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 3,
+        padding: "7px 8px",
+        cursor: "pointer",
+        borderBottom: "1px solid var(--qe-faint)",
+        borderLeft: `3px solid ${on ? "var(--qe-cyan)" : "transparent"}`,
+        background: on ? "var(--qe-active)" : "transparent"
+      } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 5 } }, /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.5rem", color: accent, fontWeight: 700, letterSpacing: "0.08em" } }, item.kind === "link" ? "LINK" : "REASON"), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.62rem", color: "var(--qe-cyan)", fontWeight: 700 } }, (item.symbol || "").replace("USDT", ""))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 5 } }, item.kind === "link" ? /* @__PURE__ */ React.createElement(LinkBadge, { status: item.link_status, variant: 3 }) : /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.52rem", color: "var(--qe-magenta)" } }, "set reason"), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.5rem", marginLeft: "auto", color: item.kind === "link" ? "var(--qe-muted)" : lpSgn(item.net_pnl) } }, item.kind === "link" ? `#${item.id}` : lpUsd(item.net_pnl))));
+    })), /* @__PURE__ */ React.createElement("div", { style: { overflow: "auto", padding: 8 } }, active && (active.kind === "link" ? /* @__PURE__ */ React.createElement(LkLinkResolver, { key: active.key, item: active, onDone: resolveDone }) : /* @__PURE__ */ React.createElement(LkReasonResolver, { key: active.key, item: active, onDone: resolveDone }))))
+  )), /* @__PURE__ */ React.createElement(GridItem, { x: 9, y: 0, w: 15, h: 9, minW: 6, minH: 5 }, /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "Open Positions",
+      count: positions ? positions.length : null,
+      onRefresh: () => load("fast"),
+      bodyStyle: { padding: 0 }
+    },
+    positions == null ? /* @__PURE__ */ React.createElement("div", { style: { padding: 10 } }, /* @__PURE__ */ React.createElement(Spinner, { label: "loading" })) : /* @__PURE__ */ React.createElement(DataList, { columns: posCols, rows: positions, selKey: "position_id", tools: false, emptyMsg: "no open positions" })
+  )), /* @__PURE__ */ React.createElement(GridItem, { x: 9, y: 9, w: 8, h: 8, minW: 4, minH: 5 }, /* @__PURE__ */ React.createElement(Pane, { title: "Active Calcs", count: calcs ? calcs.length : null, bodyStyle: { padding: 0 } }, calcs == null ? /* @__PURE__ */ React.createElement("div", { style: { padding: 10 } }, /* @__PURE__ */ React.createElement(Spinner, { label: "loading" })) : /* @__PURE__ */ React.createElement(DataList, { columns: calcCols, rows: calcs, selKey: "calc_id", tools: false, emptyMsg: "no active calcs" }))), /* @__PURE__ */ React.createElement(GridItem, { x: 17, y: 9, w: 7, h: 8, minW: 4, minH: 5 }, /* @__PURE__ */ React.createElement(Pane, { title: "Funding", tag: "LIVE", bodyStyle: { padding: 0 }, onRefresh: () => load("slow") }, funding == null ? /* @__PURE__ */ React.createElement("div", { style: { padding: 10 } }, /* @__PURE__ */ React.createElement(Spinner, { label: "loading" })) : /* @__PURE__ */ React.createElement(
+    DataList,
+    {
+      columns: fundCols,
+      rows: funding.rows || [],
+      selKey: "position_id",
+      tools: false,
+      emptyMsg: "no open positions",
+      summary: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", null, "net next ", funding.countdown_s != null ? lpClock(funding.countdown_s) : "\u2014"), /* @__PURE__ */ React.createElement("span", { style: { color: lpSgn(funding.net_next) } }, lpUsd(funding.net_next, 3)))
+    }
+  ))), /* @__PURE__ */ React.createElement(GridItem, { x: 9, y: 17, w: 15, h: 7, minW: 6, minH: 5 }, /* @__PURE__ */ React.createElement(Pane, { title: "Recent Closes", count: closes ? closes.length : null, bodyStyle: { padding: 0 } }, closes == null ? /* @__PURE__ */ React.createElement("div", { style: { padding: 10 } }, /* @__PURE__ */ React.createElement(Spinner, { label: "loading" })) : /* @__PURE__ */ React.createElement(DataList, { columns: closeCols, rows: closes, selKey: "id", tools: false, emptyMsg: "no recent closes" }))))), toast && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", bottom: 14, left: "50%", transform: "translateX(-50%)", zIndex: 80, display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", background: "var(--qe-bg)", border: "1px solid var(--qe-green)" } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-green)" } }, "\u2713"), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.62rem", color: "var(--qe-text)" } }, toast)), /* @__PURE__ */ React.createElement(StatusFooter, null));
+};
+Object.assign(window, { LinkagePage });
+
+;
+
+/* ==== pages-history.jsx ==== */
+const _hFmtTs = (ms) => {
+  if (!ms) return "\u2014";
+  const d = /* @__PURE__ */ new Date(+ms);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+const _hDur = (ms) => {
+  if (ms == null) return "\u2014";
+  const s = Math.max(0, Math.floor(ms / 1e3));
+  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  return (d ? d + "d " : "") + (d || h ? h + "h " : "") + m + "m";
+};
+const _hIso = (dt, end) => {
+  const p = (n) => String(n).padStart(2, "0");
+  return `${dt.getFullYear()}-${p(dt.getMonth() + 1)}-${p(dt.getDate())}T${end ? "23:59:59" : "00:00:00"}`;
+};
+const _hRange = (preset) => {
+  if (preset === "all") return { date_from: "", date_to: "" };
+  const now = /* @__PURE__ */ new Date();
+  const from = new Date(now);
+  if (preset === "ytd") {
+    from.setMonth(0, 1);
+  } else from.setDate(now.getDate() - ({ "7d": 7, "15d": 15, "30d": 30, "90d": 90 }[preset] || 30));
+  return { date_from: _hIso(from, false), date_to: _hIso(now, true) };
+};
+const H_TABS = [
+  ["positions", "Closed Positions", "/fragments/history/closed_positions"],
+  ["orders", "Orders", "/fragments/history/order_history"],
+  ["fills", "Fills", "/fragments/history/fills"],
+  ["events", "Trade Events", "/fragments/history/trade_events"],
+  ["pretrade", "Pre-Trade Log", "/fragments/history/pre_trade"]
+];
+const HReasonModal = ({ row, onClose, onSaved }) => {
+  const [pick, setPick] = React.useState(null);
+  const [note, setNote] = React.useState(row.close_note || "");
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState(null);
+  const save = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await _lkForm(`/history/close_reason/${row.id}`, { exit_reason: pick, close_note: note }, "PUT");
+      if (r.ok) {
+        onSaved();
+        onClose();
+      } else setErr(r.text || "save failed");
+    } catch (e) {
+      setErr("save failed \u2014 engine unreachable?");
+    }
+    setBusy(false);
+  };
+  return /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", inset: 0, zIndex: 90, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center" }, onClick: onClose }, /* @__PURE__ */ React.createElement("div", { style: { background: "var(--qe-card)", border: "1px solid var(--qe-line)", padding: 14, width: 380 }, onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement(SecLbl, { rule: true, right: /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-ghost", onClick: onClose }, "\u2715") }, row.symbol, " \xB7 close reason"), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5, margin: "8px 0" } }, LP_MANUAL_REASONS.map((r) => /* @__PURE__ */ React.createElement("button", { key: r.key, onClick: () => setPick(r.key), style: {
+    textAlign: "left",
+    padding: "6px 8px",
+    cursor: "pointer",
+    background: pick === r.key ? "var(--qe-active)" : "var(--qe-panel)",
+    border: `1px solid ${pick === r.key ? "var(--qe-cyan)" : "var(--qe-line)"}`
+  } }, /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.6rem", fontWeight: 700, color: pick === r.key ? "var(--qe-cyan)" : "var(--qe-text)" } }, r.label), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.5rem", color: "var(--qe-muted)", marginTop: 2 } }, r.hint)))), /* @__PURE__ */ React.createElement("input", { className: "qe-input", placeholder: "optional note\u2026", value: note, onChange: (e) => setNote(e.target.value) }), err ? /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.58rem", color: "var(--qe-red)", marginTop: 6 } }, err) : null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "flex-end", marginTop: 8 } }, /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-primary", disabled: !pick || busy, onClick: save }, busy ? /* @__PURE__ */ React.createElement(Spinner, { size: "0.62rem" }) : "Save"))));
+};
+const HistoryPage = () => {
+  const [tab, setTab] = React.useState("positions");
+  const [period, setPeriod] = React.useState("30d");
+  const [q, setQ] = React.useState("");
+  const [page, setPage] = React.useState(1);
+  const [perPage, setPerPage] = React.useState(20);
+  const [data, setData] = React.useState(null);
+  const [loading, setLoading] = React.useState(false);
+  const [sel, setSel] = React.useState(null);
+  const [drill, setDrill] = React.useState(null);
+  const [modal, setModal] = React.useState(null);
+  const seqRef = React.useRef(0);
+  const load = React.useCallback(async () => {
+    const ep = H_TABS.find(([k]) => k === tab)[2];
+    const { date_from, date_to } = _hRange(period);
+    const params = new URLSearchParams({
+      format: "json",
+      page: String(page),
+      per_page: String(perPage),
+      search: q.trim(),
+      date_from,
+      date_to
+    });
+    const seq = ++seqRef.current;
+    setLoading(true);
+    try {
+      const d = await _ptJson(ep + "?" + params.toString());
+      if (seq === seqRef.current) setData(d);
+    } catch (e) {
+      if (seq === seqRef.current) setData((prev) => prev || { rows: [], total: 0 });
+    }
+    if (seq === seqRef.current) setLoading(false);
+  }, [tab, period, q, page, perPage]);
+  React.useEffect(() => {
+    load();
+  }, [load]);
+  React.useEffect(() => {
+    const t = setInterval(load, 3e4);
+    return () => clearInterval(t);
+  }, [load]);
+  React.useEffect(() => {
+    setPage(1);
+    setSel(null);
+    setDrill(null);
+  }, [tab, period, q]);
+  const drillSeq = React.useRef(0);
+  const openDrill = async (row) => {
+    if (sel && sel.id === row.id) {
+      setSel(null);
+      setDrill(null);
+      return;
+    }
+    const seq = ++drillSeq.current;
+    setSel(row);
+    setDrill(null);
+    try {
+      const [fills, ctx] = await Promise.all([
+        _ptJson(`/fragments/history/position_fills?position_id=${row.id}&format=json`).catch(() => ({ fills: [] })),
+        _ptJson(`/context/position/${encodeURIComponent(row.terminal_position_id || row.id)}`).catch(() => null)
+      ]);
+      if (seq === drillSeq.current) setDrill({ fills: fills.fills || [], ctx });
+    } catch (e) {
+      if (seq === drillSeq.current) setDrill({ fills: [], ctx: null });
+    }
+  };
+  const rows = data && data.rows || [];
+  const total = data && data.total || 0;
+  const totalPages = Math.max(1, Math.ceil(total / perPage));
+  const exportCsv = () => {
+    if (!rows.length) return;
+    const cols = Object.keys(rows[0]).filter((k) => !k.startsWith("_"));
+    const esc = (v) => {
+      const s = String(v == null ? "" : v);
+      return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const csv = [cols.join(","), ...rows.map((r) => cols.map((c) => esc(r[c])).join(","))].join("\n");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    a.download = `qe-history-${tab}-${period}-p${page}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+  const exitCell = (r) => {
+    const er = r.exit_reason || "";
+    if (er.startsWith("MANUAL") || er === "manual" || er === "limit_close") {
+      return /* @__PURE__ */ React.createElement("span", { style: { cursor: "pointer" }, onClick: (e) => {
+        e.stopPropagation();
+        setModal(r);
+      }, title: "Set / edit the close reason" }, /* @__PURE__ */ React.createElement(ExitBadge, { reason: er.startsWith("MANUAL") ? er : "MANUAL_OTHER", note: r.close_note }));
+    }
+    return /* @__PURE__ */ React.createElement(ExitBadge, { reason: er || null, note: r.close_note, pending: !er });
+  };
+  const COLS = {
+    positions: [
+      { key: "exit_time_ms", label: "CLOSED", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, _hFmtTs(r.exit_time_ms)) },
+      { key: "symbol", label: "SYM", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, r.symbol) },
+      { key: "direction", label: "SIDE", render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: r.direction === "LONG" ? "ok" : "err" }, r.direction) },
+      { key: "model_name", label: "MODEL", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, r.model_name || "\u2014") },
+      { key: "plan", label: "PLAN", sort: false, render: (r) => r.calc_id ? /* @__PURE__ */ React.createElement(DevBadge, { pos: { ...r, amendment_count: r.cumulative_amendment_count } }) : /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014") },
+      { key: "quantity", label: "QTY", align: "right", render: (r) => _ptFmtSz(r.quantity) },
+      { key: "entry_price", label: "ENTRY", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, lpPx(r.entry_price)) },
+      { key: "exit_price", label: "EXIT", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, lpPx(r.exit_price)) },
+      { key: "net_pnl", label: "NET", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: lpSgn(r.net_pnl), fontWeight: 700 } }, lpUsd(r.net_pnl)) },
+      { key: "pct", label: "%", align: "right", sort: false, render: (r) => {
+        const den = (r.entry_price || 0) * (r.quantity || 0);
+        const pct = den ? r.net_pnl / den * 100 : null;
+        return pct == null ? "\u2014" : /* @__PURE__ */ React.createElement("span", { style: { color: lpSgn(pct) } }, lpPct(pct));
+      } },
+      { key: "total_fees", label: "FEE", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, _ptFmtN(r.total_fees, 4)) },
+      { key: "hold_time_ms", label: "DUR", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, _hDur(r.hold_time_ms)) },
+      { key: "exit_reason", label: "REASON", render: exitCell }
+    ],
+    orders: [
+      { key: "updated_at_ms", label: "TIME", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, _hFmtTs(r.updated_at_ms)) },
+      { key: "exchange_order_id", label: "ORDER ID", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, String(r.exchange_order_id || "").slice(0, 12)) },
+      { key: "symbol", label: "SYM", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, r.symbol) },
+      { key: "side", label: "SIDE", render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: (r.side || "").toUpperCase() === "BUY" ? "ok" : "err" }, (r.side || "").toUpperCase()) },
+      { key: "order_type", label: "TYPE", render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: "mute" }, (r.order_type || "").toUpperCase()) },
+      { key: "quantity", label: "QTY", align: "right" },
+      { key: "price", label: "PRICE", align: "right", render: (r) => lpPx(r.price) },
+      { key: "avg_fill_price", label: "AVG FILL", align: "right", render: (r) => lpPx(r.avg_fill_price) },
+      { key: "status", label: "STATUS", render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: r.status === "filled" ? "ok" : r.status === "new" ? "info" : "mute" }, (r.status || "").toUpperCase()) },
+      { key: "link_status", label: "LINK", render: (r) => /* @__PURE__ */ React.createElement(LinkBadge, { status: r.link_status, variant: 3 }) }
+    ],
+    fills: [
+      { key: "timestamp_ms", label: "TIME", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, _hFmtTs(r.timestamp_ms)) },
+      { key: "symbol", label: "SYM", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, r.symbol) },
+      { key: "is_close", label: "ACTION", render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: r.is_close ? "mute" : "info" }, r.is_close ? "CLOSE" : "OPEN") },
+      { key: "direction", label: "SIDE", render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: r.direction === "LONG" ? "ok" : "err" }, r.direction) },
+      { key: "price", label: "PRICE", align: "right", render: (r) => lpPx(r.price) },
+      { key: "quantity", label: "QTY", align: "right" },
+      { key: "fee", label: "FEE", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, _ptFmtN(r.fee, 4), " ", r.fee_asset || "") },
+      { key: "role", label: "ROLE", render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: "mute" }, (r.role || "").toUpperCase()) },
+      { key: "realized_pnl", label: "PnL", align: "right", render: (r) => r.realized_pnl == null || r.realized_pnl === 0 ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014") : /* @__PURE__ */ React.createElement("span", { style: { color: lpSgn(r.realized_pnl) } }, lpUsd(r.realized_pnl)) }
+    ],
+    events: [
+      /* trade_events rows carry an ISO-string timestamp, not epoch-ms [P4 audit #1] */
+      { key: "timestamp", label: "TIME", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, String(r.timestamp || "").slice(0, 16).replace("T", " ") || "\u2014") },
+      { key: "_symbol", label: "SYM", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, r._symbol || "\u2014") },
+      { key: "event_type", label: "TYPE", render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: "info" }, r.event_type) },
+      { key: "calc_id", label: "CALC", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, r.calc_id ? String(r.calc_id).slice(-8) : "\u2014") },
+      { key: "source", label: "SRC", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, r.source || "") }
+    ],
+    pretrade: [
+      { key: "timestamp", label: "TIME", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, String(r.timestamp || "").slice(0, 16).replace("T", " ")) },
+      { key: "calc_id", label: "CALC ID", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontFamily: "var(--qe-mono)" } }, String(r.calc_id || "").slice(-8)) },
+      { key: "ticker", label: "SYM", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, r.ticker) },
+      { key: "side", label: "SIDE", render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: (r.side || "").toLowerCase() === "long" ? "ok" : "err" }, (r.side || "").toUpperCase()) },
+      { key: "average", label: "ENTRY", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, lpPx(r.average)) },
+      { key: "tp_price", label: "TP", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { className: "qe-up" }, lpPx(r.tp_price)) },
+      { key: "sl_price", label: "SL", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { className: "qe-dn" }, lpPx(r.sl_price)) },
+      { key: "size", label: "SIZE", align: "right", render: (r) => _ptFmtSz(r.size) },
+      { key: "model_display", label: "MODEL", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, r.model_display || "\u2014") },
+      { key: "status", label: "LINK", render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: ["matched", "linked"].includes(r.status) ? "ok" : r.status === "active" ? "info" : "mute" }, (r.status || "").toUpperCase()) }
+    ]
+  };
+  const summary = (() => {
+    if (tab !== "positions" || !rows.length) return null;
+    const net = rows.reduce((s, r) => s + (r.net_pnl || 0), 0);
+    const wins = rows.filter((r) => (r.net_pnl || 0) >= 0).length;
+    const fees = rows.reduce((s, r) => s + (r.total_fees || 0), 0);
+    return [
+      { label: "ROWS", value: String(rows.length) },
+      { label: "WINS", value: String(wins), color: "var(--qe-green)" },
+      { label: "LOSSES", value: String(rows.length - wins), color: "var(--qe-red)" },
+      { label: "WINRATE", value: rows.length ? Math.round(wins / rows.length * 100) + "%" : "\u2014" },
+      { label: "FEES", value: _ptFmtN(fees), color: "var(--qe-sub)" },
+      { label: "NET", value: lpUsd(net), color: lpSgn(net) }
+    ];
+  })();
+  const dp = sel;
+  return /* @__PURE__ */ React.createElement("div", { className: "qe-scope", "data-screen-label": "04 History", style: { width: "100%", height: "100%", background: "var(--qe-bg)", display: "flex", flexDirection: "column", overflow: "hidden" } }, /* @__PURE__ */ React.createElement(TopNavStd, { page: "History", variant: "line", dense: true }), /* @__PURE__ */ React.createElement(PageHeader, { title: "History", subtitle: "closed positions \xB7 orders \xB7 fills \xB7 events \xB7 pre-trade log" }, /* @__PURE__ */ React.createElement(PeriodSelector, { options: [["7d", "7D"], ["15d", "15D"], ["30d", "30D"], ["90d", "90D"], ["ytd", "YTD"], ["all", "ALL"]], value: period, onChange: setPeriod }), /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      className: "qe-input",
+      placeholder: "filter symbol\u2026",
+      value: q,
+      onChange: (e) => setQ(e.target.value),
+      onKeyDown: (e) => {
+        if (e.key === "Escape") setQ("");
+      },
+      style: { width: 180, height: 22, boxSizing: "border-box" }
+    }
+  ), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", onClick: exportCsv, title: "Download the loaded rows as CSV" }, "Export CSV")), summary ? /* @__PURE__ */ React.createElement(Strip, { dense: true, style: { margin: 6, marginBottom: 0 }, items: summary }) : null, /* @__PURE__ */ React.createElement(TabStrip, { value: tab, onChange: setTab, tabs: H_TABS.map(([k, l]) => [k, l, tab === k && data ? total : null]) }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column" } }, /* @__PURE__ */ React.createElement(GridWorkspace, null, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 16, h: 24, minW: 8, minH: 6 }, /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: H_TABS.find(([k]) => k === tab)[1],
+      count: total || null,
+      onRefresh: load,
+      style: { height: "100%" },
+      bodyStyle: { padding: 0, display: "flex", flexDirection: "column" }
+    },
+    /* @__PURE__ */ React.createElement("div", { style: { flex: 1, overflow: "auto" } }, loading && !data ? /* @__PURE__ */ React.createElement("div", { style: { padding: 10 } }, /* @__PURE__ */ React.createElement(Spinner, { label: "loading" })) : /* @__PURE__ */ React.createElement(
+      DataList,
+      {
+        dense: true,
+        tools: false,
+        columns: COLS[tab],
+        rows,
+        selKey: "id",
+        selected: tab === "positions" && sel ? sel.id : null,
+        onClick: tab === "positions" ? (r) => openDrill(r) : void 0,
+        emptyMsg: "no rows in this window"
+      }
+    )),
+    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, padding: "4px 8px", borderTop: "1px solid var(--qe-line)", fontFamily: "var(--qe-mono)", fontSize: "0.58rem" } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, total, " rows \xB7 page ", page, "/", totalPages), /* @__PURE__ */ React.createElement("div", { className: "qe-grow" }), /* @__PURE__ */ React.createElement(
+      "select",
+      {
+        className: "qe-input qe-select",
+        style: { width: "auto", height: 20, fontSize: "0.56rem" },
+        value: String(perPage),
+        onChange: (e) => {
+          setPerPage(+e.target.value);
+          setPage(1);
+        }
+      },
+      /* @__PURE__ */ React.createElement("option", { value: "20" }, "20"),
+      /* @__PURE__ */ React.createElement("option", { value: "50" }, "50")
+    ), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-ghost", disabled: page <= 1, onClick: () => setPage((p) => p - 1) }, "\u2039"), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-ghost", disabled: page >= totalPages, onClick: () => setPage((p) => p + 1) }, "\u203A"))
+  )), /* @__PURE__ */ React.createElement(GridItem, { x: 16, y: 0, w: 8, h: 24, minW: 6, minH: 6 }, /* @__PURE__ */ React.createElement(Pane, { title: "Position Detail", style: { height: "100%" }, bodyStyle: { overflow: "auto" } }, !dp ? /* @__PURE__ */ React.createElement(EmptyState, { tone: "neutral", glyph: "\u25CE", msg: "Select a closed position", hint: "Click a row to inspect its fills, exec link and amendments." }) : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, /* @__PURE__ */ React.createElement(SecLbl, { rule: true, right: /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-ghost", onClick: () => {
+    setSel(null);
+    setDrill(null);
+  } }, "\u2715") }, dp.symbol, " \xB7 CLOSED \xB7 ", dp.direction), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 10px" } }, /* @__PURE__ */ React.createElement(KV, { l: "Net", v: lpUsd(dp.net_pnl), color: lpSgn(dp.net_pnl) }), /* @__PURE__ */ React.createElement(KV, { l: "Duration", v: _hDur(dp.hold_time_ms) }), /* @__PURE__ */ React.createElement(KV, { l: "Entry", v: lpPx(dp.entry_price) }), /* @__PURE__ */ React.createElement(KV, { l: "Exit", v: lpPx(dp.exit_price) }), /* @__PURE__ */ React.createElement(KV, { l: "TP plan", v: lpPx(dp.tp_price), color: "var(--qe-green)" }), /* @__PURE__ */ React.createElement(KV, { l: "SL plan", v: lpPx(dp.sl_price), color: "var(--qe-red)" }), /* @__PURE__ */ React.createElement(KV, { l: "MFE / MAE", v: `${_ptFmtN(dp.mfe)} / ${_ptFmtN(dp.mae)}` }), /* @__PURE__ */ React.createElement(KV, { l: "Funding", v: lpUsd(dp.funding_fees, 3), color: lpSgn(dp.funding_fees) }), /* @__PURE__ */ React.createElement(KV, { l: "Model", v: dp.model_name || "\u2014" }), /* @__PURE__ */ React.createElement(KV, { l: "Calc", v: dp.calc_id ? String(dp.calc_id).slice(-8) : "\u2014", color: "var(--qe-cyan)" })), /* @__PURE__ */ React.createElement("div", { style: { borderTop: "1px solid var(--qe-line)" } }), /* @__PURE__ */ React.createElement(SecLbl, { rule: true }, "Fills"), drill == null ? /* @__PURE__ */ React.createElement(Spinner, { label: "loading" }) : !drill.fills.length ? /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.58rem", color: "var(--qe-muted)" } }, "No fills recorded for this position.") : /* @__PURE__ */ React.createElement(DataList, { dense: true, tools: false, selKey: "id", columns: [
+    { key: "timestamp_ms", label: "TIME", render: (f) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, _hFmtTs(f.timestamp_ms)) },
+    { key: "is_close", label: "ACT", render: (f) => /* @__PURE__ */ React.createElement(Badge, { tone: f.is_close ? "mute" : "info" }, f.is_close ? "C" : "O") },
+    { key: "price", label: "PRICE", align: "right", render: (f) => lpPx(f.price) },
+    { key: "quantity", label: "QTY", align: "right" },
+    { key: "exec", label: "EXEC LINK", sort: false, render: (f) => f.is_close || !f.calc_id ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014") : f.exec_link_status === "linked" ? /* @__PURE__ */ React.createElement(Badge, { tone: "ok" }, "\u25CF LINKED") : f.exec_link_status === "partial" ? /* @__PURE__ */ React.createElement(Badge, { tone: "warn" }, "\u26A0 ", f.exec_match_count, "/1") : /* @__PURE__ */ React.createElement(Badge, { tone: "err" }, "\u2717 UNLINKED") }
+  ], rows: drill.fills }), drill && drill.ctx && Array.isArray(drill.ctx.amendments) && drill.ctx.amendments.length ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(SecLbl, { rule: true }, "Amendments \xB7 ", drill.ctx.amendments.length), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 2 } }, drill.ctx.amendments.slice(0, 12).map((a, i) => /* @__PURE__ */ React.createElement("div", { key: i, className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-sub)" } }, _hFmtTs(a.ts_ms), " \xB7 ", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-amber)" } }, a.field), " ", a.old_value, " \u2192 ", a.new_value, a.deviation_pct != null ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, " (", lpPct(a.deviation_pct), ")") : null)))) : null))))), modal ? /* @__PURE__ */ React.createElement(HReasonModal, { row: modal, onClose: () => setModal(null), onSaved: load }) : null, /* @__PURE__ */ React.createElement(StatusFooter, null));
+};
+Object.assign(window, { HistoryPage });
+
+;
+
 /* ==== app-shell.jsx ==== */
 const LiveValueDemo = ({ id, base, jitter = 2, fmt, style }) => {
   const [v, setV] = React.useState(base);
@@ -4336,8 +5027,10 @@ const QE_PAGES = {
   // P1 — real page (dash-tiled.jsx)
   "Pre-Trade": PreTradePage,
   // P3 — real page (pages-pretrade.jsx)
-  Linkage: _PagePlaceholder("Linkage", "P4"),
-  History: _PagePlaceholder("History", "P4"),
+  Linkage: LinkagePage,
+  // P4 — real page (pages-linkage.jsx)
+  History: HistoryPage,
+  // P4 — real page (pages-history.jsx)
   Analytics: _PagePlaceholder("Analytics", "P5"),
   Models: _PagePlaceholder("Models", "P7"),
   Regime: _PagePlaceholder("Regime", "P6"),
