@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Request, Form
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from markupsafe import escape
 
 import config
@@ -117,9 +117,19 @@ async def frag_history_exchange(
 
 
 @router.get("/fragments/history/open_positions", response_class=HTMLResponse)
-async def frag_history_open_positions(request: Request):
+async def frag_history_open_positions(request: Request, format: str = ""):
     from core.order_manager_singleton import order_manager
     prm = app_state.params
+    if format == "json":
+        # v3.0 P4 JSON door: live positions (the shared serializer incl. the
+        # G-O7 fields) + working orders + the header cap.
+        from api.routes_calculator import _json_safe
+        from api.routes_cockpit import _position_row
+        return JSONResponse(_json_safe({
+            "positions":      [_position_row(p) for p in app_state.positions],
+            "working_orders": list(order_manager.open_orders or []),
+            "max_positions":  prm["max_position_count"],
+        }))
     return templates.TemplateResponse(
         request, "fragments/history/open_positions.html",
         _ctx(request,
@@ -136,6 +146,7 @@ async def frag_history_pre_trade(
     sort_by: str = "timestamp", sort_dir: str = "DESC",
     search: str = "", ticker: str = "", side: str = "",
     date_from: str = "", date_to: str = "",
+    format: str = "",
 ):
     # MED-003 (Task 101): route-level defense-in-depth for sort_by/sort_dir.
     sort_by, sort_dir = validate_sort_params(sort_by, sort_dir, db._PRE_TRADE_SORT_COLS)
@@ -166,6 +177,11 @@ async def frag_history_pre_trade(
             r["model_display"] = fk_names.get(r["model_id"], "(deleted model)")
         else:
             r["model_display"] = ""
+    if format == "json":
+        # v3.0 P4 JSON door — rows carry the resolved model_display (F11
+        # precedence) so the React column needs no re-resolution.
+        from api.routes_orders import _rows_json
+        return _rows_json(rows, total, page, per_page)
     total_pages = max(1, (total + per_page - 1) // per_page)
     return templates.TemplateResponse(
         request, "fragments/history/pre_trade_table.html",
@@ -210,6 +226,7 @@ async def frag_history_trade_events(
     page: int = 1, per_page: int = 20,
     event_type: str = "", search: str = "",
     date_from: str = "", date_to: str = "",
+    format: str = "",
 ):
     """Trade Events Log tab — reads from trade_events table (sync query)."""
     import asyncio
@@ -241,6 +258,11 @@ async def frag_history_trade_events(
         rows = [r for r in rows if _s in r["_symbol"].upper()]
         total = len(rows)  # approximate after client-side filter
 
+    if format == "json":
+        # v3.0 P4 JSON door — rows carry the parsed _payload + _symbol the
+        # route already extracted (same post-filter set the fragment renders).
+        from api.routes_orders import _rows_json
+        return _rows_json(rows, total, page, per_page)
     total_pages = max(1, (total + per_page - 1) // per_page)
     return templates.TemplateResponse(
         request, "fragments/history/trade_events_table.html",

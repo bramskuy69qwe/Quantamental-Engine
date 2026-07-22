@@ -78,6 +78,9 @@ _PRESERVE_FIELDS = (
     # P4.T3: live deviation badge inputs/level — same refresh+preserve treatment.
     # #1 (debug 2026-06-08): tpsl_amended joins the badge inputs.
     "amendment_count", "deviation_badge", "tpsl_amended",
+    # v3.0 P4 (G-O7): planned legs + numeric drift — same refresh+preserve
+    # treatment as the badge inputs they sit beside.
+    "planned_tp", "planned_sl", "tp_drift_pct", "sl_drift_pct",
     # P5.T7: live unrealized funding (Σ funding_events for the open position),
     # re-derived each refresh by _enrich_positions_calc_id; preserved between
     # so a snapshot rebuild doesn't flicker it to 0.

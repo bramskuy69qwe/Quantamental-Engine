@@ -2352,6 +2352,13 @@ class OrderManager:
                 pos.size_delta_pct = 0.0
                 pos.amendment_count = 0
                 pos.tpsl_amended = False
+                # v3.0 P4 (G-O7): clear the planned/drift quartet with the rest
+                # so a same-key reopen can't inherit stale values via
+                # _PRESERVE_FIELDS.
+                pos.planned_tp = 0.0
+                pos.planned_sl = 0.0
+                pos.tp_drift_pct = 0.0
+                pos.sl_drift_pct = 0.0
                 pos.deviation_badge = "red"  # no-calc / UNPLANNED (spec §10.2)
                 _rec = pos.position_id in _recovered_now
                 _ep: Dict[str, Any] = {
@@ -2423,6 +2430,20 @@ class OrderManager:
                              and abs(_live_tp - _p_tp) / abs(_p_tp) > 0.001)
             _sl_drift = bool(_p_sl and _live_sl
                              and abs(_live_sl - _p_sl) / abs(_p_sl) > 0.001)
+            # v3.0 P4 (G-O7): expose the planned legs + the SIGNED numeric
+            # drift these booleans collapse — display fields for the Linkage
+            # cockpit row (no behavior change; the badge logic below is
+            # untouched).
+            pos.planned_tp = float(_p_tp or 0.0)
+            pos.planned_sl = float(_p_sl or 0.0)
+            pos.tp_drift_pct = (
+                (_live_tp - _p_tp) / abs(_p_tp) * 100.0
+                if (_p_tp and _live_tp) else 0.0
+            )
+            pos.sl_drift_pct = (
+                (_live_sl - _p_sl) / abs(_p_sl) * 100.0
+                if (_p_sl and _live_sl) else 0.0
+            )
             # #1b (debug 2026-06-09): REMOVAL of a planned protective leg. The
             # operator canceled a TP/SL the calc planned, leaving the position
             # OFF-PLAN (e.g. an unprotected position with no stop). The price-drift

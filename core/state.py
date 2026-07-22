@@ -164,6 +164,13 @@ class PositionInfo:
     # order_amendments ledger never sees. Lets the badge label a genuine
     # "amended" apart from a size-deviation ("off-size") yellow.
     tpsl_amended:            bool  = False
+    # v3.0 P4 (G-O7): the planned legs + SIGNED numeric drift % the booleans
+    # above collapse — stamped in _enrich_positions_calc_id at the same site,
+    # for the Linkage cockpit position row. 0.0 = leg missing / no drift.
+    planned_tp:              float = 0.0
+    planned_sl:              float = 0.0
+    tp_drift_pct:            float = 0.0
+    sl_drift_pct:            float = 0.0
 
 
 def deviation_badge_level(

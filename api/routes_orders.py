@@ -62,6 +62,18 @@ async def frag_open_orders(
 
 # ── Order History ────────────────────────────────────────────────────────────
 
+def _rows_json(rows, total, page, per_page):
+    """v3.0 P4: uniform JSON door for the paginated history tables — the raw
+    rows + paging envelope; display shaping (pnl %, M·R, badge families) is
+    the React client's job."""
+    from api.routes_calculator import _json_safe
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    return JSONResponse(_json_safe({
+        "rows": rows, "total": total, "page": page,
+        "per_page": per_page, "total_pages": total_pages,
+    }))
+
+
 @router.get("/fragments/history/order_history", response_class=HTMLResponse)
 async def frag_order_history(
     request: Request,
@@ -69,6 +81,7 @@ async def frag_order_history(
     sort_by: str = "updated_at_ms", sort_dir: str = "DESC",
     search: str = "",
     date_from: str = "", date_to: str = "",
+    format: str = "",
 ):
     # MED-003 (Task 101): route-level defense-in-depth for sort_by/sort_dir.
     sort_by, sort_dir = validate_sort_params(sort_by, sort_dir, db._ORDERS_SORT_COLS)
@@ -78,6 +91,8 @@ async def frag_order_history(
         sort_by=sort_by, sort_dir=sort_dir, search=search,
         date_from_ms=_iso_to_ms(date_from), date_to_ms=_iso_to_ms(date_to),
     )
+    if format == "json":
+        return _rows_json(rows, total, page, per_page)
     total_pages = max(1, (total + per_page - 1) // per_page)
     return templates.TemplateResponse(
         request, "fragments/history/order_history_table.html",
@@ -97,6 +112,7 @@ async def frag_fills(
     sort_by: str = "timestamp_ms", sort_dir: str = "DESC",
     search: str = "",
     date_from: str = "", date_to: str = "",
+    format: str = "",
 ):
     # MED-003 (Task 101): route-level defense-in-depth for sort_by/sort_dir.
     sort_by, sort_dir = validate_sort_params(sort_by, sort_dir, db._FILLS_SORT_COLS)
@@ -106,6 +122,8 @@ async def frag_fills(
         sort_by=sort_by, sort_dir=sort_dir, search=search,
         date_from_ms=_iso_to_ms(date_from), date_to_ms=_iso_to_ms(date_to),
     )
+    if format == "json":
+        return _rows_json(rows, total, page, per_page)
     total_pages = max(1, (total + per_page - 1) // per_page)
     return templates.TemplateResponse(
         request, "fragments/history/fills_table.html",
@@ -125,6 +143,7 @@ async def frag_closed_positions(
     sort_by: str = "exit_time_ms", sort_dir: str = "DESC",
     search: str = "",
     date_from: str = "", date_to: str = "",
+    format: str = "",
 ):
     # MED-003 (Task 101): route-level defense-in-depth for sort_by/sort_dir.
     sort_by, sort_dir = validate_sort_params(sort_by, sort_dir, db._CLOSED_POS_SORT_COLS)
@@ -143,6 +162,10 @@ async def frag_closed_positions(
     _cfg = await read_account_config_async(db, app_state.active_account_id)
     stamp_close_deviation_badges(
         rows, yellow_pct=_cfg.yellow_deviation_pct, red_pct=_cfg.red_deviation_pct)
+    if format == "json":
+        # the stamped deviation_badge rides the row; pnl %, M·R and the
+        # exit-reason badge family are client-side shaping
+        return _rows_json(rows, total, page, per_page)
     total_pages = max(1, (total + per_page - 1) // per_page)
     return templates.TemplateResponse(
         request, "fragments/history/closed_positions_table.html",
@@ -191,7 +214,8 @@ def _pretrade_ts_to_ms(pretrade: dict) -> int | None:
 
 
 @router.get("/fragments/history/position_fills", response_class=HTMLResponse)
-async def frag_position_fills(request: Request, position_id: int = 0):
+async def frag_position_fills(request: Request, position_id: int = 0,
+                              format: str = ""):
     """Return fills for a single closed position (lazy-loaded drawer)."""
     from api.helpers import _ctx
     from core.exec_link import get_exec_link_status
@@ -249,6 +273,12 @@ async def frag_position_fills(request: Request, position_id: int = 0):
                 f["exec_link_status"] = status
                 f["exec_match_count"] = count
 
+    if format == "json":
+        # v3.0 P4 JSON door — fills carry the stamped exec_link_status /
+        # exec_match_count (the drawer's per-fill badges); the events/amend
+        # timeline side of the drawer rides GET /context/position/{id}.
+        from api.routes_calculator import _json_safe
+        return JSONResponse(_json_safe({"fills": fills}))
     return templates.TemplateResponse(
         request, "fragments/history/position_fills.html",
         _ctx(request, fills=fills),
