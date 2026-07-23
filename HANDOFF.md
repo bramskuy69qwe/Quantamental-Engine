@@ -1,27 +1,47 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-07-23 (**v3.0 EXECUTION — P0-P7 SHIPPED (P7 Models + the PaneFoot completeness fix landed this session, HEAD `3e6bb45`); NEXT = P8 retirement + directive-#7 re-audit.** A live-DB incident earlier in the arc was caught + FULLY restored — details in the P2 block.)
-**Branch**: **`v3.0/ui-plan-audit` — LOCAL ONLY (unpushed).** Session commits on top of the plan-audit docs (`9e9e5f4`): `b14b3b3` render-as-is clarify · **`1221b16` P0** · **`8b23417` P1** · **`35ffff1`+`cca3eb7` P2** · `9e85249` launch-v3.bat · **`a1fde0b` P3** · **`319daa3`+`b55d317` P4** · `44a4077` P5-charge docs · **`13c62de` P5 Analytics** · **`81a6594` P6 Regime** · `0116083`+`e43a7e1` PaneFoot arc · **`22b03b9` P7 Models** · `1bfb244` P7 wrap · **`3e6bb45` PaneFoot completeness (HEAD)** — operator caught 24 foot-less panes the arc missed (Analytics 21 / Regime 2 / DEV 1; the old source-level check under-counted on a JSX-apostrophe parser bug). The authoritative sweep now runs against the EMITTED bundle (esbuild `foot`-shorthand aware) and reports ZERO foot-less panes bundle-wide; bundle **`c434b727ad`**. Base = the v2.7 line (`92b753b`, pushed). **Operator merges/pushes v3.0 at their call.**
-**Tests**: **4252 passed / 7 skipped / 3 deselected** (SOLO, `.venv`, FULL gate green at the P7 wrap; +31 P7 pins + 1 route smoke over the P6 bundle; NO F5 tripwire). One observation: a single once-off collection-order ERROR in `test_phase8_audit_followup.py::TestSizeDriftNotification` appeared in ONE mid-session full run, did not reproduce solo (24/24) NOR in the clean final gate — no error detail captured (tail-swallowed); treat as an ordering-flake watch item, not a finding. ALWAYS run SOLO on the **`.venv`** interpreter (user-site Python lacks `pytest-timeout` → drops the 30 s guardrail). Fresh worktree/clone: run `scripts/provision_test_env.py` FIRST (CLAUDE.md § "Fresh worktree / clone").
-**Engine**: **STOPPED** (untouched this session). **Must be restarted to live-verify `/v3`** — it will NOT serve the new v3 routes (incl. the P7 `/api/models/*` doors) or the current bundle **`c434b727ad`** until restart. Recipe — **SYNCED OS CLOCK FIRST** (`w32tm /resync`; a drifted clock → `-1021 Timestamp ahead` → the "Connecting to exchange…" hang): `.venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000` (**no `--reload`**), or `launch-v3.bat`.
+**Date**: 2026-07-23 (**v3.0 EXECUTION — P0-P7 SHIPPED + P8 IN PROGRESS: the directive-#7 audit ledger (`d8bd5c8`) and fix wave 1 (`37d012e`, HEAD) landed this session; NEXT = P8 wave 2 (D2/D3 code fixes) → doc wave → retirement.** A live-DB incident earlier in the arc was caught + FULLY restored — details in the P2 block.)
+**Branch**: **`v3.0/ui-plan-audit` — LOCAL ONLY (unpushed).** Session commits on top of the plan-audit docs (`9e9e5f4`): `b14b3b3` render-as-is clarify · **`1221b16` P0** · **`8b23417` P1** · **`35ffff1`+`cca3eb7` P2** · `9e85249` launch-v3.bat · **`a1fde0b` P3** · **`319daa3`+`b55d317` P4** · `44a4077` P5-charge docs · **`13c62de` P5 Analytics** · **`81a6594` P6 Regime** · `0116083`+`e43a7e1` PaneFoot arc · **`22b03b9` P7 Models** · `1bfb244` P7 wrap · **`3e6bb45` PaneFoot completeness** (24 foot-less panes operator-caught; the authoritative sweep runs against the EMITTED bundle, esbuild foot-shorthand aware) · `4b2370a` wrap · **`d8bd5c8` P8 directive-#7 audit ledger** (9 lenses; `docs/audits/2026-07-23-v3.0-p8-design-consistency-audit.md` = the source of truth: D1 fabrication HIGH · D2 Dashboard drops HIGH+3MED · D3 3MED · 4 doc MEDs · LOW/NIT tail) · **`37d012e` P8 wave 1 (HEAD)** — fabrication mechanism KILLED: `chrome-live.js` QE_CHROME store (state 10s/snapshot 30s/system 60s/accounts+retry/SSE status), chrome rebound (real regime/P&L/OPEN/EXP/DD, real account picker + activate, honest footer, ornaments dropped per G-O9), NotificationProvider wired to `/notifications/poll` (real-4 channels, N_SEED gone), whole mock family deleted; bundle **`ebb1d4e12a`**; 2 audits SHIP-WITH-NITS 0 CRIT/HIGH/MED, all folded. Base = the v2.7 line (`92b753b`, pushed). **Operator merges/pushes v3.0 at their call.**
+**Tests**: **4252 passed / 7 skipped / 3 deselected** (SOLO, `.venv`, FULL gate green ×3 at the wave-1 wrap). **NB the F5 tripwire fires its BENIGN branch while the engine runs alongside** (engine log + news-scheduler upserts = expected drift; investigated at wave 1 — NOT a test leak; re-run with the engine stopped for a silent gate). Watch item (older): a once-off collection-order ERROR in `test_phase8_audit_followup.py::TestSizeDriftNotification` (one P7-era run; never reproduced). ALWAYS run SOLO on the **`.venv`** interpreter (user-site Python lacks `pytest-timeout` → drops the 30 s guardrail). Fresh worktree/clone: run `scripts/provision_test_env.py` FIRST (CLAUDE.md § "Fresh worktree / clone").
+**Engine**: **RUNNING since 2026-07-23 18:42** (operator-started, 2× uvicorn :8000, the HANDOFF recipe) — serves `static/v3` per-request, so a browser refresh picks up the current bundle **`ebb1d4e12a`** (wave 1 is JSX-only; no restart needed). Surfaced observations from the live log (NOT filed): the news fetcher upserts 100 items every ~16 s (confirm the cadence is intended); httpx INFO lines write the **Finnhub API token in cleartext** into `data/logs/risk_engine.jsonl` (pre-existing leak — ledger candidate).
 
-## ▶ STATUS 2026-07-23 (v3.0 EXECUTION) — P0-P7 SHIPPED; NEXT = P8
+## ▶ STATUS 2026-07-23 (v3.0 EXECUTION) — P0-P7 SHIPPED; P8 IN PROGRESS (audit + wave 1 DONE)
 
-**▶▶ NEXT SESSION: P8 — retirement + directive-#7 re-audit** (plan §5 row
-P8): retire the Jinja pages ONLY after operator acceptance of their React
-twins (P2-P7 acceptance is still pending — never retire a template before
-its twin is accepted); promote `/v3` → `/`; base.html plumbing
-retired/bridged; the CLAUDE.md OLD-class JS-drift grep; **re-audit the plan
-vs. the BUILT frontend + fix drift (directive #7)** — multi-agent read-only,
-the Track-2 "browser tests after the DOM stabilizes" moment. Also due at
-P8/program close: the shared-chrome random-walk residual (`nav-and-data.jsx`
-placeholder → a small shared `/api/state`+SSE adapter on every page), the
-named bundle follow-up (a real `no-undef` lint pass needs an eslint/acorn
-dev-dep — operator call; until then the targeted identifier grep + the
-audit-time vm-render sweep are the guard), and CLAUDE.md § Release hygiene
-(bump `PROJECT_VERSION_` + README Status in the close wrap). House cycle
-unchanged: one commit, gate SOLO `.venv`, ≥2 independent audits (direct
-parallel Agent calls, not Workflow), fold, STOP.
+**▶▶ NEXT: P8 wave 2** — the ledger's D2+D3 code fixes (ledger Disposition
+§2; `docs/audits/2026-07-23-v3.0-p8-design-consistency-audit.md`):
+Dashboard restores (L1-F1 daily-PnL array+chart — needs the backend
+`_journal_stats_context` addition · F2 sparkline series · F3 sector_lines
+render · F4 weekly gauge · F5 AGE col · F6/F7 OHLC header + honest label +
+retrying flag) · hedge-safe SSE uPnL merges (L3-F1: composite symbol|side —
+pages-linkage AND dash-tiled) · History M·R/heat + false-header fix (L3-F2)
+· Trade-Events summary render (L3-F3) · the worthwhile LOW tail (L4-LOW-2
+period future-clamp, L1-F8 _ptJson window-export, L1-F9 mark null-guard,
+L6-LOW-1 toast tone, L2-NIT-6 snake_case regime labels). Then the **doc
+wave** (4 doc MEDs + named-residue backfills: plan P4 retitle, DESIGN.md
+§6/§9, L2-LOW-1's four P3 items, L4-NIT-3, L5-LOW-1 regime header comment,
+stale §2 citation) and the **retirement decision points** (Primitives in
+prod nav · tools={false} ratify-vs-lift · workspace account-namespacing).
+Retirement itself (promote `/v3` → `/`, retire Jinja) stays gated on
+operator acceptance of P2-P7. House cycle unchanged: one commit per wave,
+gate SOLO `.venv`, ≥2 independent audits (direct parallel Agent calls, not
+Workflow), fold, STOP.
+
+**P8 SHIPPED SO FAR (this session):** `d8bd5c8` the 9-lens directive-#7
+audit ledger (headline: 5/6 pages CLEAN at material tiers; drift = D1
+fabrication (consensus HIGH) + D2 Dashboard drops + D3 linkage/history
+trims + 4 doc MEDs) · **`37d012e` wave 1** — D1 CLOSED: `chrome-live.js`
+QE_CHROME store + chrome rebound to real data ('—' when absent), real
+account picker (activate+reload, failures surfaced), honest StatusFooter
+(uptime real, ornaments dropped), NotificationProvider wired to
+`/notifications/poll` (real-4 channels; N_SEED + REGIME/NEWS fiction gone),
+the whole mock family deleted (QE_LIVE/QE_POS/MOCK/MOCK_WATCHLIST/
+mockOhlc/mockEquity/mockSpark/LiveNumber/LivePct/useLiveTicker/
+MOCK_REGIME-fallback/qeMockClockFmt), DEV demo rows relabeled EXAMPLE.
+Bundle `ebb1d4e12a`; 2 audits SHIP-WITH-NITS 0 CRIT/HIGH/MED, all folded
+(poll in-flight guard, /accounts retry, switch-failure surface,
+unknown-regime '—'). The old P8-work list items now DONE by wave 1: the
+shared-chrome adapter; still open: the no-undef lint follow-up (operator
+call) + Release hygiene (PROJECT_VERSION_ bump at program close).
 
 **P7 SHIPPED (this session, HEAD `22b03b9`)** — the Models page on the
 verbatim-capture backend; full detail in the plan's **P7 SHIPPED-STATE**
