@@ -1,25 +1,34 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-07-23 (**v3.0 EXECUTION — P0-P7 SHIPPED + P8 IN PROGRESS: the directive-#7 audit ledger (`d8bd5c8`), fix wave 1 (`37d012e`) and fix wave 2 (`15e77bb`, HEAD) landed this session; NEXT = the P8 doc wave → operator decision points → acceptance-gated retirement.** A live-DB incident earlier in the arc was caught + FULLY restored — details in the P2 block.)
+**Date**: 2026-07-24 (**v3.0 EXECUTION — P0-P7 SHIPPED + P8 AUDIT FULLY REMEDIATED: ledger `d8bd5c8` → wave 1 `37d012e` (fabrication) → wave 2 `15e77bb` (D2/D3 code) → doc wave `0c2da37` (doc-truth + sweep). EVERY audit finding is closed; NEXT = the 3 operator decision points → acceptance-gated retirement.** A live-DB incident earlier in the arc was caught + FULLY restored — details in the P2 block.)
 **Branch**: **`v3.0/ui-plan-audit` — LOCAL ONLY (unpushed).** Session commits on top of the plan-audit docs (`9e9e5f4`): `b14b3b3` render-as-is clarify · **`1221b16` P0** · **`8b23417` P1** · **`35ffff1`+`cca3eb7` P2** · `9e85249` launch-v3.bat · **`a1fde0b` P3** · **`319daa3`+`b55d317` P4** · `44a4077` P5-charge docs · **`13c62de` P5 Analytics** · **`81a6594` P6 Regime** · `0116083`+`e43a7e1` PaneFoot arc · **`22b03b9` P7 Models** · `1bfb244` P7 wrap · **`3e6bb45` PaneFoot completeness** (24 foot-less panes operator-caught; the authoritative sweep runs against the EMITTED bundle, esbuild foot-shorthand aware) · `4b2370a` wrap · **`d8bd5c8` P8 directive-#7 audit ledger** (9 lenses; `docs/audits/2026-07-23-v3.0-p8-design-consistency-audit.md` = the source of truth: D1 fabrication HIGH · D2 Dashboard drops HIGH+3MED · D3 3MED · 4 doc MEDs · LOW/NIT tail) · **`37d012e` P8 wave 1 (HEAD)** — fabrication mechanism KILLED: `chrome-live.js` QE_CHROME store (state 10s/snapshot 30s/system 60s/accounts+retry/SSE status), chrome rebound (real regime/P&L/OPEN/EXP/DD, real account picker + activate, honest footer, ornaments dropped per G-O9), NotificationProvider wired to `/notifications/poll` (real-4 channels, N_SEED gone), whole mock family deleted; bundle **`ebb1d4e12a`**; 2 audits SHIP-WITH-NITS 0 CRIT/HIGH/MED, all folded. Base = the v2.7 line (`92b753b`, pushed). **Operator merges/pushes v3.0 at their call.**
 **Tests**: **4255 passed / 7 skipped / 3 deselected** (SOLO, `.venv`, FULL gate green at the wave-2 wrap; +3 wave-2 pins). **NB the F5 tripwire fires its BENIGN branch while the engine runs alongside** (engine log + news-scheduler upserts = expected drift; investigated at wave 1 — NOT a test leak; re-run with the engine stopped for a silent gate). Watch item (older): a once-off collection-order ERROR in `test_phase8_audit_followup.py::TestSizeDriftNotification` (one P7-era run; never reproduced). ALWAYS run SOLO on the **`.venv`** interpreter (user-site Python lacks `pytest-timeout` → drops the 30 s guardrail). Fresh worktree/clone: run `scripts/provision_test_env.py` FIRST (CLAUDE.md § "Fresh worktree / clone").
-**Engine**: **RUNNING since 2026-07-23 18:42** (operator-started, 2× uvicorn :8000, the HANDOFF recipe) — serves `static/v3` per-request, so a browser refresh picks up the current bundle **`47f92434ad`**. **NB wave 2 changed PYTHON routes** (`_journal_stats_context` daily_pnl + signals `series`) — the running engine predates them, so the Monthly bar chart + sparklines render their empty-states until the NEXT engine restart (all other wave-2 fixes are JSX-only and live on refresh). Surfaced observations from the live log (NOT filed): the news fetcher upserts 100 items every ~16 s (confirm the cadence is intended); httpx INFO lines write the **Finnhub API token in cleartext** into `data/logs/risk_engine.jsonl` (pre-existing leak — ledger candidate).
+**Engine**: **RUNNING since 2026-07-23 18:42** (operator-started, 2× uvicorn :8000, the HANDOFF recipe) — serves `static/v3` per-request, so a browser refresh picks up the current bundle **`36ffe0a5ee`**. **NB wave 2 changed PYTHON routes** (`_journal_stats_context` daily_pnl + signals `series`) — the running engine predates them, so the Monthly bar chart + macro sparklines render their empty-states until the NEXT engine restart (every other P8 fix is JSX/docs-only and live on refresh). Surfaced observations from the live log (NOT filed): the news fetcher upserts 100 items every ~16 s (confirm the cadence is intended); httpx INFO lines write the **Finnhub API token in cleartext** into `data/logs/risk_engine.jsonl` (pre-existing leak — ledger candidate).
 
 ## ▶ STATUS 2026-07-23 (v3.0 EXECUTION) — P0-P7 SHIPPED; P8 IN PROGRESS (audit + wave 1 DONE)
 
-**▶▶ NEXT: P8 doc wave** — the 4 doc MEDs + named-residue backfills
-(ledger Disposition §3): plan P4 note retitle (stale pre-execution text,
-F13 class) · DESIGN.md §6 account-namespacing overstatement + §9
-Primitives-nav contradiction (pairs with decision point 1) · L2-LOW-1's
-four P3 named-residue items · L4-NIT-3 label renames · L5-LOW-1 regime
-file-header confirm-gate correction · the stale §2 PaneFoot citation ·
-L4-NIT-5/L8-LOW-a the 11-site ECharts `'#000'` → `QE_ECHARTS_THEME.bg`
-sweep (mechanical, fits the doc wave). Then the **retirement decision
-points for the operator**: (1) Primitives in prod nav — strip vs amend §9;
-(2) `tools={false}` fleet convention — ratify in DESIGN.md §5 vs lift on
-large tables; (3) workspace layout account-namespacing — implement vs
-correct the doc. Retirement itself (promote `/v3` → `/`, retire Jinja)
-stays gated on operator acceptance of P2-P7. House cycle unchanged.
+**▶▶ NEXT: the 3 P8 OPERATOR DECISION POINTS, then retirement.** All
+audit findings are now closed (D1 wave 1 · D2/D3 wave 2 · docs wave 3).
+What remains needs YOUR call:
+1. **Primitives in production nav** — it ships as a divider-separated
+   amber DEV-chip tab in `NAV_ITEMS` (faithful to the design). Strip it
+   for the `/v3` → `/` promotion (hash `#Primitives` keeps it reachable)
+   or keep the chip? DESIGN.md §9/§10 now describe the shipped state and
+   name this as your call.
+2. **`tools={false}` fleet convention** — every shipped page disables
+   DataList's built-in search/sort/filter (server owns paging/search),
+   while DESIGN.md §5 still advertises them as auto. Ratify the
+   convention in §5, or lift the suppression on the big tables
+   (Per-Fill Log 500 rows, History pages)?
+3. **Workspace-layout account-namespacing** — keys are
+   `qe.ws.layout.${id}` with no account component (deferred §1.5).
+   Implement namespacing, or leave it (doc now states the truth)?
+Then **retirement** (promote `/v3` → `/`, retire the Jinja twins,
+base.html plumbing, CLAUDE.md OLD-class JS-drift grep) — still gated on
+your acceptance of P2-P7 live, plus the Release-hygiene bump
+(`PROJECT_VERSION_` + README Status) at program close. Also open, no
+owner yet: the no-undef lint follow-up (eslint/acorn dev-dep) and the
+`entry_ms` misnomer + P1 numeric-stub cleanup (wave-2 finding).
 
 **P8 wave 2 SHIPPED `15e77bb` (this session)** — D2+D3 closed; full detail
 in the ledger's Disposition EXECUTION STATE. Headlines: Monthly daily-PnL
