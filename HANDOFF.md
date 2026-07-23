@@ -1,35 +1,52 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-07-23 (**v3.0 EXECUTION — P0-P6 SHIPPED + the PaneFoot arc (2 commits, HEAD `e43a7e1`); NEXT = P7 Models — NEW SESSION.** A live-DB incident earlier in the arc was caught + FULLY restored — details in the P2 block.)
-**Branch**: **`v3.0/ui-plan-audit` — LOCAL ONLY (unpushed).** Session commits on top of the plan-audit docs (`9e9e5f4`): `b14b3b3` render-as-is clarify · **`1221b16` P0** · **`8b23417` P1** · **`35ffff1`+`cca3eb7` P2** · `9e85249` launch-v3.bat · **`a1fde0b` P3** · **`319daa3`+`b55d317` P4** · `44a4077` P5-charge docs · **`13c62de` P5 Analytics** · **`81a6594` P6 Regime** · `0116083` PaneFoot prose pass (superseded) · **`e43a7e1` PaneFoot v2 4-tier data-state (HEAD)**. Base = the v2.7 line (`92b753b`, pushed). **Operator merges/pushes v3.0 at their call.**
-**Tests**: **4220 passed / 7 skipped / 3 deselected** (SOLO, `.venv`, FULL gate re-run green at the `e43a7e1` wrap; +9 P6 pins over the P5 bundle; the two PaneFoot commits are JSX-only — count unchanged; NO F5 tripwire). ALWAYS run SOLO on the **`.venv`** interpreter (user-site Python lacks `pytest-timeout` → drops the 30 s guardrail). Fresh worktree/clone: run `scripts/provision_test_env.py` FIRST (CLAUDE.md § "Fresh worktree / clone").
-**Engine**: **STOPPED** (no python processes as of this wrap). **Must be restarted to live-verify `/v3`** — it will NOT serve the new v3 routes (incl. `/api/regime/multipliers`) or the current bundle **`94ac1f0c60`** until restart. Recipe — **SYNCED OS CLOCK FIRST** (`w32tm /resync`; a drifted clock → `-1021 Timestamp ahead` → the "Connecting to exchange…" hang): `.venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000` (**no `--reload`**), or `launch-v3.bat`.
+**Date**: 2026-07-23 (**v3.0 EXECUTION — P0-P7 SHIPPED (P7 Models landed this session, HEAD `22b03b9`); NEXT = P8 retirement + directive-#7 re-audit.** A live-DB incident earlier in the arc was caught + FULLY restored — details in the P2 block.)
+**Branch**: **`v3.0/ui-plan-audit` — LOCAL ONLY (unpushed).** Session commits on top of the plan-audit docs (`9e9e5f4`): `b14b3b3` render-as-is clarify · **`1221b16` P0** · **`8b23417` P1** · **`35ffff1`+`cca3eb7` P2** · `9e85249` launch-v3.bat · **`a1fde0b` P3** · **`319daa3`+`b55d317` P4** · `44a4077` P5-charge docs · **`13c62de` P5 Analytics** · **`81a6594` P6 Regime** · `0116083`+`e43a7e1` PaneFoot arc · **`22b03b9` P7 Models (HEAD)**. Base = the v2.7 line (`92b753b`, pushed). **Operator merges/pushes v3.0 at their call.**
+**Tests**: **4252 passed / 7 skipped / 3 deselected** (SOLO, `.venv`, FULL gate green at the P7 wrap; +31 P7 pins + 1 route smoke over the P6 bundle; NO F5 tripwire). One observation: a single once-off collection-order ERROR in `test_phase8_audit_followup.py::TestSizeDriftNotification` appeared in ONE mid-session full run, did not reproduce solo (24/24) NOR in the clean final gate — no error detail captured (tail-swallowed); treat as an ordering-flake watch item, not a finding. ALWAYS run SOLO on the **`.venv`** interpreter (user-site Python lacks `pytest-timeout` → drops the 30 s guardrail). Fresh worktree/clone: run `scripts/provision_test_env.py` FIRST (CLAUDE.md § "Fresh worktree / clone").
+**Engine**: **STOPPED** (untouched this session). **Must be restarted to live-verify `/v3`** — it will NOT serve the new v3 routes (incl. the P7 `/api/models/*` doors) or the current bundle **`665cd17682`** until restart. Recipe — **SYNCED OS CLOCK FIRST** (`w32tm /resync`; a drifted clock → `-1021 Timestamp ahead` → the "Connecting to exchange…" hang): `.venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000` (**no `--reload`**), or `launch-v3.bat`.
 
-## ▶ STATUS 2026-07-23 (v3.0 EXECUTION) — P0-P6 SHIPPED; NEXT = P7 Models
+## ▶ STATUS 2026-07-23 (v3.0 EXECUTION) — P0-P7 SHIPPED; NEXT = P8
 
-**▶▶ NEXT SESSION: P7 Models** (plan §5 row P7 — the HEAVY phase: G-M1
-verbatim `report_json` store · **G-M2 generic lossless workbook capture**
-(§2 — a small generic serializer, NOT a per-metric schema port; render-as-is
-directive #4) · G-M3 overview/leaderboard feed · G-M4 `source_json`+`tags_json`
-on `potential_models` (§3 RATIFIED — models DO carry source binding) · G-M5-7).
-Design refs: `pages-models.jsx` + `pages-models-detail.jsx` +
-`pages-models-data.jsx` (STRIP `_synthReport` — defined pages-models-data.jsx:35
-AND invoked pages-models.jsx:84, both call sites). The v2.7 model library
-backend (CRUD + multipart upload + MultiCharts parser vs the real `@ES` file)
-is the wired base — VERIFY-FIRST its current shape before scoping; the parser
-keeps ~9 scalars today and G-M2 rebuilds it to capture the whole workbook
-verbatim. MultiCharts real-file gotchas are in the v2.7 memory block (trades
-header on ROW 3 — scan; signed-negative drawdown/PF cells → recompute PF from
-gross; `Point Value` is the string "$50"; the `.xml` export IS an OOXML zip).
-Schema changes ride `database.py` twins + the executescript-before-ALTER trap
-(CLAUDE.md). **P7's new pages MUST bind qeFootState foots from the start**
-(DESIGN.md §5 — the 4-tier data-state contract; `useAnaJson` returns a ready
-`foot`; never hand-write prose/id/ms foots) and **grep every new
-cross-component identifier against its defining scope + the emitted bundle**
-(the build guard is parse-only — see the PaneFoot-arc lessons below). House
-cycle: one commit, gate SOLO `.venv`, ≥2 independent audits (direct parallel
-Agent calls, not Workflow), fold, STOP. After P7: P8 = retirement +
-directive-#7 re-audit + JS-drift grep + promote `/v3` → `/`.
+**▶▶ NEXT SESSION: P8 — retirement + directive-#7 re-audit** (plan §5 row
+P8): retire the Jinja pages ONLY after operator acceptance of their React
+twins (P2-P7 acceptance is still pending — never retire a template before
+its twin is accepted); promote `/v3` → `/`; base.html plumbing
+retired/bridged; the CLAUDE.md OLD-class JS-drift grep; **re-audit the plan
+vs. the BUILT frontend + fix drift (directive #7)** — multi-agent read-only,
+the Track-2 "browser tests after the DOM stabilizes" moment. Also due at
+P8/program close: the shared-chrome random-walk residual (`nav-and-data.jsx`
+placeholder → a small shared `/api/state`+SSE adapter on every page), the
+named bundle follow-up (a real `no-undef` lint pass needs an eslint/acorn
+dev-dep — operator call; until then the targeted identifier grep + the
+audit-time vm-render sweep are the guard), and CLAUDE.md § Release hygiene
+(bump `PROJECT_VERSION_` + README Status in the close wrap). House cycle
+unchanged: one commit, gate SOLO `.venv`, ≥2 independent audits (direct
+parallel Agent calls, not Workflow), fold, STOP.
+
+**P7 SHIPPED (this session, HEAD `22b03b9`)** — the Models page on the
+verbatim-capture backend; full detail in the plan's **P7 SHIPPED-STATE**
+note. Headlines: G-M2 = ONE generic lossless serializer
+(`core/backtest_adapters/workbook_capture.py`, `workbook.v1` — every
+sheet/cell, type+SIGN preserved, non-finite F2-encoded, 250k-cell
+fail-loud cap; the v2.7 ~9-scalar parse stays as the derived aggregate);
+G-M1 `report_json` + per-run report endpoint; G-M3 overview feed (4
+queries, spark ≤48); G-M4 source+tags + §6-3b seed-if-empty; G-M5
+dry-run (writes nothing; bare dry_run w/o format=json 400s) + combined
+create+import w/ rollback; G-M6 usage feed (closed+plans; open lane
+deliberately absent); G-M7 filename + contracts. Schema = twins +
+migration 015. Frontend = 6 `pages-models-*` modules: render-as-is =
+RENDER-TIME label-lookup over the capture (generic sheet sectionizer +
+bespoke KPI/paired-trades/equity/hourly panes, each degrading to the
+generic render); `_synthReport` NOT ported; all foots qeFootState/
+last-submit; `useAnaJson` gained an additive null-url skip. **2
+independent audits, SHIP-WITH-NITS ×2, 0 CRIT/HIGH** (frontend auditor
+EXECUTED the built bundle across all 26 component states — zero unbound
+identifiers, the P6-arc CRIT class); ALL findings folded pre-commit
+(headline folds: create-flow bounce await-reload; report-fetch error →
+tier-3 EmptyState+Retry, was an infinite spinner; dry-run fail-loud).
+31 pins `tests/test_p7_models.py`; 2 v2.7 pins updated to the new truth
+(trade-key parity +`contracts`; the to_thread spy asserts parse AND
+capture off-loop).
 
 **P6 SHIPPED (this session, HEAD)** — the Regime page; full detail in the
 plan's **P6 SHIPPED-STATE** note. Headlines: verify-first found the surface
@@ -86,8 +103,9 @@ concatenated bundle is a NAMED FOLLOW-UP (needs an eslint/acorn dev-dep —
 operator call); until then, grep new cross-component identifiers against
 their defining scope before rebuild.
 Operator acceptance of P2 (gear → Config), P3 (`/v3` Pre-Trade), P4
-(History+Linkage), P5 (Analytics), and P6 (Regime) is still pending — engine
-restart required (launch-v3.bat).
+(History+Linkage), P5 (Analytics), P6 (Regime), and P7 (Models — incl. a
+real `@ES` import rendered as-in-file from the verbatim capture) is still
+pending — engine restart required (launch-v3.bat).
 
 **Program state:**
 | Phase | State |
@@ -99,7 +117,8 @@ restart required (launch-v3.bat).
 | **P4 History+Linkage** | **SHIPPED** — backend `319daa3`: G-O7 = PositionInfo `planned_tp/planned_sl/tp_drift_pct/sl_drift_pct` stamped in `_enrich_positions_calc_id` (display-only; badge/sticky logic untouched; cleared in the no-junction branch; `_PRESERVE_FIELDS`). G-O6 = `GET /api/linkage/funding`. Mirrors: `/api/linkage/{positions,calcs,closes}` (closes carries DERIVED `pending_reason` = un-annotated MANUAL_OTHER). History `?format=json` doors: closed_positions (stamped badge) · order_history · fills · pre_trade (`model_display` F11) · trade_events (`_payload`/`_symbol`; rows carry ISO `timestamp`, not ms) · open_positions (serializer + working orders) · position_fills (`exec_link_status`). Drilldown events/amendments ride the EXISTING `/context/position/{id}`. 12 pins `tests/test_p4_linkage.py`. Writes stay choke-pointed (manual_link / mark_unplanned / close_reason / cancel — POST the existing endpoints from React, never write link_status directly). Frontend `b55d317`: `link-primitives.jsx` (lpPx magnitude rule; DevBadge ±0.1% deadband) + `pages-linkage.jsx` (needs_review inbox + 3-leg diff + reason picker; monitor wall on the mirrors; SSE uPnL merge; alert-class failure discrimination on the 200-always endpoints) + `pages-history.jsx` (5 tabs on the doors, server paging/search/date presets, drilldown, close-reason modal, page-scope CSV). Audit SHIP-WITH-NITS folded; residues in file headers (no server column-sort; ctx.events + Export-Audit → P8). |
 | **P5 Analytics** | **SHIPPED `13c62de`** — G-O4 `/api/analytics/execution` (fills ⋈ pre_trade_log ⋈ orders; residual-vs-plan slippage semantics per audit H-1; time-to-fill, not latency — no signal→fill source exists) + `/api/analytics/distributions` (account-tz hour/dow per-trade tuples + R histogram); 8 `?format=json` doors + `_json_safe` F2-fold on `equity_ohlc`; `frontend/src/pages-analytics.jsx` (11 tabs; FE-MED-018 dim rule; real offset nav); 22 pins `tests/test_p5_analytics.py`; 2 independent audits, ALL findings folded pre-commit. Full detail: the plan's **P5 SHIPPED-STATE** note. |
 | **P6 Regime** | **SHIPPED `81a6594`** — verify-first: surface already ALL-JSON (zero doors; News = `/api/news/*` + `/api/calendar`, not `/api/regime/*`); +`GET /api/regime/multipliers`; 9 pins `tests/test_p6_regime.py`; `frontend/src/pages-regime.jsx` (4 tabs; 5-style timeline; Task-136/124 semantics; page-level backfill job w/ terminal poll; scroll-to-NOW calendar; decision-tree copy corrected to the real classifier cascade; confirm-gated Reclassify). 2 audits SHIP-WITH-NITS, all folded. Full detail: the plan's **P6 SHIPPED-STATE** note. Followed by the **PaneFoot arc** (`0116083` prose pass → **`e43a7e1` 4-tier data-state**, ★ block above). |
-| P7 Models · P8 retire+re-audit | not started (plan §5; P7 Models = the generic lossless MultiCharts capture, `b14b3b3`; P8 = retirement + directive-#7 re-audit + JS-drift grep). |
+| **P7 Models** | **SHIPPED `22b03b9`** — G-M1..7 backends (verbatim `workbook.v1` capture · report store/endpoint · overview feed · source+tags+seed · dry-run/create+import · usage · filename+contracts; schema twins + migration 015) + 6 React modules (render-as-is via render-time label-lookup; generic sheet sectionizer + degrading bespoke panes). 31 pins `tests/test_p7_models.py`; 2 audits SHIP-WITH-NITS, 0 CRIT/HIGH, all folded. Full detail: the plan's **P7 SHIPPED-STATE** note. |
+| P8 retire+re-audit | not started (plan §5: retirement after acceptance + directive-#7 re-audit + JS-drift grep + promote `/v3` → `/`). |
 
 **★ P2 KEY FACTS (shipped shape — still binding for later phases):**
 - **Two disjoint risk stores** — `account_params` (sizing knobs; write via
