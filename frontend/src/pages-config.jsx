@@ -30,9 +30,12 @@
 
 /* ── fetch helpers ───────────────────────────────────────────────────────── */
 const _cfgJson = async (url) => {
-  const r = await fetch(url, { headers: { Accept: 'application/json' } });
-  if (!r.ok) throw new Error(url + ' ' + r.status);
-  return r.json();
+  let r;
+  try { r = await fetch(url, { headers: { Accept: 'application/json' } }); }
+  catch (e) { const err = new Error(url + ' unreachable'); err.status = 0; throw err; }
+  if (!r.ok) { const err = new Error(url + ' ' + r.status); err.status = r.status; throw err; }
+  try { return await r.json(); }
+  catch (e) { const err = new Error(url + ' corrupt response'); err.corrupt = true; throw err; }
 };
 
 /* Strip an HTML-snippet response (the Jinja-era endpoints answer with styled
@@ -268,16 +271,20 @@ const CfgAccountsTab = () => {
   const [detail, setDetail]     = React.useState(null);  // {params, settings} for acct
   const acctRef = React.useRef(null);                    // live selection, for async guards
 
+  const [netA, setNetA] = React.useState({});   // /accounts pipe (qeFootState)
+  const [netD, setNetD] = React.useState({});   // /api/config/account/{id} pipe
   const loadAccounts = React.useCallback(async (keepSelection) => {
+    const t0 = performance.now();
     try {
       const rows = await _cfgJson('/accounts');
+      setNetA({ err: null, ms: performance.now() - t0 });
       setAccounts(rows);
       setAcct((cur) => {
         if (keepSelection && cur != null && rows.some((a) => a.id === cur)) return cur;
         const act = rows.find((a) => a.is_active) || rows[0];
         return act ? act.id : null;
       });
-    } catch (e) { setAccounts([]); }
+    } catch (err) { setAccounts([]); setNetA((n) => ({ ...n, err })); }
   }, []);
   React.useEffect(() => { loadAccounts(false); }, [loadAccounts]);
 
@@ -286,9 +293,12 @@ const CfgAccountsTab = () => {
     if (acct == null) return;
     setDetail(null);
     let alive = true;
+    const t0 = performance.now();
     _cfgJson('/api/config/account/' + acct)
-      .then((d) => { if (alive) setDetail(d); })
-      .catch(() => { if (alive) setDetail({ params: {}, settings: {} }); });
+      .then((d) => { if (alive) { setDetail(d); setNetD({ err: null, ms: performance.now() - t0 }); } })
+      // _placeholder: the empty-defaults form is NOT "last data" — the foot
+      // must report tier-3, not keep-last-good [foot-audit MED-3]
+      .catch((err) => { if (alive) { setDetail({ params: {}, settings: {}, _placeholder: true }); setNetD((n) => ({ ...n, err })); } });
     return () => { alive = false; };
   }, [acct]);
 
@@ -314,7 +324,7 @@ const CfgAccountsTab = () => {
       <GridItem x={0} y={0} w={6} h={20} minW={4} minH={6}>
         <Pane title="Accounts" count={accounts ? accounts.length : null} style={{ height: '100%' }}
           onRefresh={() => loadAccounts(true)}
-          foot={{ tone: 'sub', msg: accounts ? `${accounts.length} accounts · add/delete on Jinja /config` : 'loading…' }}>
+          foot={qeFootState({ loading: netA.ms == null && !netA.err, err: netA.err, hasData: accounts != null && accounts.length > 0, ms: netA.ms })}>
           {accounts == null ? <Spinner label="loading" /> :
            !accounts.length ? <EmptyState tone="warn" glyph="∅" msg="No accounts" hint="Engine unreachable, or no accounts configured." /> : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -348,7 +358,8 @@ const CfgAccountsTab = () => {
             also refetch server truth [P2 audit LOW-1] */}
         <Pane title="Account Settings" style={{ height: '100%' }} bodyStyle={{ overflow: 'auto' }}
           onRefresh={() => reload(true)}
-          foot={{ tone: 'sub', msg: 'two stores · sizing (account_params) + DD posture (account_settings, display-only)' }}>
+          foot={!sel ? { tone: 'sub', msg: 'no account selected' }
+            : qeFootState({ loading: detail == null && !netD.err, err: netD.err, hasData: detail != null && !detail._placeholder, ms: netD.ms })}>
           {!sel ? <EmptyState tone="neutral" glyph="◇" msg="No account selected" /> :
            detail == null ? <Spinner label="loading" /> :
            <CfgAccountForm key={sel.id} account={sel} detail={detail} onReload={reload} />}
@@ -367,9 +378,13 @@ const CfgConnectionsTab = () => {
   const [msg, setMsg]         = React.useState(null);
   const [add, setAdd]         = React.useState({ provider: '', label: '', key: '' });
 
+  const [net, setNet] = React.useState({});
   const load = React.useCallback(async () => {
-    try { setConns((await _cfgJson('/api/connections')).connections || []); }
-    catch (e) { setConns([]); }
+    const t0 = performance.now();
+    try {
+      setConns((await _cfgJson('/api/connections')).connections || []);
+      setNet({ err: null, ms: performance.now() - t0 });
+    } catch (err) { setConns([]); setNet((n) => ({ ...n, err })); }
   }, []);
   React.useEffect(() => { load(); }, [load]);
 
@@ -429,7 +444,7 @@ const CfgConnectionsTab = () => {
       <GridItem x={0} y={0} w={24} h={20} minW={10} minH={6}>
         <Pane title="Data & Exchange Connections" count={conns ? conns.length : null}
           style={{ height: '100%' }} bodyStyle={{ padding: 0 }} onRefresh={load}
-          foot={{ tone: 'sub', msg: conns ? `${conns.length} providers · ${conns.filter((c) => c.has_key).length} connected` : 'loading…' }}>
+          foot={qeFootState({ loading: net.ms == null && !net.err, err: net.err, hasData: conns != null && conns.length > 0, ms: net.ms })}>
           {conns == null ? <div style={{ padding: 10 }}><Spinner label="loading" /></div> : (
             <React.Fragment>
               <DataList
@@ -517,9 +532,12 @@ const CfgPresetsTab = () => {
   const [busy, setBusy]     = React.useState(null);
   const [msg, setMsg]       = React.useState(null);
 
+  const [net, setNet] = React.useState({});
   const load = React.useCallback(async () => {
+    const t0 = performance.now();
     try {
       const [pc, accounts] = await Promise.all([_cfgJson('/api/config/presets'), _cfgJson('/accounts')]);
+      setNet({ err: null, ms: performance.now() - t0 });
       setCat(pc.presets || []);
       const act = (accounts || []).find((a) => a.is_active) || null;
       setActive(act);
@@ -531,7 +549,7 @@ const CfgPresetsTab = () => {
           setCurrent((d.settings || {}).strategy_preset || '');
         } catch (e) { setCurrent(''); }
       }
-    } catch (e) { setCat([]); }
+    } catch (err) { setCat([]); setNet((n) => ({ ...n, err })); }
   }, []);
   React.useEffect(() => { load(); }, [load]);
 
@@ -567,7 +585,7 @@ const CfgPresetsTab = () => {
     <GridWorkspace>
       <GridItem x={0} y={0} w={24} h={16} minW={10} minH={6}>
         <Pane title="Risk Presets" style={{ height: '100%' }} bodyStyle={{ overflow: 'auto' }} onRefresh={load}
-          foot={{ tone: 'sub', msg: 'Apply = FULL write (both stores) · confirm-gated' }}>
+          foot={qeFootState({ loading: net.ms == null && !net.err, err: net.err, hasData: (cat || []).length > 0, ms: net.ms })}>
           <div className="qe-mono" style={{ fontSize: '0.6rem', color: 'var(--qe-sub)', marginBottom: 8, lineHeight: 1.5 }}>
             Apply is FULL: writes the DD posture (account_settings — the store the DD gate reads)
             AND the sizing envelope (account_params). Applies to the active account
@@ -622,8 +640,11 @@ const CfgPresetsTab = () => {
 /* ── System tab ──────────────────────────────────────────────────────────── */
 const CfgSystemTab = () => {
   const [sys, setSys] = React.useState(null);
+  const [net, setNet] = React.useState({});
   const load = React.useCallback(async () => {
-    try { setSys(await _cfgJson('/api/system')); } catch (e) { setSys({}); }
+    const t0 = performance.now();
+    try { setSys(await _cfgJson('/api/system')); setNet({ err: null, ms: performance.now() - t0 }); }
+    catch (err) { setSys({}); setNet((n) => ({ ...n, err })); }
   }, []);
   React.useEffect(() => { load(); }, [load]);
 
@@ -632,7 +653,7 @@ const CfgSystemTab = () => {
     <GridWorkspace>
       <GridItem x={0} y={0} w={24} h={12} minW={10} minH={5}>
         <Pane title="System" style={{ height: '100%' }} bodyStyle={{ overflow: 'auto' }} onRefresh={load}
-          foot={{ tone: 'sub', msg: 'read-only engine facts · /api/system' }}>
+          foot={qeFootState({ loading: net.ms == null && !net.err, err: net.err, hasData: !!(sys && sys.version), ms: net.ms })}>
           {sys == null ? <Spinner label="loading" /> :
            !sys.version ? <EmptyState tone="warn" glyph="∅" msg="Engine unreachable" hint="/api/system did not answer." /> : (
             <React.Fragment>

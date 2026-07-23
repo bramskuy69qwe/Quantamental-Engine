@@ -559,11 +559,67 @@ const PaneHead = ({title, count=null, right=null, hot=false, tag=null, onRefresh
   );
 };
 
-// PaneFoot — the pane's truthful status line (counts, cadence, source — see
-// DESIGN.md §5 PaneFoot policy). Tones: ok | info | warn | err | sub.
+// ─────────────────────────────────────────────────────────────────────────
+// qeFootState — the ONE production PaneFoot deriver (DESIGN.md §5, 4-tier
+// data-state model; operator-ratified). Foots are DATA-STATE lines, never
+// descriptive prose:
+//   1 fine     → ok   `connected [12ms]` (real measured fetch ms)
+//   2 degraded → warn data on screen but imperfect: `delayed [640ms]`
+//                (ms > 500) · `response corrupt · showing last data` ·
+//                `no network · showing last data · retrying`
+//   3 error    → err  nothing usable to show; the CAUSE is named:
+//                `endpoint not found (404)` · `no network — engine
+//                unreachable` · `server error (500)` · `unauthorized (403)`
+//                · `corrupt response`
+//   4 attempt  → sub + busy (braille): `loading…` / `reconnecting…`
+// 2-vs-3 rule: data on screen → tier 2 (warn, cause appended); no data →
+// tier 3 (err, cause displayed). `empty` (successful fetch, zero rows) is
+// accepted so callers can pass full state — it stays tier 1; the BODY owns
+// empty-state display (EmptyState), the foot reports the pipe.
+const qeFootCause = (err) => {
+  if (!err) return 'unknown error';
+  if (err.corrupt) return 'corrupt response';
+  const s = err.status;
+  if (s === 404) return 'endpoint not found (404)';
+  if (s === 401 || s === 403) return `unauthorized (${s})`;
+  if (s >= 500) return `server error (${s})`;
+  if (s == null || s === 0) return 'no network — engine unreachable';
+  return `request failed (${s})`;
+};
+const qeFootState = ({ loading, err, corrupt, status, hasData, empty, ms, retrying }) => {
+  // Compose the error DESCRIPTOR onto a plain object (never mutate the
+  // caller's Error across renders); flat corrupt/status compose for callers
+  // that track them apart from the thrown error. `status: 0` alone IS an
+  // error (this codebase's network sentinel) — null-check, not truthiness.
+  const e = (err || corrupt != null || status != null)
+    ? {
+        corrupt: (err && err.corrupt) != null ? err.corrupt : corrupt,
+        status: (err && err.status) != null ? err.status : status,
+      }
+    : null;
+  if (loading && !hasData) {
+    return { tone: 'sub', busy: true, msg: e ? 'reconnecting…' : 'loading…' };
+  }
+  if (e) {
+    if (hasData) {
+      // tier 2 — degraded, keep-last-good. `· retrying` only when the
+      // caller genuinely re-polls (a one-shot fetch must not promise it).
+      const suffix = retrying ? ' · retrying' : '';
+      if (e.corrupt) return { tone: 'warn', msg: `response corrupt · showing last data${suffix}` };
+      if (e.status == null || e.status === 0) return { tone: 'warn', msg: `no network · showing last data${suffix}` };
+      return { tone: 'warn', msg: `${qeFootCause(e)} · showing last data${suffix}` };
+    }
+    return { tone: 'err', msg: qeFootCause(e) };
+  }
+  if (ms != null && ms > 500) return { tone: 'warn', msg: `delayed [${Math.round(ms)}ms]` };
+  return { tone: 'ok', msg: `connected${ms != null ? ` [${Math.round(ms)}ms]` : ''}` };
+};
+
+// PaneFoot — the pane's DATA-STATE line (derive via qeFootState — see the
+// 4-tier model above / DESIGN.md §5). Tones: ok | info | warn | err | sub.
 // `id`/`ms` render when passed (DEV proving-ground demos) but production
-// pages never pass them — fabricated event-ids/latency readouts are banned.
-// `busy` swaps the glyph for the braille loading spinner (used during reload).
+// pages never pass them raw — the measured ms rides INSIDE qeFootState's msg.
+// `busy` swaps the glyph for the braille loading spinner (tier 4 + reload).
 const PaneFoot = ({tone='info', id, msg, ms, busy=false}) => {
   const toneColors = {
     ok:   { fg: 'var(--qe-green)', bg: 'rgba(0,255,127,0.06)',  glyph:'✓' },
@@ -1284,6 +1340,6 @@ Object.assign(window, {
   StatusDot, Badge, RegimeBadge, PeriodSelector, Gauge, EmptyState,
   Tabs, Strip, FlashCell, LiveValue, useLiveTicker, LiveNumber, LivePct, LiveClock,
   asciiSpark, ASCII_SPARK,
-  Pane, PaneHead, PaneFoot, RefreshButton, ReloadGlyph, ReloadIconSVG, BrailleSquares, Spinner, useSpinFrame, RELOAD_MS, PaneErrorBoundary, DataList, FieldList, StepperInput, LockButton, NewsTickerBar,
+  Pane, PaneHead, PaneFoot, qeFootState, qeFootCause, RefreshButton, ReloadGlyph, ReloadIconSVG, BrailleSquares, Spinner, useSpinFrame, RELOAD_MS, PaneErrorBoundary, DataList, FieldList, StepperInput, LockButton, NewsTickerBar,
   Switch, Chip, Banner, Toast, PageHeader,
 });

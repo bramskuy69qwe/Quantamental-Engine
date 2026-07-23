@@ -21,19 +21,33 @@ const QE_DASH = (function () {
     log: [],                // engine-log lines, newest-first for the prepend feed
     logCursor: 0,
     loaded: false,
+    // per-source data-pipe state for qeFootState (DESIGN.md §5 4-tier foots)
+    net: { snapshot: {}, st: {}, macro: {}, log: {} },
   };
   const subs = new Set();
   const notify = () => subs.forEach((f) => { try { f(); } catch (e) { /* isolate */ } });
 
-  async function _json(url) {
-    const r = await fetch(url, { headers: { Accept: 'application/json' } });
-    if (!r.ok) throw new Error(url + ' ' + r.status);
-    return r.json();
+  async function _json(url, key) {
+    const t0 = performance.now();
+    try {
+      let r;
+      try { r = await fetch(url, { headers: { Accept: 'application/json' } }); }
+      catch (e) { const err = new Error(url + ' unreachable'); err.status = 0; throw err; }
+      if (!r.ok) { const err = new Error(url + ' ' + r.status); err.status = r.status; throw err; }
+      let d;
+      try { d = await r.json(); }
+      catch (e) { const err = new Error(url + ' corrupt response'); err.corrupt = true; throw err; }
+      if (key) state.net[key] = { err: null, ms: performance.now() - t0 };
+      return d;
+    } catch (err) {
+      if (key) { state.net[key] = { ...state.net[key], err }; notify(); }
+      throw err;
+    }
   }
 
   async function loadSnapshot() {
     try {
-      const s = await _json('/api/dashboard/snapshot');
+      const s = await _json('/api/dashboard/snapshot', 'snapshot');
       state.equity = s.equity || {};
       state.risk = s.risk || {};
       state.journal = s.journal || {};
@@ -44,15 +58,15 @@ const QE_DASH = (function () {
     } catch (e) { /* keep prior state */ }
   }
   async function loadState() {
-    try { state.st = await _json('/api/state'); notify(); } catch (e) { /* keep */ }
+    try { state.st = await _json('/api/state', 'st'); notify(); } catch (e) { /* keep */ }
   }
   async function loadMacro() {
-    try { const m = await _json('/api/regime/signals/latest'); state.macro = m.signals || []; notify(); }
+    try { const m = await _json('/api/regime/signals/latest', 'macro'); state.macro = m.signals || []; notify(); }
     catch (e) { /* keep */ }
   }
   async function loadLog() {
     try {
-      const d = await _json('/api/engine/log?since=' + state.logCursor + '&limit=60');
+      const d = await _json('/api/engine/log?since=' + state.logCursor + '&limit=60', 'log');
       const lines = d.lines || [];
       if (lines.length) {
         // server returns oldest-first; prepend newest for the feed display
@@ -61,6 +75,7 @@ const QE_DASH = (function () {
         notify();
       } else if (d.latest_id != null) {
         state.logCursor = d.latest_id;
+        notify();   // quiet poll still refreshes net.log (foot recovery) [foot-audit LOW-5]
       }
     } catch (e) { /* keep */ }
   }
@@ -125,6 +140,14 @@ const QE_DASH = (function () {
 
 /* Subscribe a component to QE_DASH updates. Used at the LEAF level so the
    memoized TiledGrid never re-renders. */
+// Per-source pane foot: never-responded → tier-4 loading; then the 4-tier
+// model off the tracked {err, ms} (qeFootState from primitives).
+const _dashFoot = (d, key, hasData) => {
+  const n = (d.net && d.net[key]) || {};
+  // every QE_DASH source is on a poll interval → retrying is truthful
+  return qeFootState({ loading: n.ms == null && !n.err, err: n.err, hasData: !!hasData, ms: n.ms, retrying: true });
+};
+
 const useDash = () => {
   const [, force] = React.useReducer((x) => x + 1, 0);
   React.useEffect(() => QE_DASH.subscribe(force), []);
@@ -194,7 +217,7 @@ const EquityStatsPane = () => {
   return (
     <Pane title="Equity" style={{ height: '100%' }}
       right={<Badge tone="ok">LIVE</Badge>}
-      foot={{ tone: 'info', msg: `equity ${_n(eq.total_equity)} · margin ${_n(eq.available_margin)}` }}>
+      foot={_dashFoot(d, 'snapshot', eq.total_equity != null)}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <div><Lbl>Total</Lbl><EquityHero /></div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
@@ -211,19 +234,18 @@ const EquityStatsPane = () => {
 };
 
 /* ── Tile: Equity curve — self-fetching OHLC chart + a live header ──────── */
-const EquityOhlcChart = React.memo(function EquityOhlcChart({ tf }) {
+const EquityOhlcChart = React.memo(function EquityOhlcChart({ tf, onNet }) {
   const [data, setData] = React.useState([]);
   React.useEffect(() => {
     let alive = true;
     const load = async () => {
+      const t0 = performance.now();
       try {
-        const r = await fetch('/api/dashboard/equity_ohlc?tf=' + tf, { headers: { Accept: 'application/json' } });
-        if (!r.ok) return;
-        const j = await r.json();
+        const j = await _ptJson('/api/dashboard/equity_ohlc?tf=' + tf);
         // CandlestickChart wants [[t, o, c, l, h], …]; snapshot candle = {x,o,h,l,c}
         const rows = (j.candles || []).map((c) => [c.x, c.o, c.c, c.l, c.h]);
-        if (alive) setData(rows);
-      } catch (e) { /* keep */ }
+        if (alive) { setData(rows); if (onNet) onNet({ err: null, ms: performance.now() - t0 }); }
+      } catch (err) { if (alive && onNet) onNet((n) => ({ ...n, err })); }
     };
     load();
     const id = setInterval(load, 5000);
@@ -234,12 +256,13 @@ const EquityOhlcChart = React.memo(function EquityOhlcChart({ tf }) {
 
 const EquityCurvePane = () => {
   const [tf, setTf] = React.useState('1h');
+  const [net, setNet] = React.useState({});   // the chart child reports its 5s pipe up
   const d = useDash();
   const c = d.equity.total_equity;
   return (
     <Pane title="Equity Curve" hot tag="OHLC" style={{ height: '100%' }}
       right={<PeriodSelector options={[['1h', '1H'], ['4h', '4H'], ['1d', '1D'], ['1w', '1W']]} value={tf} onChange={setTf} />}
-      foot={{ tone: 'info', msg: `equity_ohlc · last C=${_n(c)} · tf=${tf}` }}
+      foot={qeFootState({ loading: net.ms == null && !net.err, err: net.err, hasData: net.ms != null, ms: net.ms })}
       bodyStyle={{ padding: 6 }}>
       <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
         <div className="qe-mono" style={{ fontSize: '0.62rem', display: 'flex', gap: 14, flexWrap: 'wrap', padding: '2px 4px', alignItems: 'baseline' }}>
@@ -249,7 +272,9 @@ const EquityCurvePane = () => {
           </span>
         </div>
         <div style={{ flex: 1, minHeight: 0 }}>
-          <EquityOhlcChart tf={tf} />
+          {/* onNet is the raw setState — success passes a VALUE, failure an
+              UPDATER fn; both are valid setState forms */}
+          <EquityOhlcChart tf={tf} onNet={setNet} />
         </div>
       </div>
     </Pane>
@@ -267,7 +292,7 @@ const RiskMonitorPane = () => {
   return (
     <Pane title="Risk Monitor" style={{ height: '100%' }}
       right={<Badge tone={enforced ? 'err' : 'info'}>{enforced ? 'ENFORCED' : 'ADVISORY'}</Badge>}
-      foot={{ tone: _stateTone(ddState), msg: `exp ${_n(rk.exposure_pct)}% · dd ${_n(rk.drawdown_pct)}% (cap ${_n(rk.max_dd_pct)}%) · ${enforced ? 'enforced' : 'advisory'}` }}>
+      foot={_dashFoot(d, 'st', d.st && d.st.dd_state != null)}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <Gauge label="Net Exposure" value={rk.exposure_pct != null ? rk.exposure_pct / 100 : 0} max={(rk.max_exposure_pct || 500) / 100} current={rk.exposure_pct != null ? _n(rk.exposure_pct / 100, 2) + '×' : '—'} maxLabel={`${_n(rk.max_exposure_pct / 100, 1)}× cap`} />
         <Gauge label="Drawdown 30d" value={Math.min(rk.drawdown_pct || 0, rk.max_dd_pct || 10)} max={rk.max_dd_pct || 10} current={_n(rk.drawdown_pct) + '%'} maxLabel={`${_n(rk.max_dd_pct)}% limit`} ticks={[5, 8]} />
@@ -292,7 +317,7 @@ const OpenPositionsPane = () => {
   return (
     <Pane title="Open Positions" count={rows.length} style={{ height: '100%' }}
       right={<button className="qe-btn qe-btn-sm" title="Size a new position in Pre-Trade" onClick={() => window.qeNav && window.qeNav('Pre-Trade')}>+ Calc</button>}
-      foot={{ tone: 'info', msg: `${rows.length} positions · snapshot + SSE` }}
+      foot={_dashFoot(d, 'snapshot', d.loaded)}
       bodyStyle={{ padding: 0, display: 'flex', flexDirection: 'column' }}>
       <DataList
         selKey="sym"
@@ -324,7 +349,7 @@ const MacroSignalsPane = () => {
   const sigs = d.macro;
   return (
     <Pane title="Macro Signals" count={sigs.length} style={{ height: '100%' }}
-      foot={{ tone: 'info', msg: `${sigs.length} signals · fred / yfinance / binance · 60s poll` }}>
+      foot={_dashFoot(d, 'macro', sigs.length > 0)}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {sigs.length === 0 && <EmptyState tone="warn" glyph="∅" msg="No signal data" hint="Run regime backfill to populate." />}
         {sigs.map((s) => (
@@ -345,7 +370,7 @@ const MonthlyPane = () => {
   const j = d.journal;
   return (
     <Pane title="Monthly Analytics Preview" style={{ height: '100%' }}
-      foot={{ tone: (j.monthly_pnl || 0) < 0 ? 'warn' : 'ok', msg: `${j.month_label || '—'} · pnl ${_sn(j.monthly_pnl)} · ${j.trade_count || 0} trades · winrate ${_n(j.win_rate)}%` }}>
+      foot={_dashFoot(d, 'snapshot', d.loaded)}>
       <div style={{ padding: '4px 6px' }}>
         <FieldList rows={[
           { label: 'Period PnL',  value: <>{_sn(j.monthly_pnl)} <span style={{ color: 'var(--qe-muted)', fontSize: '0.6rem' }}>({_sn(j.monthly_pnl_pct)}%)</span></>, color: (j.monthly_pnl || 0) < 0 ? 'red' : 'green' },
@@ -375,7 +400,7 @@ const ActiveParamsPane = () => {
   return (
     <Pane title="Active Parameters" tag="VIEW" style={{ height: '100%' }}
       right={<button className="qe-btn qe-btn-sm qe-btn-ghost" title="Edit risk parameters in Configuration" onClick={() => window.qeNav && window.qeNav('Config')}>Edit</button>}
-      foot={{ tone: 'sub', msg: 'risk params · from account config' }}>
+      foot={_dashFoot(d, 'snapshot', d.loaded)}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         <FieldList rows={rows} />
       </div>
@@ -401,6 +426,21 @@ const EngineLogBody = () => {
   );
 };
 
+/* Engine-Log pane as its own LEAF (subscribes via useDash for the state
+   foot) — TiledGrid stays subscription-free/memoized. [foot-audit CRIT-1:
+   the foot briefly read an unbound `d` inside the memo component.] */
+const EngineLogPane = () => {
+  const d = useDash();
+  return (
+    <Pane title="Engine Log" tag="LIVE" style={{ height: '100%' }}
+      right={<StatusDot tone="ok" label="LOG" />}
+      foot={_dashFoot(d, 'log', d.log.length > 0)}
+      bodyStyle={{ padding: '4px 6px', fontFamily: 'var(--qe-mono)' }}>
+      <EngineLogBody />
+    </Pane>
+  );
+};
+
 /* ── TiledGrid — renders once; leaves stream ────────────────────────────── */
 const TiledGrid = React.memo(function TiledGrid() {
   return (
@@ -412,14 +452,7 @@ const TiledGrid = React.memo(function TiledGrid() {
       <GridItem x={18} y={8} w={6} h={8} minW={4} minH={6}><MacroSignalsPane /></GridItem>
       <GridItem x={0} y={16} w={12} h={8} minW={8} minH={6}><MonthlyPane /></GridItem>
       <GridItem x={12} y={16} w={6} h={8} minW={4} minH={6}><ActiveParamsPane /></GridItem>
-      <GridItem x={18} y={16} w={6} h={8} minW={4} minH={6}>
-        <Pane title="Engine Log" tag="LIVE" style={{ height: '100%' }}
-          right={<StatusDot tone="ok" label="LOG" />}
-          foot={{ tone: 'info', msg: 'engine_events tail · /api/engine/log · 4s poll' }}
-          bodyStyle={{ padding: '4px 6px', fontFamily: 'var(--qe-mono)' }}>
-          <EngineLogBody />
-        </Pane>
-      </GridItem>
+      <GridItem x={18} y={16} w={6} h={8} minW={4} minH={6}><EngineLogPane /></GridItem>
     </GridWorkspace>
   );
 });

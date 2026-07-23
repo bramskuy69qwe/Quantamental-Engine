@@ -41,10 +41,43 @@
        are omitted (no engine feed for either). */
 
 /* ── helpers ─────────────────────────────────────────────────────────────── */
+/* Last-submit result foot for the calc-result family of panes (Position
+   Result / Setup Summary / Correlated Exposure): POST state, not a poll pipe
+   (DESIGN.md §5 — non-fetch panes carry their nearest truthful state). */
+const _ptCalcFoot = (busy, calcErr, calc) => {
+  if (busy) return { tone: 'sub', busy: true, msg: 'calculating…' };
+  if (calcErr) {
+    return calc
+      ? { tone: 'warn', msg: 'calc failed · showing last result' }
+      : { tone: 'err', msg: String(calcErr).slice(0, 80) };
+  }
+  return calc ? { tone: 'ok', msg: 'calc ok' } : { tone: 'sub', msg: 'no calc yet' };
+};
+
+/* Errors carry `status` (HTTP code; 0 = network-level failure) and `corrupt`
+   (body was not JSON) for the qeFootState 4-tier deriver — ADDITIVE: existing
+   catches see an Error exactly as before (fetch TypeError = no network). */
 const _ptJson = async (url) => {
-  const r = await fetch(url, { headers: { Accept: 'application/json' } });
-  if (!r.ok) throw new Error(url + ' ' + r.status);
-  return r.json();
+  let r;
+  try {
+    r = await fetch(url, { headers: { Accept: 'application/json' } });
+  } catch (e) {
+    const err = new Error(url + ' unreachable');
+    err.status = 0;
+    throw err;
+  }
+  if (!r.ok) {
+    const err = new Error(url + ' ' + r.status);
+    err.status = r.status;
+    throw err;
+  }
+  try {
+    return await r.json();
+  } catch (e) {
+    const err = new Error(url + ' corrupt response');
+    err.corrupt = true;
+    throw err;
+  }
 };
 const _ptStrip = (html) => {
   let t;
@@ -245,17 +278,23 @@ const PreTradePage = () => {
   const calcTickerRef = React.useRef(calc ? calc.ticker : null);
 
   /* ── context fetches + polls ── */
+  const [netRegime, setNetRegime] = React.useState({});   // regime-poll pipe (qeFootState)
   React.useEffect(() => {
     let alive = true;
-    const load = (url, fn) => _ptJson(url).then((d) => { if (alive) fn(d); }).catch(() => {});
+    const load = (url, fn, netFn) => {
+      const t0 = performance.now();
+      return _ptJson(url)
+        .then((d) => { if (alive) { fn(d); if (netFn) netFn({ err: null, ms: performance.now() - t0 }); } })
+        .catch((err) => { if (alive && netFn) netFn((n) => ({ ...n, err })); });
+    };
     load('/api/state', setSt);
-    load('/api/regime/current', setRegime);
+    load('/api/regime/current', setRegime, setNetRegime);
     load('/api/models', (d) => setModels(Array.isArray(d) ? d : (d.models || [])));
     load('/api/calculator/context', setCtxInfo);
     const aid = window.QE_BOOTSTRAP && window.QE_BOOTSTRAP.activeAccountId;
     if (aid != null) load('/api/config/account/' + aid, (d) => setRiskPct((d.params || {}).individual_risk_per_trade));
     const t1 = setInterval(() => load('/api/state', setSt), 5000);
-    const t2 = setInterval(() => load('/api/regime/current', setRegime), 60000);
+    const t2 = setInterval(() => load('/api/regime/current', setRegime, setNetRegime), 60000);
     return () => { alive = false; clearInterval(t1); clearInterval(t2); };
   }, []);
 
@@ -304,15 +343,18 @@ const PreTradePage = () => {
   }, [tickerNorm]);
 
   /* ── 2s orderbook poll ── */
+  const [netOb, setNetOb] = React.useState({});   // orderbook 2s pipe (qeFootState)
   React.useEffect(() => {
     setOb(null);
+    setNetOb({});
     if (!tickerNorm) return;
     let alive = true, timer = null;
     const poll = async () => {
+      const t0 = performance.now();
       try {
         const d = await _ptJson('/api/calculator/orderbook/' + encodeURIComponent(tickerNorm));
-        if (alive && tickerRef.current === tickerNorm) setOb(d);
-      } catch (e) { /* keep last */ }
+        if (alive && tickerRef.current === tickerNorm) { setOb(d); setNetOb({ err: null, ms: performance.now() - t0 }); }
+      } catch (err) { if (alive && tickerRef.current === tickerNorm) setNetOb((n) => ({ ...n, err })); }
       if (alive) timer = setTimeout(poll, 2000);
     };
     const debounce = setTimeout(poll, 600);
@@ -613,7 +655,7 @@ const PreTradePage = () => {
           <GridItem x={0} y={0} w={10} h={12} minW={6} minH={8}>
             <Pane title="Order Inputs" style={{ height: '100%' }} bodyStyle={{ overflow: 'auto' }}
               right={<Badge tone={form.orderType === 'limit' ? 'ok' : 'warn'}>{form.orderType === 'limit' ? 'MAKER FEE' : 'TAKER FEE'}</Badge>}
-              foot={{ tone: 'sub', msg: 'form persists on manual calc · server validates' }}>
+              foot={{ tone: 'ok', msg: 'local' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
 
                 <div>
@@ -797,7 +839,7 @@ const PreTradePage = () => {
           {/* SETUP SUMMARY pane */}
           <GridItem x={0} y={12} w={10} h={6} minW={6} minH={5}>
             <Pane title="Setup Summary" tag="CLICK TO COPY" style={{ height: '100%' }}
-              foot={{ tone: 'sub', msg: calc ? 'mirrors the last calc · click any field to copy' : 'no calc yet' }}
+              foot={_ptCalcFoot(busy, calcErr, calc)}
               right={<PeriodSelector
                 options={isCommodity ? [['notional', 'NOTIONAL'], ['contracts', 'CONTRACTS'], ['lot', 'LOT']] : [['notional', 'NOTIONAL'], ['contracts', 'CONTRACTS']]}
                 value={effSizeUnit} onChange={setSizeUnit} />}>
@@ -841,7 +883,7 @@ const PreTradePage = () => {
           {/* RECENT pane */}
           <GridItem x={10} y={0} w={7} h={5} minW={5} minH={4}>
             <Pane title="Recent Setups" count={recent.length} style={{ height: '100%' }}
-              foot={{ tone: 'sub', msg: `${recent.length} stored · recall restores core fields` }}>
+              foot={{ tone: 'ok', msg: 'local' }}>
               {!recent.length ? <EmptyState tone="neutral" glyph="◇" msg="No recent setups" /> : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                   {recent.map((r, i) => (
@@ -872,7 +914,7 @@ const PreTradePage = () => {
           {/* REGIME + ATR pane */}
           <GridItem x={17} y={0} w={7} h={5} minW={5} minH={4}>
             <Pane title="Regime · ATR Volatility" hot style={{ height: '100%' }}
-              foot={{ tone: 'info', msg: '/api/regime/current · 60s poll' }}>
+              foot={qeFootState({ loading: netRegime.ms == null && !netRegime.err, err: netRegime.err, hasData: regime != null, ms: netRegime.ms, retrying: true })}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <div>
                   <Lbl>Current Regime</Lbl>
@@ -910,9 +952,7 @@ const PreTradePage = () => {
             <Pane title="Position Result" style={{ height: '100%' }}
               right={calc ? <Badge tone={c.eligible ? 'ok' : 'err'}>{c.eligible ? '✓ ELIGIBLE' : '⛔ INELIGIBLE'}</Badge> : null}
               bodyStyle={{ padding: 0 }}
-              foot={calc
-                ? { tone: c.eligible ? 'ok' : 'warn', msg: `${(c.ticker || '').toUpperCase()} · ${c.side || ''} · regime ×${c.regime_multiplier != null ? c.regime_multiplier : 1}` }
-                : { tone: 'sub', msg: 'no calc yet' }}>
+              foot={_ptCalcFoot(busy, calcErr, calc)}>
               {!calc ? <div style={{ padding: 10 }}><EmptyState tone="neutral" glyph="◇" msg="No calc yet" hint="Size a setup to see the position result." /></div> : (
                 <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
                   {!c.eligible && c.ineligible_reason ? (
@@ -980,9 +1020,7 @@ const PreTradePage = () => {
           {/* CORRELATED EXPOSURE pane */}
           <GridItem x={10} y={12} w={7} h={6} minW={5} minH={4}>
             <Pane title="Correlated Sector Exposure" style={{ height: '100%' }}
-              foot={!calc || !c.correlated_exposure
-                ? { tone: 'sub', msg: 'no calc yet' }
-                : { tone: c.exceeds_corr_limit ? 'warn' : 'ok', msg: c.exceeds_corr_limit ? 'sector cap exceeded' : 'within sector cap' }}>
+              foot={_ptCalcFoot(busy, calcErr, calc)}>
               {!calc || !c.correlated_exposure ? <EmptyState tone="neutral" glyph="◇" msg="No calc yet" /> : (
                 <React.Fragment>
                   {c.exceeds_corr_limit ? (
@@ -1003,7 +1041,8 @@ const PreTradePage = () => {
           <GridItem x={17} y={12} w={7} h={6} minW={5} minH={4}>
             <Pane title="Live Orderbook" tag="2s" style={{ height: '100%' }}
               right={ob && (ob.bids || []).length ? <StatusDot tone="ok" label="LIVE" /> : <StatusDot tone="off" label="—" />}
-              foot={{ tone: 'sub', msg: 'top-5 mirror · /api/calculator/orderbook' }}>
+              foot={!tickerNorm ? { tone: 'sub', msg: 'enter a ticker' }
+                : qeFootState({ loading: netOb.ms == null && !netOb.err, err: netOb.err, hasData: ob != null, ms: netOb.ms, retrying: true })}>
               {!ob || (!(ob.bids || []).length && !(ob.asks || []).length) ? (
                 <EmptyState tone="neutral" glyph="〇" msg={tickerNorm ? 'No depth yet' : 'Enter a ticker'} />
               ) : (

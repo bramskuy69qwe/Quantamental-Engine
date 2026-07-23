@@ -467,7 +467,7 @@ const SignalCard = ({ sig, globalSel, coverageRows, thresholds, onOverride, onGo
 };
 
 /* ── Tab: Overview ───────────────────────────────────────────────────────── */
-const RegimeTabOverview = ({ current, mults, onGoBackfill }) => {
+const RegimeTabOverview = ({ current, curFoot, mults, onGoBackfill }) => {
   const [tlStyle, setTlStyle] = React.useState('swim');
   const [tlRange, setTlRange] = React.useState(365);
   const [globalSel, setGlobalSel] = React.useState({ v: 365, n: 0 });
@@ -475,9 +475,9 @@ const RegimeTabOverview = ({ current, mults, onGoBackfill }) => {
   const [selChange, setSelChange] = React.useState(null);
 
   const tlFrom = _rgFromDate(tlRange);
-  const { data: tlData, err: tlErr } = useAnaJson(
+  const { data: tlData, err: tlErr, foot: tlFoot } = useAnaJson(
     `/api/regime/timeline${tlFrom ? `?from_date=${tlFrom}` : ''}`);
-  const { data: coverage } = useAnaJson('/api/regime/coverage');
+  const { data: coverage, foot: covFoot } = useAnaJson('/api/regime/coverage');
   const { data: thresholds } = useAnaJson('/api/regime/thresholds');
 
   const timeline = Array.isArray(tlData) ? tlData : [];
@@ -510,7 +510,7 @@ const RegimeTabOverview = ({ current, mults, onGoBackfill }) => {
     <GridWorkspace>
       <GridItem x={0} y={0} w={6} h={7} minW={4} minH={4}>
         <Pane title="Current Regime" hot style={{ height: '100%' }}
-          foot={{ tone: 'info', msg: '/api/regime/current · 60s poll' }}>
+          foot={curFoot}>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, padding: '8px 0' }}>
             {curInfo
               ? <RegimeBadge tone={curInfo.tone} label={curInfo.label.toUpperCase()} />
@@ -583,11 +583,7 @@ const RegimeTabOverview = ({ current, mults, onGoBackfill }) => {
             <span style={{ color: 'var(--qe-muted)' }}>│</span>
             <PeriodSelector options={[[30, '30d'], [90, '90d'], [365, '1y'], [0, 'All']]} value={tlRange} onChange={setTlRange} />
           </>}
-          foot={tlData == null
-            ? { tone: 'sub', msg: 'loading…' }
-            : tlErr && !timeline.length
-              ? { tone: 'warn', msg: 'timeline fetch failed' }
-              : { tone: 'ok', msg: `${timeline.length} regime labels · ${tlRange === 0 ? 'all-time' : tlRange + 'd'} window` }}>
+          foot={tlFoot}>
           {timeline.length === 0 && tlErr ? (
             <EmptyState tone="warn" glyph="⚠" msg="timeline fetch failed" hint="engine unreachable?" />
           ) : (
@@ -608,7 +604,7 @@ const RegimeTabOverview = ({ current, mults, onGoBackfill }) => {
               value={globalActive ? globalSel.v : null}
               onChange={(v) => { setGlobalSel((s) => ({ v, n: s.n + 1 })); setGlobalActive(true); }} />
           </>}
-          foot={{ tone: 'sub', msg: 'thresholds from config · per-card range clears the global highlight' }}>
+          foot={covFoot}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
             {RG_SIGNALS.map((sig) => (
               <SignalCard key={sig.key} sig={sig} globalSel={globalSel}
@@ -623,7 +619,7 @@ const RegimeTabOverview = ({ current, mults, onGoBackfill }) => {
 
       <GridItem x={0} y={25} w={24} h={10} minW={10} minH={5}>
         <Pane title="Recent Regime Changes" count={changes.length} style={{ height: '100%' }} bodyStyle={{ padding: 0 }}
-          foot={{ tone: 'sub', msg: `${changes.length} transitions (last 25) · click a row for signal context` }}>
+          foot={tlFoot}>
           <DataList
             selKey="date" tools={false}
             onClick={(r) => setSelChange((s) => (s === r.date ? null : r.date))}
@@ -685,7 +681,7 @@ const RegimeTabBackfill = ({ job, onStart }) => {
   const [mode, setMode] = React.useState('macro_only');
   const [since, setSince] = React.useState('2020-01-01');
   const [until, setUntil] = React.useState(() => new Date().toISOString().slice(0, 10));
-  const { data: coverage, err: covErr, reload: reloadCoverage } = useAnaJson('/api/regime/coverage');
+  const { data: coverage, err: covErr, reload: reloadCoverage, foot: covFoot } = useAnaJson('/api/regime/coverage');
 
   // refresh coverage the moment the (page-owned) job completes while this
   // tab is mounted; a later remount refetches on mount anyway.
@@ -707,7 +703,12 @@ const RegimeTabBackfill = ({ job, onStart }) => {
     <GridWorkspace>
       <GridItem x={0} y={0} w={8} h={14} minW={5} minH={6}>
         <Pane title="Backfill Macro Data" style={{ height: '100%' }}
-          foot={{ tone: 'sub', msg: 'writes regime_signals + regime_labels · classify follows fetch' }}>
+          foot={!job ? { tone: 'ok', msg: 'local' }
+            : (job.status === 'starting' || job.status === 'running')
+              ? { tone: 'sub', busy: true, msg: `backfill ${Math.round(job.pct || 0)}%` }
+              : job.status === 'failed'
+                ? { tone: 'err', msg: job.detail || 'backfill failed' }
+                : { tone: 'ok', msg: 'backfill completed' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <p style={{ fontSize: '0.62rem', color: 'var(--qe-sub)', lineHeight: 1.5, margin: 0 }}>
               Macro Only fetches VIX (yfinance) + yields/spreads (FRED) + derives BTC RVol — works for deep
@@ -760,9 +761,7 @@ const RegimeTabBackfill = ({ job, onStart }) => {
         <Pane title="Signal Coverage" count={covRows.length} style={{ height: '100%' }}
           right={<button className="qe-btn qe-btn-sm qe-btn-ghost" onClick={reloadCoverage}>↻</button>}
           bodyStyle={{ padding: 0 }}
-          foot={coverage == null
-            ? { tone: 'sub', msg: 'loading…' }
-            : { tone: 'info', msg: `${covRows.filter((r) => (r.count || 0) > 0).length}/${covRows.length} signals backfilled` }}>
+          foot={covFoot}>
           {covErr && srvRows.length === 0 ? (
             <EmptyState tone="warn" glyph="⚠" msg="coverage fetch failed" hint="engine unreachable?" />
           ) : (
@@ -884,8 +883,8 @@ const RegimeTabNews = () => {
     const iso = (ms) => new Date(ms).toISOString().slice(0, 10);
     return `/api/calendar?from_date=${iso(Date.now() - 30 * 86400000)}&to_date=${iso(Date.now() + 30 * 86400000)}`;
   });
-  const { data: feedData, err: feedErr, reload: reloadFeed } = useAnaJson('/api/news/feed?limit=80', 15_000);
-  const { data: calData, reload: reloadCal } = useAnaJson(calUrl, 60_000);
+  const { data: feedData, err: feedErr, reload: reloadFeed, foot: feedFoot } = useAnaJson('/api/news/feed?limit=80', 15_000);
+  const { data: calData, reload: reloadCal, foot: calFoot } = useAnaJson(calUrl, 60_000);
   React.useEffect(() => { const t = setInterval(() => setTick((x) => x + 1), 60_000); return () => clearInterval(t); }, []);
 
   const nowMs = Date.now();
@@ -931,7 +930,7 @@ const RegimeTabNews = () => {
             {feedErr ? <StatusDot tone="warn" label="STALE — retrying" /> : <StatusDot tone="info" label="15s refresh" />}
           </>}
           bodyStyle={{ padding: newsView === 'magazine' ? 6 : 0 }}
-          foot={{ tone: 'info', msg: `${news.length} items · finnhub + bwe · 15s feed / 60s calendar` }}>
+          foot={feedFoot}>
           {news.length === 0 ? (
             <EmptyState tone={feedErr ? 'warn' : 'info'} glyph="📰"
               msg={feedErr ? 'news fetch failed' : 'no news items stored yet'}
@@ -968,7 +967,7 @@ const RegimeTabNews = () => {
             <LiveClock id="regime-news-clock" style={{ fontSize: '0.54rem', color: 'var(--qe-muted)', fontFamily: 'var(--qe-mono)' }} />
           </>}
           bodyStyle={{ padding: 6 }}
-          foot={{ tone: 'sub', msg: `${cal.length} events · ±30d window · est/act from finnhub` }}>
+          foot={calFoot}>
           {cal.length === 0 ? (
             <EmptyState tone="info" glyph="◫" msg="no calendar events stored"
               hint="press ↻ on Market News to fetch (finnhub)" />
@@ -1043,7 +1042,7 @@ const RegimeTabNews = () => {
 
 /* ── Tab: Config ─────────────────────────────────────────────────────────── */
 const RegimeTabConfig = ({ mults }) => {
-  const { data: thresholds, err: thrErr } = useAnaJson('/api/regime/thresholds');
+  const { data: thresholds, err: thrErr, foot: thrFoot } = useAnaJson('/api/regime/thresholds');
   const [reclass, setReclass] = React.useState(null);   // {busy} | {msg} | {err}
 
   const reclassify = async () => {
@@ -1090,7 +1089,7 @@ const RegimeTabConfig = ({ mults }) => {
           right={<button className="qe-btn qe-btn-sm" disabled={reclass && reclass.busy} onClick={reclassify}>
             {reclass && reclass.busy ? <Spinner size="0.62rem" /> : '↻ Reclassify all dates'}
           </button>}
-          foot={{ tone: 'sub', msg: 'config constants · read-only · reclassify recomputes labels' }}>
+          foot={thrFoot}>
           <p style={{ fontSize: '0.6rem', color: 'var(--qe-sub)', margin: '0 0 6px 0', lineHeight: 1.5 }}>
             Threshold values used by the rule-based classifier (config constants — read-only;
             reclassify recomputes historical labels from stored signals).
@@ -1121,7 +1120,7 @@ const RegimeTabConfig = ({ mults }) => {
       <GridItem x={8} y={0} w={16} h={18} minW={8} minH={6}>
         <Pane title="Decision Tree Rules" style={{ height: '100%' }}
           right={<span style={{ fontSize: '0.54rem', color: 'var(--qe-muted)', fontFamily: 'var(--qe-mono)' }}>evaluated top→bottom · first match wins</span>}
-          foot={{ tone: 'sub', msg: 'rules mirror core/regime_classifier.py' }}>
+          foot={thrFoot}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {rules.map((rule) => {
               const info = REGIME_INFO[rule.key];
@@ -1152,7 +1151,7 @@ const REGIME_TABS = [
 
 const RegimePage = () => {
   const [tab, setTab] = React.useState('overview');
-  const { data: current } = useAnaJson('/api/regime/current', 60_000);
+  const { data: current, foot: curFoot } = useAnaJson('/api/regime/current', 60_000);
   const { data: mults } = useAnaJson('/api/regime/multipliers');
 
   // Backfill job lives at PAGE level (audit M6a) — a sub-tab switch must not
@@ -1200,7 +1199,7 @@ const RegimePage = () => {
 
   const goBackfill = React.useCallback(() => setTab('backfill'), []);
   const content = {
-    overview: <RegimeTabOverview current={current} mults={mults} onGoBackfill={goBackfill} />,
+    overview: <RegimeTabOverview current={current} curFoot={curFoot} mults={mults} onGoBackfill={goBackfill} />,
     backfill: <RegimeTabBackfill job={bfJob} onStart={startBackfill} />,
     news: <RegimeTabNews />,
     config: <RegimeTabConfig mults={mults} />,

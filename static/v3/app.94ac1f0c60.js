@@ -331,6 +331,36 @@ const PaneHead = ({ title, count = null, right = null, hot = false, tag = null, 
     /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "qe-grow" }), right, dots)
   ));
 };
+const qeFootCause = (err) => {
+  if (!err) return "unknown error";
+  if (err.corrupt) return "corrupt response";
+  const s = err.status;
+  if (s === 404) return "endpoint not found (404)";
+  if (s === 401 || s === 403) return `unauthorized (${s})`;
+  if (s >= 500) return `server error (${s})`;
+  if (s == null || s === 0) return "no network \u2014 engine unreachable";
+  return `request failed (${s})`;
+};
+const qeFootState = ({ loading, err, corrupt, status, hasData, empty, ms, retrying }) => {
+  const e = err || corrupt != null || status != null ? {
+    corrupt: (err && err.corrupt) != null ? err.corrupt : corrupt,
+    status: (err && err.status) != null ? err.status : status
+  } : null;
+  if (loading && !hasData) {
+    return { tone: "sub", busy: true, msg: e ? "reconnecting\u2026" : "loading\u2026" };
+  }
+  if (e) {
+    if (hasData) {
+      const suffix = retrying ? " \xB7 retrying" : "";
+      if (e.corrupt) return { tone: "warn", msg: `response corrupt \xB7 showing last data${suffix}` };
+      if (e.status == null || e.status === 0) return { tone: "warn", msg: `no network \xB7 showing last data${suffix}` };
+      return { tone: "warn", msg: `${qeFootCause(e)} \xB7 showing last data${suffix}` };
+    }
+    return { tone: "err", msg: qeFootCause(e) };
+  }
+  if (ms != null && ms > 500) return { tone: "warn", msg: `delayed [${Math.round(ms)}ms]` };
+  return { tone: "ok", msg: `connected${ms != null ? ` [${Math.round(ms)}ms]` : ""}` };
+};
 const PaneFoot = ({ tone = "info", id, msg, ms, busy = false }) => {
   const toneColors = {
     ok: { fg: "var(--qe-green)", bg: "rgba(0,255,127,0.06)", glyph: "\u2713" },
@@ -880,6 +910,8 @@ Object.assign(window, {
   Pane,
   PaneHead,
   PaneFoot,
+  qeFootState,
+  qeFootCause,
   RefreshButton,
   ReloadGlyph,
   ReloadIconSVG,
@@ -2366,7 +2398,9 @@ const QE_DASH = /* @__PURE__ */ function() {
     log: [],
     // engine-log lines, newest-first for the prepend feed
     logCursor: 0,
-    loaded: false
+    loaded: false,
+    // per-source data-pipe state for qeFootState (DESIGN.md §5 4-tier foots)
+    net: { snapshot: {}, st: {}, macro: {}, log: {} }
   };
   const subs = /* @__PURE__ */ new Set();
   const notify = () => subs.forEach((f) => {
@@ -2375,14 +2409,43 @@ const QE_DASH = /* @__PURE__ */ function() {
     } catch (e) {
     }
   });
-  async function _json(url) {
-    const r = await fetch(url, { headers: { Accept: "application/json" } });
-    if (!r.ok) throw new Error(url + " " + r.status);
-    return r.json();
+  async function _json(url, key) {
+    const t0 = performance.now();
+    try {
+      let r;
+      try {
+        r = await fetch(url, { headers: { Accept: "application/json" } });
+      } catch (e) {
+        const err = new Error(url + " unreachable");
+        err.status = 0;
+        throw err;
+      }
+      if (!r.ok) {
+        const err = new Error(url + " " + r.status);
+        err.status = r.status;
+        throw err;
+      }
+      let d;
+      try {
+        d = await r.json();
+      } catch (e) {
+        const err = new Error(url + " corrupt response");
+        err.corrupt = true;
+        throw err;
+      }
+      if (key) state.net[key] = { err: null, ms: performance.now() - t0 };
+      return d;
+    } catch (err) {
+      if (key) {
+        state.net[key] = { ...state.net[key], err };
+        notify();
+      }
+      throw err;
+    }
   }
   async function loadSnapshot() {
     try {
-      const s = await _json("/api/dashboard/snapshot");
+      const s = await _json("/api/dashboard/snapshot", "snapshot");
       state.equity = s.equity || {};
       state.risk = s.risk || {};
       state.journal = s.journal || {};
@@ -2395,14 +2458,14 @@ const QE_DASH = /* @__PURE__ */ function() {
   }
   async function loadState() {
     try {
-      state.st = await _json("/api/state");
+      state.st = await _json("/api/state", "st");
       notify();
     } catch (e) {
     }
   }
   async function loadMacro() {
     try {
-      const m = await _json("/api/regime/signals/latest");
+      const m = await _json("/api/regime/signals/latest", "macro");
       state.macro = m.signals || [];
       notify();
     } catch (e) {
@@ -2410,7 +2473,7 @@ const QE_DASH = /* @__PURE__ */ function() {
   }
   async function loadLog() {
     try {
-      const d = await _json("/api/engine/log?since=" + state.logCursor + "&limit=60");
+      const d = await _json("/api/engine/log?since=" + state.logCursor + "&limit=60", "log");
       const lines = d.lines || [];
       if (lines.length) {
         state.log = [...lines.slice().reverse(), ...state.log].slice(0, 60);
@@ -2418,6 +2481,7 @@ const QE_DASH = /* @__PURE__ */ function() {
         notify();
       } else if (d.latest_id != null) {
         state.logCursor = d.latest_id;
+        notify();
       }
     } catch (e) {
     }
@@ -2492,6 +2556,10 @@ const QE_DASH = /* @__PURE__ */ function() {
     return () => subs.delete(fn);
   } };
 }();
+const _dashFoot = (d, key, hasData) => {
+  const n = d.net && d.net[key] || {};
+  return qeFootState({ loading: n.ms == null && !n.err, err: n.err, hasData: !!hasData, ms: n.ms, retrying: true });
+};
 const useDash = () => {
   const [, force] = React.useReducer((x) => x + 1, 0);
   React.useEffect(() => QE_DASH.subscribe(force), []);
@@ -2557,23 +2625,26 @@ const EquityStatsPane = () => {
       title: "Equity",
       style: { height: "100%" },
       right: /* @__PURE__ */ React.createElement(Badge, { tone: "ok" }, "LIVE"),
-      foot: { tone: "info", msg: `equity ${_n(eq.total_equity)} \xB7 margin ${_n(eq.available_margin)}` }
+      foot: _dashFoot(d, "snapshot", eq.total_equity != null)
     },
     /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Total"), /* @__PURE__ */ React.createElement(EquityHero, null)), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Daily"), /* @__PURE__ */ React.createElement(DeltaPct, { id: "eq.daily", value: eq.daily_pnl_pct })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Weekly"), /* @__PURE__ */ React.createElement(DeltaPct, { id: "eq.weekly", value: eq.weekly_pnl_pct })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Unrealized"), /* @__PURE__ */ React.createElement(LiveValue, { id: "eq.unreal", value: eq.unrealized_pnl == null ? 0 : eq.unrealized_pnl, format: (x) => _sn(x), style: { color: (eq.unrealized_pnl || 0) >= 0 ? "var(--qe-green)" : "var(--qe-red)", fontWeight: 700, fontSize: "var(--qe-fs-md)" } })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Available"), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontWeight: 700 } }, _n(eq.available_margin)))), /* @__PURE__ */ React.createElement("div", { className: "qe-divider-h" }), /* @__PURE__ */ React.createElement(FieldList, { cols: 2, dense: true, rows: blocks.map(([label, v]) => ({ label, value: _n(v) })) }))
   );
 };
-const EquityOhlcChart = React.memo(function EquityOhlcChart2({ tf }) {
+const EquityOhlcChart = React.memo(function EquityOhlcChart2({ tf, onNet }) {
   const [data, setData] = React.useState([]);
   React.useEffect(() => {
     let alive = true;
     const load = async () => {
+      const t0 = performance.now();
       try {
-        const r = await fetch("/api/dashboard/equity_ohlc?tf=" + tf, { headers: { Accept: "application/json" } });
-        if (!r.ok) return;
-        const j = await r.json();
+        const j = await _ptJson("/api/dashboard/equity_ohlc?tf=" + tf);
         const rows = (j.candles || []).map((c) => [c.x, c.o, c.c, c.l, c.h]);
-        if (alive) setData(rows);
-      } catch (e) {
+        if (alive) {
+          setData(rows);
+          if (onNet) onNet({ err: null, ms: performance.now() - t0 });
+        }
+      } catch (err) {
+        if (alive && onNet) onNet((n) => ({ ...n, err }));
       }
     };
     load();
@@ -2587,6 +2658,7 @@ const EquityOhlcChart = React.memo(function EquityOhlcChart2({ tf }) {
 });
 const EquityCurvePane = () => {
   const [tf, setTf] = React.useState("1h");
+  const [net, setNet] = React.useState({});
   const d = useDash();
   const c = d.equity.total_equity;
   return /* @__PURE__ */ React.createElement(
@@ -2597,10 +2669,10 @@ const EquityCurvePane = () => {
       tag: "OHLC",
       style: { height: "100%" },
       right: /* @__PURE__ */ React.createElement(PeriodSelector, { options: [["1h", "1H"], ["4h", "4H"], ["1d", "1D"], ["1w", "1W"]], value: tf, onChange: setTf }),
-      foot: { tone: "info", msg: `equity_ohlc \xB7 last C=${_n(c)} \xB7 tf=${tf}` },
+      foot: qeFootState({ loading: net.ms == null && !net.err, err: net.err, hasData: net.ms != null, ms: net.ms }),
       bodyStyle: { padding: 6 }
     },
-    /* @__PURE__ */ React.createElement("div", { style: { height: "100%", display: "flex", flexDirection: "column" } }, /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.62rem", display: "flex", gap: 14, flexWrap: "wrap", padding: "2px 4px", alignItems: "baseline" } }, /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "C"), " ", /* @__PURE__ */ React.createElement(LiveValue, { id: "ohlc.c", value: c == null ? 0 : c, format: (x) => "$" + _n(x), style: { color: "var(--qe-text)", fontWeight: 700 } })), /* @__PURE__ */ React.createElement("span", { style: { marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 4 } }, /* @__PURE__ */ React.createElement("span", { className: "qe-live", style: { color: "var(--qe-cyan)" } }, "streaming"))), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0 } }, /* @__PURE__ */ React.createElement(EquityOhlcChart, { tf })))
+    /* @__PURE__ */ React.createElement("div", { style: { height: "100%", display: "flex", flexDirection: "column" } }, /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.62rem", display: "flex", gap: 14, flexWrap: "wrap", padding: "2px 4px", alignItems: "baseline" } }, /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "C"), " ", /* @__PURE__ */ React.createElement(LiveValue, { id: "ohlc.c", value: c == null ? 0 : c, format: (x) => "$" + _n(x), style: { color: "var(--qe-text)", fontWeight: 700 } })), /* @__PURE__ */ React.createElement("span", { style: { marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 4 } }, /* @__PURE__ */ React.createElement("span", { className: "qe-live", style: { color: "var(--qe-cyan)" } }, "streaming"))), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0 } }, /* @__PURE__ */ React.createElement(EquityOhlcChart, { tf, onNet: setNet })))
   );
 };
 const _stateTone = (s) => s === "limit" ? "err" : s === "warning" ? "warn" : "ok";
@@ -2616,7 +2688,7 @@ const RiskMonitorPane = () => {
       title: "Risk Monitor",
       style: { height: "100%" },
       right: /* @__PURE__ */ React.createElement(Badge, { tone: enforced ? "err" : "info" }, enforced ? "ENFORCED" : "ADVISORY"),
-      foot: { tone: _stateTone(ddState), msg: `exp ${_n(rk.exposure_pct)}% \xB7 dd ${_n(rk.drawdown_pct)}% (cap ${_n(rk.max_dd_pct)}%) \xB7 ${enforced ? "enforced" : "advisory"}` }
+      foot: _dashFoot(d, "st", d.st && d.st.dd_state != null)
     },
     /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 14 } }, /* @__PURE__ */ React.createElement(Gauge, { label: "Net Exposure", value: rk.exposure_pct != null ? rk.exposure_pct / 100 : 0, max: (rk.max_exposure_pct || 500) / 100, current: rk.exposure_pct != null ? _n(rk.exposure_pct / 100, 2) + "\xD7" : "\u2014", maxLabel: `${_n(rk.max_exposure_pct / 100, 1)}\xD7 cap` }), /* @__PURE__ */ React.createElement(Gauge, { label: "Drawdown 30d", value: Math.min(rk.drawdown_pct || 0, rk.max_dd_pct || 10), max: rk.max_dd_pct || 10, current: _n(rk.drawdown_pct) + "%", maxLabel: `${_n(rk.max_dd_pct)}% limit`, ticks: [5, 8] }), /* @__PURE__ */ React.createElement(Gauge, { label: "Positions", value: rk.positions_open || 0, max: rk.positions_max || 20, current: `${rk.positions_open || 0}/${rk.positions_max || 20}`, maxLabel: "capacity" }), /* @__PURE__ */ React.createElement("div", { className: "qe-divider-h" }), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "DD STATE"), /* @__PURE__ */ React.createElement(Badge, { tone: _stateTone(ddState) }, enforced && ddState === "limit" ? "HALTED" : _stateLabel(ddState))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "WEEKLY"), /* @__PURE__ */ React.createElement(Badge, { tone: _stateTone(st.weekly_pnl_state || rk.weekly_pnl_state) }, _stateLabel(st.weekly_pnl_state || rk.weekly_pnl_state)))), (rk.funding_lines || []).length > 0 && /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-muted)" } }, (rk.funding_lines || []).join(" \xB7 ")))
   );
@@ -2632,7 +2704,7 @@ const OpenPositionsPane = () => {
       count: rows.length,
       style: { height: "100%" },
       right: /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", title: "Size a new position in Pre-Trade", onClick: () => window.qeNav && window.qeNav("Pre-Trade") }, "+ Calc"),
-      foot: { tone: "info", msg: `${rows.length} positions \xB7 snapshot + SSE` },
+      foot: _dashFoot(d, "snapshot", d.loaded),
       bodyStyle: { padding: 0, display: "flex", flexDirection: "column" }
     },
     /* @__PURE__ */ React.createElement(
@@ -2669,7 +2741,7 @@ const MacroSignalsPane = () => {
       title: "Macro Signals",
       count: sigs.length,
       style: { height: "100%" },
-      foot: { tone: "info", msg: `${sigs.length} signals \xB7 fred / yfinance / binance \xB7 60s poll` }
+      foot: _dashFoot(d, "macro", sigs.length > 0)
     },
     /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, sigs.length === 0 && /* @__PURE__ */ React.createElement(EmptyState, { tone: "warn", glyph: "\u2205", msg: "No signal data", hint: "Run regime backfill to populate." }), sigs.map((s) => /* @__PURE__ */ React.createElement("div", { key: s.key, style: { display: "grid", gridTemplateColumns: "84px 1fr 56px", alignItems: "center", gap: 6, padding: "3px 0", borderBottom: "1px dotted var(--qe-faint)" } }, /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.6rem", color: "var(--qe-sub)", letterSpacing: "0.04em" } }, s.key), /* @__PURE__ */ React.createElement(LiveValue, { id: `sig.${s.key}`, value: s.v == null ? 0 : s.v, format: (x) => s.v == null ? "\u2014" : (+x).toFixed(2), style: { fontSize: "0.68rem", fontWeight: 700, textAlign: "right", display: "block" } }), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.56rem", textAlign: "right", color: s.tone === "up" ? "var(--qe-green)" : s.tone === "dn" ? "var(--qe-red)" : "var(--qe-muted)" } }, s.d == null ? "" : _sn(s.d)))))
   );
@@ -2682,7 +2754,7 @@ const MonthlyPane = () => {
     {
       title: "Monthly Analytics Preview",
       style: { height: "100%" },
-      foot: { tone: (j.monthly_pnl || 0) < 0 ? "warn" : "ok", msg: `${j.month_label || "\u2014"} \xB7 pnl ${_sn(j.monthly_pnl)} \xB7 ${j.trade_count || 0} trades \xB7 winrate ${_n(j.win_rate)}%` }
+      foot: _dashFoot(d, "snapshot", d.loaded)
     },
     /* @__PURE__ */ React.createElement("div", { style: { padding: "4px 6px" } }, /* @__PURE__ */ React.createElement(FieldList, { rows: [
       { label: "Period PnL", value: /* @__PURE__ */ React.createElement(React.Fragment, null, _sn(j.monthly_pnl), " ", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)", fontSize: "0.6rem" } }, "(", _sn(j.monthly_pnl_pct), "%)")), color: (j.monthly_pnl || 0) < 0 ? "red" : "green" },
@@ -2712,7 +2784,7 @@ const ActiveParamsPane = () => {
       tag: "VIEW",
       style: { height: "100%" },
       right: /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-ghost", title: "Edit risk parameters in Configuration", onClick: () => window.qeNav && window.qeNav("Config") }, "Edit"),
-      foot: { tone: "sub", msg: "risk params \xB7 from account config" }
+      foot: _dashFoot(d, "snapshot", d.loaded)
     },
     /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, /* @__PURE__ */ React.createElement(FieldList, { rows }))
   );
@@ -2722,19 +2794,23 @@ const EngineLogBody = () => {
   const rows = d.log;
   return /* @__PURE__ */ React.createElement("div", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.62rem", lineHeight: 1.5 } }, rows.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { color: "var(--qe-muted)" } }, "\u2014 no recent engine events \u2014"), rows.map((l, i) => /* @__PURE__ */ React.createElement("div", { key: `${l.id}-${i}`, style: { display: "grid", gridTemplateColumns: "56px 44px 1fr", gap: 6, opacity: i === 0 ? 1 : Math.max(0.45, 1 - i * 0.06) } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, l.t), /* @__PURE__ */ React.createElement("span", { style: { color: l.tone === "ok" ? "var(--qe-green)" : l.tone === "info" ? "var(--qe-cyan)" : l.tone === "err" ? "var(--qe-red)" : l.tone === "warn" ? "var(--qe-amber)" : "var(--qe-sub)" } }, "[", l.tag, "]"), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-text-dim)" } }, l.msg))));
 };
-const TiledGrid = React.memo(function TiledGrid2() {
-  return /* @__PURE__ */ React.createElement(GridWorkspace, { persistId: "dashboard" }, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 8, h: 8, minW: 6, minH: 6 }, /* @__PURE__ */ React.createElement(EquityStatsPane, null)), /* @__PURE__ */ React.createElement(GridItem, { x: 8, y: 0, w: 16, h: 8, minW: 8, minH: 6 }, /* @__PURE__ */ React.createElement(EquityCurvePane, null)), /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 8, w: 6, h: 8, minW: 4, minH: 6 }, /* @__PURE__ */ React.createElement(RiskMonitorPane, null)), /* @__PURE__ */ React.createElement(GridItem, { x: 6, y: 8, w: 12, h: 8, minW: 8, minH: 6 }, /* @__PURE__ */ React.createElement(OpenPositionsPane, null)), /* @__PURE__ */ React.createElement(GridItem, { x: 18, y: 8, w: 6, h: 8, minW: 4, minH: 6 }, /* @__PURE__ */ React.createElement(MacroSignalsPane, null)), /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 16, w: 12, h: 8, minW: 8, minH: 6 }, /* @__PURE__ */ React.createElement(MonthlyPane, null)), /* @__PURE__ */ React.createElement(GridItem, { x: 12, y: 16, w: 6, h: 8, minW: 4, minH: 6 }, /* @__PURE__ */ React.createElement(ActiveParamsPane, null)), /* @__PURE__ */ React.createElement(GridItem, { x: 18, y: 16, w: 6, h: 8, minW: 4, minH: 6 }, /* @__PURE__ */ React.createElement(
+const EngineLogPane = () => {
+  const d = useDash();
+  return /* @__PURE__ */ React.createElement(
     Pane,
     {
       title: "Engine Log",
       tag: "LIVE",
       style: { height: "100%" },
       right: /* @__PURE__ */ React.createElement(StatusDot, { tone: "ok", label: "LOG" }),
-      foot: { tone: "info", msg: "engine_events tail \xB7 /api/engine/log \xB7 4s poll" },
+      foot: _dashFoot(d, "log", d.log.length > 0),
       bodyStyle: { padding: "4px 6px", fontFamily: "var(--qe-mono)" }
     },
     /* @__PURE__ */ React.createElement(EngineLogBody, null)
-  )));
+  );
+};
+const TiledGrid = React.memo(function TiledGrid2() {
+  return /* @__PURE__ */ React.createElement(GridWorkspace, { persistId: "dashboard" }, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 8, h: 8, minW: 6, minH: 6 }, /* @__PURE__ */ React.createElement(EquityStatsPane, null)), /* @__PURE__ */ React.createElement(GridItem, { x: 8, y: 0, w: 16, h: 8, minW: 8, minH: 6 }, /* @__PURE__ */ React.createElement(EquityCurvePane, null)), /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 8, w: 6, h: 8, minW: 4, minH: 6 }, /* @__PURE__ */ React.createElement(RiskMonitorPane, null)), /* @__PURE__ */ React.createElement(GridItem, { x: 6, y: 8, w: 12, h: 8, minW: 8, minH: 6 }, /* @__PURE__ */ React.createElement(OpenPositionsPane, null)), /* @__PURE__ */ React.createElement(GridItem, { x: 18, y: 8, w: 6, h: 8, minW: 4, minH: 6 }, /* @__PURE__ */ React.createElement(MacroSignalsPane, null)), /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 16, w: 12, h: 8, minW: 8, minH: 6 }, /* @__PURE__ */ React.createElement(MonthlyPane, null)), /* @__PURE__ */ React.createElement(GridItem, { x: 12, y: 16, w: 6, h: 8, minW: 4, minH: 6 }, /* @__PURE__ */ React.createElement(ActiveParamsPane, null)), /* @__PURE__ */ React.createElement(GridItem, { x: 18, y: 16, w: 6, h: 8, minW: 4, minH: 6 }, /* @__PURE__ */ React.createElement(EngineLogPane, null)));
 });
 const DashHeaderDots = () => {
   const d = useDash();
@@ -2809,9 +2885,26 @@ Object.assign(window, { DashTiled, QE_DASH });
 
 /* ==== pages-config.jsx ==== */
 const _cfgJson = async (url) => {
-  const r = await fetch(url, { headers: { Accept: "application/json" } });
-  if (!r.ok) throw new Error(url + " " + r.status);
-  return r.json();
+  let r;
+  try {
+    r = await fetch(url, { headers: { Accept: "application/json" } });
+  } catch (e) {
+    const err = new Error(url + " unreachable");
+    err.status = 0;
+    throw err;
+  }
+  if (!r.ok) {
+    const err = new Error(url + " " + r.status);
+    err.status = r.status;
+    throw err;
+  }
+  try {
+    return await r.json();
+  } catch (e) {
+    const err = new Error(url + " corrupt response");
+    err.corrupt = true;
+    throw err;
+  }
 };
 const _cfgStrip = (html) => {
   try {
@@ -2994,17 +3087,22 @@ const CfgAccountsTab = () => {
   const [acct, setAcct] = React.useState(null);
   const [detail, setDetail] = React.useState(null);
   const acctRef = React.useRef(null);
+  const [netA, setNetA] = React.useState({});
+  const [netD, setNetD] = React.useState({});
   const loadAccounts = React.useCallback(async (keepSelection) => {
+    const t0 = performance.now();
     try {
       const rows = await _cfgJson("/accounts");
+      setNetA({ err: null, ms: performance.now() - t0 });
       setAccounts(rows);
       setAcct((cur) => {
         if (keepSelection && cur != null && rows.some((a) => a.id === cur)) return cur;
         const act = rows.find((a) => a.is_active) || rows[0];
         return act ? act.id : null;
       });
-    } catch (e) {
+    } catch (err) {
       setAccounts([]);
+      setNetA((n) => ({ ...n, err }));
     }
   }, []);
   React.useEffect(() => {
@@ -3015,10 +3113,17 @@ const CfgAccountsTab = () => {
     if (acct == null) return;
     setDetail(null);
     let alive = true;
+    const t0 = performance.now();
     _cfgJson("/api/config/account/" + acct).then((d) => {
-      if (alive) setDetail(d);
-    }).catch(() => {
-      if (alive) setDetail({ params: {}, settings: {} });
+      if (alive) {
+        setDetail(d);
+        setNetD({ err: null, ms: performance.now() - t0 });
+      }
+    }).catch((err) => {
+      if (alive) {
+        setDetail({ params: {}, settings: {}, _placeholder: true });
+        setNetD((n) => ({ ...n, err }));
+      }
     });
     return () => {
       alive = false;
@@ -3042,7 +3147,7 @@ const CfgAccountsTab = () => {
       count: accounts ? accounts.length : null,
       style: { height: "100%" },
       onRefresh: () => loadAccounts(true),
-      foot: { tone: "sub", msg: accounts ? `${accounts.length} accounts \xB7 add/delete on Jinja /config` : "loading\u2026" }
+      foot: qeFootState({ loading: netA.ms == null && !netA.err, err: netA.err, hasData: accounts != null && accounts.length > 0, ms: netA.ms })
     },
     accounts == null ? /* @__PURE__ */ React.createElement(Spinner, { label: "loading" }) : !accounts.length ? /* @__PURE__ */ React.createElement(EmptyState, { tone: "warn", glyph: "\u2205", msg: "No accounts", hint: "Engine unreachable, or no accounts configured." }) : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4 } }, accounts.map((a) => /* @__PURE__ */ React.createElement(Card, { key: a.id, tight: true, style: {
       cursor: "pointer",
@@ -3065,7 +3170,7 @@ const CfgAccountsTab = () => {
       style: { height: "100%" },
       bodyStyle: { overflow: "auto" },
       onRefresh: () => reload(true),
-      foot: { tone: "sub", msg: "two stores \xB7 sizing (account_params) + DD posture (account_settings, display-only)" }
+      foot: !sel ? { tone: "sub", msg: "no account selected" } : qeFootState({ loading: detail == null && !netD.err, err: netD.err, hasData: detail != null && !detail._placeholder, ms: netD.ms })
     },
     !sel ? /* @__PURE__ */ React.createElement(EmptyState, { tone: "neutral", glyph: "\u25C7", msg: "No account selected" }) : detail == null ? /* @__PURE__ */ React.createElement(Spinner, { label: "loading" }) : /* @__PURE__ */ React.createElement(CfgAccountForm, { key: sel.id, account: sel, detail, onReload: reload })
   )));
@@ -3077,11 +3182,15 @@ const CfgConnectionsTab = () => {
   const [busyP, setBusyP] = React.useState(null);
   const [msg, setMsg] = React.useState(null);
   const [add, setAdd] = React.useState({ provider: "", label: "", key: "" });
+  const [net, setNet] = React.useState({});
   const load = React.useCallback(async () => {
+    const t0 = performance.now();
     try {
       setConns((await _cfgJson("/api/connections")).connections || []);
-    } catch (e) {
+      setNet({ err: null, ms: performance.now() - t0 });
+    } catch (err) {
       setConns([]);
+      setNet((n) => ({ ...n, err }));
     }
   }, []);
   React.useEffect(() => {
@@ -3160,7 +3269,7 @@ const CfgConnectionsTab = () => {
       style: { height: "100%" },
       bodyStyle: { padding: 0 },
       onRefresh: load,
-      foot: { tone: "sub", msg: conns ? `${conns.length} providers \xB7 ${conns.filter((c) => c.has_key).length} connected` : "loading\u2026" }
+      foot: qeFootState({ loading: net.ms == null && !net.err, err: net.err, hasData: conns != null && conns.length > 0, ms: net.ms })
     },
     conns == null ? /* @__PURE__ */ React.createElement("div", { style: { padding: 10 } }, /* @__PURE__ */ React.createElement(Spinner, { label: "loading" })) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(
       DataList,
@@ -3295,9 +3404,12 @@ const CfgPresetsTab = () => {
   const [current, setCurrent] = React.useState("");
   const [busy, setBusy] = React.useState(null);
   const [msg, setMsg] = React.useState(null);
+  const [net, setNet] = React.useState({});
   const load = React.useCallback(async () => {
+    const t0 = performance.now();
     try {
       const [pc, accounts] = await Promise.all([_cfgJson("/api/config/presets"), _cfgJson("/accounts")]);
+      setNet({ err: null, ms: performance.now() - t0 });
       setCat(pc.presets || []);
       const act = (accounts || []).find((a) => a.is_active) || null;
       setActive(act);
@@ -3309,8 +3421,9 @@ const CfgPresetsTab = () => {
           setCurrent("");
         }
       }
-    } catch (e) {
+    } catch (err) {
       setCat([]);
+      setNet((n) => ({ ...n, err }));
     }
   }, []);
   React.useEffect(() => {
@@ -3350,7 +3463,7 @@ Enforcement mode is NOT changed.`
       style: { height: "100%" },
       bodyStyle: { overflow: "auto" },
       onRefresh: load,
-      foot: { tone: "sub", msg: "Apply = FULL write (both stores) \xB7 confirm-gated" }
+      foot: qeFootState({ loading: net.ms == null && !net.err, err: net.err, hasData: (cat || []).length > 0, ms: net.ms })
     },
     /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.6rem", color: "var(--qe-sub)", marginBottom: 8, lineHeight: 1.5 } }, "Apply is FULL: writes the DD posture (account_settings \u2014 the store the DD gate reads) AND the sizing envelope (account_params). Applies to the active account", active ? /* @__PURE__ */ React.createElement("span", null, " \u2014 ", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, active.name)) : null, ". Enforcement mode never changes here."),
     cat == null ? /* @__PURE__ */ React.createElement(Spinner, { label: "loading" }) : !cat.length ? /* @__PURE__ */ React.createElement(EmptyState, { tone: "warn", glyph: "\u2205", msg: "No presets", hint: "Engine unreachable?" }) : /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 6 } }, cat.map((p) => {
@@ -3372,11 +3485,15 @@ Enforcement mode is NOT changed.`
 };
 const CfgSystemTab = () => {
   const [sys, setSys] = React.useState(null);
+  const [net, setNet] = React.useState({});
   const load = React.useCallback(async () => {
+    const t0 = performance.now();
     try {
       setSys(await _cfgJson("/api/system"));
-    } catch (e) {
+      setNet({ err: null, ms: performance.now() - t0 });
+    } catch (err) {
       setSys({});
+      setNet((n) => ({ ...n, err }));
     }
   }, []);
   React.useEffect(() => {
@@ -3390,7 +3507,7 @@ const CfgSystemTab = () => {
       style: { height: "100%" },
       bodyStyle: { overflow: "auto" },
       onRefresh: load,
-      foot: { tone: "sub", msg: "read-only engine facts \xB7 /api/system" }
+      foot: qeFootState({ loading: net.ms == null && !net.err, err: net.err, hasData: !!(sys && sys.version), ms: net.ms })
     },
     sys == null ? /* @__PURE__ */ React.createElement(Spinner, { label: "loading" }) : !sys.version ? /* @__PURE__ */ React.createElement(EmptyState, { tone: "warn", glyph: "\u2205", msg: "Engine unreachable", hint: "/api/system did not answer." }) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(SecLbl, { rule: true, right: /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)", fontSize: "0.54rem" } }, "READ-ONLY \xB7 G-O8") }, "Engine"), /* @__PURE__ */ React.createElement(FieldList, { cols: 2, rows: [
       { label: "Engine", value: sys.short_name || sys.name || "\u2014" },
@@ -3428,10 +3545,34 @@ Object.assign(window, { ConfigPage });
 ;
 
 /* ==== pages-pretrade.jsx ==== */
+const _ptCalcFoot = (busy, calcErr, calc) => {
+  if (busy) return { tone: "sub", busy: true, msg: "calculating\u2026" };
+  if (calcErr) {
+    return calc ? { tone: "warn", msg: "calc failed \xB7 showing last result" } : { tone: "err", msg: String(calcErr).slice(0, 80) };
+  }
+  return calc ? { tone: "ok", msg: "calc ok" } : { tone: "sub", msg: "no calc yet" };
+};
 const _ptJson = async (url) => {
-  const r = await fetch(url, { headers: { Accept: "application/json" } });
-  if (!r.ok) throw new Error(url + " " + r.status);
-  return r.json();
+  let r;
+  try {
+    r = await fetch(url, { headers: { Accept: "application/json" } });
+  } catch (e) {
+    const err = new Error(url + " unreachable");
+    err.status = 0;
+    throw err;
+  }
+  if (!r.ok) {
+    const err = new Error(url + " " + r.status);
+    err.status = r.status;
+    throw err;
+  }
+  try {
+    return await r.json();
+  } catch (e) {
+    const err = new Error(url + " corrupt response");
+    err.corrupt = true;
+    throw err;
+  }
 };
 const _ptStrip = (html) => {
   let t;
@@ -3620,20 +3761,28 @@ const PreTradePage = () => {
   const regimeRef = React.useRef(null);
   regimeRef.current = regime;
   const calcTickerRef = React.useRef(calc ? calc.ticker : null);
+  const [netRegime, setNetRegime] = React.useState({});
   React.useEffect(() => {
     let alive = true;
-    const load = (url, fn) => _ptJson(url).then((d) => {
-      if (alive) fn(d);
-    }).catch(() => {
-    });
+    const load = (url, fn, netFn) => {
+      const t0 = performance.now();
+      return _ptJson(url).then((d) => {
+        if (alive) {
+          fn(d);
+          if (netFn) netFn({ err: null, ms: performance.now() - t0 });
+        }
+      }).catch((err) => {
+        if (alive && netFn) netFn((n) => ({ ...n, err }));
+      });
+    };
     load("/api/state", setSt);
-    load("/api/regime/current", setRegime);
+    load("/api/regime/current", setRegime, setNetRegime);
     load("/api/models", (d) => setModels(Array.isArray(d) ? d : d.models || []));
     load("/api/calculator/context", setCtxInfo);
     const aid = window.QE_BOOTSTRAP && window.QE_BOOTSTRAP.activeAccountId;
     if (aid != null) load("/api/config/account/" + aid, (d) => setRiskPct((d.params || {}).individual_risk_per_trade));
     const t1 = setInterval(() => load("/api/state", setSt), 5e3);
-    const t2 = setInterval(() => load("/api/regime/current", setRegime), 6e4);
+    const t2 = setInterval(() => load("/api/regime/current", setRegime, setNetRegime), 6e4);
     return () => {
       alive = false;
       clearInterval(t1);
@@ -3684,15 +3833,22 @@ const PreTradePage = () => {
       clearTimeout(timer);
     };
   }, [tickerNorm]);
+  const [netOb, setNetOb] = React.useState({});
   React.useEffect(() => {
     setOb(null);
+    setNetOb({});
     if (!tickerNorm) return;
     let alive = true, timer = null;
     const poll = async () => {
+      const t0 = performance.now();
       try {
         const d = await _ptJson("/api/calculator/orderbook/" + encodeURIComponent(tickerNorm));
-        if (alive && tickerRef.current === tickerNorm) setOb(d);
-      } catch (e) {
+        if (alive && tickerRef.current === tickerNorm) {
+          setOb(d);
+          setNetOb({ err: null, ms: performance.now() - t0 });
+        }
+      } catch (err) {
+        if (alive && tickerRef.current === tickerNorm) setNetOb((n) => ({ ...n, err }));
       }
       if (alive) timer = setTimeout(poll, 2e3);
     };
@@ -3981,7 +4137,7 @@ const PreTradePage = () => {
       style: { height: "100%" },
       bodyStyle: { overflow: "auto" },
       right: /* @__PURE__ */ React.createElement(Badge, { tone: form.orderType === "limit" ? "ok" : "warn" }, form.orderType === "limit" ? "MAKER FEE" : "TAKER FEE"),
-      foot: { tone: "sub", msg: "form persists on manual calc \xB7 server validates" }
+      foot: { tone: "ok", msg: "local" }
     },
     /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Order Type"), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4, marginTop: 3 } }, [["market", "MARKET"], ["limit", "LIMIT"], ["stop", "STOP"]].map(([k, l]) => /* @__PURE__ */ React.createElement("button", { key: k, onClick: () => setOrderType(k), className: `qe-btn ${form.orderType === k ? "qe-btn-primary" : ""}`, style: { height: 26, justifyContent: "center" } }, l)))), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Ticker"), /* @__PURE__ */ React.createElement(
       "input",
@@ -4091,7 +4247,7 @@ const PreTradePage = () => {
       title: "Setup Summary",
       tag: "CLICK TO COPY",
       style: { height: "100%" },
-      foot: { tone: "sub", msg: calc ? "mirrors the last calc \xB7 click any field to copy" : "no calc yet" },
+      foot: _ptCalcFoot(busy, calcErr, calc),
       right: /* @__PURE__ */ React.createElement(
         PeriodSelector,
         {
@@ -4124,7 +4280,7 @@ const PreTradePage = () => {
       title: "Recent Setups",
       count: recent.length,
       style: { height: "100%" },
-      foot: { tone: "sub", msg: `${recent.length} stored \xB7 recall restores core fields` }
+      foot: { tone: "ok", msg: "local" }
     },
     !recent.length ? /* @__PURE__ */ React.createElement(EmptyState, { tone: "neutral", glyph: "\u25C7", msg: "No recent setups" }) : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 3 } }, recent.map((r, i) => /* @__PURE__ */ React.createElement("div", { key: i, onClick: () => recall(r), title: "Click to recall into the form", style: {
       padding: "4px 7px",
@@ -4138,7 +4294,7 @@ const PreTradePage = () => {
       title: "Regime \xB7 ATR Volatility",
       hot: true,
       style: { height: "100%" },
-      foot: { tone: "info", msg: "/api/regime/current \xB7 60s poll" }
+      foot: qeFootState({ loading: netRegime.ms == null && !netRegime.err, err: netRegime.err, hasData: regime != null, ms: netRegime.ms, retrying: true })
     },
     /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Current Regime"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, marginTop: 4, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.74rem", fontWeight: 700, color: "var(--qe-cyan)" } }, String(regLabel).toUpperCase()), calc && calc.regime_stale || !calc && regime && regime.label == null ? /* @__PURE__ */ React.createElement(Badge, { tone: "warn" }, "STALE") : null, /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.78rem", fontWeight: 700, color: "var(--qe-cyan)" } }, "\xD7", _ptFmtN(regMult, 1), " size")), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.56rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)", marginTop: 2 } }, riskPct != null ? `${_ptFmtN(riskPct * 100, 2)}% \u2192 ${_ptFmtN(riskPct * 100 * regMult, 2)}% risk` : "", calc && calc.regime_mode ? ` \xB7 mode ${calc.regime_mode}` : regime && regime.mode ? ` \xB7 mode ${regime.mode}` : "")), /* @__PURE__ */ React.createElement("div", { style: { borderTop: "1px solid var(--qe-line)" } }), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Volatility (atr_c)"), calc && calc.atr_c != null ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, marginTop: 4, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "1rem", fontWeight: 700 } }, _ptFmtN(calc.atr_c, 2)), /* @__PURE__ */ React.createElement(Badge, { tone: calc.atr_category === "normal" ? "ok" : calc.atr_category === "not_volatile" ? "info" : "warn" }, String(calc.atr_category || "").toUpperCase())), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.56rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)", marginTop: 2 } }, "ATR(", "100", ",4h) ", _ptFmtP(calc.atr100), " \xB7 ATR(14,4h) ", _ptFmtP(calc.atr14))) : /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.6rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)", marginTop: 4 } }, "run Calculate for the ticker's ATR read")))
   )), /* @__PURE__ */ React.createElement(GridItem, { x: 10, y: 5, w: 14, h: 7, minW: 8, minH: 7 }, /* @__PURE__ */ React.createElement(
@@ -4148,7 +4304,7 @@ const PreTradePage = () => {
       style: { height: "100%" },
       right: calc ? /* @__PURE__ */ React.createElement(Badge, { tone: c.eligible ? "ok" : "err" }, c.eligible ? "\u2713 ELIGIBLE" : "\u26D4 INELIGIBLE") : null,
       bodyStyle: { padding: 0 },
-      foot: calc ? { tone: c.eligible ? "ok" : "warn", msg: `${(c.ticker || "").toUpperCase()} \xB7 ${c.side || ""} \xB7 regime \xD7${c.regime_multiplier != null ? c.regime_multiplier : 1}` } : { tone: "sub", msg: "no calc yet" }
+      foot: _ptCalcFoot(busy, calcErr, calc)
     },
     !calc ? /* @__PURE__ */ React.createElement("div", { style: { padding: 10 } }, /* @__PURE__ */ React.createElement(EmptyState, { tone: "neutral", glyph: "\u25C7", msg: "No calc yet", hint: "Size a setup to see the position result." })) : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", height: "100%" } }, !c.eligible && c.ineligible_reason ? /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.62rem", color: "var(--qe-red)", padding: "4px 8px", borderBottom: "1px solid var(--qe-line)" } }, "\u26D4 ", c.ineligible_reason) : null, c.equity_stale || c.mark_price_stale ? /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.58rem", color: "var(--qe-amber)", padding: "3px 8px", borderBottom: "1px solid var(--qe-line)" } }, c.equity_stale ? "\u26A0 equity snapshot stale" : "", c.equity_stale && c.mark_price_stale ? " \xB7 " : "", c.mark_price_stale ? `\u26A0 mark price stale${c.mark_price_age != null ? ` (${Math.round(c.mark_price_age)}s)` : ""}` : "") : null, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "1fr 1px 1.05fr 1px 1fr", gap: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "7px 12px 7px 8px", display: "flex", flexDirection: "column", overflow: "auto" } }, /* @__PURE__ */ React.createElement(SecLbl, { rule: true }, "Position"), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 4 } }, /* @__PURE__ */ React.createElement(Lbl, null, "Size (Contracts) ", form.applyMult && c.regime_multiplier != null && c.regime_multiplier !== 1 ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\xD7", _ptFmtN(c.regime_multiplier, 1), " regime") : null, " ", c.size_overridden ? /* @__PURE__ */ React.createElement(Badge, { tone: "warn" }, "OVERRIDE") : null), /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "1.5rem", fontWeight: 700, color: "var(--qe-cyan)", lineHeight: 1.05 } }, _ptFmtSz(c.size)), c.size_raw != null && c.size_raw !== c.size ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.54rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)" } }, "without regime: ", _ptFmtSz(c.size_raw)) : null, !c.eligible && c.would_be_size ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.54rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)" } }, "would-be: ", _ptFmtSz(c.would_be_size)) : null), /* @__PURE__ */ React.createElement(FieldList, { rows: [
       { label: "Notional", value: _ptFmtN(c.notional) + " USDT" },
@@ -4179,7 +4335,7 @@ const PreTradePage = () => {
     {
       title: "Correlated Sector Exposure",
       style: { height: "100%" },
-      foot: !calc || !c.correlated_exposure ? { tone: "sub", msg: "no calc yet" } : { tone: c.exceeds_corr_limit ? "warn" : "ok", msg: c.exceeds_corr_limit ? "sector cap exceeded" : "within sector cap" }
+      foot: _ptCalcFoot(busy, calcErr, calc)
     },
     !calc || !c.correlated_exposure ? /* @__PURE__ */ React.createElement(EmptyState, { tone: "neutral", glyph: "\u25C7", msg: "No calc yet" }) : /* @__PURE__ */ React.createElement(React.Fragment, null, c.exceeds_corr_limit ? /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.6rem", color: "var(--qe-red)", marginBottom: 4 } }, "\u26D4 correlated-exposure cap exceeded") : null, /* @__PURE__ */ React.createElement(FieldList, { rows: [
       ...Object.entries(c.correlated_exposure).map(([sector, v]) => ({
@@ -4196,7 +4352,7 @@ const PreTradePage = () => {
       tag: "2s",
       style: { height: "100%" },
       right: ob && (ob.bids || []).length ? /* @__PURE__ */ React.createElement(StatusDot, { tone: "ok", label: "LIVE" }) : /* @__PURE__ */ React.createElement(StatusDot, { tone: "off", label: "\u2014" }),
-      foot: { tone: "sub", msg: "top-5 mirror \xB7 /api/calculator/orderbook" }
+      foot: !tickerNorm ? { tone: "sub", msg: "enter a ticker" } : qeFootState({ loading: netOb.ms == null && !netOb.err, err: netOb.err, hasData: ob != null, ms: netOb.ms, retrying: true })
     },
     !ob || !(ob.bids || []).length && !(ob.asks || []).length ? /* @__PURE__ */ React.createElement(EmptyState, { tone: "neutral", glyph: "\u3007", msg: tickerNorm ? "No depth yet" : "Enter a ticker" }) : (() => {
       const maxQ = Math.max(...[...ob.bids || [], ...ob.asks || []].map(([, q]) => parseFloat(q) || 0), 1e-9);
@@ -4460,19 +4616,31 @@ const LinkagePage = () => {
   const [closes, setCloses] = React.useState(null);
   const [sel, setSel] = React.useState(null);
   const [toast, setToast] = React.useState(null);
+  const [nets, setNets] = React.useState({});
   const load = React.useCallback((which) => {
-    const get = (url, fn, pick) => _ptJson(url).then((d) => fn(pick ? d[pick] : d)).catch(() => {
-    });
+    const get = (url, fn, pick, key) => {
+      const t0 = performance.now();
+      return _ptJson(url).then((d) => {
+        fn(pick ? d[pick] : d);
+        setNets((m) => ({ ...m, [key]: { err: null, ms: performance.now() - t0 } }));
+      }).catch((err) => {
+        setNets((m) => ({ ...m, [key]: { ...m[key], err } }));
+      });
+    };
     if (!which || which === "fast") {
-      get("/orders/needs_review", setNeeds, "orders");
-      get("/api/linkage/positions", setPositions, "positions");
-      get("/api/linkage/calcs", setCalcs, "calcs");
+      get("/orders/needs_review", setNeeds, "orders", "needs");
+      get("/api/linkage/positions", setPositions, "positions", "positions");
+      get("/api/linkage/calcs", setCalcs, "calcs", "calcs");
     }
     if (!which || which === "slow") {
-      get("/api/linkage/funding", setFunding);
-      get("/api/linkage/closes", setCloses, "closes");
+      get("/api/linkage/funding", setFunding, null, "funding");
+      get("/api/linkage/closes", setCloses, "closes", "closes");
     }
   }, []);
+  const lkFoot = (key, hasData) => {
+    const n = nets[key] || {};
+    return qeFootState({ loading: n.ms == null && !n.err, err: n.err, hasData, ms: n.ms, retrying: true });
+  };
   React.useEffect(() => {
     load();
     const t1 = setInterval(() => load("fast"), 5e3);
@@ -4574,7 +4742,7 @@ const LinkagePage = () => {
       title: "MANUAL LINK \u2014 NEEDS REVIEW",
       right: /* @__PURE__ */ React.createElement(Badge, { tone: inbox.length ? "warn" : "ok" }, inbox.length),
       bodyStyle: { padding: 0, display: "flex", flexDirection: "column" },
-      foot: { tone: inbox.length ? "warn" : "ok", msg: `${inbox.length} to resolve \xB7 writes via choke-point endpoints` }
+      foot: lkFoot("needs", needs != null)
     },
     needs == null ? /* @__PURE__ */ React.createElement("div", { style: { padding: 10 } }, /* @__PURE__ */ React.createElement(Spinner, { label: "loading" })) : !inbox.length ? /* @__PURE__ */ React.createElement("div", { style: { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 10 } }, /* @__PURE__ */ React.createElement(EmptyState, { tone: "info", glyph: "\u2713", msg: "Inbox clear", hint: "Every order is linked and every close is categorized." })) : /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "162px 1fr" } }, /* @__PURE__ */ React.createElement("div", { style: { overflow: "auto", borderRight: "1px solid var(--qe-line)" } }, inbox.map((item) => {
       const on = active && item.key === active.key;
@@ -4597,7 +4765,7 @@ const LinkagePage = () => {
       count: positions ? positions.length : null,
       onRefresh: () => load("fast"),
       bodyStyle: { padding: 0 },
-      foot: { tone: "info", msg: "5s poll \xB7 uPnL live via SSE" }
+      foot: lkFoot("positions", positions != null)
     },
     positions == null ? /* @__PURE__ */ React.createElement("div", { style: { padding: 10 } }, /* @__PURE__ */ React.createElement(Spinner, { label: "loading" })) : /* @__PURE__ */ React.createElement(DataList, { columns: posCols, rows: positions, selKey: "position_id", tools: false, emptyMsg: "no open positions" })
   )), /* @__PURE__ */ React.createElement(GridItem, { x: 9, y: 9, w: 8, h: 8, minW: 4, minH: 5 }, /* @__PURE__ */ React.createElement(
@@ -4606,7 +4774,7 @@ const LinkagePage = () => {
       title: "Active Calcs",
       count: calcs ? calcs.length : null,
       bodyStyle: { padding: 0 },
-      foot: { tone: "info", msg: "5s poll \xB7 countdown off expiry_ms" }
+      foot: lkFoot("calcs", calcs != null)
     },
     calcs == null ? /* @__PURE__ */ React.createElement("div", { style: { padding: 10 } }, /* @__PURE__ */ React.createElement(Spinner, { label: "loading" })) : /* @__PURE__ */ React.createElement(DataList, { columns: calcCols, rows: calcs, selKey: "calc_id", tools: false, emptyMsg: "no active calcs" })
   )), /* @__PURE__ */ React.createElement(GridItem, { x: 17, y: 9, w: 7, h: 8, minW: 4, minH: 5 }, /* @__PURE__ */ React.createElement(
@@ -4616,7 +4784,7 @@ const LinkagePage = () => {
       tag: "LIVE",
       bodyStyle: { padding: 0 },
       onRefresh: () => load("slow"),
-      foot: { tone: "info", msg: "30s poll \xB7 net next is SIGNED" }
+      foot: lkFoot("funding", funding != null)
     },
     funding == null ? /* @__PURE__ */ React.createElement("div", { style: { padding: 10 } }, /* @__PURE__ */ React.createElement(Spinner, { label: "loading" })) : /* @__PURE__ */ React.createElement(
       DataList,
@@ -4635,7 +4803,7 @@ const LinkagePage = () => {
       title: "Recent Closes",
       count: closes ? closes.length : null,
       bodyStyle: { padding: 0 },
-      foot: { tone: "sub", msg: "30s poll \xB7 pending reason = un-annotated manual close" }
+      foot: lkFoot("closes", closes != null)
     },
     closes == null ? /* @__PURE__ */ React.createElement("div", { style: { padding: 10 } }, /* @__PURE__ */ React.createElement(Spinner, { label: "loading" })) : /* @__PURE__ */ React.createElement(DataList, { columns: closeCols, rows: closes, selKey: "id", tools: false, emptyMsg: "no recent closes" })
   )))), toast && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", bottom: 14, left: "50%", transform: "translateX(-50%)", zIndex: 80, display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", background: "var(--qe-bg)", border: "1px solid var(--qe-green)" } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-green)" } }, "\u2713"), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.62rem", color: "var(--qe-text)" } }, toast)), /* @__PURE__ */ React.createElement(StatusFooter, null));
@@ -4716,6 +4884,8 @@ const HistoryPage = () => {
   const [drill, setDrill] = React.useState(null);
   const [modal, setModal] = React.useState(null);
   const seqRef = React.useRef(0);
+  const [net, setNet] = React.useState({});
+  const [netDrill, setNetDrill] = React.useState({});
   const load = React.useCallback(async () => {
     const ep = H_TABS.find(([k]) => k === tab)[2];
     const { date_from, date_to } = _hRange(period);
@@ -4729,11 +4899,18 @@ const HistoryPage = () => {
     });
     const seq = ++seqRef.current;
     setLoading(true);
+    const t0 = performance.now();
     try {
       const d = await _ptJson(ep + "?" + params.toString());
-      if (seq === seqRef.current) setData(d);
-    } catch (e) {
-      if (seq === seqRef.current) setData((prev) => prev || { rows: [], total: 0 });
+      if (seq === seqRef.current) {
+        setData(d);
+        setNet({ err: null, ms: performance.now() - t0 });
+      }
+    } catch (err) {
+      if (seq === seqRef.current) {
+        setData((prev) => prev || { rows: [], total: 0 });
+        setNet((n) => ({ ...n, err }));
+      }
     }
     if (seq === seqRef.current) setLoading(false);
   }, [tab, period, q, page, perPage]);
@@ -4759,14 +4936,22 @@ const HistoryPage = () => {
     const seq = ++drillSeq.current;
     setSel(row);
     setDrill(null);
-    try {
-      const [fills, ctx] = await Promise.all([
-        _ptJson(`/fragments/history/position_fills?position_id=${row.id}&format=json`).catch(() => ({ fills: [] })),
-        _ptJson(`/context/position/${encodeURIComponent(row.terminal_position_id || row.id)}`).catch(() => null)
-      ]);
-      if (seq === drillSeq.current) setDrill({ fills: fills.fills || [], ctx });
-    } catch (e) {
-      if (seq === drillSeq.current) setDrill({ fills: [], ctx: null });
+    setNetDrill({});
+    const t0 = performance.now();
+    let legErr = null;
+    const [fills, ctx] = await Promise.all([
+      _ptJson(`/fragments/history/position_fills?position_id=${row.id}&format=json`).catch((e) => {
+        legErr = legErr || e;
+        return { fills: [] };
+      }),
+      _ptJson(`/context/position/${encodeURIComponent(row.terminal_position_id || row.id)}`).catch((e) => {
+        legErr = legErr || e;
+        return null;
+      })
+    ]);
+    if (seq === drillSeq.current) {
+      setDrill({ fills: fills && fills.fills || [], ctx });
+      setNetDrill(legErr ? { err: legErr } : { err: null, ms: performance.now() - t0 });
     }
   };
   const rows = data && data.rows || [];
@@ -4862,7 +5047,7 @@ const HistoryPage = () => {
   };
   const summary = (() => {
     if (tab !== "positions" || !rows.length) return null;
-    const net = rows.reduce((s, r) => s + (r.net_pnl || 0), 0);
+    const net2 = rows.reduce((s, r) => s + (r.net_pnl || 0), 0);
     const wins = rows.filter((r) => (r.net_pnl || 0) >= 0).length;
     const fees = rows.reduce((s, r) => s + (r.total_fees || 0), 0);
     return [
@@ -4871,7 +5056,7 @@ const HistoryPage = () => {
       { label: "LOSSES", value: String(rows.length - wins), color: "var(--qe-red)" },
       { label: "WINRATE", value: rows.length ? Math.round(wins / rows.length * 100) + "%" : "\u2014" },
       { label: "FEES", value: _ptFmtN(fees), color: "var(--qe-sub)" },
-      { label: "NET", value: lpUsd(net), color: lpSgn(net) }
+      { label: "NET", value: lpUsd(net2), color: lpSgn(net2) }
     ];
   })();
   const dp = sel;
@@ -4895,7 +5080,7 @@ const HistoryPage = () => {
       onRefresh: load,
       style: { height: "100%" },
       bodyStyle: { padding: 0, display: "flex", flexDirection: "column" },
-      foot: data == null ? { tone: "sub", msg: "loading\u2026" } : { tone: "info", msg: `${total} rows \xB7 server paging + search \xB7 30s refresh` }
+      foot: qeFootState({ loading: net.ms == null && !net.err, err: net.err, hasData: rows.length > 0, ms: net.ms, retrying: true })
     },
     /* @__PURE__ */ React.createElement("div", { style: { flex: 1, overflow: "auto" } }, loading && !data ? /* @__PURE__ */ React.createElement("div", { style: { padding: 10 } }, /* @__PURE__ */ React.createElement(Spinner, { label: "loading" })) : /* @__PURE__ */ React.createElement(
       DataList,
@@ -4930,7 +5115,7 @@ const HistoryPage = () => {
       title: "Position Detail",
       style: { height: "100%" },
       bodyStyle: { overflow: "auto" },
-      foot: { tone: "sub", msg: "fills + /context amendments \xB7 lazy on select" }
+      foot: !sel ? { tone: "sub", msg: "select a position" } : qeFootState({ loading: drill == null && !netDrill.err, err: netDrill.err, hasData: drill != null, ms: netDrill.ms })
     },
     !dp ? /* @__PURE__ */ React.createElement(EmptyState, { tone: "neutral", glyph: "\u25CE", msg: "Select a closed position", hint: "Click a row to inspect its fills, exec link and amendments." }) : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, /* @__PURE__ */ React.createElement(SecLbl, { rule: true, right: /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-ghost", onClick: () => {
       setSel(null);
@@ -4978,18 +5163,21 @@ const useAnaJson = (url, intervalMs = 0) => {
   const [data, setData] = React.useState(null);
   const [err, setErr] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
+  const [ms, setMs] = React.useState(null);
   const seqRef = React.useRef(0);
   const load = React.useCallback(async () => {
     const seq = ++seqRef.current;
+    const t0 = performance.now();
     try {
       const d = await _ptJson(url);
       if (seq === seqRef.current) {
         setData(d);
         setErr(null);
+        setMs(performance.now() - t0);
       }
     } catch (e) {
       if (seq === seqRef.current) {
-        setErr(String(e && e.message || e));
+        setErr(e);
       }
     }
     if (seq === seqRef.current) setLoading(false);
@@ -5003,7 +5191,8 @@ const useAnaJson = (url, intervalMs = 0) => {
     const t = setInterval(load, intervalMs);
     return () => clearInterval(t);
   }, [load, intervalMs]);
-  return { data, err, loading, reload: load };
+  const foot = qeFootState({ loading, err, hasData: data != null, ms, retrying: intervalMs > 0 });
+  return { data, err, loading, reload: load, ms, foot };
 };
 const useAnaLabel = (data, onLabel) => {
   React.useEffect(() => {
@@ -5015,8 +5204,8 @@ const AnaEmpty = ({ err, msg }) => /* @__PURE__ */ React.createElement("div", { 
   {
     tone: err ? "warn" : "neutral",
     glyph: err ? "\u26A0" : "\u25C7",
-    msg: err ? "analytics fetch failed \u2014 engine unreachable?" : msg,
-    hint: err || void 0
+    msg: err ? "analytics fetch failed" : msg,
+    hint: err ? qeFootCause(err) : void 0
   }
 ));
 const AnaKv = ({ label, value, color }) => /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 2, minWidth: 0 } }, /* @__PURE__ */ React.createElement(Lbl, null, label), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.82rem", fontWeight: 700, color: color || "var(--qe-text)" } }, value));
@@ -5226,7 +5415,7 @@ const AnaExecScatter = ({ points, height = "100%" }) => {
   return /* @__PURE__ */ React.createElement("div", { ref, className: "qe-chart", style: { height } });
 };
 const AnaTabOverview = ({ period, offset, onLabel }) => {
-  const { data, err } = useAnaJson(`/fragments/analytics/overview?format=json&${_anaQS(period, offset)}`);
+  const { data, err, foot } = useAnaJson(`/fragments/analytics/overview?format=json&${_anaQS(period, offset)}`);
   useAnaLabel(data, onLabel);
   if (!data) return /* @__PURE__ */ React.createElement(AnaEmpty, { err, msg: "loading overview\u2026" });
   const s = data.stats || {}, b = data.boundaries || {}, c = data.cumulative || {}, ra = data.ratios || {};
@@ -5260,7 +5449,7 @@ const AnaTabOverview = ({ period, offset, onLabel }) => {
       title: "Volume & Activity",
       tag: lbl,
       style: { height: "100%" },
-      foot: { tone: "sub", msg: "from exchange_history \xB7 funding/transfers excluded" }
+      foot
     },
     /* @__PURE__ */ React.createElement(AnaVRow, { label: "Trading Volume", value: `$${(s.trading_volume || 0).toLocaleString(void 0, { maximumFractionDigits: 0 })}` }),
     /* @__PURE__ */ React.createElement(AnaVRow, { label: "Fees Paid", value: `$${(s.total_fees || 0).toFixed(2)}` }),
@@ -5274,7 +5463,7 @@ const AnaTabOverview = ({ period, offset, onLabel }) => {
       tag: lbl,
       style: { height: "100%" },
       bodyStyle: { padding: 0 },
-      foot: { tone: pnl >= 0 ? "ok" : "warn", msg: `${days} trading days \xB7 period pnl ${pnl >= 0 ? "+" : ""}${pnl.toFixed(2)}` }
+      foot
     },
     /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "minmax(200px,0.9fr) 1px 1.3fr", gap: 0, height: "100%" } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "7px 12px 7px 8px" } }, /* @__PURE__ */ React.createElement(FieldList, { rows: [
       { label: "Initial Equity", value: `$${initial.toFixed(2)}` },
@@ -5289,7 +5478,7 @@ const AnaTabOverview = ({ period, offset, onLabel }) => {
     {
       title: "Trade Statistics",
       style: { height: "100%" },
-      foot: { tone: "sub", msg: `${total} trades \xB7 win ${winrate.toFixed(1)}%` }
+      foot
     },
     /* @__PURE__ */ React.createElement(AnaVRow, { label: "Total Trades", value: total }),
     /* @__PURE__ */ React.createElement(AnaVRow, { label: "Winning", value: wins, color: "var(--qe-green)" }),
@@ -5312,7 +5501,7 @@ const AnaTabEquity = () => {
   const [tf, setTf] = React.useState("1M");
   const [logScale, setLogScale] = React.useState(false);
   const [ddMode, setDdMode] = React.useState(false);
-  const { data, err } = useAnaJson(`/api/analytics/equity_ohlc?tf=${encodeURIComponent(tf)}`);
+  const { data, err, foot } = useAnaJson(`/api/analytics/equity_ohlc?tf=${encodeURIComponent(tf)}`);
   const candles = data && data.candles || [];
   const ddSeries = React.useMemo(() => {
     let peak = -Infinity;
@@ -5358,13 +5547,13 @@ const AnaTabEquity = () => {
       )),
       style: { height: "100%" },
       bodyStyle: { padding: 6 },
-      foot: { tone: "info", msg: `${candles.length} buckets \xB7 tf=${tf} \xB7 /api/analytics/equity_ohlc` }
+      foot
     },
     /* @__PURE__ */ React.createElement("div", { style: { height: "100%", display: "flex", flexDirection: "column" } }, /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.62rem", display: "flex", gap: 14, flexWrap: "wrap", padding: "2px 4px", alignItems: "baseline" } }, ohlcRow.map(([k, v, col]) => /* @__PURE__ */ React.createElement("span", { key: k }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, k), " ", /* @__PURE__ */ React.createElement("span", { style: { color: col } }, v == null ? "\u2014" : `$${(+v).toFixed(2)}`))), /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "Chg"), " ", /* @__PURE__ */ React.createElement("span", { style: { color: _anaPnl(chg) } }, `${chg >= 0 ? "+" : ""}$${chg.toFixed(2)} (${chgPct >= 0 ? "+" : ""}${chgPct.toFixed(2)}%)`)), /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "Bar Range"), " ", /* @__PURE__ */ React.createElement("span", null, last.h != null && last.l != null ? `$${(last.h - last.l).toFixed(2)}` : "\u2014")), /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "Cash Flow"), " ", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-blue)" } }, last.cf ? `${last.cf >= 0 ? "+" : "-"}$${Math.abs(+last.cf).toFixed(2)}` : "+$0.00"))), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0 } }, ddMode ? /* @__PURE__ */ React.createElement(EquityChart, { data: ddSeries, color: "var(--qe-red)", baseline: 0 }) : /* @__PURE__ */ React.createElement(CandlestickChart, { data: candles.map((d) => [d.x, d.o, d.c, d.l, d.h]), logScale })))
   ));
 };
 const AnaTabDistributions = ({ period, offset, onLabel }) => {
-  const { data, err } = useAnaJson(`/api/analytics/distributions?${_anaQS(period, offset)}`);
+  const { data, err, foot } = useAnaJson(`/api/analytics/distributions?${_anaQS(period, offset)}`);
   useAnaLabel(data, onLabel);
   if (!data) return /* @__PURE__ */ React.createElement(AnaEmpty, { err, msg: "loading distributions\u2026" });
   const trades = data.trades || [];
@@ -5416,7 +5605,7 @@ const AnaTabDistributions = ({ period, offset, onLabel }) => {
       title: "PnL Distribution",
       style: { height: "100%" },
       tag: lbl || `$${step} bins`,
-      foot: { tone: "sub", msg: `n=${trades.length} closed trades \xB7 $${step} bins` }
+      foot
     },
     /* @__PURE__ */ React.createElement(AnaHistChart, { bins: pnlBins, divergent: true, noun: "trade" })
   )), /* @__PURE__ */ React.createElement(GridItem, { x: 12, y: 0, w: 12, h: 6, minW: 6, minH: 5 }, /* @__PURE__ */ React.createElement(
@@ -5440,7 +5629,7 @@ const AnaTabDistributions = ({ period, offset, onLabel }) => {
 };
 const AnaTabCalendar = () => {
   const [ym, setYm] = React.useState("");
-  const { data, err } = useAnaJson(`/fragments/analytics/calendar?format=json&month=${encodeURIComponent(ym)}`);
+  const { data, err, foot } = useAnaJson(`/fragments/analytics/calendar?format=json&month=${encodeURIComponent(ym)}`);
   if (!data) return /* @__PURE__ */ React.createElement(AnaEmpty, { err, msg: "loading calendar\u2026" });
   const weeks = data.calendar_grid || [];
   const maxAbs = data.max_abs_pnl || 1;
@@ -5461,10 +5650,7 @@ const AnaTabCalendar = () => {
         "Next \u203A"
       )),
       style: { height: "100%" },
-      foot: {
-        tone: (data.avg_daily || 0) >= 0 ? "ok" : "warn",
-        msg: `${data.trading_days || 0} trading days \xB7 best $${(data.best_day || 0).toFixed(2)} \xB7 worst $${(data.worst_day || 0).toFixed(2)}`
-      }
+      foot
     },
     /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, height: "100%" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 2 } }, ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => /* @__PURE__ */ React.createElement("div", { key: d, style: { textAlign: "center", fontSize: "0.54rem", color: "var(--qe-muted)", textTransform: "uppercase", padding: "2px 0", letterSpacing: "0.1em" } }, d))), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 2, flex: 1, minHeight: 0, alignContent: "start" } }, weeks.flat().map((cell, i) => {
       if (!cell || !cell.day) return /* @__PURE__ */ React.createElement("div", { key: i });
@@ -5496,7 +5682,7 @@ const AnaTabCalendar = () => {
   ));
 };
 const AnaTabPairs = ({ period, offset, onLabel }) => {
-  const { data, err } = useAnaJson(`/fragments/analytics/pairs?format=json&${_anaQS(period, offset)}`);
+  const { data, err, foot } = useAnaJson(`/fragments/analytics/pairs?format=json&${_anaQS(period, offset)}`);
   useAnaLabel(data, onLabel);
   if (!data) return /* @__PURE__ */ React.createElement(AnaEmpty, { err, msg: "loading pairs\u2026" });
   const rows = data.rows || [];
@@ -5516,7 +5702,7 @@ const AnaTabPairs = ({ period, offset, onLabel }) => {
       tag: data.period_label,
       style: { height: "100%" },
       bodyStyle: { padding: 0 },
-      foot: { tone: totals.pnl >= 0 ? "ok" : "warn", msg: `${totals.trades} trades \xB7 \u03A3 ${totals.pnl >= 0 ? "+" : ""}${totals.pnl.toFixed(2)} \xB7 fees ${totals.fees.toFixed(2)}` }
+      foot
     },
     /* @__PURE__ */ React.createElement(
       DataList,
@@ -5546,7 +5732,7 @@ const AnaTabPairs = ({ period, offset, onLabel }) => {
 };
 const AnaTabExcursions = ({ period, offset, onLabel }) => {
   const [dir, setDir] = React.useState("all");
-  const { data, err } = useAnaJson(`/fragments/analytics/excursions?format=json&dir=${encodeURIComponent(dir)}&${_anaQS(period, offset)}`);
+  const { data, err, foot } = useAnaJson(`/fragments/analytics/excursions?format=json&dir=${encodeURIComponent(dir)}&${_anaQS(period, offset)}`);
   useAnaLabel(data, onLabel);
   if (!data) return /* @__PURE__ */ React.createElement(AnaEmpty, { err, msg: "loading excursions\u2026" });
   const trades = data.trades || [];
@@ -5559,7 +5745,7 @@ const AnaTabExcursions = ({ period, offset, onLabel }) => {
       right: /* @__PURE__ */ React.createElement(PeriodSelector, { options: [["all", "All"], ["LONG", "Long"], ["SHORT", "Short"]], value: dir, onChange: setDir }),
       style: { height: "100%" },
       bodyStyle: { padding: 6 },
-      foot: { tone: "info", msg: `${points.length} reconciled trades \xB7 server-side ${dir === "all" ? "no" : dir} filter` }
+      foot
     },
     points.length ? /* @__PURE__ */ React.createElement(ScatterChart, { points, xName: "MFE ($)", yName: "MAE ($)" }) : /* @__PURE__ */ React.createElement(EmptyState, { msg: "no reconciled excursions in window" })
   )), /* @__PURE__ */ React.createElement(GridItem, { x: 16, y: 0, w: 8, h: 5, minW: 5, minH: 4 }, /* @__PURE__ */ React.createElement(Pane, { title: "Excursion Summary", style: { height: "100%" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 14px" } }, /* @__PURE__ */ React.createElement(AnaKv, { label: "Avg MFE", value: `$${(data.avg_mfe || 0).toFixed(2)}`, color: "var(--qe-green)" }), /* @__PURE__ */ React.createElement(AnaKv, { label: "Avg |MAE|", value: `$${(data.avg_mae_abs || 0).toFixed(2)}`, color: "var(--qe-red)" }), /* @__PURE__ */ React.createElement(AnaKv, { label: "Avg ME-Ratio", value: (data.avg_mer || 0).toFixed(2) }), /* @__PURE__ */ React.createElement(AnaKv, { label: "MFE > 2\xD7 MAE", value: `${data.pct_favorable || 0}%`, color: "var(--qe-green)" })))), /* @__PURE__ */ React.createElement(GridItem, { x: 16, y: 5, w: 8, h: 11, minW: 5, minH: 5 }, /* @__PURE__ */ React.createElement(
@@ -5591,7 +5777,7 @@ const AnaTabExcursions = ({ period, offset, onLabel }) => {
   )));
 };
 const AnaTabRMultiples = ({ period, offset, onLabel }) => {
-  const { data, err } = useAnaJson(`/fragments/analytics/r_multiples?format=json&${_anaQS(period, offset)}`);
+  const { data, err, foot } = useAnaJson(`/fragments/analytics/r_multiples?format=json&${_anaQS(period, offset)}`);
   useAnaLabel(data, onLabel);
   if (!data) return /* @__PURE__ */ React.createElement(AnaEmpty, { err, msg: "loading r-multiples\u2026" });
   const st = data.r_stats || {};
@@ -5603,14 +5789,14 @@ const AnaTabRMultiples = ({ period, offset, onLabel }) => {
       title: "R-Multiple Distribution",
       tag: data.period_label,
       style: { height: "100%" },
-      foot: { tone: (st.expectancy || 0) >= 0 ? "ok" : "warn", msg: `${st.count} trades \xB7 expectancy ${(st.expectancy || 0).toFixed(3)}R` }
+      foot
     },
     /* @__PURE__ */ React.createElement(AnaHistChart, { bins, divergent: true, noun: "trade" })
   )), /* @__PURE__ */ React.createElement(GridItem, { x: 16, y: 0, w: 8, h: 12, minW: 5, minH: 6 }, /* @__PURE__ */ React.createElement(Pane, { title: "R-Multiple Stats", style: { height: "100%" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, /* @__PURE__ */ React.createElement(AnaKv, { label: "Total Trades", value: st.count }), /* @__PURE__ */ React.createElement(AnaKv, { label: "Win Rate", value: `${((st.win_rate || 0) * 100).toFixed(1)}%`, color: (st.win_rate || 0) >= 0.5 ? "var(--qe-green)" : "var(--qe-red)" }), /* @__PURE__ */ React.createElement(AnaKv, { label: "Expectancy", value: `${(st.expectancy || 0).toFixed(3)}R`, color: _anaPnl(st.expectancy || 0) }), /* @__PURE__ */ React.createElement(AnaKv, { label: "Profit Factor", value: _anaRatio(st.profit_factor), color: (st.profit_factor || 0) >= 1.5 ? "var(--qe-green)" : (st.profit_factor || 0) >= 1 ? "var(--qe-amber)" : "var(--qe-red)" }), /* @__PURE__ */ React.createElement(AnaKv, { label: "Avg Win R", value: `${(st.avg_win_r || 0).toFixed(2)}R`, color: "var(--qe-green)" }), /* @__PURE__ */ React.createElement(AnaKv, { label: "Avg Loss R", value: `${(st.avg_loss_r || 0).toFixed(2)}R`, color: "var(--qe-red)" }), /* @__PURE__ */ React.createElement(AnaKv, { label: "Best R", value: `${(st.best || 0).toFixed(2)}R`, color: "var(--qe-green)" }), /* @__PURE__ */ React.createElement(AnaKv, { label: "Worst R", value: `${(st.worst || 0).toFixed(2)}R`, color: "var(--qe-red)" }), /* @__PURE__ */ React.createElement(AnaKv, { label: "Median R", value: `${(st.median || 0).toFixed(2)}R` }), /* @__PURE__ */ React.createElement(AnaKv, { label: "Mean R", value: `${(st.mean || 0).toFixed(3)}R` })))));
 };
 const AnaVarCard = ({ label, val, equity, desc }) => /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4, padding: 10, background: "var(--qe-panel)", border: "1px solid var(--qe-line)" }, title: desc }, /* @__PURE__ */ React.createElement(Lbl, null, label), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "1rem", fontWeight: 700, color: "var(--qe-red)" } }, Math.abs(val * 100).toFixed(2), "%"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.62rem", color: "var(--qe-sub)", fontFamily: "var(--qe-mono)" } }, "$", Math.abs(val * (equity || 0)).toFixed(0)));
 const AnaTabRisk = ({ period, offset, onLabel }) => {
-  const { data, err } = useAnaJson(`/fragments/analytics/var?format=json&${_anaQS(period, offset)}`);
+  const { data, err, foot } = useAnaJson(`/fragments/analytics/var?format=json&${_anaQS(period, offset)}`);
   useAnaLabel(data, onLabel);
   if (!data) return /* @__PURE__ */ React.createElement(AnaEmpty, { err, msg: "loading risk metrics\u2026" });
   if (!data.has_data) {
@@ -5636,7 +5822,7 @@ const AnaTabRisk = ({ period, offset, onLabel }) => {
       title: "Value at Risk \xB7 Risk Metrics",
       tag: data.period_label,
       style: { height: "100%" },
-      foot: { tone: "sub", msg: `95% VaR ${Math.abs((data.var95 || 0) * 100).toFixed(2)}% \xB7 n=${(data.returns || []).length} daily returns` }
+      foot
     },
     /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8 } }, /* @__PURE__ */ React.createElement(AnaVarCard, { label: "Historical VaR (95%)", val: data.var95 || 0, equity: data.cur_equity, desc: "Worst daily loss exceeded 5% of the time" }), /* @__PURE__ */ React.createElement(AnaVarCard, { label: "Historical VaR (99%)", val: data.var99 || 0, equity: data.cur_equity, desc: "Worst daily loss exceeded 1% of the time" }), /* @__PURE__ */ React.createElement(AnaVarCard, { label: "CVaR / ES (95%)", val: data.cvar95 || 0, equity: data.cur_equity, desc: "Expected Shortfall \u2014 average loss on worst 5% of days" }), /* @__PURE__ */ React.createElement(AnaVarCard, { label: "Parametric VaR (95%)", val: data.pvar95 || 0, equity: data.cur_equity, desc: "Gaussian VaR (\u03BC \u2212 1.645\u03C3)" }))
   )), /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 5, w: 24, h: 12, minW: 10, minH: 6 }, /* @__PURE__ */ React.createElement(
@@ -5664,7 +5850,7 @@ const _anaLinkKey = (r) => {
 };
 const AnaTabExecution = () => {
   const [ftFilter, setFtFilter] = React.useState("all");
-  const { data, err } = useAnaJson("/api/analytics/execution?limit=500");
+  const { data, err, foot } = useAnaJson("/api/analytics/execution?limit=500");
   if (!data) return /* @__PURE__ */ React.createElement(AnaEmpty, { err, msg: "loading execution quality\u2026" });
   const rows = data.rows || [];
   const sum = data.summary || {};
@@ -5752,7 +5938,7 @@ const AnaTabExecution = () => {
       count: tableRows.length,
       tag: `newest ${data.limit}`,
       style: { height: "100%" },
-      foot: { tone: "sub", msg: `aggregates cover this window (newest ${data.limit}), not all-time` },
+      foot,
       right: /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 3 } }, ["all", "entry", "tp", "sl", "manual"].map((f) => /* @__PURE__ */ React.createElement(
         "button",
         {
@@ -5797,7 +5983,7 @@ const AnaTabExecution = () => {
   )));
 };
 const AnaTabFunding = () => {
-  const { data, err } = useAnaJson("/fragments/analytics/funding?format=json", 3e4);
+  const { data, err, foot } = useAnaJson("/fragments/analytics/funding?format=json", 3e4);
   if (!data) return /* @__PURE__ */ React.createElement(AnaEmpty, { err, msg: "loading funding\u2026" });
   const raw = data.rows || [];
   if (!raw.length) return /* @__PURE__ */ React.createElement(AnaEmpty, { err, msg: "no open positions \u2014 funding exposure is live-position-based" });
@@ -5813,7 +5999,7 @@ const AnaTabFunding = () => {
       right: err ? /* @__PURE__ */ React.createElement(StatusDot, { tone: "warn", label: "STALE \u2014 retrying" }) : /* @__PURE__ */ React.createElement(StatusDot, { tone: "info", label: "30s refresh" }),
       style: { height: "100%" },
       bodyStyle: { padding: 0 },
-      foot: { tone: tot8h >= 0 ? "ok" : "warn", msg: `${rows.length} positions \xB7 net per 8h ${tot8h >= 0 ? "+" : "-"}$${Math.abs(tot8h).toFixed(4)}` }
+      foot
     },
     /* @__PURE__ */ React.createElement(
       DataList,
@@ -5840,7 +6026,7 @@ const AnaTabFunding = () => {
   ));
 };
 const AnaTabBeta = () => {
-  const { data, err } = useAnaJson("/fragments/analytics/beta?format=json", 6e4);
+  const { data, err, foot } = useAnaJson("/fragments/analytics/beta?format=json", 6e4);
   if (!data) return /* @__PURE__ */ React.createElement(AnaEmpty, { err, msg: "loading beta\u2026" });
   const raw = data.rows || [];
   if (!raw.length) return /* @__PURE__ */ React.createElement(AnaEmpty, { err, msg: "no open positions \u2014 beta exposure is live-position-based" });
@@ -5854,7 +6040,7 @@ const AnaTabBeta = () => {
       right: /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.54rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)" } }, "\u03B2 from 30d OHLCV \xB7 sector preset fallback \xB7 unsigned notional"),
       style: { height: "100%" },
       bodyStyle: { padding: 0 },
-      foot: { tone: "info", msg: `portfolio \u03B2 ${(data.port_beta || 0).toFixed(2)} \xB7 \u03A3 \u03B2-adj $${(data.total_beta_exp || 0).toLocaleString(void 0, { maximumFractionDigits: 0 })} \xB7 60s poll` }
+      foot
     },
     /* @__PURE__ */ React.createElement(
       DataList,
@@ -6426,17 +6612,17 @@ const SignalCard = ({ sig, globalSel, coverageRows, thresholds, onOverride, onGo
     }
   ) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(SignalChart, { data: series, color: sig.color, thresholds: thr, decimals: sig.decimals, unit: sig.unit, height: 84 }), thr.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6, fontSize: "0.54rem", fontFamily: "var(--qe-mono)" } }, thr.map((t) => /* @__PURE__ */ React.createElement("span", { key: t.l, style: { display: "inline-flex", alignItems: "center", gap: 3, color: t.c } }, /* @__PURE__ */ React.createElement("span", { style: { width: 8, height: 0, borderTop: `1px dashed ${t.c}`, display: "inline-block" } }), t.l, " ", t.v, sig.unit && " " + sig.unit)))));
 };
-const RegimeTabOverview = ({ current, mults, onGoBackfill }) => {
+const RegimeTabOverview = ({ current, curFoot, mults, onGoBackfill }) => {
   const [tlStyle, setTlStyle] = React.useState("swim");
   const [tlRange, setTlRange] = React.useState(365);
   const [globalSel, setGlobalSel] = React.useState({ v: 365, n: 0 });
   const [globalActive, setGlobalActive] = React.useState(true);
   const [selChange, setSelChange] = React.useState(null);
   const tlFrom = _rgFromDate(tlRange);
-  const { data: tlData, err: tlErr } = useAnaJson(
+  const { data: tlData, err: tlErr, foot: tlFoot } = useAnaJson(
     `/api/regime/timeline${tlFrom ? `?from_date=${tlFrom}` : ""}`
   );
-  const { data: coverage } = useAnaJson("/api/regime/coverage");
+  const { data: coverage, foot: covFoot } = useAnaJson("/api/regime/coverage");
   const { data: thresholds } = useAnaJson("/api/regime/thresholds");
   const timeline = Array.isArray(tlData) ? tlData : [];
   const counts = {};
@@ -6467,7 +6653,7 @@ const RegimeTabOverview = ({ current, mults, onGoBackfill }) => {
       title: "Current Regime",
       hot: true,
       style: { height: "100%" },
-      foot: { tone: "info", msg: "/api/regime/current \xB7 60s poll" }
+      foot: curFoot
     },
     /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "8px 0" } }, curInfo ? /* @__PURE__ */ React.createElement(RegimeBadge, { tone: curInfo.tone, label: curInfo.label.toUpperCase() }) : /* @__PURE__ */ React.createElement(RegimeBadge, { tone: "neut", label: "NO DATA" }), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "1.8rem", fontWeight: 700, color: curInfo ? curInfo.color : "var(--qe-muted)", lineHeight: 1 } }, current && current.multiplier != null && current.source !== "none" ? `${current.multiplier}\xD7` : "\u2014"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.56rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)" } }, "sizing multiplier"), current && current.source === "live" && /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.54rem", color: "var(--qe-sub)", fontFamily: "var(--qe-mono)" } }, current.mode, " \xB7 ", current.confidence, " confidence \xB7 ", current.stability_bars, "d stable"), current && current.source === "db" && /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.54rem", color: "var(--qe-sub)", fontFamily: "var(--qe-mono)" } }, "from stored labels \xB7 ", current.date || "\u2014"))
   )), /* @__PURE__ */ React.createElement(GridItem, { x: 6, y: 0, w: 12, h: 7, minW: 6, minH: 4 }, /* @__PURE__ */ React.createElement(
@@ -6506,7 +6692,7 @@ const RegimeTabOverview = ({ current, mults, onGoBackfill }) => {
       tag: tlStyle.toUpperCase(),
       style: { height: "100%" },
       right: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.54rem", color: "var(--qe-muted)", letterSpacing: "0.08em", fontFamily: "var(--qe-mono)" } }, "STYLE"), /* @__PURE__ */ React.createElement(PeriodSelector, { options: [["swim", "Swim"], ["bars", "Bars"], ["blocks", "Blocks"], ["heat", "Heat"], ["stack", "Stack"]], value: tlStyle, onChange: setTlStyle }), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2502"), /* @__PURE__ */ React.createElement(PeriodSelector, { options: [[30, "30d"], [90, "90d"], [365, "1y"], [0, "All"]], value: tlRange, onChange: setTlRange })),
-      foot: tlData == null ? { tone: "sub", msg: "loading\u2026" } : tlErr && !timeline.length ? { tone: "warn", msg: "timeline fetch failed" } : { tone: "ok", msg: `${timeline.length} regime labels \xB7 ${tlRange === 0 ? "all-time" : tlRange + "d"} window` }
+      foot: tlFoot
     },
     timeline.length === 0 && tlErr ? /* @__PURE__ */ React.createElement(EmptyState, { tone: "warn", glyph: "\u26A0", msg: "timeline fetch failed", hint: "engine unreachable?" }) : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, /* @__PURE__ */ React.createElement(TimelineSvg, { data: timeline, style: tlStyle }), /* @__PURE__ */ React.createElement(RegimeLegend, null))
   )), /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 15, w: 24, h: 10, minW: 10, minH: 5 }, /* @__PURE__ */ React.createElement(
@@ -6533,7 +6719,7 @@ const RegimeTabOverview = ({ current, mults, onGoBackfill }) => {
           }
         }
       )),
-      foot: { tone: "sub", msg: "thresholds from config \xB7 per-card range clears the global highlight" }
+      foot: covFoot
     },
     /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 } }, RG_SIGNALS.map((sig) => /* @__PURE__ */ React.createElement(
       SignalCard,
@@ -6554,7 +6740,7 @@ const RegimeTabOverview = ({ current, mults, onGoBackfill }) => {
       count: changes.length,
       style: { height: "100%" },
       bodyStyle: { padding: 0 },
-      foot: { tone: "sub", msg: `${changes.length} transitions (last 25) \xB7 click a row for signal context` }
+      foot: tlFoot
     },
     /* @__PURE__ */ React.createElement(
       DataList,
@@ -6610,7 +6796,7 @@ const RegimeTabBackfill = ({ job, onStart }) => {
   const [mode, setMode] = React.useState("macro_only");
   const [since, setSince] = React.useState("2020-01-01");
   const [until, setUntil] = React.useState(() => (/* @__PURE__ */ new Date()).toISOString().slice(0, 10));
-  const { data: coverage, err: covErr, reload: reloadCoverage } = useAnaJson("/api/regime/coverage");
+  const { data: coverage, err: covErr, reload: reloadCoverage, foot: covFoot } = useAnaJson("/api/regime/coverage");
   const jobStatus = job && job.status;
   React.useEffect(() => {
     if (jobStatus === "completed") reloadCoverage();
@@ -6636,7 +6822,7 @@ const RegimeTabBackfill = ({ job, onStart }) => {
     {
       title: "Backfill Macro Data",
       style: { height: "100%" },
-      foot: { tone: "sub", msg: "writes regime_signals + regime_labels \xB7 classify follows fetch" }
+      foot: !job ? { tone: "ok", msg: "local" } : job.status === "starting" || job.status === "running" ? { tone: "sub", busy: true, msg: `backfill ${Math.round(job.pct || 0)}%` } : job.status === "failed" ? { tone: "err", msg: job.detail || "backfill failed" } : { tone: "ok", msg: "backfill completed" }
     },
     /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, /* @__PURE__ */ React.createElement("p", { style: { fontSize: "0.62rem", color: "var(--qe-sub)", lineHeight: 1.5, margin: 0 } }, "Macro Only fetches VIX (yfinance) + yields/spreads (FRED) + derives BTC RVol \u2014 works for deep history. Full additionally classifies with any existing Binance OI/funding rows; those crypto series are refreshed by the engine scheduler, not this fetch."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Mode"), /* @__PURE__ */ React.createElement("select", { className: "qe-input qe-select", value: mode, onChange: (e) => setMode(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "macro_only" }, "Macro Only \xB7 VIX \xB7 FRED \xB7 RVol"), /* @__PURE__ */ React.createElement("option", { value: "full" }, "Full \xB7 + existing OI / funding rows"))), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "From"), /* @__PURE__ */ React.createElement("input", { type: "date", className: "qe-input", value: since, onChange: (e) => setSince(e.target.value) })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "To"), /* @__PURE__ */ React.createElement("input", { type: "date", className: "qe-input", value: until, onChange: (e) => setUntil(e.target.value) }))), /* @__PURE__ */ React.createElement(
       "button",
@@ -6656,7 +6842,7 @@ const RegimeTabBackfill = ({ job, onStart }) => {
       style: { height: "100%" },
       right: /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-ghost", onClick: reloadCoverage }, "\u21BB"),
       bodyStyle: { padding: 0 },
-      foot: coverage == null ? { tone: "sub", msg: "loading\u2026" } : { tone: "info", msg: `${covRows.filter((r) => (r.count || 0) > 0).length}/${covRows.length} signals backfilled` }
+      foot: covFoot
     },
     covErr && srvRows.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, { tone: "warn", glyph: "\u26A0", msg: "coverage fetch failed", hint: "engine unreachable?" }) : /* @__PURE__ */ React.createElement(
       DataList,
@@ -6728,8 +6914,8 @@ const RegimeTabNews = () => {
     const iso = (ms) => new Date(ms).toISOString().slice(0, 10);
     return `/api/calendar?from_date=${iso(Date.now() - 30 * 864e5)}&to_date=${iso(Date.now() + 30 * 864e5)}`;
   });
-  const { data: feedData, err: feedErr, reload: reloadFeed } = useAnaJson("/api/news/feed?limit=80", 15e3);
-  const { data: calData, reload: reloadCal } = useAnaJson(calUrl, 6e4);
+  const { data: feedData, err: feedErr, reload: reloadFeed, foot: feedFoot } = useAnaJson("/api/news/feed?limit=80", 15e3);
+  const { data: calData, reload: reloadCal, foot: calFoot } = useAnaJson(calUrl, 6e4);
   React.useEffect(() => {
     const t = setInterval(() => setTick((x) => x + 1), 6e4);
     return () => clearInterval(t);
@@ -6772,7 +6958,7 @@ const RegimeTabNews = () => {
       style: { height: "100%" },
       right: /* @__PURE__ */ React.createElement(React.Fragment, null, refreshMsg && /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.54rem", color: "var(--qe-sub)", fontFamily: "var(--qe-mono)" } }, refreshMsg), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-ghost", onClick: refresh }, "\u21BB"), /* @__PURE__ */ React.createElement(PeriodSelector, { options: [["magazine", "Magazine"], ["detail", "Detail"]], value: newsView, onChange: setNewsView }), feedErr ? /* @__PURE__ */ React.createElement(StatusDot, { tone: "warn", label: "STALE \u2014 retrying" }) : /* @__PURE__ */ React.createElement(StatusDot, { tone: "info", label: "15s refresh" })),
       bodyStyle: { padding: newsView === "magazine" ? 6 : 0 },
-      foot: { tone: "info", msg: `${news.length} items \xB7 finnhub + bwe \xB7 15s feed / 60s calendar` }
+      foot: feedFoot
     },
     news.length === 0 ? /* @__PURE__ */ React.createElement(
       EmptyState,
@@ -6828,7 +7014,7 @@ const RegimeTabNews = () => {
       tag: "NOW MARKER",
       right: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(PeriodSelector, { options: [["", "All"], ["high", "High"], ["high,medium", "High+Med"]], value: calFilter, onChange: setCalFilter }), /* @__PURE__ */ React.createElement(LiveClock, { id: "regime-news-clock", style: { fontSize: "0.54rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)" } })),
       bodyStyle: { padding: 6 },
-      foot: { tone: "sub", msg: `${cal.length} events \xB7 \xB130d window \xB7 est/act from finnhub` }
+      foot: calFoot
     },
     cal.length === 0 ? /* @__PURE__ */ React.createElement(
       EmptyState,
@@ -6873,7 +7059,7 @@ const RegimeTabNews = () => {
   )));
 };
 const RegimeTabConfig = ({ mults }) => {
-  const { data: thresholds, err: thrErr } = useAnaJson("/api/regime/thresholds");
+  const { data: thresholds, err: thrErr, foot: thrFoot } = useAnaJson("/api/regime/thresholds");
   const [reclass, setReclass] = React.useState(null);
   const reclassify = async () => {
     if (!window.confirm("Reclassify ALL dates? This recomputes every historical regime label from stored signals.")) return;
@@ -6917,7 +7103,7 @@ const RegimeTabConfig = ({ mults }) => {
       title: "Classifier Thresholds",
       style: { height: "100%" },
       right: /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", disabled: reclass && reclass.busy, onClick: reclassify }, reclass && reclass.busy ? /* @__PURE__ */ React.createElement(Spinner, { size: "0.62rem" }) : "\u21BB Reclassify all dates"),
-      foot: { tone: "sub", msg: "config constants \xB7 read-only \xB7 reclassify recomputes labels" }
+      foot: thrFoot
     },
     /* @__PURE__ */ React.createElement("p", { style: { fontSize: "0.6rem", color: "var(--qe-sub)", margin: "0 0 6px 0", lineHeight: 1.5 } }, "Threshold values used by the rule-based classifier (config constants \u2014 read-only; reclassify recomputes historical labels from stored signals)."),
     reclass && reclass.msg && /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.6rem", color: "var(--qe-green)", fontFamily: "var(--qe-mono)", marginBottom: 4 } }, reclass.msg),
@@ -6934,7 +7120,7 @@ const RegimeTabConfig = ({ mults }) => {
       title: "Decision Tree Rules",
       style: { height: "100%" },
       right: /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.54rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)" } }, "evaluated top\u2192bottom \xB7 first match wins"),
-      foot: { tone: "sub", msg: "rules mirror core/regime_classifier.py" }
+      foot: thrFoot
     },
     /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, rules.map((rule) => {
       const info = REGIME_INFO[rule.key];
@@ -6955,7 +7141,7 @@ const REGIME_TABS = [
 ];
 const RegimePage = () => {
   const [tab, setTab] = React.useState("overview");
-  const { data: current } = useAnaJson("/api/regime/current", 6e4);
+  const { data: current, foot: curFoot } = useAnaJson("/api/regime/current", 6e4);
   const { data: mults } = useAnaJson("/api/regime/multipliers");
   const [bfJob, setBfJob] = React.useState(null);
   const bfBusyRef = React.useRef(false);
@@ -7003,7 +7189,7 @@ const RegimePage = () => {
   }, [bfStatus]);
   const goBackfill = React.useCallback(() => setTab("backfill"), []);
   const content = {
-    overview: /* @__PURE__ */ React.createElement(RegimeTabOverview, { current, mults, onGoBackfill: goBackfill }),
+    overview: /* @__PURE__ */ React.createElement(RegimeTabOverview, { current, curFoot, mults, onGoBackfill: goBackfill }),
     backfill: /* @__PURE__ */ React.createElement(RegimeTabBackfill, { job: bfJob, onStart: startBackfill }),
     news: /* @__PURE__ */ React.createElement(RegimeTabNews, null),
     config: /* @__PURE__ */ React.createElement(RegimeTabConfig, { mults })

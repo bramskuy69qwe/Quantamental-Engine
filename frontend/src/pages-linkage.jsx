@@ -178,18 +178,34 @@ const LinkagePage = () => {
   const [sel, setSel]         = React.useState(null);
   const [toast, setToast]     = React.useState(null);
 
+  // Per-SOURCE pipe state (audit MED-1: the lanes span different routers —
+  // /orders/* vs /api/linkage/* — so a lane-representative foot would
+  // misattribute partial failures in both directions).
+  const [nets, setNets] = React.useState({});
   const load = React.useCallback((which) => {
-    const get = (url, fn, pick) => _ptJson(url).then((d) => fn(pick ? d[pick] : d)).catch(() => {});
+    const get = (url, fn, pick, key) => {
+      const t0 = performance.now();
+      return _ptJson(url)
+        .then((d) => {
+          fn(pick ? d[pick] : d);
+          setNets((m) => ({ ...m, [key]: { err: null, ms: performance.now() - t0 } }));
+        })
+        .catch((err) => { setNets((m) => ({ ...m, [key]: { ...m[key], err } })); });
+    };
     if (!which || which === 'fast') {
-      get('/orders/needs_review', setNeeds, 'orders');
-      get('/api/linkage/positions', setPositions, 'positions');
-      get('/api/linkage/calcs', setCalcs, 'calcs');
+      get('/orders/needs_review', setNeeds, 'orders', 'needs');
+      get('/api/linkage/positions', setPositions, 'positions', 'positions');
+      get('/api/linkage/calcs', setCalcs, 'calcs', 'calcs');
     }
     if (!which || which === 'slow') {
-      get('/api/linkage/funding', setFunding);
-      get('/api/linkage/closes', setCloses, 'closes');
+      get('/api/linkage/funding', setFunding, null, 'funding');
+      get('/api/linkage/closes', setCloses, 'closes', 'closes');
     }
   }, []);
+  const lkFoot = (key, hasData) => {
+    const n = nets[key] || {};
+    return qeFootState({ loading: n.ms == null && !n.err, err: n.err, hasData, ms: n.ms, retrying: true });
+  };
   React.useEffect(() => {
     load();
     const t1 = setInterval(() => load('fast'), 5000);
@@ -282,7 +298,7 @@ const LinkagePage = () => {
             <Pane title="MANUAL LINK — NEEDS REVIEW"
               right={<Badge tone={inbox.length ? 'warn' : 'ok'}>{inbox.length}</Badge>}
               bodyStyle={{ padding: 0, display: 'flex', flexDirection: 'column' }}
-              foot={{ tone: inbox.length ? 'warn' : 'ok', msg: `${inbox.length} to resolve · writes via choke-point endpoints` }}>
+              foot={lkFoot('needs', needs != null)}>
               {needs == null ? <div style={{ padding: 10 }}><Spinner label="loading" /></div> :
                !inbox.length ? (
                 <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 10 }}>
@@ -329,7 +345,7 @@ const LinkagePage = () => {
           <GridItem x={9} y={0} w={15} h={9} minW={6} minH={5}>
             <Pane title="Open Positions" count={positions ? positions.length : null}
               onRefresh={() => load('fast')} bodyStyle={{ padding: 0 }}
-              foot={{ tone: 'info', msg: '5s poll · uPnL live via SSE' }}>
+              foot={lkFoot('positions', positions != null)}>
               {positions == null ? <div style={{ padding: 10 }}><Spinner label="loading" /></div> :
                <DataList columns={posCols} rows={positions} selKey="position_id" tools={false} emptyMsg="no open positions" />}
             </Pane>
@@ -337,14 +353,14 @@ const LinkagePage = () => {
 
           <GridItem x={9} y={9} w={8} h={8} minW={4} minH={5}>
             <Pane title="Active Calcs" count={calcs ? calcs.length : null} bodyStyle={{ padding: 0 }}
-              foot={{ tone: 'info', msg: '5s poll · countdown off expiry_ms' }}>
+              foot={lkFoot('calcs', calcs != null)}>
               {calcs == null ? <div style={{ padding: 10 }}><Spinner label="loading" /></div> :
                <DataList columns={calcCols} rows={calcs} selKey="calc_id" tools={false} emptyMsg="no active calcs" />}
             </Pane>
           </GridItem>
           <GridItem x={17} y={9} w={7} h={8} minW={4} minH={5}>
             <Pane title="Funding" tag="LIVE" bodyStyle={{ padding: 0 }} onRefresh={() => load('slow')}
-              foot={{ tone: 'info', msg: '30s poll · net next is SIGNED' }}>
+              foot={lkFoot('funding', funding != null)}>
               {funding == null ? <div style={{ padding: 10 }}><Spinner label="loading" /></div> :
                <DataList columns={fundCols} rows={funding.rows || []} selKey="position_id" tools={false}
                  emptyMsg="no open positions"
@@ -354,7 +370,7 @@ const LinkagePage = () => {
 
           <GridItem x={9} y={17} w={15} h={7} minW={6} minH={5}>
             <Pane title="Recent Closes" count={closes ? closes.length : null} bodyStyle={{ padding: 0 }}
-              foot={{ tone: 'sub', msg: '30s poll · pending reason = un-annotated manual close' }}>
+              foot={lkFoot('closes', closes != null)}>
               {closes == null ? <div style={{ padding: 10 }}><Spinner label="loading" /></div> :
                <DataList columns={closeCols} rows={closes} selKey="id" tools={false} emptyMsg="no recent closes" />}
             </Pane>

@@ -70,19 +70,25 @@ const _anaMs = (ms) => {
   return `${(ms / 3_600_000).toFixed(1)}h`;
 };
 
-/* fetch hook — seq stale-guard + keep-last-good (P4 idioms) */
+/* fetch hook — seq stale-guard + keep-last-good (P4 idioms). Measures the
+   fetch with performance.now() and derives a ready-to-bind 4-tier state
+   `foot` via qeFootState (DESIGN.md §5): panes do foot={foot}, nothing else.
+   `err` is the ERROR OBJECT (status/corrupt ride it) — consumers wanting
+   text use qeFootCause(err). */
 const useAnaJson = (url, intervalMs = 0) => {
   const [data, setData] = React.useState(null);
   const [err, setErr] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
+  const [ms, setMs] = React.useState(null);
   const seqRef = React.useRef(0);
   const load = React.useCallback(async () => {
     const seq = ++seqRef.current;
+    const t0 = performance.now();
     try {
       const d = await _ptJson(url);
-      if (seq === seqRef.current) { setData(d); setErr(null); }
+      if (seq === seqRef.current) { setData(d); setErr(null); setMs(performance.now() - t0); }
     } catch (e) {
-      if (seq === seqRef.current) { setErr(String((e && e.message) || e)); }  // keep last-good
+      if (seq === seqRef.current) { setErr(e); }  // keep last-good data
     }
     if (seq === seqRef.current) setLoading(false);
   }, [url]);
@@ -92,7 +98,8 @@ const useAnaJson = (url, intervalMs = 0) => {
     const t = setInterval(load, intervalMs);
     return () => clearInterval(t);
   }, [load, intervalMs]);
-  return { data, err, loading, reload: load };
+  const foot = qeFootState({ loading, err, hasData: data != null, ms, retrying: intervalMs > 0 });
+  return { data, err, loading, reload: load, ms, foot };
 };
 
 /* report the server period_label up to the PeriodNav */
@@ -105,8 +112,8 @@ const useAnaLabel = (data, onLabel) => {
 const AnaEmpty = ({ err, msg }) => (
   <div style={{ padding: 4, height: '100%' }}>
     <EmptyState tone={err ? 'warn' : 'neutral'} glyph={err ? '⚠' : '◇'}
-      msg={err ? 'analytics fetch failed — engine unreachable?' : msg}
-      hint={err || undefined} />
+      msg={err ? 'analytics fetch failed' : msg}
+      hint={err ? qeFootCause(err) : undefined} />
   </div>
 );
 
@@ -266,7 +273,7 @@ const AnaExecScatter = ({ points, height = '100%' }) => {
 
 /* ── Overview ───────────────────────────────────────────────────────────── */
 const AnaTabOverview = ({ period, offset, onLabel }) => {
-  const { data, err } = useAnaJson(`/fragments/analytics/overview?format=json&${_anaQS(period, offset)}`);
+  const { data, err, foot } = useAnaJson(`/fragments/analytics/overview?format=json&${_anaQS(period, offset)}`);
   useAnaLabel(data, onLabel);
   if (!data) return <AnaEmpty err={err} msg="loading overview…" />;
   const s = data.stats || {}, b = data.boundaries || {}, c = data.cumulative || {}, ra = data.ratios || {};
@@ -300,7 +307,7 @@ const AnaTabOverview = ({ period, offset, onLabel }) => {
     <GridWorkspace>
       <GridItem x={0} y={0} w={8} h={6} minW={5} minH={5}>
         <Pane title="Volume & Activity" tag={lbl} style={{ height: '100%' }}
-          foot={{ tone: 'sub', msg: 'from exchange_history · funding/transfers excluded' }}>
+          foot={foot}>
           <AnaVRow label="Trading Volume" value={`$${(s.trading_volume || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`} />
           <AnaVRow label="Fees Paid" value={`$${(s.total_fees || 0).toFixed(2)}`} />
           <AnaVRow label="No. of Longs" value={s.num_longs || 0} color="var(--qe-green)" />
@@ -316,7 +323,7 @@ const AnaTabOverview = ({ period, offset, onLabel }) => {
 
       <GridItem x={8} y={0} w={16} h={7} minW={8} minH={5}>
         <Pane title="Equity & PnL" tag={lbl} style={{ height: '100%' }} bodyStyle={{ padding: 0 }}
-          foot={{ tone: pnl >= 0 ? 'ok' : 'warn', msg: `${days} trading days · period pnl ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}` }}>
+          foot={foot}>
           <div style={{ display: 'grid', gridTemplateColumns: 'minmax(200px,0.9fr) 1px 1.3fr', gap: 0, height: '100%' }}>
             <div style={{ padding: '7px 12px 7px 8px' }}>
               <FieldList rows={[
@@ -343,7 +350,7 @@ const AnaTabOverview = ({ period, offset, onLabel }) => {
 
       <GridItem x={0} y={6} w={8} h={10} minW={5} minH={6}>
         <Pane title="Trade Statistics" style={{ height: '100%' }}
-          foot={{ tone: 'sub', msg: `${total} trades · win ${winrate.toFixed(1)}%` }}>
+          foot={foot}>
           <AnaVRow label="Total Trades" value={total} />
           <AnaVRow label="Winning" value={wins} color="var(--qe-green)" />
           <AnaVRow label="Losing" value={s.losing_trades || 0} color="var(--qe-red)" />
@@ -382,7 +389,7 @@ const AnaTabEquity = () => {
   const [tf, setTf] = React.useState('1M');
   const [logScale, setLogScale] = React.useState(false);
   const [ddMode, setDdMode] = React.useState(false);
-  const { data, err } = useAnaJson(`/api/analytics/equity_ohlc?tf=${encodeURIComponent(tf)}`);
+  const { data, err, foot } = useAnaJson(`/api/analytics/equity_ohlc?tf=${encodeURIComponent(tf)}`);
   const candles = (data && data.candles) || [];
   const ddSeries = React.useMemo(() => {
     let peak = -Infinity;
@@ -415,7 +422,7 @@ const AnaTabEquity = () => {
           </>
         }
         style={{ height: '100%' }} bodyStyle={{ padding: 6 }}
-        foot={{ tone: 'info', msg: `${candles.length} buckets · tf=${tf} · /api/analytics/equity_ohlc` }}>
+        foot={foot}>
         <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
           <div className="qe-mono" style={{ fontSize: '0.62rem', display: 'flex', gap: 14, flexWrap: 'wrap', padding: '2px 4px', alignItems: 'baseline' }}>
             {ohlcRow.map(([k, v, col]) => (
@@ -438,7 +445,7 @@ const AnaTabEquity = () => {
 
 /* ── Distributions (G-O4) ───────────────────────────────────────────────── */
 const AnaTabDistributions = ({ period, offset, onLabel }) => {
-  const { data, err } = useAnaJson(`/api/analytics/distributions?${_anaQS(period, offset)}`);
+  const { data, err, foot } = useAnaJson(`/api/analytics/distributions?${_anaQS(period, offset)}`);
   useAnaLabel(data, onLabel);
   if (!data) return <AnaEmpty err={err} msg="loading distributions…" />;
   const trades = data.trades || [];
@@ -496,7 +503,7 @@ const AnaTabDistributions = ({ period, offset, onLabel }) => {
     <GridWorkspace>
       <GridItem x={0} y={0} w={12} h={6} minW={6} minH={5}>
         <Pane title="PnL Distribution" style={{ height: '100%' }} tag={lbl || `$${step} bins`}
-          foot={{ tone: 'sub', msg: `n=${trades.length} closed trades · $${step} bins` }}>
+          foot={foot}>
           <AnaHistChart bins={pnlBins} divergent noun="trade" />
         </Pane>
       </GridItem>
@@ -537,7 +544,7 @@ const AnaTabCalendar = () => {
   // the door's month/current_month so a client↔account tz month-boundary
   // mismatch can't dead-end or overrun the nav (audit L7).
   const [ym, setYm] = React.useState('');
-  const { data, err } = useAnaJson(`/fragments/analytics/calendar?format=json&month=${encodeURIComponent(ym)}`);
+  const { data, err, foot } = useAnaJson(`/fragments/analytics/calendar?format=json&month=${encodeURIComponent(ym)}`);
   if (!data) return <AnaEmpty err={err} msg="loading calendar…" />;
   const weeks = data.calendar_grid || [];
   const maxAbs = data.max_abs_pnl || 1;
@@ -554,8 +561,7 @@ const AnaTabCalendar = () => {
           </>
         }
         style={{ height: '100%' }}
-        foot={{ tone: (data.avg_daily || 0) >= 0 ? 'ok' : 'warn',
-          msg: `${data.trading_days || 0} trading days · best $${(data.best_day || 0).toFixed(2)} · worst $${(data.worst_day || 0).toFixed(2)}` }}>
+        foot={foot}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, height: '100%' }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 2 }}>
             {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => (
@@ -612,7 +618,7 @@ const AnaTabCalendar = () => {
 
 /* ── Traded Pairs ───────────────────────────────────────────────────────── */
 const AnaTabPairs = ({ period, offset, onLabel }) => {
-  const { data, err } = useAnaJson(`/fragments/analytics/pairs?format=json&${_anaQS(period, offset)}`);
+  const { data, err, foot } = useAnaJson(`/fragments/analytics/pairs?format=json&${_anaQS(period, offset)}`);
   useAnaLabel(data, onLabel);
   if (!data) return <AnaEmpty err={err} msg="loading pairs…" />;
   const rows = data.rows || [];
@@ -631,7 +637,7 @@ const AnaTabPairs = ({ period, offset, onLabel }) => {
   return (
     <div style={{ padding: 4, height: '100%' }}>
       <Pane title="Traded Pairs" count={`${rows.length} symbols`} tag={data.period_label} style={{ height: '100%' }} bodyStyle={{ padding: 0 }}
-        foot={{ tone: totals.pnl >= 0 ? 'ok' : 'warn', msg: `${totals.trades} trades · Σ ${totals.pnl >= 0 ? '+' : ''}${totals.pnl.toFixed(2)} · fees ${totals.fees.toFixed(2)}` }}>
+        foot={foot}>
         <DataList
           selKey="symbol" dense={false} tools={false}
           columns={[
@@ -662,7 +668,7 @@ const AnaTabPairs = ({ period, offset, onLabel }) => {
 /* ── MFE / MAE ──────────────────────────────────────────────────────────── */
 const AnaTabExcursions = ({ period, offset, onLabel }) => {
   const [dir, setDir] = React.useState('all');
-  const { data, err } = useAnaJson(`/fragments/analytics/excursions?format=json&dir=${encodeURIComponent(dir)}&${_anaQS(period, offset)}`);
+  const { data, err, foot } = useAnaJson(`/fragments/analytics/excursions?format=json&dir=${encodeURIComponent(dir)}&${_anaQS(period, offset)}`);
   useAnaLabel(data, onLabel);
   if (!data) return <AnaEmpty err={err} msg="loading excursions…" />;
   const trades = data.trades || [];
@@ -673,7 +679,7 @@ const AnaTabExcursions = ({ period, offset, onLabel }) => {
         <Pane title="MFE / MAE Scatter" tag={data.period_label}
           right={<PeriodSelector options={[['all', 'All'], ['LONG', 'Long'], ['SHORT', 'Short']]} value={dir} onChange={setDir} />}
           style={{ height: '100%' }} bodyStyle={{ padding: 6 }}
-          foot={{ tone: 'info', msg: `${points.length} reconciled trades · server-side ${dir === 'all' ? 'no' : dir} filter` }}>
+          foot={foot}>
           {points.length ? <ScatterChart points={points} xName="MFE ($)" yName="MAE ($)" /> : <EmptyState msg="no reconciled excursions in window" />}
         </Pane>
       </GridItem>
@@ -713,7 +719,7 @@ const AnaTabExcursions = ({ period, offset, onLabel }) => {
 
 /* ── R-Multiples ────────────────────────────────────────────────────────── */
 const AnaTabRMultiples = ({ period, offset, onLabel }) => {
-  const { data, err } = useAnaJson(`/fragments/analytics/r_multiples?format=json&${_anaQS(period, offset)}`);
+  const { data, err, foot } = useAnaJson(`/fragments/analytics/r_multiples?format=json&${_anaQS(period, offset)}`);
   useAnaLabel(data, onLabel);
   if (!data) return <AnaEmpty err={err} msg="loading r-multiples…" />;
   const st = data.r_stats || {};
@@ -723,7 +729,7 @@ const AnaTabRMultiples = ({ period, offset, onLabel }) => {
     <GridWorkspace>
       <GridItem x={0} y={0} w={16} h={12} minW={8} minH={6}>
         <Pane title="R-Multiple Distribution" tag={data.period_label} style={{ height: '100%' }}
-          foot={{ tone: (st.expectancy || 0) >= 0 ? 'ok' : 'warn', msg: `${st.count} trades · expectancy ${(st.expectancy || 0).toFixed(3)}R` }}>
+          foot={foot}>
           <AnaHistChart bins={bins} divergent noun="trade" />
         </Pane>
       </GridItem>
@@ -757,7 +763,7 @@ const AnaVarCard = ({ label, val, equity, desc }) => (
 );
 
 const AnaTabRisk = ({ period, offset, onLabel }) => {
-  const { data, err } = useAnaJson(`/fragments/analytics/var?format=json&${_anaQS(period, offset)}`);
+  const { data, err, foot } = useAnaJson(`/fragments/analytics/var?format=json&${_anaQS(period, offset)}`);
   useAnaLabel(data, onLabel);
   if (!data) return <AnaEmpty err={err} msg="loading risk metrics…" />;
   if (!data.has_data) {
@@ -779,7 +785,7 @@ const AnaTabRisk = ({ period, offset, onLabel }) => {
     <GridWorkspace>
       <GridItem x={0} y={0} w={24} h={5} minW={10} minH={5}>
         <Pane title="Value at Risk · Risk Metrics" tag={data.period_label} style={{ height: '100%' }}
-          foot={{ tone: 'sub', msg: `95% VaR ${Math.abs((data.var95 || 0) * 100).toFixed(2)}% · n=${(data.returns || []).length} daily returns` }}>
+          foot={foot}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8 }}>
             <AnaVarCard label="Historical VaR (95%)" val={data.var95 || 0} equity={data.cur_equity} desc="Worst daily loss exceeded 5% of the time" />
             <AnaVarCard label="Historical VaR (99%)" val={data.var99 || 0} equity={data.cur_equity} desc="Worst daily loss exceeded 1% of the time" />
@@ -815,7 +821,7 @@ const _anaLinkKey = (r) => {
 
 const AnaTabExecution = () => {
   const [ftFilter, setFtFilter] = React.useState('all');
-  const { data, err } = useAnaJson('/api/analytics/execution?limit=500');
+  const { data, err, foot } = useAnaJson('/api/analytics/execution?limit=500');
   if (!data) return <AnaEmpty err={err} msg="loading execution quality…" />;
   const rows = data.rows || [];
   const sum = data.summary || {};
@@ -1019,7 +1025,7 @@ const AnaTabExecution = () => {
       <GridItem x={0} y={28} w={24} h={14} minW={10} minH={8}>
         <Pane title="Per-Fill Log" count={tableRows.length} tag={`newest ${data.limit}`}
           style={{ height: '100%' }}
-          foot={{ tone: 'sub', msg: `aggregates cover this window (newest ${data.limit}), not all-time` }}
+          foot={foot}
           right={
             <div style={{ display: 'flex', gap: 3 }}>
               {['all', 'entry', 'tp', 'sl', 'manual'].map((f) => (
@@ -1065,7 +1071,7 @@ const AnaTabExecution = () => {
 
 /* ── Funding ────────────────────────────────────────────────────────────── */
 const AnaTabFunding = () => {
-  const { data, err } = useAnaJson('/fragments/analytics/funding?format=json', 30_000);
+  const { data, err, foot } = useAnaJson('/fragments/analytics/funding?format=json', 30_000);
   if (!data) return <AnaEmpty err={err} msg="loading funding…" />;
   const raw = data.rows || [];
   if (!raw.length) return <AnaEmpty err={err} msg="no open positions — funding exposure is live-position-based" />;
@@ -1082,7 +1088,7 @@ const AnaTabFunding = () => {
           ? <StatusDot tone="warn" label="STALE — retrying" />
           : <StatusDot tone="info" label="30s refresh" />}
         style={{ height: '100%' }} bodyStyle={{ padding: 0 }}
-        foot={{ tone: tot8h >= 0 ? 'ok' : 'warn', msg: `${rows.length} positions · net per 8h ${tot8h >= 0 ? '+' : '-'}$${Math.abs(tot8h).toFixed(4)}` }}>
+        foot={foot}>
         <DataList
           selKey="_k" dense={false} tools={false}
           columns={[
@@ -1114,7 +1120,7 @@ const AnaTabFunding = () => {
 
 /* ── Beta Exposure ──────────────────────────────────────────────────────── */
 const AnaTabBeta = () => {
-  const { data, err } = useAnaJson('/fragments/analytics/beta?format=json', 60_000);
+  const { data, err, foot } = useAnaJson('/fragments/analytics/beta?format=json', 60_000);
   if (!data) return <AnaEmpty err={err} msg="loading beta…" />;
   const raw = data.rows || [];
   if (!raw.length) return <AnaEmpty err={err} msg="no open positions — beta exposure is live-position-based" />;
@@ -1127,7 +1133,7 @@ const AnaTabBeta = () => {
         <Pane title="Beta-Weighted Exposure vs BTC" count={rows.length}
           right={<span style={{ fontSize: '0.54rem', color: 'var(--qe-muted)', fontFamily: 'var(--qe-mono)' }}>β from 30d OHLCV · sector preset fallback · unsigned notional</span>}
           style={{ height: '100%' }} bodyStyle={{ padding: 0 }}
-          foot={{ tone: 'info', msg: `portfolio β ${(data.port_beta || 0).toFixed(2)} · Σ β-adj $${(data.total_beta_exp || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })} · 60s poll` }}>
+          foot={foot}>
           <DataList
             selKey="_k" dense={false} tools={false}
             columns={[

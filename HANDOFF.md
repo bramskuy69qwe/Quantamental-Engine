@@ -44,26 +44,42 @@ unknown-label guards; synthesized coverage rows; category-not-impact chips;
 "open ↗" article links). Deviations + residues named in the plan note + file
 header.
 
-**★ PaneFoot consistency commit (post-P6, operator-caught drift):** the
-operator noticed only Dashboard had pane footers. Root cause chain: P1 ported
-design foots WITH fabricated `id:`/`ms:` ornaments (mock-strip miss); P3
-dropped foots and named it; P5/P6 dropped them citing a FALSE "P1-P4 parity"
-claim (never verified against shipped P1 — a verify-first miss against our
-own tree). **Operator-ratified policy: foots everywhere, REAL data only**
-(recorded in `frontend/DESIGN.md` §5 Pane). Shipped: fake id/ms stripped from
-dash-tiled's 8; ~42 truthful `{tone,msg}` foots across all 7 pages; the
-audit's HIGH catch fixed at the PRIMITIVE — Pane's ↻ reload path minted a
-fake `nextEventId` + a fake "elapsed ms" (the 620ms animation timer) +
-claimed "resynced from source" even on panes whose data hooks live in the
-parent (a child remount can't re-run them); now honest: `reloaded ·
-refetched` (with onRefresh) / `reloaded · body remounted` (without), no
-id/ms; `nextEventId`/`QE_EVENT_SEQ` deleted (a Math.random left the
-primitives layer). Loading states guard to `loading…`; tones state-reflect
-(no static warn/ok). 1 independent audit (all 39+ msgs verified truthful
-against real timers/scopes/contracts), findings folded. Bundle
-**`8586604edd`**. LESSON for P7/P8: cross-page pane-anatomy consistency is
-an audit dimension; never cite "parity with shipped pages" without
-re-grepping the shipped pages.
+**★ PaneFoot arc (post-P6, operator-driven, TWO commits):**
+(1) `0116083` — operator caught that only Dashboard had footers (P5/P6 had
+dropped them citing a FALSE "P1-P4 parity" claim; P1's carried fabricated
+`id:`/`ms:` ornaments). First pass: truthful prose foots everywhere + the
+primitive's fake reload telemetry (`nextEventId`/animation-timer-ms/false
+"resynced") fixed. (2) **the DATA-STATE redesign at HEAD (supersedes the
+prose approach — operator redirect):** foots are now 4-TIER STATE LINES
+derived through **`qeFootState({loading, err, corrupt, status, hasData,
+empty, ms, retrying})`** (primitives.jsx, window-exported): ok
+`connected [12ms]` (real measured fetch ms) · warn degraded keep-last-good
+(`delayed [Nms]` >500ms / `response corrupt · showing last data` /
+`no network · showing last data`, `· retrying` appended ONLY for
+interval-driven callers) · err named-cause (`endpoint not found (404)` /
+`no network — engine unreachable` / `server error (5xx)` / `unauthorized` /
+`corrupt response`) · sub+busy `loading…`/`reconnecting…`. 2-vs-3 rule:
+data on screen → warn, none → err. Plumbing: `_ptJson`/`_cfgJson` attach
+`err.status` (0=network) + `err.corrupt` (ADDITIVE); `useAnaJson` measures
+ms + returns a ready `foot` (NB its `err` is now the ERROR OBJECT, not a
+string — use `qeFootCause(err)` for text); QE_DASH tracks per-source
+`state.net`; config/linkage/history/pretrade track per-loader `{err,ms}`
+(linkage per-SOURCE, not per-lane — the lanes span /orders/* vs
+/api/linkage/*). Non-fetch panes: `ok · local` (forms/localStorage),
+`_ptCalcFoot` last-submit state (calc family), backfill job-state foot.
+Audit was **DO-NOT-SHIP first**: two unbound-identifier CRITs in the built
+bundle (a foot reading `d` inside the subscription-free TiledGrid memo —
+fixed by extracting `EngineLogPane` as a useDash leaf; `curFoot` never
+passed as a prop to RegimeTabOverview) — the esbuild `vm.Script` guard is
+PARSE-only and cannot catch free identifiers. Both fixed + verified in the
+rebuilt bundle; HIGH (drilldown's dead outer catch → per-leg error capture)
++ MED×3 + LOWs folded. Bundle **`94ac1f0c60`**. LESSONS for P7/P8:
+(a) cross-page pane-anatomy consistency is an audit dimension; never cite
+"parity with shipped pages" without re-grepping them; (b) the bundle guard
+does not catch unbound identifiers — a `no-undef` lint pass over the
+concatenated bundle is a NAMED FOLLOW-UP (needs an eslint/acorn dev-dep —
+operator call); until then, grep new cross-component identifiers against
+their defining scope before rebuild.
 Operator acceptance of P2 (gear → Config), P3 (`/v3` Pre-Trade), P4
 (History+Linkage), P5 (Analytics), and P6 (Regime) is still pending — engine
 restart required (launch-v3.bat).

@@ -104,6 +104,8 @@ const HistoryPage = () => {
   const [drill, setDrill]   = React.useState(null);   // {fills, ctx}
   const [modal, setModal]   = React.useState(null);
   const seqRef = React.useRef(0);
+  const [net, setNet] = React.useState({});         // table-fetch pipe (qeFootState)
+  const [netDrill, setNetDrill] = React.useState({}); // drilldown pipe
 
   const load = React.useCallback(async () => {
     const ep = H_TABS.find(([k]) => k === tab)[2];
@@ -114,10 +116,14 @@ const HistoryPage = () => {
     });
     const seq = ++seqRef.current;
     setLoading(true);
+    const t0 = performance.now();
     try {
       const d = await _ptJson(ep + '?' + params.toString());
-      if (seq === seqRef.current) setData(d);
-    } catch (e) { if (seq === seqRef.current) setData((prev) => prev || { rows: [], total: 0 }); }  // keep last-good on a poll hiccup [P4 audit #5]
+      if (seq === seqRef.current) { setData(d); setNet({ err: null, ms: performance.now() - t0 }); }
+    } catch (err) {
+      // keep last-good on a poll hiccup [P4 audit #5]
+      if (seq === seqRef.current) { setData((prev) => prev || { rows: [], total: 0 }); setNet((n) => ({ ...n, err })); }
+    }
     if (seq === seqRef.current) setLoading(false);
   }, [tab, period, q, page, perPage]);
 
@@ -130,14 +136,20 @@ const HistoryPage = () => {
   const openDrill = async (row) => {
     if (sel && sel.id === row.id) { setSel(null); setDrill(null); return; }
     const seq = ++drillSeq.current;          // stale-response guard [P4 audit #3]
-    setSel(row); setDrill(null);
-    try {
-      const [fills, ctx] = await Promise.all([
-        _ptJson(`/fragments/history/position_fills?position_id=${row.id}&format=json`).catch(() => ({ fills: [] })),
-        _ptJson(`/context/position/${encodeURIComponent(row.terminal_position_id || row.id)}`).catch(() => null),
-      ]);
-      if (seq === drillSeq.current) setDrill({ fills: fills.fills || [], ctx });
-    } catch (e) { if (seq === drillSeq.current) setDrill({ fills: [], ctx: null }); }
+    setSel(row); setDrill(null); setNetDrill({});
+    const t0 = performance.now();
+    // the inner catches make Promise.all unrejectable — capture the first
+    // leg error so the foot can't claim `connected` over a failed drill
+    // [foot-audit HIGH-1]
+    let legErr = null;
+    const [fills, ctx] = await Promise.all([
+      _ptJson(`/fragments/history/position_fills?position_id=${row.id}&format=json`).catch((e) => { legErr = legErr || e; return { fills: [] }; }),
+      _ptJson(`/context/position/${encodeURIComponent(row.terminal_position_id || row.id)}`).catch((e) => { legErr = legErr || e; return null; }),
+    ]);
+    if (seq === drillSeq.current) {
+      setDrill({ fills: (fills && fills.fills) || [], ctx });
+      setNetDrill(legErr ? { err: legErr } : { err: null, ms: performance.now() - t0 });
+    }
   };
 
   const rows = (data && data.rows) || [];
@@ -268,9 +280,7 @@ const HistoryPage = () => {
           <GridItem x={0} y={0} w={16} h={24} minW={8} minH={6}>
             <Pane title={H_TABS.find(([k]) => k === tab)[1]} count={total || null} onRefresh={load}
               style={{ height: '100%' }} bodyStyle={{ padding: 0, display: 'flex', flexDirection: 'column' }}
-              foot={data == null
-                ? { tone: 'sub', msg: 'loading…' }
-                : { tone: 'info', msg: `${total} rows · server paging + search · 30s refresh` }}>
+              foot={qeFootState({ loading: net.ms == null && !net.err, err: net.err, hasData: rows.length > 0, ms: net.ms, retrying: true })}>
               <div style={{ flex: 1, overflow: 'auto' }}>
                 {loading && !data ? <div style={{ padding: 10 }}><Spinner label="loading" /></div> :
                  <DataList dense tools={false} columns={COLS[tab]} rows={rows}
@@ -293,7 +303,8 @@ const HistoryPage = () => {
 
           <GridItem x={16} y={0} w={8} h={24} minW={6} minH={6}>
             <Pane title="Position Detail" style={{ height: '100%' }} bodyStyle={{ overflow: 'auto' }}
-              foot={{ tone: 'sub', msg: 'fills + /context amendments · lazy on select' }}>
+              foot={!sel ? { tone: 'sub', msg: 'select a position' }
+                : qeFootState({ loading: drill == null && !netDrill.err, err: netDrill.err, hasData: drill != null, ms: netDrill.ms })}>
               {!dp ? (
                 <EmptyState tone="neutral" glyph="◎" msg="Select a closed position" hint="Click a row to inspect its fills, exec link and amendments." />
               ) : (

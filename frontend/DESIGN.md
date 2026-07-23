@@ -201,21 +201,37 @@ look with inline styles.
 
 ### Pane (tiling tile)
 - **`Pane`** `{title, count, right, hot, tag, foot, onRefresh}` — head (20px) + scrolling body + optional `foot`. Independently reloadable; body wrapped in `PaneErrorBoundary` (a throwing child shows a recoverable error state, not a blank app).
-- **PaneFoot policy (operator-ratified, post-P6 consistency pass): foots
-  everywhere, REAL data only.** Every major data pane carries a
-  `foot={{tone, msg}}` whose message is truthful and derivable at the call
-  site: row/item counts, poll cadence, source attribution, window
-  descriptions, real state summaries. **Never pass `id` or `ms`** — the
-  design reference's `[00123]` event-ids and `Nms` latency readouts were
-  fabricated ornaments (a real telemetry feed may re-introduce them later).
-  The ↻ reload's own status line is honest too: `reloaded · refetched` when
-  the pane has an `onRefresh` hook, `reloaded · body remounted` when it
-  doesn't (a child remount cannot re-run the PARENT's data hooks — never
-  claim "resynced" without one). `tone` must reflect real state (`warn`
-  only when something is genuinely warning-worthy; guard loading states to
-  `loading…` rather than rendering zero-counts). Micro/KPI tiles,
-  pure-form panes, and panes whose head/right slot already carries the
-  same truthful readout may omit the foot — don't pad with filler.
+- **PaneFoot policy (operator-ratified, rev 2): foots are DATA-STATE lines,
+  never descriptive prose.** A foot reports the health of the pane's data
+  pipe on a 4-tier model, derived through **`qeFootState({loading, err,
+  corrupt, status, hasData, empty, ms})`** (primitives.jsx, exported on
+  window) — panes bind the result, they do not hand-craft messages:
+  1. **fine** → tone `ok` — `connected [12ms]` (REAL measured fetch ms,
+     `performance.now()` around the fetch).
+  2. **degraded** → tone `warn` — something is on screen but imperfect:
+     `delayed [640ms]` (ms > 500) · `response corrupt · showing last data`
+     · `no network · showing last data · retrying` (the keep-last-good
+     states; **`· retrying` is appended only when the caller genuinely
+     re-polls** — pass `retrying: true` for interval-driven fetches, never
+     for one-shots).
+  3. **error** → tone `err` — nothing usable to show, and the CAUSE is
+     named: `endpoint not found (404)` · `no network — engine unreachable`
+     · `server error (500)` · `unauthorized (403)` · `corrupt response`.
+  4. **attempt** → tone `sub` + `busy:true` (braille spinner) —
+     `loading…` / `reconnecting…`.
+  **2-vs-3 rule: data on screen → tier 2 (warn, cause appended); no data →
+  tier 3 (err, cause displayed).** Fetch plumbing: `_ptJson`/`_cfgJson`
+  attach `err.status` (0 = network-level) and `err.corrupt` to thrown
+  errors; `useAnaJson` measures `ms` and returns a ready `foot`; custom
+  loaders (QE_DASH, config/linkage/history/pretrade) track `{err, ms}` per
+  source and derive through the same helper. Non-fetch panes carry their
+  nearest truthful state: `ok · local` for forms/localStorage, the
+  last-submit result for POST-result panes (`calculating…` / `calc ok` /
+  `calc failed · showing last result`). Never hand-write `id`/`ms` foot
+  props (DEV proving-ground demos excepted); the ↻ reload line stays
+  honest (`reloaded · refetched` with `onRefresh`, `reloaded · body
+  remounted` without). A successful-but-empty fetch is tier 1 — the BODY
+  owns empty-state display (EmptyState); the foot reports the pipe.
 - **`PageHeader`** `{title, subtitle, left, children}` — the 34px page title bar. **Never repeat the page title inside content.**
 
 ---
