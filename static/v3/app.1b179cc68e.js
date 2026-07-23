@@ -5749,6 +5749,1078 @@ Object.assign(window, { AnalyticsPage });
 
 ;
 
+/* ==== pages-regime.jsx ==== */
+const REGIME_KEYS = ["risk_on_trending", "risk_on_choppy", "neutral", "risk_off_defensive", "risk_off_panic"];
+const REGIME_INFO = {
+  risk_on_trending: { label: "Risk-On Trending", short: "TREND", tone: "trend", color: "var(--qe-green)", bg: "color-mix(in srgb, var(--qe-green) 10%, transparent)" },
+  risk_on_choppy: { label: "Risk-On Choppy", short: "CHOP", tone: "chop", color: "var(--qe-cyan)", bg: "color-mix(in srgb, var(--qe-cyan) 10%, transparent)" },
+  neutral: { label: "Neutral", short: "NEUT", tone: "neut", color: "var(--qe-sub)", bg: "color-mix(in srgb, var(--qe-sub) 6%, transparent)" },
+  risk_off_defensive: { label: "Risk-Off Defensive", short: "DEF", tone: "def", color: "var(--qe-amber)", bg: "color-mix(in srgb, var(--qe-amber) 10%, transparent)" },
+  risk_off_panic: { label: "Risk-Off Panic", short: "PANIC", tone: "panic", color: "var(--qe-red)", bg: "color-mix(in srgb, var(--qe-red) 10%, transparent)" }
+};
+const REGIME_THEME_KEY = {
+  risk_on_trending: "green",
+  risk_on_choppy: "cyan",
+  neutral: "muted",
+  risk_off_defensive: "amber",
+  risk_off_panic: "red"
+};
+const REGIME_HEX = Object.fromEntries(
+  REGIME_KEYS.map((k) => [k, QE_ECHARTS_THEME[REGIME_THEME_KEY[k]]])
+);
+const _rgMult = (mults, key) => mults && mults[key] != null ? `${mults[key]}\xD7` : "\u2014";
+const _rgFromDate = (days) => {
+  if (!days) return "";
+  const d = new Date(Date.now() - days * 864e5);
+  return d.toISOString().slice(0, 10);
+};
+const _rgRel = (iso, nowMs) => {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return "\u2014";
+  const diff = Math.max(0, Math.floor((nowMs - t) / 1e3));
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+};
+const _rgThr = (v, c, l) => v == null ? null : { v, c, l };
+const RG_SIGNALS = [
+  {
+    key: "vix_close",
+    label: "VIX",
+    unit: "",
+    color: "var(--qe-red)",
+    decimals: 1,
+    thr: (t) => [_rgThr(t.vix_panic, "var(--qe-red)", "Panic"), _rgThr(t.vix_defensive, "var(--qe-amber)", "Def"), _rgThr(t.vix_risk_on, "var(--qe-green)", "Risk-On")]
+  },
+  { key: "us10y_yield", label: "US 10Y Yield", unit: "%", color: "var(--qe-blue)", decimals: 2, thr: () => [] },
+  {
+    key: "hy_spread",
+    label: "HY Spread",
+    unit: "%",
+    color: "var(--qe-amber)",
+    decimals: 2,
+    thr: (t) => [_rgThr(t.hy_spread_panic, "var(--qe-red)", "Panic"), _rgThr(t.hy_spread_defensive, "var(--qe-amber)", "Def"), _rgThr(t.hy_spread_risk_on, "var(--qe-green)", "Risk-On")]
+  },
+  {
+    key: "btc_rvol_ratio",
+    label: "BTC RVol (30d/7d)",
+    unit: "",
+    color: "var(--qe-purple)",
+    decimals: 2,
+    thr: (t) => [_rgThr(t.rvol_ratio_choppy, "var(--qe-amber)", "Chop"), _rgThr(t.rvol_ratio_trending, "var(--qe-green)", "Trend")]
+  },
+  {
+    key: "agg_oi_change",
+    label: "Aggregate OI Change",
+    unit: "%",
+    color: "var(--qe-green)",
+    decimals: 2,
+    thr: () => [{ v: 0, c: "var(--qe-muted)", l: "Zero" }]
+  },
+  {
+    key: "avg_funding",
+    label: "Avg Funding Rate",
+    unit: "",
+    color: "var(--qe-cyan)",
+    decimals: 5,
+    thr: (t) => [{ v: 0, c: "var(--qe-muted)", l: "Zero" }, _rgThr(t.funding_panic, "var(--qe-red)", "Panic")]
+  }
+];
+const _rgSigThr = (sig, thresholds) => thresholds ? sig.thr(thresholds).filter(Boolean) : [];
+const RG_THRESHOLD_LABELS = {
+  vix_panic: "VIX Panic",
+  vix_defensive: "VIX Defensive",
+  vix_risk_on: "VIX Risk-On",
+  vix_choppy: "VIX Choppy",
+  hy_spread_panic: "HY Spread Panic",
+  hy_spread_defensive: "HY Spread Defensive",
+  hy_spread_neutral: "HY Spread Neutral",
+  hy_spread_risk_on: "HY Spread Risk-On",
+  rvol_ratio_choppy: "RVol Choppy",
+  rvol_ratio_trending: "RVol Trending",
+  funding_panic: "Funding Panic",
+  btc_dom_change_bull: "BTC Dom Bull",
+  btc_dom_change_bear: "BTC Dom Bear"
+};
+const _rgPost = async (url, body) => {
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: body != null ? { "Content-Type": "application/json" } : {},
+      body: body != null ? JSON.stringify(body) : void 0
+    });
+    let data = null;
+    try {
+      data = await r.json();
+    } catch (e) {
+    }
+    return { ok: r.ok, status: r.status, data };
+  } catch (e) {
+    return { ok: false, status: 0, data: null };
+  }
+};
+const _regimeSegs = (data) => {
+  const segs = [];
+  let cur = { label: data[0].label, start: 0, days: 1 };
+  for (let i = 1; i < data.length; i++) {
+    if (data[i].label === cur.label) cur.days++;
+    else {
+      segs.push(cur);
+      cur = { label: data[i].label, start: i, days: 1 };
+    }
+  }
+  segs.push(cur);
+  return segs;
+};
+const _fmtDay = (data, i) => data[i] && data[i].date ? data[i].date : `#${i}`;
+const TimelineSvg = ({ data, style = "swim" }) => {
+  const ref = React.useRef(null);
+  const empty = !data || !data.length;
+  const n = empty ? 0 : data.length;
+  const { opts, height } = React.useMemo(() => {
+    if (empty) return { opts: null, height: 120 };
+    const muted = QE_ECHARTS_THEME.muted, sub = QE_ECHARTS_THEME.sub, line = QE_ECHARTS_THEME.line;
+    const segs = _regimeSegs(data);
+    const tip = {
+      trigger: "item",
+      backgroundColor: "#000",
+      borderColor: QE_ECHARTS_THEME.cyan,
+      borderWidth: 1,
+      padding: [4, 8],
+      textStyle: { color: QE_ECHARTS_THEME.text, fontSize: 11, fontFamily: "JetBrains Mono, monospace" },
+      formatter: (p) => p.data && p.data._meta ? p.data._meta : ""
+    };
+    const infoOf = (l) => REGIME_INFO[l] || { label: l, short: String(l).slice(0, 5).toUpperCase(), color: "var(--qe-sub)" };
+    const hexOf = (l) => REGIME_HEX[l] || QE_ECHARTS_THEME.sub;
+    if (style === "swim") {
+      const lanes = REGIME_KEYS;
+      const bgItems = lanes.map((r, li) => ({ value: [0, n, li], itemStyle: { color: REGIME_HEX[r], opacity: 0.07 } }));
+      const segItems = segs.filter((s) => lanes.indexOf(s.label) >= 0).map((s) => ({
+        value: [s.start, s.start + s.days, lanes.indexOf(s.label)],
+        itemStyle: { color: hexOf(s.label), opacity: 0.92 },
+        _meta: `${infoOf(s.label).label} \xB7 ${s.days}d \xB7 ${_fmtDay(data, s.start)} \u2192 ${_fmtDay(data, Math.min(s.start + s.days - 1, n - 1))}`
+      }));
+      const swimRect = (frac) => (params, api) => {
+        const x0 = api.coord([api.value(0), api.value(2)]);
+        const x1 = api.coord([api.value(1), api.value(2)]);
+        const bandH = api.size([0, 1])[1];
+        const h = Math.max(bandH * frac, 2);
+        return { type: "rect", shape: { x: x0[0], y: x0[1] - h / 2, width: Math.max(x1[0] - x0[0], 1), height: h }, style: api.style() };
+      };
+      return {
+        height: lanes.length * 18 + 12,
+        opts: {
+          backgroundColor: "transparent",
+          animation: false,
+          grid: { left: 54, right: 10, top: 6, bottom: 6 },
+          tooltip: tip,
+          xAxis: { type: "value", min: 0, max: n, show: false },
+          yAxis: {
+            type: "category",
+            inverse: true,
+            data: lanes.map((r) => REGIME_INFO[r].short),
+            axisLine: { show: false },
+            axisTick: { show: false },
+            splitLine: { show: false },
+            axisLabel: { color: (val, idx) => REGIME_HEX[lanes[idx]], fontSize: 9, fontWeight: 700, fontFamily: "JetBrains Mono, monospace" }
+          },
+          series: [
+            { type: "custom", silent: true, z: 1, renderItem: swimRect(0.86), encode: { x: [0, 1], y: 2 }, data: bgItems },
+            { type: "custom", z: 2, renderItem: swimRect(0.86), encode: { x: [0, 1], y: 2 }, data: segItems }
+          ]
+        }
+      };
+    }
+    if (style === "bars") {
+      const items = data.map((d, i) => ({
+        value: [i, i + 1, 0],
+        itemStyle: { color: hexOf(d.label), opacity: 0.92 },
+        _meta: `${infoOf(d.label).label} \xB7 ${d.date || "#" + i}`
+      }));
+      return {
+        height: 56,
+        opts: {
+          backgroundColor: "transparent",
+          animation: false,
+          grid: { left: 10, right: 10, top: 8, bottom: 8 },
+          tooltip: tip,
+          xAxis: { type: "value", min: 0, max: n, show: false },
+          yAxis: { type: "category", data: [""], show: false },
+          series: [{
+            type: "custom",
+            renderItem: (params, api) => {
+              const x0 = api.coord([api.value(0), 0]);
+              const x1 = api.coord([api.value(1), 0]);
+              const bandH = api.size([0, 1])[1];
+              return { type: "rect", shape: { x: x0[0], y: x0[1] - bandH * 0.42, width: Math.max(x1[0] - x0[0], 0.6), height: bandH * 0.84 }, style: api.style() };
+            },
+            encode: { x: [0, 1], y: 2 },
+            data: items
+          }]
+        }
+      };
+    }
+    if (style === "blocks") {
+      const items = segs.map((s) => ({
+        value: [s.start, s.start + s.days, 0],
+        itemStyle: { color: hexOf(s.label), opacity: 0.9 },
+        _label: s.days > 6 ? `${infoOf(s.label).short} ${s.days}d` : infoOf(s.label).short,
+        _meta: `${infoOf(s.label).label} \xB7 ${s.days}d \xB7 ${_fmtDay(data, s.start)} \u2192 ${_fmtDay(data, Math.min(s.start + s.days - 1, n - 1))}`
+      }));
+      return {
+        height: 52,
+        opts: {
+          backgroundColor: "transparent",
+          animation: false,
+          grid: { left: 10, right: 10, top: 8, bottom: 8 },
+          tooltip: tip,
+          xAxis: { type: "value", min: 0, max: n, show: false },
+          yAxis: { type: "category", data: [""], show: false },
+          series: [{
+            type: "custom",
+            renderItem: (params, api) => {
+              const x0 = api.coord([api.value(0), 0]);
+              const x1 = api.coord([api.value(1), 0]);
+              const bandH = api.size([0, 1])[1];
+              const w = Math.max(x1[0] - x0[0], 1);
+              const rect = { type: "rect", shape: { x: x0[0] + 0.5, y: x0[1] - bandH * 0.45, width: Math.max(w - 1, 0.6), height: bandH * 0.9 }, style: api.style() };
+              const lbl = params.data && params.data._label;
+              if (w > 42 && lbl) {
+                return { type: "group", children: [rect, {
+                  type: "text",
+                  style: {
+                    text: lbl,
+                    x: x0[0] + w / 2,
+                    y: x0[1],
+                    fill: "#000",
+                    opacity: 0.6,
+                    font: "700 9px JetBrains Mono, monospace",
+                    textAlign: "center",
+                    textVerticalAlign: "middle"
+                  }
+                }] };
+              }
+              return rect;
+            },
+            encode: { x: [0, 1], y: 2 },
+            data: items
+          }]
+        }
+      };
+    }
+    if (style === "heat") {
+      const cells = data.map((d) => [d.date, REGIME_KEYS.indexOf(d.label)]);
+      return {
+        height: 132,
+        opts: {
+          backgroundColor: "transparent",
+          animation: false,
+          tooltip: { ...tip, formatter: (p) => {
+            const k = REGIME_KEYS[p.data[1]];
+            return `${p.data[0]}
+${(REGIME_INFO[k] || {}).label || "\u2014"}`;
+          } },
+          visualMap: {
+            show: false,
+            type: "piecewise",
+            dimension: 1,
+            seriesIndex: 0,
+            pieces: REGIME_KEYS.map((r, i) => ({ value: i, color: REGIME_HEX[r] }))
+          },
+          calendar: {
+            top: 24,
+            left: 34,
+            right: 10,
+            bottom: 6,
+            cellSize: ["auto", 15],
+            range: [data[0].date, data[n - 1].date],
+            orient: "horizontal",
+            itemStyle: { color: QE_ECHARTS_THEME.bg, borderColor: "#000", borderWidth: 1.5 },
+            dayLabel: { color: muted, fontSize: 8, fontFamily: "JetBrains Mono, monospace", firstDay: 1 },
+            monthLabel: { color: sub, fontSize: 9, fontFamily: "JetBrains Mono, monospace" },
+            yearLabel: { show: false },
+            splitLine: { lineStyle: { color: line, width: 1 } }
+          },
+          series: [{
+            type: "heatmap",
+            coordinateSystem: "calendar",
+            data: cells,
+            itemStyle: { borderColor: "#000", borderWidth: 1.5 }
+          }]
+        }
+      };
+    }
+    const WIN = 14, step = Math.max(1, Math.floor(n / 200));
+    const buckets = [], labels = [];
+    for (let bi = WIN; bi <= n; bi += step) {
+      const slice = data.slice(bi - WIN, bi);
+      const c = {};
+      REGIME_KEYS.forEach((r) => {
+        c[r] = 0;
+      });
+      slice.forEach((d) => {
+        if (c[d.label] != null) c[d.label]++;
+      });
+      buckets.push(c);
+      labels.push(_fmtDay(data, bi - 1));
+    }
+    const series = REGIME_KEYS.map((r) => ({
+      name: REGIME_INFO[r].short,
+      type: "line",
+      stack: "comp",
+      smooth: 0.2,
+      symbol: "none",
+      lineStyle: { width: 0 },
+      areaStyle: { color: REGIME_HEX[r], opacity: 0.85 },
+      emphasis: { focus: "series" },
+      data: buckets.map((b) => +(b[r] / WIN * 100).toFixed(1))
+    }));
+    return {
+      height: 130,
+      opts: {
+        backgroundColor: "transparent",
+        animation: false,
+        grid: { left: 38, right: 10, top: 10, bottom: 20 },
+        tooltip: {
+          trigger: "axis",
+          backgroundColor: "#000",
+          borderColor: QE_ECHARTS_THEME.cyan,
+          borderWidth: 1,
+          padding: [6, 9],
+          textStyle: { color: QE_ECHARTS_THEME.text, fontSize: 11, fontFamily: "JetBrains Mono, monospace" },
+          axisPointer: { type: "line", lineStyle: { color: QE_ECHARTS_THEME.cyan, opacity: 0.4 } },
+          formatter: (ps) => {
+            const head = ps[0] ? ps[0].axisValue : "";
+            const rows = ps.filter((p) => p.value > 0).reverse().map((p) => `${p.marker} ${p.seriesName} ${p.value.toFixed(0)}%`).join("<br/>");
+            return `${head}<br/>${rows}`;
+          }
+        },
+        xAxis: {
+          type: "category",
+          boundaryGap: false,
+          data: labels,
+          ..._axis({ axisLabel: {
+            color: muted,
+            fontSize: 9,
+            fontFamily: "JetBrains Mono, monospace",
+            interval: Math.ceil(labels.length / 6)
+          }, splitLine: { show: false } })
+        },
+        yAxis: {
+          type: "value",
+          min: 0,
+          max: 100,
+          ..._axis({
+            axisLabel: { color: muted, fontSize: 9, fontFamily: "JetBrains Mono, monospace", formatter: (v) => v + "%" },
+            splitLine: { lineStyle: { color: QE_ECHARTS_THEME.faint, opacity: 0.4, type: [2, 3] } }
+          })
+        },
+        series
+      }
+    };
+  }, [data, style, empty, n]);
+  useECharts(ref, opts, [opts]);
+  if (empty) {
+    return /* @__PURE__ */ React.createElement(
+      EmptyState,
+      {
+        tone: "info",
+        glyph: "\u3007",
+        msg: "No regime data yet",
+        cta: /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.6rem", color: "var(--qe-sub)", fontFamily: "var(--qe-mono)" } }, "use Backfill tab to fetch macro signals")
+      }
+    );
+  }
+  const showTimeAxis = style === "swim" || style === "bars" || style === "blocks";
+  const padL = style === "swim" ? 54 : 10;
+  const ticks = (() => {
+    if (!showTimeAxis) return [];
+    const fmt = (s) => typeof s === "string" && s.length >= 10 ? s.slice(5) : s;
+    const idxs = [0, 0.25, 0.5, 0.75, 1].map((t) => Math.round(t * (n - 1)));
+    return [...new Set(idxs)].map((i) => fmt(_fmtDay(data, i)));
+  })();
+  return /* @__PURE__ */ React.createElement("div", { style: { width: "100%" } }, /* @__PURE__ */ React.createElement("div", { ref, style: { width: "100%", height } }), showTimeAxis && ticks.length > 1 && /* @__PURE__ */ React.createElement("div", { style: {
+    display: "flex",
+    justifyContent: "space-between",
+    paddingLeft: padL,
+    paddingRight: 10,
+    marginTop: 2,
+    fontFamily: "var(--qe-mono)",
+    fontSize: "0.52rem",
+    color: "var(--qe-muted)",
+    letterSpacing: "0.02em"
+  } }, ticks.map((t, i) => /* @__PURE__ */ React.createElement("span", { key: i }, t))));
+};
+const RegimeLegend = () => /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 14, flexWrap: "wrap", fontFamily: "var(--qe-mono)" } }, REGIME_KEYS.map((r) => /* @__PURE__ */ React.createElement("span", { key: r, style: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: "0.58rem" } }, /* @__PURE__ */ React.createElement("span", { style: { width: 8, height: 8, background: REGIME_HEX[r], display: "inline-block" } }), /* @__PURE__ */ React.createElement("span", { style: { color: REGIME_HEX[r] } }, REGIME_INFO[r].label))));
+const SignalChart = ({ data, color, thresholds = [], decimals = 2, unit = "", height = 84 }) => {
+  const ref = React.useRef(null);
+  const c = _qeResolveColor(color);
+  const opts = React.useMemo(() => {
+    const lo = Math.min(...data), hi = Math.max(...data);
+    const pad = (hi - lo) * 0.6 || 1;
+    const inBand = thresholds.filter((t) => t.v >= lo - pad && t.v <= hi + pad);
+    return {
+      backgroundColor: "transparent",
+      animation: false,
+      grid: { left: 42, right: 8, top: 8, bottom: 6 },
+      tooltip: {
+        trigger: "axis",
+        backgroundColor: "#000",
+        borderColor: QE_ECHARTS_THEME.cyan,
+        borderWidth: 1,
+        padding: [3, 7],
+        textStyle: { color: QE_ECHARTS_THEME.text, fontSize: 11, fontFamily: "JetBrains Mono, monospace" },
+        axisPointer: { type: "line", lineStyle: { color: c, opacity: 0.5 } },
+        formatter: (ps) => {
+          const v = ps[0].value;
+          return `${(+v).toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}${unit ? " " + unit : ""}`;
+        }
+      },
+      xAxis: { type: "category", show: false, boundaryGap: false, data: data.map((_, i) => i) },
+      yAxis: {
+        type: "value",
+        scale: true,
+        ..._axis({
+          axisLabel: {
+            color: QE_ECHARTS_THEME.muted,
+            fontSize: 8,
+            fontFamily: "JetBrains Mono, monospace",
+            formatter: (v) => (+v).toLocaleString("en-US", { maximumFractionDigits: decimals })
+          },
+          splitLine: { lineStyle: { color: QE_ECHARTS_THEME.faint, opacity: 0.35, type: [2, 3] } }
+        })
+      },
+      series: [{
+        type: "line",
+        data,
+        smooth: 0.18,
+        symbol: "none",
+        lineStyle: { color: c, width: 1.4 },
+        areaStyle: { color: { type: "linear", x: 0, y: 0, x2: 0, y2: 1, colorStops: [
+          { offset: 0, color: c + "40" },
+          { offset: 1, color: c + "00" }
+        ] } },
+        markLine: inBand.length ? {
+          symbol: "none",
+          silent: true,
+          data: inBand.map((t) => ({
+            yAxis: t.v,
+            lineStyle: { color: _qeResolveColor(t.c), type: "dashed", width: 1, opacity: 0.8 },
+            label: {
+              show: true,
+              position: "insideStartTop",
+              formatter: t.l,
+              color: _qeResolveColor(t.c),
+              fontSize: 8,
+              fontFamily: "JetBrains Mono, monospace"
+            }
+          }))
+        } : void 0
+      }]
+    };
+  }, [data, c, thresholds, decimals, unit]);
+  useECharts(ref, opts, [opts]);
+  return /* @__PURE__ */ React.createElement("div", { ref, style: { width: "100%", height } });
+};
+const SignalCard = ({ sig, globalSel, coverageRows, thresholds, onOverride, onGoBackfill }) => {
+  const [range, setRange] = React.useState(globalSel.v);
+  React.useEffect(() => {
+    setRange(globalSel.v);
+  }, [globalSel]);
+  const from = _rgFromDate(range);
+  const { data, err } = useAnaJson(
+    `/api/regime/signals?signal_name=${encodeURIComponent(sig.key)}${from ? `&from_date=${from}` : ""}`
+  );
+  const covLoading = coverageRows == null;
+  const covered = (coverageRows || []).some((c) => c.signal_name === sig.key && (c.count || 0) > 0);
+  const series = React.useMemo(
+    () => Array.isArray(data) ? data.map((d) => d.value).filter((v) => v != null) : null,
+    [data]
+  );
+  const last = series && series.length ? series[series.length - 1] : null;
+  const thr = React.useMemo(() => _rgSigThr(sig, thresholds), [sig, thresholds]);
+  const pick = (v) => {
+    setRange(v);
+    onOverride();
+  };
+  return /* @__PURE__ */ React.createElement("div", { style: { background: "var(--qe-card)", border: "1px solid var(--qe-line)", padding: "8px 10px", display: "flex", flexDirection: "column", gap: 6 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6 } }, /* @__PURE__ */ React.createElement("span", { style: { width: 6, height: 6, background: sig.color, display: "inline-block" } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.7rem", fontWeight: 600, color: "var(--qe-text)" } }, sig.label), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.74rem", color: "var(--qe-text)", fontWeight: 700, marginLeft: 4 } }, last != null ? last.toLocaleString("en-US", { minimumFractionDigits: sig.decimals, maximumFractionDigits: sig.decimals }) + (sig.unit ? " " + sig.unit : "") : ""), /* @__PURE__ */ React.createElement("span", { style: { marginLeft: "auto" } }, /* @__PURE__ */ React.createElement(PeriodSelector, { options: [[30, "30d"], [90, "90d"], [365, "1y"], [1825, "5y"], [0, "All"]], value: range, onChange: pick }))), series == null ? err ? /* @__PURE__ */ React.createElement(EmptyState, { tone: "warn", glyph: "\u26A0", msg: "signal fetch failed", hint: "engine unreachable?" }) : /* @__PURE__ */ React.createElement("div", { style: { height: 84, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--qe-muted)", fontSize: "0.6rem", fontFamily: "var(--qe-mono)" } }, "loading\u2026") : series.length === 0 ? covLoading ? /* @__PURE__ */ React.createElement("div", { style: { height: 84, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--qe-muted)", fontSize: "0.6rem", fontFamily: "var(--qe-mono)" } }, "loading\u2026") : covered ? /* @__PURE__ */ React.createElement(EmptyState, { tone: "info", glyph: "\u25C7", msg: "No data for range", hint: "widen the range" }) : /* @__PURE__ */ React.createElement(
+    EmptyState,
+    {
+      tone: "warn",
+      glyph: "\u2205",
+      msg: "Not yet backfilled",
+      cta: /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", onClick: onGoBackfill }, "Use Backfill tab \u2192")
+    }
+  ) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(SignalChart, { data: series, color: sig.color, thresholds: thr, decimals: sig.decimals, unit: sig.unit, height: 84 }), thr.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6, fontSize: "0.54rem", fontFamily: "var(--qe-mono)" } }, thr.map((t) => /* @__PURE__ */ React.createElement("span", { key: t.l, style: { display: "inline-flex", alignItems: "center", gap: 3, color: t.c } }, /* @__PURE__ */ React.createElement("span", { style: { width: 8, height: 0, borderTop: `1px dashed ${t.c}`, display: "inline-block" } }), t.l, " ", t.v, sig.unit && " " + sig.unit)))));
+};
+const RegimeTabOverview = ({ current, mults, onGoBackfill }) => {
+  const [tlStyle, setTlStyle] = React.useState("swim");
+  const [tlRange, setTlRange] = React.useState(365);
+  const [globalSel, setGlobalSel] = React.useState({ v: 365, n: 0 });
+  const [globalActive, setGlobalActive] = React.useState(true);
+  const [selChange, setSelChange] = React.useState(null);
+  const tlFrom = _rgFromDate(tlRange);
+  const { data: tlData, err: tlErr } = useAnaJson(
+    `/api/regime/timeline${tlFrom ? `?from_date=${tlFrom}` : ""}`
+  );
+  const { data: coverage } = useAnaJson("/api/regime/coverage");
+  const { data: thresholds } = useAnaJson("/api/regime/thresholds");
+  const timeline = Array.isArray(tlData) ? tlData : [];
+  const counts = {};
+  REGIME_KEYS.forEach((r) => {
+    counts[r] = 0;
+  });
+  timeline.forEach((d) => {
+    if (counts[d.label] != null) counts[d.label]++;
+  });
+  const total = timeline.length;
+  const changes = React.useMemo(() => {
+    const out = [];
+    for (let i = 1; i < timeline.length; i++) {
+      if (timeline[i].label !== timeline[i - 1].label) {
+        out.push({ ...timeline[i], _prev: timeline[i - 1].label });
+      }
+    }
+    return out.reverse().slice(0, 25);
+  }, [timeline]);
+  const curInfo = current && current.label ? REGIME_INFO[current.label] || REGIME_INFO.neutral : null;
+  const sigOf = (row, k) => row.signals && row.signals[k] != null ? row.signals[k] : null;
+  const fmtSig = (v, d = 2, suf = "") => v == null ? "\u2014" : (+v).toFixed(d) + suf;
+  const t = thresholds || {};
+  const vixColor = (v) => v == null ? "var(--qe-muted)" : t.vix_defensive != null && v >= t.vix_defensive ? "var(--qe-red)" : t.vix_risk_on != null && v >= t.vix_risk_on ? "var(--qe-amber)" : "var(--qe-text)";
+  return /* @__PURE__ */ React.createElement(GridWorkspace, null, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 6, h: 7, minW: 4, minH: 4 }, /* @__PURE__ */ React.createElement(Pane, { title: "Current Regime", hot: true, style: { height: "100%" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "8px 0" } }, curInfo ? /* @__PURE__ */ React.createElement(RegimeBadge, { tone: curInfo.tone, label: curInfo.label.toUpperCase() }) : /* @__PURE__ */ React.createElement(RegimeBadge, { tone: "neut", label: "NO DATA" }), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "1.8rem", fontWeight: 700, color: curInfo ? curInfo.color : "var(--qe-muted)", lineHeight: 1 } }, current && current.multiplier != null && current.source !== "none" ? `${current.multiplier}\xD7` : "\u2014"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.56rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)" } }, "sizing multiplier"), current && current.source === "live" && /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.54rem", color: "var(--qe-sub)", fontFamily: "var(--qe-mono)" } }, current.mode, " \xB7 ", current.confidence, " confidence \xB7 ", current.stability_bars, "d stable"), current && current.source === "db" && /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.54rem", color: "var(--qe-sub)", fontFamily: "var(--qe-mono)" } }, "from stored labels \xB7 ", current.date || "\u2014")))), /* @__PURE__ */ React.createElement(GridItem, { x: 6, y: 0, w: 12, h: 7, minW: 6, minH: 4 }, /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "Regime Distribution",
+      tag: tlRange === 0 ? "ALL" : `${tlRange}d`,
+      style: { height: "100%" },
+      right: /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.54rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)" } }, total, " days observed")
+    },
+    total === 0 ? /* @__PURE__ */ React.createElement(
+      EmptyState,
+      {
+        tone: tlErr ? "warn" : "info",
+        glyph: "\u3007",
+        msg: tlErr ? "timeline fetch failed" : "no regime labels in window",
+        hint: tlErr ? "engine unreachable?" : "run a backfill to classify history"
+      }
+    ) : /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 6 } }, REGIME_KEYS.map((r) => {
+      const c = counts[r] || 0;
+      const pct = total > 0 ? c / total * 100 : 0;
+      const info = REGIME_INFO[r];
+      return /* @__PURE__ */ React.createElement("div", { key: r, style: { padding: "6px 4px", background: info.bg, border: "1px solid color-mix(in srgb, " + info.color + " 27%, transparent)", textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.56rem", fontWeight: 700, color: info.color, letterSpacing: "0.08em" } }, info.short), /* @__PURE__ */ React.createElement("div", { style: { fontFamily: "var(--qe-mono)", fontSize: "1rem", fontWeight: 700, color: info.color } }, pct.toFixed(1), "%"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.52rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)" } }, c, "d"));
+    }))
+  )), /* @__PURE__ */ React.createElement(GridItem, { x: 18, y: 0, w: 6, h: 7, minW: 4, minH: 4 }, /* @__PURE__ */ React.createElement(Pane, { title: "Sizing Multipliers", style: { height: "100%" } }, /* @__PURE__ */ React.createElement(FieldList, { rows: REGIME_KEYS.map((r) => {
+    const info = REGIME_INFO[r];
+    return {
+      label: info.label.replace("Risk-On ", "").replace("Risk-Off ", ""),
+      value: _rgMult(mults, r),
+      color: info.color
+    };
+  }) }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.54rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)", marginTop: 6 } }, "applied to base size at calc time"))), /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 7, w: 24, h: 8, minW: 10, minH: 5 }, /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "Regime Timeline",
+      tag: tlStyle.toUpperCase(),
+      style: { height: "100%" },
+      right: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.54rem", color: "var(--qe-muted)", letterSpacing: "0.08em", fontFamily: "var(--qe-mono)" } }, "STYLE"), /* @__PURE__ */ React.createElement(PeriodSelector, { options: [["swim", "Swim"], ["bars", "Bars"], ["blocks", "Blocks"], ["heat", "Heat"], ["stack", "Stack"]], value: tlStyle, onChange: setTlStyle }), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2502"), /* @__PURE__ */ React.createElement(PeriodSelector, { options: [[30, "30d"], [90, "90d"], [365, "1y"], [0, "All"]], value: tlRange, onChange: setTlRange }))
+    },
+    timeline.length === 0 && tlErr ? /* @__PURE__ */ React.createElement(EmptyState, { tone: "warn", glyph: "\u26A0", msg: "timeline fetch failed", hint: "engine unreachable?" }) : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, /* @__PURE__ */ React.createElement(TimelineSvg, { data: timeline, style: tlStyle }), /* @__PURE__ */ React.createElement(RegimeLegend, null))
+  )), /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 15, w: 24, h: 10, minW: 10, minH: 5 }, /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "Macro Signals",
+      count: RG_SIGNALS.length,
+      style: { height: "100%" },
+      right: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(
+        "span",
+        {
+          style: { fontSize: "0.54rem", color: "var(--qe-muted)", letterSpacing: "0.08em", fontFamily: "var(--qe-mono)" },
+          title: "cards inherit the All range until individually overridden; a per-card range clears the global highlight"
+        },
+        "ALL"
+      ), /* @__PURE__ */ React.createElement(
+        PeriodSelector,
+        {
+          options: [[30, "30d"], [90, "90d"], [365, "1y"], [1825, "5y"], [0, "All"]],
+          value: globalActive ? globalSel.v : null,
+          onChange: (v) => {
+            setGlobalSel((s) => ({ v, n: s.n + 1 }));
+            setGlobalActive(true);
+          }
+        }
+      ))
+    },
+    /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 } }, RG_SIGNALS.map((sig) => /* @__PURE__ */ React.createElement(
+      SignalCard,
+      {
+        key: sig.key,
+        sig,
+        globalSel,
+        coverageRows: Array.isArray(coverage) ? coverage : null,
+        thresholds,
+        onOverride: () => setGlobalActive(false),
+        onGoBackfill
+      }
+    )))
+  )), /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 25, w: 24, h: 10, minW: 10, minH: 5 }, /* @__PURE__ */ React.createElement(Pane, { title: "Recent Regime Changes", count: changes.length, style: { height: "100%" }, bodyStyle: { padding: 0 } }, /* @__PURE__ */ React.createElement(
+    DataList,
+    {
+      selKey: "date",
+      tools: false,
+      onClick: (r) => setSelChange((s) => s === r.date ? null : r.date),
+      selected: selChange,
+      columns: [
+        { key: "date", label: "DATE", cell: "dim" },
+        { key: "label", label: "REGIME", render: (r) => {
+          const info = REGIME_INFO[r.label] || REGIME_INFO.neutral;
+          return /* @__PURE__ */ React.createElement("span", { style: { color: info.color, fontWeight: 700 } }, info.label);
+        } },
+        { key: "mode", label: "MODE", cell: "dim" },
+        { key: "vix", label: "VIX", align: "right", render: (r) => {
+          const v = sigOf(r, "vix_close");
+          return /* @__PURE__ */ React.createElement("span", { style: { color: vixColor(v) } }, fmtSig(v, 1));
+        } },
+        { key: "hy", label: "HY SPREAD", align: "right", render: (r) => fmtSig(sigOf(r, "hy_spread"), 2, "%") },
+        { key: "rvol", label: "RVOL", align: "right", render: (r) => fmtSig(sigOf(r, "btc_rvol_ratio"), 2) },
+        { key: "funding", label: "FUNDING", align: "right", render: (r) => {
+          const v = sigOf(r, "avg_funding");
+          return v == null ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014") : /* @__PURE__ */ React.createElement("span", { style: { color: v >= 0 ? "var(--qe-green)" : "var(--qe-red)" } }, (v * 100).toFixed(3), "%");
+        } }
+      ],
+      rows: changes,
+      emptyMsg: "no regime transitions in window"
+    }
+  ), selChange && (() => {
+    const i = changes.findIndex((r) => r.date === selChange);
+    const row = changes[i];
+    if (!row) return null;
+    const to = REGIME_INFO[row.label] || REGIME_INFO.neutral;
+    const from = row._prev ? REGIME_INFO[row._prev] || REGIME_INFO.neutral : null;
+    return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 14, padding: "5px 10px", borderTop: "1px solid var(--qe-line)", background: "var(--qe-panel)", fontFamily: "var(--qe-mono)", fontSize: "0.62rem", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)", letterSpacing: "0.1em", fontSize: "0.5rem", fontWeight: 700 } }, "SIGNAL CONTEXT"), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, row.date), /* @__PURE__ */ React.createElement("span", null, from && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { color: from.color, fontWeight: 700 } }, from.short), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, " \u2192 ")), /* @__PURE__ */ React.createElement("span", { style: { color: to.color, fontWeight: 700 } }, to.short)), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "size ", from ? /* @__PURE__ */ React.createElement("span", { style: { color: from.color } }, _rgMult(mults, row._prev)) : "\u2014", " \u2192 ", /* @__PURE__ */ React.createElement("span", { style: { color: to.color, fontWeight: 700 } }, _rgMult(mults, row.label))), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "VIX ", /* @__PURE__ */ React.createElement("span", { style: { color: vixColor(sigOf(row, "vix_close")) } }, fmtSig(sigOf(row, "vix_close"), 1))), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "HY ", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-text)" } }, fmtSig(sigOf(row, "hy_spread"), 2, "%"))), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "RVOL ", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-text)" } }, fmtSig(sigOf(row, "btc_rvol_ratio"), 2))), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "FUND ", (() => {
+      const v = sigOf(row, "avg_funding");
+      return v == null ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014") : /* @__PURE__ */ React.createElement("span", { style: { color: v >= 0 ? "var(--qe-green)" : "var(--qe-red)" } }, (v * 100).toFixed(3), "%");
+    })()), /* @__PURE__ */ React.createElement("span", { className: "qe-grow" }), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-ghost", onClick: () => setSelChange(null) }, "\u2715"));
+  })())));
+};
+const RG_SIGNAL_SOURCE = {
+  vix_close: "yfinance",
+  us10y_yield: "FRED",
+  hy_spread: "FRED",
+  btc_rvol_ratio: "derived",
+  agg_oi_change: "Binance",
+  avg_funding: "Binance"
+};
+const RegimeTabBackfill = ({ job, onStart }) => {
+  const [mode, setMode] = React.useState("macro_only");
+  const [since, setSince] = React.useState("2020-01-01");
+  const [until, setUntil] = React.useState(() => (/* @__PURE__ */ new Date()).toISOString().slice(0, 10));
+  const { data: coverage, err: covErr, reload: reloadCoverage } = useAnaJson("/api/regime/coverage");
+  const jobStatus = job && job.status;
+  React.useEffect(() => {
+    if (jobStatus === "completed") reloadCoverage();
+  }, [jobStatus, reloadCoverage]);
+  const running = job && (job.status === "running" || job.status === "starting");
+  const results = job && job.results;
+  const srvRows = Array.isArray(coverage) ? coverage : [];
+  const covRows = srvRows.concat(
+    RG_SIGNALS.filter((s) => !srvRows.some((r) => r.signal_name === s.key)).map((s) => ({
+      signal_name: s.key,
+      source: RG_SIGNAL_SOURCE[s.key] || "\u2014",
+      min_date: null,
+      max_date: null,
+      count: 0
+    }))
+  );
+  const labelOf = (key) => {
+    const s = RG_SIGNALS.find((x) => x.key === key);
+    return s ? s.label : key;
+  };
+  return /* @__PURE__ */ React.createElement(GridWorkspace, null, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 8, h: 14, minW: 5, minH: 6 }, /* @__PURE__ */ React.createElement(Pane, { title: "Backfill Macro Data", style: { height: "100%" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, /* @__PURE__ */ React.createElement("p", { style: { fontSize: "0.62rem", color: "var(--qe-sub)", lineHeight: 1.5, margin: 0 } }, "Macro Only fetches VIX (yfinance) + yields/spreads (FRED) + derives BTC RVol \u2014 works for deep history. Full additionally classifies with any existing Binance OI/funding rows; those crypto series are refreshed by the engine scheduler, not this fetch."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Mode"), /* @__PURE__ */ React.createElement("select", { className: "qe-input qe-select", value: mode, onChange: (e) => setMode(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "macro_only" }, "Macro Only \xB7 VIX \xB7 FRED \xB7 RVol"), /* @__PURE__ */ React.createElement("option", { value: "full" }, "Full \xB7 + existing OI / funding rows"))), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "From"), /* @__PURE__ */ React.createElement("input", { type: "date", className: "qe-input", value: since, onChange: (e) => setSince(e.target.value) })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "To"), /* @__PURE__ */ React.createElement("input", { type: "date", className: "qe-input", value: until, onChange: (e) => setUntil(e.target.value) }))), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      className: "qe-btn qe-btn-primary qe-btn-lg",
+      style: { width: "100%", justifyContent: "center" },
+      disabled: running,
+      onClick: () => onStart({ mode, since, until })
+    },
+    running ? /* @__PURE__ */ React.createElement(Spinner, { size: "0.7rem" }) : "\u25B6 Start Backfill"
+  ), job && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4, marginTop: 4 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "0.6rem", fontFamily: "var(--qe-mono)" } }, /* @__PURE__ */ React.createElement("span", { style: { color: job.status === "failed" ? "var(--qe-red)" : "var(--qe-sub)" } }, job.status === "failed" ? "Backfill failed \u2014 data unchanged" : job.detail || job.status), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, Math.round(job.pct || 0), "%")), job.status === "failed" && job.detail && /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.54rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)" } }, job.detail), /* @__PURE__ */ React.createElement("div", { style: { height: 4, background: "var(--qe-panel)", border: "1px solid var(--qe-line)" } }, /* @__PURE__ */ React.createElement("div", { style: { width: `${Math.max(0, Math.min(100, job.pct || 0))}%`, height: "100%", background: job.status === "failed" ? "var(--qe-red)" : "var(--qe-cyan)" } })), job.status === "completed" && results && /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.58rem", color: "var(--qe-green)", fontFamily: "var(--qe-mono)", lineHeight: 1.6 } }, "done \u2014 ", Object.entries(results).map(([k, v]) => `${k}: ${v}`).join(" \xB7 ")))))), /* @__PURE__ */ React.createElement(GridItem, { x: 8, y: 0, w: 16, h: 20, minW: 8, minH: 6 }, /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "Signal Coverage",
+      count: covRows.length,
+      style: { height: "100%" },
+      right: /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-ghost", onClick: reloadCoverage }, "\u21BB"),
+      bodyStyle: { padding: 0 }
+    },
+    covErr && srvRows.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, { tone: "warn", glyph: "\u26A0", msg: "coverage fetch failed", hint: "engine unreachable?" }) : /* @__PURE__ */ React.createElement(
+      DataList,
+      {
+        selKey: "signal_name",
+        tools: false,
+        columns: [
+          { key: "signal_name", label: "SIGNAL", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: (r.count || 0) > 0 ? "var(--qe-text)" : "var(--qe-sub)", fontWeight: 600 } }, labelOf(r.signal_name)) },
+          { key: "source", label: "SOURCE", cell: "dim" },
+          { key: "min_date", label: "FROM", cell: "dim", render: (r) => r.min_date || /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014") },
+          { key: "max_date", label: "TO", cell: "dim", render: (r) => r.max_date || /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014") },
+          { key: "count", label: "ROWS", align: "right", render: (r) => (r.count || 0) > 0 ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-green)", fontWeight: 700 } }, (+r.count).toLocaleString()) : /* @__PURE__ */ React.createElement(Badge, { tone: "warn" }, "NOT BACKFILLED") }
+        ],
+        rows: covRows
+      }
+    )
+  )));
+};
+const NEWS_SRC_STYLE = {
+  finnhub: { color: "var(--qe-blue)", background: "var(--qe-bg-blue)" },
+  bwe: { color: "var(--qe-amber)", background: "var(--qe-bg-amber)" }
+};
+const IMPACT_STYLE = {
+  high: { color: "var(--qe-red)", background: "var(--qe-bg-red)" },
+  medium: { color: "var(--qe-amber)", background: "var(--qe-bg-amber)" }
+};
+const RG_DEFAULT_PILL = { color: "var(--qe-sub)", background: "var(--qe-panel)" };
+const srcPill = (source) => NEWS_SRC_STYLE[source] || RG_DEFAULT_PILL;
+const impactPill = (impact) => IMPACT_STYLE[impact] || RG_DEFAULT_PILL;
+const NewsItem = ({ n, hero = false, expanded, onClick, nowMs }) => {
+  const srcStyle = srcPill(n.source);
+  const catStyle = RG_DEFAULT_PILL;
+  const catLbl = n.category || "news";
+  const relTime = _rgRel(n.published_at, nowMs);
+  const tickers = (n.tickers || "").split(",").map((t) => t.trim()).filter(Boolean);
+  const openLink = n.url ? /* @__PURE__ */ React.createElement(
+    "a",
+    {
+      href: n.url,
+      target: "_blank",
+      rel: "noopener noreferrer",
+      onClick: (e) => e.stopPropagation(),
+      style: { fontSize: "0.56rem", color: "var(--qe-cyan)", fontFamily: "var(--qe-mono)", textDecoration: "none" }
+    },
+    "open \u2197"
+  ) : null;
+  if (hero) {
+    return /* @__PURE__ */ React.createElement("div", { onClick, style: {
+      background: "var(--qe-card)",
+      border: `1px solid ${expanded ? "var(--qe-cyan)" : "var(--qe-line)"}`,
+      padding: "12px 14px",
+      cursor: "pointer"
+    } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, marginBottom: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { ...srcStyle, padding: "1px 6px", fontSize: "0.56rem", fontWeight: 700, letterSpacing: "0.06em", fontFamily: "var(--qe-mono)" } }, (n.source || "?").toUpperCase()), /* @__PURE__ */ React.createElement(Badge, { tone: "info" }, "TOP STORY"), /* @__PURE__ */ React.createElement("span", { style: { ...catStyle, padding: "1px 6px", fontSize: "0.54rem", fontWeight: 700, fontFamily: "var(--qe-mono)" } }, catLbl.toUpperCase()), /* @__PURE__ */ React.createElement("span", { style: { marginLeft: "auto", fontSize: "0.58rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)" } }, relTime)), /* @__PURE__ */ React.createElement("h2", { style: { fontSize: "0.94rem", fontWeight: 800, color: "var(--qe-text)", lineHeight: 1.35, marginBottom: 6, fontFamily: "var(--qe-ui)", letterSpacing: "-0.01em" } }, n.headline), n.summary ? /* @__PURE__ */ React.createElement("p", { style: { fontSize: "0.7rem", color: "var(--qe-sub)", lineHeight: 1.6, margin: 0 } }, n.summary) : null, expanded && tickers.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 4, marginTop: 8 } }, tickers.map((t) => /* @__PURE__ */ React.createElement("span", { key: t, style: { padding: "1px 6px", fontFamily: "var(--qe-mono)", fontSize: "0.56rem", background: "var(--qe-panel)", border: "1px solid var(--qe-line)", color: "var(--qe-sub)" } }, t))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10, marginTop: 6, alignItems: "baseline" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.54rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)" } }, expanded ? "\u25B2 Collapse" : "\u25BC Expand"), expanded && openLink));
+  }
+  return /* @__PURE__ */ React.createElement("div", { onClick, style: {
+    background: "var(--qe-card)",
+    border: `1px solid ${expanded ? "var(--qe-cyan)" : "var(--qe-line)"}`,
+    padding: expanded ? "10px 12px" : "6px 10px",
+    cursor: "pointer"
+  } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "flex-start", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { ...srcStyle, padding: "1px 5px", fontSize: "0.5rem", fontWeight: 700, letterSpacing: "0.06em", fontFamily: "var(--qe-mono)", flexShrink: 0 } }, (n.source || "?").toUpperCase()), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: expanded ? "0.74rem" : "0.68rem", fontWeight: expanded ? 700 : 600, color: "var(--qe-text)", lineHeight: 1.4 } }, n.headline), expanded && n.summary ? /* @__PURE__ */ React.createElement("p", { style: { fontSize: "0.66rem", color: "var(--qe-sub)", lineHeight: 1.6, margin: "6px 0 0 0" } }, n.summary) : null, expanded && (tickers.length > 0 || openLink) && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6, alignItems: "baseline" } }, tickers.map((t) => /* @__PURE__ */ React.createElement("span", { key: t, style: { padding: "1px 5px", fontFamily: "var(--qe-mono)", fontSize: "0.54rem", background: "var(--qe-panel)", border: "1px solid var(--qe-line)", color: "var(--qe-sub)" } }, t)), openLink)), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 3, flexShrink: 0 } }, /* @__PURE__ */ React.createElement("span", { style: { ...catStyle, padding: "1px 5px", fontSize: "0.5rem", fontWeight: 700, fontFamily: "var(--qe-mono)" } }, catLbl.toUpperCase()), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.54rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)", whiteSpace: "nowrap" } }, relTime))));
+};
+const RegimeTabNews = () => {
+  const [expanded, setExpanded] = React.useState(null);
+  const [newsView, setNewsView] = React.useState("magazine");
+  const [calFilter, setCalFilter] = React.useState("");
+  const [refreshMsg, setRefreshMsg] = React.useState(null);
+  const [, setTick] = React.useState(0);
+  const [calUrl] = React.useState(() => {
+    const iso = (ms) => new Date(ms).toISOString().slice(0, 10);
+    return `/api/calendar?from_date=${iso(Date.now() - 30 * 864e5)}&to_date=${iso(Date.now() + 30 * 864e5)}`;
+  });
+  const { data: feedData, err: feedErr, reload: reloadFeed } = useAnaJson("/api/news/feed?limit=80", 15e3);
+  const { data: calData, reload: reloadCal } = useAnaJson(calUrl, 6e4);
+  React.useEffect(() => {
+    const t = setInterval(() => setTick((x) => x + 1), 6e4);
+    return () => clearInterval(t);
+  }, []);
+  const nowMs = Date.now();
+  const news = Array.isArray(feedData) ? feedData : [];
+  const calAll = Array.isArray(calData) ? calData : [];
+  const cal = calFilter ? calAll.filter((e) => calFilter.split(",").includes(e.impact)) : calAll;
+  const refresh = async () => {
+    setRefreshMsg("refreshing\u2026");
+    const r = await _rgPost("/api/news/refresh");
+    if (r.ok && r.data) {
+      setRefreshMsg(`+${r.data.news_added || 0} news \xB7 +${r.data.calendar_added || 0} events`);
+      reloadFeed();
+      reloadCal();
+    } else {
+      setRefreshMsg(r.status ? `refresh failed (HTTP ${r.status})` : "refresh failed \u2014 engine unreachable?");
+    }
+  };
+  React.useEffect(() => {
+    if (!refreshMsg || refreshMsg === "refreshing\u2026") return void 0;
+    const t = setTimeout(() => setRefreshMsg(null), 6e3);
+    return () => clearTimeout(t);
+  }, [refreshMsg]);
+  const nowRef = React.useRef(null);
+  const calReady = cal.length > 0;
+  React.useEffect(() => {
+    if (nowRef.current) {
+      try {
+        nowRef.current.scrollIntoView({ block: "center" });
+      } catch (e) {
+      }
+    }
+  }, [calReady, calFilter]);
+  return /* @__PURE__ */ React.createElement(GridWorkspace, null, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 16, h: 24, minW: 8, minH: 8 }, /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "Market News",
+      count: news.length,
+      style: { height: "100%" },
+      right: /* @__PURE__ */ React.createElement(React.Fragment, null, refreshMsg && /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.54rem", color: "var(--qe-sub)", fontFamily: "var(--qe-mono)" } }, refreshMsg), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-ghost", onClick: refresh }, "\u21BB"), /* @__PURE__ */ React.createElement(PeriodSelector, { options: [["magazine", "Magazine"], ["detail", "Detail"]], value: newsView, onChange: setNewsView }), feedErr ? /* @__PURE__ */ React.createElement(StatusDot, { tone: "warn", label: "STALE \u2014 retrying" }) : /* @__PURE__ */ React.createElement(StatusDot, { tone: "info", label: "15s refresh" })),
+      bodyStyle: { padding: newsView === "magazine" ? 6 : 0 }
+    },
+    news.length === 0 ? /* @__PURE__ */ React.createElement(
+      EmptyState,
+      {
+        tone: feedErr ? "warn" : "info",
+        glyph: "\u{1F4F0}",
+        msg: feedErr ? "news fetch failed" : "no news items stored yet",
+        hint: feedErr ? "engine unreachable?" : "press \u21BB to fetch from finnhub (needs an API key in Connections)"
+      }
+    ) : newsView === "magazine" ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4 } }, /* @__PURE__ */ React.createElement(
+      NewsItem,
+      {
+        n: news[0],
+        hero: true,
+        nowMs,
+        expanded: expanded === news[0].id,
+        onClick: () => setExpanded(expanded === news[0].id ? null : news[0].id)
+      }
+    ), news.slice(1).map((n) => /* @__PURE__ */ React.createElement(
+      NewsItem,
+      {
+        key: n.id,
+        n,
+        nowMs,
+        expanded: expanded === n.id,
+        onClick: () => setExpanded(expanded === n.id ? null : n.id)
+      }
+    ))) : /* @__PURE__ */ React.createElement(
+      DataList,
+      {
+        selKey: "id",
+        dense: true,
+        tools: false,
+        onClick: (n) => {
+          setNewsView("magazine");
+          setExpanded(n.id);
+        },
+        columns: [
+          { key: "published_at", label: "TIME", cell: "dim", render: (n) => _rgRel(n.published_at, nowMs) },
+          { key: "source", label: "SRC", render: (n) => /* @__PURE__ */ React.createElement("span", { style: { ...srcPill(n.source), padding: "1px 5px", fontSize: "0.5rem", fontWeight: 700, fontFamily: "var(--qe-mono)", letterSpacing: "0.06em" } }, (n.source || "?").toUpperCase()) },
+          { key: "headline", label: "HEADLINE", render: (n) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-text)", fontWeight: 600 } }, n.headline) },
+          { key: "tickers", label: "TICKERS", cell: "dim", render: (n) => /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.56rem" } }, n.tickers || "\u2014") }
+        ],
+        rows: news
+      }
+    )
+  )), /* @__PURE__ */ React.createElement(GridItem, { x: 16, y: 0, w: 8, h: 24, minW: 6, minH: 8 }, /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "Economic Calendar",
+      count: cal.length,
+      style: { height: "100%" },
+      tag: "NOW MARKER",
+      right: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(PeriodSelector, { options: [["", "All"], ["high", "High"], ["high,medium", "High+Med"]], value: calFilter, onChange: setCalFilter }), /* @__PURE__ */ React.createElement(LiveClock, { id: "regime-news-clock", style: { fontSize: "0.54rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)" } })),
+      bodyStyle: { padding: 6 }
+    },
+    cal.length === 0 ? /* @__PURE__ */ React.createElement(
+      EmptyState,
+      {
+        tone: "info",
+        glyph: "\u25EB",
+        msg: "no calendar events stored",
+        hint: "press \u21BB on Market News to fetch (finnhub)"
+      }
+    ) : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4 } }, (() => {
+      const out = [];
+      let nowInserted = false;
+      const marker = /* @__PURE__ */ React.createElement("div", { key: "now-marker", ref: nowRef, style: { display: "flex", alignItems: "center", gap: 6, padding: "4px 0" } }, /* @__PURE__ */ React.createElement("hr", { style: { flex: 1, border: "none", borderTop: "1px solid var(--qe-cyan)", opacity: 0.5 } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.54rem", fontWeight: 700, color: "var(--qe-cyan)", letterSpacing: "0.12em", fontFamily: "var(--qe-mono)" } }, "\u25CF NOW"), /* @__PURE__ */ React.createElement("hr", { style: { flex: 1, border: "none", borderTop: "1px solid var(--qe-cyan)", opacity: 0.5 } }));
+      cal.forEach((e, i) => {
+        const evMs = Date.parse(e.event_time);
+        if (!nowInserted && Number.isFinite(evMs) && evMs >= nowMs) {
+          nowInserted = true;
+          out.push(marker);
+        }
+        const isPast = Number.isFinite(evMs) && evMs < nowMs;
+        const minsAway = Number.isFinite(evMs) ? Math.round((evMs - nowMs) / 6e4) : 0;
+        const isNear = !isPast && Math.abs(minsAway) <= 240;
+        const timeLbl = !Number.isFinite(evMs) ? "\u2014" : isPast ? minsAway < -60 ? `${Math.round(-minsAway / 60)}h ago` : `${-minsAway}m ago` : minsAway < 60 ? `in ${minsAway}m` : `in ${Math.round(minsAway / 60)}h`;
+        const est = e.estimate, act = e.actual;
+        const surprise = act != null && est != null && Math.abs(+est) > 0 ? Math.abs(act - est) / Math.abs(est) : 0;
+        const actColor = act == null ? "var(--qe-sub)" : surprise > 0.1 ? act > est ? "var(--qe-green)" : "var(--qe-red)" : "var(--qe-text)";
+        const fmtNum = (v) => v == null ? "\u2014" : Math.abs(+v) > 0 && Math.abs(+v) < 0.01 ? (+v).toExponential(1) : (+v).toFixed(2);
+        const impactStyle = impactPill(e.impact);
+        out.push(
+          /* @__PURE__ */ React.createElement("div", { key: e.id != null ? e.id : i, style: {
+            padding: "5px 7px",
+            /* rgba amber near-wash — the tint carve-out (DESIGN.md §2) */
+            background: isNear ? "rgba(255,174,0,0.06)" : "var(--qe-panel)",
+            border: `1px solid ${isNear ? "color-mix(in srgb, var(--qe-amber) 50%, transparent)" : "var(--qe-line)"}`,
+            opacity: isPast ? 0.55 : 1
+          } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 3 } }, /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.58rem", color: isNear ? "var(--qe-amber)" : "var(--qe-muted)", fontWeight: 700 } }, timeLbl), /* @__PURE__ */ React.createElement("span", { style: { display: "inline-flex", alignItems: "center", gap: 4 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.54rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)" } }, e.country || "\u2014"), /* @__PURE__ */ React.createElement("span", { style: { ...impactStyle, padding: "1px 4px", fontSize: "0.5rem", fontWeight: 700, fontFamily: "var(--qe-mono)" } }, e.impact === "medium" ? "MED" : (e.impact || "?").toUpperCase()))), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.66rem", fontWeight: 600, color: isPast ? "var(--qe-sub)" : "var(--qe-text)", lineHeight: 1.3, marginBottom: 3 } }, e.event_name, e.unit ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)", fontSize: "0.56rem" } }, " (", e.unit, ")") : null), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10, fontFamily: "var(--qe-mono)", fontSize: "0.58rem" } }, /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "est "), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, fmtNum(est))), /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "act "), /* @__PURE__ */ React.createElement("span", { style: { color: actColor, fontWeight: 700 } }, fmtNum(act))), e.previous != null && /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "prev "), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, fmtNum(e.previous)))))
+        );
+      });
+      if (!nowInserted) out.push(marker);
+      return out;
+    })())
+  )));
+};
+const RegimeTabConfig = ({ mults }) => {
+  const { data: thresholds, err: thrErr } = useAnaJson("/api/regime/thresholds");
+  const [reclass, setReclass] = React.useState(null);
+  const reclassify = async () => {
+    if (!window.confirm("Reclassify ALL dates? This recomputes every historical regime label from stored signals.")) return;
+    setReclass({ busy: true });
+    const r = await _rgPost("/api/regime/reclassify", {});
+    if (r.ok && r.data) setReclass({ msg: `reclassified ${r.data.labels_classified} labels` });
+    else setReclass({ err: r.status ? `failed (HTTP ${r.status})` : "failed \u2014 engine unreachable?" });
+  };
+  const t = thresholds || {};
+  const V = ({ k }) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-text)", fontWeight: 700 } }, t[k] != null ? t[k] : "\u2014");
+  const rules = [
+    {
+      label: "Panic",
+      key: "risk_off_panic",
+      body: /* @__PURE__ */ React.createElement(React.Fragment, null, "VIX > ", /* @__PURE__ */ React.createElement(V, { k: "vix_panic" }), " AND (HY Spread > ", /* @__PURE__ */ React.createElement(V, { k: "hy_spread_defensive" }), " OR full-mode Funding < ", /* @__PURE__ */ React.createElement(V, { k: "funding_panic" }), ")")
+    },
+    {
+      label: "Defensive",
+      key: "risk_off_defensive",
+      body: /* @__PURE__ */ React.createElement(React.Fragment, null, "VIX > ", /* @__PURE__ */ React.createElement(V, { k: "vix_defensive" }), " OR HY Spread > ", /* @__PURE__ */ React.createElement(V, { k: "hy_spread_defensive" }), " ", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "(also VIX > ", /* @__PURE__ */ React.createElement(V, { k: "vix_panic" }), " when the panic second leg fails)"))
+    },
+    {
+      label: "Trending",
+      key: "risk_on_trending",
+      body: /* @__PURE__ */ React.createElement(React.Fragment, null, "HY < ", /* @__PURE__ */ React.createElement(V, { k: "hy_spread_risk_on" }), " AND VIX < ", /* @__PURE__ */ React.createElement(V, { k: "vix_risk_on" }), " AND ", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "[macro:"), " RVol < ", /* @__PURE__ */ React.createElement(V, { k: "rvol_ratio_trending" }), " ", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\xB7 full: OI rising AND funding > 0]"))
+    },
+    {
+      label: "Choppy",
+      key: "risk_on_choppy",
+      body: /* @__PURE__ */ React.createElement(React.Fragment, null, "HY < ", /* @__PURE__ */ React.createElement(V, { k: "hy_spread_risk_on" }), " AND VIX < ", /* @__PURE__ */ React.createElement(V, { k: "vix_choppy" }), " AND RVol > ", /* @__PURE__ */ React.createElement(V, { k: "rvol_ratio_choppy" }))
+    },
+    {
+      label: "Neutral",
+      key: "neutral",
+      body: /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "default fallback; HY Spread \u2265 ", /* @__PURE__ */ React.createElement(V, { k: "hy_spread_neutral" }), " floors any risk-on day to neutral")
+    }
+  ];
+  return /* @__PURE__ */ React.createElement(GridWorkspace, null, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 8, h: 18, minW: 5, minH: 6 }, /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "Classifier Thresholds",
+      style: { height: "100%" },
+      right: /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", disabled: reclass && reclass.busy, onClick: reclassify }, reclass && reclass.busy ? /* @__PURE__ */ React.createElement(Spinner, { size: "0.62rem" }) : "\u21BB Reclassify all dates")
+    },
+    /* @__PURE__ */ React.createElement("p", { style: { fontSize: "0.6rem", color: "var(--qe-sub)", margin: "0 0 6px 0", lineHeight: 1.5 } }, "Threshold values used by the rule-based classifier (config constants \u2014 read-only; reclassify recomputes historical labels from stored signals)."),
+    reclass && reclass.msg && /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.6rem", color: "var(--qe-green)", fontFamily: "var(--qe-mono)", marginBottom: 4 } }, reclass.msg),
+    reclass && reclass.err && /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.6rem", color: "var(--qe-red)", fontFamily: "var(--qe-mono)", marginBottom: 4 } }, reclass.err),
+    thresholds == null ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.6rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)" } }, thrErr ? "thresholds fetch failed" : "loading\u2026") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 1 } }, Object.entries(thresholds).map(([k, v]) => /* @__PURE__ */ React.createElement("div", { key: k, style: { display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "3px 6px", borderBottom: "1px dotted var(--qe-faint)" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.62rem", color: "var(--qe-sub)" } }, RG_THRESHOLD_LABELS[k] || k), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.74rem", fontWeight: 700, color: "var(--qe-text)" } }, v)))),
+    /* @__PURE__ */ React.createElement("div", { style: { marginTop: 10 } }, /* @__PURE__ */ React.createElement(SecLbl, { rule: true }, "Sizing Multipliers"), /* @__PURE__ */ React.createElement(FieldList, { rows: REGIME_KEYS.map((r) => ({
+      label: REGIME_INFO[r].short,
+      value: _rgMult(mults, r),
+      color: REGIME_INFO[r].color
+    })), dense: true }))
+  )), /* @__PURE__ */ React.createElement(GridItem, { x: 8, y: 0, w: 16, h: 18, minW: 8, minH: 6 }, /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "Decision Tree Rules",
+      style: { height: "100%" },
+      right: /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.54rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)" } }, "evaluated top\u2192bottom \xB7 first match wins")
+    },
+    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, rules.map((rule) => {
+      const info = REGIME_INFO[rule.key];
+      return /* @__PURE__ */ React.createElement("div", { key: rule.key, style: {
+        background: info.bg,
+        border: "1px solid color-mix(in srgb, " + info.color + " 33%, transparent)",
+        borderLeft: `3px solid ${info.color}`,
+        padding: "7px 10px"
+      } }, /* @__PURE__ */ React.createElement("span", { style: { color: info.color, fontWeight: 700, fontSize: "0.72rem", fontFamily: "var(--qe-mono)" } }, rule.label, ":"), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)", fontSize: "0.66rem", marginLeft: 6, fontFamily: "var(--qe-mono)" } }, rule.body));
+    }))
+  )));
+};
+const REGIME_TABS = [
+  ["overview", "Overview"],
+  ["backfill", "Backfill"],
+  ["news", "News"],
+  ["config", "Config"]
+];
+const RegimePage = () => {
+  const [tab, setTab] = React.useState("overview");
+  const { data: current } = useAnaJson("/api/regime/current", 6e4);
+  const { data: mults } = useAnaJson("/api/regime/multipliers");
+  const [bfJob, setBfJob] = React.useState(null);
+  const bfBusyRef = React.useRef(false);
+  const startBackfill = React.useCallback(async ({ mode, since, until }) => {
+    if (bfBusyRef.current) return;
+    bfBusyRef.current = true;
+    setBfJob({ id: null, status: "starting", pct: 0, detail: "" });
+    const r = await _rgPost("/api/regime/backfill", { mode, since_date: since, until_date: until });
+    if (!r.ok || !r.data || r.data.job_id == null) {
+      bfBusyRef.current = false;
+      setBfJob({
+        id: null,
+        status: "failed",
+        pct: 0,
+        detail: r.data && (r.data.error || r.data.detail) || (r.status ? `HTTP ${r.status}` : "engine unreachable")
+      });
+      return;
+    }
+    setBfJob({ id: r.data.job_id, status: "running", pct: 0, detail: "", fails: 0 });
+  }, []);
+  const bfId = bfJob && bfJob.id;
+  const bfStatus = bfJob && bfJob.status;
+  React.useEffect(() => {
+    if (bfStatus !== "running" || bfId == null) {
+      bfBusyRef.current = bfStatus === "starting";
+      return void 0;
+    }
+    const t = setInterval(async () => {
+      try {
+        const s = await _ptJson(`/api/regime/backfill-status/${bfId}`);
+        setBfJob((j) => j && j.id === bfId ? { ...j, ...s, id: bfId, fails: 0 } : j);
+      } catch (e) {
+        setBfJob((j) => {
+          if (!j || j.id !== bfId) return j;
+          const fails = (j.fails || 0) + 1;
+          if (fails >= 4) return { ...j, status: "failed", fails, detail: "job lost \u2014 engine restarted?" };
+          return { ...j, fails };
+        });
+      }
+    }, 1500);
+    return () => clearInterval(t);
+  }, [bfId, bfStatus]);
+  React.useEffect(() => {
+    if (bfStatus === "completed" || bfStatus === "failed") bfBusyRef.current = false;
+  }, [bfStatus]);
+  const goBackfill = React.useCallback(() => setTab("backfill"), []);
+  const content = {
+    overview: /* @__PURE__ */ React.createElement(RegimeTabOverview, { current, mults, onGoBackfill: goBackfill }),
+    backfill: /* @__PURE__ */ React.createElement(RegimeTabBackfill, { job: bfJob, onStart: startBackfill }),
+    news: /* @__PURE__ */ React.createElement(RegimeTabNews, null),
+    config: /* @__PURE__ */ React.createElement(RegimeTabConfig, { mults })
+  };
+  const tabSubtitles = {
+    overview: "current regime \xB7 distribution \xB7 timeline \xB7 macro signals \xB7 changes",
+    backfill: "fetch historical macro signals \xB7 signal coverage",
+    news: "finnhub + bwe streams \xB7 economic calendar",
+    config: "classifier thresholds \xB7 decision tree rules"
+  };
+  const curInfo = current && current.label ? REGIME_INFO[current.label] || REGIME_INFO.neutral : null;
+  const asOf = current ? current.source === "live" && current.computed_at ? String(current.computed_at).slice(0, 16).replace("T", " ") + " UTC" : current.source === "db" ? `${current.date || "\u2014"} (stored)` : null : null;
+  return /* @__PURE__ */ React.createElement("div", { className: "qe-scope", "data-screen-label": "07 Regime", style: {
+    width: "100%",
+    height: "100%",
+    background: "var(--qe-bg)",
+    display: "flex",
+    flexDirection: "column",
+    overflow: "hidden"
+  } }, /* @__PURE__ */ React.createElement(TopNavStd, { page: "Regime", variant: "line", dense: true }), /* @__PURE__ */ React.createElement(PageHeader, { title: "Regime", subtitle: tabSubtitles[tab] }, curInfo ? /* @__PURE__ */ React.createElement(RegimeBadge, { tone: curInfo.tone, label: curInfo.label.toUpperCase() }) : /* @__PURE__ */ React.createElement(RegimeBadge, { tone: "neut", label: "NO DATA" }), current && current.multiplier != null && current.source !== "none" && /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.6rem", color: "var(--qe-cyan)", fontWeight: 700 } }, current.multiplier, "\xD7 size"), asOf && /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.54rem", color: "var(--qe-muted)" } }, "as of ", asOf)), /* @__PURE__ */ React.createElement(TabStrip, { value: tab, onChange: setTab, tabs: REGIME_TABS }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column" } }, content[tab]), /* @__PURE__ */ React.createElement(StatusFooter, null));
+};
+Object.assign(window, { RegimePage });
+
+;
+
 /* ==== app-shell.jsx ==== */
 const LiveValueDemo = ({ id, base, jitter = 2, fmt, style }) => {
   const [v, setV] = React.useState(base);
@@ -5921,7 +6993,8 @@ const QE_PAGES = {
   Analytics: AnalyticsPage,
   // P5 — real page (pages-analytics.jsx)
   Models: _PagePlaceholder("Models", "P7"),
-  Regime: _PagePlaceholder("Regime", "P6"),
+  Regime: RegimePage,
+  // P6 — real page (pages-regime.jsx)
   Config: ConfigPage,
   // P2 — real page (pages-config.jsx)
   Primitives: PrimitivesPage

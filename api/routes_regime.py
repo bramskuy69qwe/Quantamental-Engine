@@ -239,3 +239,17 @@ async def api_regime_reclassify(request: Request):
 @router.get("/api/regime/thresholds", response_class=JSONResponse)
 async def api_regime_thresholds():
     return JSONResponse(config.REGIME_THRESHOLDS)
+
+
+@router.get("/api/regime/multipliers", response_class=JSONResponse)
+async def api_regime_multipliers():
+    """v3.0 P6: the full per-regime sizing-multiplier map.
+
+    /api/regime/current carries only the CURRENT label's multiplier; the
+    React Regime page renders all five (Sizing Multipliers pane + the
+    transition context strip), and hardcoding them client-side would drift
+    from config. Separate endpoint rather than a key inside /thresholds —
+    that response is a FLAT dict the Jinja loadThresholds iterates verbatim
+    (a nested key would render as a bogus threshold row).
+    """
+    return JSONResponse(config.REGIME_MULTIPLIERS)

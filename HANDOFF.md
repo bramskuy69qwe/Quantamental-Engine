@@ -1,56 +1,51 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-07-23 (**v3.0 EXECUTION — P0-P5 SHIPPED (P5 = the Analytics commit at HEAD); NEXT = P6 Regime.** A live-DB incident earlier in the arc was caught + FULLY restored — details in the P2 block.)
-**Branch**: **`v3.0/ui-plan-audit` — LOCAL ONLY (unpushed).** Session commits on top of the plan-audit docs (`9e9e5f4`): `b14b3b3` render-as-is clarify · **`1221b16` P0** · **`8b23417` P1** · **`35ffff1`+`cca3eb7` P2** · `9e85249` launch-v3.bat · **`a1fde0b` P3** · **`319daa3`+`b55d317` P4** · `44a4077` P5-charge docs · **the P5 Analytics commit (HEAD)**. Base = the v2.7 line (`92b753b`, pushed). **Operator merges/pushes v3.0 at their call.**
-**Tests**: **4211 passed / 7 skipped / 3 deselected** (SOLO, `.venv`, FULL gate re-run POST-P5-audit-folds; +22 P5 pins over the P4 bundle; NO F5 tripwire). ALWAYS run SOLO on the **`.venv`** interpreter (user-site Python lacks `pytest-timeout` → drops the 30 s guardrail). Fresh worktree/clone: run `scripts/provision_test_env.py` FIRST (CLAUDE.md § "Fresh worktree / clone").
-**Engine**: **STOPPED** (no python processes as of this wrap). **Must be restarted to live-verify `/v3`** — it will NOT serve the new v3 routes (incl. the P5 analytics JSON doors + G-O4 endpoints) until restart. Recipe — **SYNCED OS CLOCK FIRST** (`w32tm /resync`; a drifted clock → `-1021 Timestamp ahead` → the "Connecting to exchange…" hang): `.venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000` (**no `--reload`**).
+**Date**: 2026-07-23 (**v3.0 EXECUTION — P0-P6 SHIPPED (P6 = the Regime commit at HEAD); NEXT = P7 Models.** A live-DB incident earlier in the arc was caught + FULLY restored — details in the P2 block.)
+**Branch**: **`v3.0/ui-plan-audit` — LOCAL ONLY (unpushed).** Session commits on top of the plan-audit docs (`9e9e5f4`): `b14b3b3` render-as-is clarify · **`1221b16` P0** · **`8b23417` P1** · **`35ffff1`+`cca3eb7` P2** · `9e85249` launch-v3.bat · **`a1fde0b` P3** · **`319daa3`+`b55d317` P4** · `44a4077` P5-charge docs · **`13c62de` P5 Analytics** · **the P6 Regime commit (HEAD)**. Base = the v2.7 line (`92b753b`, pushed). **Operator merges/pushes v3.0 at their call.**
+**Tests**: **4220 passed / 7 skipped / 3 deselected** (SOLO, `.venv`, FULL gate; +9 P6 pins over the P5 bundle; NO F5 tripwire; post-fold re-gate pending at wrap — targeted 91 green). ALWAYS run SOLO on the **`.venv`** interpreter (user-site Python lacks `pytest-timeout` → drops the 30 s guardrail). Fresh worktree/clone: run `scripts/provision_test_env.py` FIRST (CLAUDE.md § "Fresh worktree / clone").
+**Engine**: **STOPPED** (no python processes as of this wrap). **Must be restarted to live-verify `/v3`** — it will NOT serve the new v3 routes (incl. `/api/regime/multipliers`) until restart. Recipe — **SYNCED OS CLOCK FIRST** (`w32tm /resync`; a drifted clock → `-1021 Timestamp ahead` → the "Connecting to exchange…" hang): `.venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000` (**no `--reload`**).
 
-## ▶ STATUS 2026-07-23 (v3.0 EXECUTION) — P0-P5 SHIPPED; NEXT = P6 Regime
+## ▶ STATUS 2026-07-23 (v3.0 EXECUTION) — P0-P6 SHIPPED; NEXT = P7 Models
 
-**▶▶ NEXT SESSION: P6 Regime** (plan §5 row P6 — the row lists backend work
-"none new": `/api/regime/*` covers all 4 sub-tabs Overview/Backfill/News/Config).
-**VERIFY-FIRST**: map the actual `/api/regime/*` surface before scoping any code
-— the row's "fully SERVED" claim is pre-execution, and P5's G-O4 row needed a
-mechanism correction; assume nothing. Design ref:
-`docs/design/meridian_v3/v25/src/pages-regime.jsx` (the `pages-regime-v2`
-alternate is canvas-only — deliberately never imported); DESIGN.md §8 (the
-`REGIME_HEX` map lives in pages-regime.jsx; RegimeBadge tones trend/chop/neut/
-def/panic). Mock devices to strip: `mockSpark` in signals (plan §4). The macro
-strip stays scoped to the 6 real signals (`/api/regime/signals/latest`, the P1
-G-O5 ruling — BTC.D/DXY have no engine source). The Regime Config sub-tab has
-WRITERS — safe-writes discipline: never POST a write-endpoint through the shared
-TestClient (F5), stub the writers; route React writes through the EXISTING
-endpoints, HTML responses stripped per the P2 convention. Jinja `/regime` stays
-the parity ref until acceptance. House cycle: one commit, gate SOLO `.venv`,
-≥2 independent audits (direct parallel Agent calls, not Workflow), fold, STOP.
+**▶▶ NEXT SESSION: P7 Models** (plan §5 row P7 — the HEAVY phase: G-M1
+verbatim `report_json` store · **G-M2 generic lossless workbook capture**
+(§2 — a small generic serializer, NOT a per-metric schema port; render-as-is
+directive #4) · G-M3 overview/leaderboard feed · G-M4 `source_json`+`tags_json`
+on `potential_models` (§3 RATIFIED — models DO carry source binding) · G-M5-7).
+Design refs: `pages-models.jsx` + `pages-models-detail.jsx` +
+`pages-models-data.jsx` (STRIP `_synthReport` — defined pages-models-data.jsx:35
+AND invoked pages-models.jsx:84, both call sites). The v2.7 model library
+backend (CRUD + multipart upload + MultiCharts parser vs the real `@ES` file)
+is the wired base — VERIFY-FIRST its current shape before scoping; the parser
+keeps ~9 scalars today and G-M2 rebuilds it to capture the whole workbook
+verbatim. MultiCharts real-file gotchas are in the v2.7 memory block (trades
+header on ROW 3 — scan; signed-negative drawdown/PF cells → recompute PF from
+gross; `Point Value` is the string "$50"; the `.xml` export IS an OOXML zip).
+Schema changes ride `database.py` twins + the executescript-before-ALTER trap
+(CLAUDE.md). House cycle: one commit, gate SOLO `.venv`, ≥2 independent audits
+(direct parallel Agent calls, not Workflow), fold, STOP. After P7: P8 =
+retirement + directive-#7 re-audit + JS-drift grep + promote `/v3` → `/`.
 
-**P5 SHIPPED (this session, HEAD)** — G-O4 backends + the 11-tab React
-Analytics page; full detail in the plan's **P5 SHIPPED-STATE** note. Headlines:
-G-O4 shipped as **`/api/analytics/execution` + `/api/analytics/distributions`**
-JSON (named deviation from the plan row's `/fragments` shape — no Jinja twin
-exists; the G-O6 precedent) built on **`fills` JOIN `pre_trade_log`** per the
-mechanism correction; **8 `?format=json` doors** + the `_json_safe` F2-fold on
-`equity_ohlc` (the equity tab binds that pre-existing JSON — deliberately no
-door on its fragment); `frontend/src/pages-analytics.jsx` (11 tabs, REAL period
-offset-nav with server labels, 3 page-local ECharts); 22 pins
-`tests/test_p5_analytics.py`. **2 independent audits — every finding folded
-pre-commit.** The big one (backend H-1, verified before folding):
-`fills.slippage_actual` is a **RESIDUAL vs the impact-adjusted
-`effective_entry`**, so `summary.bias_bp` = mean residual (a perfect model
-reads 0 — subtracting `avg_est` double-counted the prediction), the exec
-scatter's reference is **y=0 not y=x**, and `est_slippage` renders as
-"predicted impact" context (ENTRY fills only). Also folded: VaR-threshold sign
-(frontend H1 — `historical_var` returns a NEGATIVE threshold; negating it
-painted mid-range days red), hedge-mode composite DataList keys (M1 — this
-operator RUNS hedge mode), the from_ms-only window trap (M-1), blank-order-id
-join guard, slip-bin clamp+overflow, entry-only link-coverage numerator,
-`r_count` em-dash gate, tz-safe calendar Next-clamp (door now carries
-account-tz `month`/`current_month`), funding STALE dot, excursions "N of M"
-truncation disclosure. Residues named in the plan note + the pages-analytics
-file header. Bundle **`8712708ad9`**.
+**P6 SHIPPED (this session, HEAD)** — the Regime page; full detail in the
+plan's **P6 SHIPPED-STATE** note. Headlines: verify-first found the surface
+ALREADY all-JSON (zero doors; the row's "none new" TRUE in substance — but
+News binds `/api/news/*` + `/api/calendar`, NOT `/api/regime/*`); ONE additive
+endpoint `GET /api/regime/multipliers` (config map; deliberately not nested in
+the FLAT /thresholds response); 9 pins `tests/test_p6_regime.py`;
+`frontend/src/pages-regime.jsx` (4 tabs: 5-style ECharts timeline, 6 signal
+cards w/ Task-136 precedence + Task-124 discrimination, PAGE-level backfill
+job + 1500ms poll w/ 4-fail terminal, news magazine/detail + scroll-to-NOW
+calendar, Config w/ decision-tree copy CORRECTED to the real classify_regime
+cascade + confirm-gated Reclassify). **2 independent audits (relaunched after
+a session-limit kill — plan-audit precedent), SHIP-WITH-NITS ×2, 0 CRIT/HIGH,
+ALL findings folded pre-commit** (rule-copy divergence verified against the
+classifier first; ECharts re-init memoization; _rgPost never rejects;
+unknown-label guards; synthesized coverage rows; category-not-impact chips;
+"open ↗" article links). Deviations + residues named in the plan note + file
+header. Bundle **`1b179cc68e`**.
 Operator acceptance of P2 (gear → Config), P3 (`/v3` Pre-Trade), P4
-(History+Linkage), and P5 (Analytics) is still pending — engine restart
-required (launch-v3.bat).
+(History+Linkage), P5 (Analytics), and P6 (Regime) is still pending — engine
+restart required (launch-v3.bat).
 
 **Program state:**
 | Phase | State |
@@ -60,8 +55,9 @@ required (launch-v3.bat).
 | **P2 Config** | **SHIPPED** — backend `35ffff1` (5 JSON endpoints: `/api/system` G-O8, `/api/connections`, `/api/config/account/{id}`, `POST /api/config/apply-preset` FULL, `/api/config/presets`; operator decisions: **preset Apply = FULL**, **enforcement flip = display-only/deferred**) + the frontend-port commit: `frontend/src/pages-config.jsx`, 4 tabs wired (account update form-encoded + activate + test · connections add/test/delete via the existing HTML endpoints, responses stripped to text · confirm-gated FULL preset Apply · read-only System), DD/weekly posture DISPLAY-only, mocks stripped, Add/Delete Account deliberately NOT wired (disabled — safe-writes scope; Jinja `/config` stays the management surface). **2 independent audits: SHIP-WITH-NITS ×2, 0 CRIT/HIGH; folded**: MED-1 cross-account reload guard (endpoint-echoed `account_id` + `acctRef`), MED-2 accounts-list refresh after save, add-form clear only on success, presets catch scoping, "Save" relabel (POST /connections doesn't test), 422-JSON prettifier, credential trim, ↻ onRefresh on both Accounts panes, "Saved." anchor comment in `routes_accounts.py`. **Accepted residues (named)**: Spot market-type option 400s by design (Jinja parity; only linear_perpetual adapters registered); update-endpoint partial-write-before-params-validation masking (pre-existing backend semantics, shared with Jinja — ledger candidate). Deviations recorded in the plan's **P2 SHIPPED-STATE** note. |
 | **P3 Pre-Trade** | **SHIPPED** (the P3 commit) — backend: `?format=json` doors on `POST /calculator/calculate` (success-only; error exits stay HTML) + the countdown route (in-route `_out` shim, Task-139/146 literals intact in the pinned scan window) + `GET /api/calculator/orderbook/{t}` + `/api/calculator/context` + `_json_safe` (F2 discipline); 13 pins `tests/test_p3_pretrade.py`. Frontend `pages-pretrade.jsx`: full calc form (TP ladder / size override / model picker + `?model_id=` handoff + prefill-on-change / link override / match window), countdown chip = the PENDING(1s+t0)→stable(5s)→terminal machine w/ receipt-anchored local tick, auto-refresh w/ persistence-suppressor + cross-ticker guard, 1 Hz price poll (drives backend calc-symbol sub), **§1.3 overlay exact** (enforced→blur/freeze/scrim card; advisory→warn banner; corrected copy). "positions frozen" fiction PURGED bundle-wide (notifications.jsx + app-shell demo). **2 audits (SHIP-WITH-NITS · DO-NOT-SHIP→fixed): both HIGHs + all MEDs + LOW sweep folded pre-commit** (manual-only result cache; cross-ticker guard; queued manual; picker prefill; STOP=TAKER badge; interval stabilization; skew-immune countdown; …). Residues named in the plan's P3 SHIPPED-STATE note. |
 | **P4 History+Linkage** | **SHIPPED** — backend `319daa3`: G-O7 = PositionInfo `planned_tp/planned_sl/tp_drift_pct/sl_drift_pct` stamped in `_enrich_positions_calc_id` (display-only; badge/sticky logic untouched; cleared in the no-junction branch; `_PRESERVE_FIELDS`). G-O6 = `GET /api/linkage/funding`. Mirrors: `/api/linkage/{positions,calcs,closes}` (closes carries DERIVED `pending_reason` = un-annotated MANUAL_OTHER). History `?format=json` doors: closed_positions (stamped badge) · order_history · fills · pre_trade (`model_display` F11) · trade_events (`_payload`/`_symbol`; rows carry ISO `timestamp`, not ms) · open_positions (serializer + working orders) · position_fills (`exec_link_status`). Drilldown events/amendments ride the EXISTING `/context/position/{id}`. 12 pins `tests/test_p4_linkage.py`. Writes stay choke-pointed (manual_link / mark_unplanned / close_reason / cancel — POST the existing endpoints from React, never write link_status directly). Frontend `b55d317`: `link-primitives.jsx` (lpPx magnitude rule; DevBadge ±0.1% deadband) + `pages-linkage.jsx` (needs_review inbox + 3-leg diff + reason picker; monitor wall on the mirrors; SSE uPnL merge; alert-class failure discrimination on the 200-always endpoints) + `pages-history.jsx` (5 tabs on the doors, server paging/search/date presets, drilldown, close-reason modal, page-scope CSV). Audit SHIP-WITH-NITS folded; residues in file headers (no server column-sort; ctx.events + Export-Audit → P8). |
-| **P5 Analytics** | **SHIPPED (HEAD)** — G-O4 `/api/analytics/execution` (fills ⋈ pre_trade_log ⋈ orders; residual-vs-plan slippage semantics per audit H-1; time-to-fill, not latency — no signal→fill source exists) + `/api/analytics/distributions` (account-tz hour/dow per-trade tuples + R histogram); 8 `?format=json` doors + `_json_safe` F2-fold on `equity_ohlc`; `frontend/src/pages-analytics.jsx` (11 tabs; FE-MED-018 dim rule; real offset nav); 22 pins `tests/test_p5_analytics.py`; 2 independent audits, ALL findings folded pre-commit. Full detail: the plan's **P5 SHIPPED-STATE** note. |
-| P6 Regime · P7 Models · P8 retire+re-audit | not started (plan §5; P7 Models = the generic lossless MultiCharts capture, `b14b3b3`). |
+| **P5 Analytics** | **SHIPPED `13c62de`** — G-O4 `/api/analytics/execution` (fills ⋈ pre_trade_log ⋈ orders; residual-vs-plan slippage semantics per audit H-1; time-to-fill, not latency — no signal→fill source exists) + `/api/analytics/distributions` (account-tz hour/dow per-trade tuples + R histogram); 8 `?format=json` doors + `_json_safe` F2-fold on `equity_ohlc`; `frontend/src/pages-analytics.jsx` (11 tabs; FE-MED-018 dim rule; real offset nav); 22 pins `tests/test_p5_analytics.py`; 2 independent audits, ALL findings folded pre-commit. Full detail: the plan's **P5 SHIPPED-STATE** note. |
+| **P6 Regime** | **SHIPPED (HEAD)** — verify-first: surface already ALL-JSON (zero doors; News = `/api/news/*` + `/api/calendar`, not `/api/regime/*`); +`GET /api/regime/multipliers`; 9 pins `tests/test_p6_regime.py`; `frontend/src/pages-regime.jsx` (4 tabs; 5-style timeline; Task-136/124 semantics; page-level backfill job w/ terminal poll; scroll-to-NOW calendar; decision-tree copy corrected to the real classifier cascade; confirm-gated Reclassify). 2 audits SHIP-WITH-NITS, all folded. Full detail: the plan's **P6 SHIPPED-STATE** note. |
+| P7 Models · P8 retire+re-audit | not started (plan §5; P7 Models = the generic lossless MultiCharts capture, `b14b3b3`; P8 = retirement + directive-#7 re-audit + JS-drift grep). |
 
 **★ P2 KEY FACTS (shipped shape — still binding for later phases):**
 - **Two disjoint risk stores** — `account_params` (sizing knobs; write via

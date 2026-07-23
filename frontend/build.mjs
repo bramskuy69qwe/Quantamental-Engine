@@ -56,7 +56,8 @@ const JSX_ORDER = [
   'pages-linkage.jsx',        // P4 — Linkage triage board (needs_review + mirrors)
   'pages-history.jsx',        // P4 — History page (JSON doors + drilldown)
   'pages-analytics.jsx',      // P5 — Analytics page (11 tabs; G-O4 exec/dist)
-  // ── remaining page modules land here in their phases (regime, models, …) ──
+  'pages-regime.jsx',         // P6 — Regime page (4 sub-tabs; all-JSON surface)
+  // ── remaining page modules land here in their phases (models, …) ──
   'app-shell.jsx',            // MUST be last
 ];
 
