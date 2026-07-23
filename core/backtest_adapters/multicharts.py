@@ -5,11 +5,14 @@ Verified against a real ``@ES - 1 Minute`` export (2026-06-24 sample,
 re-inspected 2026-07-16). Layout facts the parser is built on:
 
 - The export is an OOXML workbook (``PK`` magic bytes) even when saved
-  as ``.xml`` — sniff bytes, not the extension. 8 sheets; only three
-  carry data: ``Strategy Analysis`` (summary; labels col A, All-Trades
-  values col B), ``List of Trades`` (title row, blank row, HEADER ON
-  ROW 3 — found by scanning, not hardcoded), ``Settings`` (key/value in
-  cols A/B).
+  as ``.xml`` — sniff bytes, not the extension. 8 sheets. This DERIVED
+  aggregate reads three of them: ``Strategy Analysis`` (summary; labels
+  col A, All-Trades values col B), ``List of Trades`` (title row, blank
+  row, HEADER ON ROW 3 — found by scanning, not hardcoded), ``Settings``
+  (key/value in cols A/B). The v3.0 P7 verbatim store (``capture()`` →
+  ``workbook_capture.capture_workbook``) reads ALL sheets regardless —
+  the 3-sheet assumption governs only this normalized layer (plan §2
+  G-M2).
 - Two rows per trade: Entry row (``Type``=Entry*, carries ``Trade #`` +
   ``Profit ($)``/``Cum. Profit ($)``/``Drawdown ($)``), then Exit row
   (``Type``=Exit*, carries ``Order #`` + exit ``Price`` + exit
@@ -135,6 +138,13 @@ class MultiChartsAdapter:
             f"'{filename}' is not a MultiCharts Strategy Performance Report "
             "(unrecognized format — expected an OOXML workbook)."
         )
+
+    def capture(self, file_bytes: bytes, filename: str) -> Dict[str, Any]:
+        """Verbatim whole-workbook capture (v3.0 P7 G-M1/G-M2) — every
+        sheet, every cell, type+sign preserving. Raises BacktestAdapterError
+        on non-workbook bytes (callers run it after parse() succeeded)."""
+        from core.backtest_adapters.workbook_capture import capture_workbook
+        return capture_workbook(file_bytes)
 
     # ── workbook ────────────────────────────────────────────────────────────
 
@@ -293,6 +303,7 @@ class MultiChartsAdapter:
                     entry_price=pending["price"],
                     exit_price=_to_float(cell(row, "Price")) or 0.0,
                     size_usdt=pending["price"] * pending["contracts"] * point_value,
+                    contracts=pending["contracts"],
                     pnl_usdt=pending["pnl"] or 0.0,
                     exit_reason=exit_reason,
                 ))

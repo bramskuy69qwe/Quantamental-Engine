@@ -82,6 +82,7 @@ const useAnaJson = (url, intervalMs = 0) => {
   const [ms, setMs] = React.useState(null);
   const seqRef = React.useRef(0);
   const load = React.useCallback(async () => {
+    if (!url) return;  // P7 (additive): null url = conditional fetch, skip
     const seq = ++seqRef.current;
     const t0 = performance.now();
     try {
@@ -92,12 +93,19 @@ const useAnaJson = (url, intervalMs = 0) => {
     }
     if (seq === seqRef.current) setLoading(false);
   }, [url]);
-  React.useEffect(() => { setLoading(true); load(); }, [load]);
   React.useEffect(() => {
-    if (!intervalMs) return undefined;
+    if (!url) {  // reset so a later real url starts clean (P7 conditional fetch)
+      seqRef.current++;
+      setData(null); setErr(null); setMs(null); setLoading(true);
+      return;
+    }
+    setLoading(true); load();
+  }, [load, url]);
+  React.useEffect(() => {
+    if (!intervalMs || !url) return undefined;
     const t = setInterval(load, intervalMs);
     return () => clearInterval(t);
-  }, [load, intervalMs]);
+  }, [load, intervalMs, url]);
   const foot = qeFootState({ loading, err, hasData: data != null, ms, retrying: intervalMs > 0 });
   return { data, err, loading, reload: load, ms, foot };
 };

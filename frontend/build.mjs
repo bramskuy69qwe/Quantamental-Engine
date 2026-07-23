@@ -57,7 +57,12 @@ const JSX_ORDER = [
   'pages-history.jsx',        // P4 — History page (JSON doors + drilldown)
   'pages-analytics.jsx',      // P5 — Analytics page (11 tabs; G-O4 exec/dist)
   'pages-regime.jsx',         // P6 — Regime page (4 sub-tabs; all-JSON surface)
-  // ── remaining page modules land here in their phases (models, …) ──
+  'pages-models-data.jsx',    // P7 — Models data layer (fetch + capture utils)
+  'pages-models-lib.jsx',     // P7 — library vocabulary (cards, KPI tiles)
+  'pages-models-report.jsx',  // P7 — run report tabs (render-as-is sections)
+  'pages-models-overview.jsx',// P7 — Overview sub-tab (aggregates+leaderboard)
+  'pages-models-detail.jsx',  // P7 — model detail + ModelView section shell
+  'pages-models.jsx',         // P7 — dialogs + ModelsPage orchestrator
   'app-shell.jsx',            // MUST be last
 ];
 

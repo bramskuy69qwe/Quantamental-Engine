@@ -585,7 +585,7 @@ const QE_PAGES = {
   Linkage:    LinkagePage,    // P4 — real page (pages-linkage.jsx)
   History:    HistoryPage,    // P4 — real page (pages-history.jsx)
   Analytics:  AnalyticsPage,  // P5 — real page (pages-analytics.jsx)
-  Models:     _PagePlaceholder('Models', 'P7'),
+  Models:     ModelsPage,     // P7 — real page (pages-models.jsx)
   Regime:     RegimePage,     // P6 — real page (pages-regime.jsx)
   Config:     ConfigPage,  // P2 — real page (pages-config.jsx)
   Primitives: PrimitivesPage,

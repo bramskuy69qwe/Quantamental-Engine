@@ -38,6 +38,10 @@ class BacktestTrade:
     entry_price: float = 0.0
     exit_price: float = 0.0
     size_usdt: float = 0.0
+    # v3.0 P7 (G-M7): the raw contract count alongside the dollar
+    # notional — size_usdt = entry_price × contracts × point_value, so
+    # contracts is otherwise unrecoverable without the Settings sheet.
+    contracts: float = 0.0
     r_multiple: float = 0.0   # not in MC reports — stays 0
     pnl_usdt: float = 0.0
     regime_label: str = ""    # n/a for external apps — stays ""

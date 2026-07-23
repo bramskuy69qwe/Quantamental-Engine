@@ -273,11 +273,11 @@ async def test_upload_happy_path_still_works_through_to_thread(mdb, monkeypatch)
     BEHAVIORAL pin (audit fold): a to_thread spy proves adapter.parse
     actually routed through it."""
     import asyncio as _aio
-    seen = {}
+    seen = []
     orig = _aio.to_thread
 
     async def spy(fn, *a, **k):
-        seen["fn"] = getattr(fn, "__name__", "")
+        seen.append(getattr(fn, "__name__", ""))
         return await orig(fn, *a, **k)
 
     monkeypatch.setattr(rm.asyncio, "to_thread", spy)
@@ -287,6 +287,8 @@ async def test_upload_happy_path_still_works_through_to_thread(mdb, monkeypatch)
     resp = await rm.upload_model_backtest(_req(), mid, file=good,
                                           app_id="multicharts")
     assert resp.status_code == 200 and "text-red" not in resp.body.decode()
-    assert seen.get("fn") == "parse"
+    # v3.0 P7: the verbatim capture is a SECOND openpyxl pass — both
+    # CPU-bound calls must ride to_thread (same F8 rationale).
+    assert "parse" in seen and "capture" in seen
     runs = await mdb.list_model_backtests(mid)
     assert len(runs) == 1 and runs[0]["summary"]["net_profit"] == 250.0

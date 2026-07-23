@@ -5166,6 +5166,7 @@ const useAnaJson = (url, intervalMs = 0) => {
   const [ms, setMs] = React.useState(null);
   const seqRef = React.useRef(0);
   const load = React.useCallback(async () => {
+    if (!url) return;
     const seq = ++seqRef.current;
     const t0 = performance.now();
     try {
@@ -5183,14 +5184,22 @@ const useAnaJson = (url, intervalMs = 0) => {
     if (seq === seqRef.current) setLoading(false);
   }, [url]);
   React.useEffect(() => {
+    if (!url) {
+      seqRef.current++;
+      setData(null);
+      setErr(null);
+      setMs(null);
+      setLoading(true);
+      return;
+    }
     setLoading(true);
     load();
-  }, [load]);
+  }, [load, url]);
   React.useEffect(() => {
-    if (!intervalMs) return void 0;
+    if (!intervalMs || !url) return void 0;
     const t = setInterval(load, intervalMs);
     return () => clearInterval(t);
-  }, [load, intervalMs]);
+  }, [load, intervalMs, url]);
   const foot = qeFootState({ loading, err, hasData: data != null, ms, retrying: intervalMs > 0 });
   return { data, err, loading, reload: load, ms, foot };
 };
@@ -7215,6 +7224,1331 @@ Object.assign(window, { RegimePage });
 
 ;
 
+/* ==== pages-models-data.jsx ==== */
+const _mdlSend = async (url, method, body) => {
+  let r;
+  try {
+    r = await fetch(url, {
+      method,
+      headers: body != null ? { "Content-Type": "application/json", Accept: "application/json" } : { Accept: "application/json" },
+      body: body != null ? JSON.stringify(body) : void 0
+    });
+  } catch (e) {
+    const err = new Error(url + " unreachable");
+    err.status = 0;
+    throw err;
+  }
+  let data = null;
+  try {
+    data = await r.json();
+  } catch (e) {
+    const err = new Error(url + " corrupt response");
+    err.corrupt = true;
+    throw err;
+  }
+  if (!r.ok || data && data.error) {
+    const err = new Error(data && data.error || url + " " + r.status);
+    err.status = r.status;
+    throw err;
+  }
+  return data;
+};
+const _mdlUpload = async (url, formData) => {
+  let r;
+  try {
+    r = await fetch(url, { method: "POST", body: formData, headers: { Accept: "application/json" } });
+  } catch (e) {
+    const err = new Error(url + " unreachable");
+    err.status = 0;
+    throw err;
+  }
+  let data = null;
+  try {
+    data = await r.json();
+  } catch (e) {
+    const err = new Error(url + " corrupt response");
+    err.corrupt = true;
+    throw err;
+  }
+  if (!r.ok || data && data.error) {
+    const err = new Error(data && data.error || url + " " + r.status);
+    err.status = r.status;
+    throw err;
+  }
+  return data;
+};
+const _mdlMoney = (v, dp = 2) => (v >= 0 ? "+" : "\u2212") + "$" + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: dp, maximumFractionDigits: dp });
+const _mdlPl = (v) => v > 0 ? "var(--qe-green)" : v < 0 ? "var(--qe-red)" : "var(--qe-sub)";
+const _mdlDate = (iso) => iso ? String(iso).slice(0, 10) : "\u2014";
+const _mdlDt = (iso) => iso ? String(iso).slice(0, 16).replace("T", " ") : "\u2014";
+const _mdlMs = (ms) => ms ? new Date(ms).toISOString().slice(0, 16).replace("T", " ") : "\u2014";
+const MDL_TYPES = [["macro", "Macro"], ["micro", "Micro"], ["both", "Both"]];
+const mdlTypeLabel = (t) => ({ macro: "Macro", micro: "Micro", both: "Both" })[t] || t || "\u2014";
+const mdlCellVal = (c) => {
+  if (c == null) return null;
+  if (typeof c !== "object") return c;
+  if (c.t === "n") return typeof c.v === "number" ? c.v : null;
+  return c.v != null ? c.v : null;
+};
+const mdlCellNum = (c) => {
+  const v = mdlCellVal(c);
+  return typeof v === "number" ? v : null;
+};
+const mdlCellIsPct = (c) => !!(c && typeof c === "object" && c.t === "n" && typeof c.f === "string" && c.f.indexOf("%") >= 0);
+const mdlCellIsDt = (c) => !!(c && typeof c === "object" && c.t === "dt");
+const mdlCellText = (c) => {
+  if (mdlCellIsDt(c)) return _mdlDt(c.v);
+  const v = mdlCellVal(c);
+  return v == null ? "" : String(v);
+};
+const mdlSheet = (report, name) => {
+  if (!report || !report.sheets) return null;
+  const s = report.sheets.find((x) => x.name === name);
+  return s && s.rows && s.rows.length ? s : null;
+};
+const mdlSections = (rows) => {
+  const secs = [];
+  let cur = null;
+  const isEmptyRow = (r) => !r || !r.length || r.every((c) => {
+    const v = mdlCellVal(c);
+    return v == null || v === "";
+  });
+  for (const r of rows || []) {
+    if (isEmptyRow(r)) {
+      cur = null;
+      continue;
+    }
+    const vals = r.map(mdlCellVal);
+    const filled = [];
+    vals.forEach((v, i) => {
+      if (v != null && v !== "") filled.push(i);
+    });
+    if (filled.length === 1 && typeof vals[filled[0]] === "string" && r.length <= filled[0] + 1) {
+      cur = { title: String(vals[filled[0]]), header: null, rows: [] };
+      secs.push(cur);
+      continue;
+    }
+    const headerish = (vals[0] == null || vals[0] === "") && filled.length >= 2 && filled.every((i) => typeof vals[i] === "string");
+    if (headerish) {
+      if (!cur) {
+        cur = { title: null, header: null, rows: [] };
+        secs.push(cur);
+      }
+      cur.header = vals.map((v) => v == null ? "" : String(v));
+      continue;
+    }
+    if (!cur) {
+      cur = { title: null, header: null, rows: [] };
+      secs.push(cur);
+    }
+    cur.rows.push(r);
+  }
+  return secs.filter((s) => s.rows.length || s.title);
+};
+const mdlSectionWidth = (sec) => Math.max(1, ...sec.rows.map((r) => r.length));
+const mdlFindRow = (rows, label) => {
+  for (const r of rows || []) {
+    if (r && typeof mdlCellVal(r[0]) === "string" && String(mdlCellVal(r[0])).trim() === label) return r;
+  }
+  return null;
+};
+const MDL_FMT = {
+  "Profit Factor": "pf",
+  "Adjusted Profit Factor": "pf",
+  "Select Profit Factor": "pf",
+  "Total # of Trades": "int",
+  "Max # Contracts Held": "int",
+  "Number Winning Trades": "int",
+  "Number Losing Trades": "int",
+  "Number of Outliers": "int",
+  "Max Consec. Winners": "int",
+  "Max Consec. Losers": "int",
+  "% Profitable": "pct",
+  "Return on Account": "pct",
+  "Return on Initial Capital": "pct",
+  "Annual Rate of Return": "pct",
+  "Monthly Rate of Return": "pct",
+  "Percent in the Market": "pct",
+  "Return on Max Strategy Drawdown": "num",
+  "Monthly Return StdDev": "num",
+  "Sharpe Ratio": "num",
+  "Annualized Sharpe Ratio": "num",
+  "Sortino Ratio": "num",
+  "Calmar Ratio": "num",
+  "Sterling Ratio": "num",
+  "RINA Index": "num",
+  "Upside Potential Ratio": "num",
+  "Fouse Ratio": "num",
+  "Z-score": "num",
+  "Confidence Limit": "num"
+};
+const mdlFmtFor = (label, cell) => {
+  if (mdlCellIsPct(cell)) return "pct";
+  const l = String(label || "").trim();
+  if (MDL_FMT[l]) return MDL_FMT[l];
+  if (/\(%\)$/.test(l)) return "pct";
+  if (/^(#|Number|Avg #|Max #)/.test(l) || /# of/.test(l)) return "int";
+  if (/Ratio|Index|Z-score|StdDev|Std\. Deviation|Deviation/i.test(l)) return "num";
+  return "usd";
+};
+const mdlPairTrades = (sheet) => {
+  if (!sheet) return null;
+  const rows = sheet.rows;
+  let headIdx = -1, head = null;
+  for (let i = 0; i < rows.length; i++) {
+    const cells = (rows[i] || []).map((c) => String(mdlCellVal(c) == null ? "" : mdlCellVal(c)).trim());
+    if (cells.indexOf("Trade #") >= 0 && cells.indexOf("Type") >= 0) {
+      headIdx = i;
+      head = cells;
+      break;
+    }
+  }
+  if (headIdx < 0) return null;
+  const col = {};
+  head.forEach((name, i) => {
+    if (name) col[name] = i;
+  });
+  const get = (r, name) => col[name] != null && col[name] < r.length ? r[col[name]] : null;
+  const dtSplit = (c) => {
+    if (mdlCellIsDt(c)) {
+      const iso = String(c.v);
+      return [iso.slice(0, 10), iso.slice(11, 19)];
+    }
+    const v = mdlCellVal(c);
+    return [v == null ? "" : String(v), ""];
+  };
+  const trades = [];
+  let pending = null;
+  for (let i = headIdx + 1; i < rows.length; i++) {
+    const r = rows[i] || [];
+    const typ = String(mdlCellVal(get(r, "Type")) || "").trim();
+    if (typ.indexOf("Entry") === 0) {
+      const [d, t] = dtSplit(get(r, "Date") != null ? get(r, "Date") : get(r, "Time"));
+      pending = {
+        n: mdlCellNum(get(r, "Trade #")) || trades.length + 1,
+        side: typ.indexOf("Long") >= 0 ? "L" : "S",
+        entryType: typ,
+        entrySignal: mdlCellText(get(r, "Signal")),
+        entryOrder: mdlCellNum(get(r, "Order #")),
+        entryDate: d,
+        entryTime: t,
+        entryPrice: mdlCellNum(get(r, "Price")),
+        contracts: mdlCellNum(get(r, "Contracts")),
+        profit: mdlCellNum(get(r, "Profit ($)")),
+        profitPct: mdlCellNum(get(r, "Profit (%)")),
+        cum: mdlCellNum(get(r, "Cum. Profit ($)")),
+        cumPct: mdlCellNum(get(r, "Cum. Profit (%)")),
+        runup: mdlCellNum(get(r, "Run-up ($)")),
+        runupPct: mdlCellNum(get(r, "Run-up (%)")),
+        dd: mdlCellNum(get(r, "Drawdown ($)")),
+        ddPct: mdlCellNum(get(r, "Drawdown (%)"))
+      };
+    } else if (typ.indexOf("Exit") === 0) {
+      if (!pending) continue;
+      const [d, t] = dtSplit(get(r, "Date") != null ? get(r, "Date") : get(r, "Time"));
+      trades.push({
+        ...pending,
+        exitType: typ,
+        exitSignal: mdlCellText(get(r, "Signal")),
+        exitOrder: mdlCellNum(get(r, "Order #")),
+        exitDate: d,
+        exitTime: t,
+        exitPrice: mdlCellNum(get(r, "Price"))
+      });
+      pending = null;
+    }
+  }
+  return trades;
+};
+const mdlHourly = (trades) => {
+  if (!trades || !trades.length) return [];
+  const by = {};
+  trades.forEach((t) => {
+    if (!t.entryTime) return;
+    const h = t.entryTime.slice(0, 2) + ":00";
+    (by[h] = by[h] || []).push(t);
+  });
+  return Object.keys(by).sort().map((h) => {
+    const ts = by[h];
+    const wins = ts.filter((t) => (t.profit || 0) > 0);
+    const net = ts.reduce((a, t) => a + (t.profit || 0), 0);
+    return { hour: h, profit: +net.toFixed(2), trades: ts.length, winPct: ts.length ? +(wins.length / ts.length * 100).toFixed(1) : 0 };
+  });
+};
+const mdlRunKpis = (summary) => {
+  const s = summary || {};
+  return {
+    net: s.net_profit != null ? s.net_profit : 0,
+    pf: s.profit_factor != null ? Math.abs(s.profit_factor) : 0,
+    winPct: +((s.win_rate || 0) * 100).toFixed(1),
+    maxDDPct: +((s.max_drawdown_pct || 0) * 100).toFixed(2),
+    maxDD: s.max_drawdown != null ? s.max_drawdown : 0,
+    sharpe: s.sharpe != null ? s.sharpe : 0,
+    nTrades: s.total_trades != null ? s.total_trades : 0
+  };
+};
+const mdlLatestKpis = (m) => m && m.latest_run ? mdlRunKpis(m.latest_run.summary) : null;
+Object.assign(window, {
+  _mdlSend,
+  _mdlUpload,
+  _mdlMoney,
+  _mdlPl,
+  _mdlDate,
+  _mdlDt,
+  _mdlMs,
+  MDL_TYPES,
+  mdlTypeLabel,
+  mdlCellVal,
+  mdlCellNum,
+  mdlCellIsPct,
+  mdlCellIsDt,
+  mdlCellText,
+  mdlSheet,
+  mdlSections,
+  mdlSectionWidth,
+  mdlFindRow,
+  mdlFmtFor,
+  mdlPairTrades,
+  mdlHourly,
+  mdlRunKpis,
+  mdlLatestKpis
+});
+
+;
+
+/* ==== pages-models-lib.jsx ==== */
+const _MDLTYPE_TONE = { macro: "info", micro: "blue", both: "mag" };
+const TypeBadge = ({ type }) => /* @__PURE__ */ React.createElement(Badge, { tone: _MDLTYPE_TONE[type] || "mute" }, mdlTypeLabel(type));
+const KpiTile = ({ label, value, sub, color }) => /* @__PURE__ */ React.createElement(Card, { tight: true, style: { display: "flex", flexDirection: "column", gap: 2, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontFamily: "var(--qe-ui)", fontSize: "0.5rem", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--qe-muted)" } }, label), /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.92rem", fontWeight: 700, color: color || "var(--qe-text)", lineHeight: 1.1, fontVariantNumeric: "tabular-nums" } }, value), sub && /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.5rem", color: "var(--qe-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, sub));
+const KvMini = ({ l, v, c }) => /* @__PURE__ */ React.createElement("div", { style: { minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontFamily: "var(--qe-ui)", fontSize: "0.5rem", fontWeight: 700, letterSpacing: "0.08em", color: "var(--qe-muted)" } }, l), /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.62rem", fontWeight: 700, color: c || "var(--qe-text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, v));
+const ModelCard = ({ m, onOpen }) => {
+  const k = mdlLatestKpis(m);
+  const spark = m.spark || [];
+  return /* @__PURE__ */ React.createElement("div", { onClick: () => onOpen(m), style: { cursor: "pointer", display: "flex" } }, /* @__PURE__ */ React.createElement(Card, { ticks: true, className: "qe-model-card", style: { display: "flex", flexDirection: "column", gap: 6, cursor: "pointer", padding: "8px 10px", flex: 1 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "flex-start", gap: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { minWidth: 0, flex: 1 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 7 } }, /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-ui)", fontWeight: 700, fontSize: "0.78rem", color: "var(--qe-text)", letterSpacing: "0.01em" } }, m.name), /* @__PURE__ */ React.createElement(TypeBadge, { type: m.type })), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.58rem", color: "var(--qe-sub)", lineHeight: 1.4, marginTop: 3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" } }, m.description))), k ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { height: 26 } }, spark.length > 1 ? /* @__PURE__ */ React.createElement(Sparkline, { data: spark, height: 26, color: k.net >= 0 ? "var(--qe-green)" : "var(--qe-red)" }) : /* @__PURE__ */ React.createElement("div", { style: { height: 26 } })), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 5 } }, /* @__PURE__ */ React.createElement(KvMini, { l: "NET P/L", v: _mdlMoney(k.net, 0), c: _mdlPl(k.net) }), /* @__PURE__ */ React.createElement(KvMini, { l: "WIN %", v: k.winPct + "%" }), /* @__PURE__ */ React.createElement(KvMini, { l: "PF", v: k.pf.toFixed(2), c: k.pf >= 1.3 ? "var(--qe-green)" : k.pf < 1 ? "var(--qe-red)" : "var(--qe-text)" }), /* @__PURE__ */ React.createElement(KvMini, { l: "MAX DD", v: k.maxDDPct + "%", c: "var(--qe-red)" }), /* @__PURE__ */ React.createElement(KvMini, { l: "TRADES", v: k.nTrades }))) : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 7, padding: "10px 4px", border: "1px dashed var(--qe-faint)" } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-amber)", fontSize: "0.7rem" } }, "\u25C7"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.58rem", color: "var(--qe-muted)" } }, "No backtests imported yet")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "auto", paddingTop: 4, borderTop: "1px solid var(--qe-faint)" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.5rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)" } }, "updated ", _mdlDate(m.updated_at || m.created_at)), /* @__PURE__ */ React.createElement("span", { style: { display: "flex", gap: 4 } }, (m.tags || []).slice(0, 2).map((t) => /* @__PURE__ */ React.createElement("span", { key: t, style: { fontSize: "0.5rem", color: "var(--qe-muted)", letterSpacing: "0.06em", textTransform: "uppercase", border: "1px solid var(--qe-faint)", padding: "0 3px" } }, t))))));
+};
+const ModelLibrary = ({ models, onOpen, onNew, embedded = false }) => {
+  const [q, setQ] = React.useState("");
+  const [type, setType] = React.useState("all");
+  const [sort, setSort] = React.useState("updated");
+  const filtered = (models || []).filter((m) => type === "all" || m.type === type).filter((m) => {
+    if (!q) return true;
+    const needle = q.toLowerCase();
+    return (m.name || "").toLowerCase().includes(needle) || (m.tags || []).some((t) => t.toLowerCase().includes(needle));
+  }).sort((a, b) => {
+    if (sort === "updated") return String(b.updated_at || b.created_at || "").localeCompare(String(a.updated_at || a.created_at || ""));
+    if (sort === "name") return String(a.name).localeCompare(String(b.name));
+    const ka = mdlLatestKpis(a), kb = mdlLatestKpis(b);
+    if (sort === "net") return ((kb && kb.net) != null && kb ? kb.net : -1e9) - ((ka && ka.net) != null && ka ? ka.net : -1e9);
+    if (sort === "pf") return (kb ? kb.pf : -1) - (ka ? ka.pf : -1);
+    return 0;
+  });
+  return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", height: "100%", minHeight: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderBottom: "1px solid var(--qe-line)", flexShrink: 0, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative", width: 200 } }, /* @__PURE__ */ React.createElement("input", { className: "qe-input", placeholder: "Search models\u2026", value: q, onChange: (e) => setQ(e.target.value), style: { paddingLeft: 20 } }), /* @__PURE__ */ React.createElement("span", { style: { position: "absolute", left: 6, top: "50%", transform: "translateY(-50%)", color: "var(--qe-muted)", fontSize: "0.6rem", pointerEvents: "none" } }, "\u2315")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 4 } }, [["all", "All"], ...MDL_TYPES].map(([v, l]) => /* @__PURE__ */ React.createElement("button", { key: v, className: `qe-btn qe-btn-sm ${type === v ? "qe-btn-on" : ""}`, onClick: () => setType(v) }, l))), /* @__PURE__ */ React.createElement("div", { className: "qe-grow" }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.52rem", color: "var(--qe-muted)", textTransform: "uppercase", letterSpacing: "0.08em" } }, "Sort"), /* @__PURE__ */ React.createElement("select", { className: "qe-input qe-select", value: sort, onChange: (e) => setSort(e.target.value), style: { width: 120 } }, /* @__PURE__ */ React.createElement("option", { value: "updated" }, "Last updated"), /* @__PURE__ */ React.createElement("option", { value: "net" }, "Net P/L"), /* @__PURE__ */ React.createElement("option", { value: "pf" }, "Profit factor"), /* @__PURE__ */ React.createElement("option", { value: "name" }, "Name")), !embedded && /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-primary", onClick: onNew }, "+ New Model")), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0, overflow: "auto", padding: 10 } }, filtered.length ? /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(290px, 1fr))", gap: 10, alignItems: "stretch" } }, filtered.map((m) => /* @__PURE__ */ React.createElement(ModelCard, { key: m.id, m, onOpen }))) : /* @__PURE__ */ React.createElement("div", { style: { height: "100%", display: "flex", alignItems: "center", justifyContent: "center" } }, /* @__PURE__ */ React.createElement(
+    EmptyState,
+    {
+      tone: (models || []).length ? "neutral" : "info",
+      glyph: "\u25C7",
+      msg: (models || []).length ? "No models match your filters" : "No models yet",
+      hint: (models || []).length ? "Clear the search or type filter." : "Create a reusable trading model, then import a backtest report to track its performance.",
+      cta: !(models || []).length && /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-primary", onClick: onNew }, "+ New Model")
+    }
+  ))));
+};
+Object.assign(window, { TypeBadge, KpiTile, KvMini, ModelCard, ModelLibrary });
+
+;
+
+/* ==== pages-models-report.jsx ==== */
+const MCNum = ({ v, fmt = "usd", bold }) => {
+  if (v == null || v === "") return /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "n/a");
+  if (fmt === "str") return /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-text)" } }, v);
+  const num = typeof v === "number" ? v : parseFloat(v);
+  if (isNaN(num)) return /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-text)" } }, v);
+  if (fmt === "pf") {
+    const a = Math.abs(num), lt1 = a < 1;
+    return /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: lt1 ? "var(--qe-red)" : "var(--qe-green)", fontWeight: bold ? 700 : 500, fontVariantNumeric: "tabular-nums" } }, lt1 ? "(" + a.toFixed(2) + ")" : a.toFixed(2));
+  }
+  const neg = num < 0, zero = num === 0;
+  let body;
+  if (fmt === "pct") body = (Math.abs(num) * 100).toFixed(2) + "%";
+  else if (fmt === "int") body = Math.round(Math.abs(num)).toLocaleString();
+  else if (fmt === "num") body = Math.abs(num).toFixed(2);
+  else body = "$" + Math.abs(num).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const text = neg ? "(" + body + ")" : body;
+  const color = fmt === "int" || zero ? "var(--qe-text)" : neg ? "var(--qe-red)" : "var(--qe-green)";
+  return /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color, fontWeight: bold ? 700 : 500, fontVariantNumeric: "tabular-nums" } }, text);
+};
+const MdlCellR = ({ cell, label, bold }) => {
+  if (cell == null) return null;
+  const n = mdlCellNum(cell);
+  if (n == null) {
+    const t = mdlCellText(cell);
+    if (!t && typeof cell === "object") return /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "n/a");
+    return /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-text)" } }, t);
+  }
+  return /* @__PURE__ */ React.createElement(MCNum, { v: n, fmt: mdlFmtFor(label, cell), bold });
+};
+const MdlSheetSections = ({ sheet, emptyMsg = "sheet empty in this export" }) => {
+  if (!sheet) {
+    return /* @__PURE__ */ React.createElement("div", { style: { padding: 8, height: "100%", display: "flex", alignItems: "center", justifyContent: "center" } }, /* @__PURE__ */ React.createElement(EmptyState, { tone: "neutral", glyph: "\u25C7", msg: emptyMsg }));
+  }
+  const secs = mdlSections(sheet.rows);
+  if (!secs.length) {
+    return /* @__PURE__ */ React.createElement("div", { style: { padding: 8, height: "100%", display: "flex", alignItems: "center", justifyContent: "center" } }, /* @__PURE__ */ React.createElement(EmptyState, { tone: "neutral", glyph: "\u25C7", msg: emptyMsg }));
+  }
+  return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column" } }, secs.map((sec, si) => {
+    const width = mdlSectionWidth(sec);
+    const cols = [{
+      key: "label",
+      label: sec.header && sec.header[0] || "Metric",
+      width: "40%",
+      render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)", whiteSpace: "normal" } }, r.label)
+    }];
+    for (let i = 1; i < width; i++) {
+      cols.push({
+        key: "c" + i,
+        label: sec.header && sec.header[i] || "\xB7",
+        align: i === width - 1 ? "right" : "center",
+        render: (r) => /* @__PURE__ */ React.createElement(MdlCellR, { cell: r.cells[i], label: r.label, bold: i === 1 })
+      });
+    }
+    const rows = sec.rows.map((r, ri) => ({
+      id: si + ":" + ri,
+      label: mdlCellText(r[0]),
+      cells: r
+    }));
+    return /* @__PURE__ */ React.createElement("div", { key: si }, sec.title && /* @__PURE__ */ React.createElement(SecLbl, { rule: true, style: { margin: "8px 7px 2px" } }, sec.title), rows.length > 0 && /* @__PURE__ */ React.createElement(DataList, { columns: cols, rows, dense: false, selKey: "id", tools: false }));
+  }));
+};
+const StrategyAnalysisTab = ({ rep, foot }) => {
+  const k = mdlRunKpis(rep.run && rep.run.summary);
+  const sheet = mdlSheet(rep.report, "Strategy Analysis");
+  const acct = sheet ? mdlCellNum((mdlFindRow(sheet.rows, "Account Size Required") || [])[1]) : null;
+  return /* @__PURE__ */ React.createElement(GridWorkspace, { key: "sa" }, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 24, h: 6, minW: 12, minH: 5 }, /* @__PURE__ */ React.createElement(Pane, { title: "Key Metrics", style: { height: "100%" }, foot }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(6, minmax(0, 1fr))", gap: 7 } }, /* @__PURE__ */ React.createElement(KpiTile, { label: "Net Profit", value: _mdlMoney(k.net, 0), color: _mdlPl(k.net) }), /* @__PURE__ */ React.createElement(KpiTile, { label: "Profit Factor", value: k.pf.toFixed(2), color: k.pf >= 1 ? "var(--qe-green)" : "var(--qe-red)" }), /* @__PURE__ */ React.createElement(KpiTile, { label: "% Profitable", value: k.winPct + "%" }), /* @__PURE__ */ React.createElement(KpiTile, { label: "Max Drawdown", value: k.maxDDPct + "%", color: "var(--qe-red)" }), /* @__PURE__ */ React.createElement(KpiTile, { label: "Total Trades", value: k.nTrades }), /* @__PURE__ */ React.createElement(KpiTile, { label: "Account Size", value: acct != null ? _mdlMoney(acct, 0) : "\u2014" })))), /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 6, w: 24, h: 18, minW: 10, minH: 10 }, /* @__PURE__ */ React.createElement(Pane, { title: "Strategy Performance", tag: "AS IN FILE", style: { height: "100%" }, bodyStyle: { padding: 0 }, foot }, /* @__PURE__ */ React.createElement(MdlSheetSections, { sheet, emptyMsg: "no verbatim capture for this run \u2014 re-import to populate" }))));
+};
+const GraphsTab = ({ rep, foot }) => {
+  const eqRows = rep.equity || [];
+  const k = mdlRunKpis(rep.run && rep.run.summary);
+  const settings = ((rep.run || {}).summary || {}).settings || {};
+  const initial = parseFloat(String(settings["Initial Capital"] != null ? settings["Initial Capital"] : "").replace(/[$,\s]/g, "")) || (eqRows.length ? eqRows[0].equity : 0);
+  const eq = eqRows.length ? [initial, ...eqRows.map((r) => r.equity)] : [];
+  const dd = eqRows.length ? [0, ...eqRows.map((r) => -Math.abs(r.drawdown))] : [];
+  const empty = (msg) => /* @__PURE__ */ React.createElement("div", { style: { padding: 8, height: "100%", display: "flex", alignItems: "center", justifyContent: "center" } }, /* @__PURE__ */ React.createElement(EmptyState, { tone: "neutral", glyph: "\u25C7", msg }));
+  return /* @__PURE__ */ React.createElement(GridWorkspace, { key: "gr" }, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 24, h: 14, minW: 10, minH: 7 }, /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "Equity Curve",
+      tag: "CLOSED TRADES",
+      style: { height: "100%" },
+      right: /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.54rem", color: "var(--qe-muted)" } }, "net ", _mdlMoney(k.net, 0)),
+      foot,
+      bodyStyle: { padding: "4px 6px", display: "flex", flexDirection: "column" }
+    },
+    eq.length > 1 ? /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0 } }, /* @__PURE__ */ React.createElement(EquityChart, { data: eq, baseline: initial, color: k.net >= 0 ? "var(--qe-green)" : "var(--qe-red)" })) : empty("no equity points on this run")
+  )), /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 14, w: 24, h: 10, minW: 10, minH: 6 }, /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "Drawdown",
+      tag: "$ FROM PEAK",
+      style: { height: "100%" },
+      bodyStyle: { padding: "4px 6px", display: "flex", flexDirection: "column" },
+      foot
+    },
+    dd.length > 1 ? /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0 } }, /* @__PURE__ */ React.createElement(EquityChart, { data: dd, baseline: 0, color: "var(--qe-red)" })) : empty("no equity points on this run")
+  )));
+};
+const TradesTab = ({ rep, foot }) => {
+  const [side, setSide] = React.useState("all");
+  const sheet = mdlSheet(rep.report, "List of Trades");
+  const paired = React.useMemo(() => mdlPairTrades(sheet), [sheet]);
+  if (!paired || !paired.length) {
+    const rows = (rep.trades || []).map((t, i) => ({ ...t, _i: i + 1 }));
+    return /* @__PURE__ */ React.createElement(GridWorkspace, { key: "tr-fb" }, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 24, h: 24, minW: 12, minH: 12 }, /* @__PURE__ */ React.createElement(Pane, { title: "List of Trades", count: rows.length, tag: "NORMALIZED", style: { height: "100%" }, bodyStyle: { padding: 0 }, foot }, rows.length ? /* @__PURE__ */ React.createElement(DataList, { selKey: "_i", rows, columns: [
+      { key: "_i", label: "#", render: (t) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-muted)" } }, t._i) },
+      { key: "side", label: "Side", render: (t) => /* @__PURE__ */ React.createElement(Badge, { tone: t.side === "long" ? "ok" : "err" }, (t.side || "").toUpperCase()) },
+      { key: "entry_dt", label: "Entry", render: (t) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.56rem" } }, _mdlDt(t.entry_dt)) },
+      { key: "exit_dt", label: "Exit", render: (t) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.56rem" } }, _mdlDt(t.exit_dt)) },
+      { key: "entry_price", label: "Entry Px", align: "right", render: (t) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono" }, t.entry_price) },
+      { key: "exit_price", label: "Exit Px", align: "right", render: (t) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono" }, t.exit_price) },
+      { key: "contracts", label: "Cts", align: "right", render: (t) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono" }, t.contracts || "\u2014") },
+      { key: "pnl_usdt", label: "P/L $", align: "right", render: (t) => /* @__PURE__ */ React.createElement(MCNum, { v: t.pnl_usdt, fmt: "usd", bold: true }) },
+      { key: "exit_reason", label: "Exit Reason" }
+    ], emptyMsg: "no trades on this run" }) : /* @__PURE__ */ React.createElement(MdlSheetSections, { sheet, emptyMsg: "no trades on this run" }))));
+  }
+  const trades = paired.filter((t) => side === "all" || t.side === side);
+  const cols = [
+    { key: "n", label: "#", sortVal: (t) => t.n, render: (t) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-muted)" } }, t.n) },
+    {
+      key: "order",
+      label: "Order",
+      sort: false,
+      search: false,
+      render: (t) => /* @__PURE__ */ React.createElement("div", { className: "qe-mc-stack" }, /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-muted)" } }, t.entryOrder != null ? t.entryOrder : "\u2014"), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-muted)", opacity: 0.6 } }, t.exitOrder != null ? t.exitOrder : "\u2014"))
+    },
+    {
+      key: "side",
+      label: "Type",
+      filter: false,
+      sortVal: (t) => t.side,
+      searchVal: (t) => `${t.entryType} ${t.exitType}`,
+      render: (t) => /* @__PURE__ */ React.createElement("div", { className: "qe-mc-stack" }, /* @__PURE__ */ React.createElement(Badge, { tone: t.side === "L" ? "ok" : "err" }, (t.entryType || "").replace("Entry", "")), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.5rem", color: "var(--qe-muted)" } }, (t.exitType || "").replace("Exit", "Exit ")))
+    },
+    {
+      key: "entrySignal",
+      label: "Signal",
+      searchVal: (t) => `${t.entrySignal} ${t.exitSignal}`,
+      render: (t) => /* @__PURE__ */ React.createElement("div", { className: "qe-mc-stack" }, /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-cyan)", fontSize: "0.56rem" } }, t.entrySignal), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-sub)", fontSize: "0.56rem" } }, t.exitSignal))
+    },
+    {
+      key: "entryDate",
+      label: "Date",
+      sortVal: (t) => t.entryDate,
+      searchVal: (t) => `${t.entryDate} ${t.exitDate}`,
+      render: (t) => /* @__PURE__ */ React.createElement("div", { className: "qe-mc-stack" }, /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-muted)", fontSize: "0.54rem" } }, t.entryDate), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-muted)", fontSize: "0.54rem", opacity: 0.8 } }, t.exitDate))
+    },
+    {
+      key: "entryTime",
+      label: "Time",
+      sortVal: (t) => t.entryTime,
+      searchVal: (t) => `${t.entryTime} ${t.exitTime}`,
+      render: (t) => /* @__PURE__ */ React.createElement("div", { className: "qe-mc-stack" }, /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-muted)", fontSize: "0.54rem" } }, t.entryTime), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-muted)", fontSize: "0.54rem", opacity: 0.8 } }, t.exitTime))
+    },
+    {
+      key: "entryPrice",
+      label: "Price",
+      align: "right",
+      sortVal: (t) => t.entryPrice,
+      render: (t) => /* @__PURE__ */ React.createElement("div", { className: "qe-mc-stack" }, /* @__PURE__ */ React.createElement("span", { className: "qe-mono" }, t.entryPrice != null ? t.entryPrice : "\u2014"), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-muted)" } }, t.exitPrice != null ? t.exitPrice : "\u2014"))
+    },
+    { key: "contracts", label: "Cts", align: "right", render: (t) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono" }, t.contracts != null ? t.contracts : "\u2014") },
+    { key: "profit", label: "Profit $", align: "right", sortVal: (t) => t.profit, render: (t) => /* @__PURE__ */ React.createElement(MCNum, { v: t.profit, fmt: "usd", bold: true }) },
+    { key: "profitPct", label: "Profit %", align: "right", sortVal: (t) => t.profitPct, render: (t) => /* @__PURE__ */ React.createElement(MCNum, { v: t.profitPct, fmt: "pct" }) },
+    { key: "cum", label: "Cum $", align: "right", sortVal: (t) => t.cum, render: (t) => /* @__PURE__ */ React.createElement(MCNum, { v: t.cum, fmt: "usd" }) },
+    { key: "runup", label: "Run-up $", align: "right", sortVal: (t) => t.runup, render: (t) => /* @__PURE__ */ React.createElement(MCNum, { v: t.runup, fmt: "usd" }) },
+    { key: "dd", label: "Drawdn $", align: "right", sortVal: (t) => t.dd, render: (t) => /* @__PURE__ */ React.createElement(MCNum, { v: t.dd, fmt: "usd" }) }
+  ];
+  return /* @__PURE__ */ React.createElement(GridWorkspace, { key: "tr" }, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 24, h: 24, minW: 12, minH: 12 }, /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "List of Trades",
+      count: trades.length,
+      style: { height: "100%" },
+      bodyStyle: { padding: 0 },
+      foot,
+      right: /* @__PURE__ */ React.createElement("span", { style: { display: "flex", gap: 4 } }, [["all", "ALL"], ["L", "LONG"], ["S", "SHORT"]].map(([v, l]) => /* @__PURE__ */ React.createElement("button", { key: v, className: `qe-btn qe-btn-sm ${side === v ? "qe-btn-on" : ""}`, onClick: () => setSide(v) }, l)))
+    },
+    /* @__PURE__ */ React.createElement("div", { className: "qe-mc-trades" }, /* @__PURE__ */ React.createElement(
+      DataList,
+      {
+        selKey: "n",
+        columns: cols,
+        rows: trades,
+        emptyMsg: `no ${side === "L" ? "long " : side === "S" ? "short " : ""}trades in run`
+      }
+    ))
+  )));
+};
+const AnalysisTab = ({ rep, foot }) => /* @__PURE__ */ React.createElement(GridWorkspace, { key: "an" }, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 24, h: 24, minW: 12, minH: 10 }, /* @__PURE__ */ React.createElement(Pane, { title: "Trade Analysis", tag: "AS IN FILE", style: { height: "100%" }, bodyStyle: { padding: 0 }, foot }, /* @__PURE__ */ React.createElement(
+  MdlSheetSections,
+  {
+    sheet: mdlSheet(rep.report, "Trade Analysis"),
+    emptyMsg: "'Trade Analysis' sheet empty in this export"
+  }
+))));
+const PeriodicalTab = ({ rep, foot }) => {
+  const paired = React.useMemo(() => mdlPairTrades(mdlSheet(rep.report, "List of Trades")), [rep.report]);
+  const hourly = mdlHourly(paired);
+  return /* @__PURE__ */ React.createElement(GridWorkspace, { key: "pe" }, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 24, h: 8, minW: 10, minH: 6 }, /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "Profit by Hour",
+      tag: "FROM TRADE LIST",
+      style: { height: "100%" },
+      bodyStyle: { padding: "4px 6px", display: "flex", flexDirection: "column" },
+      foot
+    },
+    hourly.length ? /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0 } }, /* @__PURE__ */ React.createElement(BarChart, { data: hourly.map((x) => x.profit), categories: hourly.map((x) => x.hour), color: "var(--qe-cyan)" })) : /* @__PURE__ */ React.createElement("div", { style: { padding: 8, height: "100%", display: "flex", alignItems: "center", justifyContent: "center" } }, /* @__PURE__ */ React.createElement(EmptyState, { tone: "neutral", glyph: "\u25C7", msg: "no timed trades to bucket" }))
+  )), /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 8, w: 24, h: 16, minW: 10, minH: 8 }, /* @__PURE__ */ React.createElement(Pane, { title: "Periodical Analysis", tag: "AS IN FILE", style: { height: "100%" }, bodyStyle: { padding: 0 }, foot }, /* @__PURE__ */ React.createElement(
+    MdlSheetSections,
+    {
+      sheet: mdlSheet(rep.report, "Periodical Analysis"),
+      emptyMsg: "'Periodical Analysis' sheet empty in this export"
+    }
+  ))));
+};
+const SettingsTab = ({ rep, foot }) => {
+  const run = rep.run || {};
+  const summary = run.summary || {};
+  return /* @__PURE__ */ React.createElement(GridWorkspace, { key: "se" }, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 16, h: 24, minW: 8, minH: 10 }, /* @__PURE__ */ React.createElement(Pane, { title: "Settings", tag: "AS IN FILE", style: { height: "100%" }, bodyStyle: { padding: 0 }, foot }, /* @__PURE__ */ React.createElement(
+    MdlSheetSections,
+    {
+      sheet: mdlSheet(rep.report, "Settings"),
+      emptyMsg: "'Settings' sheet empty in this export"
+    }
+  ))), /* @__PURE__ */ React.createElement(GridItem, { x: 16, y: 0, w: 8, h: 10, minW: 6, minH: 6 }, /* @__PURE__ */ React.createElement(Pane, { title: "Import Provenance", style: { height: "100%" }, foot }, /* @__PURE__ */ React.createElement(FieldList, { dense: true, rows: [
+    { label: "Source file", value: summary.source_file || "\u2014", color: "cyan" },
+    { label: "Source app", value: run.source_app || "\u2014" },
+    { label: "Imported", value: _mdlDt(run.created_at) },
+    { label: "Window", value: (run.date_from || "\u2014") + " \u2192 " + (run.date_to || "\u2014") },
+    { label: "Status", value: (run.status || "\u2014").toUpperCase() }
+  ] }))));
+};
+Object.assign(window, {
+  MCNum,
+  MdlCellR,
+  MdlSheetSections,
+  StrategyAnalysisTab,
+  GraphsTab,
+  TradesTab,
+  AnalysisTab,
+  PeriodicalTab,
+  SettingsTab
+});
+
+;
+
+/* ==== pages-models-overview.jsx ==== */
+const ModelOverview = ({ models, onOpen, onNew, foot }) => {
+  const scored = (models || []).map((m) => ({ m, k: mdlLatestKpis(m) })).filter((x) => x.k);
+  const totalNet = scored.reduce((a, x) => a + x.k.net, 0);
+  const avgWin = scored.length ? scored.reduce((a, x) => a + x.k.winPct, 0) / scored.length : 0;
+  const totalTrades = scored.reduce((a, x) => a + x.k.nTrades, 0);
+  const ranked = [...scored].sort((a, b) => b.k.net - a.k.net);
+  const best = ranked[0], worst = ranked[ranked.length - 1];
+  const n = (models || []).length;
+  return /* @__PURE__ */ React.createElement(GridWorkspace, { key: "models-overview" }, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 12, h: 5, minW: 8, minH: 4 }, /* @__PURE__ */ React.createElement(Pane, { title: "Library Summary", count: n, style: { height: "100%" }, foot }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(132px, 1fr))", gap: 7 } }, /* @__PURE__ */ React.createElement(KpiTile, { label: "Total Net P/L", value: _mdlMoney(totalNet, 0), sub: "latest run / model", color: _mdlPl(totalNet) }), /* @__PURE__ */ React.createElement(KpiTile, { label: "Avg Win %", value: avgWin.toFixed(1) + "%", sub: `${scored.length} models` }), /* @__PURE__ */ React.createElement(KpiTile, { label: "Models", value: n, sub: `${n - scored.length} without runs` }), /* @__PURE__ */ React.createElement(KpiTile, { label: "Best Model", value: best ? _mdlMoney(best.k.net, 0) : "\u2014", sub: best ? best.m.name : "\u2014", color: "var(--qe-green)" }), /* @__PURE__ */ React.createElement(KpiTile, { label: "Worst Model", value: worst ? _mdlMoney(worst.k.net, 0) : "\u2014", sub: worst ? worst.m.name : "\u2014", color: worst && worst.k.net < 0 ? "var(--qe-red)" : "var(--qe-text)" })), /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { marginTop: 6, fontSize: "0.52rem", color: "var(--qe-muted)" } }, scored.length, " with imported performance \xB7 ", totalTrades, " backtested trades"))), /* @__PURE__ */ React.createElement(GridItem, { x: 12, y: 0, w: 12, h: 5, minW: 8, minH: 4 }, /* @__PURE__ */ React.createElement(Pane, { title: "Leaderboard", count: ranked.length, style: { height: "100%" }, bodyStyle: { padding: 0 }, foot }, ranked.length ? /* @__PURE__ */ React.createElement(
+    DataList,
+    {
+      selKey: "id",
+      onClick: (row) => {
+        const m = (models || []).find((x) => x.id === row.id);
+        if (m) onOpen(m);
+      },
+      columns: [
+        { key: "rank", label: "#", render: (r, i) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-muted)" } }, i + 1) },
+        { key: "name", label: "MODEL", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700, fontSize: "0.6rem" } }, r.name) },
+        { key: "type", label: "TYPE", render: (r) => /* @__PURE__ */ React.createElement(TypeBadge, { type: r.type }) },
+        { key: "net", label: "NET P/L", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: _mdlPl(r.net), fontWeight: 700 } }, _mdlMoney(r.net, 0)) },
+        { key: "pf", label: "PF", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono" }, r.pf.toFixed(2)) },
+        { key: "win", label: "WIN%", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono" }, r.win, "%") }
+      ],
+      rows: ranked.map((x) => ({ id: x.m.id, name: x.m.name, type: x.m.type, net: x.k.net, pf: x.k.pf, win: x.k.winPct }))
+    }
+  ) : /* @__PURE__ */ React.createElement("div", { style: { padding: 10, height: "100%", display: "flex", alignItems: "center", justifyContent: "center" } }, /* @__PURE__ */ React.createElement(
+    EmptyState,
+    {
+      tone: "neutral",
+      glyph: "\u25C7",
+      msg: "No ranked models yet",
+      hint: "Import a backtest report to put a model on the board."
+    }
+  )))), /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 5, w: 24, h: 13, minW: 12, minH: 9 }, /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "Model Library",
+      count: n,
+      style: { height: "100%" },
+      right: /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-primary", onClick: onNew }, "+ New Model"),
+      foot,
+      bodyStyle: { padding: 0, display: "flex", flexDirection: "column" }
+    },
+    /* @__PURE__ */ React.createElement(ModelLibrary, { models, onOpen, onNew, embedded: true })
+  )));
+};
+Object.assign(window, { ModelOverview });
+
+;
+
+/* ==== pages-models-detail.jsx ==== */
+const _MdlFieldRow = ({ l, v, color }) => /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "104px 1fr", gap: 8, padding: "3px 0", borderBottom: "1px solid var(--qe-faint)" } }, /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-ui)", fontSize: "0.54rem", fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--qe-muted)" } }, l), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.62rem", color: color || "var(--qe-text)", textWrap: "pretty" } }, v));
+const _mdlOr = (v, suffix = "") => v != null && v !== "" ? String(v) + suffix : "\u2014";
+const ModelOverviewTab = ({ m, runs, runsFoot, usage, usageFoot, ovFoot, onOpenRun, onImport, onLoadCalc }) => {
+  const r = m.risk_preset || {};
+  const s = m.strategy || {};
+  const src = m.source || {};
+  const hasSrc = Object.keys(src).length > 0;
+  const closed = usage && usage.closed || [];
+  const plans = usage && usage.plans || [];
+  return /* @__PURE__ */ React.createElement(GridWorkspace, { key: "ov-" + m.id }, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 8, h: 11, minW: 5, minH: 8 }, /* @__PURE__ */ React.createElement(Pane, { title: "Risk, Sizing & Source", style: { height: "100%" }, foot: ovFoot }, /* @__PURE__ */ React.createElement(_MdlFieldRow, { l: "Risk / trade", v: r.risk_pct != null ? (+r.risk_pct).toFixed(2) + "%" : "\u2014", color: "var(--qe-cyan)" }), /* @__PURE__ */ React.createElement(_MdlFieldRow, { l: "Sizing rule", v: _mdlOr(r.sizing_rule) }), /* @__PURE__ */ React.createElement(_MdlFieldRow, { l: "Match window", v: r.window_seconds != null ? r.window_seconds + "s" : "\u2014" }), /* @__PURE__ */ React.createElement(_MdlFieldRow, { l: "TP method", v: _mdlOr(r.tp_methodology) }), /* @__PURE__ */ React.createElement(_MdlFieldRow, { l: "SL method", v: _mdlOr(r.sl_methodology) }), /* @__PURE__ */ React.createElement(_MdlFieldRow, { l: "Regime mult.", v: r.apply_regime_multiplier ? "ON" : "OFF", color: r.apply_regime_multiplier ? "var(--qe-green)" : "var(--qe-muted)" }), /* @__PURE__ */ React.createElement(_MdlFieldRow, { l: "Size override", v: r.size_override_default != null ? "$" + r.size_override_default : "\u2014" }), hasSrc && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { margin: "7px 0 3px", fontFamily: "var(--qe-ui)", fontSize: "0.5rem", fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--qe-cyan)" } }, "Source \xB7 ", src.app || "\u2014"), /* @__PURE__ */ React.createElement(_MdlFieldRow, { l: "Symbol", v: _mdlOr(src.symbol), color: "var(--qe-cyan)" }), /* @__PURE__ */ React.createElement(_MdlFieldRow, { l: "Resolution", v: _mdlOr(src.resolution) }), /* @__PURE__ */ React.createElement(_MdlFieldRow, { l: "Point value", v: src.point_value != null ? "$" + src.point_value + (src.currency ? " / " + src.currency : "") : "\u2014" }), /* @__PURE__ */ React.createElement(_MdlFieldRow, { l: "Init capital", v: src.initial_capital != null ? "$" + Number(src.initial_capital).toLocaleString() : "\u2014" }), /* @__PURE__ */ React.createElement(_MdlFieldRow, { l: "Commission", v: _mdlOr(src.commission) }), /* @__PURE__ */ React.createElement(_MdlFieldRow, { l: "Slippage", v: _mdlOr(src.slippage) })), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-on", style: { marginTop: 8, width: "100%", justifyContent: "center" }, onClick: onLoadCalc }, "\u21AA Load into Pre-Trade"))), /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 11, w: 8, h: 6, minW: 5, minH: 6 }, /* @__PURE__ */ React.createElement(Pane, { title: "Strategy Definition", style: { height: "100%" }, foot: ovFoot }, s.notes && /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.6rem", color: "var(--qe-sub)", lineHeight: 1.5, marginBottom: 7, textWrap: "pretty" } }, s.notes), /* @__PURE__ */ React.createElement(_MdlFieldRow, { l: "Entry logic", v: _mdlOr(s.entry_logic) }), /* @__PURE__ */ React.createElement(_MdlFieldRow, { l: "Exit logic", v: _mdlOr(s.exit_logic) }), /* @__PURE__ */ React.createElement(_MdlFieldRow, { l: "Universe", v: _mdlOr(s.target_universe), color: "var(--qe-cyan)" }), /* @__PURE__ */ React.createElement(_MdlFieldRow, { l: "Regime cfg", v: _mdlOr(s.regime_config) }))), /* @__PURE__ */ React.createElement(GridItem, { x: 8, y: 0, w: 16, h: 8, minW: 9, minH: 7 }, /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "Backtest Runs",
+      count: (runs || []).length,
+      style: { height: "100%" },
+      right: /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-primary", onClick: onImport }, "\u2913 Import Report"),
+      foot: runsFoot,
+      bodyStyle: { padding: 0 }
+    },
+    (runs || []).length ? /* @__PURE__ */ React.createElement(
+      DataList,
+      {
+        selKey: "id",
+        onClick: (row) => {
+          if (row.status === "completed") onOpenRun(row);
+        },
+        columns: [
+          { key: "source_app", label: "SOURCE", render: (r2) => /* @__PURE__ */ React.createElement(Badge, { tone: "info" }, r2.source_app || "\u2014") },
+          { key: "file", label: "FILE", search: false, sort: false, render: (r2) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-sub)" } }, r2.summary && r2.summary.source_file || r2.name || "\u2014") },
+          { key: "window", label: "WINDOW", sort: false, render: (r2) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.54rem" } }, _mdlDate(r2.date_from), " \u2192 ", _mdlDate(r2.date_to)) },
+          { key: "net", label: "NET P/L", align: "right", sortVal: (r2) => mdlRunKpis(r2.summary).net, render: (r2) => {
+            const k = mdlRunKpis(r2.summary);
+            return /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: _mdlPl(k.net), fontWeight: 700 } }, _mdlMoney(k.net, 0));
+          } },
+          { key: "pf", label: "PF", align: "right", sortVal: (r2) => mdlRunKpis(r2.summary).pf, render: (r2) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono" }, mdlRunKpis(r2.summary).pf.toFixed(2)) },
+          { key: "win", label: "WIN%", align: "right", sortVal: (r2) => mdlRunKpis(r2.summary).winPct, render: (r2) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono" }, mdlRunKpis(r2.summary).winPct, "%") },
+          { key: "dd", label: "MAX DD", align: "right", sortVal: (r2) => mdlRunKpis(r2.summary).maxDDPct, render: (r2) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-red)" } }, mdlRunKpis(r2.summary).maxDDPct, "%") },
+          { key: "n", label: "TRADES", align: "right", sortVal: (r2) => mdlRunKpis(r2.summary).nTrades, render: (r2) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono" }, mdlRunKpis(r2.summary).nTrades) },
+          { key: "status", label: "STATUS", render: (r2) => /* @__PURE__ */ React.createElement(Badge, { tone: r2.status === "completed" ? "ok" : r2.status === "failed" ? "err" : "warn" }, (r2.status || "\u2014").toUpperCase()) },
+          { key: "created_at", label: "IMPORTED", align: "right", render: (r2) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.54rem", color: "var(--qe-muted)" } }, _mdlDt(r2.created_at)) }
+        ],
+        rows: runs
+      }
+    ) : /* @__PURE__ */ React.createElement("div", { style: { padding: 10, height: "100%", display: "flex", alignItems: "center", justifyContent: "center" } }, /* @__PURE__ */ React.createElement(
+      EmptyState,
+      {
+        tone: "warn",
+        glyph: "\u2913",
+        msg: "No backtests imported yet",
+        hint: "Performance only ever comes from imported reports (MultiCharts .xlsx / .xml).",
+        cta: /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-primary", onClick: onImport }, "\u2913 Import a report")
+      }
+    ))
+  )), /* @__PURE__ */ React.createElement(GridItem, { x: 8, y: 8, w: 16, h: 9, minW: 9, minH: 6 }, /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "Usage / Attribution",
+      count: closed.length + plans.length,
+      style: { height: "100%" },
+      foot: usageFoot,
+      bodyStyle: { padding: 0 }
+    },
+    closed.length || plans.length ? /* @__PURE__ */ React.createElement("div", null, closed.length > 0 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(SecLbl, { rule: true, style: { margin: "6px 7px 2px" } }, "Closed positions"), /* @__PURE__ */ React.createElement(
+      DataList,
+      {
+        selKey: "id",
+        columns: [
+          { key: "terminal_position_id", label: "POSITION", render: (u) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-cyan)", fontSize: "0.56rem" } }, u.terminal_position_id || "#" + u.id) },
+          { key: "symbol", label: "SYMBOL" },
+          { key: "direction", label: "SIDE", render: (u) => /* @__PURE__ */ React.createElement(Badge, { tone: u.direction === "long" ? "ok" : u.direction === "short" ? "err" : "mute" }, (u.direction || "\u2014").toUpperCase()) },
+          { key: "net_pnl", label: "NET PnL", align: "right", sortVal: (u) => u.net_pnl, render: (u) => u.net_pnl == null ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014") : /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: _mdlPl(u.net_pnl), fontWeight: 700 } }, (u.net_pnl >= 0 ? "+" : "") + (+u.net_pnl).toFixed(2)) },
+          { key: "exit_time_ms", label: "CLOSED", align: "right", render: (u) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-muted)", fontSize: "0.54rem" } }, _mdlMs(u.exit_time_ms)) }
+        ],
+        rows: closed
+      }
+    )), plans.length > 0 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(SecLbl, { rule: true, style: { margin: "6px 7px 2px" } }, "Pre-trade plans"), /* @__PURE__ */ React.createElement(
+      DataList,
+      {
+        selKey: "id",
+        columns: [
+          { key: "calc_id", label: "CALC", render: (u) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-cyan)", fontSize: "0.56rem" } }, u.calc_id || "#" + u.id) },
+          { key: "ticker", label: "TICKER" },
+          { key: "side", label: "SIDE", render: (u) => /* @__PURE__ */ React.createElement(Badge, { tone: /long|buy/i.test(u.side || "") ? "ok" : /short|sell/i.test(u.side || "") ? "err" : "mute" }, (u.side || "\u2014").toUpperCase()) },
+          { key: "status", label: "STATUS", render: (u) => /* @__PURE__ */ React.createElement(Badge, { tone: "mute" }, (u.status || "\u2014").toUpperCase()) },
+          { key: "timestamp", label: "PLANNED", align: "right", render: (u) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-muted)", fontSize: "0.54rem" } }, _mdlDt(u.timestamp)) }
+        ],
+        rows: plans
+      }
+    ))) : /* @__PURE__ */ React.createElement("div", { style: { padding: 10, height: "100%", display: "flex", alignItems: "center", justifyContent: "center" } }, /* @__PURE__ */ React.createElement(
+      EmptyState,
+      {
+        tone: "neutral",
+        glyph: "\u2205",
+        msg: "Not used by any positions yet",
+        hint: "Closed positions and pre-trade plans tagged with this model appear here (open positions appear once closed)."
+      }
+    ))
+  )));
+};
+const MODEL_SECTIONS = [
+  ["overview", "Overview"],
+  ["strategy", "Strategy Analysis"],
+  ["graphs", "Graphs"],
+  ["trades", "List of Trades"],
+  ["analysis", "Trade Analysis"],
+  ["periodical", "Periodical"],
+  ["settings", "Settings"]
+];
+const ModelView = ({ m, ovFoot, onImport, onLoadCalc }) => {
+  const [section, setSection] = React.useState("overview");
+  const [runId, setRunId] = React.useState(null);
+  const { data: runsData, foot: runsFoot, reload: reloadRuns } = useAnaJson(`/api/models/${m.id}/runs`);
+  const { data: usage, foot: usageFoot, reload: reloadUsage } = useAnaJson(`/api/models/${m.id}/usage`);
+  const allRuns = runsData && runsData.runs || [];
+  const runs = allRuns.filter((r) => r.status === "completed");
+  React.useEffect(() => {
+    setSection("overview");
+    setRunId(null);
+  }, [m.id]);
+  const run = runs.find((r) => r.id === runId) || runs[0] || null;
+  const effRunId = run ? run.id : null;
+  const { data: rep, err: repErr, reload: reloadRep, foot: repFoot } = useAnaJson(
+    effRunId != null ? `/api/models/${m.id}/runs/${effRunId}/report` : null
+  );
+  const report = effRunId != null && rep && rep.run ? rep : null;
+  const needsRun = section !== "overview" && !report;
+  return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 } }, /* @__PURE__ */ React.createElement(
+    TabStrip,
+    {
+      value: section,
+      onChange: setSection,
+      tabs: MODEL_SECTIONS,
+      right: run && section !== "overview" ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, paddingLeft: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.5rem", color: "var(--qe-muted)", textTransform: "uppercase", letterSpacing: "0.08em" } }, "Run"), runs.length > 1 ? /* @__PURE__ */ React.createElement("select", { className: "qe-input qe-select", value: effRunId, onChange: (e) => setRunId(+e.target.value), style: { width: 190, height: 18, alignSelf: "center" } }, runs.map((r) => /* @__PURE__ */ React.createElement("option", { key: r.id, value: r.id }, "#", r.id, " \xB7 ", r.summary && r.summary.source_file || r.name || r.source_app))) : /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-cyan)", alignSelf: "center" } }, "#", run.id, " \xB7 ", run.summary && run.summary.source_file || run.name || run.source_app)) : null
+    }
+  ), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column" } }, section === "overview" && /* @__PURE__ */ React.createElement(
+    ModelOverviewTab,
+    {
+      m,
+      runs: allRuns,
+      runsFoot,
+      usage,
+      usageFoot,
+      ovFoot,
+      onImport: () => onImport(() => {
+        reloadRuns();
+        reloadUsage();
+      }),
+      onLoadCalc,
+      onOpenRun: (r) => {
+        setRunId(r.id);
+        setSection("strategy");
+      }
+    }
+  ), needsRun && /* @__PURE__ */ React.createElement("div", { style: { height: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 } }, run && repErr ? (
+    // MED-2 fold: a failed report fetch is a TERMINAL state on
+    // this one-shot pipe — name the cause (tier 3), offer retry.
+    /* @__PURE__ */ React.createElement(
+      EmptyState,
+      {
+        tone: "err",
+        glyph: "\u2717",
+        msg: "run report unavailable",
+        hint: qeFootCause(repErr),
+        cta: /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", onClick: reloadRep }, "Retry")
+      }
+    )
+  ) : run ? /* @__PURE__ */ React.createElement(Spinner, { label: "loading run report" }) : /* @__PURE__ */ React.createElement(
+    EmptyState,
+    {
+      tone: "warn",
+      glyph: "\u2913",
+      msg: "No imported run to report on",
+      hint: "This model has no completed backtest import yet. Import a MultiCharts report (.xlsx / .xml) to populate Strategy Analysis, trades, and the rest.",
+      cta: /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-primary", onClick: () => onImport(() => {
+        reloadRuns();
+        reloadUsage();
+      }) }, "\u2913 Import a report")
+    }
+  )), !needsRun && section === "strategy" && /* @__PURE__ */ React.createElement(StrategyAnalysisTab, { rep: report, foot: repFoot }), !needsRun && section === "graphs" && /* @__PURE__ */ React.createElement(GraphsTab, { rep: report, foot: repFoot }), !needsRun && section === "trades" && /* @__PURE__ */ React.createElement(TradesTab, { rep: report, foot: repFoot }), !needsRun && section === "analysis" && /* @__PURE__ */ React.createElement(AnalysisTab, { rep: report, foot: repFoot }), !needsRun && section === "periodical" && /* @__PURE__ */ React.createElement(PeriodicalTab, { rep: report, foot: repFoot }), !needsRun && section === "settings" && /* @__PURE__ */ React.createElement(SettingsTab, { rep: report, foot: repFoot })));
+};
+Object.assign(window, { ModelView, ModelOverviewTab });
+
+;
+
+/* ==== pages-models.jsx ==== */
+const ModelDialog = ({ title, onClose, width = 460, children, footer, foot = null, hot = true }) => /* @__PURE__ */ React.createElement(
+  "div",
+  {
+    style: { position: "absolute", inset: 0, zIndex: 50, background: "rgba(0,0,0,0.66)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 },
+    onClick: onClose
+  },
+  /* @__PURE__ */ React.createElement("div", { onClick: (e) => e.stopPropagation(), style: {
+    width,
+    maxWidth: "100%",
+    maxHeight: "100%",
+    display: "flex",
+    flexDirection: "column",
+    position: "relative",
+    background: "var(--qe-card)",
+    border: "1px solid var(--qe-line-2)",
+    boxShadow: "0 24px 70px -16px var(--qe-bg)"
+  } }, /* @__PURE__ */ React.createElement(
+    PaneHead,
+    {
+      title,
+      hot,
+      right: /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          onClick: onClose,
+          title: "Close",
+          style: {
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 14,
+            height: 14,
+            border: "1px solid var(--qe-faint)",
+            background: "transparent",
+            color: "var(--qe-muted)",
+            cursor: "pointer",
+            fontSize: "0.7rem",
+            lineHeight: 1,
+            padding: 0
+          },
+          onMouseEnter: (e) => {
+            e.currentTarget.style.color = "var(--qe-red)";
+            e.currentTarget.style.borderColor = "var(--qe-red)";
+          },
+          onMouseLeave: (e) => {
+            e.currentTarget.style.color = "var(--qe-muted)";
+            e.currentTarget.style.borderColor = "var(--qe-faint)";
+          }
+        },
+        "\u2715"
+      )
+    }
+  ), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0, overflow: "auto", padding: 10 } }, children), foot && /* @__PURE__ */ React.createElement(PaneFoot, { ...foot }), footer && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6, padding: "7px 9px", borderTop: "1px solid var(--qe-line)", background: "var(--qe-panel)", flexShrink: 0 } }, footer), /* @__PURE__ */ React.createElement("span", { className: "qe-grip", style: { pointerEvents: "none" } }))
+);
+const _MdlField = ({ label, children, hint, error }) => /* @__PURE__ */ React.createElement("label", { style: { display: "flex", flexDirection: "column", gap: 4, minWidth: 0 } }, /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-ui)", fontSize: "0.52rem", fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", color: error ? "var(--qe-red)" : "var(--qe-sub)" } }, label), children, error ? /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.5rem", color: "var(--qe-red)" } }, error) : hint && /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.5rem", color: "var(--qe-muted)" } }, hint));
+const _MdlSec = ({ title, sub, children }) => /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-ui)", fontSize: "0.54rem", fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", color: "var(--qe-sub)", whiteSpace: "nowrap" } }, title), sub && /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.5rem", color: "var(--qe-muted)", whiteSpace: "nowrap" } }, sub), /* @__PURE__ */ React.createElement("span", { style: { flex: 1, height: 1, background: "var(--qe-line)" } })), children);
+const _MdlFileBtn = ({ label, onFile, className = "qe-btn qe-btn-sm qe-btn-on", accept = ".xlsx,.xml" }) => {
+  const ref = React.useRef(null);
+  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      ref,
+      type: "file",
+      accept,
+      style: { display: "none" },
+      onChange: (e) => {
+        const f = e.target.files && e.target.files[0];
+        if (f) onFile(f);
+        e.target.value = "";
+      }
+    }
+  ), /* @__PURE__ */ React.createElement("button", { className, onClick: () => ref.current && ref.current.click() }, label));
+};
+const MDL_SOURCE_APPS = ["MultiCharts", "TradeStation", "NinjaTrader", "Generic CSV"];
+const ModelFormModal = ({ model, onClose, onSave }) => {
+  const editing = !!model;
+  const blank = {
+    name: "",
+    type: "macro",
+    desc: "",
+    tags: "",
+    app: "MultiCharts",
+    symbol: "",
+    resolution: "",
+    pointValue: "",
+    currency: "USD",
+    initialCapital: "",
+    commission: "",
+    slippage: "",
+    riskPct: "1.0",
+    matchWindow: "90",
+    tp: "",
+    sl: "",
+    regimeMult: false,
+    entry: "",
+    exit: "",
+    notes: "",
+    universe: ""
+  };
+  const fromModel = (m) => {
+    const r = m.risk_preset || {}, s = m.strategy || {}, src = m.source || {};
+    return {
+      name: m.name || "",
+      type: m.type || "both",
+      desc: m.description || "",
+      tags: (m.tags || []).join(", "),
+      app: src.app || "MultiCharts",
+      symbol: src.symbol || "",
+      resolution: src.resolution || "",
+      pointValue: src.point_value != null ? String(src.point_value) : "",
+      currency: src.currency || "USD",
+      initialCapital: src.initial_capital != null ? String(src.initial_capital) : "",
+      commission: src.commission || "",
+      slippage: src.slippage || "",
+      riskPct: r.risk_pct != null ? String(r.risk_pct) : "",
+      matchWindow: r.window_seconds != null ? String(r.window_seconds) : "",
+      tp: r.tp_methodology || "",
+      sl: r.sl_methodology || "",
+      regimeMult: !!r.apply_regime_multiplier,
+      entry: s.entry_logic || "",
+      exit: s.exit_logic || "",
+      notes: s.notes || "",
+      universe: s.target_universe || ""
+    };
+  };
+  const [mode, setMode] = React.useState("blank");
+  const [f, setF] = React.useState(() => editing ? fromModel(model) : blank);
+  const [parsed, setParsed] = React.useState(null);
+  const [busy, setBusy] = React.useState(false);
+  const [subErr, setSubErr] = React.useState(null);
+  const [touched, setTouched] = React.useState(false);
+  const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
+  const doParse = async (file) => {
+    setBusy(true);
+    setSubErr(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("app_id", "multicharts");
+      const pv = await _mdlUpload("/api/models/import?dry_run=1", fd);
+      setParsed({ file, preview: pv });
+      const sug = pv.source_suggestion || {};
+      const inputs = pv.settings || {};
+      const rp = parseFloat(inputs.RiskPctOfEquity);
+      setF((p) => ({
+        ...p,
+        name: p.name || [sug.symbol, sug.resolution].filter(Boolean).join(" ").trim(),
+        symbol: sug.symbol || p.symbol,
+        resolution: sug.resolution || p.resolution,
+        pointValue: sug.point_value != null ? String(sug.point_value) : p.pointValue,
+        currency: sug.currency || p.currency,
+        initialCapital: sug.initial_capital != null ? String(sug.initial_capital) : p.initialCapital,
+        commission: sug.commission || p.commission,
+        slippage: sug.slippage || p.slippage,
+        riskPct: Number.isFinite(rp) ? String(rp) : p.riskPct,
+        universe: p.universe || sug.symbol || ""
+      }));
+    } catch (e) {
+      setSubErr(e);
+    }
+    setBusy(false);
+  };
+  const errors = {
+    name: !f.name.trim() ? "Name is required" : null,
+    riskPct: f.riskPct.trim() && !(parseFloat(f.riskPct) > 0 && parseFloat(f.riskPct) <= 100) ? "Risk must be in (0, 100]" : null
+  };
+  const valid = !errors.name && !errors.riskPct;
+  const buildBody = () => {
+    const risk = { ...model && model.risk_preset || {}, apply_regime_multiplier: f.regimeMult };
+    if (f.riskPct.trim()) risk.risk_pct = parseFloat(f.riskPct);
+    else delete risk.risk_pct;
+    if (f.matchWindow.trim()) risk.window_seconds = parseInt(f.matchWindow, 10);
+    else delete risk.window_seconds;
+    if (f.tp.trim()) risk.tp_methodology = f.tp.trim();
+    else delete risk.tp_methodology;
+    if (f.sl.trim()) risk.sl_methodology = f.sl.trim();
+    else delete risk.sl_methodology;
+    const strategy = {
+      ...model && model.strategy || {},
+      entry_logic: f.entry.trim(),
+      exit_logic: f.exit.trim(),
+      target_universe: f.universe.trim(),
+      notes: f.notes.trim()
+    };
+    const source = {};
+    if (f.app.trim()) source.app = f.app.trim();
+    if (f.symbol.trim()) source.symbol = f.symbol.trim();
+    if (f.resolution.trim()) source.resolution = f.resolution.trim();
+    if (f.pointValue.trim() && Number.isFinite(parseFloat(f.pointValue))) source.point_value = parseFloat(f.pointValue);
+    if (f.currency.trim()) source.currency = f.currency.trim();
+    if (f.initialCapital.trim() && Number.isFinite(parseFloat(f.initialCapital))) source.initial_capital = parseFloat(f.initialCapital);
+    if (f.commission.trim()) source.commission = f.commission.trim();
+    if (f.slippage.trim()) source.slippage = f.slippage.trim();
+    return {
+      name: f.name.trim(),
+      type: f.type,
+      description: f.desc.trim(),
+      risk_preset: risk,
+      strategy,
+      source: Object.keys(source).length > 1 || source.symbol ? source : editing ? model.source || {} : {},
+      tags: f.tags.split(",").map((t) => t.trim()).filter(Boolean)
+    };
+  };
+  const submit = async () => {
+    setTouched(true);
+    if (!valid || busy) return;
+    setBusy(true);
+    setSubErr(null);
+    const body = buildBody();
+    try {
+      if (editing) {
+        await _mdlSend("/api/models/" + model.id, "PUT", body);
+        onSave({ kind: "updated", modelId: model.id });
+      } else if (parsed) {
+        const fd = new FormData();
+        fd.append("file", parsed.file);
+        fd.append("app_id", "multicharts");
+        fd.append("payload", JSON.stringify(body));
+        const res = await _mdlUpload("/api/models/import", fd);
+        onSave({ kind: "created+imported", modelId: res.model_id, runId: res.run_id });
+      } else {
+        const res = await _mdlSend("/api/models", "POST", body);
+        onSave({ kind: "created", modelId: res.model_id });
+      }
+    } catch (e) {
+      setSubErr(e);
+      setBusy(false);
+    }
+  };
+  const seg = (val, label) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      key: val,
+      onClick: () => {
+        setMode(val);
+        if (val === "blank") setParsed(null);
+      },
+      style: {
+        flex: 1,
+        padding: "7px 0",
+        fontFamily: "var(--qe-ui)",
+        fontSize: "0.58rem",
+        fontWeight: 700,
+        letterSpacing: "0.04em",
+        cursor: "pointer",
+        border: "1px solid " + (mode === val ? "var(--qe-cyan)" : "var(--qe-line)"),
+        background: mode === val ? "var(--qe-bg-cyan)" : "transparent",
+        color: mode === val ? "var(--qe-cyan)" : "var(--qe-sub)"
+      }
+    },
+    label
+  );
+  const foot = busy ? { tone: "sub", busy: true, msg: parsed && !editing ? "uploading\u2026" : "saving\u2026" } : subErr ? { tone: "err", msg: qeFootCause(subErr) + " \u2014 " + String(subErr.message || "").slice(0, 60) } : parsed ? { tone: "ok", msg: `parsed ${parsed.file.name} \xB7 fields auto-filled` } : { tone: "sub", msg: "ok \xB7 local \u2014 nothing submitted yet" };
+  const pvk = parsed ? mdlRunKpis(parsed.preview.summary) : null;
+  return /* @__PURE__ */ React.createElement(
+    ModelDialog,
+    {
+      title: editing ? `Edit Model \xB7 ${model.name}` : "New Model",
+      width: 640,
+      onClose,
+      foot,
+      footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", onClick: onClose }, "Cancel"), /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          className: "qe-btn qe-btn-sm qe-btn-primary",
+          disabled: !valid || busy,
+          onClick: submit,
+          style: !valid || busy ? { opacity: 0.5, cursor: "not-allowed" } : {}
+        },
+        editing ? "Save changes" : parsed ? "Create model + import run" : "Create model"
+      ))
+    },
+    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 20, padding: "4px 6px" } }, !editing && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6 } }, seg("blank", "+ Blank model"), seg("import", "\u2913 From backtest report")), !editing && mode === "import" && /* @__PURE__ */ React.createElement(_MdlSec, { title: "Import Backtest Report", sub: "MultiCharts .xlsx / .xml" }, !parsed ? /* @__PURE__ */ React.createElement("div", { style: { border: "1px dashed var(--qe-line-2)", padding: "22px 16px", textAlign: "center", background: "var(--qe-panel)" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "1.3rem", color: "var(--qe-muted)", lineHeight: 1 } }, "\u2913"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.62rem", color: "var(--qe-sub)", marginTop: 8 } }, "Pick a report to auto-fill the model"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.52rem", color: "var(--qe-muted)", marginTop: 4 } }, "parses the Settings sheet \u2014 symbol, point value, resolution, risk inputs"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, justifyContent: "center", marginTop: 14 } }, busy ? /* @__PURE__ */ React.createElement(Spinner, { label: "parsing" }) : /* @__PURE__ */ React.createElement(_MdlFileBtn, { label: "Choose file\u2026", onFile: doParse }))) : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement(Badge, { tone: "ok" }, "PARSED"), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.6rem", color: "var(--qe-text)" } }, parsed.file.name), /* @__PURE__ */ React.createElement("div", { className: "qe-grow" }), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-ghost", onClick: () => setParsed(null) }, "Clear")), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 } }, /* @__PURE__ */ React.createElement(KpiTile, { label: "Net P/L", value: _mdlMoney(pvk.net, 0), color: _mdlPl(pvk.net) }), /* @__PURE__ */ React.createElement(KpiTile, { label: "Profit Factor", value: pvk.pf.toFixed(2), color: pvk.pf >= 1 ? "var(--qe-green)" : "var(--qe-red)" }), /* @__PURE__ */ React.createElement(KpiTile, { label: "Win %", value: pvk.winPct + "%" }), /* @__PURE__ */ React.createElement(KpiTile, { label: "Trades", value: pvk.nTrades })), (parsed.preview.warnings || []).map((w, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", gap: 6, alignItems: "center", fontSize: "0.54rem", color: "var(--qe-amber)" } }, /* @__PURE__ */ React.createElement("span", null, "!"), /* @__PURE__ */ React.createElement("span", null, w))), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.52rem", color: "var(--qe-muted)" } }, "Fields below were auto-filled from the report \u2014 edit anything before creating. Nothing is saved until you confirm."))), /* @__PURE__ */ React.createElement(_MdlSec, { title: "Identity" }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "2fr 1fr", gap: "14px 12px" } }, /* @__PURE__ */ React.createElement(_MdlField, { label: "Name", error: touched && errors.name }, /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: f.name, onChange: (e) => set("name", e.target.value), placeholder: "e.g. BTC Macro Trend" })), /* @__PURE__ */ React.createElement(_MdlField, { label: "Type" }, /* @__PURE__ */ React.createElement("select", { className: "qe-input qe-select", value: f.type, onChange: (e) => set("type", e.target.value) }, MDL_TYPES.map(([v, l]) => /* @__PURE__ */ React.createElement("option", { key: v, value: v }, l)))), /* @__PURE__ */ React.createElement(_MdlField, { label: "Description", hint: "One or two lines \u2014 shown on the library card." }, /* @__PURE__ */ React.createElement("textarea", { className: "qe-input", rows: 2, value: f.desc, onChange: (e) => set("desc", e.target.value), style: { resize: "vertical", lineHeight: 1.4 } })), /* @__PURE__ */ React.createElement(_MdlField, { label: "Tags", hint: "comma-separated" }, /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: f.tags, onChange: (e) => set("tags", e.target.value), placeholder: "trend, core" })))), /* @__PURE__ */ React.createElement(_MdlSec, { title: "Source Binding", sub: "where the model was backtested (\xA73 \u2014 the model owns it)" }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "14px 12px" } }, /* @__PURE__ */ React.createElement(_MdlField, { label: "Source app" }, /* @__PURE__ */ React.createElement("select", { className: "qe-input qe-select", value: f.app, onChange: (e) => set("app", e.target.value) }, MDL_SOURCE_APPS.concat(MDL_SOURCE_APPS.indexOf(f.app) < 0 && f.app ? [f.app] : []).map((a) => /* @__PURE__ */ React.createElement("option", { key: a }, a)))), /* @__PURE__ */ React.createElement(_MdlField, { label: "Symbol" }, /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: f.symbol, onChange: (e) => set("symbol", e.target.value), placeholder: "@ES" })), /* @__PURE__ */ React.createElement(_MdlField, { label: "Resolution" }, /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: f.resolution, onChange: (e) => set("resolution", e.target.value), placeholder: "1 Minute" })), /* @__PURE__ */ React.createElement(_MdlField, { label: "Point value" }, /* @__PURE__ */ React.createElement("input", { className: "qe-input", type: "number", step: "1", value: f.pointValue, onChange: (e) => set("pointValue", e.target.value), placeholder: "50" })), /* @__PURE__ */ React.createElement(_MdlField, { label: "Currency" }, /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: f.currency, onChange: (e) => set("currency", e.target.value), placeholder: "USD" })), /* @__PURE__ */ React.createElement(_MdlField, { label: "Initial capital" }, /* @__PURE__ */ React.createElement("input", { className: "qe-input", type: "number", step: "1000", value: f.initialCapital, onChange: (e) => set("initialCapital", e.target.value) })), /* @__PURE__ */ React.createElement(_MdlField, { label: "Commission" }, /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: f.commission, onChange: (e) => set("commission", e.target.value) })), /* @__PURE__ */ React.createElement(_MdlField, { label: "Slippage" }, /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: f.slippage, onChange: (e) => set("slippage", e.target.value) })))), /* @__PURE__ */ React.createElement(_MdlSec, { title: "Risk & Sizing Preset" }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px 12px" } }, /* @__PURE__ */ React.createElement(_MdlField, { label: "Risk / trade (%)", error: touched && errors.riskPct }, /* @__PURE__ */ React.createElement("input", { className: "qe-input", type: "number", step: "0.05", value: f.riskPct, onChange: (e) => set("riskPct", e.target.value) })), /* @__PURE__ */ React.createElement(_MdlField, { label: "Match window (s)" }, /* @__PURE__ */ React.createElement("input", { className: "qe-input", type: "number", step: "5", value: f.matchWindow, onChange: (e) => set("matchWindow", e.target.value) })), /* @__PURE__ */ React.createElement(_MdlField, { label: "TP methodology" }, /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: f.tp, onChange: (e) => set("tp", e.target.value), placeholder: "ATR \xD7 2.5" })), /* @__PURE__ */ React.createElement(_MdlField, { label: "SL methodology" }, /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: f.sl, onChange: (e) => set("sl", e.target.value), placeholder: "ATR \xD7 1.2" }))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 2 } }, /* @__PURE__ */ React.createElement(Switch, { checked: f.regimeMult, onChange: () => set("regimeMult", !f.regimeMult), accent: "var(--qe-cyan)" }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.6rem", color: "var(--qe-sub)" } }, "Apply regime multiplier"))), /* @__PURE__ */ React.createElement(_MdlSec, { title: "Strategy" }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px 12px" } }, /* @__PURE__ */ React.createElement(_MdlField, { label: "Entry logic" }, /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: f.entry, onChange: (e) => set("entry", e.target.value) })), /* @__PURE__ */ React.createElement(_MdlField, { label: "Exit logic" }, /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: f.exit, onChange: (e) => set("exit", e.target.value) }))), /* @__PURE__ */ React.createElement(_MdlField, { label: "Target universe" }, /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: f.universe, onChange: (e) => set("universe", e.target.value), placeholder: "e.g. BTCUSDT perp" })), /* @__PURE__ */ React.createElement(_MdlField, { label: "Notes", hint: "Freeform strategy definition." }, /* @__PURE__ */ React.createElement("textarea", { className: "qe-input", rows: 3, value: f.notes, onChange: (e) => set("notes", e.target.value), style: { resize: "vertical", lineHeight: 1.5 } })))))
+  );
+};
+const ImportModal = ({ model, onClose, onDone }) => {
+  const [step, setStep] = React.useState("source");
+  const [file, setFile] = React.useState(null);
+  const [preview, setPreview] = React.useState(null);
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState(null);
+  const doPreview = async (f) => {
+    setBusy(true);
+    setErr(null);
+    setFile(f);
+    try {
+      const fd = new FormData();
+      fd.append("file", f);
+      fd.append("app_id", "multicharts");
+      const pv = await _mdlUpload(`/models/${model.id}/backtest-upload?format=json&dry_run=1`, fd);
+      setPreview(pv);
+      setStep("preview");
+    } catch (e) {
+      setErr(e);
+      setStep("error");
+    }
+    setBusy(false);
+  };
+  const doConfirm = async () => {
+    if (!file || busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("app_id", "multicharts");
+      const res = await _mdlUpload(`/models/${model.id}/backtest-upload?format=json`, fd);
+      onDone(res);
+    } catch (e) {
+      setErr(e);
+      setStep("error");
+      setBusy(false);
+    }
+  };
+  const foot = busy ? { tone: "sub", busy: true, msg: step === "preview" ? "importing\u2026" : "parsing\u2026" } : err ? { tone: "err", msg: qeFootCause(err) + " \u2014 " + String(err.message || "").slice(0, 60) } : preview ? { tone: "ok", msg: `parsed ${preview.file} \xB7 nothing saved yet` } : { tone: "sub", msg: "ok \xB7 local \u2014 nothing uploaded yet" };
+  const pvk = preview ? mdlRunKpis(preview.summary) : null;
+  return /* @__PURE__ */ React.createElement(
+    ModelDialog,
+    {
+      title: `Import Report \u2192 ${model.name}`,
+      width: 480,
+      onClose,
+      foot,
+      footer: step === "preview" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", onClick: () => setStep("upload") }, "Back"), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-primary", disabled: busy, onClick: doConfirm }, "Confirm import")) : step === "error" ? /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", onClick: () => {
+        setErr(null);
+        setStep("upload");
+      } }, "Try another file") : step === "upload" ? /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", onClick: () => setStep("source") }, "Back") : null
+    },
+    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 14 } }, ["source", "upload", "preview"].map((s, i) => {
+      const active = step === s;
+      const done = ["source", "upload", "preview"].indexOf(step) > i || step === "error" && i < 2;
+      return /* @__PURE__ */ React.createElement("div", { key: s, style: { flex: 1, display: "flex", alignItems: "center", gap: 5 } }, /* @__PURE__ */ React.createElement("span", { style: {
+        width: 16,
+        height: 16,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+        border: `1px solid ${active ? "var(--qe-cyan)" : done ? "var(--qe-green)" : "var(--qe-faint)"}`,
+        color: active ? "var(--qe-cyan)" : done ? "var(--qe-green)" : "var(--qe-muted)",
+        fontSize: "0.5rem",
+        fontFamily: "var(--qe-mono)",
+        fontWeight: 700
+      } }, done ? "\u2713" : i + 1), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.5rem", textTransform: "uppercase", letterSpacing: "0.08em", color: active ? "var(--qe-cyan)" : "var(--qe-muted)" } }, s));
+    })),
+    step === "source" && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10 } }, /* @__PURE__ */ React.createElement(_MdlField, { label: "Source application", hint: "More backtesting apps will be supported over time." }, /* @__PURE__ */ React.createElement("select", { className: "qe-input qe-select", defaultValue: "MultiCharts" }, /* @__PURE__ */ React.createElement("option", null, "MultiCharts"))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "flex-end" } }, /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-primary", onClick: () => setStep("upload") }, "Next \u2192"))),
+    step === "upload" && /* @__PURE__ */ React.createElement("div", { style: { border: "1px dashed var(--qe-line-2)", padding: "26px 16px", textAlign: "center", background: "var(--qe-panel)" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "1.4rem", color: "var(--qe-muted)", lineHeight: 1 } }, "\u2913"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.62rem", color: "var(--qe-sub)", marginTop: 8 } }, "Pick a MultiCharts report"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.5rem", color: "var(--qe-muted)", marginTop: 3 } }, ".xlsx or .xml \u2014 performance summary + trade list"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, justifyContent: "center", marginTop: 12 } }, busy ? /* @__PURE__ */ React.createElement(Spinner, { label: "parsing" }) : /* @__PURE__ */ React.createElement(_MdlFileBtn, { label: "Choose file\u2026", onFile: doPreview }))),
+    step === "preview" && preview && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 7 } }, /* @__PURE__ */ React.createElement(Badge, { tone: "ok" }, "PARSED"), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.6rem", color: "var(--qe-text)" } }, preview.file)), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 7 } }, /* @__PURE__ */ React.createElement(KpiTile, { label: "Net Profit", value: _mdlMoney(pvk.net, 0), color: _mdlPl(pvk.net) }), /* @__PURE__ */ React.createElement(KpiTile, { label: "Profit Factor", value: pvk.pf.toFixed(2), color: pvk.pf >= 1.3 ? "var(--qe-green)" : "var(--qe-text)" }), /* @__PURE__ */ React.createElement(KpiTile, { label: "Win %", value: pvk.winPct + "%" }), /* @__PURE__ */ React.createElement(KpiTile, { label: "Max DD", value: pvk.maxDDPct + "%", color: "var(--qe-red)" }), /* @__PURE__ */ React.createElement(KpiTile, { label: "Sharpe", value: pvk.sharpe.toFixed(2) }), /* @__PURE__ */ React.createElement(KpiTile, { label: "Trades", value: pvk.nTrades })), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.54rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)" } }, preview.session_name, " \xB7 ", preview.trades_count, " trades \xB7 ", (preview.sheets || []).length, " sheets captured"), (preview.warnings || []).map((w, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", gap: 6, alignItems: "center", fontSize: "0.54rem", color: "var(--qe-amber)" } }, /* @__PURE__ */ React.createElement("span", null, "!"), /* @__PURE__ */ React.createElement("span", null, w)))),
+    step === "error" && /* @__PURE__ */ React.createElement(
+      EmptyState,
+      {
+        tone: "err",
+        glyph: "\u2717",
+        msg: "Import failed",
+        hint: err ? String(err.message || qeFootCause(err)) : "Unrecognized file format."
+      }
+    )
+  );
+};
+const ModelTabStrip = ({ models, active, onSelect, onNew }) => /* @__PURE__ */ React.createElement(
+  TabStrip,
+  {
+    value: active,
+    onChange: onSelect,
+    tabs: [["overview", "Overview"], ...(models || []).map((m) => [m.id, m.name])],
+    right: /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        className: "qe-btn qe-btn-sm qe-btn-ghost",
+        onClick: onNew,
+        title: "New model",
+        style: { alignSelf: "center", marginLeft: 6, fontSize: "0.9rem", lineHeight: 1, padding: "0 8px" }
+      },
+      "+"
+    )
+  }
+);
+const ModelsPage = () => {
+  const { data, err, foot: ovFoot, reload } = useAnaJson("/api/models/overview");
+  const models = data && data.models || [];
+  const [active, setActive] = React.useState("overview");
+  const [modal, setModal] = React.useState(null);
+  const importDoneRef = React.useRef(null);
+  const [toast, setToast] = React.useState(null);
+  const [confirmDel, setConfirmDel] = React.useState(false);
+  React.useEffect(() => {
+    setConfirmDel(false);
+  }, [active]);
+  React.useEffect(() => {
+    if (!confirmDel) return void 0;
+    const t = setTimeout(() => setConfirmDel(false), 4e3);
+    return () => clearTimeout(t);
+  }, [confirmDel]);
+  const model = active !== "overview" ? models.find((m) => m.id === active) || null : null;
+  React.useEffect(() => {
+    if (active !== "overview" && data && !models.some((m) => m.id === active)) setActive("overview");
+  }, [data, active]);
+  const toastTimer = React.useRef(null);
+  const flash = (msg) => {
+    setToast(msg);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 2600);
+  };
+  React.useEffect(() => () => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+  }, []);
+  const loadCalc = (id) => {
+    try {
+      history.replaceState(null, "", "?model_id=" + id + window.location.hash);
+    } catch (e) {
+    }
+    flash("Risk preset \u2192 Pre-Trade");
+    setTimeout(() => window.qeNav && window.qeNav("Pre-Trade"), 400);
+  };
+  const onFormSave = async (res) => {
+    setModal(null);
+    await reload();
+    if (res.kind === "updated") flash("Model updated");
+    else if (res.kind === "created+imported") {
+      flash("Model created + run imported");
+      setActive(res.modelId);
+    } else {
+      flash("Model created");
+      setActive(res.modelId);
+    }
+  };
+  const deleteModel = async () => {
+    if (!model) return;
+    setConfirmDel(false);
+    try {
+      await _mdlSend("/api/models/" + model.id, "DELETE");
+      setActive("overview");
+      reload();
+      flash("Model deleted");
+    } catch (e) {
+      flash("Delete failed: " + qeFootCause(e));
+    }
+  };
+  const onImportDone = (res) => {
+    setModal(null);
+    reload();
+    if (importDoneRef.current) {
+      try {
+        importDoneRef.current();
+      } catch (e) {
+      }
+      importDoneRef.current = null;
+    }
+    flash(`Backtest report imported (run #${res.run_id})`);
+  };
+  const subtitle = model ? `${model.name} \xB7 ${mdlTypeLabel(model.type)} model` : "reusable, exchange-agnostic trading models \xB7 performance via import";
+  const headerActions = model ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", onClick: () => setModal("edit") }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-on", onClick: () => loadCalc(model.id) }, "\u21AA Load into Pre-Trade"), confirmDel ? /* @__PURE__ */ React.createElement("span", { style: { display: "inline-flex", gap: 4, alignItems: "center" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.56rem", color: "var(--qe-red)", fontFamily: "var(--qe-mono)", fontWeight: 700, letterSpacing: "0.04em" } }, "DELETE \u201C", model.name, "\u201D + its runs?"), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-danger", onClick: deleteModel }, "Confirm"), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-ghost", onClick: () => setConfirmDel(false) }, "Cancel")) : /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-danger", onClick: () => setConfirmDel(true) }, "Delete")) : /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-primary", onClick: () => setModal("new") }, "+ New Model");
+  return /* @__PURE__ */ React.createElement("div", { className: "qe-scope", "data-screen-label": "06 Models", style: { width: "100%", height: "100%", background: "var(--qe-bg)", display: "flex", flexDirection: "column", overflow: "hidden", position: "relative" } }, /* @__PURE__ */ React.createElement(TopNavStd, { page: "Models", variant: "line", dense: true }), /* @__PURE__ */ React.createElement(PageHeader, { title: "Models", subtitle }, headerActions), /* @__PURE__ */ React.createElement(
+    ModelTabStrip,
+    {
+      models,
+      active,
+      onSelect: setActive,
+      onNew: () => setModal("new")
+    }
+  ), active === "overview" && (err && !data ? /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center" } }, /* @__PURE__ */ React.createElement(
+    EmptyState,
+    {
+      tone: "err",
+      glyph: "\u2717",
+      msg: "models feed unavailable",
+      hint: qeFootCause(err),
+      cta: /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", onClick: reload }, "Retry")
+    }
+  )) : /* @__PURE__ */ React.createElement(ModelOverview, { models, foot: ovFoot, onOpen: (m) => setActive(m.id), onNew: () => setModal("new") })), model && // key: a model switch remounts the whole view — no cross-model
+  // stale frame / phantom report fetch (P7 audit LOW-2).
+  /* @__PURE__ */ React.createElement(
+    ModelView,
+    {
+      key: model.id,
+      m: model,
+      ovFoot,
+      onImport: (refresh) => {
+        importDoneRef.current = refresh || null;
+        setModal("import");
+      },
+      onLoadCalc: () => loadCalc(model.id)
+    }
+  ), modal === "new" && /* @__PURE__ */ React.createElement(ModelFormModal, { onClose: () => setModal(null), onSave: onFormSave }), modal === "edit" && model && /* @__PURE__ */ React.createElement(ModelFormModal, { model, onClose: () => setModal(null), onSave: onFormSave }), modal === "import" && model && /* @__PURE__ */ React.createElement(ImportModal, { model, onClose: () => {
+    importDoneRef.current = null;
+    setModal(null);
+  }, onDone: onImportDone }), toast && /* @__PURE__ */ React.createElement("div", { style: {
+    position: "absolute",
+    bottom: 16,
+    left: "50%",
+    transform: "translateX(-50%)",
+    zIndex: 60,
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "7px 14px",
+    background: "var(--qe-card)",
+    border: "1px solid var(--qe-green)",
+    boxShadow: "0 8px 30px var(--qe-bg)"
+  } }, /* @__PURE__ */ React.createElement("span", { style: { width: 7, height: 7, borderRadius: "50%", background: "var(--qe-green)" } }), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.6rem", color: "var(--qe-text)" } }, toast)), /* @__PURE__ */ React.createElement(StatusFooter, null));
+};
+Object.assign(window, { ModelsPage, ModelTabStrip, ModelFormModal, ImportModal, ModelDialog });
+
+;
+
 /* ==== app-shell.jsx ==== */
 const LiveValueDemo = ({ id, base, jitter = 2, fmt, style }) => {
   const [v, setV] = React.useState(base);
@@ -7386,7 +8720,8 @@ const QE_PAGES = {
   // P4 — real page (pages-history.jsx)
   Analytics: AnalyticsPage,
   // P5 — real page (pages-analytics.jsx)
-  Models: _PagePlaceholder("Models", "P7"),
+  Models: ModelsPage,
+  // P7 — real page (pages-models.jsx)
   Regime: RegimePage,
   // P6 — real page (pages-regime.jsx)
   Config: ConfigPage,

@@ -23,10 +23,24 @@ Response conventions:
   banner (the list stays rendered). Catches the BASE ValueError — an
   unknown app_id raises plain ValueError from the registry while parse
   raises BacktestAdapterError; both must render, not 500 (P2 audit).
+
+v3.0 P7 additions (the React /v3 Models page):
+- JSON doors: `?format=json` on the backtest upload (errors become
+  JSON {"error"} with real status codes — a new lane, no htmx
+  constraint), plus GET /api/models/overview (G-M3), /{id}/runs,
+  /{id}/runs/{run_id}/report (G-M1), /{id}/usage (G-M6), and the
+  combined POST /api/models/import (G-M5; `?dry_run=1` = parse-preview,
+  no writes). All JSON exits ride _json_safe (F2 both-doors rule).
+- Every successful import now also stores the VERBATIM workbook capture
+  (G-M2) in report_json, stamps the source filename into
+  summary_json["source_file"] (G-M7), and auto-seeds the model's empty
+  source binding from the parsed Settings sheet (G-M4/§6-3b) — the
+  Jinja upload lane gets all three for free (shared path).
 """
 from __future__ import annotations
 
 import asyncio
+import json as _pyjson
 import logging
 import math
 from dataclasses import asdict
@@ -50,7 +64,15 @@ MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 
 # Raw JSON columns are internal storage — API/fragment consumers get the
 # decoded dicts only (P1 audit NIT-3).
-_RAW_JSON_KEYS = ("config_json", "risk_preset_json", "strategy_json")
+_RAW_JSON_KEYS = ("config_json", "risk_preset_json", "strategy_json",
+                  "source_json", "tags_json")
+
+
+def _json_safe_resp(payload, status_code: int = 200) -> JSONResponse:
+    """JSONResponse through the house _json_safe non-finite guard (F2
+    both-doors discipline; local import mirrors routes_analytics)."""
+    from api.routes_calculator import _json_safe
+    return JSONResponse(_json_safe(payload), status_code=status_code)
 
 
 def _clean(model: Dict[str, Any]) -> Dict[str, Any]:
@@ -65,6 +87,17 @@ def _clean(model: Dict[str, Any]) -> Dict[str, Any]:
 async def api_list_models():
     models = await db.list_potential_models()
     return JSONResponse([_clean(m) for m in models])
+
+
+# NB: declared BEFORE /api/models/{model_id} — FastAPI matches in
+# declaration order and the untyped path segment would otherwise
+# swallow "overview" into a 422.
+@router.get("/api/models/overview", response_class=JSONResponse)
+async def api_models_overview():
+    """G-M3: the library/overview feed — every model + latest-run
+    summary + equity sparkline + runs_count, batched (no N+1)."""
+    models = await db.list_models_overview()
+    return _json_safe_resp({"models": [_clean(m) for m in models]})
 
 
 @router.get("/api/models/{model_id}", response_class=JSONResponse)
@@ -104,13 +137,27 @@ def _validate_model_body(body: Dict[str, Any]) -> Optional[str]:
         return "Description must be a string"
     if body.get("type", "both") not in VALID_TYPES:
         return "Type must be macro, micro, or both"
-    for key in ("risk_preset", "strategy", "config"):
+    for key in ("risk_preset", "strategy", "config", "source"):
         if key in body and body[key] is not None:
             if not isinstance(body[key], dict):
                 return f"{key} must be an object"
             if _has_non_finite(body[key]):
                 return f"{key} must not contain NaN or Infinity values"
+    if "tags" in body and body["tags"] is not None:
+        tags = body["tags"]
+        if not isinstance(tags, list) or any(not isinstance(t, str) for t in tags):
+            return "tags must be a list of strings"
+        if len(tags) > 32 or any(len(t) > 48 for t in tags):
+            return "tags: at most 32 tags of at most 48 chars each"
     return None
+
+
+def _norm_tags(tags) -> "list | None":
+    """None passes through (update = leave untouched); a list is
+    trimmed + de-blanked."""
+    if tags is None:
+        return None
+    return [t.strip() for t in tags if t.strip()]
 
 
 async def _json_object_body(request: Request) -> "Dict[str, Any] | None":
@@ -144,6 +191,8 @@ async def api_create_model(request: Request):
         body.get("config", {}) or {},
         risk_preset=body.get("risk_preset"),
         strategy=body.get("strategy"),
+        source=body.get("source"),
+        tags=_norm_tags(body.get("tags")),
     )
     return JSONResponse({"model_id": model_id, "status": "created"})
 
@@ -169,6 +218,8 @@ async def api_update_model(request: Request, model_id: int):
         body.get("config", {}) or {},
         risk_preset=body.get("risk_preset"),
         strategy=body.get("strategy"),
+        source=body.get("source"),
+        tags=_norm_tags(body.get("tags")),
     )
     return JSONResponse({"status": "updated"})
 
@@ -177,6 +228,44 @@ async def api_update_model(request: Request, model_id: int):
 async def api_delete_model(model_id: int):
     await db.delete_potential_model(model_id)
     return JSONResponse({"status": "deleted"})
+
+
+# ── v3.0 P7 JSON doors (runs list · verbatim report · usage feed) ───────────
+
+@router.get("/api/models/{model_id}/runs", response_class=JSONResponse)
+async def api_model_runs(model_id: int):
+    """Imported-run list for a model (summary-only — the verbatim
+    capture rides the per-run report endpoint, never the list)."""
+    if not await db.get_potential_model(model_id):
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    runs = await db.list_model_backtests(model_id)
+    for r in runs:
+        r.pop("config_json", None)
+        r.pop("summary_json", None)
+    return _json_safe_resp({"runs": runs})
+
+
+@router.get("/api/models/{model_id}/runs/{run_id}/report",
+            response_class=JSONResponse)
+async def api_model_run_report(model_id: int, run_id: int):
+    """G-M1: one run with its verbatim workbook capture + equity +
+    normalized trades. `report` is null for engine-run / pre-P7 rows
+    (the UI falls back to the derived summary/trades)."""
+    data = await db.get_model_backtest_report(model_id, run_id)
+    if data is None:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    return _json_safe_resp(data)
+
+
+@router.get("/api/models/{model_id}/usage", response_class=JSONResponse)
+async def api_model_usage(model_id: int):
+    """G-M6: reverse attribution — closed positions + pre-trade plans
+    tagged with this model (open positions surface once closed; named
+    P7 deviation — no durable open-position model_id source)."""
+    if not await db.get_potential_model(model_id):
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    usage = await db.get_model_usage(model_id)
+    return _json_safe_resp(usage)
 
 
 # ── Page (v2.7 Phase 4 — moved here from 3.2 once the template existed) ─────
@@ -435,51 +524,156 @@ async def delete_model_form(model_id: int):
 
 # ── Backtest-report upload (the codebase's first multipart route) ───────────
 
-@router.post("/models/{model_id}/backtest-upload", response_class=HTMLResponse)
+def _upload_size_error(file: UploadFile, raw: "bytes | None") -> Optional[str]:
+    """The v2.7 Task C (F14) size discipline, shared by both import
+    routes: reject on the parser-measured UploadFile.size BEFORE read()
+    materializes it into RAM; the post-read check stays as the belt
+    (size can be None). Call once pre-read (raw=None), once post-read."""
+    n = len(raw) if raw is not None else (file.size or 0)
+    if n > MAX_UPLOAD_BYTES:
+        return (f"File too large ({n // (1024 * 1024)} MB > "
+                f"{MAX_UPLOAD_BYTES // (1024 * 1024)} MB).")
+    if raw is not None and not raw:
+        return "Empty file."
+    return None
+
+
+async def _parse_and_capture(app_id: str, raw: bytes, filename: str):
+    """Adapter parse (off-loop — v2.7 F8) + the G-M2 verbatim capture.
+    Returns (adapter, result, capture, warnings). Parse errors raise
+    ValueError (the caller renders); a capture failure AFTER a
+    successful parse degrades to capture=None with a warning — the
+    derived import still lands."""
+    adapter = get_backtest_adapter(app_id)  # unknown app_id: ValueError
+    result = await asyncio.to_thread(adapter.parse, raw, filename)
+    capture = None
+    if hasattr(adapter, "capture"):
+        try:
+            capture = await asyncio.to_thread(adapter.capture, raw, filename)
+        except ValueError as exc:
+            log.warning("[p7] capture failed after successful parse "
+                        "(app=%s file=%r): %s", app_id, filename, exc)
+    warnings = []
+    if not result.trades:
+        warnings.append("no trades parsed from the trade list")
+    if capture is None:
+        warnings.append("verbatim capture unavailable — run stores "
+                        "summary/trades only")
+    else:
+        # ANCHOR (P7 audit NIT): the sheet/setting names below are
+        # MultiCharts-specific inside an adapter-generic helper — fine
+        # while MC is the only capture-capable adapter; when adapter #2
+        # lands, move these expectations onto the adapter (e.g. an
+        # `expected_sheets` attr) instead of growing this if-ladder.
+        names = {s.get("name") for s in capture.get("sheets", [])}
+        if "Strategy Analysis" not in names:
+            warnings.append("'Strategy Analysis' sheet missing — summary "
+                            "derived from trades")
+    pv = _mc_to_float(result.settings.get("Point Value"))
+    if pv is None or pv <= 0:
+        warnings.append("Settings 'Point Value' missing/invalid — "
+                        "size_usdt uses point value 1.0")
+    return adapter, result, capture, warnings
+
+
+def _preview_payload(adapter, result, capture, warnings, filename: str) -> Dict[str, Any]:
+    """The shared dry-run preview shape (both import routes serve it —
+    one builder, no shape drift; P7 audit NIT fold)."""
+    return {
+        "preview": True,
+        "file": filename,
+        "source_app": adapter.app_id,
+        "session_name": result.session_name,
+        "summary": asdict(result.summary),
+        "settings": result.settings,
+        "trades_count": len(result.trades),
+        "sheets": [s.get("name") for s in (capture or {}).get("sheets", [])],
+        "warnings": warnings,
+        "source_suggestion": _source_from_settings(result.settings, adapter),
+    }
+
+
+def _mc_to_float(value):
+    """Deferred import of the MultiCharts tolerant coercer ($/,/% aware)
+    — reused for Settings-derived numbers, single source of truth."""
+    from core.backtest_adapters.multicharts import _to_float
+    return _to_float(value)
+
+
+def _source_from_settings(settings: Dict[str, str], adapter) -> Dict[str, Any]:
+    """G-M4/§6-3b: the model source binding derived from a parsed
+    Settings sheet. Only keys the sheet actually carries; {} when the
+    sheet yields nothing bindable (callers skip the seed)."""
+    if not settings:
+        return {}
+    out: Dict[str, Any] = {}
+    for key, setting in (("symbol", "Symbol Name"), ("resolution", "Compression"),
+                         ("currency", "Symbol Currency"),
+                         ("commission", "Commission"), ("slippage", "Slippage")):
+        v = (settings.get(setting) or "").strip()
+        if v:
+            out[key] = v
+    for key, setting in (("point_value", "Point Value"),
+                         ("initial_capital", "Initial Capital")):
+        v = _mc_to_float(settings.get(setting))
+        if v is not None and math.isfinite(v) and v > 0:
+            out[key] = v
+    if not out:
+        return {}
+    out["app"] = getattr(adapter, "display_name", "") or adapter.app_id
+    return out
+
+
+@router.post("/models/{model_id}/backtest-upload")
 async def upload_model_backtest(
     request: Request,
     model_id: int,
     file: UploadFile = File(...),
     app_id: str = Form("multicharts"),
+    format: str = "",
+    dry_run: str = "",
 ):
     """Parse an external report and attach it to the model as an imported
-    run. Every response is 200 + the backtest-list fragment (with an error
-    banner on failure) so the list container swaps cleanly either way."""
-    async def _list_response(error: str = "") -> HTMLResponse:
+    run. Default (htmx) lane: every response is 200 + the backtest-list
+    fragment (with an error banner on failure) so the list container
+    swaps cleanly either way. `?format=json` (v3.0 P7): JSON responses
+    with real status codes; `&dry_run=1` = parse-preview, NO writes."""
+    is_json = format == "json"
+    want_dry = dry_run in ("1", "true", "yes")
+
+    async def _list_response(error: str = "", status: int = 400):
+        if is_json:
+            return JSONResponse({"error": error}, status_code=status)
         runs = await db.list_model_backtests(model_id)
         return HTMLResponse(_render_fragment(
             "fragments/model_backtest_list.html", runs=runs, error=error,
         ))
 
+    # P7 audit LOW-1 fold: the htmx lane has no preview UI, so a dry_run
+    # request outside the JSON lane must FAIL LOUD, never silently commit
+    # a real import (the sibling /api/models/import honors bare dry_run).
+    if want_dry and not is_json:
+        return JSONResponse(
+            {"error": "dry_run requires format=json"}, status_code=400)
     if not await db.get_potential_model(model_id):
-        return await _list_response("Model not found.")
-    # v2.7 Task C (holistic-audit F14): reject on the parser-measured
-    # UploadFile.size (starlette tallies it while spooling the received
-    # part to disk) BEFORE read() materializes it into RAM. The
-    # post-read check stays as the belt — size can be None.
-    if file.size and file.size > MAX_UPLOAD_BYTES:
-        return await _list_response(
-            f"File too large ({file.size // (1024 * 1024)} MB > "
-            f"{MAX_UPLOAD_BYTES // (1024 * 1024)} MB)."
-        )
+        return await _list_response("Model not found.", status=404)
+    err = _upload_size_error(file, None)
+    if err:
+        return await _list_response(err)
     raw = await file.read()
-    if not raw:
-        return await _list_response("Empty file.")
-    if len(raw) > MAX_UPLOAD_BYTES:
-        return await _list_response(
-            f"File too large ({len(raw) // (1024 * 1024)} MB > "
-            f"{MAX_UPLOAD_BYTES // (1024 * 1024)} MB)."
-        )
+    err = _upload_size_error(file, raw)
+    if err:
+        return await _list_response(err)
+    filename = file.filename or ""
     try:
-        adapter = get_backtest_adapter(app_id)  # unknown app_id: ValueError
-        # v2.7 Task C (holistic-audit F8): the parse is synchronous openpyxl
-        # CPU work — ~100-500ms for the real export, seconds at the cap —
-        # on the SAME event loop that processes Binance WS fills. Off-loop
-        # per the house idiom (asyncio.to_thread — cf. order_enrichment,
-        # context_query, link_actions).
-        result = await asyncio.to_thread(adapter.parse, raw, file.filename or "")
+        adapter, result, capture, warnings = await _parse_and_capture(
+            app_id, raw, filename)
     except ValueError as exc:  # includes BacktestAdapterError
         return await _list_response(str(exc))
+
+    if want_dry:
+        return _json_safe_resp(
+            _preview_payload(adapter, result, capture, warnings, filename))
 
     payload = asdict(result)
     # §6-3b: persist the Settings-sheet params read-only — they ride
@@ -487,14 +681,103 @@ async def upload_model_backtest(
     # the run LIST (model_backtest_list.html; Task D/F12 — there is no
     # separate run-detail view in the minimal v2.7 UI).
     payload["summary"]["settings"] = payload.pop("settings", {})
+    payload["summary"]["source_file"] = filename  # G-M7
     try:
-        await db.create_model_backtest(model_id, adapter.app_id, payload)
+        session_id = await db.create_model_backtest(
+            model_id, adapter.app_id, payload, report=capture)
     except Exception:
         # create_model_backtest is atomic (deletes its session on failure),
         # so nothing was saved.
         log.exception("backtest import failed post-parse (model %s)", model_id)
-        return await _list_response("Import failed after parse — nothing saved.")
+        return await _list_response(
+            "Import failed after parse — nothing saved.", status=500)
+    seeded = await db.seed_model_source_if_empty(
+        model_id, _source_from_settings(result.settings, adapter))
+    if is_json:
+        return _json_safe_resp({
+            "run_id": session_id,
+            "model_id": model_id,
+            "file": filename,
+            "summary": payload["summary"],
+            "warnings": warnings,
+            "source_seeded": seeded,
+        })
     return await _list_response()
+
+
+@router.post("/api/models/import", response_class=JSONResponse)
+async def api_create_model_and_import(
+    file: UploadFile = File(...),
+    app_id: str = Form("multicharts"),
+    payload: str = Form(""),
+    dry_run: str = "",
+):
+    """G-M5: combined create-model-and-import (JSON, multipart).
+    `payload` = the JSON model body (same shape as POST /api/models).
+    `?dry_run=1` = parse-preview only — no model, no run, no payload
+    needed (the create-form's autofill lane). On an import failure the
+    just-created model is rolled back — the operation is all-or-nothing."""
+    err = _upload_size_error(file, None)
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
+    raw = await file.read()
+    err = _upload_size_error(file, raw)
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
+    filename = file.filename or ""
+    try:
+        adapter, result, capture, warnings = await _parse_and_capture(
+            app_id, raw, filename)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+    source_suggestion = _source_from_settings(result.settings, adapter)
+    if dry_run in ("1", "true", "yes"):
+        return _json_safe_resp(
+            _preview_payload(adapter, result, capture, warnings, filename))
+
+    try:
+        body = _pyjson.loads(payload) if payload else None
+    except ValueError:
+        body = None
+    if not isinstance(body, dict):
+        return JSONResponse(
+            {"error": "payload must be a JSON object (the model body)"},
+            status_code=400)
+    verr = _validate_model_body(body)
+    if verr:
+        return JSONResponse({"error": verr}, status_code=400)
+    model_id = await db.create_potential_model(
+        body.get("name", "").strip(),
+        body.get("type", "both"),
+        body.get("description", "").strip(),
+        body.get("config", {}) or {},
+        risk_preset=body.get("risk_preset"),
+        strategy=body.get("strategy"),
+        # An explicit source wins; otherwise bind the import's Settings.
+        source=body.get("source") or source_suggestion or None,
+        tags=_norm_tags(body.get("tags")),
+    )
+    imp = asdict(result)
+    imp["summary"]["settings"] = imp.pop("settings", {})
+    imp["summary"]["source_file"] = filename  # G-M7
+    try:
+        run_id = await db.create_model_backtest(
+            model_id, adapter.app_id, imp, report=capture)
+    except Exception:
+        log.exception("create+import: import failed post-create "
+                      "(model %s rolled back)", model_id)
+        await db.delete_potential_model(model_id)
+        return JSONResponse(
+            {"error": "Import failed after parse — model not created."},
+            status_code=500)
+    return _json_safe_resp({
+        "model_id": model_id,
+        "run_id": run_id,
+        "file": filename,
+        "summary": imp["summary"],
+        "warnings": warnings,
+    })
 
 
 # ── Calculator prefill (3.5 — consumed by the Phase-5 picker) ────────────────

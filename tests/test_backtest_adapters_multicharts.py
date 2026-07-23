@@ -254,6 +254,7 @@ def test_trade_and_equity_key_parity_with_db_columns():
     assert trade_keys == {
         "symbol", "side", "entry_dt", "exit_dt", "entry_price", "exit_price",
         "size_usdt", "r_multiple", "pnl_usdt", "regime_label", "exit_reason",
+        "contracts",  # v3.0 P7 (G-M7): raw contract count, column added
     }
     equity_keys = set(asdict(result.equity_curve[0]).keys())
     assert equity_keys == {"dt", "equity", "drawdown"}

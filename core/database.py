@@ -288,7 +288,11 @@ CREATE TABLE IF NOT EXISTS backtest_sessions (
     -- post-ALTER index block instead (executescript-before-ALTER
     -- ordering trap; cf. the T160 install-ordering comment below).
     model_id    INTEGER DEFAULT NULL,
-    source_app  TEXT    NOT NULL DEFAULT ''
+    source_app  TEXT    NOT NULL DEFAULT '',
+    -- v3.0 P7 (G-M1): the VERBATIM whole-workbook capture for imported
+    -- runs ({"format":"workbook.v1","sheets":[…]}) — every sheet, every
+    -- cell, type+sign preserving. '{}' = engine-run / pre-P7 import.
+    report_json TEXT    NOT NULL DEFAULT '{}'
 );
 
 CREATE TABLE IF NOT EXISTS backtest_trades (
@@ -301,6 +305,8 @@ CREATE TABLE IF NOT EXISTS backtest_trades (
     entry_price  REAL    NOT NULL DEFAULT 0,
     exit_price   REAL    NOT NULL DEFAULT 0,
     size_usdt    REAL    NOT NULL DEFAULT 0,
+    -- v3.0 P7 (G-M7): raw contract count alongside the dollar notional.
+    contracts    REAL    NOT NULL DEFAULT 0,
     r_multiple   REAL    NOT NULL DEFAULT 0,
     pnl_usdt     REAL    NOT NULL DEFAULT 0,
     regime_label TEXT    NOT NULL DEFAULT '',
@@ -331,7 +337,12 @@ CREATE TABLE IF NOT EXISTS potential_models (
     -- update_potential_model, NULL = never updated.
     risk_preset_json TEXT NOT NULL DEFAULT '{}',
     strategy_json    TEXT NOT NULL DEFAULT '{}',
-    updated_at       TEXT
+    updated_at       TEXT,
+    -- v3.0 P7 (G-M4, §3 RATIFIED): the model OWNS its backtest source
+    -- binding (app/symbol/resolution/point value/…) + free tags. The
+    -- ACCOUNT is the exchange-agnostic entity, not the model.
+    source_json      TEXT NOT NULL DEFAULT '{}',
+    tags_json        TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE TABLE IF NOT EXISTS regime_signals (
@@ -897,6 +908,15 @@ class DatabaseManager(
             "ALTER TABLE backtest_sessions ADD COLUMN source_app TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE pre_trade_log ADD COLUMN model_id INTEGER DEFAULT NULL",
             "ALTER TABLE closed_positions ADD COLUMN model_id INTEGER DEFAULT NULL",
+            # ── v3.0 P7: models tab (G-M1 report store · G-M4 source+tags
+            # · G-M7 contract count). Dual-track twin: migration
+            # 015_v3_0_p7_models_global.sql covers split-DB setups. All
+            # additive; no index (report reads ride the session PK,
+            # overview reads ride idx_bt_sessions_model).
+            "ALTER TABLE backtest_sessions ADD COLUMN report_json TEXT NOT NULL DEFAULT '{}'",
+            "ALTER TABLE backtest_trades ADD COLUMN contracts REAL NOT NULL DEFAULT 0",
+            "ALTER TABLE potential_models ADD COLUMN source_json TEXT NOT NULL DEFAULT '{}'",
+            "ALTER TABLE potential_models ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]'",
         ]:
             try:
                 await self._conn.execute(migration)

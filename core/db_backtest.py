@@ -95,6 +95,7 @@ class BacktestMixin:
                 float(t.get("entry_price", 0)),
                 float(t.get("exit_price", 0)),
                 float(t.get("size_usdt", 0)),
+                float(t.get("contracts", 0)),
                 float(t.get("r_multiple", 0)),
                 float(t.get("pnl_usdt", 0)),
                 t.get("regime_label", ""),
@@ -107,8 +108,8 @@ class BacktestMixin:
         await self._conn.executemany(
             """INSERT INTO backtest_trades
                (session_id, symbol, side, entry_dt, exit_dt, entry_price, exit_price,
-                size_usdt, r_multiple, pnl_usdt, regime_label, exit_reason)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                size_usdt, contracts, r_multiple, pnl_usdt, regime_label, exit_reason)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             rows,
         )
         await self._conn.commit()

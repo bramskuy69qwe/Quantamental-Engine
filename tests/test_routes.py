@@ -92,6 +92,7 @@ API_ROUTES = [
     "/manifest.json",
     "/service-worker.js",
     "/api/models",  # v2.7 P3: JSON contract smoke
+    "/api/models/overview",  # v3.0 P7 G-M3: overview feed smoke
     # v3.0 P1 backend gaps (JSON contract smoke):
     "/api/state",
     "/api/dashboard/snapshot",

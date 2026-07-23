@@ -8,11 +8,14 @@ log = logging.getLogger("database")
 
 
 def _decode_model_row(row) -> Dict[str, Any]:
-    """dict(row) with the JSON columns decoded (config/risk_preset/strategy)."""
+    """dict(row) with the JSON columns decoded (config/risk_preset/strategy
+    + the v3.0 P7 source/tags)."""
     d = dict(row)
     d["config"] = _json.loads(d.get("config_json") or "{}")
     d["risk_preset"] = _json.loads(d.get("risk_preset_json") or "{}")
     d["strategy"] = _json.loads(d.get("strategy_json") or "{}")
+    d["source"] = _json.loads(d.get("source_json") or "{}")
+    d["tags"] = _json.loads(d.get("tags_json") or "[]")
     return d
 
 
@@ -23,19 +26,24 @@ class ModelsMixin:
         self, name: str, model_type: str, description: str, config: Dict[str, Any],
         risk_preset: Optional[Dict[str, Any]] = None,
         strategy: Optional[Dict[str, Any]] = None,
+        source: Optional[Dict[str, Any]] = None,
+        tags: Optional[list] = None,
     ) -> int:
         """Insert a new potential_models row; return new id.
 
-        risk_preset / strategy are optional (v2.7) — omitted writes '{}'
-        so pre-v2.7 callers are unchanged. updated_at stays NULL on
-        create (NULL = never updated; update_potential_model stamps it).
+        risk_preset / strategy (v2.7) and source / tags (v3.0 P7 G-M4)
+        are optional — omitted writes '{}'/'[]' so earlier callers are
+        unchanged. updated_at stays NULL on create (NULL = never
+        updated; update_potential_model stamps it).
         """
         async with self._conn.execute(
             """INSERT INTO potential_models
-               (name, type, description, config_json, risk_preset_json, strategy_json)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+               (name, type, description, config_json, risk_preset_json,
+                strategy_json, source_json, tags_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (name, model_type, description, _json.dumps(config),
-             _json.dumps(risk_preset or {}), _json.dumps(strategy or {})),
+             _json.dumps(risk_preset or {}), _json.dumps(strategy or {}),
+             _json.dumps(source or {}), _json.dumps(tags or [])),
         ) as cur:
             new_id = cur.lastrowid
         await self._conn.commit()
@@ -64,11 +72,14 @@ class ModelsMixin:
         description: str, config: Dict[str, Any],
         risk_preset: Optional[Dict[str, Any]] = None,
         strategy: Optional[Dict[str, Any]] = None,
+        source: Optional[Dict[str, Any]] = None,
+        tags: Optional[list] = None,
     ) -> None:
         """Overwrite name/type/description/config; stamp updated_at.
 
-        risk_preset / strategy: None = leave the stored value untouched
-        (pre-v2.7 callers don't pass them); a dict overwrites.
+        risk_preset / strategy / source / tags: None = leave the stored
+        value untouched (earlier callers don't pass them); a value
+        overwrites.
         """
         sets = ["name=?", "type=?", "description=?", "config_json=?",
                 "updated_at=datetime('now')"]
@@ -79,6 +90,12 @@ class ModelsMixin:
         if strategy is not None:
             sets.append("strategy_json=?")
             params.append(_json.dumps(strategy))
+        if source is not None:
+            sets.append("source_json=?")
+            params.append(_json.dumps(source))
+        if tags is not None:
+            sets.append("tags_json=?")
+            params.append(_json.dumps(tags))
         params.append(model_id)
         await self._conn.execute(
             f"UPDATE potential_models SET {', '.join(sets)} WHERE id=?",
@@ -110,12 +127,16 @@ class ModelsMixin:
 
     async def create_model_backtest(
         self, model_id: int, source_app: str, normalized: Dict[str, Any],
+        report: Optional[Dict[str, Any]] = None,
     ) -> int:
         """One-path import: session + trades + equity + finish.
 
         ``normalized`` is the adapter output (v2.7 plan §2.1 shape):
         {session_name, summary: dict, trades: [dict], equity_curve:
         [dict]}. date_from/date_to come from summary.period_start/_end.
+        ``report`` (v3.0 P7 G-M1) is the verbatim workbook capture,
+        stored in report_json; None leaves the '{}' default (legacy
+        callers / apps without a capture lane).
         Returns the new backtest_sessions id (status 'completed').
 
         Transactional shape (v2.7 Task C, audit F9): the four steps
@@ -145,6 +166,12 @@ class ModelsMixin:
             await self.insert_backtest_equity(
                 session_id, normalized.get("equity_curve") or []
             )
+            if report is not None:
+                await self._conn.execute(
+                    "UPDATE backtest_sessions SET report_json=? WHERE id=?",
+                    (_json.dumps(report), session_id),
+                )
+                await self._conn.commit()
             await self.finish_backtest_session(session_id, "completed", summary)
         except Exception:
             # No phantom 'running' rows: a mid-import failure (e.g. an
@@ -159,10 +186,20 @@ class ModelsMixin:
             raise
         return session_id
 
+    # Run-list / overview column set — deliberately EXCLUDES report_json:
+    # the verbatim capture can be hundreds of KB and belongs only to the
+    # single-run report fetch (get_model_backtest_report).
+    _RUN_LIST_COLS = (
+        "id, created_at, name, type, status, date_from, date_to, "
+        "config_json, summary_json, model_id, source_app"
+    )
+
     async def list_model_backtests(self, model_id: int) -> List[Dict[str, Any]]:
-        """All imported runs for a model, newest first, JSON decoded."""
+        """All imported runs for a model, newest first, JSON decoded
+        (WITHOUT the verbatim report_json — see _RUN_LIST_COLS)."""
         async with self._conn.execute(
-            "SELECT * FROM backtest_sessions WHERE model_id=? ORDER BY id DESC",
+            f"SELECT {self._RUN_LIST_COLS} FROM backtest_sessions "
+            "WHERE model_id=? ORDER BY id DESC",
             (model_id,),
         ) as cur:
             rows = await cur.fetchall()
@@ -173,6 +210,141 @@ class ModelsMixin:
             d["summary"] = _json.loads(d.get("summary_json") or "{}")
             result.append(d)
         return result
+
+    # ── v3.0 P7: report fetch / overview feed / usage reverse feed ──────────
+
+    async def get_model_backtest_report(
+        self, model_id: int, run_id: int,
+    ) -> Optional[Dict[str, Any]]:
+        """One imported run WITH its verbatim capture + equity + trades
+        (G-M1). None when the run doesn't exist or belongs to another
+        model (the caller 404s — never leak a cross-model run)."""
+        async with self._conn.execute(
+            "SELECT * FROM backtest_sessions WHERE id=? AND model_id=?",
+            (run_id, model_id),
+        ) as cur:
+            row = await cur.fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["config"] = _json.loads(d.get("config_json") or "{}")
+        d["summary"] = _json.loads(d.get("summary_json") or "{}")
+        report = _json.loads(d.pop("report_json", None) or "{}")
+        d.pop("config_json", None)
+        d.pop("summary_json", None)
+        equity = await self.get_backtest_equity(run_id)
+        trades = await self.get_backtest_trades(run_id)
+        return {
+            "run": d,
+            # '{}' (engine-run / pre-P7 import) → None: the UI keys its
+            # "no verbatim capture" fallback on null, not shape-sniffing.
+            # isinstance guard (P7 audit NIT): corrupt local state (a
+            # non-dict report_json) degrades to null, never 500s.
+            "report": report if isinstance(report, dict) and report.get("sheets") else None,
+            "equity": equity,
+            "trades": trades,
+        }
+
+    async def list_models_overview(self, spark_points: int = 48) -> List[Dict[str, Any]]:
+        """The library/overview feed (G-M3): every model with its
+        latest COMPLETED imported run's summary + a downsampled equity
+        sparkline + runs_count — batched (4 queries total), no N+1.
+        """
+        models = await self.list_potential_models()
+        if not models:
+            return []
+        # Latest completed run + total runs per model, one scan.
+        async with self._conn.execute(
+            "SELECT model_id, MAX(id) AS latest_id, COUNT(*) AS n "
+            "FROM backtest_sessions "
+            "WHERE model_id IS NOT NULL AND status='completed' "
+            "GROUP BY model_id"
+        ) as cur:
+            agg = {r["model_id"]: (r["latest_id"], r["n"]) for r in await cur.fetchall()}
+        latest_ids = [v[0] for v in agg.values()]
+        runs: Dict[int, Dict[str, Any]] = {}
+        if latest_ids:
+            ph = ",".join("?" * len(latest_ids))
+            async with self._conn.execute(
+                f"SELECT {self._RUN_LIST_COLS} FROM backtest_sessions "
+                f"WHERE id IN ({ph})",
+                latest_ids,
+            ) as cur:
+                for r in await cur.fetchall():
+                    d = dict(r)
+                    d["summary"] = _json.loads(d.get("summary_json") or "{}")
+                    d.pop("summary_json", None)
+                    d.pop("config_json", None)
+                    runs[d["id"]] = d
+            # Equity for all latest runs in one scan; stride-downsample
+            # per run to <= spark_points (keep first + last).
+            eq: Dict[int, List[float]] = {}
+            async with self._conn.execute(
+                f"SELECT session_id, equity FROM backtest_equity "
+                f"WHERE session_id IN ({ph}) ORDER BY session_id, dt ASC",
+                latest_ids,
+            ) as cur:
+                for r in await cur.fetchall():
+                    eq.setdefault(r["session_id"], []).append(r["equity"])
+            for sid, series in eq.items():
+                if len(series) > spark_points:
+                    step = (len(series) - 1) / (spark_points - 1)
+                    series = [series[round(i * step)] for i in range(spark_points)]
+                if sid in runs:
+                    runs[sid]["spark"] = series
+        out = []
+        for m in models:
+            latest_id, n = agg.get(m["id"], (None, 0))
+            run = runs.get(latest_id) if latest_id else None
+            out.append({
+                **m,
+                "runs_count": n,
+                "latest_run": run,
+                "spark": (run or {}).pop("spark", []) if run else [],
+            })
+        return out
+
+    async def get_model_usage(
+        self, model_id: int, closed_limit: int = 100, plan_limit: int = 50,
+    ) -> Dict[str, Any]:
+        """Reverse attribution feed (G-M6): closed positions + pre-trade
+        plans tagged with this model. Live/open positions are NOT
+        queried server-side (no durable open-position model_id source;
+        they appear here once closed — named P7 deviation)."""
+        async with self._conn.execute(
+            "SELECT id, terminal_position_id, symbol, direction, quantity, "
+            "net_pnl, realized_pnl, entry_time_ms, exit_time_ms "
+            "FROM closed_positions WHERE model_id=? "
+            "ORDER BY exit_time_ms DESC LIMIT ?",
+            (model_id, closed_limit),
+        ) as cur:
+            closed = [dict(r) for r in await cur.fetchall()]
+        async with self._conn.execute(
+            "SELECT id, calc_id, ticker, side, timestamp, status "
+            "FROM pre_trade_log WHERE model_id=? "
+            "ORDER BY id DESC LIMIT ?",
+            (model_id, plan_limit),
+        ) as cur:
+            plans = [dict(r) for r in await cur.fetchall()]
+        return {"closed": closed, "plans": plans}
+
+    async def seed_model_source_if_empty(
+        self, model_id: int, source: Dict[str, Any],
+    ) -> bool:
+        """§6-3b auto-seed: write the import-derived source binding ONLY
+        when the model has none — an operator-entered source is never
+        overwritten by an upload. True when the seed was applied."""
+        if not source:
+            return False
+        async with self._conn.execute(
+            "UPDATE potential_models SET source_json=? "
+            "WHERE id=? AND (source_json IS NULL OR source_json='' "
+            "OR source_json='{}')",
+            (_json.dumps(source), model_id),
+        ) as cur:
+            seeded = bool(cur.rowcount)
+        await self._conn.commit()
+        return seeded
 
     async def get_model_names_by_ids(
         self, model_ids: Iterable[int],
