@@ -917,7 +917,7 @@ const _baseChart = (opts = {}) => ({
   grid: { left: 38, right: 8, top: 6, bottom: 18, ...opts.grid },
   tooltip: {
     trigger: "axis",
-    backgroundColor: "#000",
+    backgroundColor: QE_ECHARTS_THEME.bg,
     borderColor: QE_ECHARTS_THEME.cyan,
     borderWidth: 1,
     padding: [4, 8],
@@ -1146,7 +1146,7 @@ const ScatterChart = ({ points, height = "100%", xName = "X", yName = "Y" }) => 
       ..._baseChart({ grid: { left: 48, right: 14, top: 18, bottom: 38 } }),
       tooltip: {
         trigger: "item",
-        backgroundColor: "#000",
+        backgroundColor: QE_ECHARTS_THEME.bg,
         borderColor: QE_ECHARTS_THEME.cyan,
         borderWidth: 1,
         textStyle: { color: QE_ECHARTS_THEME.text, fontSize: 11, fontFamily: "JetBrains Mono, monospace" },
@@ -5165,7 +5165,7 @@ const AnaHistChart = ({ bins, color = "var(--qe-cyan)", height = "100%", unit = 
     ..._baseChart({ grid: { left: 30, right: 10, top: 18, bottom: 20 } }),
     tooltip: {
       trigger: "axis",
-      backgroundColor: "#000",
+      backgroundColor: QE_ECHARTS_THEME.bg,
       borderColor: QE_ECHARTS_THEME.cyan,
       borderWidth: 1,
       padding: [4, 8],
@@ -5216,7 +5216,7 @@ const AnaDivergingBars = ({ rows, height = "100%", fmt = (v) => v.toFixed(2) }) 
     ..._baseChart({ grid: { left: 34, right: 10, top: 16, bottom: 30 } }),
     tooltip: {
       trigger: "axis",
-      backgroundColor: "#000",
+      backgroundColor: QE_ECHARTS_THEME.bg,
       borderColor: QE_ECHARTS_THEME.cyan,
       borderWidth: 1,
       padding: [4, 8],
@@ -5289,7 +5289,7 @@ const AnaExecScatter = ({ points, height = "100%" }) => {
       ..._baseChart({ grid: { left: 46, right: 16, top: 14, bottom: 40 } }),
       tooltip: {
         trigger: "item",
-        backgroundColor: "#000",
+        backgroundColor: QE_ECHARTS_THEME.bg,
         borderColor: QE_ECHARTS_THEME.cyan,
         borderWidth: 1,
         padding: [4, 8],
@@ -6178,7 +6178,7 @@ const TimelineSvg = ({ data, style = "swim" }) => {
     const segs = _regimeSegs(data);
     const tip = {
       trigger: "item",
-      backgroundColor: "#000",
+      backgroundColor: QE_ECHARTS_THEME.bg,
       borderColor: QE_ECHARTS_THEME.cyan,
       borderWidth: 1,
       padding: [4, 8],
@@ -6287,7 +6287,7 @@ const TimelineSvg = ({ data, style = "swim" }) => {
                     text: lbl,
                     x: x0[0] + w / 2,
                     y: x0[1],
-                    fill: "#000",
+                    fill: QE_ECHARTS_THEME.bg,
                     opacity: 0.6,
                     font: "700 9px JetBrains Mono, monospace",
                     textAlign: "center",
@@ -6330,7 +6330,7 @@ ${(REGIME_INFO[k] || {}).label || "\u2014"}`;
             cellSize: ["auto", 15],
             range: [data[0].date, data[n - 1].date],
             orient: "horizontal",
-            itemStyle: { color: QE_ECHARTS_THEME.bg, borderColor: "#000", borderWidth: 1.5 },
+            itemStyle: { color: QE_ECHARTS_THEME.bg, borderColor: QE_ECHARTS_THEME.bg, borderWidth: 1.5 },
             dayLabel: { color: muted, fontSize: 8, fontFamily: "JetBrains Mono, monospace", firstDay: 1 },
             monthLabel: { color: sub, fontSize: 9, fontFamily: "JetBrains Mono, monospace" },
             yearLabel: { show: false },
@@ -6340,7 +6340,7 @@ ${(REGIME_INFO[k] || {}).label || "\u2014"}`;
             type: "heatmap",
             coordinateSystem: "calendar",
             data: cells,
-            itemStyle: { borderColor: "#000", borderWidth: 1.5 }
+            itemStyle: { borderColor: QE_ECHARTS_THEME.bg, borderWidth: 1.5 }
           }]
         }
       };
@@ -6378,7 +6378,7 @@ ${(REGIME_INFO[k] || {}).label || "\u2014"}`;
         grid: { left: 38, right: 10, top: 10, bottom: 20 },
         tooltip: {
           trigger: "axis",
-          backgroundColor: "#000",
+          backgroundColor: QE_ECHARTS_THEME.bg,
           borderColor: QE_ECHARTS_THEME.cyan,
           borderWidth: 1,
           padding: [6, 9],
@@ -6460,7 +6460,7 @@ const SignalChart = ({ data, color, thresholds = [], decimals = 2, unit = "", he
       grid: { left: 42, right: 8, top: 8, bottom: 6 },
       tooltip: {
         trigger: "axis",
-        backgroundColor: "#000",
+        backgroundColor: QE_ECHARTS_THEME.bg,
         borderColor: QE_ECHARTS_THEME.cyan,
         borderWidth: 1,
         padding: [3, 7],

@@ -213,7 +213,15 @@ const LinkagePage = () => {
     return () => { clearInterval(t1); clearInterval(t2); };
   }, [load]);
 
-  /* live uPnL deltas: SSE position_update refreshes upnl — keyed by
+  /* P8 doc wave (audit L3-F4) — named trims vs the design reference, each
+   individually defensible, collectively recorded here: the inbox strip
+   omits the direction badge / timestamp / context third line; the reason
+   resolver omits Hold + Closed-at KVs and the "Later" (defer) button;
+   Recent Closes omits Time / Hold / % columns; the funding settlement
+   countdown renders the polled value (≤30s stale) rather than ticking
+   locally; the PageHeader omits the design's "LINK · 5m window" dot. */
+
+/* live uPnL deltas: SSE position_update refreshes upnl — keyed by
      symbol|side, NEVER symbol alone (P8 audit L3-F1: in HEDGE mode a symbol
      holds a LONG and a SHORT leg; the symbol-keyed merge stamped one leg's
      uPnL onto both). SSE carries `side`, rows carry `direction`. */

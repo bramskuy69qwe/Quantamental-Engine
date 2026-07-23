@@ -171,7 +171,7 @@ const AnaHistChart = ({ bins, color = 'var(--qe-cyan)', height = '100%', unit = 
   const opts = React.useMemo(() => ({
     ..._baseChart({ grid: { left: 30, right: 10, top: 18, bottom: 20 } }),
     tooltip: {
-      trigger: 'axis', backgroundColor: '#000', borderColor: QE_ECHARTS_THEME.cyan, borderWidth: 1, padding: [4, 8],
+      trigger: 'axis', backgroundColor: QE_ECHARTS_THEME.bg, borderColor: QE_ECHARTS_THEME.cyan, borderWidth: 1, padding: [4, 8],
       textStyle: { color: QE_ECHARTS_THEME.text, fontSize: 11, fontFamily: 'JetBrains Mono, monospace' },
       axisPointer: { type: 'shadow', shadowStyle: { color: (divergent ? green : c) + '22' } },
       formatter: (p) => {
@@ -209,7 +209,7 @@ const AnaDivergingBars = ({ rows, height = '100%', fmt = (v) => v.toFixed(2) }) 
   const opts = React.useMemo(() => ({
     ..._baseChart({ grid: { left: 34, right: 10, top: 16, bottom: 30 } }),
     tooltip: {
-      trigger: 'axis', backgroundColor: '#000', borderColor: QE_ECHARTS_THEME.cyan, borderWidth: 1, padding: [4, 8],
+      trigger: 'axis', backgroundColor: QE_ECHARTS_THEME.bg, borderColor: QE_ECHARTS_THEME.cyan, borderWidth: 1, padding: [4, 8],
       textStyle: { color: QE_ECHARTS_THEME.text, fontSize: 11, fontFamily: 'JetBrains Mono, monospace' },
       axisPointer: { type: 'shadow', shadowStyle: { color: QE_ECHARTS_THEME.text + '10' } },
       formatter: (p) => { const r = rows[p[0].dataIndex]; return `${r.label} · ${(r.v >= 0 ? '+' : '') + fmt(r.v)} · ${r.n} trade${r.n === 1 ? '' : 's'}`; },
@@ -262,7 +262,7 @@ const AnaExecScatter = ({ points, height = '100%' }) => {
     return {
       ..._baseChart({ grid: { left: 46, right: 16, top: 14, bottom: 40 } }),
       tooltip: {
-        trigger: 'item', backgroundColor: '#000', borderColor: QE_ECHARTS_THEME.cyan, borderWidth: 1, padding: [4, 8],
+        trigger: 'item', backgroundColor: QE_ECHARTS_THEME.bg, borderColor: QE_ECHARTS_THEME.cyan, borderWidth: 1, padding: [4, 8],
         textStyle: { color: QE_ECHARTS_THEME.text, fontSize: 11, fontFamily: 'JetBrains Mono, monospace' },
         formatter: (o) => {
           const d = o.data;

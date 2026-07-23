@@ -47,7 +47,7 @@ const _baseChart = (opts={}) => ({
   grid: { left: 38, right: 8, top: 6, bottom: 18, ...opts.grid },
   tooltip: {
     trigger: 'axis',
-    backgroundColor: '#000',
+    backgroundColor: QE_ECHARTS_THEME.bg,
     borderColor: QE_ECHARTS_THEME.cyan,
     borderWidth: 1,
     padding: [4,8],
@@ -250,7 +250,7 @@ const ScatterChart = ({points, height='100%', xName='X', yName='Y'}) => {
     const losses     = points.filter(p => !p.profit);
     return {
       ..._baseChart({grid:{left:48, right:14, top:18, bottom:38}}),
-      tooltip: { trigger:'item', backgroundColor:'#000', borderColor: QE_ECHARTS_THEME.cyan, borderWidth:1,
+      tooltip: { trigger:'item', backgroundColor:QE_ECHARTS_THEME.bg, borderColor: QE_ECHARTS_THEME.cyan, borderWidth:1,
         textStyle:{color: QE_ECHARTS_THEME.text, fontSize:11, fontFamily:'JetBrains Mono, monospace'},
         formatter: (p) => {
           const d = p.data;

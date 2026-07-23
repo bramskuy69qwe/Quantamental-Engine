@@ -56,8 +56,9 @@ accents. Density over decoration — data is the UI.
 - Sharp edges only — **no `border-radius`** anywhere
   - **Carve-out — circular status dots.** The one exception: the small (5–8px)
     live/severity **status dots** are `border-radius:50%` on purpose (e.g. the
-    notification unread dot `notifications.jsx:171`; the `NewsTickerBar` live/dot
-    marks `tokens.css:694` / `:719`; the linkage/analytics/models live dots).
+    unread dot in `NotifRow` (`notifications.jsx`, cited by NAME — the line
+    drifts); the `NewsTickerBar` live/dot marks `tokens.css:694` / `:719`;
+    the linkage/analytics/models live dots).
     Note the `StatusDot` *primitive* itself is deliberately **square** (a 6×6
     block, `tokens.css .qe-dot::before`). Everything else stays sharp.
 - Colorblind safety — never rely on red/green alone; always pair with a label or
@@ -75,12 +76,17 @@ hardcode hex in the DOM** — always use the variable.
   `charts.jsx` — still a single source, never inline literals.
 - **Carve-out (rgba alpha-washes):** a handful of translucent tint-washes are
   written as raw `rgba()` because **no token exists for the alpha variant** —
-  the canonical case is `PaneFoot`'s tone-background washes
-  (`primitives.jsx:571` — `ok/info/warn/err` at 5–6% alpha), plus small darken
-  scrims/shadows behind timers/toasts/drawers. This is a documented carve-out
-  parallel to the ECharts exception: prefer a `--qe-bg-*` token where one fits;
-  use `rgba()` only for the alpha-wash tints that have no token. Do not
-  reach for `rgba()` for solid colors that a token already covers.
+  the canonical case is `PaneFoot`'s tone-background washes (the `toneColors`
+  map in `primitives.jsx` — `ok/info/warn/err` at 5–6% alpha; cited by NAME,
+  not line, since the line drifts), plus small darken scrims/shadows behind
+  timers/toasts/drawers/dialogs, the `HeatStrip`/calendar magnitude-heat
+  fills, and the row tints (`ANA_LINK_META`; the regime near-threshold row
+  wash) — same 5–6% shape as the PaneFoot washes. The list is
+  ILLUSTRATIVE, not exhaustive: re-grep the class before assuming a new
+  site is a violation. This is a documented carve-out parallel to the ECharts exception:
+  prefer a `--qe-bg-*` token where one fits; use `rgba()` only for the
+  alpha-wash tints that have no token. Do not reach for `rgba()` for solid
+  colors that a token already covers.
 
 ### Surfaces
 | Variable | Value | Usage |
@@ -253,7 +259,7 @@ workspace page composes the same two components:
 - 24-column grid. Drag a tile by its **pane head**; resize from any **edge/corner**. Positions are applied imperatively to `gs-*` (React never manages them, so content re-renders / live tickers never reset the layout).
 - **Gutter:** tile-to-tile gap AND workspace edge inset are both `--qe-pane-gap` (4px), applied by `GridWorkspace` — pages must not add padding around a workspace (§4).
 - A **`LockButton`** in the top nav freezes/unfreezes drag+resize across all workspaces (`useWorkspaceLock`, persisted).
-- Layouts persist per workspace via `qeWorkspaceSave` / `qeWorkspaceLoad` / `qeWorkspaceReset` (localStorage, namespaced by account); **⤓ Save / ⤒ Load / +** live in the `WorkspaceBar` (Dashboard only — disabled elsewhere in the reference).
+- Layouts persist per workspace via `qeWorkspaceSave` / `qeWorkspaceLoad` / `qeWorkspaceReset` (localStorage keyed `qe.ws.layout.${id}` — **NOT account-namespaced**; namespacing is a deferred §1.5 coexistence item, P8 decision point); **⤓ Save / ⤒ Load / +** live in the `WorkspaceBar` (Dashboard only — disabled elsewhere in the reference).
 
 ---
 
@@ -302,19 +308,25 @@ one source of truth).
 maps names → page components. Each page renders `TopNavStd` → `PageHeader` →
 workspace/content → `StatusFooter`.
 
-**Two pages are NOT in `NAV_ITEMS` on purpose** (an implementer would otherwise
-wrongly build them into the top nav):
+**Nav placement rules** (corrected in the P8 doc wave — the ported §9 had
+claimed Primitives was "not in NAV_ITEMS", contradicting both the design
+reference and the shipped code, audit L7-F2):
 
 - **`Config`** is reached via the **gear button (⚙)** on the right of the top nav
-  — not a nav tab.
-- **`Primitives`** is a **DEV-only** page (the design-system proving ground),
-  reachable via `#Primitives` / the DEV chip — **not in production nav**. It is
-  the P0 foundation surface and carries the GridStack + ECharts proving grounds.
+  — not a nav tab. (Accurate as shipped.)
+- **`Primitives`** is a **DEV-only** page (the design-system proving ground).
+  It IS currently in `NAV_ITEMS` as a divider-separated amber **DEV-chip tab**
+  (faithful to the design reference) and also reachable via `#Primitives`.
+  **Whether the tab ships past the `/v3` → `/` promotion is a named P8
+  retirement decision point** — strip it from NAV_ITEMS (hash routing keeps
+  the page reachable) or keep the DEV chip; the operator decides.
 
-**P0 status:** only `Primitives` + the shared foundation are ported. The 8
-production pages (`Dashboard`, `Pre-Trade`, `Linkage`, `History`, `Analytics`,
-`Models`, `Regime`, `Config`) render a labelled placeholder until their phase
-(P1–P7) lands.
+**Status (P8):** ALL 8 production pages (`Dashboard`, `Pre-Trade`, `Linkage`,
+`History`, `Analytics`, `Models`, `Regime`, `Config`) are shipped and wired —
+`QE_PAGES` carries real components for every one. (This line read "only
+Primitives is ported … placeholders until P1–P7" until the P8 doc wave — the
+same stale-pre-execution-text class the wave retitled out of the plan's P4
+note.)
 
 ---
 
@@ -331,6 +343,6 @@ production pages (`Dashboard`, `Pre-Trade`, `Linkage`, `History`, `Analytics`,
 | Bind live values to `window.QE_SSE` / `useLiveId` | Drive live values from a client random-walk |
 | Put tileable panes in `GridWorkspace`/`GridItem` | Lay panes out in a fixed CSS grid |
 | Let `GridWorkspace` own the pane gutter (`--qe-pane-gap`) | Wrap a workspace in a padded container |
-| Reach `Config` via the gear, keep `Primitives` DEV-only | Add either to `NAV_ITEMS` |
+| Reach `Config` via the gear; keep `Primitives` DEV-badged (§9) | Add a PRODUCTION page to `NAV_ITEMS` (the Primitives DEV chip rides there pending the P8 retirement call) |
 | Keep corners sharp | Add `border-radius` (outside the status-dot carve-out) |
 | Pair color with a label/symbol | Convey meaning with color alone |

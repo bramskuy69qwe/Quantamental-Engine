@@ -16,8 +16,10 @@
      · backfill ← POST /api/regime/backfill → poll
        GET /api/regime/backfill-status/{id} every 1500ms (Jinja cadence)
      · reclassify ← POST /api/regime/reclassify {} (upsert recompute — the UI
-       never sends dates, so the delete lane is unreachable; no confirm, Jinja
-       parity)
+       never sends dates, so the delete lane is unreachable; CONFIRM-GATED
+       here per the house convention [P6 audit L4 fold] — a named deviation
+       from Jinja, which fires with no confirm) [P8 doc wave: this line had
+       claimed the opposite of shipped behavior — audit L5-LOW-1]
      · news ← GET /api/news/feed?limit=80 (15s) · calendar ← GET /api/calendar
        (now±30d, 60s) · manual POST /api/news/refresh — NOTE: the News tab
        binds /api/news/* + /api/calendar, NOT /api/regime/* (the plan row's
@@ -160,7 +162,7 @@ const TimelineSvg = ({ data, style = 'swim' }) => {
     const muted = QE_ECHARTS_THEME.muted, sub = QE_ECHARTS_THEME.sub, line = QE_ECHARTS_THEME.line;
     const segs = _regimeSegs(data);
     const tip = {
-      trigger: 'item', backgroundColor: '#000', borderColor: QE_ECHARTS_THEME.cyan, borderWidth: 1, padding: [4, 8],
+      trigger: 'item', backgroundColor: QE_ECHARTS_THEME.bg, borderColor: QE_ECHARTS_THEME.cyan, borderWidth: 1, padding: [4, 8],
       textStyle: { color: QE_ECHARTS_THEME.text, fontSize: 11, fontFamily: 'JetBrains Mono, monospace' },
       formatter: (p) => (p.data && p.data._meta ? p.data._meta : ''),
     };
@@ -250,7 +252,7 @@ const TimelineSvg = ({ data, style = 'swim' }) => {
               const lbl = params.data && params.data._label;
               if (w > 42 && lbl) {
                 return { type: 'group', children: [rect, { type: 'text',
-                  style: { text: lbl, x: x0[0] + w / 2, y: x0[1], fill: '#000', opacity: 0.6,
+                  style: { text: lbl, x: x0[0] + w / 2, y: x0[1], fill: QE_ECHARTS_THEME.bg, opacity: 0.6,
                     font: '700 9px JetBrains Mono, monospace', textAlign: 'center', textVerticalAlign: 'middle' } }] };
               }
               return rect;
@@ -272,13 +274,13 @@ const TimelineSvg = ({ data, style = 'swim' }) => {
           calendar: { top: 24, left: 34, right: 10, bottom: 6, cellSize: ['auto', 15],
             range: [data[0].date, data[n - 1].date],
             orient: 'horizontal',
-            itemStyle: { color: QE_ECHARTS_THEME.bg, borderColor: '#000', borderWidth: 1.5 },
+            itemStyle: { color: QE_ECHARTS_THEME.bg, borderColor: QE_ECHARTS_THEME.bg, borderWidth: 1.5 },
             dayLabel: { color: muted, fontSize: 8, fontFamily: 'JetBrains Mono, monospace', firstDay: 1 },
             monthLabel: { color: sub, fontSize: 9, fontFamily: 'JetBrains Mono, monospace' },
             yearLabel: { show: false },
             splitLine: { lineStyle: { color: line, width: 1 } } },
           series: [{ type: 'heatmap', coordinateSystem: 'calendar', data: cells,
-            itemStyle: { borderColor: '#000', borderWidth: 1.5 } }],
+            itemStyle: { borderColor: QE_ECHARTS_THEME.bg, borderWidth: 1.5 } }],
         },
       };
     }
@@ -303,7 +305,7 @@ const TimelineSvg = ({ data, style = 'swim' }) => {
       opts: {
         backgroundColor: 'transparent', animation: false,
         grid: { left: 38, right: 10, top: 10, bottom: 20 },
-        tooltip: { trigger: 'axis', backgroundColor: '#000', borderColor: QE_ECHARTS_THEME.cyan, borderWidth: 1, padding: [6, 9],
+        tooltip: { trigger: 'axis', backgroundColor: QE_ECHARTS_THEME.bg, borderColor: QE_ECHARTS_THEME.cyan, borderWidth: 1, padding: [6, 9],
           textStyle: { color: QE_ECHARTS_THEME.text, fontSize: 11, fontFamily: 'JetBrains Mono, monospace' },
           axisPointer: { type: 'line', lineStyle: { color: QE_ECHARTS_THEME.cyan, opacity: 0.4 } },
           formatter: (ps) => {
@@ -374,7 +376,7 @@ const SignalChart = ({ data, color, thresholds = [], decimals = 2, unit = '', he
     return {
       backgroundColor: 'transparent', animation: false,
       grid: { left: 42, right: 8, top: 8, bottom: 6 },
-      tooltip: { trigger: 'axis', backgroundColor: '#000', borderColor: QE_ECHARTS_THEME.cyan, borderWidth: 1, padding: [3, 7],
+      tooltip: { trigger: 'axis', backgroundColor: QE_ECHARTS_THEME.bg, borderColor: QE_ECHARTS_THEME.cyan, borderWidth: 1, padding: [3, 7],
         textStyle: { color: QE_ECHARTS_THEME.text, fontSize: 11, fontFamily: 'JetBrains Mono, monospace' },
         axisPointer: { type: 'line', lineStyle: { color: c, opacity: 0.5 } },
         formatter: (ps) => { const v = ps[0].value;
