@@ -194,7 +194,7 @@ const EquityStatsPane = () => {
   return (
     <Pane title="Equity" style={{ height: '100%' }}
       right={<Badge tone="ok">LIVE</Badge>}
-      foot={{ tone: 'info', id: 1841, msg: `equity ${_n(eq.total_equity)} · margin ${_n(eq.available_margin)}`, ms: 8 }}>
+      foot={{ tone: 'info', msg: `equity ${_n(eq.total_equity)} · margin ${_n(eq.available_margin)}` }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <div><Lbl>Total</Lbl><EquityHero /></div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
@@ -239,7 +239,7 @@ const EquityCurvePane = () => {
   return (
     <Pane title="Equity Curve" hot tag="OHLC" style={{ height: '100%' }}
       right={<PeriodSelector options={[['1h', '1H'], ['4h', '4H'], ['1d', '1D'], ['1w', '1W']]} value={tf} onChange={setTf} />}
-      foot={{ tone: 'info', id: 1842, msg: `equity_ohlc · last C=${_n(c)} · tf=${tf}`, ms: 12 }}
+      foot={{ tone: 'info', msg: `equity_ohlc · last C=${_n(c)} · tf=${tf}` }}
       bodyStyle={{ padding: 6 }}>
       <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
         <div className="qe-mono" style={{ fontSize: '0.62rem', display: 'flex', gap: 14, flexWrap: 'wrap', padding: '2px 4px', alignItems: 'baseline' }}>
@@ -267,7 +267,7 @@ const RiskMonitorPane = () => {
   return (
     <Pane title="Risk Monitor" style={{ height: '100%' }}
       right={<Badge tone={enforced ? 'err' : 'info'}>{enforced ? 'ENFORCED' : 'ADVISORY'}</Badge>}
-      foot={{ tone: _stateTone(ddState), id: 1843, msg: `exp ${_n(rk.exposure_pct)}% · dd ${_n(rk.drawdown_pct)}% (cap ${_n(rk.max_dd_pct)}%) · ${enforced ? 'enforced' : 'advisory'}`, ms: 3 }}>
+      foot={{ tone: _stateTone(ddState), msg: `exp ${_n(rk.exposure_pct)}% · dd ${_n(rk.drawdown_pct)}% (cap ${_n(rk.max_dd_pct)}%) · ${enforced ? 'enforced' : 'advisory'}` }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <Gauge label="Net Exposure" value={rk.exposure_pct != null ? rk.exposure_pct / 100 : 0} max={(rk.max_exposure_pct || 500) / 100} current={rk.exposure_pct != null ? _n(rk.exposure_pct / 100, 2) + '×' : '—'} maxLabel={`${_n(rk.max_exposure_pct / 100, 1)}× cap`} />
         <Gauge label="Drawdown 30d" value={Math.min(rk.drawdown_pct || 0, rk.max_dd_pct || 10)} max={rk.max_dd_pct || 10} current={_n(rk.drawdown_pct) + '%'} maxLabel={`${_n(rk.max_dd_pct)}% limit`} ticks={[5, 8]} />
@@ -292,7 +292,7 @@ const OpenPositionsPane = () => {
   return (
     <Pane title="Open Positions" count={rows.length} style={{ height: '100%' }}
       right={<button className="qe-btn qe-btn-sm" title="Size a new position in Pre-Trade" onClick={() => window.qeNav && window.qeNav('Pre-Trade')}>+ Calc</button>}
-      foot={{ tone: 'info', id: 1844, msg: `reconciler · ${rows.length} positions`, ms: 42 }}
+      foot={{ tone: 'info', msg: `${rows.length} positions · snapshot + SSE` }}
       bodyStyle={{ padding: 0, display: 'flex', flexDirection: 'column' }}>
       <DataList
         selKey="sym"
@@ -324,7 +324,7 @@ const MacroSignalsPane = () => {
   const sigs = d.macro;
   return (
     <Pane title="Macro Signals" count={sigs.length} style={{ height: '100%' }}
-      foot={{ tone: 'info', id: 1845, msg: 'regime signals · fred / yfinance / binance', ms: 118 }}>
+      foot={{ tone: 'info', msg: `${sigs.length} signals · fred / yfinance / binance · 60s poll` }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {sigs.length === 0 && <EmptyState tone="warn" glyph="∅" msg="No signal data" hint="Run regime backfill to populate." />}
         {sigs.map((s) => (
@@ -345,7 +345,7 @@ const MonthlyPane = () => {
   const j = d.journal;
   return (
     <Pane title="Monthly Analytics Preview" style={{ height: '100%' }}
-      foot={{ tone: (j.monthly_pnl || 0) < 0 ? 'warn' : 'ok', id: 1846, msg: `${j.month_label || '—'} · pnl ${_sn(j.monthly_pnl)} · ${j.trade_count || 0} trades · winrate ${_n(j.win_rate)}%`, ms: 6 }}>
+      foot={{ tone: (j.monthly_pnl || 0) < 0 ? 'warn' : 'ok', msg: `${j.month_label || '—'} · pnl ${_sn(j.monthly_pnl)} · ${j.trade_count || 0} trades · winrate ${_n(j.win_rate)}%` }}>
       <div style={{ padding: '4px 6px' }}>
         <FieldList rows={[
           { label: 'Period PnL',  value: <>{_sn(j.monthly_pnl)} <span style={{ color: 'var(--qe-muted)', fontSize: '0.6rem' }}>({_sn(j.monthly_pnl_pct)}%)</span></>, color: (j.monthly_pnl || 0) < 0 ? 'red' : 'green' },
@@ -375,7 +375,7 @@ const ActiveParamsPane = () => {
   return (
     <Pane title="Active Parameters" tag="VIEW" style={{ height: '100%' }}
       right={<button className="qe-btn qe-btn-sm qe-btn-ghost" title="Edit risk parameters in Configuration" onClick={() => window.qeNav && window.qeNav('Config')}>Edit</button>}
-      foot={{ tone: 'sub', id: 1847, msg: 'risk params · from account config', ms: 1 }}>
+      foot={{ tone: 'sub', msg: 'risk params · from account config' }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         <FieldList rows={rows} />
       </div>
@@ -415,7 +415,7 @@ const TiledGrid = React.memo(function TiledGrid() {
       <GridItem x={18} y={16} w={6} h={8} minW={4} minH={6}>
         <Pane title="Engine Log" tag="LIVE" style={{ height: '100%' }}
           right={<StatusDot tone="ok" label="LOG" />}
-          foot={{ tone: 'ok', id: 1848, msg: 'engine_events tail · /api/engine/log', ms: 0 }}
+          foot={{ tone: 'info', msg: 'engine_events tail · /api/engine/log · 4s poll' }}
           bodyStyle={{ padding: '4px 6px', fontFamily: 'var(--qe-mono)' }}>
           <EngineLogBody />
         </Pane>

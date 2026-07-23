@@ -299,7 +299,8 @@ const AnaTabOverview = ({ period, offset, onLabel }) => {
   return (
     <GridWorkspace>
       <GridItem x={0} y={0} w={8} h={6} minW={5} minH={5}>
-        <Pane title="Volume & Activity" tag={lbl} style={{ height: '100%' }}>
+        <Pane title="Volume & Activity" tag={lbl} style={{ height: '100%' }}
+          foot={{ tone: 'sub', msg: 'from exchange_history · funding/transfers excluded' }}>
           <AnaVRow label="Trading Volume" value={`$${(s.trading_volume || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`} />
           <AnaVRow label="Fees Paid" value={`$${(s.total_fees || 0).toFixed(2)}`} />
           <AnaVRow label="No. of Longs" value={s.num_longs || 0} color="var(--qe-green)" />
@@ -314,7 +315,8 @@ const AnaTabOverview = ({ period, offset, onLabel }) => {
       </GridItem>
 
       <GridItem x={8} y={0} w={16} h={7} minW={8} minH={5}>
-        <Pane title="Equity & PnL" tag={lbl} style={{ height: '100%' }} bodyStyle={{ padding: 0 }}>
+        <Pane title="Equity & PnL" tag={lbl} style={{ height: '100%' }} bodyStyle={{ padding: 0 }}
+          foot={{ tone: pnl >= 0 ? 'ok' : 'warn', msg: `${days} trading days · period pnl ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}` }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'minmax(200px,0.9fr) 1px 1.3fr', gap: 0, height: '100%' }}>
             <div style={{ padding: '7px 12px 7px 8px' }}>
               <FieldList rows={[
@@ -340,7 +342,8 @@ const AnaTabOverview = ({ period, offset, onLabel }) => {
       </GridItem>
 
       <GridItem x={0} y={6} w={8} h={10} minW={5} minH={6}>
-        <Pane title="Trade Statistics" style={{ height: '100%' }}>
+        <Pane title="Trade Statistics" style={{ height: '100%' }}
+          foot={{ tone: 'sub', msg: `${total} trades · win ${winrate.toFixed(1)}%` }}>
           <AnaVRow label="Total Trades" value={total} />
           <AnaVRow label="Winning" value={wins} color="var(--qe-green)" />
           <AnaVRow label="Losing" value={s.losing_trades || 0} color="var(--qe-red)" />
@@ -411,7 +414,8 @@ const AnaTabEquity = () => {
               onClick={() => setDdMode((v) => !v)}>drawdown %</button>
           </>
         }
-        style={{ height: '100%' }} bodyStyle={{ padding: 6 }}>
+        style={{ height: '100%' }} bodyStyle={{ padding: 6 }}
+        foot={{ tone: 'info', msg: `${candles.length} buckets · tf=${tf} · /api/analytics/equity_ohlc` }}>
         <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
           <div className="qe-mono" style={{ fontSize: '0.62rem', display: 'flex', gap: 14, flexWrap: 'wrap', padding: '2px 4px', alignItems: 'baseline' }}>
             {ohlcRow.map(([k, v, col]) => (
@@ -491,7 +495,8 @@ const AnaTabDistributions = ({ period, offset, onLabel }) => {
   return (
     <GridWorkspace>
       <GridItem x={0} y={0} w={12} h={6} minW={6} minH={5}>
-        <Pane title="PnL Distribution" style={{ height: '100%' }} tag={lbl || `$${step} bins`}>
+        <Pane title="PnL Distribution" style={{ height: '100%' }} tag={lbl || `$${step} bins`}
+          foot={{ tone: 'sub', msg: `n=${trades.length} closed trades · $${step} bins` }}>
           <AnaHistChart bins={pnlBins} divergent noun="trade" />
         </Pane>
       </GridItem>
@@ -548,7 +553,9 @@ const AnaTabCalendar = () => {
               title={atCurrent ? 'Already at the current month' : ''} onClick={() => setYm(data.next_month)}>Next ›</button>
           </>
         }
-        style={{ height: '100%' }}>
+        style={{ height: '100%' }}
+        foot={{ tone: (data.avg_daily || 0) >= 0 ? 'ok' : 'warn',
+          msg: `${data.trading_days || 0} trading days · best $${(data.best_day || 0).toFixed(2)} · worst $${(data.worst_day || 0).toFixed(2)}` }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, height: '100%' }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 2 }}>
             {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => (
@@ -623,7 +630,8 @@ const AnaTabPairs = ({ period, offset, onLabel }) => {
   );
   return (
     <div style={{ padding: 4, height: '100%' }}>
-      <Pane title="Traded Pairs" count={`${rows.length} symbols`} tag={data.period_label} style={{ height: '100%' }} bodyStyle={{ padding: 0 }}>
+      <Pane title="Traded Pairs" count={`${rows.length} symbols`} tag={data.period_label} style={{ height: '100%' }} bodyStyle={{ padding: 0 }}
+        foot={{ tone: totals.pnl >= 0 ? 'ok' : 'warn', msg: `${totals.trades} trades · Σ ${totals.pnl >= 0 ? '+' : ''}${totals.pnl.toFixed(2)} · fees ${totals.fees.toFixed(2)}` }}>
         <DataList
           selKey="symbol" dense={false} tools={false}
           columns={[
@@ -664,7 +672,8 @@ const AnaTabExcursions = ({ period, offset, onLabel }) => {
       <GridItem x={0} y={0} w={16} h={16} minW={8} minH={6}>
         <Pane title="MFE / MAE Scatter" tag={data.period_label}
           right={<PeriodSelector options={[['all', 'All'], ['LONG', 'Long'], ['SHORT', 'Short']]} value={dir} onChange={setDir} />}
-          style={{ height: '100%' }} bodyStyle={{ padding: 6 }}>
+          style={{ height: '100%' }} bodyStyle={{ padding: 6 }}
+          foot={{ tone: 'info', msg: `${points.length} reconciled trades · server-side ${dir === 'all' ? 'no' : dir} filter` }}>
           {points.length ? <ScatterChart points={points} xName="MFE ($)" yName="MAE ($)" /> : <EmptyState msg="no reconciled excursions in window" />}
         </Pane>
       </GridItem>
@@ -713,7 +722,8 @@ const AnaTabRMultiples = ({ period, offset, onLabel }) => {
   return (
     <GridWorkspace>
       <GridItem x={0} y={0} w={16} h={12} minW={8} minH={6}>
-        <Pane title="R-Multiple Distribution" tag={data.period_label} style={{ height: '100%' }}>
+        <Pane title="R-Multiple Distribution" tag={data.period_label} style={{ height: '100%' }}
+          foot={{ tone: (st.expectancy || 0) >= 0 ? 'ok' : 'warn', msg: `${st.count} trades · expectancy ${(st.expectancy || 0).toFixed(3)}R` }}>
           <AnaHistChart bins={bins} divergent noun="trade" />
         </Pane>
       </GridItem>
@@ -768,7 +778,8 @@ const AnaTabRisk = ({ period, offset, onLabel }) => {
   return (
     <GridWorkspace>
       <GridItem x={0} y={0} w={24} h={5} minW={10} minH={5}>
-        <Pane title="Value at Risk · Risk Metrics" tag={data.period_label} style={{ height: '100%' }}>
+        <Pane title="Value at Risk · Risk Metrics" tag={data.period_label} style={{ height: '100%' }}
+          foot={{ tone: 'sub', msg: `95% VaR ${Math.abs((data.var95 || 0) * 100).toFixed(2)}% · n=${(data.returns || []).length} daily returns` }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8 }}>
             <AnaVarCard label="Historical VaR (95%)" val={data.var95 || 0} equity={data.cur_equity} desc="Worst daily loss exceeded 5% of the time" />
             <AnaVarCard label="Historical VaR (99%)" val={data.var99 || 0} equity={data.cur_equity} desc="Worst daily loss exceeded 1% of the time" />
@@ -1008,6 +1019,7 @@ const AnaTabExecution = () => {
       <GridItem x={0} y={28} w={24} h={14} minW={10} minH={8}>
         <Pane title="Per-Fill Log" count={tableRows.length} tag={`newest ${data.limit}`}
           style={{ height: '100%' }}
+          foot={{ tone: 'sub', msg: `aggregates cover this window (newest ${data.limit}), not all-time` }}
           right={
             <div style={{ display: 'flex', gap: 3 }}>
               {['all', 'entry', 'tp', 'sl', 'manual'].map((f) => (
@@ -1069,7 +1081,8 @@ const AnaTabFunding = () => {
         right={err
           ? <StatusDot tone="warn" label="STALE — retrying" />
           : <StatusDot tone="info" label="30s refresh" />}
-        style={{ height: '100%' }} bodyStyle={{ padding: 0 }}>
+        style={{ height: '100%' }} bodyStyle={{ padding: 0 }}
+        foot={{ tone: tot8h >= 0 ? 'ok' : 'warn', msg: `${rows.length} positions · net per 8h ${tot8h >= 0 ? '+' : '-'}$${Math.abs(tot8h).toFixed(4)}` }}>
         <DataList
           selKey="_k" dense={false} tools={false}
           columns={[
@@ -1113,7 +1126,8 @@ const AnaTabBeta = () => {
       <GridItem x={0} y={0} w={14} h={13} minW={8} minH={6}>
         <Pane title="Beta-Weighted Exposure vs BTC" count={rows.length}
           right={<span style={{ fontSize: '0.54rem', color: 'var(--qe-muted)', fontFamily: 'var(--qe-mono)' }}>β from 30d OHLCV · sector preset fallback · unsigned notional</span>}
-          style={{ height: '100%' }} bodyStyle={{ padding: 0 }}>
+          style={{ height: '100%' }} bodyStyle={{ padding: 0 }}
+          foot={{ tone: 'info', msg: `portfolio β ${(data.port_beta || 0).toFixed(2)} · Σ β-adj $${(data.total_beta_exp || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })} · 60s poll` }}>
           <DataList
             selKey="_k" dense={false} tools={false}
             columns={[

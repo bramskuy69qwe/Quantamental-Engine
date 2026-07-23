@@ -267,7 +267,10 @@ const HistoryPage = () => {
         <GridWorkspace>
           <GridItem x={0} y={0} w={16} h={24} minW={8} minH={6}>
             <Pane title={H_TABS.find(([k]) => k === tab)[1]} count={total || null} onRefresh={load}
-              style={{ height: '100%' }} bodyStyle={{ padding: 0, display: 'flex', flexDirection: 'column' }}>
+              style={{ height: '100%' }} bodyStyle={{ padding: 0, display: 'flex', flexDirection: 'column' }}
+              foot={data == null
+                ? { tone: 'sub', msg: 'loading…' }
+                : { tone: 'info', msg: `${total} rows · server paging + search · 30s refresh` }}>
               <div style={{ flex: 1, overflow: 'auto' }}>
                 {loading && !data ? <div style={{ padding: 10 }}><Spinner label="loading" /></div> :
                  <DataList dense tools={false} columns={COLS[tab]} rows={rows}
@@ -289,7 +292,8 @@ const HistoryPage = () => {
           </GridItem>
 
           <GridItem x={16} y={0} w={8} h={24} minW={6} minH={6}>
-            <Pane title="Position Detail" style={{ height: '100%' }} bodyStyle={{ overflow: 'auto' }}>
+            <Pane title="Position Detail" style={{ height: '100%' }} bodyStyle={{ overflow: 'auto' }}
+              foot={{ tone: 'sub', msg: 'fills + /context amendments · lazy on select' }}>
               {!dp ? (
                 <EmptyState tone="neutral" glyph="◎" msg="Select a closed position" hint="Click a row to inspect its fills, exec link and amendments." />
               ) : (

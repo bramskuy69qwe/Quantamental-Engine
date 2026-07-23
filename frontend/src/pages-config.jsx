@@ -313,7 +313,8 @@ const CfgAccountsTab = () => {
     <GridWorkspace>
       <GridItem x={0} y={0} w={6} h={20} minW={4} minH={6}>
         <Pane title="Accounts" count={accounts ? accounts.length : null} style={{ height: '100%' }}
-          onRefresh={() => loadAccounts(true)}>
+          onRefresh={() => loadAccounts(true)}
+          foot={{ tone: 'sub', msg: accounts ? `${accounts.length} accounts · add/delete on Jinja /config` : 'loading…' }}>
           {accounts == null ? <Spinner label="loading" /> :
            !accounts.length ? <EmptyState tone="warn" glyph="∅" msg="No accounts" hint="Engine unreachable, or no accounts configured." /> : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -346,7 +347,8 @@ const CfgAccountsTab = () => {
             deliberately discarded on an explicit reload; onRefresh makes it
             also refetch server truth [P2 audit LOW-1] */}
         <Pane title="Account Settings" style={{ height: '100%' }} bodyStyle={{ overflow: 'auto' }}
-          onRefresh={() => reload(true)}>
+          onRefresh={() => reload(true)}
+          foot={{ tone: 'sub', msg: 'two stores · sizing (account_params) + DD posture (account_settings, display-only)' }}>
           {!sel ? <EmptyState tone="neutral" glyph="◇" msg="No account selected" /> :
            detail == null ? <Spinner label="loading" /> :
            <CfgAccountForm key={sel.id} account={sel} detail={detail} onReload={reload} />}
@@ -426,7 +428,8 @@ const CfgConnectionsTab = () => {
     <GridWorkspace>
       <GridItem x={0} y={0} w={24} h={20} minW={10} minH={6}>
         <Pane title="Data & Exchange Connections" count={conns ? conns.length : null}
-          style={{ height: '100%' }} bodyStyle={{ padding: 0 }} onRefresh={load}>
+          style={{ height: '100%' }} bodyStyle={{ padding: 0 }} onRefresh={load}
+          foot={{ tone: 'sub', msg: conns ? `${conns.length} providers · ${conns.filter((c) => c.has_key).length} connected` : 'loading…' }}>
           {conns == null ? <div style={{ padding: 10 }}><Spinner label="loading" /></div> : (
             <React.Fragment>
               <DataList
@@ -563,7 +566,8 @@ const CfgPresetsTab = () => {
   return (
     <GridWorkspace>
       <GridItem x={0} y={0} w={24} h={16} minW={10} minH={6}>
-        <Pane title="Risk Presets" style={{ height: '100%' }} bodyStyle={{ overflow: 'auto' }} onRefresh={load}>
+        <Pane title="Risk Presets" style={{ height: '100%' }} bodyStyle={{ overflow: 'auto' }} onRefresh={load}
+          foot={{ tone: 'sub', msg: 'Apply = FULL write (both stores) · confirm-gated' }}>
           <div className="qe-mono" style={{ fontSize: '0.6rem', color: 'var(--qe-sub)', marginBottom: 8, lineHeight: 1.5 }}>
             Apply is FULL: writes the DD posture (account_settings — the store the DD gate reads)
             AND the sizing envelope (account_params). Applies to the active account
@@ -627,7 +631,8 @@ const CfgSystemTab = () => {
   return (
     <GridWorkspace>
       <GridItem x={0} y={0} w={24} h={12} minW={10} minH={5}>
-        <Pane title="System" style={{ height: '100%' }} bodyStyle={{ overflow: 'auto' }} onRefresh={load}>
+        <Pane title="System" style={{ height: '100%' }} bodyStyle={{ overflow: 'auto' }} onRefresh={load}
+          foot={{ tone: 'sub', msg: 'read-only engine facts · /api/system' }}>
           {sys == null ? <Spinner label="loading" /> :
            !sys.version ? <EmptyState tone="warn" glyph="∅" msg="Engine unreachable" hint="/api/system did not answer." /> : (
             <React.Fragment>

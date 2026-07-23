@@ -612,7 +612,8 @@ const PreTradePage = () => {
           {/* INPUTS pane */}
           <GridItem x={0} y={0} w={10} h={12} minW={6} minH={8}>
             <Pane title="Order Inputs" style={{ height: '100%' }} bodyStyle={{ overflow: 'auto' }}
-              right={<Badge tone={form.orderType === 'limit' ? 'ok' : 'warn'}>{form.orderType === 'limit' ? 'MAKER FEE' : 'TAKER FEE'}</Badge>}>
+              right={<Badge tone={form.orderType === 'limit' ? 'ok' : 'warn'}>{form.orderType === 'limit' ? 'MAKER FEE' : 'TAKER FEE'}</Badge>}
+              foot={{ tone: 'sub', msg: 'form persists on manual calc · server validates' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
 
                 <div>
@@ -796,6 +797,7 @@ const PreTradePage = () => {
           {/* SETUP SUMMARY pane */}
           <GridItem x={0} y={12} w={10} h={6} minW={6} minH={5}>
             <Pane title="Setup Summary" tag="CLICK TO COPY" style={{ height: '100%' }}
+              foot={{ tone: 'sub', msg: calc ? 'mirrors the last calc · click any field to copy' : 'no calc yet' }}
               right={<PeriodSelector
                 options={isCommodity ? [['notional', 'NOTIONAL'], ['contracts', 'CONTRACTS'], ['lot', 'LOT']] : [['notional', 'NOTIONAL'], ['contracts', 'CONTRACTS']]}
                 value={effSizeUnit} onChange={setSizeUnit} />}>
@@ -838,7 +840,8 @@ const PreTradePage = () => {
 
           {/* RECENT pane */}
           <GridItem x={10} y={0} w={7} h={5} minW={5} minH={4}>
-            <Pane title="Recent Setups" count={recent.length} style={{ height: '100%' }}>
+            <Pane title="Recent Setups" count={recent.length} style={{ height: '100%' }}
+              foot={{ tone: 'sub', msg: `${recent.length} stored · recall restores core fields` }}>
               {!recent.length ? <EmptyState tone="neutral" glyph="◇" msg="No recent setups" /> : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                   {recent.map((r, i) => (
@@ -868,7 +871,8 @@ const PreTradePage = () => {
 
           {/* REGIME + ATR pane */}
           <GridItem x={17} y={0} w={7} h={5} minW={5} minH={4}>
-            <Pane title="Regime · ATR Volatility" hot style={{ height: '100%' }}>
+            <Pane title="Regime · ATR Volatility" hot style={{ height: '100%' }}
+              foot={{ tone: 'info', msg: '/api/regime/current · 60s poll' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <div>
                   <Lbl>Current Regime</Lbl>
@@ -905,7 +909,10 @@ const PreTradePage = () => {
           <GridItem x={10} y={5} w={14} h={7} minW={8} minH={7}>
             <Pane title="Position Result" style={{ height: '100%' }}
               right={calc ? <Badge tone={c.eligible ? 'ok' : 'err'}>{c.eligible ? '✓ ELIGIBLE' : '⛔ INELIGIBLE'}</Badge> : null}
-              bodyStyle={{ padding: 0 }}>
+              bodyStyle={{ padding: 0 }}
+              foot={calc
+                ? { tone: c.eligible ? 'ok' : 'warn', msg: `${(c.ticker || '').toUpperCase()} · ${c.side || ''} · regime ×${c.regime_multiplier != null ? c.regime_multiplier : 1}` }
+                : { tone: 'sub', msg: 'no calc yet' }}>
               {!calc ? <div style={{ padding: 10 }}><EmptyState tone="neutral" glyph="◇" msg="No calc yet" hint="Size a setup to see the position result." /></div> : (
                 <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
                   {!c.eligible && c.ineligible_reason ? (
@@ -972,7 +979,10 @@ const PreTradePage = () => {
 
           {/* CORRELATED EXPOSURE pane */}
           <GridItem x={10} y={12} w={7} h={6} minW={5} minH={4}>
-            <Pane title="Correlated Sector Exposure" style={{ height: '100%' }}>
+            <Pane title="Correlated Sector Exposure" style={{ height: '100%' }}
+              foot={!calc || !c.correlated_exposure
+                ? { tone: 'sub', msg: 'no calc yet' }
+                : { tone: c.exceeds_corr_limit ? 'warn' : 'ok', msg: c.exceeds_corr_limit ? 'sector cap exceeded' : 'within sector cap' }}>
               {!calc || !c.correlated_exposure ? <EmptyState tone="neutral" glyph="◇" msg="No calc yet" /> : (
                 <React.Fragment>
                   {c.exceeds_corr_limit ? (
@@ -992,7 +1002,8 @@ const PreTradePage = () => {
           {/* LIVE ORDERBOOK pane */}
           <GridItem x={17} y={12} w={7} h={6} minW={5} minH={4}>
             <Pane title="Live Orderbook" tag="2s" style={{ height: '100%' }}
-              right={ob && (ob.bids || []).length ? <StatusDot tone="ok" label="LIVE" /> : <StatusDot tone="off" label="—" />}>
+              right={ob && (ob.bids || []).length ? <StatusDot tone="ok" label="LIVE" /> : <StatusDot tone="off" label="—" />}
+              foot={{ tone: 'sub', msg: 'top-5 mirror · /api/calculator/orderbook' }}>
               {!ob || (!(ob.bids || []).length && !(ob.asks || []).length) ? (
                 <EmptyState tone="neutral" glyph="〇" msg={tickerNorm ? 'No depth yet' : 'Enter a ticker'} />
               ) : (

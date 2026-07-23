@@ -509,7 +509,8 @@ const RegimeTabOverview = ({ current, mults, onGoBackfill }) => {
   return (
     <GridWorkspace>
       <GridItem x={0} y={0} w={6} h={7} minW={4} minH={4}>
-        <Pane title="Current Regime" hot style={{ height: '100%' }}>
+        <Pane title="Current Regime" hot style={{ height: '100%' }}
+          foot={{ tone: 'info', msg: '/api/regime/current · 60s poll' }}>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, padding: '8px 0' }}>
             {curInfo
               ? <RegimeBadge tone={curInfo.tone} label={curInfo.label.toUpperCase()} />
@@ -581,7 +582,12 @@ const RegimeTabOverview = ({ current, mults, onGoBackfill }) => {
             <PeriodSelector options={[['swim', 'Swim'], ['bars', 'Bars'], ['blocks', 'Blocks'], ['heat', 'Heat'], ['stack', 'Stack']]} value={tlStyle} onChange={setTlStyle} />
             <span style={{ color: 'var(--qe-muted)' }}>│</span>
             <PeriodSelector options={[[30, '30d'], [90, '90d'], [365, '1y'], [0, 'All']]} value={tlRange} onChange={setTlRange} />
-          </>}>
+          </>}
+          foot={tlData == null
+            ? { tone: 'sub', msg: 'loading…' }
+            : tlErr && !timeline.length
+              ? { tone: 'warn', msg: 'timeline fetch failed' }
+              : { tone: 'ok', msg: `${timeline.length} regime labels · ${tlRange === 0 ? 'all-time' : tlRange + 'd'} window` }}>
           {timeline.length === 0 && tlErr ? (
             <EmptyState tone="warn" glyph="⚠" msg="timeline fetch failed" hint="engine unreachable?" />
           ) : (
@@ -601,7 +607,8 @@ const RegimeTabOverview = ({ current, mults, onGoBackfill }) => {
             <PeriodSelector options={[[30, '30d'], [90, '90d'], [365, '1y'], [1825, '5y'], [0, 'All']]}
               value={globalActive ? globalSel.v : null}
               onChange={(v) => { setGlobalSel((s) => ({ v, n: s.n + 1 })); setGlobalActive(true); }} />
-          </>}>
+          </>}
+          foot={{ tone: 'sub', msg: 'thresholds from config · per-card range clears the global highlight' }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
             {RG_SIGNALS.map((sig) => (
               <SignalCard key={sig.key} sig={sig} globalSel={globalSel}
@@ -615,7 +622,8 @@ const RegimeTabOverview = ({ current, mults, onGoBackfill }) => {
       </GridItem>
 
       <GridItem x={0} y={25} w={24} h={10} minW={10} minH={5}>
-        <Pane title="Recent Regime Changes" count={changes.length} style={{ height: '100%' }} bodyStyle={{ padding: 0 }}>
+        <Pane title="Recent Regime Changes" count={changes.length} style={{ height: '100%' }} bodyStyle={{ padding: 0 }}
+          foot={{ tone: 'sub', msg: `${changes.length} transitions (last 25) · click a row for signal context` }}>
           <DataList
             selKey="date" tools={false}
             onClick={(r) => setSelChange((s) => (s === r.date ? null : r.date))}
@@ -698,7 +706,8 @@ const RegimeTabBackfill = ({ job, onStart }) => {
   return (
     <GridWorkspace>
       <GridItem x={0} y={0} w={8} h={14} minW={5} minH={6}>
-        <Pane title="Backfill Macro Data" style={{ height: '100%' }}>
+        <Pane title="Backfill Macro Data" style={{ height: '100%' }}
+          foot={{ tone: 'sub', msg: 'writes regime_signals + regime_labels · classify follows fetch' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <p style={{ fontSize: '0.62rem', color: 'var(--qe-sub)', lineHeight: 1.5, margin: 0 }}>
               Macro Only fetches VIX (yfinance) + yields/spreads (FRED) + derives BTC RVol — works for deep
@@ -750,7 +759,10 @@ const RegimeTabBackfill = ({ job, onStart }) => {
       <GridItem x={8} y={0} w={16} h={20} minW={8} minH={6}>
         <Pane title="Signal Coverage" count={covRows.length} style={{ height: '100%' }}
           right={<button className="qe-btn qe-btn-sm qe-btn-ghost" onClick={reloadCoverage}>↻</button>}
-          bodyStyle={{ padding: 0 }}>
+          bodyStyle={{ padding: 0 }}
+          foot={coverage == null
+            ? { tone: 'sub', msg: 'loading…' }
+            : { tone: 'info', msg: `${covRows.filter((r) => (r.count || 0) > 0).length}/${covRows.length} signals backfilled` }}>
           {covErr && srvRows.length === 0 ? (
             <EmptyState tone="warn" glyph="⚠" msg="coverage fetch failed" hint="engine unreachable?" />
           ) : (
@@ -918,7 +930,8 @@ const RegimeTabNews = () => {
             <PeriodSelector options={[['magazine', 'Magazine'], ['detail', 'Detail']]} value={newsView} onChange={setNewsView} />
             {feedErr ? <StatusDot tone="warn" label="STALE — retrying" /> : <StatusDot tone="info" label="15s refresh" />}
           </>}
-          bodyStyle={{ padding: newsView === 'magazine' ? 6 : 0 }}>
+          bodyStyle={{ padding: newsView === 'magazine' ? 6 : 0 }}
+          foot={{ tone: 'info', msg: `${news.length} items · finnhub + bwe · 15s feed / 60s calendar` }}>
           {news.length === 0 ? (
             <EmptyState tone={feedErr ? 'warn' : 'info'} glyph="📰"
               msg={feedErr ? 'news fetch failed' : 'no news items stored yet'}
@@ -954,7 +967,8 @@ const RegimeTabNews = () => {
             <PeriodSelector options={[['', 'All'], ['high', 'High'], ['high,medium', 'High+Med']]} value={calFilter} onChange={setCalFilter} />
             <LiveClock id="regime-news-clock" style={{ fontSize: '0.54rem', color: 'var(--qe-muted)', fontFamily: 'var(--qe-mono)' }} />
           </>}
-          bodyStyle={{ padding: 6 }}>
+          bodyStyle={{ padding: 6 }}
+          foot={{ tone: 'sub', msg: `${cal.length} events · ±30d window · est/act from finnhub` }}>
           {cal.length === 0 ? (
             <EmptyState tone="info" glyph="◫" msg="no calendar events stored"
               hint="press ↻ on Market News to fetch (finnhub)" />
@@ -1075,7 +1089,8 @@ const RegimeTabConfig = ({ mults }) => {
         <Pane title="Classifier Thresholds" style={{ height: '100%' }}
           right={<button className="qe-btn qe-btn-sm" disabled={reclass && reclass.busy} onClick={reclassify}>
             {reclass && reclass.busy ? <Spinner size="0.62rem" /> : '↻ Reclassify all dates'}
-          </button>}>
+          </button>}
+          foot={{ tone: 'sub', msg: 'config constants · read-only · reclassify recomputes labels' }}>
           <p style={{ fontSize: '0.6rem', color: 'var(--qe-sub)', margin: '0 0 6px 0', lineHeight: 1.5 }}>
             Threshold values used by the rule-based classifier (config constants — read-only;
             reclassify recomputes historical labels from stored signals).
@@ -1105,7 +1120,8 @@ const RegimeTabConfig = ({ mults }) => {
 
       <GridItem x={8} y={0} w={16} h={18} minW={8} minH={6}>
         <Pane title="Decision Tree Rules" style={{ height: '100%' }}
-          right={<span style={{ fontSize: '0.54rem', color: 'var(--qe-muted)', fontFamily: 'var(--qe-mono)' }}>evaluated top→bottom · first match wins</span>}>
+          right={<span style={{ fontSize: '0.54rem', color: 'var(--qe-muted)', fontFamily: 'var(--qe-mono)' }}>evaluated top→bottom · first match wins</span>}
+          foot={{ tone: 'sub', msg: 'rules mirror core/regime_classifier.py' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {rules.map((rule) => {
               const info = REGIME_INFO[rule.key];

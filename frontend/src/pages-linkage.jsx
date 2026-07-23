@@ -281,7 +281,8 @@ const LinkagePage = () => {
           <GridItem x={0} y={0} w={9} h={24} minW={6} minH={10}>
             <Pane title="MANUAL LINK — NEEDS REVIEW"
               right={<Badge tone={inbox.length ? 'warn' : 'ok'}>{inbox.length}</Badge>}
-              bodyStyle={{ padding: 0, display: 'flex', flexDirection: 'column' }}>
+              bodyStyle={{ padding: 0, display: 'flex', flexDirection: 'column' }}
+              foot={{ tone: inbox.length ? 'warn' : 'ok', msg: `${inbox.length} to resolve · writes via choke-point endpoints` }}>
               {needs == null ? <div style={{ padding: 10 }}><Spinner label="loading" /></div> :
                !inbox.length ? (
                 <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 10 }}>
@@ -327,20 +328,23 @@ const LinkagePage = () => {
 
           <GridItem x={9} y={0} w={15} h={9} minW={6} minH={5}>
             <Pane title="Open Positions" count={positions ? positions.length : null}
-              onRefresh={() => load('fast')} bodyStyle={{ padding: 0 }}>
+              onRefresh={() => load('fast')} bodyStyle={{ padding: 0 }}
+              foot={{ tone: 'info', msg: '5s poll · uPnL live via SSE' }}>
               {positions == null ? <div style={{ padding: 10 }}><Spinner label="loading" /></div> :
                <DataList columns={posCols} rows={positions} selKey="position_id" tools={false} emptyMsg="no open positions" />}
             </Pane>
           </GridItem>
 
           <GridItem x={9} y={9} w={8} h={8} minW={4} minH={5}>
-            <Pane title="Active Calcs" count={calcs ? calcs.length : null} bodyStyle={{ padding: 0 }}>
+            <Pane title="Active Calcs" count={calcs ? calcs.length : null} bodyStyle={{ padding: 0 }}
+              foot={{ tone: 'info', msg: '5s poll · countdown off expiry_ms' }}>
               {calcs == null ? <div style={{ padding: 10 }}><Spinner label="loading" /></div> :
                <DataList columns={calcCols} rows={calcs} selKey="calc_id" tools={false} emptyMsg="no active calcs" />}
             </Pane>
           </GridItem>
           <GridItem x={17} y={9} w={7} h={8} minW={4} minH={5}>
-            <Pane title="Funding" tag="LIVE" bodyStyle={{ padding: 0 }} onRefresh={() => load('slow')}>
+            <Pane title="Funding" tag="LIVE" bodyStyle={{ padding: 0 }} onRefresh={() => load('slow')}
+              foot={{ tone: 'info', msg: '30s poll · net next is SIGNED' }}>
               {funding == null ? <div style={{ padding: 10 }}><Spinner label="loading" /></div> :
                <DataList columns={fundCols} rows={funding.rows || []} selKey="position_id" tools={false}
                  emptyMsg="no open positions"
@@ -349,7 +353,8 @@ const LinkagePage = () => {
           </GridItem>
 
           <GridItem x={9} y={17} w={15} h={7} minW={6} minH={5}>
-            <Pane title="Recent Closes" count={closes ? closes.length : null} bodyStyle={{ padding: 0 }}>
+            <Pane title="Recent Closes" count={closes ? closes.length : null} bodyStyle={{ padding: 0 }}
+              foot={{ tone: 'sub', msg: '30s poll · pending reason = un-annotated manual close' }}>
               {closes == null ? <div style={{ padding: 10 }}><Spinner label="loading" /></div> :
                <DataList columns={closeCols} rows={closes} selKey="id" tools={false} emptyMsg="no recent closes" />}
             </Pane>

@@ -377,7 +377,10 @@ const asciiSpark = (vals) => {
 //   right    optional right-aligned controls (period selector, badges)
 //   hot      highlight pane with cyan border (use for "primary focus")
 //   tag      optional info-tone badge in the title bar (e.g. SSE, VIEW)
-//   foot     optional {tone, id, msg, ms} — last engine_events row for this pane
+//   foot     optional {tone, msg} — a TRUTHFUL pane status line (counts, poll
+//            cadence, source attribution — DESIGN.md §5 PaneFoot policy).
+//            id/ms are ACCEPTED for the DEV proving ground but never passed
+//            by production pages: fabricated event-ids/latency are banned.
 //   children pane body content
 //
 // Layout: head (20px) + body (flex:1, scrolls) + foot (16px, optional) + grip
@@ -389,15 +392,8 @@ const asciiSpark = (vals) => {
 // braille spinner over a darken veil that clears the foot (last-response line
 // stays lit). No alternatives — one principle, used everywhere.
 // ─────────────────────────────────────────────────────────────────────────
-const RELOAD_MS = 620;   // how long a pane reload takes (ms)
+const RELOAD_MS = 620;   // how long the reload ANIMATION runs (ms) — not a measurement
 const FOOT_H    = 17;    // PaneFoot height (16) + 1px top border — body veil stops here
-// Monotonic engine-event sequence — a reload emits a new event, so the foot's
-// "last response" advances like the real event log. Shared across panes (one log).
-let QE_EVENT_SEQ = 0;
-const nextEventId = (base=0) => {
-  QE_EVENT_SEQ = Math.max(QE_EVENT_SEQ, base|0) + 2 + Math.floor(Math.random()*6);
-  return QE_EVENT_SEQ;
-};
 
 // ReloadIconSVG — the canonical circular-arrow reload mark (matches the brief):
 // a ~290° ring with a round end at ~2 o'clock and a bold right-pointing
@@ -563,8 +559,10 @@ const PaneHead = ({title, count=null, right=null, hot=false, tag=null, onRefresh
   );
 };
 
-// PaneFoot — last response from the pane's process. Mirrors the engine_events
-// row that drove this pane's last update. Tones: ok | info | warn | err | sub.
+// PaneFoot — the pane's truthful status line (counts, cadence, source — see
+// DESIGN.md §5 PaneFoot policy). Tones: ok | info | warn | err | sub.
+// `id`/`ms` render when passed (DEV proving-ground demos) but production
+// pages never pass them — fabricated event-ids/latency readouts are banned.
 // `busy` swaps the glyph for the braille loading spinner (used during reload).
 const PaneFoot = ({tone='info', id, msg, ms, busy=false}) => {
   const toneColors = {
@@ -606,7 +604,6 @@ const Pane = ({title, count, right, hot, tag, foot=null, resizable=true, onRefre
   const [errored, setErrored]     = React.useState(false);
   const [reloadFoot, setRFoot]    = React.useState(null);  // last reload's event (overrides foot prop until a real new event)
   const timer = React.useRef(null);
-  const startRef = React.useRef(0);
   const footRef = React.useRef(foot);
   footRef.current = foot;
   React.useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
@@ -622,23 +619,21 @@ const Pane = ({title, count, right, hot, tag, foot=null, resizable=true, onRefre
   }, [footKey]);
 
   // Async reload: spin briefly, then remount the body subtree (key bump) so
-  // streams/effects re-run and any caught error is cleared. The reload is itself
-  // an engine event, so the foot's "last response" line advances to reflect it:
-  // a fresh id, real elapsed ms, and an ok ✓ resynced message (or err on catch).
-  // `onRefresh` (if given) is the hook for real re-fetch logic.
+  // streams/effects re-run and any caught error is cleared. The post-reload
+  // foot line is HONEST (PaneFoot policy — the pre-policy shape minted a fake
+  // event-id + a fake "elapsed" that was just the animation timer, and claimed
+  // "resynced from source" even on panes whose data hooks live in the PARENT
+  // and cannot re-run from a child remount): with an `onRefresh` hook the pane
+  // genuinely refetches; without one, only the body remounted — say so.
   const doRefresh = React.useCallback(() => {
     setRefresh(true);
-    startRef.current = (typeof performance !== 'undefined' ? performance.now() : Date.now());
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => {
-      const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
-      const elapsed = Math.max(1, Math.round(now - startRef.current));
       const f = footRef.current;
-      // optimistic: the reload emits a fresh "resynced" event. If the remounted
-      // body throws again, the boundary flips `errored` and the effFoot err
-      // branch overrides this line. (Only meaningful for panes that have a foot.)
+      // If the remounted body throws again, the boundary flips `errored` and
+      // the effFoot err branch overrides this line.
       setErrored(false);
-      if (f) setRFoot({tone:'ok', id: nextEventId(f.id), msg:'reloaded · resynced from source', ms: elapsed});
+      if (f) setRFoot({tone:'ok', msg: onRefresh ? 'reloaded · refetched' : 'reloaded · body remounted'});
       setNonce(n => n + 1);
       setRefresh(false);
       if (onRefresh) { try { onRefresh(); } catch (e) {} }

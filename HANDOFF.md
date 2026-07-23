@@ -1,6 +1,6 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-07-23 (**v3.0 EXECUTION — P0-P6 SHIPPED (P6 = the Regime commit at HEAD); NEXT = P7 Models.** A live-DB incident earlier in the arc was caught + FULLY restored — details in the P2 block.)
+**Date**: 2026-07-23 (**v3.0 EXECUTION — P0-P6 SHIPPED + the PaneFoot consistency commit at HEAD; NEXT = P7 Models.** A live-DB incident earlier in the arc was caught + FULLY restored — details in the P2 block.)
 **Branch**: **`v3.0/ui-plan-audit` — LOCAL ONLY (unpushed).** Session commits on top of the plan-audit docs (`9e9e5f4`): `b14b3b3` render-as-is clarify · **`1221b16` P0** · **`8b23417` P1** · **`35ffff1`+`cca3eb7` P2** · `9e85249` launch-v3.bat · **`a1fde0b` P3** · **`319daa3`+`b55d317` P4** · `44a4077` P5-charge docs · **`13c62de` P5 Analytics** · **the P6 Regime commit (HEAD)**. Base = the v2.7 line (`92b753b`, pushed). **Operator merges/pushes v3.0 at their call.**
 **Tests**: **4220 passed / 7 skipped / 3 deselected** (SOLO, `.venv`, FULL gate; +9 P6 pins over the P5 bundle; NO F5 tripwire; post-fold re-gate pending at wrap — targeted 91 green). ALWAYS run SOLO on the **`.venv`** interpreter (user-site Python lacks `pytest-timeout` → drops the 30 s guardrail). Fresh worktree/clone: run `scripts/provision_test_env.py` FIRST (CLAUDE.md § "Fresh worktree / clone").
 **Engine**: **STOPPED** (no python processes as of this wrap). **Must be restarted to live-verify `/v3`** — it will NOT serve the new v3 routes (incl. `/api/regime/multipliers`) until restart. Recipe — **SYNCED OS CLOCK FIRST** (`w32tm /resync`; a drifted clock → `-1021 Timestamp ahead` → the "Connecting to exchange…" hang): `.venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000` (**no `--reload`**).
@@ -42,7 +42,28 @@ ALL findings folded pre-commit** (rule-copy divergence verified against the
 classifier first; ECharts re-init memoization; _rgPost never rejects;
 unknown-label guards; synthesized coverage rows; category-not-impact chips;
 "open ↗" article links). Deviations + residues named in the plan note + file
-header. Bundle **`1b179cc68e`**.
+header.
+
+**★ PaneFoot consistency commit (post-P6, operator-caught drift):** the
+operator noticed only Dashboard had pane footers. Root cause chain: P1 ported
+design foots WITH fabricated `id:`/`ms:` ornaments (mock-strip miss); P3
+dropped foots and named it; P5/P6 dropped them citing a FALSE "P1-P4 parity"
+claim (never verified against shipped P1 — a verify-first miss against our
+own tree). **Operator-ratified policy: foots everywhere, REAL data only**
+(recorded in `frontend/DESIGN.md` §5 Pane). Shipped: fake id/ms stripped from
+dash-tiled's 8; ~42 truthful `{tone,msg}` foots across all 7 pages; the
+audit's HIGH catch fixed at the PRIMITIVE — Pane's ↻ reload path minted a
+fake `nextEventId` + a fake "elapsed ms" (the 620ms animation timer) +
+claimed "resynced from source" even on panes whose data hooks live in the
+parent (a child remount can't re-run them); now honest: `reloaded ·
+refetched` (with onRefresh) / `reloaded · body remounted` (without), no
+id/ms; `nextEventId`/`QE_EVENT_SEQ` deleted (a Math.random left the
+primitives layer). Loading states guard to `loading…`; tones state-reflect
+(no static warn/ok). 1 independent audit (all 39+ msgs verified truthful
+against real timers/scopes/contracts), findings folded. Bundle
+**`8586604edd`**. LESSON for P7/P8: cross-page pane-anatomy consistency is
+an audit dimension; never cite "parity with shipped pages" without
+re-grepping the shipped pages.
 Operator acceptance of P2 (gear → Config), P3 (`/v3` Pre-Trade), P4
 (History+Linkage), P5 (Analytics), and P6 (Regime) is still pending — engine
 restart required (launch-v3.bat).

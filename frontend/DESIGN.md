@@ -201,6 +201,21 @@ look with inline styles.
 
 ### Pane (tiling tile)
 - **`Pane`** `{title, count, right, hot, tag, foot, onRefresh}` — head (20px) + scrolling body + optional `foot`. Independently reloadable; body wrapped in `PaneErrorBoundary` (a throwing child shows a recoverable error state, not a blank app).
+- **PaneFoot policy (operator-ratified, post-P6 consistency pass): foots
+  everywhere, REAL data only.** Every major data pane carries a
+  `foot={{tone, msg}}` whose message is truthful and derivable at the call
+  site: row/item counts, poll cadence, source attribution, window
+  descriptions, real state summaries. **Never pass `id` or `ms`** — the
+  design reference's `[00123]` event-ids and `Nms` latency readouts were
+  fabricated ornaments (a real telemetry feed may re-introduce them later).
+  The ↻ reload's own status line is honest too: `reloaded · refetched` when
+  the pane has an `onRefresh` hook, `reloaded · body remounted` when it
+  doesn't (a child remount cannot re-run the PARENT's data hooks — never
+  claim "resynced" without one). `tone` must reflect real state (`warn`
+  only when something is genuinely warning-worthy; guard loading states to
+  `loading…` rather than rendering zero-counts). Micro/KPI tiles,
+  pure-form panes, and panes whose head/right slot already carries the
+  same truthful readout may omit the foot — don't pad with filler.
 - **`PageHeader`** `{title, subtitle, left, children}` — the 34px page title bar. **Never repeat the page title inside content.**
 
 ---
