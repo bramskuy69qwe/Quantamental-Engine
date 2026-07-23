@@ -1,30 +1,40 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-07-23 (**v3.0 EXECUTION — P0-P7 SHIPPED + P8 IN PROGRESS: the directive-#7 audit ledger (`d8bd5c8`) and fix wave 1 (`37d012e`, HEAD) landed this session; NEXT = P8 wave 2 (D2/D3 code fixes) → doc wave → retirement.** A live-DB incident earlier in the arc was caught + FULLY restored — details in the P2 block.)
+**Date**: 2026-07-23 (**v3.0 EXECUTION — P0-P7 SHIPPED + P8 IN PROGRESS: the directive-#7 audit ledger (`d8bd5c8`), fix wave 1 (`37d012e`) and fix wave 2 (`15e77bb`, HEAD) landed this session; NEXT = the P8 doc wave → operator decision points → acceptance-gated retirement.** A live-DB incident earlier in the arc was caught + FULLY restored — details in the P2 block.)
 **Branch**: **`v3.0/ui-plan-audit` — LOCAL ONLY (unpushed).** Session commits on top of the plan-audit docs (`9e9e5f4`): `b14b3b3` render-as-is clarify · **`1221b16` P0** · **`8b23417` P1** · **`35ffff1`+`cca3eb7` P2** · `9e85249` launch-v3.bat · **`a1fde0b` P3** · **`319daa3`+`b55d317` P4** · `44a4077` P5-charge docs · **`13c62de` P5 Analytics** · **`81a6594` P6 Regime** · `0116083`+`e43a7e1` PaneFoot arc · **`22b03b9` P7 Models** · `1bfb244` P7 wrap · **`3e6bb45` PaneFoot completeness** (24 foot-less panes operator-caught; the authoritative sweep runs against the EMITTED bundle, esbuild foot-shorthand aware) · `4b2370a` wrap · **`d8bd5c8` P8 directive-#7 audit ledger** (9 lenses; `docs/audits/2026-07-23-v3.0-p8-design-consistency-audit.md` = the source of truth: D1 fabrication HIGH · D2 Dashboard drops HIGH+3MED · D3 3MED · 4 doc MEDs · LOW/NIT tail) · **`37d012e` P8 wave 1 (HEAD)** — fabrication mechanism KILLED: `chrome-live.js` QE_CHROME store (state 10s/snapshot 30s/system 60s/accounts+retry/SSE status), chrome rebound (real regime/P&L/OPEN/EXP/DD, real account picker + activate, honest footer, ornaments dropped per G-O9), NotificationProvider wired to `/notifications/poll` (real-4 channels, N_SEED gone), whole mock family deleted; bundle **`ebb1d4e12a`**; 2 audits SHIP-WITH-NITS 0 CRIT/HIGH/MED, all folded. Base = the v2.7 line (`92b753b`, pushed). **Operator merges/pushes v3.0 at their call.**
-**Tests**: **4252 passed / 7 skipped / 3 deselected** (SOLO, `.venv`, FULL gate green ×3 at the wave-1 wrap). **NB the F5 tripwire fires its BENIGN branch while the engine runs alongside** (engine log + news-scheduler upserts = expected drift; investigated at wave 1 — NOT a test leak; re-run with the engine stopped for a silent gate). Watch item (older): a once-off collection-order ERROR in `test_phase8_audit_followup.py::TestSizeDriftNotification` (one P7-era run; never reproduced). ALWAYS run SOLO on the **`.venv`** interpreter (user-site Python lacks `pytest-timeout` → drops the 30 s guardrail). Fresh worktree/clone: run `scripts/provision_test_env.py` FIRST (CLAUDE.md § "Fresh worktree / clone").
-**Engine**: **RUNNING since 2026-07-23 18:42** (operator-started, 2× uvicorn :8000, the HANDOFF recipe) — serves `static/v3` per-request, so a browser refresh picks up the current bundle **`ebb1d4e12a`** (wave 1 is JSX-only; no restart needed). Surfaced observations from the live log (NOT filed): the news fetcher upserts 100 items every ~16 s (confirm the cadence is intended); httpx INFO lines write the **Finnhub API token in cleartext** into `data/logs/risk_engine.jsonl` (pre-existing leak — ledger candidate).
+**Tests**: **4255 passed / 7 skipped / 3 deselected** (SOLO, `.venv`, FULL gate green at the wave-2 wrap; +3 wave-2 pins). **NB the F5 tripwire fires its BENIGN branch while the engine runs alongside** (engine log + news-scheduler upserts = expected drift; investigated at wave 1 — NOT a test leak; re-run with the engine stopped for a silent gate). Watch item (older): a once-off collection-order ERROR in `test_phase8_audit_followup.py::TestSizeDriftNotification` (one P7-era run; never reproduced). ALWAYS run SOLO on the **`.venv`** interpreter (user-site Python lacks `pytest-timeout` → drops the 30 s guardrail). Fresh worktree/clone: run `scripts/provision_test_env.py` FIRST (CLAUDE.md § "Fresh worktree / clone").
+**Engine**: **RUNNING since 2026-07-23 18:42** (operator-started, 2× uvicorn :8000, the HANDOFF recipe) — serves `static/v3` per-request, so a browser refresh picks up the current bundle **`47f92434ad`**. **NB wave 2 changed PYTHON routes** (`_journal_stats_context` daily_pnl + signals `series`) — the running engine predates them, so the Monthly bar chart + sparklines render their empty-states until the NEXT engine restart (all other wave-2 fixes are JSX-only and live on refresh). Surfaced observations from the live log (NOT filed): the news fetcher upserts 100 items every ~16 s (confirm the cadence is intended); httpx INFO lines write the **Finnhub API token in cleartext** into `data/logs/risk_engine.jsonl` (pre-existing leak — ledger candidate).
 
 ## ▶ STATUS 2026-07-23 (v3.0 EXECUTION) — P0-P7 SHIPPED; P8 IN PROGRESS (audit + wave 1 DONE)
 
-**▶▶ NEXT: P8 wave 2** — the ledger's D2+D3 code fixes (ledger Disposition
-§2; `docs/audits/2026-07-23-v3.0-p8-design-consistency-audit.md`):
-Dashboard restores (L1-F1 daily-PnL array+chart — needs the backend
-`_journal_stats_context` addition · F2 sparkline series · F3 sector_lines
-render · F4 weekly gauge · F5 AGE col · F6/F7 OHLC header + honest label +
-retrying flag) · hedge-safe SSE uPnL merges (L3-F1: composite symbol|side —
-pages-linkage AND dash-tiled) · History M·R/heat + false-header fix (L3-F2)
-· Trade-Events summary render (L3-F3) · the worthwhile LOW tail (L4-LOW-2
-period future-clamp, L1-F8 _ptJson window-export, L1-F9 mark null-guard,
-L6-LOW-1 toast tone, L2-NIT-6 snake_case regime labels). Then the **doc
-wave** (4 doc MEDs + named-residue backfills: plan P4 retitle, DESIGN.md
-§6/§9, L2-LOW-1's four P3 items, L4-NIT-3, L5-LOW-1 regime header comment,
-stale §2 citation) and the **retirement decision points** (Primitives in
-prod nav · tools={false} ratify-vs-lift · workspace account-namespacing).
-Retirement itself (promote `/v3` → `/`, retire Jinja) stays gated on
-operator acceptance of P2-P7. House cycle unchanged: one commit per wave,
-gate SOLO `.venv`, ≥2 independent audits (direct parallel Agent calls, not
-Workflow), fold, STOP.
+**▶▶ NEXT: P8 doc wave** — the 4 doc MEDs + named-residue backfills
+(ledger Disposition §3): plan P4 note retitle (stale pre-execution text,
+F13 class) · DESIGN.md §6 account-namespacing overstatement + §9
+Primitives-nav contradiction (pairs with decision point 1) · L2-LOW-1's
+four P3 named-residue items · L4-NIT-3 label renames · L5-LOW-1 regime
+file-header confirm-gate correction · the stale §2 PaneFoot citation ·
+L4-NIT-5/L8-LOW-a the 11-site ECharts `'#000'` → `QE_ECHARTS_THEME.bg`
+sweep (mechanical, fits the doc wave). Then the **retirement decision
+points for the operator**: (1) Primitives in prod nav — strip vs amend §9;
+(2) `tools={false}` fleet convention — ratify in DESIGN.md §5 vs lift on
+large tables; (3) workspace layout account-namespacing — implement vs
+correct the doc. Retirement itself (promote `/v3` → `/`, retire Jinja)
+stays gated on operator acceptance of P2-P7. House cycle unchanged.
+
+**P8 wave 2 SHIPPED `15e77bb` (this session)** — D2+D3 closed; full detail
+in the ledger's Disposition EXECUTION STATE. Headlines: Monthly daily-PnL
+chart end-to-end (backend `daily_pnl` + BarChart) · signal sparklines
+(backend `series`) · sector_lines + Weekly-Loss gauge + AGE + real OHLC
+header restored · hedge-safe symbol|side SSE merges BOTH files (+composite
+row keys/live-ids) · History M·R/HistHeat + corrected false header +
+Trade-Events SUMMARY (Jinja-exact) · period future-clamp · err toast ·
+label de-snaking · `_ptJson` hoisted to primitives. 3 pins
+tests/test_p8_wave2.py. Audit catch worth remembering: **`entry_ms` on
+snapshot position rows is a MISNAMED ISO STRING** (PositionInfo.
+entry_timestamp passthrough; the P1 test stub baked a numeric — the
+stub-fidelity trap); PosAge is parse-tolerant; renaming the field +
+fixing the stub = backend cleanup candidates. Bundle **`47f92434ad`**;
+gate 4255/7/3.
 
 **P8 SHIPPED SO FAR (this session):** `d8bd5c8` the 9-lens directive-#7
 audit ledger (headline: 5/6 pages CLEAN at material tiers; drift = D1
