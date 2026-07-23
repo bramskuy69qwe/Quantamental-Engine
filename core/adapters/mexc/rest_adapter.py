@@ -164,9 +164,22 @@ class MexcLinearAdapter(BaseExchangeAdapter):
                 "mexc fetch_account: usdt['free'] is null — refusing "
                 "to apply phantom-zero available margin."
             )
+        # v3.0 operator-bug #1: `wallet_balance` is set to the SAME figure as
+        # `total_equity` here, which preserves this adapter's pre-existing
+        # behaviour exactly (DataCache previously took balance_usdt from
+        # total_equity for every adapter). It is deliberately NOT derived via
+        # the wallet = equity - unrealized identity, because CCXT reports no
+        # unrealized split for MEXC (hardcoded 0.0 below) — deriving would
+        # silently assert "unrealized is genuinely zero", which is unverified.
+        # KNOWN RESIDUE (unchanged by this fix, MEXC-only): with unrealized
+        # pinned at 0 from REST, apply_mark_price's balance + unrealized can
+        # double-count once positions are open. Needs a live MEXC account to
+        # verify CCXT's `total` semantics — ledger candidate, not fixed blind.
+        total = float(usdt.get("total", 0) or 0)
         return NormalizedAccount(
             currency="USDT",
-            total_equity=float(usdt.get("total", 0) or 0),
+            total_equity=total,
+            wallet_balance=total,
             available_margin=float(usdt.get("free", 0) or 0),
             unrealized_pnl=0.0,  # CCXT doesn't split this for MEXC
         )

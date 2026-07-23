@@ -14,9 +14,27 @@ from typing import Dict, List, Optional, Protocol, Tuple, runtime_checkable
 
 @dataclass
 class NormalizedAccount:
-    """Exchange-agnostic account balance snapshot."""
+    """Exchange-agnostic account balance snapshot.
+
+    **`total_equity` vs `wallet_balance` (v3.0 operator-bug #1).** These are
+    two different numbers and adapters must not conflate them:
+
+      total_equity   = wallet_balance + unrealized_pnl   ("margin balance")
+      wallet_balance = settled cash only, EXCLUDING open-position PnL
+
+    `DataCache.apply_mark_price` is the **sole continuous equity authority**
+    (the FE-9 invariant, `core/data_cache.py`): it recomputes
+    `total_equity = balance_usdt + total_unrealized` on every mark tick. An
+    adapter that reports a wallet-only figure as `total_equity` makes the
+    REST poll overwrite equity with a value short by exactly the open
+    unrealized PnL, which the next mark tick then restores — the equity
+    series visibly oscillates and `min_total_equity` latches the phantom
+    low. That is exactly what the Binance adapter did (`totalWalletBalance`
+    where `totalMarginBalance` was meant).
+    """
     currency: str = "USDT"         # Settlement/collateral currency
-    total_equity: float = 0.0
+    total_equity: float = 0.0      # margin balance = wallet + unrealized
+    wallet_balance: float = 0.0    # settled cash, excludes unrealized (0 ⇒ derive)
     available_margin: float = 0.0
     unrealized_pnl: float = 0.0
     initial_margin: float = 0.0

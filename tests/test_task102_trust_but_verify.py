@@ -92,9 +92,18 @@ class TestBinanceFetchAccountCriticalFieldValidation:
 
     def test_complete_response_applies_normally(self):
         """Anti-over-correction: a complete, well-formed response succeeds
-        and produces the expected NormalizedAccount."""
+        and produces the expected NormalizedAccount.
+
+        v3.0 operator-bug #1 updated this fixture: it previously omitted
+        `totalMarginBalance` (which a real /fapi/v2/account response always
+        carries) and asserted `total_equity == totalWalletBalance` — encoding
+        the wallet-vs-margin-balance conflation that made the live equity
+        curve oscillate. "Complete" now means complete: equity is the margin
+        balance, wallet balance is its own field.
+        """
         ad = self._make_adapter({
             "totalWalletBalance": "10000.5",
+            "totalMarginBalance": "10150.5",   # = wallet + unrealized
             "availableBalance": "8000.25",
             "totalUnrealizedProfit": "150.0",
             "totalInitialMargin": "2000.0",
@@ -102,7 +111,8 @@ class TestBinanceFetchAccountCriticalFieldValidation:
             "feeTier": "2",
         })
         acct = asyncio.run(ad.fetch_account())
-        assert acct.total_equity == 10000.5
+        assert acct.total_equity == 10150.5
+        assert acct.wallet_balance == 10000.5
         assert acct.available_margin == 8000.25
         assert acct.unrealized_pnl == 150.0
         assert acct.initial_margin == 2000.0

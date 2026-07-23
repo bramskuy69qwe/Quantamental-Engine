@@ -138,10 +138,35 @@ class BinanceUSDMAdapter(BaseExchangeAdapter):
                     "defaulting to 0 (non-critical field)",
                     non_critical,
                 )
+
+        # v3.0 operator-bug #1: `totalWalletBalance` is settled cash and
+        # EXCLUDES open-position PnL — it is the wallet balance, not equity.
+        # Reporting it as `total_equity` made every REST poll knock equity
+        # down by exactly the open unrealized PnL until the next mark tick
+        # restored it (apply_mark_price = balance + unrealized), so the
+        # equity series oscillated and `min_total_equity` latched the
+        # phantom low. `/fapi/v2/account` ships the correct figure as
+        # `totalMarginBalance` (= wallet + unrealized). Kept non-fatal: if
+        # the field is ever absent we reconstruct the identity rather than
+        # regress to the wallet-only value.
+        wallet_balance = float(info.get("totalWalletBalance", 0) or 0)
+        unrealized     = float(info.get("totalUnrealizedProfit", 0) or 0)
+        raw_margin_bal = info.get("totalMarginBalance")
+        if raw_margin_bal is None:
+            log.warning(
+                "binance fetch_account: totalMarginBalance missing from "
+                "response; deriving equity as wallet %.8f + unrealized %.8f",
+                wallet_balance, unrealized,
+            )
+            total_equity = wallet_balance + unrealized
+        else:
+            total_equity = float(raw_margin_bal or 0)
+
         return NormalizedAccount(
-            total_equity=float(info.get("totalWalletBalance", 0) or 0),
+            total_equity=total_equity,
+            wallet_balance=wallet_balance,
             available_margin=float(info.get("availableBalance", 0) or 0),
-            unrealized_pnl=float(info.get("totalUnrealizedProfit", 0) or 0),
+            unrealized_pnl=unrealized,
             initial_margin=float(info.get("totalInitialMargin", 0) or 0),
             maint_margin=float(info.get("totalMaintMargin", 0) or 0),
             fee_tier=str(info.get("feeTier", "")),

@@ -234,6 +234,12 @@ class BybitLinearAdapter(BaseExchangeAdapter):
         unrealized = float(account.get("totalPerpUPL", 0) or 0)
         initial_margin = float(account.get("totalInitialMargin", 0) or 0)
         maint_margin = float(account.get("totalMaintenanceMargin", 0) or 0)
+        # v3.0 operator-bug #1: Bybit's `totalEquity` ALREADY includes
+        # unrealized PnL, so equity was never wrong here (unlike Binance) —
+        # but the wallet-only figure is still needed as `balance_usdt`, the
+        # base apply_mark_price adds unrealized back onto. Sentinel 0.0 ⇒
+        # DataCache derives it from the equity/unrealized identity.
+        wallet_balance = float(account.get("totalWalletBalance", 0) or 0)
 
         # Per-coin USDT override (Bybit V5 quirk: some account configurations
         # aggregate at zero account-level and require per-coin extraction).
@@ -244,6 +250,9 @@ class BybitLinearAdapter(BaseExchangeAdapter):
             )
             unrealized = float(
                 usdt_entry.get("unrealisedPnl", unrealized) or unrealized
+            )
+            wallet_balance = float(
+                usdt_entry.get("walletBalance", wallet_balance) or wallet_balance
             )
 
         # AD-3: parse live fee rates, fall back to VIP0 defaults
@@ -260,6 +269,7 @@ class BybitLinearAdapter(BaseExchangeAdapter):
 
         return NormalizedAccount(
             total_equity=total_equity,
+            wallet_balance=wallet_balance,
             available_margin=available,
             unrealized_pnl=unrealized,
             initial_margin=initial_margin,

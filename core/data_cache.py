@@ -925,7 +925,19 @@ class DataCache:
             acc.total_unrealized   = na.unrealized_pnl
             acc.total_margin_used  = na.initial_margin
             acc.total_margin_ratio = na.maint_margin
-            acc.balance_usdt       = na.total_equity
+            # v3.0 operator-bug #1: balance_usdt is the WALLET balance — the
+            # base apply_mark_price adds unrealized back onto (FE-9: that
+            # method is the sole continuous equity authority). It used to be
+            # assigned `na.total_equity`, which was only ever coincidentally
+            # right: it worked because the Binance adapter was ALSO reporting
+            # the wallet figure as total_equity, and broke equity in the same
+            # stroke. The two are now distinct fields. Sentinel 0.0 ⇒ the
+            # adapter reports no separate wallet figure, so reconstruct it
+            # from the identity wallet = equity - unrealized.
+            acc.balance_usdt       = (
+                na.wallet_balance if na.wallet_balance
+                else na.total_equity - na.unrealized_pnl
+            )
 
             # Set BOD / SOW equity on first fetch if not set
             if acc.bod_equity == 0.0:

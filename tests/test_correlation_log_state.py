@@ -268,8 +268,12 @@ class TestAccountAndPortfolioTaps:
         app_state = _restore_app_state
         app_state.account_state.total_equity = 500.0
         cache = DataCache(_StubBus())
+        # wallet_balance mirrors the real NormalizedAccount shape (v3.0
+        # operator-bug #1) — equity 1000 = wallet 995 + unrealized 5. Kept
+        # faithful deliberately: a stub that omits the field would hide the
+        # very conflation the fix removed (the wave-2 stub-fidelity trap).
         na = SimpleNamespace(
-            total_equity=1000.0, available_margin=900.0,
+            total_equity=1000.0, wallet_balance=995.0, available_margin=900.0,
             unrealized_pnl=5.0, initial_margin=50.0, maint_margin=0.1,
         )
         ok = asyncio.run(cache.apply_account_update_rest(na))
@@ -290,7 +294,7 @@ class TestAccountAndPortfolioTaps:
         cache = DataCache(_StubBus())
         cache._should_accept_account_update = lambda *a: False
         na = SimpleNamespace(
-            total_equity=1.0, available_margin=1.0,
+            total_equity=1.0, wallet_balance=1.0, available_margin=1.0,
             unrealized_pnl=0.0, initial_margin=0.0, maint_margin=0.0,
         )
         ok = asyncio.run(cache.apply_account_update_rest(na))
