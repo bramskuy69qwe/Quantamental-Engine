@@ -1,15 +1,44 @@
 # Handoff — next Claude Code session
 
 **Date**: 2026-07-24 (**v3.0 EXECUTION — P0-P7 SHIPPED + P8 AUDIT FULLY REMEDIATED: ledger `d8bd5c8` → wave 1 `37d012e` (fabrication) → wave 2 `15e77bb` (D2/D3 code) → doc wave `0c2da37` (doc-truth + sweep). EVERY audit finding is closed; NEXT = the 3 operator decision points → acceptance-gated retirement.** A live-DB incident earlier in the arc was caught + FULLY restored — details in the P2 block.)
-**Branch**: **`v3.0/ui-plan-audit` — LOCAL ONLY (unpushed).** Session commits on top of the plan-audit docs (`9e9e5f4`): `b14b3b3` render-as-is clarify · **`1221b16` P0** · **`8b23417` P1** · **`35ffff1`+`cca3eb7` P2** · `9e85249` launch-v3.bat · **`a1fde0b` P3** · **`319daa3`+`b55d317` P4** · `44a4077` P5-charge docs · **`13c62de` P5 Analytics** · **`81a6594` P6 Regime** · `0116083`+`e43a7e1` PaneFoot arc · **`22b03b9` P7 Models** · `1bfb244` P7 wrap · **`3e6bb45` PaneFoot completeness** (24 foot-less panes operator-caught; the authoritative sweep runs against the EMITTED bundle, esbuild foot-shorthand aware) · `4b2370a` wrap · **`d8bd5c8` P8 directive-#7 audit ledger** (9 lenses; `docs/audits/2026-07-23-v3.0-p8-design-consistency-audit.md` = the source of truth: D1 fabrication HIGH · D2 Dashboard drops HIGH+3MED · D3 3MED · 4 doc MEDs · LOW/NIT tail) · **`37d012e` P8 wave 1 (HEAD)** — fabrication mechanism KILLED: `chrome-live.js` QE_CHROME store (state 10s/snapshot 30s/system 60s/accounts+retry/SSE status), chrome rebound (real regime/P&L/OPEN/EXP/DD, real account picker + activate, honest footer, ornaments dropped per G-O9), NotificationProvider wired to `/notifications/poll` (real-4 channels, N_SEED gone), whole mock family deleted; bundle **`ebb1d4e12a`**; 2 audits SHIP-WITH-NITS 0 CRIT/HIGH/MED, all folded. Base = the v2.7 line (`92b753b`, pushed). **Operator merges/pushes v3.0 at their call.**
-**Tests**: **4255 passed / 7 skipped / 3 deselected** (SOLO, `.venv`, FULL gate green at the wave-2 wrap; +3 wave-2 pins). **NB the F5 tripwire fires its BENIGN branch while the engine runs alongside** (engine log + news-scheduler upserts = expected drift; investigated at wave 1 — NOT a test leak; re-run with the engine stopped for a silent gate). Watch item (older): a once-off collection-order ERROR in `test_phase8_audit_followup.py::TestSizeDriftNotification` (one P7-era run; never reproduced). ALWAYS run SOLO on the **`.venv`** interpreter (user-site Python lacks `pytest-timeout` → drops the 30 s guardrail). Fresh worktree/clone: run `scripts/provision_test_env.py` FIRST (CLAUDE.md § "Fresh worktree / clone").
+**Branch**: **`v3.0/ui-plan-audit` — LOCAL ONLY (unpushed), HEAD `2f05663`, working tree CLEAN.** Commit chain on top of the plan-audit docs (`9e9e5f4`): `b14b3b3` render-as-is clarify · **`1221b16` P0** · **`8b23417` P1** · **`35ffff1`+`cca3eb7` P2** · `9e85249` launch-v3.bat · **`a1fde0b` P3** · **`319daa3`+`b55d317` P4** · `44a4077` P5-charge docs · **`13c62de` P5 Analytics** · **`81a6594` P6 Regime** · `0116083`+`e43a7e1` PaneFoot arc · **`22b03b9` P7 Models** · `1bfb244` wrap · **`3e6bb45` PaneFoot completeness** · `4b2370a` wrap · **`d8bd5c8` P8 audit ledger** · **`37d012e` P8 wave 1** · `48248b9` wrap · **`15e77bb` P8 wave 2** · `113006c` wrap · **`0c2da37` P8 doc wave** · `2f05663` session wrap (HEAD). Base = the v2.7 line (`92b753b`, pushed). **Operator merges/pushes v3.0 at their call.**
+**Tests**: **4255 passed / 7 skipped / 3 deselected** (SOLO, `.venv`, FULL gate green at the doc-wave close — the last of 6 green full runs this session; +31 P7 pins, +3 wave-2 pins over the P6 bundle). **NB the F5 tripwire fires its BENIGN branch while the engine runs alongside** (engine log + news-scheduler upserts = expected drift; investigated at wave 1 — NOT a test leak; re-run with the engine stopped for a silent gate). Watch item (older): a once-off collection-order ERROR in `test_phase8_audit_followup.py::TestSizeDriftNotification` (one P7-era run; never reproduced). ALWAYS run SOLO on the **`.venv`** interpreter (user-site Python lacks `pytest-timeout` → drops the 30 s guardrail). Fresh worktree/clone: run `scripts/provision_test_env.py` FIRST (CLAUDE.md § "Fresh worktree / clone").
 **Engine**: **RUNNING since 2026-07-23 18:42** (operator-started, 2× uvicorn :8000, the HANDOFF recipe) — serves `static/v3` per-request, so a browser refresh picks up the current bundle **`36ffe0a5ee`**. **NB wave 2 changed PYTHON routes** (`_journal_stats_context` daily_pnl + signals `series`) — the running engine predates them, so the Monthly bar chart + macro sparklines render their empty-states until the NEXT engine restart (every other P8 fix is JSX/docs-only and live on refresh). Surfaced observations from the live log (NOT filed): the news fetcher upserts 100 items every ~16 s (confirm the cadence is intended); httpx INFO lines write the **Finnhub API token in cleartext** into `data/logs/risk_engine.jsonl` (pre-existing leak — ledger candidate).
 
-## ▶ STATUS 2026-07-23 (v3.0 EXECUTION) — P0-P7 SHIPPED; P8 IN PROGRESS (audit + wave 1 DONE)
+## ▶ SESSION CLOSE 2026-07-24 — P7 Models + the whole P8 audit-and-remediation arc
 
-**▶▶ NEXT: the 3 P8 OPERATOR DECISION POINTS, then retirement.** All
-audit findings are now closed (D1 wave 1 · D2/D3 wave 2 · docs wave 3).
-What remains needs YOUR call:
+**What this session shipped (7 code/doc commits + 5 wraps, all gated + audited):**
+
+| # | Commit | What |
+|---|---|---|
+| 1 | `22b03b9` | **P7 Models** — G-M1..7 + 6 React modules (verbatim workbook capture, render-as-is report) |
+| 2 | `3e6bb45` | **PaneFoot completeness** — 24 foot-less panes (operator-caught); sweep moved to the EMITTED bundle |
+| 3 | `d8bd5c8` | **P8 directive-#7 audit ledger** — 9 parallel lenses, built frontend vs the Meridian design |
+| 4 | `37d012e` | **P8 wave 1** — the fabrication mechanism killed (chrome + notifications) |
+| 5 | `15e77bb` | **P8 wave 2** — Dashboard restores, hedge-safe SSE merges, History substance |
+| 6 | `0c2da37` | **P8 doc wave** — doc-truth MEDs, residue backfills, ECharts literal sweep |
+| 7 | `2f05663` | this wrap |
+
+**Every P8 audit finding is CLOSED** (D1 fabrication · D2 Dashboard drops ·
+D3 linkage/history · 4 doc MEDs · the LOW/NIT tail). The ledger
+(`docs/audits/2026-07-23-v3.0-p8-design-consistency-audit.md`) carries the
+per-lens detail and a Disposition section tracking execution state — **read
+it before touching P8 leftovers.**
+
+**▶▶ NEXT SESSION — TWO INPUTS FROM THE OPERATOR:**
+
+**(A) A BUG LIST.** The operator has bugs observed while live-driving `/v3`
+and will paste them next session. **Handle them FIRST, before the decision
+points.** Discipline for that pass: CLAUDE.md § "Re-investigation" —
+reproduce/pin the symptom, investigate the MECHANISM independently (a
+reported cause is a hypothesis, not a contract), fix the investigated one,
+and note any divergence. Cheap context for triage: the engine is running
+but PREDATES wave-2's Python routes (see the Engine line above), so
+"Monthly bar chart empty" / "macro sparklines missing" are EXPECTED until
+restart, not bugs. Bundle on disk = `36ffe0a5ee`; a stale browser cache is
+the other standard false positive (hard-refresh first).
+
+**(B) The 3 P8 DECISION POINTS** (answers pending — do not guess):
 1. **Primitives in production nav** — it ships as a divider-separated
    amber DEV-chip tab in `NAV_ITEMS` (faithful to the design). Strip it
    for the `/v3` → `/` promotion (hash `#Primitives` keeps it reachable)
@@ -23,14 +52,38 @@ What remains needs YOUR call:
 3. **Workspace-layout account-namespacing** — keys are
    `qe.ws.layout.${id}` with no account component (deferred §1.5).
    Implement namespacing, or leave it (doc now states the truth)?
-Then **retirement** (promote `/v3` → `/`, retire the Jinja twins,
-base.html plumbing, CLAUDE.md OLD-class JS-drift grep) — still gated on
-your acceptance of P2-P7 live, plus the Release-hygiene bump
-(`PROJECT_VERSION_` + README Status) at program close. Also open, no
-owner yet: the no-undef lint follow-up (eslint/acorn dev-dep) and the
-`entry_ms` misnomer + P1 numeric-stub cleanup (wave-2 finding).
+**THEN retirement** (promote `/v3` → `/`, retire the Jinja twins +
+base.html plumbing, CLAUDE.md OLD-class JS-drift grep) — gated on operator
+acceptance of P2-P7 live — plus the Release-hygiene bump
+(`PROJECT_VERSION_` + README Status) at program close (CLAUDE.md §
+"Release hygiene": the displayed version froze for 3 minor versions once
+because nothing named the bump).
 
-**P8 wave 2 SHIPPED `15e77bb` (this session)** — D2+D3 closed; full detail
+**▼ OPERATOR BUG LIST — paste next session (slot kept deliberately empty):**
+
+```
+(next session: paste the observed /v3 bugs here, then triage per the
+discipline in (A) above — reproduce, investigate the mechanism
+independently, fix the investigated one, name any divergence.)
+```
+
+**Open, no owner yet** (carry forward, don't lose):
+- `no-undef` lint pass over the concatenated bundle — needs an
+  eslint/acorn dev-dep (operator call). Until then the guard is the
+  targeted identifier grep + the audit-time vm-render sweep; the esbuild
+  `vm.Script` check is PARSE-only and has twice missed unbound identifiers.
+- `entry_ms` MISNOMER on snapshot position rows (it is
+  `PositionInfo.entry_timestamp`, an ISO string) + the P1 test stub that
+  baked a numeric and hid it. Rename server-side + fix the stub.
+- Live-log observations, unfiled: news fetcher upserts 100 items every
+  ~16 s (intended?); httpx INFO writes the **Finnhub API token in
+  cleartext** into `data/logs/risk_engine.jsonl`.
+- Jinja stays the parity reference until each React page is accepted —
+  never retire a template before its twin is accepted.
+
+### P8 remediation detail (all three waves)
+
+**P8 wave 2 SHIPPED `15e77bb`** — D2+D3 closed; full detail
 in the ledger's Disposition EXECUTION STATE. Headlines: Monthly daily-PnL
 chart end-to-end (backend `daily_pnl` + BarChart) · signal sparklines
 (backend `series`) · sector_lines + Weekly-Loss gauge + AGE + real OHLC
@@ -45,10 +98,23 @@ stub-fidelity trap); PosAge is parse-tolerant; renaming the field +
 fixing the stub = backend cleanup candidates. Bundle **`47f92434ad`**;
 gate 4255/7/3.
 
-**P8 SHIPPED SO FAR (this session):** `d8bd5c8` the 9-lens directive-#7
-audit ledger (headline: 5/6 pages CLEAN at material tiers; drift = D1
-fabrication (consensus HIGH) + D2 Dashboard drops + D3 linkage/history
-trims + 4 doc MEDs) · **`37d012e` wave 1** — D1 CLOSED: `chrome-live.js`
+**P8 doc wave SHIPPED `0c2da37`** — the 4 doc-truth MEDs + residue
+backfills + the 11-site ECharts `'#000'` → `QE_ECHARTS_THEME.bg` sweep
+(behaviour-identical; theme.bg = `#000000`). Plan P4 note retitled out of
+stale "frontend pending" text (F13 class) with `b55d317`'s own deviations
+restored; P3/P5/P7 residue lists backfilled from file headers (incl. the
+StepperInput mis-attribution CORRECTED — price-mode = ratified Task-152,
+pct-mode = plain uniformity); DESIGN.md §9 nav rules + §10's contradicting
+Don't-row + §9's stale "P0 status" body + §6 namespacing + de-lined §1/§2
+citations; regime + linkage file-header truth. **Audit lesson worth
+keeping: a doc MED can be HALF-closed** — the §9 rewrite left §10's
+quick-reference row still forbidding what ships; grep the WHOLE doc for a
+claim, not just the section you're editing.
+
+**P8 audit ledger `d8bd5c8`** — 9-lens directive-#7 audit (headline: 5/6
+pages CLEAN at material tiers; drift = D1 fabrication (consensus HIGH) +
+D2 Dashboard drops + D3 linkage/history trims + 4 doc MEDs) ·
+**`37d012e` wave 1** — D1 CLOSED: `chrome-live.js`
 QE_CHROME store + chrome rebound to real data ('—' when absent), real
 account picker (activate+reload, failures surfaced), honest StatusFooter
 (uptime real, ornaments dropped), NotificationProvider wired to
@@ -62,7 +128,9 @@ unknown-regime '—'). The old P8-work list items now DONE by wave 1: the
 shared-chrome adapter; still open: the no-undef lint follow-up (operator
 call) + Release hygiene (PROJECT_VERSION_ bump at program close).
 
-**P7 SHIPPED (this session, HEAD `22b03b9`)** — the Models page on the
+### Phase detail (P7 back through P0)
+
+**P7 SHIPPED `22b03b9`** — the Models page on the
 verbatim-capture backend; full detail in the plan's **P7 SHIPPED-STATE**
 note. Headlines: G-M2 = ONE generic lossless serializer
 (`core/backtest_adapters/workbook_capture.py`, `workbook.v1` — every
@@ -87,7 +155,7 @@ tier-3 EmptyState+Retry, was an infinite spinner; dry-run fail-loud).
 (trade-key parity +`contracts`; the to_thread spy asserts parse AND
 capture off-loop).
 
-**P6 SHIPPED (this session, HEAD)** — the Regime page; full detail in the
+**P6 SHIPPED `81a6594`** — the Regime page; full detail in the
 plan's **P6 SHIPPED-STATE** note. Headlines: verify-first found the surface
 ALREADY all-JSON (zero doors; the row's "none new" TRUE in substance — but
 News binds `/api/news/*` + `/api/calendar`, NOT `/api/regime/*`); ONE additive
@@ -167,10 +235,12 @@ pending — engine restart required (launch-v3.bat).
 - **DD-enforcement flip is DEFERRED (display-only)** — read `dd_enforcement_mode` from
   `/api/config/account/{id}` `settings`; do NOT wire the write (its `advisory→enforced`
   flip needs the name-confirm safety gate — a later phase).
-- ConfigPage is entirely inline-mock (no Math.random); reached via the **gear button**
-  (not top nav; DESIGN.md §9).
+- ConfigPage is reached via the **gear button**, not the top nav (DESIGN.md §9).
+  (Its P2-era "entirely inline-mock" note is SUPERSEDED — the page was wired to
+  the 5 real config endpoints in the P2 frontend commit, and P8 wave 1 removed
+  the last mock chrome around it.)
 
-**★ LIVE-DB INCIDENT (this session — RESOLVED, no residual):** a draft P2 test POSTed
+**★ LIVE-DB INCIDENT (the P2 session, 2026-07-22 — RESOLVED, no residual):** a draft P2 test POSTed
 `/api/config/apply-preset {swing}` **through the shared TestClient**, which wrote the
 swing preset onto **LIVE account 1's `account_settings`** — that writer resolves
 `config.DATA_DIR` (live), which the temp-DB rebind does NOT isolate (**F5**). The F5
