@@ -512,6 +512,34 @@ const PaneHead = ({title, count=null, right=null, hot=false, tag=null, onRefresh
 // tier 3 (err, cause displayed). `empty` (successful fetch, zero rows) is
 // accepted so callers can pass full state — it stays tier 1; the BODY owns
 // empty-state display (EmptyState), the foot reports the pipe.
+/* _ptJson — THE shared JSON-fetch plumbing (moved here from pages-pretrade
+   in P8 wave 2, audit L1-F8: dash-tiled consumed it against load order).
+   Errors carry `status` (HTTP code; 0 = network-level failure) and `corrupt`
+   (body was not JSON) for the qeFootState 4-tier deriver — ADDITIVE: plain
+   catches see an Error exactly as before. */
+const _ptJson = async (url) => {
+  let r;
+  try {
+    r = await fetch(url, { headers: { Accept: 'application/json' } });
+  } catch (e) {
+    const err = new Error(url + ' unreachable');
+    err.status = 0;
+    throw err;
+  }
+  if (!r.ok) {
+    const err = new Error(url + ' ' + r.status);
+    err.status = r.status;
+    throw err;
+  }
+  try {
+    return await r.json();
+  } catch (e) {
+    const err = new Error(url + ' corrupt response');
+    err.corrupt = true;
+    throw err;
+  }
+};
+
 const qeFootCause = (err) => {
   if (!err) return 'unknown error';
   if (err.corrupt) return 'corrupt response';
@@ -1277,6 +1305,6 @@ Object.assign(window, {
   StatusDot, Badge, RegimeBadge, PeriodSelector, Gauge, EmptyState,
   Tabs, Strip, FlashCell, LiveValue, LiveClock,
   asciiSpark, ASCII_SPARK,
-  Pane, PaneHead, PaneFoot, qeFootState, qeFootCause, RefreshButton, ReloadGlyph, ReloadIconSVG, BrailleSquares, Spinner, useSpinFrame, RELOAD_MS, PaneErrorBoundary, DataList, FieldList, StepperInput, LockButton, NewsTickerBar,
+  Pane, PaneHead, PaneFoot, qeFootState, qeFootCause, _ptJson, RefreshButton, ReloadGlyph, ReloadIconSVG, BrailleSquares, Spinner, useSpinFrame, RELOAD_MS, PaneErrorBoundary, DataList, FieldList, StepperInput, LockButton, NewsTickerBar,
   Switch, Chip, Banner, Toast, PageHeader,
 });

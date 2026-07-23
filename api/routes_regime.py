@@ -201,12 +201,17 @@ async def api_regime_signals_latest():
         key = _MACRO_SIGNAL_KEYS.get(name, name)
         pts = data.get(name, [])
         if not pts:
-            out.append({"key": key, "name": name, "v": None, "d": None, "tone": "flat"})
+            out.append({"key": key, "name": name, "v": None, "d": None,
+                        "tone": "flat", "series": []})
             continue
         v = pts[-1]["value"]
         d = (v - pts[-2]["value"]) if len(pts) >= 2 else 0.0
         tone = "up" if d > 0 else ("dn" if d < 0 else "flat")
-        out.append({"key": key, "name": name, "v": round(v, 4), "d": round(d, 4), "tone": tone})
+        out.append({"key": key, "name": name, "v": round(v, 4), "d": round(d, 4),
+                    "tone": tone,
+                    # v3.0 P8 wave 2 (audit L1-F2): the 30d series was already
+                    # fetched and discarded — ship it for the tile sparkline.
+                    "series": [round(p["value"], 4) for p in pts[-30:]]})
     return JSONResponse({"signals": out})
 
 

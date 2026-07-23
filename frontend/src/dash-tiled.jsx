@@ -27,16 +27,12 @@ const QE_DASH = (function () {
   const subs = new Set();
   const notify = () => subs.forEach((f) => { try { f(); } catch (e) { /* isolate */ } });
 
+  // net-tracking wrapper over the shared _ptJson plumbing (P8 wave 2: the
+  // in-file fetch duplicate collapsed onto primitives' _ptJson — audit N7).
   async function _json(url, key) {
     const t0 = performance.now();
     try {
-      let r;
-      try { r = await fetch(url, { headers: { Accept: 'application/json' } }); }
-      catch (e) { const err = new Error(url + ' unreachable'); err.status = 0; throw err; }
-      if (!r.ok) { const err = new Error(url + ' ' + r.status); err.status = r.status; throw err; }
-      let d;
-      try { d = await r.json(); }
-      catch (e) { const err = new Error(url + ' corrupt response'); err.corrupt = true; throw err; }
+      const d = await _ptJson(url);
       if (key) state.net[key] = { err: null, ms: performance.now() - t0 };
       return d;
     } catch (err) {
@@ -45,6 +41,11 @@ const QE_DASH = (function () {
     }
   }
 
+  // HEDGE-safe row key (audit L3-F1 twin): a symbol can hold a LONG and a
+  // SHORT PositionInfo simultaneously — never key by symbol alone.
+  const _sideKey = (s) => ((s || '').toLowerCase().startsWith('l') ? 'L' : 'S');
+  const _rowKey = (sym, side) => sym + '|' + _sideKey(side);
+
   async function loadSnapshot() {
     try {
       const s = await _json('/api/dashboard/snapshot', 'snapshot');
@@ -52,7 +53,9 @@ const QE_DASH = (function () {
       state.risk = s.risk || {};
       state.journal = s.journal || {};
       state.regime = s.regime || null;
-      if (Array.isArray(s.positions)) state.positions = s.positions;
+      if (Array.isArray(s.positions)) {
+        state.positions = s.positions.map((r) => ({ ...r, _k: _rowKey(r.sym, r.side) }));
+      }
       state.loaded = true;
       notify();
     } catch (e) { /* keep prior state */ }
@@ -97,14 +100,18 @@ const QE_DASH = (function () {
       // fields (mark/entry/tp/sl/mfe/mae), closed symbols drop immediately, new
       // symbols get minimal rows until the next snapshot enriches them.
       const list = Array.isArray(p.positions) ? p.positions : [];
+      // hedge-safe: key the merge by symbol|side, never symbol alone
+      // (audit L3-F1: the symbol-keyed merge stamped one leg's uPnL onto
+      // both legs of a hedge pair).
       const prev = {};
-      state.positions.forEach((r) => { prev[r.sym] = r; });
+      state.positions.forEach((r) => { prev[r._k || _rowKey(r.sym, r.side)] = r; });
       state.positions = list.map((x) => {
-        const r = prev[x.symbol] || {};
+        const k = _rowKey(x.symbol, x.side);
+        const r = prev[k] || {};
         const upnl = x.upnl != null ? x.upnl : r.upnl;
         const notional = r.notional || 0;
         const pct = notional ? +(upnl / Math.abs(notional) * 100).toFixed(2) : (r.pct || 0);
-        return { ...r, sym: x.symbol, side: x.side != null ? x.side : r.side,
+        return { ...r, _k: k, sym: x.symbol, side: x.side != null ? x.side : r.side,
           size: x.size != null ? x.size : r.size, upnl, pct };
       });
       notify();
@@ -186,14 +193,35 @@ const DeltaPct = ({ id, value, suffix = '%' }) => {
   );
 };
 
-/* ── Position row cells (live upnl/pct from the merged store row) ───────── */
-const _findPos = (positions, sym) => positions.find((p) => p.sym === sym) || {};
-const PosMark = ({ r }) => { const d = useDash(); const p = _findPos(d.positions, r.sym);
-  return <LiveValue id={`pos.${r.sym}.mark`} value={p.mark != null ? p.mark : 0} format={(x) => _loc(x, 2)} style={{ color: 'var(--qe-text)', fontWeight: 700 }} />; };
-const PosPnl = ({ r }) => { const d = useDash(); const p = _findPos(d.positions, r.sym); const pnl = p.upnl != null ? p.upnl : 0;
-  return <LiveValue id={`pos.${r.sym}.pnl`} value={pnl} format={(x) => _sn(x)} style={{ color: pnl >= 0 ? 'var(--qe-green)' : 'var(--qe-red)', fontWeight: 700 }} />; };
-const PosPct = ({ r }) => { const d = useDash(); const p = _findPos(d.positions, r.sym); const pct = p.pct != null ? p.pct : 0;
-  return <LiveValue id={`pos.${r.sym}.pct`} value={pct} format={(x) => _sn(x) + '%'} style={{ color: pct >= 0 ? 'var(--qe-green)' : 'var(--qe-red)', fontWeight: 600 }} />; };
+/* ── Position row cells (live upnl/pct from the merged store row) ─────────
+   P8 wave 2: lookups + LiveValue ids ride the hedge-safe composite `_k`
+   (symbol|side) — symbol-keyed ids collide on hedge pairs. Mark null-guards
+   render '—' instead of a fabricated 0.00 on SSE-minimal rows (audit F9). */
+const _findPos = (positions, k) => positions.find((p) => p._k === k) || {};
+const PosMark = ({ r }) => { const d = useDash(); const p = _findPos(d.positions, r._k);
+  return <LiveValue id={`pos.${r._k}.mark`} value={p.mark != null ? p.mark : '—'} format={(x) => (p.mark == null ? '—' : _loc(x, 2))} style={{ color: 'var(--qe-text)', fontWeight: 700 }} />; };
+const PosPnl = ({ r }) => { const d = useDash(); const p = _findPos(d.positions, r._k); const pnl = p.upnl != null ? p.upnl : 0;
+  return <LiveValue id={`pos.${r._k}.pnl`} value={pnl} format={(x) => _sn(x)} style={{ color: pnl >= 0 ? 'var(--qe-green)' : 'var(--qe-red)', fontWeight: 700 }} />; };
+const PosPct = ({ r }) => { const d = useDash(); const p = _findPos(d.positions, r._k); const pct = p.pct != null ? p.pct : 0;
+  return <LiveValue id={`pos.${r._k}.pct`} value={pct} format={(x) => _sn(x) + '%'} style={{ color: pct >= 0 ? 'var(--qe-green)' : 'var(--qe-red)', fontWeight: 600 }} />; };
+/* live-ticking age from the row's entry_ms (audit F5 — the field was
+   serialized on every snapshot row and never read).
+   NB `entry_ms` is MISNAMED: the serializer passes PositionInfo.
+   entry_timestamp through, which is an ISO-8601 STRING on every
+   production writer (wave-2 audit F1 — a numeric assumption rendered
+   "NaNm" on every real row; the P1 test stub had baked the wrong type).
+   Parse-tolerant: accept epoch-ms OR ISO; anything else → '—'. */
+const PosAge = ({ r }) => {
+  const [, force] = React.useReducer((x) => x + 1, 0);
+  React.useEffect(() => { const t = setInterval(force, 60_000); return () => clearInterval(t); }, []);
+  const raw = r.entry_ms;
+  const t = typeof raw === 'number' ? raw : (raw ? Date.parse(raw) : NaN);
+  if (!t || isNaN(t)) return <span style={{ color: 'var(--qe-muted)' }}>—</span>;
+  const s = Math.max(0, Math.floor((Date.now() - t) / 1000));
+  const dd = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+  const txt = dd ? `${dd}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
+  return <span style={{ color: 'var(--qe-muted)' }}>{txt}</span>;
+};
 const PosMfeMae = ({ r }) => {
   const mfe = r.mfe, mae = r.mae;
   return <span style={{ fontSize: '0.6rem' }}><span style={{ color: 'var(--qe-green)' }}>{mfe == null ? '—' : '+' + (+mfe).toFixed(2)}</span><span style={{ color: 'var(--qe-muted)' }}> / </span><span style={{ color: 'var(--qe-red)' }}>{mae == null ? '—' : (+mae).toFixed(2)}</span></span>;
@@ -234,7 +262,7 @@ const EquityStatsPane = () => {
 };
 
 /* ── Tile: Equity curve — self-fetching OHLC chart + a live header ──────── */
-const EquityOhlcChart = React.memo(function EquityOhlcChart({ tf, onNet }) {
+const EquityOhlcChart = React.memo(function EquityOhlcChart({ tf, onNet, onBar }) {
   const [data, setData] = React.useState([]);
   React.useEffect(() => {
     let alive = true;
@@ -244,7 +272,17 @@ const EquityOhlcChart = React.memo(function EquityOhlcChart({ tf, onNet }) {
         const j = await _ptJson('/api/dashboard/equity_ohlc?tf=' + tf);
         // CandlestickChart wants [[t, o, c, l, h], …]; snapshot candle = {x,o,h,l,c}
         const rows = (j.candles || []).map((c) => [c.x, c.o, c.c, c.l, c.h]);
-        if (alive) { setData(rows); if (onNet) onNet({ err: null, ms: performance.now() - t0 }); }
+        if (alive) {
+          setData(rows);
+          if (onNet) onNet({ err: null, ms: performance.now() - t0 });
+          // lift the latest bar for the pane's O/H/L/Chg header (audit F6)
+          if (onBar) {
+            const n = j.candles || [];
+            const last = n[n.length - 1] || null;
+            const prev = n.length > 1 ? n[n.length - 2] : last;
+            onBar(last ? { o: last.o, h: last.h, l: last.l, prevC: prev ? prev.c : null } : null);
+          }
+        }
       } catch (err) { if (alive && onNet) onNet((n) => ({ ...n, err })); }
     };
     load();
@@ -257,24 +295,34 @@ const EquityOhlcChart = React.memo(function EquityOhlcChart({ tf, onNet }) {
 const EquityCurvePane = () => {
   const [tf, setTf] = React.useState('1h');
   const [net, setNet] = React.useState({});   // the chart child reports its 5s pipe up
+  const [bar, setBar] = React.useState(null); // latest candle O/H/L (+prev close)
   const d = useDash();
   const c = d.equity.total_equity;
+  const chg = (c != null && bar && bar.prevC != null) ? c - bar.prevC : null;
   return (
     <Pane title="Equity Curve" hot tag="OHLC" style={{ height: '100%' }}
       right={<PeriodSelector options={[['1h', '1H'], ['4h', '4H'], ['1d', '1D'], ['1w', '1W']]} value={tf} onChange={setTf} />}
-      foot={qeFootState({ loading: net.ms == null && !net.err, err: net.err, hasData: net.ms != null, ms: net.ms })}
+      foot={qeFootState({ loading: net.ms == null && !net.err, err: net.err, hasData: net.ms != null, ms: net.ms, retrying: true })}
       bodyStyle={{ padding: 6 }}>
       <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+        {/* O/H/L from the latest fetched candle, C live from SSE equity, Chg vs
+            the prior candle close (audit F6 — the header had degraded to a
+            lone C + a fabricated "streaming" label on a 5s poll). */}
         <div className="qe-mono" style={{ fontSize: '0.62rem', display: 'flex', gap: 14, flexWrap: 'wrap', padding: '2px 4px', alignItems: 'baseline' }}>
+          <span><span style={{ color: 'var(--qe-muted)' }}>O</span> <span style={{ color: 'var(--qe-text)' }}>{bar ? '$' + _n(bar.o) : '—'}</span></span>
+          <span><span style={{ color: 'var(--qe-muted)' }}>H</span> <span style={{ color: 'var(--qe-green)' }}>{bar ? '$' + _n(bar.h) : '—'}</span></span>
+          <span><span style={{ color: 'var(--qe-muted)' }}>L</span> <span style={{ color: 'var(--qe-red)' }}>{bar ? '$' + _n(bar.l) : '—'}</span></span>
           <span><span style={{ color: 'var(--qe-muted)' }}>C</span> <LiveValue id="ohlc.c" value={c == null ? 0 : c} format={(x) => '$' + _n(x)} style={{ color: 'var(--qe-text)', fontWeight: 700 }} /></span>
+          <span><span style={{ color: 'var(--qe-muted)' }}>Chg</span> <span style={{ color: chg == null ? 'var(--qe-muted)' : chg >= 0 ? 'var(--qe-green)' : 'var(--qe-red)' }}>{chg == null ? '—' : _sn(chg)}</span></span>
+          <span><span style={{ color: 'var(--qe-muted)' }}>Bar Range</span> <span>{bar ? '$' + _n(bar.h - bar.l) : '—'}</span></span>
           <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            <span className="qe-live" style={{ color: 'var(--qe-cyan)' }}>streaming</span>
+            <span style={{ color: net.err ? 'var(--qe-red)' : 'var(--qe-muted)' }}>{net.err ? 'stalled' : 'poll 5s'}</span>
           </span>
         </div>
         <div style={{ flex: 1, minHeight: 0 }}>
           {/* onNet is the raw setState — success passes a VALUE, failure an
               UPDATER fn; both are valid setState forms */}
-          <EquityOhlcChart tf={tf} onNet={setNet} />
+          <EquityOhlcChart tf={tf} onNet={setNet} onBar={setBar} />
         </div>
       </div>
     </Pane>
@@ -295,7 +343,13 @@ const RiskMonitorPane = () => {
       foot={_dashFoot(d, 'st', d.st && d.st.dd_state != null)}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <Gauge label="Net Exposure" value={rk.exposure_pct != null ? rk.exposure_pct / 100 : 0} max={(rk.max_exposure_pct || 500) / 100} current={rk.exposure_pct != null ? _n(rk.exposure_pct / 100, 2) + '×' : '—'} maxLabel={`${_n(rk.max_exposure_pct / 100, 1)}× cap`} />
-        <Gauge label="Drawdown 30d" value={Math.min(rk.drawdown_pct || 0, rk.max_dd_pct || 10)} max={rk.max_dd_pct || 10} current={_n(rk.drawdown_pct) + '%'} maxLabel={`${_n(rk.max_dd_pct)}% limit`} ticks={[5, 8]} />
+        {/* ticks proportional to the REAL cap (audit N6 — hardcoded [5,8]
+            mispositioned whenever max_dd_pct ≠ 10) */}
+        <Gauge label="Drawdown 30d" value={Math.min(rk.drawdown_pct || 0, rk.max_dd_pct || 10)} max={rk.max_dd_pct || 10} current={_n(rk.drawdown_pct) + '%'} maxLabel={`${_n(rk.max_dd_pct)}% limit`} ticks={[0.5, 0.8].map((f) => f * (rk.max_dd_pct || 10))} />
+        {/* Weekly-Loss gauge restored (audit F4 — one of the two P&L
+            guardrails had no magnitude readout). weekly_pnl_pct is already
+            %, params.max_weekly_loss_pct a fraction. */}
+        <Gauge label="Weekly Loss" value={Math.max(0, -(d.equity.weekly_pnl_pct || 0))} max={((d.journal.params || {}).max_weekly_loss_pct || 0.05) * 100} current={d.equity.weekly_pnl_pct != null ? _sn(d.equity.weekly_pnl_pct) + '%' : '—'} maxLabel={`${_n(((d.journal.params || {}).max_weekly_loss_pct || 0.05) * 100, 1)}% cap`} />
         <Gauge label="Positions" value={rk.positions_open || 0} max={rk.positions_max || 20} current={`${rk.positions_open || 0}/${rk.positions_max || 20}`} maxLabel="capacity" />
         <div className="qe-divider-h" />
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
@@ -304,6 +358,12 @@ const RiskMonitorPane = () => {
         </div>
         {(rk.funding_lines || []).length > 0 &&
           <div className="qe-mono" style={{ fontSize: '0.56rem', color: 'var(--qe-muted)' }}>{(rk.funding_lines || []).join(' · ')}</div>}
+        {/* sector concentration — the backend computed + shipped this every
+            snapshot with zero readers (audit F3) */}
+        {(rk.sector_lines || []).length > 0 &&
+          <div className="qe-mono" style={{ fontSize: '0.56rem', color: 'var(--qe-muted)' }}>
+            <span style={{ color: 'var(--qe-sub)' }}>SECTOR </span>{(rk.sector_lines || []).join(' · ')}
+          </div>}
       </div>
     </Pane>
   );
@@ -320,7 +380,7 @@ const OpenPositionsPane = () => {
       foot={_dashFoot(d, 'snapshot', d.loaded)}
       bodyStyle={{ padding: 0, display: 'flex', flexDirection: 'column' }}>
       <DataList
-        selKey="sym"
+        selKey="_k"
         columns={[
           { key: 'sym',   label: 'SYM',   render: (r) => <span style={{ color: 'var(--qe-cyan)', fontWeight: 700 }}>{r.sym}</span> },
           { key: 'side',  label: 'SIDE',  render: (r) => { const l = (r.side || '').toLowerCase().startsWith('l'); return <Badge tone={l ? 'ok' : 'err'}>{l ? 'LONG' : 'SHORT'}</Badge>; } },
@@ -331,6 +391,7 @@ const OpenPositionsPane = () => {
           { key: 'pct',   label: '%',     align: 'right', render: (r) => <PosPct r={r} /> },
           { key: 'tpsl',  label: 'TP / SL', align: 'right', render: (r) => <span style={{ fontSize: '0.6rem' }}><span style={{ color: 'var(--qe-green)' }}>{r.tp == null ? '—' : _loc(r.tp, 2)}</span><span style={{ color: 'var(--qe-muted)' }}> / </span><span style={{ color: 'var(--qe-red)' }}>{r.sl == null ? '—' : _loc(r.sl, 2)}</span></span> },
           { key: 'mm',    label: 'MFE/MAE', align: 'right', render: (r) => <PosMfeMae r={r} /> },
+          { key: 'age',   label: 'AGE',   align: 'right', sort: false, render: (r) => <PosAge r={r} /> },
         ]}
         rows={rows}
         emptyMsg="No open positions"
@@ -352,9 +413,16 @@ const MacroSignalsPane = () => {
       foot={_dashFoot(d, 'macro', sigs.length > 0)}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {sigs.length === 0 && <EmptyState tone="warn" glyph="∅" msg="No signal data" hint="Run regime backfill to populate." />}
+        {/* 4-col rows: key · 30d sparkline (audit F2 — the endpoint fetched
+            the series and discarded it) · value · delta */}
         {sigs.map((s) => (
-          <div key={s.key} style={{ display: 'grid', gridTemplateColumns: '84px 1fr 56px', alignItems: 'center', gap: 6, padding: '3px 0', borderBottom: '1px dotted var(--qe-faint)' }}>
+          <div key={s.key} style={{ display: 'grid', gridTemplateColumns: '84px 1fr 64px 56px', alignItems: 'center', gap: 6, padding: '3px 0', borderBottom: '1px dotted var(--qe-faint)' }}>
             <span style={{ fontFamily: 'var(--qe-mono)', fontSize: '0.6rem', color: 'var(--qe-sub)', letterSpacing: '0.04em' }}>{s.key}</span>
+            <div style={{ height: 18, minWidth: 0 }}>
+              {(s.series || []).length > 1
+                ? <Sparkline data={s.series} height={18} area={false} color={s.tone === 'dn' ? 'var(--qe-red)' : s.tone === 'up' ? 'var(--qe-green)' : 'var(--qe-sub)'} />
+                : null}
+            </div>
             <LiveValue id={`sig.${s.key}`} value={s.v == null ? 0 : s.v} format={(x) => s.v == null ? '—' : (+x).toFixed(2)} style={{ fontSize: '0.68rem', fontWeight: 700, textAlign: 'right', display: 'block' }} />
             <span className="qe-mono" style={{ fontSize: '0.56rem', textAlign: 'right', color: s.tone === 'up' ? 'var(--qe-green)' : s.tone === 'dn' ? 'var(--qe-red)' : 'var(--qe-muted)' }}>{s.d == null ? '' : _sn(s.d)}</span>
           </div>
@@ -368,10 +436,15 @@ const MacroSignalsPane = () => {
 const MonthlyPane = () => {
   const d = useDash();
   const j = d.journal;
+  const daily = j.daily_pnl || [];
   return (
-    <Pane title="Monthly Analytics Preview" style={{ height: '100%' }}
-      foot={_dashFoot(d, 'snapshot', d.loaded)}>
-      <div style={{ padding: '4px 6px' }}>
+    <Pane title="Monthly Analytics Preview" tag={j.month_label || undefined} style={{ height: '100%' }}
+      foot={_dashFoot(d, 'snapshot', d.loaded)}
+      bodyStyle={{ padding: '4px 6px', display: 'flex', flexDirection: 'column' }}>
+      {/* stats left · the design's daily-PnL bar chart right, now on the REAL
+          per-day series (audit F1 — plan §4 mandated substitution, not
+          deletion; the array rides the snapshot's journal context) */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(190px, 0.9fr) 1.1fr', gap: 10, height: '100%', minHeight: 0 }}>
         <FieldList rows={[
           { label: 'Period PnL',  value: <>{_sn(j.monthly_pnl)} <span style={{ color: 'var(--qe-muted)', fontSize: '0.6rem' }}>({_sn(j.monthly_pnl_pct)}%)</span></>, color: (j.monthly_pnl || 0) < 0 ? 'red' : 'green' },
           { label: 'QTD',         value: <>{_sn(j.quarterly_pnl)} <span style={{ color: 'var(--qe-muted)', fontSize: '0.6rem' }}>({_sn(j.quarterly_pnl_pct)}%)</span></> },
@@ -380,6 +453,14 @@ const MonthlyPane = () => {
           { label: 'Winrate / R', value: `${_n(j.win_rate)}% / ${_n(j.avg_rr)}R` },
           { label: 'Max DD',      value: `-${_n(j.max_dd_month)}%`, color: 'red' },
         ]} />
+        <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          <Lbl>Daily PnL · {j.month_label || 'month'}</Lbl>
+          <div style={{ flex: 1, minHeight: 0, marginTop: 2 }}>
+            {daily.length
+              ? <BarChart data={daily.map((r) => r.pnl)} categories={daily.map((r) => String(r.d || '').slice(8))} />
+              : <div className="qe-mono" style={{ fontSize: '0.6rem', color: 'var(--qe-muted)', padding: 8 }}>no daily snapshots this month</div>}
+          </div>
+        </div>
       </div>
     </Pane>
   );
@@ -467,7 +548,7 @@ const DashHeaderDots = () => {
   return (
     <>
       <StatusDot tone={wsTone} label="STREAM" value={sse === 'open' ? 'live' : sse} />
-      <StatusDot tone="info" label="REGIME" value={rg && rg.label ? `${rg.label} ×${_n(rg.multiplier, 1)}` : '—'} />
+      <StatusDot tone="info" label="REGIME" value={rg && rg.label ? `${rg.label.replace(/_/g, ' ')} ×${_n(rg.multiplier, 1)}` : '—'} />
       <StatusDot tone={gateHalted ? 'err' : 'ok'} label="GATE" value={gateHalted ? 'HALTED' : 'READY'} />
     </>
   );
@@ -501,10 +582,10 @@ const WatchlistTape = () => {
     }}>
       {rows.length === 0 && <span style={{ color: 'var(--qe-muted)', padding: '0 9px' }}>no open positions</span>}
       {rows.map((r, i) => (
-        <span key={r.sym} style={{ display: 'inline-flex', alignItems: 'baseline', gap: 5, padding: '0 9px', borderRight: i < rows.length - 1 ? '1px solid var(--qe-faint)' : 'none' }}>
+        <span key={r._k || r.sym} style={{ display: 'inline-flex', alignItems: 'baseline', gap: 5, padding: '0 9px', borderRight: i < rows.length - 1 ? '1px solid var(--qe-faint)' : 'none' }}>
           <span style={{ color: 'var(--qe-cyan)', fontWeight: 700 }}>{(r.sym || '').replace('USDT', '')}</span>
-          <LiveValue id={`tape.${r.sym}`} value={r.mark != null ? r.mark : 0} format={(x) => _loc(x, 2)} style={{ color: 'var(--qe-text)', fontWeight: 600 }} />
-          <LiveValue id={`tape.${r.sym}.pct`} value={r.pct != null ? r.pct : 0} format={(x) => _sn(x) + '%'} style={{ fontSize: '0.56rem', fontWeight: 600, color: (r.pct || 0) >= 0 ? 'var(--qe-green)' : 'var(--qe-red)' }} />
+          <LiveValue id={`tape.${r._k || r.sym}`} value={r.mark != null ? r.mark : '—'} format={(x) => (r.mark == null ? '—' : _loc(x, 2))} style={{ color: 'var(--qe-text)', fontWeight: 600 }} />
+          <LiveValue id={`tape.${r._k || r.sym}.pct`} value={r.pct != null ? r.pct : 0} format={(x) => _sn(x) + '%'} style={{ fontSize: '0.56rem', fontWeight: 600, color: (r.pct || 0) >= 0 ? 'var(--qe-green)' : 'var(--qe-red)' }} />
         </span>
       ))}
     </div>

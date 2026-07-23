@@ -213,16 +213,20 @@ const LinkagePage = () => {
     return () => { clearInterval(t1); clearInterval(t2); };
   }, [load]);
 
-  /* live uPnL deltas: SSE position_update refreshes upnl by symbol (P1 pattern) */
+  /* live uPnL deltas: SSE position_update refreshes upnl — keyed by
+     symbol|side, NEVER symbol alone (P8 audit L3-F1: in HEDGE mode a symbol
+     holds a LONG and a SHORT leg; the symbol-keyed merge stamped one leg's
+     uPnL onto both). SSE carries `side`, rows carry `direction`. */
   React.useEffect(() => {
     if (typeof window.QE_SSE === 'undefined') return;
+    const sideKey = (s) => ((s || '').toLowerCase().startsWith('l') ? 'L' : 'S');
     return window.QE_SSE.onChannel('position_update', (p) => {
       const list = Array.isArray(p.positions) ? p.positions : [];
       setPositions((prev) => {
         if (!prev) return prev;
-        const by = {}; list.forEach((x) => { by[x.symbol] = x; });
+        const by = {}; list.forEach((x) => { by[x.symbol + '|' + sideKey(x.side)] = x; });
         return prev.map((r) => {
-          const u = by[r.symbol];
+          const u = by[r.symbol + '|' + sideKey(r.direction)];
           return u && u.upnl != null ? { ...r, upnl: u.upnl } : r;
         });
       });

@@ -54,31 +54,9 @@ const _ptCalcFoot = (busy, calcErr, calc) => {
   return calc ? { tone: 'ok', msg: 'calc ok' } : { tone: 'sub', msg: 'no calc yet' };
 };
 
-/* Errors carry `status` (HTTP code; 0 = network-level failure) and `corrupt`
-   (body was not JSON) for the qeFootState 4-tier deriver — ADDITIVE: existing
-   catches see an Error exactly as before (fetch TypeError = no network). */
-const _ptJson = async (url) => {
-  let r;
-  try {
-    r = await fetch(url, { headers: { Accept: 'application/json' } });
-  } catch (e) {
-    const err = new Error(url + ' unreachable');
-    err.status = 0;
-    throw err;
-  }
-  if (!r.ok) {
-    const err = new Error(url + ' ' + r.status);
-    err.status = r.status;
-    throw err;
-  }
-  try {
-    return await r.json();
-  } catch (e) {
-    const err = new Error(url + ' corrupt response');
-    err.corrupt = true;
-    throw err;
-  }
-};
+/* _ptJson (the status/corrupt-tagging JSON fetch) now lives in
+   primitives.jsx — hoisted in P8 wave 2 (audit L1-F8) so every consumer
+   (dash-tiled loads BEFORE this module) sits forward of the definition. */
 const _ptStrip = (html) => {
   let t;
   try {
@@ -587,7 +565,9 @@ const PreTradePage = () => {
   const isCommodity = PT_COMMODITY_RE.test(tickerNorm);
   const effSizeUnit = sizeUnit === 'lot' && !isCommodity ? 'contracts' : sizeUnit;
   const c = calc || {};
-  const regLabel = (calc && calc.regime_label) || (regime && regime.label) || '—';
+  // display form: snake_case keys read as words (P8 audit L2-NIT-6 — the
+  // ratified RegimeBadge-map omission left raw RISK_ON_CHOPPY on 4 sites)
+  const regLabel = ((calc && calc.regime_label) || (regime && regime.label) || '—').replace(/_/g, ' ');
   const regMult  = (calc && calc.regime_multiplier != null) ? calc.regime_multiplier
                  : (regime && regime.multiplier != null) ? regime.multiplier : 1;
 
@@ -901,7 +881,7 @@ const PreTradePage = () => {
                         Entry {_ptFmtP(r.entry)} · TP <span style={{ color: 'var(--qe-green)' }}>{r.tp != null ? _ptFmtP(r.tp) : '—'}</span> · SL <span style={{ color: 'var(--qe-red)' }}>{_ptFmtP(r.sl)}</span>
                       </div>
                       <div style={{ fontSize: '0.54rem', marginTop: 1, fontFamily: 'var(--qe-mono)' }}>
-                        <span style={{ color: 'var(--qe-cyan)' }}>{(r.regime || '').toUpperCase()}</span>
+                        <span style={{ color: 'var(--qe-cyan)' }}>{(r.regime || '').replace(/_/g, ' ').toUpperCase()}</span>
                         <span style={{ color: 'var(--qe-muted)' }}> ×{_ptFmtN(r.mult, 1)} size</span>
                       </div>
                     </div>

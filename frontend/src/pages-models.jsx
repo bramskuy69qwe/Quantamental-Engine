@@ -505,8 +505,10 @@ const ModelsPage = () => {
   }, [data, active]);
 
   const toastTimer = React.useRef(null);
-  const flash = (msg) => {
-    setToast(msg);
+  // tone: 'ok' (default) | 'err' — failures must not wear success chrome
+  // (P8 audit L6-LOW-1: "Delete failed" rendered in the green toast).
+  const flash = (msg, tone = 'ok') => {
+    setToast({ msg, tone });
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), 2600);
   };
@@ -537,7 +539,7 @@ const ModelsPage = () => {
       setActive('overview');
       reload();
       flash('Model deleted');
-    } catch (e) { flash('Delete failed: ' + qeFootCause(e)); }
+    } catch (e) { flash('Delete failed: ' + qeFootCause(e), 'err'); }
   };
 
   const onImportDone = (res) => {
@@ -604,9 +606,9 @@ const ModelsPage = () => {
       {toast && (
         <div style={{ position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 60,
           display: 'flex', alignItems: 'center', gap: 8, padding: '7px 14px', background: 'var(--qe-card)',
-          border: '1px solid var(--qe-green)', boxShadow: '0 8px 30px var(--qe-bg)' }}>
-          <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--qe-green)' }} />
-          <span className="qe-mono" style={{ fontSize: '0.6rem', color: 'var(--qe-text)' }}>{toast}</span>
+          border: `1px solid ${toast.tone === 'err' ? 'var(--qe-red)' : 'var(--qe-green)'}`, boxShadow: '0 8px 30px var(--qe-bg)' }}>
+          <span style={{ width: 7, height: 7, borderRadius: '50%', background: toast.tone === 'err' ? 'var(--qe-red)' : 'var(--qe-green)' }} />
+          <span className="qe-mono" style={{ fontSize: '0.6rem', color: 'var(--qe-text)' }}>{toast.msg}</span>
         </div>
       )}
       <StatusFooter />

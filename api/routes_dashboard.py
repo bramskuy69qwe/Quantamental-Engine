@@ -258,12 +258,16 @@ async def _journal_stats_context(aid: int, tz) -> dict:
     y_from_ms = int(y_start.timestamp() * 1000)
     y_to_ms   = int(y_end.timestamp() * 1000)
 
-    stats, boundaries, top_pairs, q_boundaries, y_boundaries = await asyncio.gather(
+    stats, boundaries, top_pairs, q_boundaries, y_boundaries, daily_series = await asyncio.gather(
         db.get_journal_stats(from_ms, to_ms, account_id=aid),
         db.get_equity_period_boundaries(from_ms, to_ms, account_id=aid),
         db.get_most_traded_pairs(from_ms, to_ms, limit=3, account_id=aid),
         db.get_equity_period_boundaries(q_from_ms, q_to_ms, account_id=aid),
         db.get_equity_period_boundaries(y_from_ms, y_to_ms, account_id=aid),
+        # v3.0 P8 wave 2 (audit L1-F1): the month's per-day PnL for the
+        # Monthly tile's daily bar chart — same source the Analytics
+        # calendar reads (last snapshot per LOCAL day).
+        db.get_daily_equity_series(from_ms, to_ms, account_id=aid),
         return_exceptions=True,
     )
     if isinstance(stats, Exception):        stats = {}
@@ -271,6 +275,7 @@ async def _journal_stats_context(aid: int, tz) -> dict:
     if isinstance(top_pairs, Exception):    top_pairs = []
     if isinstance(q_boundaries, Exception): q_boundaries = {"initial_equity": 0.0, "final_equity": 0.0}
     if isinstance(y_boundaries, Exception): y_boundaries = {"initial_equity": 0.0, "final_equity": 0.0}
+    if isinstance(daily_series, Exception): daily_series = []
 
     period_label = start.strftime("%B %Y")
 
@@ -338,6 +343,11 @@ async def _journal_stats_context(aid: int, tz) -> dict:
         "yearly_pnl":        yearly_pnl,
         "yearly_pnl_pct":    yearly_pnl_pct,
         "year_label":        year_label,
+        # v3.0 P8 wave 2 (L1-F1): day-bucketed PnL for the month (bar chart).
+        "daily_pnl": [
+            {"d": r.get("day"), "pnl": r.get("daily_pnl")}
+            for r in daily_series if r.get("daily_pnl") is not None
+        ],
     }
 
 

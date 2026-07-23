@@ -140,16 +140,21 @@ const AnaVRow = ({ label, value, color }) => (
 );
 
 /* ── period bar (design PeriodNav; real offset nav, server label) ───────── */
-const AnaPeriodNav = ({ period, onPeriod, onNav, disabled, label }) => {
+const AnaPeriodNav = ({ period, offset = 0, onPeriod, onNav, disabled, label }) => {
   const presets = [['monthly', 'Month'], ['weekly', 'Week'], ['quarterly', 'Quarter'],
     ['yearly', 'Year'], ['rolling_30d', '30D'], ['rolling_90d', '90D'], ['all_time', 'All']];
   const noNav = ANA_NO_NAV.has(period);
+  // › clamps at the CURRENT period (P8 audit L4-LOW-2 — the Calendar tab
+  // already clamps exactly this dead-end; unbounded › walked into empty
+  // future windows).
+  const noFwd = noNav || offset >= 0;
   return (
     <div title={disabled ? "Period filter doesn't apply to this sub-tab — it has its own controls." : ''}
       style={{ display: 'flex', alignItems: 'center', gap: 6, opacity: disabled ? 0.4 : 1, pointerEvents: disabled ? 'none' : 'auto' }}>
       <button className="qe-btn qe-btn-sm qe-btn-ghost" disabled={noNav} style={noNav ? { opacity: 0.45 } : undefined} onClick={() => onNav(-1)}>‹</button>
       <span className="qe-mono" style={{ fontSize: '0.74rem', fontWeight: 700, minWidth: 120, textAlign: 'center', color: 'var(--qe-text)' }}>{label || '…'}</span>
-      <button className="qe-btn qe-btn-sm qe-btn-ghost" disabled={noNav} style={noNav ? { opacity: 0.45 } : undefined} onClick={() => onNav(+1)}>›</button>
+      <button className="qe-btn qe-btn-sm qe-btn-ghost" disabled={noFwd} style={noFwd ? { opacity: 0.45 } : undefined}
+        title={offset >= 0 && !noNav ? 'already at the current period' : undefined} onClick={() => onNav(+1)}>›</button>
       <span style={{ color: 'var(--qe-muted)', margin: '0 2px' }}>│</span>
       <PeriodSelector options={presets} value={period} onChange={onPeriod} />
     </div>
@@ -1234,7 +1239,7 @@ const AnalyticsPage = () => {
     }}>
       <TopNavStd page="Analytics" variant="line" dense />
       <PageHeader title="Analytics" subtitle="portfolio performance · equity curve · distributions · execution · funding · beta">
-        <AnaPeriodNav period={period} onPeriod={setP} onNav={nav} disabled={!periodEnabled} label={srvLabel} />
+        <AnaPeriodNav period={period} offset={offset} onPeriod={setP} onNav={nav} disabled={!periodEnabled} label={srvLabel} />
       </PageHeader>
       <TabStrip value={tab} onChange={setTab} tabs={ANA_TABS.map(([id, l]) => [id, l])} />
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>

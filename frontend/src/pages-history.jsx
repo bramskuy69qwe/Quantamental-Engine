@@ -13,9 +13,13 @@
    30s auto-refresh per the Jinja cadence. Named deviations: column-click server
    sort is NOT wired (each table uses its default sort; DataList tools are off —
    the server owns search/paging); the summary strip + CSV export cover the
-   LOADED page of rows, not the full dataset; pnl % and M·R are computed
-   client-side per the door contract; the drilldown renders ctx.amendments only
-   (ctx.events + the Jinja Export-Audit button are NOT ported — P8 candidates). */
+   LOADED page of rows, not the full dataset; pnl %, M·R and the MFE/MAE heat
+   cell are computed client-side from the row's own fields (P8 wave 2 —
+   restored per audit L3-F2; the pre-wave header FALSELY claimed M·R was
+   already rendered); Open-time/TP/SL columns stay drilldown-only (width);
+   the drilldown renders ctx.amendments only; the Trade-Events payload
+   expand-grid is NOT ported (the SUMMARY one-liner is — L3-F3); ctx.events +
+   the Jinja Export-Audit button are NOT ported — P8 candidates. */
 
 const _hFmtTs = (ms) => {
   if (!ms) return '—';
@@ -40,6 +44,41 @@ const _hRange = (preset) => {
   if (preset === 'ytd') { from.setMonth(0, 1); }
   else from.setDate(now.getDate() - ({ '7d': 7, '15d': 15, '30d': 30, '90d': 90 }[preset] || 30));
   return { date_from: _hIso(from, false), date_to: _hIso(now, true) };
+};
+
+/* MAE ◂ heat ▸ MFE excursion cell (the design's HistHeat, P8 wave 2 L3-F2):
+   two half-bars scaled to the row's own magnitudes — visual only, the
+   numbers live in the drilldown. Named deviation: the design's third
+   channel (center ENTRY rule + exit-PnL tick) is NOT ported — exit PnL
+   already has its own NET column; a zero-magnitude side renders 0-width. */
+const HistHeat = ({ mfe, mae }) => {
+  if (mfe == null && mae == null) return <span style={{ color: 'var(--qe-muted)' }}>—</span>;
+  const f = Math.max(0, +mfe || 0), a = Math.abs(+mae || 0);
+  const span = Math.max(f, a) || 1;
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, width: 74 }} title={`MFE +${f.toFixed(2)} / MAE -${a.toFixed(2)}`}>
+      <span style={{ flex: 1, height: 7, display: 'flex', justifyContent: 'flex-end', background: 'var(--qe-panel)' }}>
+        <span style={{ width: `${(a / span) * 100}%`, background: 'var(--qe-red)', opacity: 0.75 }} />
+      </span>
+      <span style={{ flex: 1, height: 7, display: 'flex', background: 'var(--qe-panel)' }}>
+        <span style={{ width: `${(f / span) * 100}%`, background: 'var(--qe-green)', opacity: 0.75 }} />
+      </span>
+    </span>
+  );
+};
+
+/* Trade-Events SUMMARY one-liner — the Jinja per-type branches ported
+   verbatim (P8 wave 2 L3-F3; the payload expand-grid stays unported). */
+const _hEvtSummary = (r) => {
+  const p = r._payload || {};
+  const f = (v, d = 4) => (v == null || isNaN(v) ? '—' : (+v).toFixed(d));
+  if (r.event_type === 'position_amended' && p.old != null) return `${p.field || ''}: ${f(p.old)} → ${f(p.new)}`;
+  if ((r.event_type === 'tp_modified' || r.event_type === 'sl_modified') && p.from_price != null) return `${f(p.from_price)} → ${f(p.to_price)}`;
+  if (r.event_type === 'order_filled' && p.price != null) return `Price: ${f(p.price)} · Qty: ${f(p.quantity != null ? p.quantity : p.fill_qty)}`;
+  if (r.event_type === 'position_closed' && p.pnl != null) return `PnL: ${f(p.pnl, 2)}`;
+  if (r.event_type === 'order_placed' && p.side) return `${p.side} ${p.order_type || ''}`;
+  const raw = r.payload_json || '';
+  return raw.length > 60 ? raw.slice(0, 60) + '…' : raw;
 };
 
 const H_TABS = [
@@ -196,6 +235,22 @@ const HistoryPage = () => {
           const pct = den ? (r.net_pnl / den) * 100 : null;
           return pct == null ? '—' : <span style={{ color: lpSgn(pct) }}>{lpPct(pct)}</span>;
         } },
+      { key: 'mr', label: 'M·R', align: 'right', sort: false, render: (r) => {
+          // M·R = MFE / |MAE| (the Jinja twin's column, restored L3-F2).
+          // NULL mae/mfe = UNKNOWN → '—'; ∞ only on a MEASURED zero MAE
+          // with positive MFE (wave-2 audit F2 — the ||0 coercion
+          // fabricated certainty on unbackfilled rows). Named deviation
+          // from the twin (which blankets '—' on any falsy mae/ratio):
+          // measured values render numerically — more truthful, kept.
+          if (r.mae == null || r.mfe == null) return <span style={{ color: 'var(--qe-muted)' }}>—</span>;
+          const mae = Math.abs(+r.mae);
+          if (!mae) return (+r.mfe) > 0
+            ? <span style={{ color: 'var(--qe-green)' }}>∞</span>
+            : <span style={{ color: 'var(--qe-muted)' }}>—</span>;
+          const mr = (+r.mfe || 0) / mae;
+          return <span style={{ color: mr >= 2 ? 'var(--qe-green)' : mr >= 1 ? 'var(--qe-text)' : 'var(--qe-red)' }}>{mr.toFixed(2)}</span>;
+        } },
+      { key: 'heat', label: 'MAE◂ ▸MFE', align: 'right', sort: false, render: (r) => <HistHeat mfe={r.mfe} mae={r.mae} /> },
       { key: 'total_fees', label: 'FEE', align: 'right', render: (r) => <span style={{ color: 'var(--qe-sub)' }}>{_ptFmtN(r.total_fees, 4)}</span> },
       { key: 'hold_time_ms', label: 'DUR', render: (r) => <span style={{ color: 'var(--qe-muted)' }}>{_hDur(r.hold_time_ms)}</span> },
       { key: 'exit_reason', label: 'REASON', render: exitCell },
@@ -230,6 +285,9 @@ const HistoryPage = () => {
       { key: 'event_type', label: 'TYPE', render: (r) => <Badge tone="info">{r.event_type}</Badge> },
       { key: 'calc_id', label: 'CALC', render: (r) => <span style={{ color: 'var(--qe-muted)' }}>{r.calc_id ? String(r.calc_id).slice(-8) : '—'}</span> },
       { key: 'source', label: 'SRC', render: (r) => <span style={{ color: 'var(--qe-muted)' }}>{r.source || ''}</span> },
+      /* the event's SUBSTANCE — restored L3-F3 (the door parses _payload
+         per row; the tab consumed only _symbol) */
+      { key: 'summary', label: 'SUMMARY', sort: false, render: (r) => <span style={{ color: 'var(--qe-sub)', fontSize: '0.6rem', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', verticalAlign: 'bottom' }}>{_hEvtSummary(r) || '—'}</span> },
     ],
     pretrade: [
       { key: 'timestamp', label: 'TIME', render: (r) => <span style={{ color: 'var(--qe-muted)' }}>{String(r.timestamp || '').slice(0, 16).replace('T', ' ')}</span> },
