@@ -373,13 +373,13 @@ const AnaTabOverview = ({ period, offset, onLabel }) => {
       </GridItem>
 
       <GridItem x={8} y={7} w={16} h={5} minW={8} minH={5}>
-        <Pane title="Performance Ratios" style={{ height: '100%' }}>
+        <Pane title="Performance Ratios" style={{ height: '100%' }} foot={foot}>
           <FieldList cols={2} rows={ratioRows} />
         </Pane>
       </GridItem>
 
       <GridItem x={8} y={12} w={16} h={4} minW={8} minH={4}>
-        <Pane title="Cash & Cumulative" style={{ height: '100%' }}>
+        <Pane title="Cash & Cumulative" style={{ height: '100%' }} foot={foot}>
           <FieldList cols={2} rows={[
             { label: 'Deposits (window)', value: `$${(s.deposits || 0).toFixed(2)}` },
             { label: 'Withdrawals (window)', value: `$${(s.withdrawals || 0).toFixed(2)}` },
@@ -517,27 +517,28 @@ const AnaTabDistributions = ({ period, offset, onLabel }) => {
       </GridItem>
       <GridItem x={12} y={0} w={12} h={6} minW={6} minH={5}>
         <Pane title="R-Multiple Distribution" style={{ height: '100%' }} tag="1R bins"
-          right={<span style={{ fontSize: '0.54rem', color: 'var(--qe-muted)', fontFamily: 'var(--qe-mono)' }}>n={(data.r_values || []).length} · positional R from plan SL</span>}>
+          right={<span style={{ fontSize: '0.54rem', color: 'var(--qe-muted)', fontFamily: 'var(--qe-mono)' }}>n={(data.r_values || []).length} · positional R from plan SL</span>}
+          foot={foot}>
           {rBins.length ? <AnaHistChart bins={rBins} divergent noun="trade" /> : <EmptyState msg="no R-multiples in window" />}
         </Pane>
       </GridItem>
       <GridItem x={0} y={6} w={12} h={6} minW={6} minH={5}>
-        <Pane title="Hold Time Distribution" style={{ height: '100%' }} tag="min">
+        <Pane title="Hold Time Distribution" style={{ height: '100%' }} tag="min" foot={foot}>
           {holds.length ? <AnaHistChart bins={holdBins} color="var(--qe-blue)" noun="trade" /> : <EmptyState msg="no hold-time data (open_time unknown)" />}
         </Pane>
       </GridItem>
       <GridItem x={12} y={6} w={12} h={6} minW={6} minH={5}>
-        <Pane title="Trades by Hour of Day" style={{ height: '100%' }} tag="account tz">
+        <Pane title="Trades by Hour of Day" style={{ height: '100%' }} tag="account tz" foot={foot}>
           <AnaHistChart bins={hourBins} color="var(--qe-cyan)" noun="trade" />
         </Pane>
       </GridItem>
       <GridItem x={0} y={12} w={12} h={6} minW={6} minH={5}>
-        <Pane title="Avg PnL by Day of Week" style={{ height: '100%' }} tag="$">
+        <Pane title="Avg PnL by Day of Week" style={{ height: '100%' }} tag="$" foot={foot}>
           <AnaDivergingBars rows={dowRows} />
         </Pane>
       </GridItem>
       <GridItem x={12} y={12} w={12} h={6} minW={6} minH={5}>
-        <Pane title="Win Rate by Hour of Day" style={{ height: '100%' }} tag="%">
+        <Pane title="Win Rate by Hour of Day" style={{ height: '100%' }} tag="%" foot={foot}>
           <AnaHistChart bins={wrHourBins} divergent unit="%"
             tip={(l, v) => `${l || 'hour'} · ${v}% win rate`} />
         </Pane>
@@ -692,7 +693,7 @@ const AnaTabExcursions = ({ period, offset, onLabel }) => {
         </Pane>
       </GridItem>
       <GridItem x={16} y={0} w={8} h={5} minW={5} minH={4}>
-        <Pane title="Excursion Summary" style={{ height: '100%' }}>
+        <Pane title="Excursion Summary" style={{ height: '100%' }} foot={foot}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 14px' }}>
             <AnaKv label="Avg MFE" value={`$${(data.avg_mfe || 0).toFixed(2)}`} color="var(--qe-green)" />
             <AnaKv label="Avg |MAE|" value={`$${(data.avg_mae_abs || 0).toFixed(2)}`} color="var(--qe-red)" />
@@ -704,7 +705,7 @@ const AnaTabExcursions = ({ period, offset, onLabel }) => {
       <GridItem x={16} y={5} w={8} h={11} minW={5} minH={5}>
         <Pane title="Per-Trade Excursions"
           count={points.length > trades.length ? `${trades.length} of ${points.length}` : trades.length}
-          style={{ height: '100%' }} bodyStyle={{ padding: 0 }}>
+          style={{ height: '100%' }} bodyStyle={{ padding: 0 }} foot={foot}>
           <DataList
             selKey="trade_key" tools={false}
             columns={[
@@ -742,7 +743,7 @@ const AnaTabRMultiples = ({ period, offset, onLabel }) => {
         </Pane>
       </GridItem>
       <GridItem x={16} y={0} w={8} h={12} minW={5} minH={6}>
-        <Pane title="R-Multiple Stats" style={{ height: '100%' }}>
+        <Pane title="R-Multiple Stats" style={{ height: '100%' }} foot={foot}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <AnaKv label="Total Trades" value={st.count} />
             <AnaKv label="Win Rate" value={`${((st.win_rate || 0) * 100).toFixed(1)}%`} color={(st.win_rate || 0) >= 0.5 ? 'var(--qe-green)' : 'var(--qe-red)'} />
@@ -804,7 +805,8 @@ const AnaTabRisk = ({ period, offset, onLabel }) => {
       </GridItem>
       <GridItem x={0} y={5} w={24} h={12} minW={10} minH={6}>
         <Pane title="Daily Return Distribution" style={{ height: '100%' }}
-          right={<span style={{ fontSize: '0.54rem', color: 'var(--qe-muted)', fontFamily: 'var(--qe-mono)' }}>red = below the 95% VaR threshold · n={(data.returns || []).length} days</span>}>
+          right={<span style={{ fontSize: '0.54rem', color: 'var(--qe-muted)', fontFamily: 'var(--qe-mono)' }}>red = below the 95% VaR threshold · n={(data.returns || []).length} days</span>}
+          foot={foot}>
           <AnaHistChart bins={histBins} divergent unit="%" noun="day" />
         </Pane>
       </GridItem>
@@ -897,7 +899,7 @@ const AnaTabExecution = () => {
     <GridWorkspace>
       {kpis.map(({ l, v, sub, tone }, i) => (
         <GridItem key={l} x={i < 4 ? i * 4 : 16} y={0} w={i === 4 ? 8 : 4} h={3} minW={3} minH={3}>
-          <Pane title={l} style={{ height: '100%' }}>
+          <Pane title={l} style={{ height: '100%' }} foot={foot}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               <div className="qe-mono" style={{ fontSize: '1.1rem', fontWeight: 700, color: tone, lineHeight: 1.1 }}>{v}</div>
               <div style={{ fontSize: '0.58rem', color: 'var(--qe-muted)', fontFamily: 'var(--qe-mono)', lineHeight: 1.4 }}>{sub}</div>
@@ -907,7 +909,7 @@ const AnaTabExecution = () => {
       ))}
 
       <GridItem x={0} y={3} w={12} h={6} minW={6} minH={6}>
-        <Pane title="Exec Link Status" style={{ height: '100%' }}>
+        <Pane title="Exec Link Status" style={{ height: '100%' }} foot={foot}>
           <div style={{ display: 'flex', height: 12, marginBottom: 8, gap: 1, background: 'var(--qe-panel)' }}>
             {linkBreak.filter((b) => b.n > 0).map((b) => (
               <div key={b.key} title={`${b.label}: ${b.n}`} style={{ flex: b.n, background: b.color, opacity: 0.85 }} />
@@ -933,7 +935,7 @@ const AnaTabExecution = () => {
       </GridItem>
 
       <GridItem x={12} y={3} w={12} h={6} minW={6} minH={6}>
-        <Pane title="Avg |Slippage| by Fill Type" tag="bp" style={{ height: '100%' }}>
+        <Pane title="Avg |Slippage| by Fill Type" tag="bp" style={{ height: '100%' }} foot={foot}>
           {ftStats.map(({ ft, n, avgBp }) => (
             <div key={ft} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
               <span className="qe-mono" style={{ fontSize: '0.62rem', fontWeight: 700, color: ANA_FT_COLOR[ft], width: 76, flexShrink: 0 }}>{ft}</span>
@@ -960,13 +962,13 @@ const AnaTabExecution = () => {
               y=0 = fill exactly at the plan's predicted price · red ring = worse than plan
             </span>
           }
-          bodyStyle={{ padding: '8px 10px' }}>
+          bodyStyle={{ padding: '8px 10px' }} foot={foot}>
           {scatterPts.length ? <AnaExecScatter points={scatterPts} /> : <EmptyState msg="no calc-backed entries with both estimate and residual yet" />}
         </Pane>
       </GridItem>
 
       <GridItem x={0} y={17} w={12} h={6} minW={6} minH={5}>
-        <Pane title="Time-to-Fill Distribution" tag="order→fill" style={{ height: '100%' }} bodyStyle={{ display: 'flex', flexDirection: 'column' }}>
+        <Pane title="Time-to-Fill Distribution" tag="order→fill" style={{ height: '100%' }} bodyStyle={{ display: 'flex', flexDirection: 'column' }} foot={foot}>
           <div style={{ flex: 1, minHeight: 0 }}>
             {ttfs.length ? <AnaHistChart bins={ttfBins} color="var(--qe-cyan)" noun="fill" /> : <EmptyState msg="no order-linked fills yet" />}
           </div>
@@ -980,7 +982,7 @@ const AnaTabExecution = () => {
       </GridItem>
 
       <GridItem x={12} y={17} w={12} h={6} minW={6} minH={5}>
-        <Pane title="Entry Residual Distribution" tag="bp vs plan" style={{ height: '100%' }} bodyStyle={{ display: 'flex', flexDirection: 'column' }}>
+        <Pane title="Entry Residual Distribution" tag="bp vs plan" style={{ height: '100%' }} bodyStyle={{ display: 'flex', flexDirection: 'column' }} foot={foot}>
           <div style={{ flex: 1, minHeight: 0 }}>
             {entryCosts.length ? <AnaHistChart bins={slipBins} color="var(--qe-blue)" noun="fill" /> : <EmptyState msg="no calc-backed entry fills yet" />}
           </div>
@@ -991,7 +993,7 @@ const AnaTabExecution = () => {
       </GridItem>
 
       <GridItem x={0} y={23} w={12} h={5} minW={6} minH={5}>
-        <Pane title="Order Type Mix" style={{ height: '100%' }}>
+        <Pane title="Order Type Mix" style={{ height: '100%' }} foot={foot}>
           {otKeys.length ? otKeys.map((ot) => {
             const n = sum.by_order_type[ot] || 0;
             const c = otColor(ot);
@@ -1013,7 +1015,7 @@ const AnaTabExecution = () => {
       </GridItem>
 
       <GridItem x={12} y={23} w={12} h={5} minW={6} minH={5}>
-        <Pane title="Maker / Taker Split" style={{ height: '100%' }}>
+        <Pane title="Maker / Taker Split" style={{ height: '100%' }} foot={foot}>
           {[['maker', sum.maker || 0, 'var(--qe-green)'], ['taker', sum.taker || 0, 'var(--qe-amber)']].map(([role, n, c]) => (
             <div key={role} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
               <span className="qe-mono" style={{ fontSize: '0.62rem', color: c, width: 60, flexShrink: 0 }}>{role.toUpperCase()}</span>
@@ -1161,7 +1163,7 @@ const AnaTabBeta = () => {
         </Pane>
       </GridItem>
       <GridItem x={14} y={0} w={10} h={7} minW={6} minH={4}>
-        <Pane title="Sector β-Adjusted Breakdown" style={{ height: '100%' }}>
+        <Pane title="Sector β-Adjusted Breakdown" style={{ height: '100%' }} foot={foot}>
           {sectors.length ? (
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
               {sectors.map(([sec, exp]) => {
@@ -1179,7 +1181,9 @@ const AnaTabBeta = () => {
         </Pane>
       </GridItem>
       <GridItem x={14} y={7} w={10} h={6} minW={6} minH={4}>
-        <Pane title="Sector Preset Betas · Fallback" style={{ height: '100%' }}>
+        {/* static compiled reference — not on the fetch pipe (§5 ok · local) */}
+        <Pane title="Sector Preset Betas · Fallback" style={{ height: '100%' }}
+          foot={{ tone: 'sub', msg: 'ok · local — compiled presets' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: '0.62rem', fontFamily: 'var(--qe-mono)' }}>
             {[['big_two_crypto', '1.0'], ['top_twenty_alts', '1.5'], ['commodities', '0.4'], ['other_alts', '2.0']].map(([s, v]) => (
               <div key={s} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', borderBottom: '1px dotted var(--qe-faint)' }}>

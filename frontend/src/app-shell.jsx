@@ -534,7 +534,7 @@ data: 93580.40`}</pre>
                 </Pane>
               </GridItem>
               <GridItem x={7} y={0} w={5} h={7}>
-                <Pane title="Positions" count={3}>
+                <Pane title="Positions" count={3} foot={{tone:'sub', id:2103, msg:'demo rows · static', ms:0}}>
                   <FieldList rows={[
                     {label:'BTCUSDT', value:'+2.02', color:'green'},
                     {label:'ETHUSDT', value:'+3.47', color:'green'},

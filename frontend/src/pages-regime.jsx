@@ -467,7 +467,7 @@ const SignalCard = ({ sig, globalSel, coverageRows, thresholds, onOverride, onGo
 };
 
 /* ── Tab: Overview ───────────────────────────────────────────────────────── */
-const RegimeTabOverview = ({ current, curFoot, mults, onGoBackfill }) => {
+const RegimeTabOverview = ({ current, curFoot, mults, multsFoot, onGoBackfill }) => {
   const [tlStyle, setTlStyle] = React.useState('swim');
   const [tlRange, setTlRange] = React.useState(365);
   const [globalSel, setGlobalSel] = React.useState({ v: 365, n: 0 });
@@ -535,7 +535,8 @@ const RegimeTabOverview = ({ current, curFoot, mults, onGoBackfill }) => {
 
       <GridItem x={6} y={0} w={12} h={7} minW={6} minH={4}>
         <Pane title="Regime Distribution" tag={tlRange === 0 ? 'ALL' : `${tlRange}d`} style={{ height: '100%' }}
-          right={<span style={{ fontSize: '0.54rem', color: 'var(--qe-muted)', fontFamily: 'var(--qe-mono)' }}>{total} days observed</span>}>
+          right={<span style={{ fontSize: '0.54rem', color: 'var(--qe-muted)', fontFamily: 'var(--qe-mono)' }}>{total} days observed</span>}
+          foot={tlFoot}>
           {total === 0 ? (
             <EmptyState tone={tlErr ? 'warn' : 'info'} glyph="〇"
               msg={tlErr ? 'timeline fetch failed' : 'no regime labels in window'}
@@ -560,7 +561,7 @@ const RegimeTabOverview = ({ current, curFoot, mults, onGoBackfill }) => {
       </GridItem>
 
       <GridItem x={18} y={0} w={6} h={7} minW={4} minH={4}>
-        <Pane title="Sizing Multipliers" style={{ height: '100%' }}>
+        <Pane title="Sizing Multipliers" style={{ height: '100%' }} foot={multsFoot}>
           <FieldList rows={REGIME_KEYS.map((r) => {
             const info = REGIME_INFO[r];
             return {
@@ -1152,7 +1153,7 @@ const REGIME_TABS = [
 const RegimePage = () => {
   const [tab, setTab] = React.useState('overview');
   const { data: current, foot: curFoot } = useAnaJson('/api/regime/current', 60_000);
-  const { data: mults } = useAnaJson('/api/regime/multipliers');
+  const { data: mults, foot: multsFoot } = useAnaJson('/api/regime/multipliers');
 
   // Backfill job lives at PAGE level (audit M6a) — a sub-tab switch must not
   // orphan the running server job (jobs are in-memory server-side).
@@ -1199,7 +1200,7 @@ const RegimePage = () => {
 
   const goBackfill = React.useCallback(() => setTab('backfill'), []);
   const content = {
-    overview: <RegimeTabOverview current={current} curFoot={curFoot} mults={mults} onGoBackfill={goBackfill} />,
+    overview: <RegimeTabOverview current={current} curFoot={curFoot} mults={mults} multsFoot={multsFoot} onGoBackfill={goBackfill} />,
     backfill: <RegimeTabBackfill job={bfJob} onStart={startBackfill} />,
     news: <RegimeTabNews />,
     config: <RegimeTabConfig mults={mults} />,
