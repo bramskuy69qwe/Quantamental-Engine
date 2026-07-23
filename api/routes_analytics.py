@@ -25,6 +25,13 @@ log = logging.getLogger("routes.analytics")
 router = APIRouter()
 
 
+def _analytics_json(payload: Dict[str, Any]) -> JSONResponse:
+    """v3.0 P5 JSON-door envelope — every analytics door passes through the
+    _json_safe non-finite guard (F2 discipline, both-doors rule)."""
+    from api.routes_calculator import _json_safe
+    return JSONResponse(_json_safe(payload))
+
+
 def _shift_date(dt: datetime, period: str, offset: int) -> datetime:
     """Shift *dt* by *offset* units of *period* for navigation."""
     if period == "weekly":
@@ -139,7 +146,8 @@ async def analytics_page(request: Request):
 
 @router.get("/fragments/analytics/overview", response_class=HTMLResponse)
 async def frag_analytics_overview(request: Request, month: str = "", all: str = "",
-                                   period: str = "", offset: int = 0):
+                                   period: str = "", offset: int = 0,
+                                   format: str = ""):
     from_ms, to_ms, period_label, month_s = _analytics_range(month, all, period, offset)
     aid = app_state.active_account_id
 
@@ -174,6 +182,24 @@ async def frag_analytics_overview(request: Request, month: str = "", all: str = 
         "expectancy":    round(r_stats.get("expectancy", 0.0), 3),
     }
 
+    if format == "json":
+        # v3.0 P5 JSON door — the same context the fragment renders, plus the
+        # route-computed daily_equity series (already fetched above) so the
+        # React overview mini-curve needs no second request.
+        return _analytics_json({
+            "stats": stats, "boundaries": boundaries, "top_pairs": top_pairs,
+            "cumulative": cumulative, "ratios": ratios,
+            # r_count lets the client tell "PF genuinely 0" from "no
+            # R-linked closes at all" (audit L1 — 0.00-red vs em-dash).
+            "r_count": len(r_vals),
+            "trading_days": trading_days, "period_label": period_label,
+            "month": month_s,
+            "daily_equity": [
+                {"day": r.get("day"), "total_equity": r.get("total_equity"),
+                 "daily_pnl": r.get("daily_pnl")}
+                for r in equity_series
+            ],
+        })
     return templates.TemplateResponse(
         request,
         "fragments/analytics/overview_stats.html",
@@ -241,11 +267,14 @@ async def api_analytics_equity_ohlc(tf: str = "1M"):
     await _maybe_backfill_equity(from_ms, account_id=aid)
     candles = await db.get_equity_ohlc(tf_minutes=tf_minutes, limit=limit, account_id=aid)
     _inject_live_equity(candles)
-    return JSONResponse({"candles": candles, "tf": tf})
+    # v3.0 P5: _json_safe wrap added (F2 discipline) — this was the one
+    # analytics JSON endpoint predating the both-doors non-finite guard.
+    return _analytics_json({"candles": candles, "tf": tf})
 
 
 @router.get("/fragments/analytics/calendar", response_class=HTMLResponse)
-async def frag_analytics_calendar(request: Request, month: str = "", all: str = ""):
+async def frag_analytics_calendar(request: Request, month: str = "", all: str = "",
+                                  format: str = ""):
     aid = app_state.active_account_id
     tz = get_account_tz(aid)
     now = datetime.now(tz)
@@ -281,6 +310,21 @@ async def frag_analytics_calendar(request: Request, month: str = "", all: str = 
     worst_day    = min(pnl_vals) if pnl_vals else 0.0
     max_abs_pnl  = max(abs(v) for v in pnl_vals) if pnl_vals else 1.0
 
+    if format == "json":
+        # v3.0 P5 JSON door — grid cells carry day/date-string/pnl/trades/
+        # win_rate; the React calendar renders heat client-side off max_abs_pnl.
+        return _analytics_json({
+            "calendar_grid": calendar_grid,
+            "month_label": start.strftime("%B %Y"),
+            # month/current_month are ACCOUNT-tz truths so the client's
+            # Next-clamp can't drift across a tz month boundary (audit L7).
+            "month": f"{y:04d}-{m:02d}",
+            "current_month": f"{now.year:04d}-{now.month:02d}",
+            "prev_month": prev_month, "next_month": next_month,
+            "trading_days": trading_days, "avg_daily": avg_daily,
+            "best_day": best_day, "worst_day": worst_day,
+            "max_abs_pnl": max_abs_pnl if max_abs_pnl > 0 else 1.0,
+        })
     return templates.TemplateResponse(
         request,
         "fragments/analytics/calendar_pnl.html",
@@ -299,6 +343,7 @@ async def frag_analytics_pairs(
     month: str = "", all: str = "",
     sort_by: str = "total", sort_dir: str = "DESC",
     period: str = "", offset: int = 0,
+    format: str = "",
 ):
     from_ms, to_ms, period_label, month_s = _analytics_range(month, all, period, offset)
     rows = await db.get_traded_pairs_stats(from_ms, to_ms, account_id=app_state.active_account_id)
@@ -309,6 +354,11 @@ async def frag_analytics_pairs(
     rev = sort_dir.upper() != "ASC"
     rows.sort(key=lambda r: (r.get(col) or 0), reverse=rev)
 
+    if format == "json":
+        # v3.0 P5 JSON door.
+        return _analytics_json({"rows": rows, "period_label": period_label,
+                                "month": month_s, "sort_by": col,
+                                "sort_dir": sort_dir.upper()})
     return templates.TemplateResponse(
         request,
         "fragments/analytics/pairs_table.html",
@@ -322,6 +372,7 @@ async def frag_analytics_excursions(
     request: Request,
     month: str = "", all: str = "", dir: str = "all",
     period: str = "", offset: int = 0,
+    format: str = "",
 ):
     from_ms, to_ms, period_label, month_s = _analytics_range(month, all, period, offset)
     trades = await db.get_mfe_mae_series(from_ms, to_ms, account_id=app_state.active_account_id)
@@ -343,6 +394,15 @@ async def frag_analytics_excursions(
         for t in trades
     ]
 
+    if format == "json":
+        # v3.0 P5 JSON door — dir filter applied server-side so the summary
+        # stats and the row set stay consistent (the design filtered client-side).
+        return _analytics_json({
+            "trades": trades[:200], "scatter_data": scatter_data,
+            "avg_mfe": round(avg_mfe, 2), "avg_mae_abs": round(avg_mae_abs, 2),
+            "avg_mer": round(avg_mer, 2), "pct_favorable": pct_fav,
+            "period_label": period_label, "filter_dir": dir, "month": month_s,
+        })
     return templates.TemplateResponse(
         request,
         "fragments/analytics/excursions.html",
@@ -356,12 +416,18 @@ async def frag_analytics_excursions(
 
 @router.get("/fragments/analytics/r_multiples", response_class=HTMLResponse)
 async def frag_analytics_r_multiples(request: Request, month: str = "", all: str = "",
-                                      period: str = "", offset: int = 0):
+                                      period: str = "", offset: int = 0,
+                                      format: str = ""):
     from_ms, to_ms, period_label, month_s = _analytics_range(month, all, period, offset)
     r_values  = await db.get_r_multiples(from_ms, to_ms, account_id=app_state.active_account_id)
     r_stats   = r_multiple_stats(r_values)
     histogram = r_multiple_histogram(r_values)
 
+    if format == "json":
+        # v3.0 P5 JSON door.
+        return _analytics_json({"r_values": r_values, "r_stats": r_stats,
+                                "histogram": histogram,
+                                "period_label": period_label, "month": month_s})
     return templates.TemplateResponse(
         request,
         "fragments/analytics/r_multiples.html",
@@ -372,7 +438,8 @@ async def frag_analytics_r_multiples(request: Request, month: str = "", all: str
 
 @router.get("/fragments/analytics/var", response_class=HTMLResponse)
 async def frag_analytics_var(request: Request, month: str = "", all: str = "",
-                              period: str = "", offset: int = 0):
+                              period: str = "", offset: int = 0,
+                              format: str = ""):
     from_ms, to_ms, period_label, month_s = _analytics_range(month, all, period, offset)
     series   = await db.get_daily_equity_series(from_ms, to_ms, account_id=app_state.active_account_id)
     equities = [r["total_equity"] for r in series if r.get("total_equity")]
@@ -397,6 +464,14 @@ async def frag_analytics_var(request: Request, month: str = "", all: str = "",
     else:
         hist_data = []
 
+    if format == "json":
+        # v3.0 P5 JSON door — has_data mirrors the ≥20-returns VaR guard.
+        return _analytics_json({
+            "var95": var95, "var99": var99, "cvar95": cvar95, "pvar95": pvar95,
+            "cur_equity": cur_equity, "returns": returns, "hist_data": hist_data,
+            "period_label": period_label, "month": month_s,
+            "has_data": len(returns) >= 20,
+        })
     return templates.TemplateResponse(
         request,
         "fragments/analytics/var_display.html",
@@ -408,7 +483,7 @@ async def frag_analytics_var(request: Request, month: str = "", all: str = "",
 
 
 @router.get("/fragments/analytics/funding", response_class=HTMLResponse)
-async def frag_analytics_funding(request: Request):
+async def frag_analytics_funding(request: Request, format: str = ""):
     positions = app_state.positions
     rows: List[Dict[str, Any]] = []
 
@@ -440,6 +515,13 @@ async def frag_analytics_funding(request: Request):
     total_8h  = sum(r["per_8h"]  for r in rows)
     total_day = sum(r["per_day"] for r in rows)
 
+    if format == "json":
+        # v3.0 P5 JSON door — per_8h/per_day/per_week are UNSIGNED magnitudes
+        # (compute_funding_exposure); the sign for display derives from the
+        # `adverse` flag client-side. total_8h/total_day are magnitude sums
+        # (Jinja parity — /api/linkage/funding's net_next is the SIGNED twin).
+        return _analytics_json({"rows": rows, "total_8h": total_8h,
+                                "total_day": total_day})
     return templates.TemplateResponse(
         request,
         "fragments/analytics/funding_tracker.html",
@@ -448,7 +530,7 @@ async def frag_analytics_funding(request: Request):
 
 
 @router.get("/fragments/analytics/beta", response_class=HTMLResponse)
-async def frag_analytics_beta(request: Request):
+async def frag_analytics_beta(request: Request, format: str = ""):
     positions  = app_state.positions
     btc_ohlcv  = app_state.ohlcv_cache.get("BTCUSDT", [])
     btc_closes = [float(c[4]) for c in btc_ohlcv[-31:] if len(c) >= 5]
@@ -484,6 +566,14 @@ async def frag_analytics_beta(request: Request):
         s = r["sector"] or "unknown"
         sector_totals[s] = sector_totals.get(s, 0.0) + r["beta_adj_exp"]
 
+    if format == "json":
+        # v3.0 P5 JSON door — beta_adj_exp is UNSIGNED (abs notional × beta,
+        # no SHORT sign flip; engine/Jinja parity — the design mock's signed
+        # short exposure has no engine source).
+        return _analytics_json({"rows": rows, "total_notional": total_notional,
+                                "total_beta_exp": total_beta_exp,
+                                "port_beta": port_beta,
+                                "sector_totals": sector_totals})
     return templates.TemplateResponse(
         request,
         "fragments/analytics/beta_exposure.html",
@@ -491,3 +581,224 @@ async def frag_analytics_beta(request: Request):
              total_beta_exp=total_beta_exp, port_beta=port_beta,
              sector_totals=sector_totals),
     )
+
+
+# ─── v3.0 P5 (G-O4): Execution-Quality + Distributions JSON backends ────────
+#
+# Named deviation from the plan row ("add /fragments/analytics/execution +
+# /distributions"): these ship as /api JSON endpoints, not HTML fragments —
+# their only consumer is the React Analytics page and no Jinja twin exists
+# to hold parity with (the same shape G-O6 took: /api/linkage/funding).
+# Built from fills JOIN pre_trade_log per the P5 mechanism correction —
+# NOT execution_log, which is the manual-UI journal (no calc_id / fill_type
+# / slippage_actual).
+
+_EXEC_LIMIT_MAX = 2000
+
+
+@router.get("/api/analytics/execution")
+async def api_analytics_execution(limit: int = 500):
+    """Execution-quality per-fill rows + summary aggregates.
+
+    Row semantics:
+    - est_slippage: pre_trade_log.est_slippage — the UNSIGNED predicted
+      market-impact fraction vs top-of-book at calc time. ENTRY FILLS ONLY
+      (P5 audit L-2: a close fill's residual is measured vs its trigger,
+      so pairing it with the entry impact estimate is axis salad); None
+      when absent.
+    - slippage_actual: fills.slippage_actual — RAW signed (fill−expected)/
+      expected fraction (order_enrichment convention, not side-normalized).
+      For entries `expected` is pre_trade_log.effective_entry — the
+      IMPACT-ADJUSTED predicted fill — so this is a RESIDUAL vs the
+      prediction, not total slippage (P5 audit H-1).
+    - slippage_cost: side-normalized residual (+ = worse than the plan's
+      predicted fill, − = better): BUY keeps the raw sign, SELL flips it.
+      A perfectly calibrated model produces 0, NOT est_slippage.
+    - time_to_fill_ms: fills.timestamp_ms − orders.created_at_ms (engine-
+      observed order→fill elapsed). There is NO signal→fill latency source
+      in the observe-only architecture — named deviation from the design's
+      ms-scale "latency" pane; this is time-to-fill and can be hours for
+      resting limit orders.
+    - link_status: '' for close fills / fills without calc_id (P4 drawer
+      parity), else get_exec_link_status ('linked'|'partial'|'unlinked');
+      link_confirmed marks the operator-confirmed subset of 'linked'.
+
+    Aggregates ride the SAME returned window (newest `limit` fills) — the
+    summary is not an all-time scan (named residue: window == rows).
+    """
+    from core.exec_link import DEFAULT_LINK_WINDOW_SECONDS, get_exec_link_status
+    from api.routes_orders import _pretrade_ts_to_ms
+
+    aid = app_state.active_account_id
+    limit = max(1, min(int(limit or 500), _EXEC_LIMIT_MAX))
+    raw = await db.get_execution_quality(account_id=aid, limit=limit)
+
+    window = await db.get_account_link_window_seconds(aid)
+    if window is None:
+        window = DEFAULT_LINK_WINDOW_SECONDS
+
+    rows: List[Dict[str, Any]] = []
+    for r in raw:
+        side = (r.get("side") or "").upper()
+        slip = r.get("slippage_actual")
+        cost = None if slip is None else (slip if side == "BUY" else -slip)
+
+        created = r.get("order_created_ms") or 0
+        ts = r.get("timestamp_ms") or 0
+        ttf = ts - created if (created > 0 and ts >= created) else None
+
+        has_ptl = r.get("ptl_calc_id") is not None
+        est = (r.get("est_slippage")
+               if (has_ptl and r.get("fill_type") == "entry") else None)
+
+        if r.get("is_close") or not r.get("calc_id"):
+            status, count = "", 0
+        else:
+            fill_d = {"calc_id": r.get("calc_id"),
+                      "exec_link_confirmed": r.get("exec_link_confirmed"),
+                      "price": r.get("price")}
+            ptl_d = None
+            if has_ptl:
+                ptl_d = {"effective_entry": r.get("est_entry"),
+                         "average": r.get("est_average"),
+                         "tp_price": r.get("plan_tp"),
+                         "sl_price": r.get("plan_sl"),
+                         "link_window_seconds_override": r.get("link_window_override")}
+            pretrade_ts_ms = (
+                _pretrade_ts_to_ms({"timestamp": r.get("pretrade_ts")})
+                if has_ptl else None
+            )
+            status, count = get_exec_link_status(
+                fill_d, ptl_d, r.get("order_type") or "",
+                fill_ts_ms=r.get("timestamp_ms"),
+                pretrade_ts_ms=pretrade_ts_ms,
+                account_link_window_seconds=window,
+            )
+
+        rows.append({
+            "fill_id": r.get("fill_id"),
+            "exchange_fill_id": r.get("exchange_fill_id"),
+            "time_ms": r.get("timestamp_ms"),
+            "symbol": r.get("symbol"),
+            "side": r.get("side"),
+            "direction": r.get("direction"),
+            "price": r.get("price"),
+            "quantity": r.get("quantity"),
+            "fee": r.get("fee"),
+            "fee_asset": r.get("fee_asset"),
+            "role": (r.get("role") or "").lower() or None,
+            "is_close": bool(r.get("is_close")),
+            "calc_id": r.get("calc_id"),
+            "fill_type": r.get("fill_type"),
+            "order_type": r.get("order_type"),
+            "est_slippage": est,
+            "slippage_actual": slip,
+            "slippage_cost": cost,
+            "time_to_fill_ms": ttf,
+            "link_status": status,
+            "link_confirmed": bool(r.get("exec_link_confirmed")),
+            "match_count": count,
+        })
+
+    total = len(rows)
+    by_fill_type: Dict[str, int] = {}
+    by_order_type: Dict[str, int] = {}
+    maker = taker = linked = confirmed = calc_backed = 0
+    est_bps: List[float] = []
+    cost_bps: List[float] = []
+    ttfs: List[int] = []
+    for row in rows:
+        ft = row["fill_type"] or "unclassified"
+        by_fill_type[ft] = by_fill_type.get(ft, 0) + 1
+        ot = row["order_type"] or "unknown"
+        by_order_type[ot] = by_order_type.get(ot, 0) + 1
+        if row["role"] == "maker":
+            maker += 1
+        elif row["role"] == "taker":
+            taker += 1
+        if row["calc_id"]:
+            calc_backed += 1
+        if row["link_status"] == "linked":
+            linked += 1
+            if row["link_confirmed"]:
+                confirmed += 1
+        if row["time_to_fill_ms"] is not None:
+            ttfs.append(row["time_to_fill_ms"])
+        # Bias sample: entry fills carrying BOTH an estimate and an actual.
+        if (row["fill_type"] == "entry" and row["est_slippage"] is not None
+                and row["slippage_cost"] is not None):
+            est_bps.append(row["est_slippage"] * 10000)
+            cost_bps.append(row["slippage_cost"] * 10000)
+
+    ttfs.sort()
+    avg_est = sum(est_bps) / len(est_bps) if est_bps else None
+    avg_cost = sum(cost_bps) / len(cost_bps) if cost_bps else None
+    summary = {
+        "total": total,
+        "calc_backed": calc_backed,
+        "linked": linked,
+        "confirmed": confirmed,
+        "by_fill_type": by_fill_type,
+        "by_order_type": by_order_type,
+        "maker": maker,
+        "taker": taker,
+        "entry_n": len(est_bps),
+        "avg_est_bp": avg_est,
+        "avg_cost_bp": avg_cost,
+        # P5 audit H-1: slippage_cost is already the residual vs the
+        # impact-adjusted prediction, so the calibration bias IS its mean —
+        # subtracting avg_est would double-count the predicted impact
+        # (perfect model → bias −avg_est instead of 0).
+        "bias_bp": avg_cost,
+        "ttf_n": len(ttfs),
+        "ttf_avg_ms": (sum(ttfs) / len(ttfs)) if ttfs else None,
+        "ttf_p95_ms": ttfs[min(len(ttfs) - 1, int(len(ttfs) * 0.95))] if ttfs else None,
+        "ttf_max_ms": ttfs[-1] if ttfs else None,
+    }
+    return _analytics_json({"rows": rows, "summary": summary, "limit": limit})
+
+
+@router.get("/api/analytics/distributions")
+async def api_analytics_distributions(month: str = "", all: str = "",
+                                      period: str = "", offset: int = 0):
+    """v3.0 P5 (G-O4): per-trade tuples for the Distributions histograms.
+
+    The client bins (design parity); hour/dow are bucketed server-side in
+    the ACCOUNT timezone (hour 0-23; dow 0=Mon..6=Sun — Python weekday()).
+    hold_min is None when open_time is unknown (pre-backfill rows).
+    R-multiples ride along via the shared get_r_multiples +
+    r_multiple_histogram (the R-Multiples tab's own 8-bin shape).
+    """
+    from_ms, to_ms, period_label, month_s = _analytics_range(month, all, period, offset)
+    aid = app_state.active_account_id
+    tz = get_account_tz(aid)
+
+    series = await db.get_trade_distribution_series(from_ms, to_ms, account_id=aid)
+    trades: List[Dict[str, Any]] = []
+    for t in series:
+        close_ms = t.get("time") or 0
+        open_ms = t.get("open_time") or 0
+        hold_min = None
+        if open_ms > 0 and close_ms >= open_ms:
+            hold_min = round((close_ms - open_ms) / 60000.0, 1)
+        local = (datetime.fromtimestamp(close_ms / 1000, tz=tz)
+                 if close_ms > 0 else None)
+        trades.append({
+            "symbol": t.get("symbol"),
+            "direction": t.get("direction"),
+            "pnl": t.get("income"),
+            "hold_min": hold_min,
+            "hour": local.hour if local else None,
+            "dow": local.weekday() if local else None,
+            "time_ms": close_ms or None,
+        })
+
+    r_values = await db.get_r_multiples(from_ms, to_ms, account_id=aid)
+    return _analytics_json({
+        "trades": trades,
+        "count": len(trades),
+        "r_values": r_values,
+        "r_histogram": r_multiple_histogram(r_values),
+        "period_label": period_label,
+        "month": month_s,
+    })

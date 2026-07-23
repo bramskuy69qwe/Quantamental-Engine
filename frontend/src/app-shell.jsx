@@ -584,7 +584,7 @@ const QE_PAGES = {
   'Pre-Trade': PreTradePage,  // P3 — real page (pages-pretrade.jsx)
   Linkage:    LinkagePage,    // P4 — real page (pages-linkage.jsx)
   History:    HistoryPage,    // P4 — real page (pages-history.jsx)
-  Analytics:  _PagePlaceholder('Analytics', 'P5'),
+  Analytics:  AnalyticsPage,  // P5 — real page (pages-analytics.jsx)
   Models:     _PagePlaceholder('Models', 'P7'),
   Regime:     _PagePlaceholder('Regime', 'P6'),
   Config:     ConfigPage,  // P2 — real page (pages-config.jsx)

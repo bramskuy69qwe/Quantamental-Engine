@@ -55,7 +55,8 @@ const JSX_ORDER = [
   'link-primitives.jsx',      // P4 — linkage vocabulary (badges, diff, countdown)
   'pages-linkage.jsx',        // P4 — Linkage triage board (needs_review + mirrors)
   'pages-history.jsx',        // P4 — History page (JSON doors + drilldown)
-  // ── remaining page modules land here in their phases (pages, models, …) ──
+  'pages-analytics.jsx',      // P5 — Analytics page (11 tabs; G-O4 exec/dist)
+  // ── remaining page modules land here in their phases (regime, models, …) ──
   'app-shell.jsx',            // MUST be last
 ];
 

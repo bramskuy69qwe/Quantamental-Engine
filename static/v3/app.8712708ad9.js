@@ -4862,6 +4862,893 @@ Object.assign(window, { HistoryPage });
 
 ;
 
+/* ==== pages-analytics.jsx ==== */
+const ANA_TABS = [
+  ["overview", "Overview"],
+  ["equity", "Equity Curve"],
+  ["dist", "Distributions"],
+  ["calendar", "Calendar PnL"],
+  ["pairs", "Traded Pairs"],
+  ["excursions", "MFE / MAE"],
+  ["rmultiples", "R-Multiples"],
+  ["risk", "Risk Metrics"],
+  ["execution", "Execution Quality"],
+  ["funding", "Funding"],
+  ["beta", "Beta Exposure"]
+];
+const ANA_PERIOD_TABS = /* @__PURE__ */ new Set(["overview", "dist", "pairs", "excursions", "rmultiples", "risk"]);
+const ANA_NO_NAV = /* @__PURE__ */ new Set(["rolling_30d", "rolling_90d", "all_time"]);
+const _anaPnl = (v) => v > 0 ? "var(--qe-green)" : v < 0 ? "var(--qe-red)" : "var(--qe-sub)";
+const _anaQS = (period, offset) => `period=${encodeURIComponent(period)}&offset=${offset}`;
+const _anaRatio = (v) => v == null ? "\u2014" : v >= 999 ? "\u221E" : (+v).toFixed(2);
+const _anaMs = (ms) => {
+  if (ms == null) return "\u2014";
+  if (ms < 1e3) return `${Math.round(ms)}ms`;
+  if (ms < 6e4) return `${(ms / 1e3).toFixed(1)}s`;
+  if (ms < 36e5) return `${(ms / 6e4).toFixed(1)}m`;
+  return `${(ms / 36e5).toFixed(1)}h`;
+};
+const useAnaJson = (url, intervalMs = 0) => {
+  const [data, setData] = React.useState(null);
+  const [err, setErr] = React.useState(null);
+  const [loading, setLoading] = React.useState(true);
+  const seqRef = React.useRef(0);
+  const load = React.useCallback(async () => {
+    const seq = ++seqRef.current;
+    try {
+      const d = await _ptJson(url);
+      if (seq === seqRef.current) {
+        setData(d);
+        setErr(null);
+      }
+    } catch (e) {
+      if (seq === seqRef.current) {
+        setErr(String(e && e.message || e));
+      }
+    }
+    if (seq === seqRef.current) setLoading(false);
+  }, [url]);
+  React.useEffect(() => {
+    setLoading(true);
+    load();
+  }, [load]);
+  React.useEffect(() => {
+    if (!intervalMs) return void 0;
+    const t = setInterval(load, intervalMs);
+    return () => clearInterval(t);
+  }, [load, intervalMs]);
+  return { data, err, loading, reload: load };
+};
+const useAnaLabel = (data, onLabel) => {
+  React.useEffect(() => {
+    if (data && data.period_label && onLabel) onLabel(data.period_label);
+  }, [data, onLabel]);
+};
+const AnaEmpty = ({ err, msg }) => /* @__PURE__ */ React.createElement("div", { style: { padding: 4, height: "100%" } }, /* @__PURE__ */ React.createElement(
+  EmptyState,
+  {
+    tone: err ? "warn" : "neutral",
+    glyph: err ? "\u26A0" : "\u25C7",
+    msg: err ? "analytics fetch failed \u2014 engine unreachable?" : msg,
+    hint: err || void 0
+  }
+));
+const AnaKv = ({ label, value, color }) => /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 2, minWidth: 0 } }, /* @__PURE__ */ React.createElement(Lbl, null, label), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.82rem", fontWeight: 700, color: color || "var(--qe-text)" } }, value));
+const AnaVRow = ({ label, value, color }) => /* @__PURE__ */ React.createElement("div", { className: "qe-fl-row" }, /* @__PURE__ */ React.createElement("div", { className: "qe-fl-l" }, /* @__PURE__ */ React.createElement("span", { style: { overflow: "hidden", textOverflow: "ellipsis" } }, label)), /* @__PURE__ */ React.createElement("div", { className: "qe-fl-v", style: color ? { color } : void 0 }, value));
+const AnaPeriodNav = ({ period, onPeriod, onNav, disabled, label }) => {
+  const presets = [
+    ["monthly", "Month"],
+    ["weekly", "Week"],
+    ["quarterly", "Quarter"],
+    ["yearly", "Year"],
+    ["rolling_30d", "30D"],
+    ["rolling_90d", "90D"],
+    ["all_time", "All"]
+  ];
+  const noNav = ANA_NO_NAV.has(period);
+  return /* @__PURE__ */ React.createElement(
+    "div",
+    {
+      title: disabled ? "Period filter doesn't apply to this sub-tab \u2014 it has its own controls." : "",
+      style: { display: "flex", alignItems: "center", gap: 6, opacity: disabled ? 0.4 : 1, pointerEvents: disabled ? "none" : "auto" }
+    },
+    /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-ghost", disabled: noNav, style: noNav ? { opacity: 0.45 } : void 0, onClick: () => onNav(-1) }, "\u2039"),
+    /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.74rem", fontWeight: 700, minWidth: 120, textAlign: "center", color: "var(--qe-text)" } }, label || "\u2026"),
+    /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-ghost", disabled: noNav, style: noNav ? { opacity: 0.45 } : void 0, onClick: () => onNav(1) }, "\u203A"),
+    /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)", margin: "0 2px" } }, "\u2502"),
+    /* @__PURE__ */ React.createElement(PeriodSelector, { options: presets, value: period, onChange: onPeriod })
+  );
+};
+const AnaHistChart = ({ bins, color = "var(--qe-cyan)", height = "100%", unit = "", divergent = false, noun = "trade", tip = null }) => {
+  const ref = React.useRef(null);
+  const c = _qeResolveColor(color);
+  const green = QE_ECHARTS_THEME.green, red = QE_ECHARTS_THEME.red;
+  const opts = React.useMemo(() => ({
+    ..._baseChart({ grid: { left: 30, right: 10, top: 18, bottom: 20 } }),
+    tooltip: {
+      trigger: "axis",
+      backgroundColor: "#000",
+      borderColor: QE_ECHARTS_THEME.cyan,
+      borderWidth: 1,
+      padding: [4, 8],
+      textStyle: { color: QE_ECHARTS_THEME.text, fontSize: 11, fontFamily: "JetBrains Mono, monospace" },
+      axisPointer: { type: "shadow", shadowStyle: { color: (divergent ? green : c) + "22" } },
+      formatter: (p) => {
+        var _a;
+        const v = (_a = p[0].data.value) != null ? _a : p[0].data;
+        if (tip) return tip(p[0].axisValue, v);
+        return `${p[0].axisValue || "\u2014"}${unit} \xB7 ${v} ${noun}${v === 1 ? "" : "s"}`;
+      }
+    },
+    xAxis: {
+      type: "category",
+      data: bins.map((b) => b.label),
+      ..._axis({ axisLabel: { color: QE_ECHARTS_THEME.muted, fontSize: 9, fontFamily: "JetBrains Mono, monospace" }, splitLine: { show: false } })
+    },
+    yAxis: {
+      type: "value",
+      minInterval: 1,
+      ..._axis({
+        axisLabel: { color: QE_ECHARTS_THEME.muted, fontSize: 9, fontFamily: "JetBrains Mono, monospace" },
+        splitLine: { lineStyle: { color: QE_ECHARTS_THEME.faint, opacity: 0.4, type: [2, 3] } }
+      })
+    },
+    series: [{
+      type: "bar",
+      barWidth: "62%",
+      data: bins.map((b) => ({ value: b.count, itemStyle: { color: divergent ? b.pos ? green : red : c, opacity: 0.82 } })),
+      emphasis: { itemStyle: { opacity: 1 } },
+      label: {
+        show: true,
+        position: "top",
+        fontSize: 9,
+        fontFamily: "JetBrains Mono, monospace",
+        color: divergent ? QE_ECHARTS_THEME.sub : c,
+        formatter: (x) => x.value > 0 ? x.value : ""
+      }
+    }]
+  }), [bins, c, unit, divergent, noun]);
+  useECharts(ref, opts, [opts]);
+  return /* @__PURE__ */ React.createElement("div", { ref, className: "qe-chart", style: { height } });
+};
+const AnaDivergingBars = ({ rows, height = "100%", fmt = (v) => v.toFixed(2) }) => {
+  const ref = React.useRef(null);
+  const green = QE_ECHARTS_THEME.green, red = QE_ECHARTS_THEME.red;
+  const opts = React.useMemo(() => ({
+    ..._baseChart({ grid: { left: 34, right: 10, top: 16, bottom: 30 } }),
+    tooltip: {
+      trigger: "axis",
+      backgroundColor: "#000",
+      borderColor: QE_ECHARTS_THEME.cyan,
+      borderWidth: 1,
+      padding: [4, 8],
+      textStyle: { color: QE_ECHARTS_THEME.text, fontSize: 11, fontFamily: "JetBrains Mono, monospace" },
+      axisPointer: { type: "shadow", shadowStyle: { color: QE_ECHARTS_THEME.text + "10" } },
+      formatter: (p) => {
+        const r = rows[p[0].dataIndex];
+        return `${r.label} \xB7 ${(r.v >= 0 ? "+" : "") + fmt(r.v)} \xB7 ${r.n} trade${r.n === 1 ? "" : "s"}`;
+      }
+    },
+    xAxis: {
+      type: "category",
+      data: rows.map((r) => r.label),
+      ..._axis({ axisLabel: { color: QE_ECHARTS_THEME.muted, fontSize: 9, fontFamily: "JetBrains Mono, monospace" }, splitLine: { show: false } })
+    },
+    yAxis: {
+      type: "value",
+      ..._axis({
+        axisLabel: { color: QE_ECHARTS_THEME.muted, fontSize: 9, fontFamily: "JetBrains Mono, monospace", formatter: (v) => v.toFixed(1) },
+        splitLine: { lineStyle: { color: QE_ECHARTS_THEME.faint, opacity: 0.4, type: [2, 3] } }
+      })
+    },
+    series: [{
+      type: "bar",
+      barWidth: "56%",
+      data: rows.map((r) => ({ value: r.n > 0 ? r.v : 0, itemStyle: { color: r.v >= 0 ? green : red, opacity: 0.82 } })),
+      markLine: { symbol: "none", silent: true, data: [{ yAxis: 0, lineStyle: { color: QE_ECHARTS_THEME.line, width: 1 }, label: { show: false } }] },
+      emphasis: { itemStyle: { opacity: 1 } },
+      label: {
+        show: true,
+        fontSize: 9,
+        fontFamily: "JetBrains Mono, monospace",
+        color: QE_ECHARTS_THEME.sub,
+        position: "top",
+        formatter: (x) => {
+          const r = rows[x.dataIndex];
+          return r.n > 0 && Math.abs(r.v) > 5e-3 ? (r.v >= 0 ? "+" : "") + fmt(r.v) : "";
+        }
+      }
+    }]
+  }), [rows, fmt]);
+  useECharts(ref, opts, [opts]);
+  return /* @__PURE__ */ React.createElement("div", { ref, className: "qe-chart", style: { height } });
+};
+const ANA_FT_COLOR = {
+  entry: "var(--qe-blue)",
+  tp: "var(--qe-green)",
+  sl: "var(--qe-red)",
+  manual: "var(--qe-muted)",
+  reduce_only: "var(--qe-sub)"
+};
+const AnaExecScatter = ({ points, height = "100%" }) => {
+  const ref = React.useRef(null);
+  const opts = React.useMemo(() => {
+    const maxX = Math.max(...points.map((p) => p.est), 1) * 1.18;
+    const maxY = Math.max(...points.map((p) => p.act), 1) * 1.18;
+    const minY = Math.min(0, ...points.map((p) => p.act)) * 1.18;
+    const data = points.map((p) => ({
+      value: [p.est, p.act],
+      name: p.id,
+      itemStyle: {
+        color: _qeResolveColor(ANA_FT_COLOR[p.ft] || "var(--qe-sub)"),
+        opacity: 0.82,
+        borderColor: p.act > 0 ? QE_ECHARTS_THEME.red : "transparent",
+        borderWidth: p.act > 0 ? 1.6 : 0
+      },
+      _ft: p.ft
+    }));
+    return {
+      ..._baseChart({ grid: { left: 46, right: 16, top: 14, bottom: 40 } }),
+      tooltip: {
+        trigger: "item",
+        backgroundColor: "#000",
+        borderColor: QE_ECHARTS_THEME.cyan,
+        borderWidth: 1,
+        padding: [4, 8],
+        textStyle: { color: QE_ECHARTS_THEME.text, fontSize: 11, fontFamily: "JetBrains Mono, monospace" },
+        formatter: (o) => {
+          const d = o.data;
+          return `<b>${d.name}</b> \xB7 ${d._ft}<br/>impact est ${d.value[0].toFixed(2)}bp<br/>residual&nbsp;&nbsp;${(d.value[1] >= 0 ? "+" : "") + d.value[1].toFixed(2)}bp vs plan`;
+        }
+      },
+      xAxis: {
+        type: "value",
+        min: 0,
+        max: maxX,
+        name: "Predicted impact (bp)",
+        nameLocation: "center",
+        nameGap: 24,
+        nameTextStyle: { color: QE_ECHARTS_THEME.sub, fontSize: 10 },
+        ..._axis()
+      },
+      yAxis: {
+        type: "value",
+        min: minY,
+        max: maxY,
+        name: "Residual vs plan (bp)",
+        nameLocation: "middle",
+        nameGap: 32,
+        nameRotate: 90,
+        nameTextStyle: { color: QE_ECHARTS_THEME.sub, fontSize: 10 },
+        ..._axis()
+      },
+      series: [
+        {
+          type: "line",
+          silent: true,
+          symbol: "none",
+          data: [[0, 0], [maxX, 0]],
+          lineStyle: { color: QE_ECHARTS_THEME.muted, type: "dashed", width: 1 },
+          tooltip: { show: false },
+          z: 1
+        },
+        { type: "scatter", data, symbolSize: 11, z: 2, emphasis: { scale: 1.3, itemStyle: { opacity: 1 } } }
+      ]
+    };
+  }, [points]);
+  useECharts(ref, opts, [opts]);
+  return /* @__PURE__ */ React.createElement("div", { ref, className: "qe-chart", style: { height } });
+};
+const AnaTabOverview = ({ period, offset, onLabel }) => {
+  const { data, err } = useAnaJson(`/fragments/analytics/overview?format=json&${_anaQS(period, offset)}`);
+  useAnaLabel(data, onLabel);
+  if (!data) return /* @__PURE__ */ React.createElement(AnaEmpty, { err, msg: "loading overview\u2026" });
+  const s = data.stats || {}, b = data.boundaries || {}, c = data.cumulative || {}, ra = data.ratios || {};
+  const lbl = data.period_label || "";
+  const days = data.trading_days || 0;
+  const pnl = s.total_pnl || 0;
+  const initial = b.initial_equity || 0;
+  const pnlPct = initial > 0 ? pnl / initial * 100 : null;
+  const total = s.total_trades || 0;
+  const wins = s.winning_trades || 0;
+  const winrate = total > 0 ? wins / total * 100 : 0;
+  const rr = s.avg_profit && s.avg_loss ? Math.abs(s.avg_profit / s.avg_loss) : null;
+  const eqSeries = (data.daily_equity || []).map((r) => r.total_equity).filter((v) => v != null);
+  const noR = (data.r_count || 0) === 0;
+  const ratioRows = [
+    ["Sharpe", ra.sharpe, "annualized"],
+    ["Sharpe (MFE)", ra.sharpe_mfe, "mfe / notional"],
+    ["Sortino", ra.sortino, "downside \u03C3 \xB7 \u221E = no downside days"],
+    ["Sortino (MAE)", ra.sortino_mae, "mae / notional"],
+    ["Profit Factor", noR ? null : ra.profit_factor, "\u03A3 gross w / |\u03A3 gross l| \xB7 \u221E = no losers"],
+    ["Expectancy", noR ? null : ra.expectancy, "mean R-multiple", "R"]
+  ].map(([l, v, d, suf]) => {
+    const empty = v == null;
+    const inf = !empty && v >= 999;
+    const color = empty ? "sub" : inf || v >= 2 ? "green" : v >= 1 ? "amber" : "red";
+    return { label: l, hint: d, value: empty ? "\u2014" : inf ? "\u221E" : (+v).toFixed(2) + (suf || ""), color };
+  });
+  return /* @__PURE__ */ React.createElement(GridWorkspace, null, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 8, h: 6, minW: 5, minH: 5 }, /* @__PURE__ */ React.createElement(Pane, { title: "Volume & Activity", tag: lbl, style: { height: "100%" } }, /* @__PURE__ */ React.createElement(AnaVRow, { label: "Trading Volume", value: `$${(s.trading_volume || 0).toLocaleString(void 0, { maximumFractionDigits: 0 })}` }), /* @__PURE__ */ React.createElement(AnaVRow, { label: "Fees Paid", value: `$${(s.total_fees || 0).toFixed(2)}` }), /* @__PURE__ */ React.createElement(AnaVRow, { label: "No. of Longs", value: s.num_longs || 0, color: "var(--qe-green)" }), /* @__PURE__ */ React.createElement(AnaVRow, { label: "No. of Shorts", value: s.num_shorts || 0, color: "var(--qe-red)" }), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 8 } }, /* @__PURE__ */ React.createElement(Lbl, null, "Top Pairs"), /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.68rem", color: "var(--qe-sub)", marginTop: 2 } }, (data.top_pairs || []).length ? data.top_pairs.join(" \xB7 ") : "\u2014")))), /* @__PURE__ */ React.createElement(GridItem, { x: 8, y: 0, w: 16, h: 7, minW: 8, minH: 5 }, /* @__PURE__ */ React.createElement(Pane, { title: "Equity & PnL", tag: lbl, style: { height: "100%" }, bodyStyle: { padding: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "minmax(200px,0.9fr) 1px 1.3fr", gap: 0, height: "100%" } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "7px 12px 7px 8px" } }, /* @__PURE__ */ React.createElement(FieldList, { rows: [
+    { label: "Initial Equity", value: `$${initial.toFixed(2)}` },
+    { label: "Final Equity", value: `$${(b.final_equity || 0).toFixed(2)}` },
+    { label: "Period PnL", value: `$${pnl.toFixed(2)}`, color: _anaPnl(pnl) },
+    { label: "Period PnL %", value: pnlPct == null ? "\u2014" : `${pnlPct.toFixed(2)}%`, color: _anaPnl(pnlPct || 0) },
+    { label: "Daily Avg PnL", value: days ? `$${(pnl / days).toFixed(2)}` : "\u2014", color: _anaPnl(pnl) },
+    { label: "Trading Days", value: days }
+  ] })), /* @__PURE__ */ React.createElement("div", { style: { background: "var(--qe-line)" } }), /* @__PURE__ */ React.createElement("div", { style: { padding: "7px 8px 7px 12px", display: "flex", flexDirection: "column", minHeight: 0 } }, /* @__PURE__ */ React.createElement(Lbl, null, "Equity Curve \xB7 ", lbl), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0, marginTop: 2 } }, eqSeries.length >= 2 ? /* @__PURE__ */ React.createElement(EquityChart, { data: eqSeries, color: _anaPnl(pnl), baseline: initial || null, height: "100%" }) : /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.62rem", color: "var(--qe-muted)", padding: 8 } }, "not enough snapshots in window")))))), /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 6, w: 8, h: 10, minW: 5, minH: 6 }, /* @__PURE__ */ React.createElement(Pane, { title: "Trade Statistics", style: { height: "100%" } }, /* @__PURE__ */ React.createElement(AnaVRow, { label: "Total Trades", value: total }), /* @__PURE__ */ React.createElement(AnaVRow, { label: "Winning", value: wins, color: "var(--qe-green)" }), /* @__PURE__ */ React.createElement(AnaVRow, { label: "Losing", value: s.losing_trades || 0, color: "var(--qe-red)" }), /* @__PURE__ */ React.createElement(AnaVRow, { label: "Win Rate", value: `${winrate.toFixed(1)}%`, color: winrate >= 50 ? "var(--qe-green)" : "var(--qe-red)" }), /* @__PURE__ */ React.createElement(AnaVRow, { label: "Avg W / L", value: rr == null ? "\u2014" : `${rr.toFixed(2)}\xD7` }), /* @__PURE__ */ React.createElement(AnaVRow, { label: "Avg Profit", value: `$${(s.avg_profit || 0).toFixed(2)}`, color: "var(--qe-green)" }), /* @__PURE__ */ React.createElement(AnaVRow, { label: "Avg Loss", value: `$${(s.avg_loss || 0).toFixed(2)}`, color: "var(--qe-red)" }), /* @__PURE__ */ React.createElement(AnaVRow, { label: "Biggest Win", value: `$${(s.biggest_profit || 0).toFixed(2)}`, color: "var(--qe-green)" }), /* @__PURE__ */ React.createElement(AnaVRow, { label: "Biggest Loss", value: `$${(s.biggest_loss || 0).toFixed(2)}`, color: "var(--qe-red)" }), /* @__PURE__ */ React.createElement(AnaVRow, { label: "Max Drawdown", value: `${((b.max_drawdown || 0) * 100).toFixed(2)}%`, color: "var(--qe-red)" }))), /* @__PURE__ */ React.createElement(GridItem, { x: 8, y: 7, w: 16, h: 5, minW: 8, minH: 5 }, /* @__PURE__ */ React.createElement(Pane, { title: "Performance Ratios", style: { height: "100%" } }, /* @__PURE__ */ React.createElement(FieldList, { cols: 2, rows: ratioRows }))), /* @__PURE__ */ React.createElement(GridItem, { x: 8, y: 12, w: 16, h: 4, minW: 8, minH: 4 }, /* @__PURE__ */ React.createElement(Pane, { title: "Cash & Cumulative", style: { height: "100%" } }, /* @__PURE__ */ React.createElement(FieldList, { cols: 2, rows: [
+    { label: "Deposits (window)", value: `$${(s.deposits || 0).toFixed(2)}` },
+    { label: "Withdrawals (window)", value: `$${(s.withdrawals || 0).toFixed(2)}` },
+    { label: "Cumulative PnL (all-time)", value: `$${(c.total_pnl || 0).toFixed(2)}`, color: _anaPnl(c.total_pnl || 0) },
+    { label: "Cumulative PnL %", value: c.total_pnl_percent == null ? "\u2014" : `${(+c.total_pnl_percent).toFixed(2)}%`, color: _anaPnl(c.total_pnl_percent || 0) }
+  ] }))));
+};
+const AnaTabEquity = () => {
+  const [tf, setTf] = React.useState("1M");
+  const [logScale, setLogScale] = React.useState(false);
+  const [ddMode, setDdMode] = React.useState(false);
+  const { data, err } = useAnaJson(`/api/analytics/equity_ohlc?tf=${encodeURIComponent(tf)}`);
+  const candles = data && data.candles || [];
+  const ddSeries = React.useMemo(() => {
+    let peak = -Infinity;
+    return candles.map((d) => {
+      if (d.c != null) peak = Math.max(peak, d.c);
+      return peak > 0 && d.c != null ? +((d.c - peak) / peak * 100).toFixed(2) : 0;
+    });
+  }, [candles]);
+  if (!data) return /* @__PURE__ */ React.createElement(AnaEmpty, { err, msg: "loading equity curve\u2026" });
+  if (!candles.length) return /* @__PURE__ */ React.createElement(AnaEmpty, { err, msg: "no equity snapshots yet" });
+  const last = candles[candles.length - 1];
+  const prev = candles.length > 1 ? candles[candles.length - 2] : last;
+  const chg = last.c != null && prev.c != null ? last.c - prev.c : 0;
+  const chgPct = prev.c ? chg / prev.c * 100 : 0;
+  const ohlcRow = [
+    ["O", last.o, "var(--qe-text)"],
+    ["H", last.h, "var(--qe-green)"],
+    ["L", last.l, "var(--qe-red)"],
+    ["C", last.c, "var(--qe-text)"]
+  ];
+  return /* @__PURE__ */ React.createElement("div", { style: { padding: 4, height: "100%" } }, /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "Equity Curve",
+      hot: true,
+      tag: ddMode ? "DRAWDOWN %" : "OHLC",
+      right: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(PeriodSelector, { options: [["1W", "1W"], ["2W", "2W"], ["1M", "1M"], ["3M", "3M"], ["6M", "6M"], ["1Y", "1Y"], ["all", "All"]], value: tf, onChange: setTf }), /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          className: `qe-btn qe-btn-sm ${logScale && !ddMode ? "qe-btn-on" : "qe-btn-ghost"}`,
+          disabled: ddMode,
+          style: ddMode ? { opacity: 0.4 } : void 0,
+          onClick: () => setLogScale((v) => !v)
+        },
+        "log scale"
+      ), /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          className: `qe-btn qe-btn-sm ${ddMode ? "qe-btn-on" : "qe-btn-ghost"}`,
+          onClick: () => setDdMode((v) => !v)
+        },
+        "drawdown %"
+      )),
+      style: { height: "100%" },
+      bodyStyle: { padding: 6 }
+    },
+    /* @__PURE__ */ React.createElement("div", { style: { height: "100%", display: "flex", flexDirection: "column" } }, /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.62rem", display: "flex", gap: 14, flexWrap: "wrap", padding: "2px 4px", alignItems: "baseline" } }, ohlcRow.map(([k, v, col]) => /* @__PURE__ */ React.createElement("span", { key: k }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, k), " ", /* @__PURE__ */ React.createElement("span", { style: { color: col } }, v == null ? "\u2014" : `$${(+v).toFixed(2)}`))), /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "Chg"), " ", /* @__PURE__ */ React.createElement("span", { style: { color: _anaPnl(chg) } }, `${chg >= 0 ? "+" : ""}$${chg.toFixed(2)} (${chgPct >= 0 ? "+" : ""}${chgPct.toFixed(2)}%)`)), /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "Bar Range"), " ", /* @__PURE__ */ React.createElement("span", null, last.h != null && last.l != null ? `$${(last.h - last.l).toFixed(2)}` : "\u2014")), /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "Cash Flow"), " ", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-blue)" } }, last.cf ? `${last.cf >= 0 ? "+" : "-"}$${Math.abs(+last.cf).toFixed(2)}` : "+$0.00"))), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0 } }, ddMode ? /* @__PURE__ */ React.createElement(EquityChart, { data: ddSeries, color: "var(--qe-red)", baseline: 0 }) : /* @__PURE__ */ React.createElement(CandlestickChart, { data: candles.map((d) => [d.x, d.o, d.c, d.l, d.h]), logScale })))
+  ));
+};
+const AnaTabDistributions = ({ period, offset, onLabel }) => {
+  const { data, err } = useAnaJson(`/api/analytics/distributions?${_anaQS(period, offset)}`);
+  useAnaLabel(data, onLabel);
+  if (!data) return /* @__PURE__ */ React.createElement(AnaEmpty, { err, msg: "loading distributions\u2026" });
+  const trades = data.trades || [];
+  if (!trades.length) return /* @__PURE__ */ React.createElement(AnaEmpty, { err, msg: "no closed trades in window" });
+  const lbl = data.period_label || "";
+  const pnls = trades.map((t) => t.pnl).filter((v) => v != null);
+  const lo = Math.min(...pnls, 0), hi = Math.max(...pnls, 0);
+  const rawStep = (hi - lo) / 12 || 1;
+  const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
+  const step = [1, 2, 5, 10].map((m) => m * mag).find((s) => s >= rawStep) || 10 * mag;
+  const b0 = Math.floor(lo / step) * step;
+  const nBins = Math.max(1, Math.ceil((hi - b0) / step) || 1);
+  const pnlBins = Array.from({ length: nBins }, (_, i) => {
+    const a = b0 + i * step;
+    return {
+      label: `${a >= 0 ? "+" : ""}${+a.toFixed(2)}`,
+      count: pnls.filter((v) => v >= a && v < a + step).length,
+      pos: a >= 0
+    };
+  });
+  const holds = trades.map((t) => t.hold_min).filter((v) => v != null);
+  const HOLD_EDGES = [[0, 10], [10, 30], [30, 60], [60, 120], [120, 240], [240, 480], [480, Infinity]];
+  const holdBins = HOLD_EDGES.map(([a, b]) => ({
+    label: b === Infinity ? `${a}+` : `${a}-${b}`,
+    count: holds.filter((v) => v >= a && v < b).length
+  }));
+  const hourBins = Array.from({ length: 24 }, (_, h) => ({
+    label: h % 3 === 0 ? `${h}h` : "",
+    count: trades.filter((t) => t.hour === h).length
+  }));
+  const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  const dowRows = DOW.map((label, i) => {
+    const ts = trades.filter((t) => t.dow === i && t.pnl != null);
+    return { label, v: ts.length ? ts.reduce((s, t) => s + t.pnl, 0) / ts.length : 0, n: ts.length };
+  });
+  const wrHourBins = Array.from({ length: 24 }, (_, h) => {
+    const tr = trades.filter((t) => t.hour === h && t.pnl != null);
+    const w = tr.filter((t) => t.pnl > 0).length;
+    return {
+      label: h % 3 === 0 ? `${h}h` : "",
+      count: tr.length ? Math.round(w / tr.length * 100) : 0,
+      pos: tr.length > 0 && w / tr.length >= 0.5
+    };
+  });
+  const rBins = (data.r_histogram || []).map((b) => ({ label: b.label, count: b.count, pos: b.pos }));
+  return /* @__PURE__ */ React.createElement(GridWorkspace, null, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 12, h: 6, minW: 6, minH: 5 }, /* @__PURE__ */ React.createElement(Pane, { title: "PnL Distribution", style: { height: "100%" }, tag: lbl || `$${step} bins` }, /* @__PURE__ */ React.createElement(AnaHistChart, { bins: pnlBins, divergent: true, noun: "trade" }))), /* @__PURE__ */ React.createElement(GridItem, { x: 12, y: 0, w: 12, h: 6, minW: 6, minH: 5 }, /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "R-Multiple Distribution",
+      style: { height: "100%" },
+      tag: "1R bins",
+      right: /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.54rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)" } }, "n=", (data.r_values || []).length, " \xB7 positional R from plan SL")
+    },
+    rBins.length ? /* @__PURE__ */ React.createElement(AnaHistChart, { bins: rBins, divergent: true, noun: "trade" }) : /* @__PURE__ */ React.createElement(EmptyState, { msg: "no R-multiples in window" })
+  )), /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 6, w: 12, h: 6, minW: 6, minH: 5 }, /* @__PURE__ */ React.createElement(Pane, { title: "Hold Time Distribution", style: { height: "100%" }, tag: "min" }, holds.length ? /* @__PURE__ */ React.createElement(AnaHistChart, { bins: holdBins, color: "var(--qe-blue)", noun: "trade" }) : /* @__PURE__ */ React.createElement(EmptyState, { msg: "no hold-time data (open_time unknown)" }))), /* @__PURE__ */ React.createElement(GridItem, { x: 12, y: 6, w: 12, h: 6, minW: 6, minH: 5 }, /* @__PURE__ */ React.createElement(Pane, { title: "Trades by Hour of Day", style: { height: "100%" }, tag: "account tz" }, /* @__PURE__ */ React.createElement(AnaHistChart, { bins: hourBins, color: "var(--qe-cyan)", noun: "trade" }))), /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 12, w: 12, h: 6, minW: 6, minH: 5 }, /* @__PURE__ */ React.createElement(Pane, { title: "Avg PnL by Day of Week", style: { height: "100%" }, tag: "$" }, /* @__PURE__ */ React.createElement(AnaDivergingBars, { rows: dowRows }))), /* @__PURE__ */ React.createElement(GridItem, { x: 12, y: 12, w: 12, h: 6, minW: 6, minH: 5 }, /* @__PURE__ */ React.createElement(Pane, { title: "Win Rate by Hour of Day", style: { height: "100%" }, tag: "%" }, /* @__PURE__ */ React.createElement(
+    AnaHistChart,
+    {
+      bins: wrHourBins,
+      divergent: true,
+      unit: "%",
+      tip: (l, v) => `${l || "hour"} \xB7 ${v}% win rate`
+    }
+  ))));
+};
+const AnaTabCalendar = () => {
+  const [ym, setYm] = React.useState("");
+  const { data, err } = useAnaJson(`/fragments/analytics/calendar?format=json&month=${encodeURIComponent(ym)}`);
+  if (!data) return /* @__PURE__ */ React.createElement(AnaEmpty, { err, msg: "loading calendar\u2026" });
+  const weeks = data.calendar_grid || [];
+  const maxAbs = data.max_abs_pnl || 1;
+  const atCurrent = data.month >= data.current_month;
+  return /* @__PURE__ */ React.createElement("div", { style: { padding: 4, height: "100%" } }, /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "Calendar PnL",
+      right: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-ghost", onClick: () => setYm(data.prev_month) }, "\u2039 Prev"), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.74rem", fontWeight: 700, padding: "0 6px" } }, data.month_label), /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          className: "qe-btn qe-btn-sm qe-btn-ghost",
+          disabled: atCurrent,
+          style: atCurrent ? { opacity: 0.4 } : void 0,
+          title: atCurrent ? "Already at the current month" : "",
+          onClick: () => setYm(data.next_month)
+        },
+        "Next \u203A"
+      )),
+      style: { height: "100%" }
+    },
+    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, height: "100%" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 2 } }, ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => /* @__PURE__ */ React.createElement("div", { key: d, style: { textAlign: "center", fontSize: "0.54rem", color: "var(--qe-muted)", textTransform: "uppercase", padding: "2px 0", letterSpacing: "0.1em" } }, d))), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 2, flex: 1, minHeight: 0, alignContent: "start" } }, weeks.flat().map((cell, i) => {
+      if (!cell || !cell.day) return /* @__PURE__ */ React.createElement("div", { key: i });
+      if (cell.pnl == null) {
+        return /* @__PURE__ */ React.createElement("div", { key: i, title: `${cell.date}: no trades`, style: {
+          background: "var(--qe-panel)",
+          border: "1px solid color-mix(in srgb, var(--qe-text) 4%, transparent)",
+          padding: "4px 6px",
+          minHeight: 46,
+          opacity: 0.45
+        } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.6rem", fontFamily: "var(--qe-mono)", color: "var(--qe-muted)" } }, cell.day));
+      }
+      const intensity = Math.min(Math.abs(cell.pnl) / maxAbs, 1);
+      const bg = cell.pnl > 0 ? `rgba(0,255,127,${0.12 + intensity * 0.6})` : cell.pnl < 0 ? `rgba(255,45,74,${0.12 + intensity * 0.6})` : "var(--qe-panel)";
+      const tc = cell.pnl >= 0 ? "var(--qe-green)" : "var(--qe-red)";
+      return /* @__PURE__ */ React.createElement(
+        "div",
+        {
+          key: i,
+          title: `${cell.date}: $${cell.pnl.toFixed(2)} \xB7 ${cell.trades || 0}T \xB7 ${((cell.win_rate || 0) * 100).toFixed(0)}% WR`,
+          style: { background: bg, border: "1px solid color-mix(in srgb, var(--qe-text) 4%, transparent)", padding: "4px 6px", display: "flex", flexDirection: "column", minHeight: 46 }
+        },
+        /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "0.6rem", fontFamily: "var(--qe-mono)" } }, /* @__PURE__ */ React.createElement("span", { style: { color: tc, fontWeight: 600 } }, cell.day), cell.trades > 0 && /* @__PURE__ */ React.createElement("span", { style: { color: tc, opacity: 0.7 } }, ((cell.win_rate || 0) * 100).toFixed(0), "%")),
+        /* @__PURE__ */ React.createElement("div", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.7rem", fontWeight: 700, color: tc, marginTop: 3 } }, cell.pnl >= 0 ? "+" : "-", "$", Math.abs(cell.pnl).toFixed(2)),
+        /* @__PURE__ */ React.createElement("div", { className: "qe-grow" }),
+        cell.trades > 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.52rem", color: tc, opacity: 0.75, fontFamily: "var(--qe-mono)" } }, cell.trades, "T")
+      );
+    })), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10, padding: "6px 4px", borderTop: "1px solid var(--qe-line)" } }, /* @__PURE__ */ React.createElement(AnaKv, { label: "Trading Days", value: data.trading_days || 0 }), /* @__PURE__ */ React.createElement(AnaKv, { label: "Avg Daily PnL", value: `$${(data.avg_daily || 0).toFixed(2)}`, color: _anaPnl(data.avg_daily || 0) }), /* @__PURE__ */ React.createElement(AnaKv, { label: "Best Day", value: `$${(data.best_day || 0).toFixed(2)}`, color: "var(--qe-green)" }), /* @__PURE__ */ React.createElement(AnaKv, { label: "Worst Day", value: `$${(data.worst_day || 0).toFixed(2)}`, color: "var(--qe-red)" })))
+  ));
+};
+const AnaTabPairs = ({ period, offset, onLabel }) => {
+  const { data, err } = useAnaJson(`/fragments/analytics/pairs?format=json&${_anaQS(period, offset)}`);
+  useAnaLabel(data, onLabel);
+  if (!data) return /* @__PURE__ */ React.createElement(AnaEmpty, { err, msg: "loading pairs\u2026" });
+  const rows = data.rows || [];
+  if (!rows.length) return /* @__PURE__ */ React.createElement(AnaEmpty, { err, msg: "no trades in window" });
+  const totals = {
+    trades: rows.reduce((s, r) => s + (r.total || 0), 0),
+    pnl: rows.reduce((s, r) => s + (r.pnl_total || 0), 0),
+    fees: rows.reduce((s, r) => s + (r.fees_total || 0), 0),
+    vol: rows.reduce((s, r) => s + (r.volume || 0), 0)
+  };
+  const pnlCell = (v, bold) => /* @__PURE__ */ React.createElement("span", { style: { color: v >= 0 ? "var(--qe-green)" : "var(--qe-red)", fontWeight: bold ? 700 : void 0 } }, v === 0 ? "\u2014" : (v >= 0 ? "+" : "") + v.toFixed(2));
+  return /* @__PURE__ */ React.createElement("div", { style: { padding: 4, height: "100%" } }, /* @__PURE__ */ React.createElement(Pane, { title: "Traded Pairs", count: `${rows.length} symbols`, tag: data.period_label, style: { height: "100%" }, bodyStyle: { padding: 0 } }, /* @__PURE__ */ React.createElement(
+    DataList,
+    {
+      selKey: "symbol",
+      dense: false,
+      tools: false,
+      columns: [
+        { key: "symbol", label: "SYMBOL", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, r.symbol) },
+        { key: "total", label: "TRADES", align: "right" },
+        { key: "longs", label: "LONGS", align: "right", cell: "up" },
+        { key: "shorts", label: "SHORTS", align: "right", cell: "dn" },
+        { key: "pnl_long", label: "PnL (L)", align: "right", render: (r) => pnlCell(r.pnl_long || 0) },
+        { key: "pnl_short", label: "PnL (S)", align: "right", render: (r) => pnlCell(r.pnl_short || 0) },
+        { key: "pnl_total", label: "PnL TOTAL", align: "right", render: (r) => pnlCell(r.pnl_total || 0, true) },
+        { key: "win_rate", label: "WIN RATE", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: (r.win_rate || 0) >= 0.5 ? "var(--qe-green)" : "var(--qe-red)" } }, ((r.win_rate || 0) * 100).toFixed(1), "%") },
+        { key: "avg_win", label: "AVG WIN", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-green)" } }, r.avg_win ? r.avg_win.toFixed(2) : "\u2014") },
+        { key: "avg_loss", label: "AVG LOSS", align: "right", cell: "dn", render: (r) => r.avg_loss ? r.avg_loss.toFixed(2) : "\u2014" },
+        { key: "fees_total", label: "FEES", align: "right", cell: "dim", render: (r) => (r.fees_total || 0).toFixed(2) },
+        { key: "volume", label: "VOLUME", align: "right", cell: "dim", render: (r) => (r.volume || 0).toLocaleString(void 0, { maximumFractionDigits: 0 }) }
+      ],
+      rows,
+      summary: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "TOTAL"), " ", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-text)", fontWeight: 700 } }, totals.trades, " trades")), /* @__PURE__ */ React.createElement("span", { style: { color: totals.pnl >= 0 ? "var(--qe-green)" : "var(--qe-red)", fontWeight: 700 } }, "\u03A3 PnL ", totals.pnl >= 0 ? "+" : "", totals.pnl.toFixed(2), " \xB7 fees ", totals.fees.toFixed(2), " \xB7 vol ", totals.vol.toLocaleString(void 0, { maximumFractionDigits: 0 })))
+    }
+  )));
+};
+const AnaTabExcursions = ({ period, offset, onLabel }) => {
+  const [dir, setDir] = React.useState("all");
+  const { data, err } = useAnaJson(`/fragments/analytics/excursions?format=json&dir=${encodeURIComponent(dir)}&${_anaQS(period, offset)}`);
+  useAnaLabel(data, onLabel);
+  if (!data) return /* @__PURE__ */ React.createElement(AnaEmpty, { err, msg: "loading excursions\u2026" });
+  const trades = data.trades || [];
+  const points = (data.scatter_data || []).map((p) => ({ x: p.x, y: p.y, profit: (p.z || 0) >= 0, label: p.sym }));
+  return /* @__PURE__ */ React.createElement(GridWorkspace, null, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 16, h: 16, minW: 8, minH: 6 }, /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "MFE / MAE Scatter",
+      tag: data.period_label,
+      right: /* @__PURE__ */ React.createElement(PeriodSelector, { options: [["all", "All"], ["LONG", "Long"], ["SHORT", "Short"]], value: dir, onChange: setDir }),
+      style: { height: "100%" },
+      bodyStyle: { padding: 6 }
+    },
+    points.length ? /* @__PURE__ */ React.createElement(ScatterChart, { points, xName: "MFE ($)", yName: "MAE ($)" }) : /* @__PURE__ */ React.createElement(EmptyState, { msg: "no reconciled excursions in window" })
+  )), /* @__PURE__ */ React.createElement(GridItem, { x: 16, y: 0, w: 8, h: 5, minW: 5, minH: 4 }, /* @__PURE__ */ React.createElement(Pane, { title: "Excursion Summary", style: { height: "100%" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 14px" } }, /* @__PURE__ */ React.createElement(AnaKv, { label: "Avg MFE", value: `$${(data.avg_mfe || 0).toFixed(2)}`, color: "var(--qe-green)" }), /* @__PURE__ */ React.createElement(AnaKv, { label: "Avg |MAE|", value: `$${(data.avg_mae_abs || 0).toFixed(2)}`, color: "var(--qe-red)" }), /* @__PURE__ */ React.createElement(AnaKv, { label: "Avg ME-Ratio", value: (data.avg_mer || 0).toFixed(2) }), /* @__PURE__ */ React.createElement(AnaKv, { label: "MFE > 2\xD7 MAE", value: `${data.pct_favorable || 0}%`, color: "var(--qe-green)" })))), /* @__PURE__ */ React.createElement(GridItem, { x: 16, y: 5, w: 8, h: 11, minW: 5, minH: 5 }, /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "Per-Trade Excursions",
+      count: points.length > trades.length ? `${trades.length} of ${points.length}` : trades.length,
+      style: { height: "100%" },
+      bodyStyle: { padding: 0 }
+    },
+    /* @__PURE__ */ React.createElement(
+      DataList,
+      {
+        selKey: "trade_key",
+        tools: false,
+        columns: [
+          { key: "symbol", label: "SYMBOL", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, r.symbol) },
+          { key: "direction", label: "DIR", render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: r.direction === "LONG" ? "ok" : "err" }, r.direction) },
+          { key: "mfe", label: "MFE", align: "right", cell: "up", render: (r) => (r.mfe || 0).toFixed(2) },
+          { key: "mae", label: "MAE", align: "right", cell: "dn", render: (r) => (r.mae || 0).toFixed(2) },
+          { key: "mer", label: "ME-R", align: "right", render: (r) => r.mae ? Math.abs((r.mfe || 0) / r.mae).toFixed(2) : "\u2014" },
+          { key: "income", label: "PnL", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: (r.income || 0) >= 0 ? "var(--qe-green)" : "var(--qe-red)", fontWeight: 700 } }, (r.income || 0) >= 0 ? "+" : "", (r.income || 0).toFixed(2)) },
+          { key: "hold_ms", label: "HOLD", align: "right", cell: "dim", render: (r) => _hDur(r.hold_ms) }
+        ],
+        rows: trades,
+        emptyMsg: "no excursions in window"
+      }
+    )
+  )));
+};
+const AnaTabRMultiples = ({ period, offset, onLabel }) => {
+  const { data, err } = useAnaJson(`/fragments/analytics/r_multiples?format=json&${_anaQS(period, offset)}`);
+  useAnaLabel(data, onLabel);
+  if (!data) return /* @__PURE__ */ React.createElement(AnaEmpty, { err, msg: "loading r-multiples\u2026" });
+  const st = data.r_stats || {};
+  const bins = (data.histogram || []).map((b) => ({ label: b.label, count: b.count, pos: b.pos }));
+  if (!st.count) return /* @__PURE__ */ React.createElement(AnaEmpty, { err, msg: "no R-multiples in window (needs plan-linked closes)" });
+  return /* @__PURE__ */ React.createElement(GridWorkspace, null, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 16, h: 12, minW: 8, minH: 6 }, /* @__PURE__ */ React.createElement(Pane, { title: "R-Multiple Distribution", tag: data.period_label, style: { height: "100%" } }, /* @__PURE__ */ React.createElement(AnaHistChart, { bins, divergent: true, noun: "trade" }))), /* @__PURE__ */ React.createElement(GridItem, { x: 16, y: 0, w: 8, h: 12, minW: 5, minH: 6 }, /* @__PURE__ */ React.createElement(Pane, { title: "R-Multiple Stats", style: { height: "100%" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, /* @__PURE__ */ React.createElement(AnaKv, { label: "Total Trades", value: st.count }), /* @__PURE__ */ React.createElement(AnaKv, { label: "Win Rate", value: `${((st.win_rate || 0) * 100).toFixed(1)}%`, color: (st.win_rate || 0) >= 0.5 ? "var(--qe-green)" : "var(--qe-red)" }), /* @__PURE__ */ React.createElement(AnaKv, { label: "Expectancy", value: `${(st.expectancy || 0).toFixed(3)}R`, color: _anaPnl(st.expectancy || 0) }), /* @__PURE__ */ React.createElement(AnaKv, { label: "Profit Factor", value: _anaRatio(st.profit_factor), color: (st.profit_factor || 0) >= 1.5 ? "var(--qe-green)" : (st.profit_factor || 0) >= 1 ? "var(--qe-amber)" : "var(--qe-red)" }), /* @__PURE__ */ React.createElement(AnaKv, { label: "Avg Win R", value: `${(st.avg_win_r || 0).toFixed(2)}R`, color: "var(--qe-green)" }), /* @__PURE__ */ React.createElement(AnaKv, { label: "Avg Loss R", value: `${(st.avg_loss_r || 0).toFixed(2)}R`, color: "var(--qe-red)" }), /* @__PURE__ */ React.createElement(AnaKv, { label: "Best R", value: `${(st.best || 0).toFixed(2)}R`, color: "var(--qe-green)" }), /* @__PURE__ */ React.createElement(AnaKv, { label: "Worst R", value: `${(st.worst || 0).toFixed(2)}R`, color: "var(--qe-red)" }), /* @__PURE__ */ React.createElement(AnaKv, { label: "Median R", value: `${(st.median || 0).toFixed(2)}R` }), /* @__PURE__ */ React.createElement(AnaKv, { label: "Mean R", value: `${(st.mean || 0).toFixed(3)}R` })))));
+};
+const AnaVarCard = ({ label, val, equity, desc }) => /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4, padding: 10, background: "var(--qe-panel)", border: "1px solid var(--qe-line)" }, title: desc }, /* @__PURE__ */ React.createElement(Lbl, null, label), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "1rem", fontWeight: 700, color: "var(--qe-red)" } }, Math.abs(val * 100).toFixed(2), "%"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.62rem", color: "var(--qe-sub)", fontFamily: "var(--qe-mono)" } }, "$", Math.abs(val * (equity || 0)).toFixed(0)));
+const AnaTabRisk = ({ period, offset, onLabel }) => {
+  const { data, err } = useAnaJson(`/fragments/analytics/var?format=json&${_anaQS(period, offset)}`);
+  useAnaLabel(data, onLabel);
+  if (!data) return /* @__PURE__ */ React.createElement(AnaEmpty, { err, msg: "loading risk metrics\u2026" });
+  if (!data.has_data) {
+    return /* @__PURE__ */ React.createElement("div", { style: { padding: 4, height: "100%" } }, /* @__PURE__ */ React.createElement(
+      EmptyState,
+      {
+        tone: "info",
+        glyph: "\u03C3",
+        msg: `VaR needs \u226520 daily returns in the window \u2014 have ${(data.returns || []).length}`,
+        hint: "widen the period (90D / All) or come back after more trading days"
+      }
+    ));
+  }
+  const varThreshPct = (data.var95 || 0) * 100;
+  const histBins = (data.hist_data || []).map((b) => ({
+    label: `${b.x.toFixed(1)}%`,
+    count: b.y,
+    pos: b.x > varThreshPct
+  }));
+  return /* @__PURE__ */ React.createElement(GridWorkspace, null, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 24, h: 5, minW: 10, minH: 5 }, /* @__PURE__ */ React.createElement(Pane, { title: "Value at Risk \xB7 Risk Metrics", tag: data.period_label, style: { height: "100%" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8 } }, /* @__PURE__ */ React.createElement(AnaVarCard, { label: "Historical VaR (95%)", val: data.var95 || 0, equity: data.cur_equity, desc: "Worst daily loss exceeded 5% of the time" }), /* @__PURE__ */ React.createElement(AnaVarCard, { label: "Historical VaR (99%)", val: data.var99 || 0, equity: data.cur_equity, desc: "Worst daily loss exceeded 1% of the time" }), /* @__PURE__ */ React.createElement(AnaVarCard, { label: "CVaR / ES (95%)", val: data.cvar95 || 0, equity: data.cur_equity, desc: "Expected Shortfall \u2014 average loss on worst 5% of days" }), /* @__PURE__ */ React.createElement(AnaVarCard, { label: "Parametric VaR (95%)", val: data.pvar95 || 0, equity: data.cur_equity, desc: "Gaussian VaR (\u03BC \u2212 1.645\u03C3)" })))), /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 5, w: 24, h: 12, minW: 10, minH: 6 }, /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "Daily Return Distribution",
+      style: { height: "100%" },
+      right: /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.54rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)" } }, "red = below the 95% VaR threshold \xB7 n=", (data.returns || []).length, " days")
+    },
+    /* @__PURE__ */ React.createElement(AnaHistChart, { bins: histBins, divergent: true, unit: "%", noun: "day" })
+  )));
+};
+const ANA_LINK_META = {
+  auto: { label: "Auto-linked", color: "var(--qe-green)", bg: "rgba(0,255,127,0.06)" },
+  confirmed: { label: "Confirmed", color: "var(--qe-cyan)", bg: "rgba(0,231,255,0.05)" },
+  partial: { label: "Partial", color: "var(--qe-amber)", bg: "rgba(255,174,0,0.06)" },
+  unlinked: { label: "Unlinked", color: "var(--qe-red)", bg: "rgba(255,45,74,0.06)" },
+  na: { label: "n/a (close/manual)", color: "var(--qe-muted)", bg: "transparent" }
+};
+const _anaLinkKey = (r) => {
+  if (r.link_status === "linked") return r.link_confirmed ? "confirmed" : "auto";
+  if (r.link_status === "partial") return "partial";
+  if (r.link_status === "unlinked") return "unlinked";
+  return "na";
+};
+const AnaTabExecution = () => {
+  const [ftFilter, setFtFilter] = React.useState("all");
+  const { data, err } = useAnaJson("/api/analytics/execution?limit=500");
+  if (!data) return /* @__PURE__ */ React.createElement(AnaEmpty, { err, msg: "loading execution quality\u2026" });
+  const rows = data.rows || [];
+  const sum = data.summary || {};
+  if (!rows.length) return /* @__PURE__ */ React.createElement(AnaEmpty, { err, msg: "no fills recorded yet" });
+  const entryN = sum.by_fill_type && sum.by_fill_type.entry || 0;
+  const linkedEntries = rows.filter((r) => r.fill_type === "entry" && r.link_status === "linked").length;
+  const linkCov = entryN > 0 ? linkedEntries / entryN * 100 : null;
+  const calcPct = sum.total ? sum.calc_backed / sum.total * 100 : 0;
+  const bias = sum.bias_bp;
+  const linkBreak = ["auto", "confirmed", "partial", "unlinked", "na"].map((k) => ({
+    key: k,
+    ...ANA_LINK_META[k],
+    n: rows.filter((r) => _anaLinkKey(r) === k).length
+  }));
+  const ftStats = ["entry", "tp", "sl", "manual", "reduce_only"].map((ft) => {
+    const es = rows.filter((r) => r.fill_type === ft && r.slippage_cost != null);
+    return { ft, n: es.length, avgBp: es.length ? es.reduce((s, r) => s + Math.abs(r.slippage_cost), 0) / es.length * 1e4 : 0 };
+  });
+  const maxFtBp = Math.max(...ftStats.map((f) => f.avgBp), 0.1);
+  const scatterPts = rows.filter((r) => r.est_slippage != null && r.slippage_cost != null).map((r) => ({ est: r.est_slippage * 1e4, act: r.slippage_cost * 1e4, ft: r.fill_type || "entry", id: r.exchange_fill_id || String(r.fill_id) }));
+  const ttfs = rows.map((r) => r.time_to_fill_ms).filter((v) => v != null);
+  const TTF_EDGES = [[0, 1e3, "<1s"], [1e3, 1e4, "1-10s"], [1e4, 6e4, "10-60s"], [6e4, 6e5, "1-10m"], [6e5, 36e5, "10-60m"], [36e5, Infinity, "1h+"]];
+  const ttfBins = TTF_EDGES.map(([a, b, label]) => ({ label, count: ttfs.filter((v) => v >= a && v < b).length }));
+  const entryCosts = rows.filter((r) => r.fill_type === "entry" && r.slippage_cost != null).map((r) => r.slippage_cost * 1e4);
+  const SLIP_STEP = 5;
+  const slipMax = Math.min(100, Math.max(SLIP_STEP, Math.ceil(Math.max(...entryCosts, 0) / SLIP_STEP) * SLIP_STEP));
+  const slipBins = [{ label: "<0", count: entryCosts.filter((v) => v < 0).length }].concat(Array.from({ length: slipMax / SLIP_STEP }, (_, i) => {
+    const a = i * SLIP_STEP;
+    return { label: `${a}-${a + SLIP_STEP}`, count: entryCosts.filter((v) => v >= a && v < a + SLIP_STEP).length };
+  })).concat(entryCosts.some((v) => v >= slipMax) ? [{ label: `${slipMax}+`, count: entryCosts.filter((v) => v >= slipMax).length }] : []);
+  const otKeys = Object.keys(sum.by_order_type || {}).sort((a, b) => (sum.by_order_type[b] || 0) - (sum.by_order_type[a] || 0));
+  const otColor = (ot) => {
+    const u = ot.toUpperCase();
+    return u === "LIMIT" ? "var(--qe-green)" : u === "MARKET" ? "var(--qe-blue)" : u.includes("STOP") ? "var(--qe-red)" : "var(--qe-sub)";
+  };
+  const tableRows = ftFilter === "all" ? rows : rows.filter((r) => r.fill_type === ftFilter);
+  const kpis = [
+    {
+      l: "Exec Link Coverage",
+      v: linkCov == null ? "\u2014" : `${linkCov.toFixed(1)}%`,
+      sub: `${linkedEntries}/${entryN} entry fills auto+confirmed`,
+      tone: linkCov == null ? "var(--qe-sub)" : linkCov > 80 ? "var(--qe-green)" : "var(--qe-amber)"
+    },
+    { l: "Calc-Backed Fills", v: `${calcPct.toFixed(0)}%`, sub: `${sum.calc_backed}/${sum.total} carry calc_id`, tone: "var(--qe-blue)" },
+    {
+      l: "Entry Residual (vs plan)",
+      v: sum.avg_cost_bp == null ? "\u2014" : `${sum.avg_cost_bp >= 0 ? "+" : ""}${sum.avg_cost_bp.toFixed(2)}bp`,
+      sub: sum.avg_est_bp == null ? "no calc-backed entries" : `predicted impact ${sum.avg_est_bp.toFixed(2)}bp \xB7 n=${sum.entry_n}`,
+      tone: "var(--qe-text)"
+    },
+    {
+      l: "Slip Bias",
+      v: bias == null ? "\u2014" : `${bias >= 0 ? "+" : ""}${bias.toFixed(2)}bp`,
+      sub: bias == null ? "needs calc-backed entries" : bias > 0 ? "fills run worse than plan" : "fills run better than plan",
+      tone: bias == null ? "var(--qe-sub)" : Math.abs(bias) < 0.5 ? "var(--qe-green)" : "var(--qe-amber)"
+    },
+    { l: "Time to Fill (p95)", v: _anaMs(sum.ttf_p95_ms), sub: `avg ${_anaMs(sum.ttf_avg_ms)} \xB7 max ${_anaMs(sum.ttf_max_ms)} \xB7 n=${sum.ttf_n}`, tone: "var(--qe-cyan)" }
+  ];
+  return /* @__PURE__ */ React.createElement(GridWorkspace, null, kpis.map(({ l, v, sub, tone }, i) => /* @__PURE__ */ React.createElement(GridItem, { key: l, x: i < 4 ? i * 4 : 16, y: 0, w: i === 4 ? 8 : 4, h: 3, minW: 3, minH: 3 }, /* @__PURE__ */ React.createElement(Pane, { title: l, style: { height: "100%" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4 } }, /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "1.1rem", fontWeight: 700, color: tone, lineHeight: 1.1 } }, v), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.58rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)", lineHeight: 1.4 } }, sub))))), /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 3, w: 12, h: 6, minW: 6, minH: 6 }, /* @__PURE__ */ React.createElement(Pane, { title: "Exec Link Status", style: { height: "100%" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", height: 12, marginBottom: 8, gap: 1, background: "var(--qe-panel)" } }, linkBreak.filter((b) => b.n > 0).map((b) => /* @__PURE__ */ React.createElement("div", { key: b.key, title: `${b.label}: ${b.n}`, style: { flex: b.n, background: b.color, opacity: 0.85 } }))), linkBreak.map((b) => /* @__PURE__ */ React.createElement("div", { key: b.key, style: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "3px 6px",
+    background: b.bg,
+    marginBottom: 2,
+    borderLeft: `2px solid ${b.color}`
+  } }, /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.62rem", fontWeight: 700, color: b.color } }, b.label), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10, alignItems: "baseline" } }, /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.66rem", color: b.color, fontWeight: 700 } }, b.n), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.58rem", color: "var(--qe-muted)" } }, rows.length ? (b.n / rows.length * 100).toFixed(0) : 0, "%")))), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.56rem", color: "var(--qe-muted)", lineHeight: 1.5, marginTop: 6, borderTop: "1px solid var(--qe-faint)", paddingTop: 4 } }, "Link status needs ", /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-cyan)" } }, "calc_id"), " on the fill (entry fills only \u2014 close/manual fills report n/a)."))), /* @__PURE__ */ React.createElement(GridItem, { x: 12, y: 3, w: 12, h: 6, minW: 6, minH: 6 }, /* @__PURE__ */ React.createElement(Pane, { title: "Avg |Slippage| by Fill Type", tag: "bp", style: { height: "100%" } }, ftStats.map(({ ft, n, avgBp }) => /* @__PURE__ */ React.createElement("div", { key: ft, style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 6 } }, /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.62rem", fontWeight: 700, color: ANA_FT_COLOR[ft], width: 76, flexShrink: 0 } }, ft), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, height: 10, background: "var(--qe-panel)", border: "1px solid var(--qe-faint)" } }, /* @__PURE__ */ React.createElement("div", { style: { width: n > 0 ? `${(avgBp / maxFtBp * 100).toFixed(1)}%` : "0%", height: "100%", background: ANA_FT_COLOR[ft], opacity: 0.8 } })), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.62rem", fontWeight: 700, color: ANA_FT_COLOR[ft], width: 52, textAlign: "right", flexShrink: 0 } }, n > 0 ? avgBp.toFixed(1) + "bp" : "\u2014"), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-muted)", width: 26, textAlign: "right", flexShrink: 0 } }, "\xD7", n))), /* @__PURE__ */ React.createElement("div", { className: "qe-divider-h", style: { margin: "6px 0" } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.56rem", color: "var(--qe-muted)", lineHeight: 1.5 } }, "sl slippage is measured against the stop trigger; entry against the plan's effective entry."))), /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 9, w: 24, h: 8, minW: 10, minH: 7 }, /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "Entry Slippage: Predicted Impact vs Residual",
+      tag: "calc-backed entries",
+      style: { height: "100%" },
+      right: /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.54rem", color: "var(--qe-muted)" } }, "y=0 = fill exactly at the plan's predicted price \xB7 red ring = worse than plan"),
+      bodyStyle: { padding: "8px 10px" }
+    },
+    scatterPts.length ? /* @__PURE__ */ React.createElement(AnaExecScatter, { points: scatterPts }) : /* @__PURE__ */ React.createElement(EmptyState, { msg: "no calc-backed entries with both estimate and residual yet" })
+  )), /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 17, w: 12, h: 6, minW: 6, minH: 5 }, /* @__PURE__ */ React.createElement(Pane, { title: "Time-to-Fill Distribution", tag: "order\u2192fill", style: { height: "100%" }, bodyStyle: { display: "flex", flexDirection: "column" } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0 } }, ttfs.length ? /* @__PURE__ */ React.createElement(AnaHistChart, { bins: ttfBins, color: "var(--qe-cyan)", noun: "fill" }) : /* @__PURE__ */ React.createElement(EmptyState, { msg: "no order-linked fills yet" })), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 14, marginTop: 6, fontSize: "0.58rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)" } }, /* @__PURE__ */ React.createElement("span", null, "avg ", _anaMs(sum.ttf_avg_ms)), /* @__PURE__ */ React.createElement("span", null, "p95 ", _anaMs(sum.ttf_p95_ms)), /* @__PURE__ */ React.createElement("span", null, "max ", _anaMs(sum.ttf_max_ms)), /* @__PURE__ */ React.createElement("span", { style: { marginLeft: "auto" } }, "engine-observed (order persisted \u2192 fill) \xB7 resting limits skew high")))), /* @__PURE__ */ React.createElement(GridItem, { x: 12, y: 17, w: 12, h: 6, minW: 6, minH: 5 }, /* @__PURE__ */ React.createElement(Pane, { title: "Entry Residual Distribution", tag: "bp vs plan", style: { height: "100%" }, bodyStyle: { display: "flex", flexDirection: "column" } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0 } }, entryCosts.length ? /* @__PURE__ */ React.createElement(AnaHistChart, { bins: slipBins, color: "var(--qe-blue)", noun: "fill" }) : /* @__PURE__ */ React.createElement(EmptyState, { msg: "no calc-backed entry fills yet" })), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.58rem", color: "var(--qe-muted)", marginTop: 6, fontFamily: "var(--qe-mono)" } }, "<0 = filled better than plan \xB7 ", "n=", entryCosts.length))), /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 23, w: 12, h: 5, minW: 6, minH: 5 }, /* @__PURE__ */ React.createElement(Pane, { title: "Order Type Mix", style: { height: "100%" } }, otKeys.length ? otKeys.map((ot) => {
+    const n = sum.by_order_type[ot] || 0;
+    const c = otColor(ot);
+    return /* @__PURE__ */ React.createElement("div", { key: ot, style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 6 } }, /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.62rem", color: c, width: 110, flexShrink: 0 } }, ot.toUpperCase()), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, height: 8, background: "var(--qe-panel)", border: "1px solid var(--qe-faint)" } }, /* @__PURE__ */ React.createElement("div", { style: { width: `${(n / (sum.total || 1) * 100).toFixed(1)}%`, height: "100%", background: c, opacity: 0.8 } })), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.62rem", color: "var(--qe-text)", width: 24, textAlign: "right", flexShrink: 0 } }, n), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-muted)", width: 34, textAlign: "right", flexShrink: 0 } }, (n / (sum.total || 1) * 100).toFixed(0), "%"));
+  }) : /* @__PURE__ */ React.createElement(EmptyState, { msg: "no order metadata" }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.56rem", color: "var(--qe-muted)", marginTop: 4 } }, '"unknown" = fill without a tracked parent order.'))), /* @__PURE__ */ React.createElement(GridItem, { x: 12, y: 23, w: 12, h: 5, minW: 6, minH: 5 }, /* @__PURE__ */ React.createElement(Pane, { title: "Maker / Taker Split", style: { height: "100%" } }, [["maker", sum.maker || 0, "var(--qe-green)"], ["taker", sum.taker || 0, "var(--qe-amber)"]].map(([role, n, c]) => /* @__PURE__ */ React.createElement("div", { key: role, style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 6 } }, /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.62rem", color: c, width: 60, flexShrink: 0 } }, role.toUpperCase()), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, height: 8, background: "var(--qe-panel)", border: "1px solid var(--qe-faint)" } }, /* @__PURE__ */ React.createElement("div", { style: { width: `${(n / (sum.total || 1) * 100).toFixed(1)}%`, height: "100%", background: c, opacity: 0.8 } })), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.62rem", color: "var(--qe-text)", width: 24, textAlign: "right", flexShrink: 0 } }, n), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-muted)", width: 34, textAlign: "right", flexShrink: 0 } }, (n / (sum.total || 1) * 100).toFixed(0), "%"))), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.56rem", color: "var(--qe-muted)", marginTop: 4 } }, "role stamped per fill by the exchange stream; maker rebates lower fee drag."))), /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 28, w: 24, h: 14, minW: 10, minH: 8 }, /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "Per-Fill Log",
+      count: tableRows.length,
+      tag: `newest ${data.limit}`,
+      style: { height: "100%" },
+      right: /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 3 } }, ["all", "entry", "tp", "sl", "manual"].map((f) => /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          key: f,
+          onClick: () => setFtFilter(f),
+          className: `qe-btn qe-btn-sm ${ftFilter === f ? "qe-btn-primary" : ""}`,
+          style: { color: ftFilter === f ? "var(--qe-bg)" : ANA_FT_COLOR[f] || "var(--qe-sub)", textTransform: "uppercase", letterSpacing: "0.04em" }
+        },
+        f
+      ))),
+      bodyStyle: { padding: 0, display: "flex", flexDirection: "column" }
+    },
+    /* @__PURE__ */ React.createElement(
+      DataList,
+      {
+        selKey: "fill_id",
+        tools: false,
+        columns: [
+          { key: "time_ms", label: "TIME", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, _hFmtTs(r.time_ms)) },
+          { key: "symbol", label: "SYM", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, r.symbol) },
+          { key: "fill_type", label: "FILL", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: ANA_FT_COLOR[r.fill_type] || "var(--qe-muted)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", fontSize: "0.58rem" } }, r.fill_type || "\u2014") },
+          { key: "order_type", label: "TYPE", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, (r.order_type || "\u2014").toUpperCase()) },
+          { key: "est_slippage", label: "EST IMPACT", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, r.est_slippage != null ? (r.est_slippage * 1e4).toFixed(1) + "bp" : "\u2014") },
+          { key: "slippage_cost", label: "RESIDUAL", align: "right", render: (r) => {
+            if (r.slippage_cost == null) return /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014");
+            const bp = r.slippage_cost * 1e4;
+            return /* @__PURE__ */ React.createElement("span", { style: { color: bp > 5 ? "var(--qe-amber)" : bp < 0 ? "var(--qe-green)" : "var(--qe-text)", fontWeight: 700 } }, (bp >= 0 ? "+" : "") + bp.toFixed(1), "bp");
+          } },
+          { key: "time_to_fill_ms", label: "TTF", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-text)" } }, _anaMs(r.time_to_fill_ms)) },
+          { key: "role", label: "ROLE", render: (r) => r.role ? /* @__PURE__ */ React.createElement(Badge, { tone: r.role === "maker" ? "ok" : "warn" }, r.role.toUpperCase()) : /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014") },
+          { key: "link_status", label: "LINK", render: (r) => {
+            const m = ANA_LINK_META[_anaLinkKey(r)];
+            return /* @__PURE__ */ React.createElement("span", { style: { color: m.color, fontWeight: 700, fontSize: "0.58rem" } }, m.label);
+          } },
+          { key: "calc_id", label: "CALC ID", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: r.calc_id ? "var(--qe-sub)" : "var(--qe-muted)" } }, r.calc_id ? String(r.calc_id).slice(-8) : "\u2014") }
+        ],
+        rows: tableRows,
+        emptyMsg: "No fills match this filter",
+        summary: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", null, tableRows.length, " fills \xB7 ", sum.maker || 0, " maker \xB7 ", sum.taker || 0, " taker"), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)" } }, "ttf avg ", _anaMs(sum.ttf_avg_ms), " \xB7 p95 ", _anaMs(sum.ttf_p95_ms)))
+      }
+    )
+  )));
+};
+const AnaTabFunding = () => {
+  const { data, err } = useAnaJson("/fragments/analytics/funding?format=json", 3e4);
+  if (!data) return /* @__PURE__ */ React.createElement(AnaEmpty, { err, msg: "loading funding\u2026" });
+  const raw = data.rows || [];
+  if (!raw.length) return /* @__PURE__ */ React.createElement(AnaEmpty, { err, msg: "no open positions \u2014 funding exposure is live-position-based" });
+  const rows = raw.map((r) => ({ ...r, _k: `${r.ticker}\xB7${r.direction}` }));
+  const sgn = (r, v) => r.adverse ? -v : v;
+  const tot8h = rows.reduce((s, r) => s + sgn(r, r.per_8h || 0), 0);
+  const totDay = rows.reduce((s, r) => s + sgn(r, r.per_day || 0), 0);
+  const money = (v, d = 4) => /* @__PURE__ */ React.createElement("span", { style: { color: v >= 0 ? "var(--qe-green)" : "var(--qe-red)" } }, v >= 0 ? "+" : "-", "$", Math.abs(v).toFixed(d));
+  return /* @__PURE__ */ React.createElement("div", { style: { padding: 4, height: "100%" } }, /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "Funding Rate Exposure \xB7 Live",
+      right: err ? /* @__PURE__ */ React.createElement(StatusDot, { tone: "warn", label: "STALE \u2014 retrying" }) : /* @__PURE__ */ React.createElement(StatusDot, { tone: "info", label: "30s refresh" }),
+      style: { height: "100%" },
+      bodyStyle: { padding: 0 }
+    },
+    /* @__PURE__ */ React.createElement(
+      DataList,
+      {
+        selKey: "_k",
+        dense: false,
+        tools: false,
+        columns: [
+          { key: "ticker", label: "SYMBOL", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, r.ticker) },
+          { key: "direction", label: "DIR", render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: r.direction === "LONG" ? "ok" : "err" }, r.direction) },
+          { key: "notional", label: "NOTIONAL", align: "right", cell: "dim", render: (r) => `$${(r.notional || 0).toLocaleString(void 0, { maximumFractionDigits: 0 })}` },
+          { key: "funding_rate", label: "FUNDING RATE", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: r.adverse ? "var(--qe-red)" : "var(--qe-green)" } }, ((r.funding_rate || 0) * 100).toFixed(4), "%") },
+          { key: "per_8h", label: "PER 8h", align: "right", render: (r) => money(sgn(r, r.per_8h || 0)) },
+          { key: "per_day", label: "PER DAY", align: "right", render: (r) => money(sgn(r, r.per_day || 0), 3) },
+          { key: "per_week", label: "PER WEEK", align: "right", cell: "dim", render: (r) => money(sgn(r, r.per_week || 0), 2) },
+          { key: "next_funding", label: "NEXT FUNDING", cell: "dim" },
+          { key: "impact", label: "IMPACT", render: (r) => r.adverse ? /* @__PURE__ */ React.createElement(Badge, { tone: "err" }, "PAY") : /* @__PURE__ */ React.createElement(Badge, { tone: "ok" }, "EARN") }
+        ],
+        rows,
+        summary: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u03A3 NET EXPOSURE"), /* @__PURE__ */ React.createElement("span", { style: { color: tot8h >= 0 ? "var(--qe-green)" : "var(--qe-red)", fontWeight: 700 } }, "per 8h ", tot8h >= 0 ? "+" : "-", "$", Math.abs(tot8h).toFixed(4), " \xB7 per day ", totDay >= 0 ? "+" : "-", "$", Math.abs(totDay).toFixed(3)))
+      }
+    ),
+    /* @__PURE__ */ React.createElement("div", { style: { padding: "4px 8px", borderTop: "1px solid var(--qe-line)", fontSize: "0.56rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)" } }, "Binance settles funding every 8h (00:00 \xB7 08:00 \xB7 16:00 UTC). LONG pays when rate > 0; SHORT pays when rate < 0.")
+  ));
+};
+const AnaTabBeta = () => {
+  const { data, err } = useAnaJson("/fragments/analytics/beta?format=json", 6e4);
+  if (!data) return /* @__PURE__ */ React.createElement(AnaEmpty, { err, msg: "loading beta\u2026" });
+  const raw = data.rows || [];
+  if (!raw.length) return /* @__PURE__ */ React.createElement(AnaEmpty, { err, msg: "no open positions \u2014 beta exposure is live-position-based" });
+  const rows = raw.map((r) => ({ ...r, _k: `${r.ticker}\xB7${r.direction}` }));
+  const sectors = Object.entries(data.sector_totals || {});
+  return /* @__PURE__ */ React.createElement(GridWorkspace, null, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 14, h: 13, minW: 8, minH: 6 }, /* @__PURE__ */ React.createElement(
+    Pane,
+    {
+      title: "Beta-Weighted Exposure vs BTC",
+      count: rows.length,
+      right: /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.54rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)" } }, "\u03B2 from 30d OHLCV \xB7 sector preset fallback \xB7 unsigned notional"),
+      style: { height: "100%" },
+      bodyStyle: { padding: 0 }
+    },
+    /* @__PURE__ */ React.createElement(
+      DataList,
+      {
+        selKey: "_k",
+        dense: false,
+        tools: false,
+        columns: [
+          { key: "ticker", label: "SYMBOL", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, r.ticker) },
+          { key: "direction", label: "DIR", render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: r.direction === "LONG" ? "ok" : "err" }, r.direction) },
+          { key: "sector", label: "SECTOR", cell: "dim" },
+          { key: "notional", label: "NOTIONAL", align: "right", render: (r) => `$${(r.notional || 0).toLocaleString(void 0, { maximumFractionDigits: 0 })}` },
+          { key: "beta", label: "\u03B2 vs BTC", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: r.beta > 1.5 ? "var(--qe-amber)" : r.beta <= 1 ? "var(--qe-green)" : "var(--qe-text)" } }, (r.beta || 0).toFixed(2)) },
+          { key: "beta_adj_exp", label: "\u03B2-ADJ. EXP.", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { fontWeight: 700 } }, "$", (r.beta_adj_exp || 0).toLocaleString(void 0, { maximumFractionDigits: 0 })) }
+        ],
+        rows,
+        summary: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "PORTFOLIO TOTAL"), " ", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-text)", fontWeight: 700 } }, "$", (data.total_notional || 0).toLocaleString(void 0, { maximumFractionDigits: 0 }))), /* @__PURE__ */ React.createElement("span", { style: { fontWeight: 700 } }, "\u03B2 = ", /* @__PURE__ */ React.createElement("span", { style: { color: Math.abs(data.port_beta || 0) > 1.5 ? "var(--qe-amber)" : "var(--qe-text)" } }, (data.port_beta || 0).toFixed(2)), " \xB7 \u03B2-adj. $", (data.total_beta_exp || 0).toLocaleString(void 0, { maximumFractionDigits: 0 })))
+      }
+    )
+  )), /* @__PURE__ */ React.createElement(GridItem, { x: 14, y: 0, w: 10, h: 7, minW: 6, minH: 4 }, /* @__PURE__ */ React.createElement(Pane, { title: "Sector \u03B2-Adjusted Breakdown", style: { height: "100%" } }, sectors.length ? /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 } }, sectors.map(([sec, exp]) => {
+    const pct = data.total_beta_exp ? Math.abs(exp / data.total_beta_exp * 100) : 0;
+    return /* @__PURE__ */ React.createElement("div", { key: sec, style: { padding: 6, background: "var(--qe-panel)", border: "1px solid var(--qe-line)" } }, /* @__PURE__ */ React.createElement(Lbl, null, sec), /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.86rem", fontWeight: 700, color: "var(--qe-text)" } }, "$", (+exp).toLocaleString(void 0, { maximumFractionDigits: 0 })), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.54rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)" } }, pct.toFixed(1), "%"));
+  })) : /* @__PURE__ */ React.createElement(EmptyState, { msg: "no sector data" }))), /* @__PURE__ */ React.createElement(GridItem, { x: 14, y: 7, w: 10, h: 6, minW: 6, minH: 4 }, /* @__PURE__ */ React.createElement(Pane, { title: "Sector Preset Betas \xB7 Fallback", style: { height: "100%" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4, fontSize: "0.62rem", fontFamily: "var(--qe-mono)" } }, [["big_two_crypto", "1.0"], ["top_twenty_alts", "1.5"], ["commodities", "0.4"], ["other_alts", "2.0"]].map(([s, v]) => /* @__PURE__ */ React.createElement("div", { key: s, style: { display: "flex", justifyContent: "space-between", padding: "3px 0", borderBottom: "1px dotted var(--qe-faint)" } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, s), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-text)", fontWeight: 700 } }, v)))), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.56rem", color: "var(--qe-muted)", marginTop: 6 } }, "used when <10 aligned daily returns exist for the empirical 30d \u03B2."))));
+};
+const AnalyticsPage = () => {
+  const [tab, setTab] = React.useState("overview");
+  const [period, setPeriod] = React.useState("monthly");
+  const [offset, setOffset] = React.useState(0);
+  const [srvLabel, setSrvLabel] = React.useState("");
+  const periodEnabled = ANA_PERIOD_TABS.has(tab);
+  const onLabel = React.useCallback((l) => setSrvLabel(l), []);
+  const setP = (p) => {
+    setPeriod(p);
+    setOffset(0);
+    setSrvLabel("");
+  };
+  const nav = (d) => {
+    setOffset((o) => o + d);
+    setSrvLabel("");
+  };
+  const common = { period, offset, onLabel };
+  const tabContent = {
+    overview: /* @__PURE__ */ React.createElement(AnaTabOverview, { ...common }),
+    equity: /* @__PURE__ */ React.createElement(AnaTabEquity, null),
+    dist: /* @__PURE__ */ React.createElement(AnaTabDistributions, { ...common }),
+    calendar: /* @__PURE__ */ React.createElement(AnaTabCalendar, null),
+    pairs: /* @__PURE__ */ React.createElement(AnaTabPairs, { ...common }),
+    excursions: /* @__PURE__ */ React.createElement(AnaTabExcursions, { ...common }),
+    rmultiples: /* @__PURE__ */ React.createElement(AnaTabRMultiples, { ...common }),
+    risk: /* @__PURE__ */ React.createElement(AnaTabRisk, { ...common }),
+    execution: /* @__PURE__ */ React.createElement(AnaTabExecution, null),
+    funding: /* @__PURE__ */ React.createElement(AnaTabFunding, null),
+    beta: /* @__PURE__ */ React.createElement(AnaTabBeta, null)
+  };
+  return /* @__PURE__ */ React.createElement("div", { className: "qe-scope", "data-screen-label": "05 Analytics", style: {
+    width: "100%",
+    height: "100%",
+    background: "var(--qe-bg)",
+    display: "flex",
+    flexDirection: "column",
+    overflow: "hidden"
+  } }, /* @__PURE__ */ React.createElement(TopNavStd, { page: "Analytics", variant: "line", dense: true }), /* @__PURE__ */ React.createElement(PageHeader, { title: "Analytics", subtitle: "portfolio performance \xB7 equity curve \xB7 distributions \xB7 execution \xB7 funding \xB7 beta" }, /* @__PURE__ */ React.createElement(AnaPeriodNav, { period, onPeriod: setP, onNav: nav, disabled: !periodEnabled, label: srvLabel })), /* @__PURE__ */ React.createElement(TabStrip, { value: tab, onChange: setTab, tabs: ANA_TABS.map(([id, l]) => [id, l]) }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column" } }, tabContent[tab]), /* @__PURE__ */ React.createElement(StatusFooter, null));
+};
+Object.assign(window, { AnalyticsPage });
+
+;
+
 /* ==== app-shell.jsx ==== */
 const LiveValueDemo = ({ id, base, jitter = 2, fmt, style }) => {
   const [v, setV] = React.useState(base);
@@ -5031,7 +5918,8 @@ const QE_PAGES = {
   // P4 — real page (pages-linkage.jsx)
   History: HistoryPage,
   // P4 — real page (pages-history.jsx)
-  Analytics: _PagePlaceholder("Analytics", "P5"),
+  Analytics: AnalyticsPage,
+  // P5 — real page (pages-analytics.jsx)
   Models: _PagePlaceholder("Models", "P7"),
   Regime: _PagePlaceholder("Regime", "P6"),
   Config: ConfigPage,

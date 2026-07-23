@@ -211,6 +211,96 @@ class AnalyticsMixin:
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
 
+    async def get_execution_quality(self, from_ms: int = 0, to_ms: int = 0,
+                                    account_id: int = 1, limit: int = 500) -> List[Dict[str, Any]]:
+        """v3.0 P5 (G-O4): per-fill execution-quality rows.
+
+        fills LEFT JOIN pre_trade_log ON calc_id (the est-price source is
+        pre_trade_log.effective_entry + est_slippage — NOT execution_log,
+        which is the manual-UI journal and carries no calc_id/fill_type/
+        slippage_actual) LEFT JOIN orders for order_type + created_at_ms
+        (time-to-fill). p.calc_id is selected as ptl_calc_id so the route
+        can distinguish "no pre_trade row" (NULL) from a matched row.
+
+        calc_id is uuid4 with a single pre_trade_log insert site, so the
+        LEFT JOIN is 1:0..1 in practice (P5 audit L-1: no UNIQUE constraint
+        exists — under a hypothetical duplicate calc_id this would fan out
+        where the P4 drawer dedupes last-row-wins).
+        """
+        window = ""
+        params: list = [account_id]
+        if from_ms or to_ms:
+            if not to_ms:  # from_ms-only must mean "since from_ms", not an
+                # empty [from_ms, 0] window (P5 audit M-1).
+                to_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+            window = "AND f.timestamp_ms >= ? AND f.timestamp_ms <= ?"
+            params += [from_ms, to_ms]
+        params.append(limit)
+        async with self._conn.execute(
+            f"""
+            SELECT
+              f.id                  AS fill_id,
+              f.exchange_fill_id    AS exchange_fill_id,
+              f.timestamp_ms        AS timestamp_ms,
+              f.symbol              AS symbol,
+              f.side                AS side,
+              f.direction           AS direction,
+              f.price               AS price,
+              f.quantity            AS quantity,
+              f.fee                 AS fee,
+              f.fee_asset           AS fee_asset,
+              f.role                AS role,
+              f.is_close            AS is_close,
+              f.calc_id             AS calc_id,
+              f.fill_type           AS fill_type,
+              f.slippage_actual     AS slippage_actual,
+              f.exec_link_confirmed AS exec_link_confirmed,
+              p.calc_id             AS ptl_calc_id,
+              p.effective_entry     AS est_entry,
+              p.average             AS est_average,
+              p.est_slippage        AS est_slippage,
+              p.tp_price            AS plan_tp,
+              p.sl_price            AS plan_sl,
+              p.timestamp           AS pretrade_ts,
+              p.link_window_seconds_override AS link_window_override,
+              o.order_type          AS order_type,
+              o.created_at_ms       AS order_created_ms
+            FROM fills f
+            LEFT JOIN pre_trade_log p
+              ON p.calc_id = f.calc_id AND p.account_id = f.account_id
+            LEFT JOIN orders o
+              ON o.exchange_order_id = f.exchange_order_id
+              AND o.account_id = f.account_id
+              AND f.exchange_order_id != ''
+            WHERE f.account_id = ? {window}
+            ORDER BY f.timestamp_ms DESC
+            LIMIT ?
+            """,
+            tuple(params),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+    async def get_trade_distribution_series(self, from_ms: int, to_ms: int,
+                                            account_id: int = 1) -> List[Dict[str, Any]]:
+        """v3.0 P5 (G-O4): per-trade tuples for the Distributions histograms.
+
+        Same exchange_history base as get_mfe_mae_series but WITHOUT the
+        (mfe != 0 OR mae != 0) filter — a PnL/hold-time distribution must
+        include flat-excursion trades. open_time = 0 rows are kept (their
+        hold time is unknowable; the route emits hold_min = None for them).
+        """
+        async with self._conn.execute(
+            """
+            SELECT trade_key, symbol, direction, income, time, open_time
+            FROM exchange_history
+            WHERE account_id = ? AND time >= ? AND time <= ?
+              AND income_type NOT IN ('FUNDING_FEE','TRANSFER')
+            ORDER BY time DESC
+            """,
+            (account_id, from_ms, to_ms),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
     async def get_r_multiples(self, from_ms: int, to_ms: int, account_id: int = 1) -> List[float]:
         """
         Returns list of R-multiple floats for the period.
