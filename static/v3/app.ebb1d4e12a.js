@@ -3,37 +3,6 @@
    window globals in load order (classic React.createElement). */
 
 /* ==== primitives.jsx ==== */
-const mockOhlc = (n = 60, base = 82.2, vol = 2) => {
-  let c = base, out = [];
-  const now = Date.UTC(2026, 3, 25, 20, 0, 0) - (n - 1) * 36e5;
-  for (let i = 0; i < n; i++) {
-    const o = c;
-    c = Math.max(base * 0.86, Math.min(base * 1.16, c + (Math.random() - 0.49) * vol));
-    const h = Math.max(o, c) + Math.random() * vol * 0.4;
-    const l = Math.min(o, c) - Math.random() * vol * 0.4;
-    out.push([now + i * 36e5, +o.toFixed(3), +c.toFixed(3), +l.toFixed(3), +h.toFixed(3)]);
-  }
-  const f = base / out[out.length - 1][2];
-  return out.map((r) => [r[0], +(r[1] * f).toFixed(3), +(r[2] * f).toFixed(3), +(r[3] * f).toFixed(3), +(r[4] * f).toFixed(3)]);
-};
-const mockEquity = (n = 80, base = 82.2, vol = 0.8) => {
-  let v = base;
-  const out = [];
-  for (let i = 0; i < n; i++) {
-    v += (Math.random() - 0.49) * vol;
-    v = Math.max(base * 0.86, Math.min(base * 1.18, v));
-    out.push(+v.toFixed(3));
-  }
-  return out;
-};
-const mockSpark = (n = 24, base = 0, range = 1) => {
-  let v = base, out = [];
-  for (let i = 0; i < n; i++) {
-    v += (Math.random() - 0.5) * range;
-    out.push(+v.toFixed(3));
-  }
-  return out;
-};
 const Lbl = ({ children, bracket = false, style = {} }) => /* @__PURE__ */ React.createElement("div", { className: `qe-lbl ${bracket ? "qe-lbl-bracket" : ""}`, style }, children);
 const SecLbl = ({ children, count = null, rule = false, right = null, style = {} }) => /* @__PURE__ */ React.createElement("div", { className: "qe-sec-lbl", style: { marginBottom: 6, ...style } }, /* @__PURE__ */ React.createElement("span", null, children), count != null && /* @__PURE__ */ React.createElement("span", { className: "qe-sec-count" }, "\xB7  ", count), rule && /* @__PURE__ */ React.createElement("span", { className: "qe-sec-rule" }), right && /* @__PURE__ */ React.createElement("span", { style: { marginLeft: "auto" } }, right));
 const KV = ({ l, v, color, span, style = {} }) => /* @__PURE__ */ React.createElement("div", { style: { minWidth: 0, gridColumn: span ? "1 / -1" : "auto", ...style } }, /* @__PURE__ */ React.createElement("div", { style: { fontFamily: "var(--qe-ui)", fontSize: "0.5rem", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--qe-muted)" } }, l), /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.6rem", color: color || "var(--qe-text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, v));
@@ -142,49 +111,6 @@ const LiveValue = ({ id, value, format = String, tone = "auto", stale = false, s
       style
     },
     format(value)
-  );
-};
-const useLiveTicker = (base, { jitter = 1, intervalMs = 1100, decimals = 2, clamp = null } = {}) => {
-  const [v, setV] = React.useState(base);
-  React.useEffect(() => {
-    const id = setInterval(() => {
-      setV((prev) => {
-        let next = prev + (Math.random() - 0.5) * jitter * 2;
-        if (clamp) next = Math.max(clamp[0], Math.min(clamp[1], next));
-        return +next.toFixed(decimals);
-      });
-    }, intervalMs + Math.random() * 400);
-    return () => clearInterval(id);
-  }, []);
-  return v;
-};
-const LiveNumber = ({
-  id,
-  base,
-  jitter = 1,
-  intervalMs = 1100,
-  decimals = 2,
-  clamp = null,
-  format,
-  style = {},
-  className = ""
-}) => {
-  const v = useLiveTicker(base, { jitter, intervalMs, decimals, clamp });
-  const fmt = format || ((x) => decimals > 0 ? x.toFixed(decimals) : String(Math.round(x)));
-  return /* @__PURE__ */ React.createElement(LiveValue, { id, value: v, format: fmt, style, className });
-};
-const LivePct = ({ id, base, jitter = 0.05, intervalMs = 1300, decimals = 2, style = {} }) => {
-  const v = useLiveTicker(base, { jitter, intervalMs, decimals });
-  const col = v > 0 ? "var(--qe-green)" : v < 0 ? "var(--qe-red)" : "var(--qe-sub)";
-  const sign = v > 0 ? "+" : "";
-  return /* @__PURE__ */ React.createElement(
-    LiveValue,
-    {
-      id,
-      value: v,
-      format: (x) => sign + x.toFixed(decimals) + "%",
-      style: { color: col, fontWeight: 700, ...style }
-    }
   );
 };
 const LiveClock = ({ id = "clock", style = {}, format = null }) => {
@@ -788,7 +714,7 @@ const NewsTickerBar = React.memo(function NewsTickerBar2({
   pollMs = 4e3
 }) {
   const sortFeed = () => {
-    const feed = news || window.MOCK_REGIME && window.MOCK_REGIME.news || [];
+    const feed = news || [];
     return [...feed].sort((a, b) => Date.parse(b.published_at) - Date.parse(a.published_at));
   };
   const [items, setItems] = React.useState(sortFeed);
@@ -881,9 +807,6 @@ const PageHeader = ({ title, subtitle = null, left = null, children = null }) =>
   flexShrink: 0
 } }, /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.78rem", fontWeight: 700, color: "var(--qe-text)", whiteSpace: "nowrap", letterSpacing: "0.04em", textTransform: "uppercase" } }, title), subtitle && /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.56rem", color: "var(--qe-muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 } }, subtitle), left, children && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "qe-grow" }), children));
 Object.assign(window, {
-  mockOhlc,
-  mockEquity,
-  mockSpark,
   Lbl,
   SecLbl,
   KV,
@@ -901,9 +824,6 @@ Object.assign(window, {
   Strip,
   FlashCell,
   LiveValue,
-  useLiveTicker,
-  LiveNumber,
-  LivePct,
   LiveClock,
   asciiSpark,
   ASCII_SPARK,
@@ -1441,212 +1361,103 @@ Object.assign(window, { qeWorkspaceSave, qeWorkspaceLoad, qeWorkspaceReset, qeWo
 
 ;
 
+/* ==== chrome-live.js ==== */
+const QE_CHROME = function() {
+  const st = {
+    state: null,
+    snap: null,
+    sys: null,
+    accounts: null,
+    stateErr: false,
+    snapErr: false,
+    sysErr: false,
+    sse: "idle"
+  };
+  const subs = /* @__PURE__ */ new Set();
+  const emit = () => subs.forEach((f) => {
+    try {
+      f();
+    } catch (e) {
+    }
+  });
+  const j = async (url) => {
+    const r = await fetch(url, { headers: { Accept: "application/json" } });
+    if (!r.ok) throw new Error(url + " " + r.status);
+    return r.json();
+  };
+  const poll = (url, key, errKey, ms) => {
+    const run = async () => {
+      try {
+        st[key] = await j(url);
+        st[errKey] = false;
+      } catch (e) {
+        st[errKey] = true;
+      }
+      emit();
+    };
+    run();
+    setInterval(run, ms);
+  };
+  poll("/api/state", "state", "stateErr", 1e4);
+  poll("/api/dashboard/snapshot", "snap", "snapErr", 3e4);
+  poll("/api/system", "sys", "sysErr", 6e4);
+  const loadAccounts = async () => {
+    try {
+      st.accounts = await j("/accounts");
+    } catch (e) {
+      st.accounts = null;
+    }
+    emit();
+    if (st.accounts == null) setTimeout(loadAccounts, 6e4);
+  };
+  loadAccounts();
+  setInterval(() => {
+    const s = window.QE_SSE && window.QE_SSE.status() || "idle";
+    if (s !== st.sse) {
+      st.sse = s;
+      emit();
+    }
+  }, 2e3);
+  return {
+    get: () => st,
+    sub: (f) => {
+      subs.add(f);
+      return () => subs.delete(f);
+    },
+    reloadAccounts: loadAccounts
+  };
+}();
+const useQeChrome = () => {
+  const [, force] = React.useReducer((x) => x + 1, 0);
+  React.useEffect(() => QE_CHROME.sub(force), []);
+  return QE_CHROME.get();
+};
+Object.assign(window, { QE_CHROME, useQeChrome });
+
+;
+
 /* ==== nav-and-data.jsx ==== */
-const MOCK = {
-  ohlc: mockOhlc(80, 82.2, 1.8),
-  equity: mockEquity(120, 82.2, 0.6),
-  account: { name: "Account 1 (Binance)", env: "LIVE", balance: "82.20", ccy: "USDT" },
-  exchange: {
-    name: "Binance",
-    market: "USD-M Futures",
-    serverTime: "2026-04-25 20:08:36 UTC",
-    latency: 93,
-    makerFee: "0.020%",
-    takerFee: "0.050%",
-    ws: { connected: true, ping: 93, age: "1s" }
-  },
-  pnl: {
-    daily: { abs: "-0.00", pct: "-0.00" },
-    weekly: { abs: "-0.00", pct: "-0.00" },
-    monthly: { abs: "-11.18", pct: "-11.97" },
-    ytd: { abs: "-11.18", pct: "-11.97" },
-    unrealized: "+5.23"
-  },
-  equityBlocks: [
-    { label: "Available", value: "43.81" },
-    { label: "Margin Used", value: "38.39" },
-    { label: "Unrealized", value: "+5.23" },
-    { label: "BOD Equity", value: "82.20" },
-    { label: "SOW Equity", value: "82.20" },
-    { label: "Max Eq (BOD)", value: "82.20" },
-    { label: "Min Eq (BOD)", value: "82.20" },
-    { label: "Total IP", value: "0.00" },
-    { label: "Total GL", value: "0.00" }
-  ],
-  risk: {
-    exposure: { v: 2.93, max: 5, ok: true, current: "2.93\xD7", maxLabel: "5.0\xD7" },
-    drawdown: { v: 11.97, max: 10, ok: false, current: "11.97%", maxLabel: "10.0%" },
-    weeklyDD: { v: 0, max: 5, ok: true, current: "0.00%", maxLabel: "5.0%" },
-    positions: { open: 5, max: 20 },
-    fundingExposure: null,
-    sectorExposure: null,
-    ddState: "ok",
-    weeklyState: "ok"
-  },
-  params: [
-    { label: "Risk/trade", value: "1.00%", tone: "cyan" },
-    { label: "Max W-loss", value: "5.0%", tone: "text" },
-    { label: "Max DD", value: "10.0%", tone: "text" },
-    { label: "Max exposure", value: "5.0\xD7", tone: "text" },
-    { label: "Max positions", value: "10", tone: "text" },
-    { label: "Max corr.", value: "50%", tone: "text" }
-  ],
-  regime: { tone: "chop", label: "RISK-ON CHOPPY", score: 0.62, age: "48s ago" },
-  april: {
-    label: "April 2026",
-    pnl: "-11.18",
-    pnlPct: "-11.97",
-    trades: 31,
-    wins: 12,
-    losses: 19,
-    winrate: 38.7,
-    avgRR: 1.2,
-    avgP: 1.23,
-    avgL: -1.02,
-    maxDD: 12.24,
-    vol: "$2,168",
-    fee: "$2.54",
-    longs: 19,
-    shorts: 12,
-    topPairs: ["STOUSDT", "JCTUSDT", "AIOTUSDT"]
-  },
-  // recent trades for tickers
-  recent: [
-    { sym: "STOUSDT", dir: "L", pnl: 0.82, pct: 1, t: "04-25 18:43" },
-    { sym: "BTCUSDT", dir: "S", pnl: 1.93, pct: 0.47, t: "04-25 17:25" },
-    { sym: "JCTUSDT", dir: "S", pnl: -1.04, pct: -1.04, t: "04-25 16:22" },
-    { sym: "AIOTUSDT", dir: "L", pnl: 0.41, pct: 0.45, t: "04-25 14:08" },
-    { sym: "STOUSDT", dir: "L", pnl: -1.12, pct: -1.32, t: "04-25 11:55" },
-    { sym: "ETHUSDT", dir: "L", pnl: -0.55, pct: -0.36, t: "04-24 22:48" }
-  ],
-  // mock open positions for variants that show some
-  positionsOpen: [
-    { sym: "BTCUSDT", dir: "L", size: "0.012", entry: "93412.10", mark: "93580.40", pnl: 2.02, pct: 0.18, tp: "94100.00", sl: "93180.00", mfe: 2.41, mae: -0.18, fee: "-0.06", age: "1h 12m" },
-    { sym: "ETHUSDT", dir: "S", size: "0.55", entry: "3214.50", mark: "3208.20", pnl: 3.47, pct: 0.19, tp: "3185.00", sl: "3232.00", mfe: 4.21, mae: -0.92, fee: "-0.08", age: "42m" },
-    { sym: "SOLUSDT", dir: "L", size: "2.4", entry: "138.42", mark: "139.21", pnl: 1.9, pct: 0.57, tp: "141.10", sl: "137.20", mfe: 2.12, mae: -0.34, fee: "-0.04", age: "18m" },
-    { sym: "AVAXUSDT", dir: "L", size: "8.2", entry: "42.18", mark: "42.04", pnl: -1.15, pct: -0.33, tp: "43.20", sl: "41.60", mfe: 0.84, mae: -1.42, fee: "-0.05", age: "2h 31m" },
-    { sym: "LINKUSDT", dir: "S", size: "12.6", entry: "21.84", mark: "21.92", pnl: -1.01, pct: -0.37, tp: "21.20", sl: "22.10", mfe: 0.42, mae: -1.18, fee: "-0.06", age: "56m" }
-  ],
-  ordersOpen: [
-    { sym: "DOGEUSDT", side: "SELL", type: "STP", qty: "120", price: "0.1841", tp: "0.1812", sl: "0.1862", age: "21m" },
-    { sym: "WIFUSDT", side: "BUY", type: "LMT", qty: "24", price: "2.412", tp: "2.481", sl: "2.380", age: "14m" },
-    { sym: "PEPEUSDT", side: "BUY", type: "LMT", qty: "4.2M", price: "0.00001214", tp: "0.0000128", sl: "0.0000118", age: "3m" },
-    { sym: "ARBUSDT", side: "SELL", type: "STP", qty: "80", price: "0.842", tp: "0.818", sl: "0.851", age: "1h 04m" }
-  ],
-  signals: [
-    { key: "BTC.D", v: "58.12", d: "+0.21", tone: "up" },
-    { key: "USDT.D", v: "4.81", d: "-0.03", tone: "dn" },
-    { key: "10Y", v: "4.21%", d: "+2bp", tone: "up" },
-    { key: "DXY", v: "104.2", d: "-0.18", tone: "dn" },
-    { key: "VIX", v: "13.8", d: "-0.42", tone: "dn" },
-    { key: "BTC.OI", v: "$32.1B", d: "+1.8%", tone: "up" },
-    { key: "FUND\xB7BTC", v: "+0.012%", d: "+0.001%", tone: "up" },
-    { key: "RVOL\xB71D", v: "0.84", d: "-0.06", tone: "dn" },
-    { key: "BTC.MCAP", v: "$1.87T", d: "+0.4%", tone: "up" },
-    { key: "ETH.D", v: "17.4", d: "+0.08", tone: "up" },
-    { key: "GOLD", v: "2641", d: "-4.2", tone: "dn" },
-    { key: "WTI", v: "71.84", d: "+0.42", tone: "up" }
-  ],
-  logs: [
-    { t: "20:08:34", tag: "WS", msg: "Market WS connected.", tone: "ok" },
-    { t: "20:08:34", tag: "WS", msg: "Market WS connecting (2 streams, attempt 1)", tone: "info" },
-    { t: "20:08:32", tag: "REG", msg: "Regime: neutral \xD71.0 (high)", tone: "sub" },
-    { t: "20:08:24", tag: "WS", msg: "No market streams to subscribe \u2014 sleeping 10s.", tone: "sub" },
-    { t: "20:08:14", tag: "WS", msg: "No market streams to subscribe \u2014 sleeping 10s.", tone: "sub" },
-    { t: "20:08:02", tag: "ENG", msg: "Snapshot persisted (eq=82.20, n=1247).", tone: "sub" },
-    { t: "20:07:48", tag: "REG", msg: "Regime transition: NEUT \u2192 CHOP (score 0.62).", tone: "info" },
-    { t: "20:07:21", tag: "RISK", msg: "DD 30d 11.97% > 10.0% cap. ADVISORY \u2014 no auto-halt.", tone: "sub" },
-    { t: "20:06:55", tag: "OM", msg: "Order 504678492 partial fill 0.42/0.55 @ 3214.50.", tone: "sub" },
-    { t: "20:06:11", tag: "EXEC", msg: "calc c-4f29bb \u2192 fill linked (\u2206 entry +0.02%).", tone: "ok" }
-  ]
+const NAV_REGIME_TONE = {
+  risk_on_trending: "trend",
+  risk_on_choppy: "chop",
+  neutral: "neut",
+  risk_off_defensive: "def",
+  risk_off_panic: "panic"
+};
+const NAV_SSE_TONE = { open: "ok", connecting: "warn", error: "err", idle: "off", disabled: "off" };
+const _navCap = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1) : "\u2014";
+const _navPct = (v) => v == null ? "\u2014" : (v > 0 ? "+" : "") + v.toFixed(2) + "%";
+const _navPctCol = (v) => v == null ? "var(--qe-muted)" : v > 0 ? "var(--qe-green)" : v < 0 ? "var(--qe-red)" : "var(--qe-sub)";
+const _navUptime = (s) => {
+  if (s == null) return "\u2014";
+  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m`;
 };
 const NAV_ITEMS = ["Dashboard", "Pre-Trade", "Linkage", "History", "Analytics", "Models", "Regime", "Primitives"];
 const QE_CLOCK_OFFSET = 0;
 const qeClockFmt = (t) => {
   const s = new Date(t.getTime() + QE_CLOCK_OFFSET).toISOString();
   return s.slice(0, 10) + " " + s.slice(11, 19) + " UTC";
-};
-const QE_LIVE = { lat: 93, pnlD: -0, pnlW: -0.02, pnlM: -11.18, eventsK: 12.4 };
-(function() {
-  const subs = /* @__PURE__ */ new Set();
-  const step = (k, jitter, clamp, decimals = 2) => {
-    let v = QE_LIVE[k] + (Math.random() - 0.5) * jitter * 2;
-    if (clamp) {
-      if (v < clamp[0]) v = clamp[0] + (clamp[0] - v);
-      if (v > clamp[1]) v = clamp[1] - (v - clamp[1]);
-      v = Math.max(clamp[0], Math.min(clamp[1], v));
-    }
-    QE_LIVE[k] = +v.toFixed(decimals);
-  };
-  setInterval(() => {
-    step("lat", 6, [60, 180], 0);
-    step("pnlD", 0.08, [-1.2, 1.2], 2);
-    step("pnlW", 0.04, [-2.4, 2.4], 2);
-    step("pnlM", 0.05, [-11.5, -10.9], 2);
-    step("eventsK", 0.05, [12.4, 99], 1);
-    subs.forEach((f) => f());
-  }, 1300);
-  window.useQeLive = (key) => {
-    const [, force] = React.useReducer((x) => x + 1, 0);
-    React.useEffect(() => {
-      subs.add(force);
-      return () => subs.delete(force);
-    }, []);
-    return QE_LIVE[key];
-  };
-})();
-const QE_POS = {};
-const _posWalk = (sym, base) => QE_POS[sym] || (QE_POS[sym] = { v: base, base, subs: /* @__PURE__ */ new Set(), lo: null, hi: null });
-setInterval(() => {
-  Object.values(QE_POS).forEach((w) => {
-    var _a, _b;
-    const lo = (_a = w.lo) != null ? _a : w.base * 0.997, hi = (_b = w.hi) != null ? _b : w.base * 1.003;
-    let v = w.v + (Math.random() - 0.5) * w.base * 18e-4;
-    if (v > hi) v = hi - (v - hi);
-    if (v < lo) v = lo + (lo - v);
-    w.v = Math.max(lo, Math.min(hi, v));
-    w.subs.forEach((f) => f());
-  });
-}, 1100);
-const _posDerive = (r, mark) => {
-  const dir = r.dir === "L" ? 1 : -1, size = parseFloat(r.size);
-  const pnl = r.pnl + (mark - parseFloat(r.mark)) * size * dir;
-  return { mark, pnl, pct: pnl / (parseFloat(r.entry) * size) * 100 };
-};
-window.useQePosMark = (r) => {
-  var _a, _b;
-  const w = _posWalk(r.sym, parseFloat(r.mark));
-  const tp = parseFloat((_a = r.tp) != null ? _a : r.tp_live), sl = parseFloat((_b = r.sl) != null ? _b : r.sl_live);
-  if (isFinite(tp) && isFinite(sl)) {
-    const hiCap = Math.max(tp, sl), loCap = Math.min(tp, sl), m = (hiCap - loCap) * 0.05;
-    w.lo = Math.max(w.base * 0.997, loCap + m);
-    w.hi = Math.min(w.base * 1.003, hiCap - m);
-    if (!(w.lo < w.hi)) {
-      w.lo = w.base * 0.999;
-      w.hi = w.base * 1.001;
-    }
-  }
-  const [, force] = React.useReducer((x) => x + 1, 0);
-  React.useEffect(() => {
-    w.subs.add(force);
-    return () => w.subs.delete(force);
-  }, [w]);
-  return _posDerive(r, w.v);
-};
-window.useQeUnrealSum = () => {
-  const rows = MOCK.positionsOpen;
-  const [, force] = React.useReducer((x) => x + 1, 0);
-  React.useEffect(() => {
-    const ws = rows.map((r) => _posWalk(r.sym, parseFloat(r.mark)));
-    ws.forEach((w) => w.subs.add(force));
-    return () => ws.forEach((w) => w.subs.delete(force));
-  }, []);
-  return rows.reduce((s, r) => s + _posDerive(r, _posWalk(r.sym, parseFloat(r.mark)).v).pnl, 0);
-};
-const SharedPct = ({ id, k }) => {
-  const v = window.useQeLive(k);
-  const col = v > 0 ? "var(--qe-green)" : v < 0 ? "var(--qe-red)" : "var(--qe-sub)";
-  return /* @__PURE__ */ React.createElement(LiveValue, { id, value: v, format: (x) => (x > 0 ? "+" : "") + x.toFixed(2) + "%", style: { color: col, fontWeight: 700 } });
 };
 const QE_DASH_PRESETS = {
   Risk: [
@@ -1681,8 +1492,7 @@ const QE_DASH_PRESETS = {
   ]
 };
 const WorkspaceBar = ({ interactive = false, persistId = "dashboard" }) => {
-  const lat = window.useQeLive("lat");
-  const pnlM = window.useQeLive("pnlM");
+  const ch = useQeChrome();
   const [preset, setPreset] = React.useState("Default");
   const [flash, setFlash] = React.useState(null);
   const flashTimer = React.useRef(null);
@@ -1718,24 +1528,52 @@ const WorkspaceBar = ({ interactive = false, persistId = "dashboard" }) => {
     background: "var(--qe-page)",
     height: 22,
     flexShrink: 0
-  } }, /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-muted)", letterSpacing: "0.1em" } }, "WORKSPACE"), /* @__PURE__ */ React.createElement("div", { className: "qe-period", style: { opacity: dim, pointerEvents: interactive ? "auto" : "none" } }, presets.map((p) => /* @__PURE__ */ React.createElement("button", { key: p, className: preset === p ? "on" : "", onClick: guard(() => onPreset(p)) }, p))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 4, opacity: dim, pointerEvents: interactive ? "auto" : "none" } }, /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", onClick: guard(onSave), title: "Save current layout" }, "\u2913 Save"), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", onClick: guard(onLoad), title: "Load saved layout" }, "\u2912 Load"), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", onClick: guard(onCreate), title: "New workspace from default", style: { width: 22, padding: 0, justifyContent: "center" } }, "+"), flash && /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.54rem", color: flash[0] === "\u2713" ? "var(--qe-green)" : "var(--qe-amber)" } }, flash)), !interactive && /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.5rem", color: "var(--qe-faint)", letterSpacing: "0.06em" } }, "\xB7 dashboard only"), /* @__PURE__ */ React.createElement("div", { className: "qe-grow" }), /* @__PURE__ */ React.createElement(Strip, { dense: true, items: [
-    { label: "EXCH", value: "Binance" },
-    { label: "LAT", value: /* @__PURE__ */ React.createElement(LiveValue, { id: "ws.lat", value: lat, format: (x) => Math.round(x) + "ms", style: { color: lat < 120 ? "var(--qe-green)" : "var(--qe-amber)", fontWeight: 700 } }) },
-    { label: "REGIME", value: /* @__PURE__ */ React.createElement(RegimeBadge, { tone: MOCK.regime.tone }) },
-    { label: "P&L\xB7D", value: /* @__PURE__ */ React.createElement(SharedPct, { id: "ws.pnl.d", k: "pnlD" }) },
-    { label: "P&L\xB7W", value: /* @__PURE__ */ React.createElement(SharedPct, { id: "ws.pnl.w", k: "pnlW" }) },
-    { label: "P&L\xB7M", value: /* @__PURE__ */ React.createElement(LiveValue, { id: "ws.pnl.m", value: pnlM / 93.38 * 100, format: (x) => (x > 0 ? "+" : "") + x.toFixed(2) + "%", style: { color: pnlM < 0 ? "var(--qe-red)" : "var(--qe-green)", fontWeight: 700 } }) },
-    { label: "OPEN", value: `${MOCK.positionsOpen.length}/20`, color: "var(--qe-cyan)" },
-    { label: "EXP", value: /* @__PURE__ */ React.createElement(LiveValue, { id: "ws.exp", value: MOCK.risk.exposure.v, format: (x) => x.toFixed(2) + "\xD7" }) },
-    { label: "DD", value: /* @__PURE__ */ React.createElement(LiveValue, { id: "ws.dd", value: 0, format: (x) => x.toFixed(2) + "%" }) }
-  ] }), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", disabled: true, title: "Add pane \u2014 planned, not wired in this build", style: { opacity: 0.4, cursor: "default" } }, "\u229E Pane"), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", disabled: true, title: "Pop out \u2014 planned, not wired in this build", style: { opacity: 0.4, cursor: "default" } }, "\u2922 Pop"));
+  } }, /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-muted)", letterSpacing: "0.1em" } }, "WORKSPACE"), /* @__PURE__ */ React.createElement("div", { className: "qe-period", style: { opacity: dim, pointerEvents: interactive ? "auto" : "none" } }, presets.map((p) => /* @__PURE__ */ React.createElement("button", { key: p, className: preset === p ? "on" : "", onClick: guard(() => onPreset(p)) }, p))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 4, opacity: dim, pointerEvents: interactive ? "auto" : "none" } }, /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", onClick: guard(onSave), title: "Save current layout" }, "\u2913 Save"), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", onClick: guard(onLoad), title: "Load saved layout" }, "\u2912 Load"), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", onClick: guard(onCreate), title: "New workspace from default", style: { width: 22, padding: 0, justifyContent: "center" } }, "+"), flash && /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.54rem", color: flash[0] === "\u2713" ? "var(--qe-green)" : "var(--qe-amber)" } }, flash)), !interactive && /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.5rem", color: "var(--qe-faint)", letterSpacing: "0.06em" } }, "\xB7 dashboard only"), /* @__PURE__ */ React.createElement("div", { className: "qe-grow" }), /* @__PURE__ */ React.createElement(Strip, { dense: true, items: (() => {
+    const st = ch.state, eq = ch.snap && ch.snap.equity, rk = ch.snap && ch.snap.risk;
+    const jr = ch.snap && ch.snap.journal, rg = ch.snap && ch.snap.regime;
+    const active = (ch.accounts || []).find((a) => a.is_active);
+    const dPct = eq ? eq.daily_pnl_pct : null;
+    const wPct = eq ? eq.weekly_pnl_pct : null;
+    const mPct = jr ? jr.monthly_pnl_pct : null;
+    return [
+      { label: "EXCH", value: active ? _navCap(active.exchange) : "\u2014" },
+      { label: "REGIME", value: rg && rg.label && NAV_REGIME_TONE[rg.label] ? /* @__PURE__ */ React.createElement(RegimeBadge, { tone: NAV_REGIME_TONE[rg.label] }) : /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014") },
+      { label: "P&L\xB7D", value: /* @__PURE__ */ React.createElement(LiveValue, { id: "ws.pnl.d", value: dPct == null ? "\u2014" : dPct, format: () => _navPct(dPct), style: { color: _navPctCol(dPct), fontWeight: 700 } }) },
+      { label: "P&L\xB7W", value: /* @__PURE__ */ React.createElement(LiveValue, { id: "ws.pnl.w", value: wPct == null ? "\u2014" : wPct, format: () => _navPct(wPct), style: { color: _navPctCol(wPct), fontWeight: 700 } }) },
+      { label: "P&L\xB7M", value: /* @__PURE__ */ React.createElement(LiveValue, { id: "ws.pnl.m", value: mPct == null ? "\u2014" : mPct, format: () => _navPct(mPct), style: { color: _navPctCol(mPct), fontWeight: 700 } }) },
+      { label: "OPEN", value: st ? `${st.position_count}${rk && rk.positions_max != null ? "/" + rk.positions_max : ""}` : "\u2014", color: "var(--qe-cyan)" },
+      { label: "EXP", value: /* @__PURE__ */ React.createElement(LiveValue, { id: "ws.exp", value: st ? st.total_exposure : "\u2014", format: (x) => st ? (+x).toFixed(2) + "\xD7" : "\u2014" }) },
+      { label: "DD", value: /* @__PURE__ */ React.createElement(LiveValue, { id: "ws.dd", value: st ? st.drawdown * 100 : "\u2014", format: (x) => st ? (+x).toFixed(2) + "%" : "\u2014", style: st && st.dd_state !== "ok" ? { color: st.dd_state === "limit" ? "var(--qe-red)" : "var(--qe-amber)", fontWeight: 700 } : void 0 }) }
+    ];
+  })() }), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", disabled: true, title: "Add pane \u2014 planned, not wired in this build", style: { opacity: 0.4, cursor: "default" } }, "\u229E Pane"), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", disabled: true, title: "Pop out \u2014 planned, not wired in this build", style: { opacity: 0.4, cursor: "default" } }, "\u2922 Pop"));
 };
 const TopNavStd = ({ page = "Dashboard", onChange, variant = "line", dense = false }) => {
   const [locked, toggleLock] = useWorkspaceLock();
-  const navLat = window.useQeLive("lat");
+  const ch = useQeChrome();
+  const [switching, setSwitching] = React.useState(false);
+  const [switchErr, setSwitchErr] = React.useState(false);
   const nav = onChange || ((p) => {
     if (window.qeNav) window.qeNav(p);
   });
+  const accounts = ch.accounts || [];
+  const active = accounts.find((a) => a.is_active);
+  const onAccount = async (id) => {
+    if (!id || switching || active && String(active.id) === String(id)) return;
+    setSwitching(true);
+    setSwitchErr(false);
+    try {
+      const r = await fetch("/accounts/" + id + "/activate", { method: "POST" });
+      if (r.ok) {
+        window.location.reload();
+        return;
+      }
+    } catch (e) {
+    }
+    setSwitching(false);
+    setSwitchErr(true);
+    setTimeout(() => setSwitchErr(false), 4e3);
+  };
+  const sseTone = NAV_SSE_TONE[ch.sse] || "off";
   return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "qe-hscroll", style: {
     display: "flex",
     alignItems: "center",
@@ -1795,7 +1633,18 @@ const TopNavStd = ({ page = "Dashboard", onChange, variant = "line", dense = fal
       compact: true,
       style: { height: 22, width: 22, padding: 0, justifyContent: "center" }
     }
-  ), /* @__PURE__ */ React.createElement("select", { className: "qe-input qe-select", style: { height: 22, fontSize: "0.62rem", width: 175 }, defaultValue: "acc1" }, /* @__PURE__ */ React.createElement("option", { value: "acc1" }, "Account 1 (Binance)"), /* @__PURE__ */ React.createElement("option", { value: "acc2", disabled: true }, "Bybit Linear (Test) \u2014 inactive"))), /* @__PURE__ */ React.createElement(StatusDot, { tone: MOCK.exchange.ws.connected ? "ok" : "err", label: "WS", value: MOCK.exchange.ws.connected ? /* @__PURE__ */ React.createElement(LiveValue, { id: "nav.lat", value: navLat, format: (x) => Math.round(x) + "ms" }) : "down" }), /* @__PURE__ */ React.createElement("span", { style: {
+  ), accounts.length ? /* @__PURE__ */ React.createElement(
+    "select",
+    {
+      className: "qe-input qe-select",
+      style: { height: 22, fontSize: "0.62rem", width: 175 },
+      value: active ? String(active.id) : "",
+      disabled: switching,
+      onChange: (e) => onAccount(e.target.value),
+      title: "Switch active account (reloads)"
+    },
+    accounts.map((a) => /* @__PURE__ */ React.createElement("option", { key: a.id, value: String(a.id) }, a.name, " (", _navCap(a.exchange), ")", a.is_active ? "" : " \u2014 inactive"))
+  ) : /* @__PURE__ */ React.createElement("select", { className: "qe-input qe-select", style: { height: 22, fontSize: "0.62rem", width: 175 }, disabled: true, value: "" }, /* @__PURE__ */ React.createElement("option", { value: "" }, "\u2014 no accounts \u2014")), switchErr && /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.54rem", color: "var(--qe-red)" } }, "switch failed")), /* @__PURE__ */ React.createElement(StatusDot, { tone: sseTone, label: "SSE", value: ch.sse === "open" ? "live" : ch.sse }), /* @__PURE__ */ React.createElement("span", { style: {
     fontFamily: "var(--qe-mono)",
     fontSize: "0.56rem",
     color: "var(--qe-muted)",
@@ -1832,21 +1681,10 @@ const TopNavStd = ({ page = "Dashboard", onChange, variant = "line", dense = fal
     "\u2699"
   ), /* @__PURE__ */ React.createElement(NotifBell, null)))), /* @__PURE__ */ React.createElement(NotifBanner, null), /* @__PURE__ */ React.createElement(WorkspaceBar, { interactive: page === "Dashboard" }));
 };
-const MOCK_WATCHLIST = [
-  { sym: "BTCUSDT", last: "93580.40", d: 0.18, vol: "1.2M" },
-  { sym: "ETHUSDT", last: "3208.20", d: -0.19, vol: "842K" },
-  { sym: "SOLUSDT", last: "139.21", d: 0.57, vol: "412K" },
-  { sym: "AVAXUSDT", last: "42.04", d: -0.33, vol: "118K" },
-  { sym: "LINKUSDT", last: "21.92", d: 0.18, vol: "88K" },
-  { sym: "DOGEUSDT", last: "0.1842", d: 0.41, vol: "2.1M" },
-  { sym: "WIFUSDT", last: "2.412", d: 1.84, vol: "620K" },
-  { sym: "ARBUSDT", last: "0.842", d: -1.18, vol: "318K" },
-  { sym: "PEPEUSDT", last: "0.0000121", d: 2.84, vol: "1.8B" },
-  { sym: "XRPUSDT", last: "0.5184", d: -0.42, vol: "1.1M" }
-];
 const StatusFooter = () => {
-  const lat = window.useQeLive("lat");
-  const eventsK = window.useQeLive("eventsK");
+  const ch = useQeChrome();
+  const engineTone = ch.stateErr ? "var(--qe-red)" : ch.state ? "var(--qe-green)" : "var(--qe-muted)";
+  const sseTone = ch.sse === "open" ? "var(--qe-green)" : ch.sse === "connecting" ? "var(--qe-amber)" : ch.sse === "error" ? "var(--qe-red)" : "var(--qe-muted)";
   return /* @__PURE__ */ React.createElement("div", { style: {
     display: "flex",
     alignItems: "center",
@@ -1859,33 +1697,27 @@ const StatusFooter = () => {
     fontFamily: "var(--qe-mono)",
     fontSize: "0.54rem",
     color: "var(--qe-muted)"
-  } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, (window.QE_BOOTSTRAP && window.QE_BOOTSTRAP.projectShortName || "QRE") + " " + (window.QE_BOOTSTRAP && window.QE_BOOTSTRAP.projectVersion || "v3")), /* @__PURE__ */ React.createElement("span", null, "\xB7"), /* @__PURE__ */ React.createElement("span", null, "tasks queue 0"), /* @__PURE__ */ React.createElement("span", null, "\xB7"), /* @__PURE__ */ React.createElement("span", null, "events ", /* @__PURE__ */ React.createElement(LiveValue, { id: "sb.events", value: eventsK, format: (x) => x.toFixed(1) + "k" })), /* @__PURE__ */ React.createElement("span", null, "\xB7"), /* @__PURE__ */ React.createElement("span", null, "uptime 13d 4h"), /* @__PURE__ */ React.createElement("div", { className: "qe-grow" }), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-green)" } }, "\u25CF bus"), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-green)" } }, "\u25CF db"), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-green)" } }, "\u25CF ws ", /* @__PURE__ */ React.createElement(LiveValue, { id: "sb.lat", value: lat, format: (x) => Math.round(x) + "ms", style: { color: "var(--qe-muted)", marginLeft: 2 } })), /* @__PURE__ */ React.createElement(LiveClock, { id: "sb.clock", format: qeClockFmt, style: { color: "var(--qe-muted)" } }));
+  } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, (window.QE_BOOTSTRAP && window.QE_BOOTSTRAP.projectShortName || "QRE") + " " + (window.QE_BOOTSTRAP && window.QE_BOOTSTRAP.projectVersion || "v3")), /* @__PURE__ */ React.createElement("span", null, "\xB7"), /* @__PURE__ */ React.createElement("span", null, "uptime ", /* @__PURE__ */ React.createElement(LiveValue, { id: "sb.uptime", value: ch.sys ? ch.sys.uptime_s : "\u2014", format: () => _navUptime(ch.sys ? ch.sys.uptime_s : null) })), /* @__PURE__ */ React.createElement("div", { className: "qe-grow" }), /* @__PURE__ */ React.createElement("span", { style: { color: engineTone } }, "\u25CF engine"), /* @__PURE__ */ React.createElement("span", { style: { color: sseTone } }, "\u25CF sse"), /* @__PURE__ */ React.createElement(LiveClock, { id: "sb.clock", format: qeClockFmt, style: { color: "var(--qe-muted)" } }));
 };
 Object.assign(window, {
-  MOCK,
   NAV_ITEMS,
   TopNavStd,
   WorkspaceBar,
   StatusFooter,
-  MOCK_WATCHLIST,
   QE_CLOCK_OFFSET,
-  qeClockFmt,
-  qeMockClockFmt: qeClockFmt
-  // P0 compat alias — drop once all page modules use qeClockFmt
+  qeClockFmt
 });
 
 ;
 
 /* ==== notifications.jsx ==== */
 const NotifCtx = React.createContext(null);
-const N_CHANNELS = ["FILLS", "RISK", "REGIME", "SYSTEM", "LINK", "NEWS"];
+const N_CHANNELS = ["FILLS", "RISK", "LINK", "SYSTEM"];
 const N_ACTIONS = {
   FILLS: ["View order", "order detail"],
   RISK: ["Review risk", "risk panel"],
-  REGIME: ["Open Regime", "regime page"],
   SYSTEM: ["Details", "system log"],
-  LINK: ["Link trades", "linkage queue"],
-  NEWS: ["Read", "news feed"]
+  LINK: ["Link trades", "linkage queue"]
 };
 const nSev = (pri) => pri === "halt" ? "var(--qe-red)" : pri === "risk" ? "var(--qe-amber)" : "var(--qe-line-2)";
 const _rnd = (a) => a[Math.floor(Math.random() * a.length)];
@@ -1911,11 +1743,6 @@ const N_SCENARIOS = {
       detail: `SELL ${_px(Math.random(), 3)} / ${_px(1 + Math.random(), 3)} ${s[0]} @ ${_px(s[1], 1)}`
     };
   },
-  regime: () => _rnd([
-    { ch: "REGIME", pri: "risk", head: "Regime \u2192 RISK-OFF PANIC", detail: "was DEFENSIVE \xB7 size \xD70.7 \u2192 \xD70.25" },
-    { ch: "REGIME", pri: "routine", head: "Regime \u2192 DEFENSIVE", detail: "was NEUTRAL \xB7 size \xD71.0 \u2192 \xD70.7 \xB7 RVol 2.1\u03C3" },
-    { ch: "REGIME", pri: "routine", head: "Regime \u2192 RISK-ON TREND", detail: "was NEUTRAL \xB7 size \xD71.0 \u2192 \xD71.2" }
-  ]),
   risk: () => _rnd([
     { ch: "RISK", pri: "risk", head: `Weekly loss ${78 + Math.floor(Math.random() * 12)}% of limit`, detail: `\u2212$${(3.1 + Math.random() * 0.6).toFixed(2)} of \u2212$4.11 \xB7 1 more stop trips the cap` },
     { ch: "RISK", pri: "risk", head: `Daily drawdown ${_px(3.5 + Math.random(), 1)}% \u2014 approaching 5.0% cap`, detail: "position sizing throttled to \xD70.5" }
@@ -1926,25 +1753,11 @@ const N_SCENARIOS = {
     const nc = (window.L_CLOSES || []).filter((c) => c.pending_reason).length || 3;
     return { ch: "LINK", pri: "risk", head: `Calc link window closes in 0${2 + Math.floor(Math.random() * 4)}:${10 + Math.floor(Math.random() * 49)}`, detail: `triage ${nl + nc} open \xB7 ${nl} orders below 6/6 \xB7 ${nc} closes to review` };
   },
-  news: () => _rnd([
-    { ch: "NEWS", pri: "risk", head: "HIGH-impact \xB7 US CPI in 10m", detail: "14:30 UTC \xB7 est 3.1% YoY \xB7 prev 3.4%" },
-    { ch: "NEWS", pri: "routine", head: "FOMC minutes released", detail: "18:00 UTC \xB7 hawkish tilt flagged" }
-  ]),
   ws: () => _rnd([
     { ch: "SYSTEM", pri: "routine", head: "Market WS reconnected", detail: "2 streams \xB7 108ms \xB7 gap 1.4s recovered" }
   ])
 };
-const N_STREAM = ["fill", "partial", "regime", "risk", "link", "news", "ws"];
-const _nbase = Date.now();
-const N_SEED = [
-  { ch: "FILLS", pri: "routine", head: "FILLED \xB7 BUY 0.0420 BTC", detail: "@ 93,580.4 \xB7 slippage +0.4bp \xB7 order #A1903", age: 12, unread: true },
-  { ch: "REGIME", pri: "risk", head: "Regime \u2192 RISK-OFF PANIC", detail: "was DEFENSIVE \xB7 size \xD70.7 \u2192 \xD70.25", age: 48, unread: true },
-  { ch: "RISK", pri: "risk", head: "Drawdown 30d 11.97% \u2014 over 10.0% cap", detail: "\u2212$11.18 of \u2212$9.34 allowance \xB7 ADVISORY mode, no auto-halt", age: 95, unread: true },
-  { ch: "SYSTEM", pri: "routine", head: "Market WS reconnected", detail: "2 streams \xB7 108ms \xB7 gap 1.4s recovered", age: 240, unread: false },
-  { ch: "LINK", pri: "risk", head: "Calc link window closes in 04:12", detail: "triage 8 open \xB7 5 orders below 6/6 \xB7 3 closes to review", age: 360, unread: false },
-  { ch: "FILLS", pri: "routine", head: "Order #A1888 partially filled 60%", detail: "SELL 0.018 / 0.030 ETH @ 3,208.0", age: 840, unread: false },
-  { ch: "REGIME", pri: "routine", head: "Regime \u2192 DEFENSIVE", detail: "was NEUTRAL \xB7 size \xD71.0 \u2192 \xD70.7 \xB7 RVol 2.1\u03C3", age: 1860, unread: false }
-].map((e, i) => ({ id: "seed" + i, ch: e.ch, pri: e.pri, head: e.head, detail: e.detail, unread: e.unread, ts: _nbase - e.age * 1e3 }));
+const N_STREAM = ["fill", "partial", "risk", "link", "ws"];
 function nRel(ts, now) {
   const s = Math.max(0, Math.round((now - ts) / 1e3));
   if (s < 5) return "now";
@@ -2131,10 +1944,10 @@ const NotifToast = ({ ev, onClick, onClose }) => /* @__PURE__ */ React.createEle
 );
 const NotifDemo = ({ fire, autostream, onAuto, onReset, onHide }) => {
   const Btn = ({ label, k, danger }) => /* @__PURE__ */ React.createElement("button", { onClick: () => fire(k), className: "qe-btn qe-btn-sm" + (danger ? " qe-btn-danger" : ""), style: { justifyContent: "center" } }, label);
-  return /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", left: 10, bottom: 50, zIndex: 70, width: 198, background: "var(--qe-card)", border: "1px solid var(--qe-line-2)", boxShadow: "0 10px 30px rgba(0,0,0,0.6)" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, padding: "5px 9px", borderBottom: "1px solid var(--qe-line)", background: "var(--qe-panel)" } }, /* @__PURE__ */ React.createElement("span", { style: { width: 6, height: 6, background: "var(--qe-cyan)" } }), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-ui)", fontSize: "0.54rem", fontWeight: 800, letterSpacing: "0.14em", color: "var(--qe-sub)" } }, "DEMO \xB7 FIRE EVENTS"), /* @__PURE__ */ React.createElement("span", { className: "qe-grow" }), /* @__PURE__ */ React.createElement("button", { onClick: onHide, title: "Collapse demo panel", className: "qe-btn qe-btn-ghost qe-btn-sm", style: { height: 16, padding: "0 5px" } }, "\u2013")), /* @__PURE__ */ React.createElement("div", { style: { padding: 8, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5 } }, /* @__PURE__ */ React.createElement(Btn, { label: "Fill", k: "fill" }), /* @__PURE__ */ React.createElement(Btn, { label: "Partial", k: "partial" }), /* @__PURE__ */ React.createElement(Btn, { label: "Regime", k: "regime" }), /* @__PURE__ */ React.createElement(Btn, { label: "Risk", k: "risk" }), /* @__PURE__ */ React.createElement(Btn, { label: "Link", k: "link" }), /* @__PURE__ */ React.createElement(Btn, { label: "News", k: "news" }), /* @__PURE__ */ React.createElement(Btn, { label: "WS recon", k: "ws" }), /* @__PURE__ */ React.createElement(Btn, { label: "Burst \xD75", k: "burst" }), /* @__PURE__ */ React.createElement("button", { onClick: () => fire("halt"), className: "qe-btn qe-btn-sm qe-btn-danger", style: { gridColumn: "1 / -1", justifyContent: "center" } }, "\u26D4 HARD-STOP HALT")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, padding: "6px 9px", borderTop: "1px solid var(--qe-line)" } }, /* @__PURE__ */ React.createElement(NotifSwitch, { label: "Auto-stream", on: autostream, onToggle: onAuto }), /* @__PURE__ */ React.createElement("span", { className: "qe-grow" }), /* @__PURE__ */ React.createElement("button", { onClick: onReset, className: "qe-btn qe-btn-ghost qe-btn-sm" }, "RESET")));
+  return /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", left: 10, bottom: 50, zIndex: 70, width: 198, background: "var(--qe-card)", border: "1px solid var(--qe-line-2)", boxShadow: "0 10px 30px rgba(0,0,0,0.6)" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, padding: "5px 9px", borderBottom: "1px solid var(--qe-line)", background: "var(--qe-panel)" } }, /* @__PURE__ */ React.createElement("span", { style: { width: 6, height: 6, background: "var(--qe-cyan)" } }), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-ui)", fontSize: "0.54rem", fontWeight: 800, letterSpacing: "0.14em", color: "var(--qe-sub)" } }, "DEMO \xB7 FIRE EVENTS"), /* @__PURE__ */ React.createElement("span", { className: "qe-grow" }), /* @__PURE__ */ React.createElement("button", { onClick: onHide, title: "Collapse demo panel", className: "qe-btn qe-btn-ghost qe-btn-sm", style: { height: 16, padding: "0 5px" } }, "\u2013")), /* @__PURE__ */ React.createElement("div", { style: { padding: 8, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5 } }, /* @__PURE__ */ React.createElement(Btn, { label: "Fill", k: "fill" }), /* @__PURE__ */ React.createElement(Btn, { label: "Partial", k: "partial" }), /* @__PURE__ */ React.createElement(Btn, { label: "Risk", k: "risk" }), /* @__PURE__ */ React.createElement(Btn, { label: "Link", k: "link" }), /* @__PURE__ */ React.createElement(Btn, { label: "WS recon", k: "ws" }), /* @__PURE__ */ React.createElement(Btn, { label: "Burst \xD75", k: "burst" }), /* @__PURE__ */ React.createElement("button", { onClick: () => fire("halt"), className: "qe-btn qe-btn-sm qe-btn-danger", style: { gridColumn: "1 / -1", justifyContent: "center" } }, "\u26D4 HARD-STOP HALT")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, padding: "6px 9px", borderTop: "1px solid var(--qe-line)" } }, /* @__PURE__ */ React.createElement(NotifSwitch, { label: "Auto-stream", on: autostream, onToggle: onAuto }), /* @__PURE__ */ React.createElement("span", { className: "qe-grow" }), /* @__PURE__ */ React.createElement("button", { onClick: onReset, className: "qe-btn qe-btn-ghost qe-btn-sm" }, "RESET")));
 };
 function NotificationProvider({ children, demo = false }) {
-  const [events, setEvents] = React.useState(N_SEED);
+  const [events, setEvents] = React.useState([]);
   const [open, setOpen] = React.useState(false);
   const [filter, setFilter] = React.useState("All");
   const [priority, setPriority] = React.useState("All");
@@ -2172,6 +1985,54 @@ function NotificationProvider({ children, demo = false }) {
   const flags = React.useRef({});
   flags.current = { muted, sound, desktop, dnd, open };
   const removeToast = (id) => setToasts((ts) => ts.filter((t) => t.id !== id));
+  const sinceRef = React.useRef(-1);
+  React.useEffect(() => {
+    let alive = true;
+    let inFlight = false;
+    const poll = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const r = await fetch(
+          "/notifications/poll?since=" + sinceRef.current,
+          { headers: { Accept: "application/json" } }
+        );
+        if (!r.ok) return;
+        const d = await r.json();
+        if (!alive || !d || typeof d.latest_id !== "number") return;
+        const priming = sinceRef.current < 0;
+        sinceRef.current = d.latest_id;
+        if (priming) return;
+        (d.notifications || []).forEach((n) => {
+          const ev = {
+            id: "n" + n.id,
+            ch: N_CHANNELS.indexOf(n.ch) >= 0 ? n.ch : "SYSTEM",
+            pri: n.pri || "routine",
+            head: n.head || n.message || "",
+            detail: n.detail || "",
+            ts: n.ts || n.ts_ms || Date.now(),
+            unread: true
+          };
+          setEvents((list) => [ev, ...list].slice(0, 200));
+          const f = flags.current;
+          if (!(f.dnd || f.muted[ev.ch])) {
+            if (f.sound) nBeep(ev.pri);
+            setToasts((ts) => [ev, ...ts].slice(0, 4));
+            setTimeout(() => removeToast(ev.id), 5200);
+          }
+        });
+      } catch (e) {
+      } finally {
+        inFlight = false;
+      }
+    };
+    poll();
+    const t = setInterval(poll, 5e3);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, []);
   const pushEvent = React.useCallback((key) => {
     const tpl = N_SCENARIOS[key]();
     if (!tpl) return;
@@ -2207,7 +2068,7 @@ function NotificationProvider({ children, demo = false }) {
   }, []);
   const fire = (key) => {
     if (key === "burst") {
-      ["fill", "regime", "risk", "ws", "partial"].forEach((k, i) => setTimeout(() => pushEvent(k), i * 420));
+      ["fill", "link", "risk", "ws", "partial"].forEach((k, i) => setTimeout(() => pushEvent(k), i * 420));
       return;
     }
     pushEvent(key);
@@ -2235,7 +2096,7 @@ function NotificationProvider({ children, demo = false }) {
   const toggleMute = (ch) => setMuted((m) => ({ ...m, [ch]: !m[ch] }));
   const toggleDesktop = () => setDesktop((v) => !v);
   const reset = () => {
-    setEvents(N_SEED.map((e) => ({ ...e })));
+    setEvents([]);
     setHaltUntil(0);
     try {
       localStorage.removeItem(HALT_KEY);
@@ -8677,7 +8538,7 @@ data: 93580.40`), /* @__PURE__ */ React.createElement("div", { style: { fontSize
   { label: "Sortino", hint: "downside \u03C3", value: "2.48", color: "green" },
   { label: "Profit F.", hint: "\u03A3w / |\u03A3l|", value: "0.74", color: "red" },
   { label: "Expect.", hint: "mean R", value: "-0.36R", color: "red" }
-] })))), /* @__PURE__ */ React.createElement(Card, { pad: true }, /* @__PURE__ */ React.createElement(SecLbl, { rule: true }, "NewsTickerBar \xB7 footer marquee"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.62rem", color: "var(--qe-sub)", marginBottom: 8, lineHeight: 1.5 } }, "Single-line async news feed. Holds ~1s then scrolls one full pass; pauses on hover. ", /* @__PURE__ */ React.createElement("code", { style: { color: "var(--qe-cyan)" } }, "React.memo"), " + inlined runs keep the animation from restarting under parent re-renders. Defaults to the Regime feed; pass ", /* @__PURE__ */ React.createElement("code", { style: { color: "var(--qe-cyan)" } }, "news"), " to override."), /* @__PURE__ */ React.createElement(
+] })))), /* @__PURE__ */ React.createElement(Card, { pad: true }, /* @__PURE__ */ React.createElement(SecLbl, { rule: true }, "NewsTickerBar \xB7 footer marquee"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.62rem", color: "var(--qe-sub)", marginBottom: 8, lineHeight: 1.5 } }, "Single-line async news feed. Holds ~1s then scrolls one full pass; pauses on hover. ", /* @__PURE__ */ React.createElement("code", { style: { color: "var(--qe-cyan)" } }, "React.memo"), " + inlined runs keep the animation from restarting under parent re-renders. No default feed \u2014 pass ", /* @__PURE__ */ React.createElement("code", { style: { color: "var(--qe-cyan)" } }, "news"), " rows (empty renders quiet)."), /* @__PURE__ */ React.createElement(
   NewsTickerBar,
   {
     label: "NEWS",
@@ -8710,10 +8571,10 @@ data: 93580.40`), /* @__PURE__ */ React.createElement("div", { style: { fontSize
   { tone: "def", t: 2 }
 ] }))), /* @__PURE__ */ React.createElement("div", { className: "spec-row" }, /* @__PURE__ */ React.createElement("span", { className: "l" }, "HeatStrip"), /* @__PURE__ */ React.createElement("div", { style: { width: "100%" } }, /* @__PURE__ */ React.createElement(HeatStrip, { height: 20, data: Array.from({ length: 30 }, (_, i) => ({ date: `04-${String(i + 1).padStart(2, "0")}`, pnl: +((Math.sin(i * 1.7) + Math.cos(i * 0.5)) * 0.9).toFixed(2) })) }))), /* @__PURE__ */ React.createElement("div", { className: "spec-row" }, /* @__PURE__ */ React.createElement("span", { className: "l" }, "Gauge tone"), /* @__PURE__ */ React.createElement("div", { style: { width: "100%", display: "flex", flexDirection: "column", gap: 10 } }, /* @__PURE__ */ React.createElement(Gauge, { label: "OK", value: 1.2, max: 5, current: "24%", maxLabel: "cap" }), /* @__PURE__ */ React.createElement(Gauge, { label: "WARN", value: 6.5, max: 10, current: "65%", maxLabel: "limit" }), /* @__PURE__ */ React.createElement(Gauge, { label: "ERR", value: 9.1, max: 10, current: "91%", maxLabel: "hard stop" })))), /* @__PURE__ */ React.createElement(Card, { pad: true, style: { gridColumn: "1 / span 2", borderColor: "var(--qe-cyan)" } }, /* @__PURE__ */ React.createElement(SecLbl, { rule: true }, "Notifications \xB7 new primitives (Switch \xB7 Chip \xB7 Banner \xB7 Toast \xB7 Bell \xB7 Row)"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.62rem", color: "var(--qe-sub)", marginBottom: 8, lineHeight: 1.5 } }, "Added with the notification system. ", /* @__PURE__ */ React.createElement("code", { style: { color: "var(--qe-cyan)" } }, "Switch"), " = boolean toggle \xB7", /* @__PURE__ */ React.createElement("code", { style: { color: "var(--qe-cyan)" } }, " Chip"), " = muteable filter pill \xB7", /* @__PURE__ */ React.createElement("code", { style: { color: "var(--qe-cyan)" } }, " Banner"), " = pinned alert bar (under nav) \xB7", /* @__PURE__ */ React.createElement("code", { style: { color: "var(--qe-cyan)" } }, " Toast"), " = transient corner popup, severity rail + auto-dismiss countdown \xB7", /* @__PURE__ */ React.createElement("code", { style: { color: "var(--qe-cyan)" } }, " NotifBell"), " = nav icon + unread badge \xB7", /* @__PURE__ */ React.createElement("code", { style: { color: "var(--qe-cyan)" } }, " NotifRow"), " = notification-center list item. The priority filter reuses", /* @__PURE__ */ React.createElement("code", { style: { color: "var(--qe-cyan)" } }, " PeriodSelector"), "; buttons/empty-state reuse existing primitives."), /* @__PURE__ */ React.createElement("div", { className: "spec-row" }, /* @__PURE__ */ React.createElement("span", { className: "l" }, "Switch"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 18 } }, /* @__PURE__ */ React.createElement(Switch, { label: "Sound", checked: true }), /* @__PURE__ */ React.createElement(Switch, { label: "Desktop", checked: true, accent: "var(--qe-green)" }), /* @__PURE__ */ React.createElement(Switch, { label: "DND", checked: false }))), /* @__PURE__ */ React.createElement("div", { className: "spec-row" }, /* @__PURE__ */ React.createElement("span", { className: "l" }, "Chip \xB7 filter"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 5, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Chip, { label: "All", count: 8, active: true }), /* @__PURE__ */ React.createElement(Chip, { label: "Fills", count: 3, onMute: () => {
 } }), /* @__PURE__ */ React.createElement(Chip, { label: "Risk", count: 2, onMute: () => {
-} }), /* @__PURE__ */ React.createElement(Chip, { label: "News", count: 1, muted: true, onMute: () => {
-} }))), /* @__PURE__ */ React.createElement("div", { className: "spec-row" }, /* @__PURE__ */ React.createElement("span", { className: "l" }, "Bell"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement(NotifBell, null), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-muted)" } }, "+ red unread-count badge when count > 0"))), /* @__PURE__ */ React.createElement("div", { className: "spec-row" }, /* @__PURE__ */ React.createElement("span", { className: "l" }, "Banner \xB7 alert"), /* @__PURE__ */ React.createElement("div", { style: { width: "100%", border: "1px solid var(--qe-line)" } }, /* @__PURE__ */ React.createElement(Banner, { tone: "err", tag: "HALT", title: "CALCULATOR BLOCKED", detail: "Daily hard-stop 5.04% > 5.00% cap \xB7 new entries gated", time: "14:31:06", releaseIn: "0d 19h 21m 16s" }))), /* @__PURE__ */ React.createElement("div", { className: "spec-row" }, /* @__PURE__ */ React.createElement("span", { className: "l" }, "Toast"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Toast, { tone: "ok", tag: "FILLS", time: "14:31:06", title: "FILLED \xB7 BUY 0.0420 BTC", detail: "@ 93,580.4 \xB7 order #A1903" }), /* @__PURE__ */ React.createElement(Toast, { tone: "warn", tag: "RISK", time: "14:30:18", title: "Weekly loss 78% of limit", detail: "\u2212$1,840 of \u2212$2,360" }), /* @__PURE__ */ React.createElement(Toast, { tone: "err", tag: "RISK", time: "14:31:06", title: "CALCULATOR BLOCKED \u2014 hard-stop breached", detail: "DD 5.04% > 5.00% cap" }))), /* @__PURE__ */ React.createElement("div", { className: "spec-row" }, /* @__PURE__ */ React.createElement("span", { className: "l" }, "NotifRow"), /* @__PURE__ */ React.createElement("div", { style: { width: "100%", border: "1px solid var(--qe-line)" } }, /* @__PURE__ */ React.createElement(NotifRow, { ev: { id: "x1", ch: "REGIME", pri: "risk", head: "Regime \u2192 RISK-OFF PANIC", detail: "was DEFENSIVE \xB7 size \xD71.0 \u2192 \xD70.25", ts: Date.now() - 48e3, unread: true }, now: Date.now(), muted: false, onRead: () => {
+} }), /* @__PURE__ */ React.createElement(Chip, { label: "Link", count: 1, muted: true, onMute: () => {
+} }))), /* @__PURE__ */ React.createElement("div", { className: "spec-row" }, /* @__PURE__ */ React.createElement("span", { className: "l" }, "Bell"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement(NotifBell, null), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-muted)" } }, "+ red unread-count badge when count > 0"))), /* @__PURE__ */ React.createElement("div", { className: "spec-row" }, /* @__PURE__ */ React.createElement("span", { className: "l" }, "Banner \xB7 alert"), /* @__PURE__ */ React.createElement("div", { style: { width: "100%", border: "1px solid var(--qe-line)" } }, /* @__PURE__ */ React.createElement(Banner, { tone: "err", tag: "HALT", title: "CALCULATOR BLOCKED", detail: "Daily hard-stop 5.04% > 5.00% cap \xB7 new entries gated", time: "14:31:06", releaseIn: "0d 19h 21m 16s" }))), /* @__PURE__ */ React.createElement("div", { className: "spec-row" }, /* @__PURE__ */ React.createElement("span", { className: "l" }, "Toast"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Toast, { tone: "ok", tag: "FILLS", time: "14:31:06", title: "EXAMPLE \xB7 fill toast", detail: "demo content \xB7 not a live event" }), /* @__PURE__ */ React.createElement(Toast, { tone: "warn", tag: "RISK", time: "14:30:18", title: "Weekly loss 78% of limit", detail: "\u2212$1,840 of \u2212$2,360" }), /* @__PURE__ */ React.createElement(Toast, { tone: "err", tag: "RISK", time: "14:31:06", title: "CALCULATOR BLOCKED \u2014 hard-stop breached", detail: "DD 5.04% > 5.00% cap" }))), /* @__PURE__ */ React.createElement("div", { className: "spec-row" }, /* @__PURE__ */ React.createElement("span", { className: "l" }, "NotifRow"), /* @__PURE__ */ React.createElement("div", { style: { width: "100%", border: "1px solid var(--qe-line)" } }, /* @__PURE__ */ React.createElement(NotifRow, { ev: { id: "x1", ch: "RISK", pri: "risk", head: "EXAMPLE \xB7 risk notification row", detail: "demo content \xB7 not a live event", ts: Date.now() - 48e3, unread: true }, now: Date.now(), muted: false, onRead: () => {
 }, onDismiss: () => {
-} }), /* @__PURE__ */ React.createElement(NotifRow, { ev: { id: "x2", ch: "SYSTEM", pri: "routine", head: "Market WS reconnected", detail: "2 streams \xB7 93ms \xB7 gap 1.4s recovered", ts: Date.now() - 24e4, unread: false }, now: Date.now(), muted: false, onRead: () => {
+} }), /* @__PURE__ */ React.createElement(NotifRow, { ev: { id: "x2", ch: "SYSTEM", pri: "routine", head: "EXAMPLE \xB7 routine system row", detail: "demo content \xB7 not a live event", ts: Date.now() - 24e4, unread: false }, now: Date.now(), muted: false, onRead: () => {
 }, onDismiss: () => {
 } })))), /* @__PURE__ */ React.createElement(Card, { pad: true, style: { gridColumn: "1 / span 2", borderColor: "var(--qe-cyan)" } }, /* @__PURE__ */ React.createElement(SecLbl, { rule: true }, "Workspace \xB7 GridStack tiling in React + ECharts theme"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.62rem", color: "var(--qe-sub)", marginBottom: 8, lineHeight: 1.55 } }, /* @__PURE__ */ React.createElement("code", { style: { color: "var(--qe-cyan)" } }, "GridWorkspace"), " owns the gs-* attributes imperatively, so React re-renders never reset the layout. ", /* @__PURE__ */ React.createElement("strong", { style: { color: "var(--qe-text)" } }, "Drag"), " a pane by its title bar,", /* @__PURE__ */ React.createElement("strong", { style: { color: "var(--qe-text)" } }, " resize"), " from any edge; the top-nav ", /* @__PURE__ */ React.createElement("strong", { style: { color: "var(--qe-text)" } }, "lock"), " (\u{1F513}) freezes every workspace. The Equity + Sparkline panes render through ", /* @__PURE__ */ React.createElement("code", { style: { color: "var(--qe-cyan)" } }, "QE_ECHARTS_THEME"), " (canvas, vendored ECharts)."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", height: 248, border: "1px solid var(--qe-line)" } }, /* @__PURE__ */ React.createElement(GridWorkspace, { cols: 12, rows: 12, persistId: "primitives-demo" }, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 7, h: 7 }, /* @__PURE__ */ React.createElement(Pane, { title: "Equity", tag: "ECHARTS", foot: { tone: "ok", id: 2101, msg: "demo series \xB7 QE_ECHARTS_THEME", ms: 3 } }, /* @__PURE__ */ React.createElement(EquityChart, { data: DEMO_EQUITY, baseline: DEMO_EQUITY[0] }))), /* @__PURE__ */ React.createElement(GridItem, { x: 7, y: 0, w: 5, h: 7 }, /* @__PURE__ */ React.createElement(Pane, { title: "Positions", count: 3, foot: { tone: "sub", id: 2103, msg: "demo rows \xB7 static", ms: 0 } }, /* @__PURE__ */ React.createElement(FieldList, { rows: [
   { label: "BTCUSDT", value: "+2.02", color: "green" },

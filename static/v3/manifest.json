@@ -1,12 +1,13 @@
 {
-  "hash": "c434b727ad",
-  "app": "app.c434b727ad.js",
-  "tokens": "tokens.c434b727ad.css",
-  "shell": "shell.c434b727ad.css",
+  "hash": "ebb1d4e12a",
+  "app": "app.ebb1d4e12a.js",
+  "tokens": "tokens.ebb1d4e12a.css",
+  "shell": "shell.ebb1d4e12a.css",
   "modules": [
     "primitives.jsx",
     "charts.jsx",
     "grid-workspace.jsx",
+    "chrome-live.js",
     "nav-and-data.jsx",
     "notifications.jsx",
     "sse-adapter.js",

@@ -2,8 +2,8 @@
 //  v3.0 — Notification System (ported from Meridian QE v2.5)
 //  Context-driven: <NotificationProvider> wraps any page; the bell + halt
 //  banner live in the real TopNavStd; the drawer / toasts / demo panel
-//  overlay the page. App-global notification taxonomy: fills, risk/drawdown,
-//  regime, system/WS, calc-link, news.
+//  overlay the page. App-global notification taxonomy (the REAL producer
+//  set, G-O3): fills, risk/drawdown, calc-link, system/WS.
 //  Single script scope — all helpers below are visible to each other; only
 //  NotifCtx / NotifBell / NotifBanner / NotificationProvider are exported.
 // ════════════════════════════════════════════════════════════════════════
@@ -11,15 +11,17 @@
 const NotifCtx = React.createContext(null);
 
 // ── taxonomy ─────────────────────────────────────────────────────────────
-const N_CHANNELS = ['FILLS', 'RISK', 'REGIME', 'SYSTEM', 'LINK', 'NEWS'];
+// P8 wave 1 (G-O3 UI wire): scoped to the FOUR channels the engine actually
+// produces (core/notifications.py _TYPE_UI: LINK/RISK/FILLS + SYSTEM
+// fallback). The design's REGIME/NEWS channels have no producer — their
+// chips were fiction and are gone until real producers exist.
+const N_CHANNELS = ['FILLS', 'RISK', 'LINK', 'SYSTEM'];
 // per-channel primary action — [button label, target description]
 const N_ACTIONS = {
   FILLS:  ['View order',  'order detail'],
   RISK:   ['Review risk', 'risk panel'],
-  REGIME: ['Open Regime', 'regime page'],
   SYSTEM: ['Details',     'system log'],
   LINK:   ['Link trades', 'linkage queue'],
-  NEWS:   ['Read',        'news feed'],
 };
 const nSev = (pri) => pri === 'halt' ? 'var(--qe-red)' : pri === 'risk' ? 'var(--qe-amber)' : 'var(--qe-line-2)';
 const _rnd = (a) => a[Math.floor(Math.random() * a.length)];
@@ -33,10 +35,6 @@ const N_SCENARIOS = {
   partial: () => { const s = _rnd([['ETH', 3208], ['SOL', 139], ['BTC', 93580]]);
     return { ch: 'FILLS', pri: 'routine', head: `Order #A${1880 + Math.floor(Math.random() * 40)} partially filled ${40 + Math.floor(Math.random() * 5) * 10}%`,
       detail: `SELL ${_px(Math.random(), 3)} / ${_px(1 + Math.random(), 3)} ${s[0]} @ ${_px(s[1], 1)}` }; },
-  regime: () => _rnd([
-    { ch: 'REGIME', pri: 'risk', head: 'Regime → RISK-OFF PANIC', detail: 'was DEFENSIVE · size ×0.7 → ×0.25' },
-    { ch: 'REGIME', pri: 'routine', head: 'Regime → DEFENSIVE', detail: 'was NEUTRAL · size ×1.0 → ×0.7 · RVol 2.1σ' },
-    { ch: 'REGIME', pri: 'routine', head: 'Regime → RISK-ON TREND', detail: 'was NEUTRAL · size ×1.0 → ×1.2' }]),
   risk: () => _rnd([
     { ch: 'RISK', pri: 'risk', head: `Weekly loss ${78 + Math.floor(Math.random() * 12)}% of limit`, detail: `−$${(3.10 + Math.random() * 0.6).toFixed(2)} of −$4.11 · 1 more stop trips the cap` },
     { ch: 'RISK', pri: 'risk', head: `Daily drawdown ${_px(3.5 + Math.random(), 1)}% — approaching 5.0% cap`, detail: 'position sizing throttled to ×0.5' }]),
@@ -44,30 +42,23 @@ const N_SCENARIOS = {
   link: () => { const nl = (window.L_NEEDS_LINK || []).filter(o => o.status === 'NEEDS_MANUAL_REVIEW' || o.status === 'UNLINKED').length || 5;
     const nc = (window.L_CLOSES || []).filter(c => c.pending_reason).length || 3;
     return { ch: 'LINK', pri: 'risk', head: `Calc link window closes in 0${2 + Math.floor(Math.random() * 4)}:${10 + Math.floor(Math.random() * 49)}`, detail: `triage ${nl + nc} open · ${nl} orders below 6/6 · ${nc} closes to review` }; },
-  news: () => _rnd([
-    { ch: 'NEWS', pri: 'risk', head: 'HIGH-impact · US CPI in 10m', detail: '14:30 UTC · est 3.1% YoY · prev 3.4%' },
-    { ch: 'NEWS', pri: 'routine', head: 'FOMC minutes released', detail: '18:00 UTC · hawkish tilt flagged' }]),
   ws: () => _rnd([
     { ch: 'SYSTEM', pri: 'routine', head: 'Market WS reconnected', detail: '2 streams · 108ms · gap 1.4s recovered' }]),
 };
-const N_STREAM = ['fill', 'partial', 'regime', 'risk', 'link', 'news', 'ws'];
+const N_STREAM = ['fill', 'partial', 'risk', 'link', 'ws'];
 
-const _nbase = Date.now();
-const N_SEED = [
-  { ch: 'FILLS', pri: 'routine', head: 'FILLED · BUY 0.0420 BTC', detail: '@ 93,580.4 · slippage +0.4bp · order #A1903', age: 12, unread: true },
-  { ch: 'REGIME', pri: 'risk', head: 'Regime → RISK-OFF PANIC', detail: 'was DEFENSIVE · size ×0.7 → ×0.25', age: 48, unread: true },
-  { ch: 'RISK', pri: 'risk', head: 'Drawdown 30d 11.97% — over 10.0% cap', detail: '−$11.18 of −$9.34 allowance · ADVISORY mode, no auto-halt', age: 95, unread: true },
-  { ch: 'SYSTEM', pri: 'routine', head: 'Market WS reconnected', detail: '2 streams · 108ms · gap 1.4s recovered', age: 240, unread: false },
-  { ch: 'LINK', pri: 'risk', head: 'Calc link window closes in 04:12', detail: 'triage 8 open · 5 orders below 6/6 · 3 closes to review', age: 360, unread: false },
-  { ch: 'FILLS', pri: 'routine', head: 'Order #A1888 partially filled 60%', detail: 'SELL 0.018 / 0.030 ETH @ 3,208.0', age: 840, unread: false },
-  { ch: 'REGIME', pri: 'routine', head: 'Regime → DEFENSIVE', detail: 'was NEUTRAL · size ×1.0 → ×0.7 · RVol 2.1σ', age: 1860, unread: false },
-].map((e, i) => ({ id: 'seed' + i, ch: e.ch, pri: e.pri, head: e.head, detail: e.detail, unread: e.unread, ts: _nbase - e.age * 1000 }));
+/* P8 wave 1: N_SEED (7 fabricated events, 3 "unread" at boot) is GONE — the
+   provider seeds empty and fills from the REAL feed (GET /notifications/poll,
+   the G-O3 backend that shipped in P1). */
 
 function nRel(ts, now) { const s = Math.max(0, Math.round((now - ts) / 1000));
   if (s < 5) return 'now'; if (s < 60) return s + 's'; if (s < 3600) return Math.floor(s / 60) + 'm'; return Math.floor(s / 3600) + 'h'; }
 function nAbs(ts) { const d = new Date(ts + (window.QE_CLOCK_OFFSET || 0)); const p = n => String(n).padStart(2, '0');
   return `${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`; }
 
+// nBeep: the notification sound. Demo-ORIGINATED but production-consumed —
+// real poll events ride the same toast/beep/DND rules as demo ones (the
+// `sound` switch in the drawer gates it; audit NIT-1 wording fix).
 let _nac = null;
 function nBeep(pri) { try {
   _nac = _nac || new (window.AudioContext || window.webkitAudioContext)();
@@ -212,8 +203,8 @@ const NotifDemo = ({ fire, autostream, onAuto, onReset, onHide }) => {
         <button onClick={onHide} title="Collapse demo panel" className="qe-btn qe-btn-ghost qe-btn-sm" style={{ height:16, padding:'0 5px' }}>–</button>
       </div>
       <div style={{ padding:8, display:'grid', gridTemplateColumns:'1fr 1fr', gap:5 }}>
-        <Btn label="Fill" k="fill" /><Btn label="Partial" k="partial" /><Btn label="Regime" k="regime" /><Btn label="Risk" k="risk" />
-        <Btn label="Link" k="link" /><Btn label="News" k="news" /><Btn label="WS recon" k="ws" /><Btn label="Burst ×5" k="burst" />
+        <Btn label="Fill" k="fill" /><Btn label="Partial" k="partial" /><Btn label="Risk" k="risk" />
+        <Btn label="Link" k="link" /><Btn label="WS recon" k="ws" /><Btn label="Burst ×5" k="burst" />
         <button onClick={()=>fire('halt')} className="qe-btn qe-btn-sm qe-btn-danger" style={{ gridColumn:'1 / -1', justifyContent:'center' }}>⛔ HARD-STOP HALT</button>
       </div>
       <div style={{ display:'flex', alignItems:'center', gap:8, padding:'6px 9px', borderTop:'1px solid var(--qe-line)' }}>
@@ -226,12 +217,13 @@ const NotifDemo = ({ fire, autostream, onAuto, onReset, onHide }) => {
 };
 
 // ── provider — owns state, exposes ctx, overlays the page ────────────────
-// P0: `demo` defaults FALSE — the DEMO fire-events panel, autostream, WebAudio
-// beep and desktop-notification dispatch are the reference's mock devices (plan
-// §4) and must not ship. Real notification producers land in P1 (G-O3). N_SEED
-// remains as placeholder seed content until then.
+// `demo` defaults FALSE — the DEMO fire-events panel, autostream, WebAudio
+// beep and desktop-notification dispatch are the reference's mock devices
+// (plan §4) and must not ship. P8 wave 1: the provider is wired to the REAL
+// feed — GET /notifications/poll (backend shipped in P1, G-O3) — and seeds
+// EMPTY; the first poll (since=-1) primes the cursor without backlog replay.
 function NotificationProvider({ children, demo = false }) {
-  const [events, setEvents] = React.useState(N_SEED);
+  const [events, setEvents] = React.useState([]);
   const [open, setOpen] = React.useState(false);
   const [filter, setFilter] = React.useState('All');
   const [priority, setPriority] = React.useState('All');
@@ -261,6 +253,55 @@ function NotificationProvider({ children, demo = false }) {
   const flags = React.useRef({}); flags.current = { muted, sound, desktop, dnd, open };
   const removeToast = (id) => setToasts(ts => ts.filter(t => t.id !== id));
 
+  // ── G-O3 UI wire: the real notification feed (P8 wave 1) ────────────────
+  // Poll /notifications/poll every 5s. The endpoint serves the v3 UI shape
+  // {ch, pri, head, detail, ts} alongside the legacy {id, ...}; since=-1
+  // primes the cursor (server returns latest_id + no backlog). Real events
+  // ride the same toast/beep/DND rules as demo ones. A failed poll keeps
+  // the bell quiet — no fabricated fallback.
+  const sinceRef = React.useRef(-1);
+  React.useEffect(() => {
+    let alive = true;
+    let inFlight = false;  // audit LOW-1: overlapping polls would re-read the
+                           // same cursor and double-process events
+    const poll = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const r = await fetch('/notifications/poll?since=' + sinceRef.current,
+          { headers: { Accept: 'application/json' } });
+        if (!r.ok) return;
+        const d = await r.json();
+        if (!alive || !d || typeof d.latest_id !== 'number') return;
+        const priming = sinceRef.current < 0;
+        sinceRef.current = d.latest_id;
+        if (priming) return;
+        (d.notifications || []).forEach((n) => {
+          const ev = {
+            id: 'n' + n.id,
+            ch: N_CHANNELS.indexOf(n.ch) >= 0 ? n.ch : 'SYSTEM',
+            pri: n.pri || 'routine',
+            head: n.head || n.message || '',
+            detail: n.detail || '',
+            ts: n.ts || n.ts_ms || Date.now(),
+            unread: true,
+          };
+          setEvents((list) => [ev, ...list].slice(0, 200));
+          const f = flags.current;
+          if (!(f.dnd || f.muted[ev.ch])) {
+            if (f.sound) nBeep(ev.pri);
+            setToasts((ts) => [ev, ...ts].slice(0, 4));
+            setTimeout(() => removeToast(ev.id), 5200);
+          }
+        });
+      } catch (e) { /* engine unreachable — nothing to show */ }
+      finally { inFlight = false; }
+    };
+    poll();
+    const t = setInterval(poll, 5000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
+
   const pushEvent = React.useCallback((key) => {
     const tpl = N_SCENARIOS[key](); if (!tpl) return;
     const ev = { ...tpl, id: 'e' + (idRef.current++), ts: Date.now(), unread: true };
@@ -277,7 +318,7 @@ function NotificationProvider({ children, demo = false }) {
     }
   }, []);
 
-  const fire = (key) => { if (key === 'burst') { ['fill','regime','risk','ws','partial'].forEach((k,i)=>setTimeout(()=>pushEvent(k), i*420)); return; } pushEvent(key); };
+  const fire = (key) => { if (key === 'burst') { ['fill','link','risk','ws','partial'].forEach((k,i)=>setTimeout(()=>pushEvent(k), i*420)); return; } pushEvent(key); };
 
   React.useEffect(() => { if (!autostream) return;
     const t = setInterval(() => pushEvent(N_STREAM[Math.floor(Math.random()*N_STREAM.length)]), 4500); return () => clearInterval(t); }, [autostream, pushEvent]);
@@ -297,7 +338,7 @@ function NotificationProvider({ children, demo = false }) {
   // just flips the flag; desktop dispatch stays gated behind pushEvent (demo-only)
   // so nothing fires. Real desktop-notification support is deferred.
   const toggleDesktop = () => setDesktop(v => !v);
-  const reset = () => { setEvents(N_SEED.map(e => ({ ...e }))); setHaltUntil(0); try { localStorage.removeItem(HALT_KEY); } catch (e) {} setHaltAt(0); try { localStorage.removeItem(HALT_AT_KEY); } catch (e) {} setToasts([]); setFilter('All'); setPriority('All'); setMuted({}); };
+  const reset = () => { setEvents([]); setHaltUntil(0); try { localStorage.removeItem(HALT_KEY); } catch (e) {} setHaltAt(0); try { localStorage.removeItem(HALT_AT_KEY); } catch (e) {} setToasts([]); setFilter('All'); setPriority('All'); setMuted({}); };
 
   const unread = events.filter(e => e.unread && !muted[e.ch]).length;
   const counts = N_CHANNELS.reduce((a, ch) => (a[ch] = events.filter(e => e.ch === ch).length, a), {});

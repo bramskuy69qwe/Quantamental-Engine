@@ -375,7 +375,7 @@ data: 93580.40`}</pre>
         <Card pad>
           <SecLbl rule>NewsTickerBar · footer marquee</SecLbl>
           <div style={{fontSize:'0.62rem', color:'var(--qe-sub)', marginBottom:8, lineHeight:1.5}}>
-            Single-line async news feed. Holds ~1s then scrolls one full pass; pauses on hover. <code style={{color:'var(--qe-cyan)'}}>React.memo</code> + inlined runs keep the animation from restarting under parent re-renders. Defaults to the Regime feed; pass <code style={{color:'var(--qe-cyan)'}}>news</code> to override.
+            Single-line async news feed. Holds ~1s then scrolls one full pass; pauses on hover. <code style={{color:'var(--qe-cyan)'}}>React.memo</code> + inlined runs keep the animation from restarting under parent re-renders. No default feed — pass <code style={{color:'var(--qe-cyan)'}}>news</code> rows (empty renders quiet).
           </div>
           <NewsTickerBar
             label="NEWS"
@@ -483,7 +483,7 @@ data: 93580.40`}</pre>
               <Chip label="All" count={8} active={true}/>
               <Chip label="Fills" count={3} onMute={()=>{}}/>
               <Chip label="Risk" count={2} onMute={()=>{}}/>
-              <Chip label="News" count={1} muted={true} onMute={()=>{}}/>
+              <Chip label="Link" count={1} muted={true} onMute={()=>{}}/>
             </div>
           </div>
           <div className="spec-row">
@@ -502,7 +502,7 @@ data: 93580.40`}</pre>
           <div className="spec-row">
             <span className="l">Toast</span>
             <div style={{display:'flex', gap:10, flexWrap:'wrap'}}>
-              <Toast tone="ok"   tag="FILLS" time="14:31:06" title="FILLED · BUY 0.0420 BTC" detail="@ 93,580.4 · order #A1903"/>
+              <Toast tone="ok"   tag="FILLS" time="14:31:06" title="EXAMPLE · fill toast" detail="demo content · not a live event"/>
               <Toast tone="warn" tag="RISK"  time="14:30:18" title="Weekly loss 78% of limit" detail="−$1,840 of −$2,360"/>
               <Toast tone="err"  tag="RISK"  time="14:31:06" title="CALCULATOR BLOCKED — hard-stop breached" detail="DD 5.04% > 5.00% cap"/>
             </div>
@@ -510,8 +510,9 @@ data: 93580.40`}</pre>
           <div className="spec-row">
             <span className="l">NotifRow</span>
             <div style={{width:'100%', border:'1px solid var(--qe-line)'}}>
-              <NotifRow ev={{id:'x1', ch:'REGIME', pri:'risk', head:'Regime → RISK-OFF PANIC', detail:'was DEFENSIVE · size ×1.0 → ×0.25', ts:Date.now()-48000, unread:true}}  now={Date.now()} muted={false} onRead={()=>{}} onDismiss={()=>{}}/>
-              <NotifRow ev={{id:'x2', ch:'SYSTEM', pri:'routine', head:'Market WS reconnected', detail:'2 streams · 93ms · gap 1.4s recovered', ts:Date.now()-240000, unread:false}} now={Date.now()} muted={false} onRead={()=>{}} onDismiss={()=>{}}/>
+              {/* EXAMPLE rows (P8 wave 1: channels scoped to the real 4) */}
+              <NotifRow ev={{id:'x1', ch:'RISK', pri:'risk', head:'EXAMPLE · risk notification row', detail:'demo content · not a live event', ts:Date.now()-48000, unread:true}}  now={Date.now()} muted={false} onRead={()=>{}} onDismiss={()=>{}}/>
+              <NotifRow ev={{id:'x2', ch:'SYSTEM', pri:'routine', head:'EXAMPLE · routine system row', detail:'demo content · not a live event', ts:Date.now()-240000, unread:false}} now={Date.now()} muted={false} onRead={()=>{}} onDismiss={()=>{}}/>
             </div>
           </div>
         </Card>

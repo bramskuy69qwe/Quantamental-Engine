@@ -3,37 +3,10 @@
    one PeriodSelector, one Gauge, one Table.
    Everything is a React component for portability into htmx templates. */
 
-// ── mock data helpers ─────────────────────────────────────────────────────
-const mockOhlc = (n=60, base=82.2, vol=2) => {
-  let c = base, out = [];
-  // bars END at the frozen mock "now" (04-25 20:00) — never in the future
-  const now = Date.UTC(2026,3,25,20,0,0) - (n-1)*3600_000;
-  for (let i=0; i<n; i++) {
-    const o = c;
-    c = Math.max(base*0.86, Math.min(base*1.16, c + (Math.random()-0.49)*vol));
-    const h = Math.max(o,c) + Math.random()*vol*0.4;
-    const l = Math.min(o,c) - Math.random()*vol*0.4;
-    out.push([now + i*3600_000, +o.toFixed(3), +c.toFixed(3), +l.toFixed(3), +h.toFixed(3)]);
-  }
-  // rescale so the series CLOSES at base — the live equity readouts (eq=82.20,
-  // session C) and the chart then tell one story
-  const f = base / out[out.length-1][2];
-  return out.map(r => [r[0], +(r[1]*f).toFixed(3), +(r[2]*f).toFixed(3), +(r[3]*f).toFixed(3), +(r[4]*f).toFixed(3)]);
-};
-const mockEquity = (n=80, base=82.2, vol=0.8) => {
-  let v = base; const out = [];
-  for (let i=0; i<n; i++) {
-    v += (Math.random()-0.49) * vol;
-    v = Math.max(base*0.86, Math.min(base*1.18, v));
-    out.push(+v.toFixed(3));
-  }
-  return out;
-};
-const mockSpark = (n=24, base=0, range=1) => {
-  let v = base, out = [];
-  for (let i=0; i<n; i++) { v += (Math.random()-0.5)*range; out.push(+v.toFixed(3)); }
-  return out;
-};
+/* P8 wave 1: the mockOhlc/mockEquity/mockSpark generators are GONE — their
+   only consumer was nav-and-data's MOCK dataset, deleted with the chrome
+   rebind (chrome-live.js). The DEV proving ground uses its own deterministic
+   DEMO_EQUITY series (app-shell.jsx). */
 
 // ── Atoms ────────────────────────────────────────────────────────────────
 const Lbl = ({children, bracket=false, style={}}) => (
@@ -304,48 +277,11 @@ const LiveValue = ({id, value, format=String, tone='auto', stale=false, style={}
   );
 };
 
-// ─────────────────────────────────────────────────────────────────────────
-// useLiveTicker — drives a numeric value with a random-walk jitter on an
-// interval. Used to make LiveNumber elements visibly tick in mocked
-// dashboards (in production these come from SSE, not this hook).
-//   base       starting value
-//   jitter     max absolute step per tick (random walk)
-//   intervalMs ms between ticks (default 1100)
-//   decimals   round to N decimals
-//   clamp      [min, max] optional bounds
-// ─────────────────────────────────────────────────────────────────────────
-const useLiveTicker = (base, {jitter=1, intervalMs=1100, decimals=2, clamp=null}={}) => {
-  const [v, setV] = React.useState(base);
-  React.useEffect(() => {
-    const id = setInterval(() => {
-      setV(prev => {
-        let next = prev + (Math.random()-0.5) * jitter * 2;
-        if (clamp) next = Math.max(clamp[0], Math.min(clamp[1], next));
-        return +next.toFixed(decimals);
-      });
-    }, intervalMs + Math.random()*400);
-    return () => clearInterval(id);
-  }, []);
-  return v;
-};
-
-// LiveNumber — convenience: useLiveTicker + LiveValue together.
-// Drop-in for any dashboard number that should pulse.
-const LiveNumber = ({id, base, jitter=1, intervalMs=1100, decimals=2, clamp=null,
-                     format, style={}, className=''}) => {
-  const v = useLiveTicker(base, {jitter, intervalMs, decimals, clamp});
-  const fmt = format || (x => (decimals > 0 ? x.toFixed(decimals) : String(Math.round(x))));
-  return <LiveValue id={id} value={v} format={fmt} style={style} className={className}/>;
-};
-
-// LivePct — signed percent with green/red color & sign
-const LivePct = ({id, base, jitter=0.05, intervalMs=1300, decimals=2, style={}}) => {
-  const v = useLiveTicker(base, {jitter, intervalMs, decimals});
-  const col = v > 0 ? 'var(--qe-green)' : v < 0 ? 'var(--qe-red)' : 'var(--qe-sub)';
-  const sign = v > 0 ? '+' : '';
-  return <LiveValue id={id} value={v} format={x => sign + x.toFixed(decimals) + '%'}
-                    style={{color: col, fontWeight:700, ...style}}/>;
-};
+/* P8 wave 1: useLiveTicker/LiveNumber/LivePct (the random-walk live-number
+   family) are GONE — zero production callers existed and plan §4 lists them
+   as strip targets. Live numbers bind LiveValue to real SSE/poll data
+   (window.QE_SSE / useLiveId); the DEV proving ground's LiveValueDemo
+   (app-shell.jsx) carries its own sanctioned demo ticker. */
 
 // LiveClock — wall clock that ticks every second (string LiveValue, no flash)
 const LiveClock = ({id='clock', style={}, format=null}) => {
@@ -1154,7 +1090,7 @@ const LockButton = ({locked, onToggle, compact=false, style={}}) => (
 //
 // Props:
 //   news    — array of {id, source, impact, headline, tickers?, published_at}.
-//             Defaults to the Regime feed (window.MOCK_REGIME.news).
+//             No default feed — pass real news rows (empty renders quiet).
 //   label   — left chip text (default "NEWS")
 //   meta    — right-side source tag (default "REGIME FEED · finnhub + bwe")
 //   pollMs  — refetch cadence (default 4000)
@@ -1163,7 +1099,9 @@ const NewsTickerBar = React.memo(function NewsTickerBar({
   news, label = 'NEWS', meta = 'REGIME FEED · finnhub + bwe', pollMs = 4000,
 }) {
   const sortFeed = () => {
-    const feed = news || (window.MOCK_REGIME && window.MOCK_REGIME.news) || [];
+    // P8 wave 1: the never-defined MOCK_REGIME fallback is gone — no prop,
+    // no feed (callers pass real news).
+    const feed = news || [];
     return [...feed].sort((a, b) => Date.parse(b.published_at) - Date.parse(a.published_at));
   };
   // Seed synchronously on first render so the bar paints fully-populated.
@@ -1335,10 +1273,9 @@ const PageHeader = ({title, subtitle=null, left=null, children=null}) => (
 );
 
 Object.assign(window, {
-  mockOhlc, mockEquity, mockSpark,
   Lbl, SecLbl, KV, Card, Stat, HeroNumber, Delta,
   StatusDot, Badge, RegimeBadge, PeriodSelector, Gauge, EmptyState,
-  Tabs, Strip, FlashCell, LiveValue, useLiveTicker, LiveNumber, LivePct, LiveClock,
+  Tabs, Strip, FlashCell, LiveValue, LiveClock,
   asciiSpark, ASCII_SPARK,
   Pane, PaneHead, PaneFoot, qeFootState, qeFootCause, RefreshButton, ReloadGlyph, ReloadIconSVG, BrailleSquares, Spinner, useSpinFrame, RELOAD_MS, PaneErrorBoundary, DataList, FieldList, StepperInput, LockButton, NewsTickerBar,
   Switch, Chip, Banner, Toast, PageHeader,

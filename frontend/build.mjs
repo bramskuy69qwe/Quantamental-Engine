@@ -46,6 +46,7 @@ const JSX_ORDER = [
   'primitives.jsx',
   'charts.jsx',
   'grid-workspace.jsx',
+  'chrome-live.js',           // P8 — shared chrome store; MUST precede nav-and-data (its consumer)
   'nav-and-data.jsx',
   'notifications.jsx',
   'sse-adapter.js',           // SSE client-adapter skeleton (§1.2)

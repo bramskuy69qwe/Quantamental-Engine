@@ -178,7 +178,7 @@ look with inline styles.
 
 ### Numbers
 - **`Stat`** `{label, value, sub, color}` · **`HeroNumber`** `{value, ccy}` · **`Delta`** `{value, pct, flat}`.
-- **Live numbers:** `LiveValue`, `LiveNumber`, `LivePct`, `LiveClock`, `FlashCell` + the `useLiveTicker` hook — streaming values that flash on change and show a stale indicator. Bind them to real data via the SSE adapter (`window.QE_SSE` / `useLiveId`), never a client random-walk.
+- **Live numbers:** `LiveValue`, `LiveClock`, `FlashCell` — streaming values that flash on change and show a stale indicator. Bind them to real data via the SSE adapter (`window.QE_SSE` / `useLiveId`) or a poll, never a client random-walk. (The reference's `LiveNumber`/`LivePct`/`useLiveTicker` random-walk family was stripped in P8 wave 1 — zero production callers.) The shared chrome (TopNav / WorkspaceBar / StatusFooter) binds the `QE_CHROME` store (`chrome-live.js`: `/api/state` 10s · snapshot 30s · `/api/system` 60s · `/accounts` · SSE status), rendering `—` when a source has no data.
 
 ### Status & badges
 - **`StatusDot`** `{tone, label, value, sq}` — the single status indicator (tones `ok|warn|err|info|off`).
