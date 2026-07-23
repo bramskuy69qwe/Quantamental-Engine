@@ -9,7 +9,25 @@
 
 **▶▶ NEXT SESSION: P5 Analytics** (plan §5 row P5 — G-O4
 `/fragments/analytics/execution` + `/distributions` backends land first, then the
-11-tab React Analytics page; 9/11 tabs already served). **P4 FRONTEND SHIPPED
+11-tab React Analytics page; 9/11 tabs already served).
+**P5 MECHANISM CORRECTION (mapped 2026-07-23, audit-impact-imprecision +1): the
+plan's G-O4 "join pre_trade_log.est_fill_price on execution_log" is WRONG-shaped —
+`execution_log` (manual-UI fills) has NO calc_id/fill_type/slippage_actual; those
+live on the `fills` table (stamped by `order_enrichment.classify_fill_type` +
+`compute_slippage_actual`, database.py:759-760), and the est-price column is
+`pre_trade_log.effective_entry` (+ `est_slippage`). Build Execution-Quality from
+`fills` JOIN `pre_trade_log`.** Distributions: reuse `r_multiple_histogram`/
+`get_r_multiples`; PnL/hold/hour/DoW histograms need a new aggregation over
+`exchange_history` (`get_mfe_mae_series` is the closest source). All 9 existing
+tabs are HTML-only → add `?format=json` doors (P3/P4 idiom); the one JSON that
+exists is `/api/analytics/equity_ohlc`. PERIOD_TABS = {overview,pairs,excursions,
+rmultiples,risk} (+dist); equity/calendar/funding/beta ignore period (dim the
+bar). G-O5 = reuse `/api/regime/signals/latest` (6 real signals; the fuller
+BTC.D/DXY strip has no engine source — scope out). Gotchas: var needs ≥20
+returns; sortino 999.0 sentinel; calendar has its own month nav; beta needs
+ohlcv_cache; max_drawdown is peak-to-trough (db_analytics.py:138-160), not the
+dd-gate rolling value. Design refs: `pages.jsx` AnalyticsPage (~1544) +
+`pages-analytics-exec.jsx` (exec/dist tabs). **P4 FRONTEND SHIPPED
 (HEAD)**: `link-primitives.jsx` (lpPx magnitude rule; DevBadge ±0.1% deadband) +
 `pages-linkage.jsx` (needs_review inbox + 3-leg diff + reason picker; monitors on
 the /api/linkage/* mirrors; SSE uPnL merge; actions POST the choke-pointed
