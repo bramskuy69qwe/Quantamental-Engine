@@ -35,6 +35,20 @@ const _lkForm = async (url, fields, method = 'POST') => {
 };
 
 /* link resolver — candidate list + per-criterion diff */
+// operator-bug #5: candidate-calc meta formatters. `timestamp` is the calc's
+// ISO creation time; `age_hours` its float age from the loose finder.
+const _lkCreated = (iso) => {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return isNaN(d) ? '—' : d.toLocaleTimeString([], { hour12: false });
+};
+const _lkAgeH = (h) => {
+  if (h == null || isNaN(h)) return '';
+  if (h < 1) return `${Math.round(h * 60)}m`;
+  const hh = Math.floor(h);
+  return `${hh}h ${Math.round((h - hh) * 60)}m`;
+};
+
 const LkLinkResolver = ({ item, onDone }) => {
   const cands = item.candidates || [];
   const [selCand, setSelCand] = React.useState(cands[0] && cands[0].calc_id);
@@ -66,13 +80,19 @@ const LkLinkResolver = ({ item, onDone }) => {
         <div className="qe-grow" />
         <span className="qe-mono" style={{ fontSize: '0.52rem', color: 'var(--qe-muted)' }}><PtAge ts={item.created_at_ms} /></span>
       </div>
+      {/* operator-bug #5: order-detail block matches the Meridian design —
+          Size / Notional / Operator / Client-order-id (backend now selects
+          quantity / operator_id / client_order_id on /orders/needs_review).
+          TP/SL moved out of here; they already appear in the criterion diff
+          below (and Status is the LinkBadge in the header). */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '5px 10px', padding: '6px 8px', border: '1px solid var(--qe-line)', marginBottom: 8 }}>
         <KV l="Order" v={'#' + (item.exchange_order_id || item.id)} />
         <KV l="Type" v={(item.order_type || '').toUpperCase()} />
         <KV l="Price" v={lpPx(item.price)} color="var(--qe-cyan)" />
-        <KV l="TP" v={lpPx(item.tp_trigger_price)} color="var(--qe-green)" />
-        <KV l="SL" v={lpPx(item.sl_trigger_price)} color="var(--qe-red)" />
-        <KV l="Status" v={item.link_status} />
+        <KV l="Size" v={item.quantity != null ? (+item.quantity).toLocaleString(undefined, { maximumFractionDigits: 4 }) : '—'} />
+        <KV l="Notional" v={(item.price != null && item.quantity != null) ? `${(item.price * item.quantity).toLocaleString(undefined, { maximumFractionDigits: 2 })} U` : '—'} />
+        <KV l="Operator" v={item.operator_id || '—'} />
+        <KV l="Client order id" v={item.client_order_id || '—'} span />
       </div>
       {!cands.length ? (
         <React.Fragment>
@@ -85,20 +105,39 @@ const LkLinkResolver = ({ item, onDone }) => {
         <React.Fragment>
           <div className="qe-lbl" style={{ margin: '2px 0 5px' }}>Candidate calcs · {cands.length}</div>
           <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 6 }}>
-            {cands.map((c) => {
+            {cands.map((c, ci) => {
               const on = c.calc_id === selCand;
+              // operator-bug #5: candidates arrive sorted best-first (backend:
+              // matching-legs DESC), so index 0 is the BEST match — mark it
+              // (design's amber BEST tag). Score badge follows the design:
+              // warn on best, mute on the rest.
+              const best = ci === 0;
               return (
                 <button key={c.calc_id} onClick={() => setSelCand(c.calc_id)} style={{
                   display: 'flex', alignItems: 'center', gap: 5, padding: '3px 8px', cursor: 'pointer',
                   background: on ? 'var(--qe-active)' : 'var(--qe-panel)', border: `1px solid ${on ? 'var(--qe-cyan)' : 'var(--qe-line)'}`,
                 }}>
                   <span className="qe-mono" style={{ fontSize: '0.58rem', color: 'var(--qe-cyan)', fontWeight: 700 }}>{String(c.calc_id).slice(-6)}</span>
-                  <Badge tone="warn">{lpScore(c)} / 6</Badge>
+                  <Badge tone={best ? 'warn' : 'mute'}>{lpScore(c)} / 6</Badge>
+                  {best ? <span style={{ fontSize: '0.5rem', color: 'var(--qe-amber)', letterSpacing: '0.08em', fontWeight: 700 }}>BEST</span> : null}
                   {c.status === 'released' ? <Badge tone="mag">REPLACEMENT</Badge> : null}
                 </button>
               );
             })}
           </div>
+          {/* operator-bug #5: model · created · R · tags meta for the selected
+              candidate. Backend enriches from pre_trade_log (model_name / est_r
+              real; tags DORMANT — pre_trade_log.tags is unwritten today, so the
+              chips only render if it is ever populated). model is omitted when
+              the operator ran the calc without a model name (empty on live). */}
+          {cand ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap', padding: '0 2px 6px', fontFamily: 'var(--qe-mono)', fontSize: '0.52rem', color: 'var(--qe-muted)' }}>
+              {cand.model ? <span style={{ color: 'var(--qe-sub)', fontWeight: 700 }}>{cand.model}</span> : null}
+              <span>created {_lkCreated(cand.timestamp)}{cand.age_hours != null ? ` (${_lkAgeH(cand.age_hours)})` : ''}</span>
+              {cand.r != null ? <span>R {(+cand.r).toFixed(2)}</span> : null}
+              {(cand.tags || []).map((t) => <span key={t} style={{ color: 'var(--qe-purple)' }}>#{t}</span>)}
+            </div>
+          ) : null}
           <div style={{ display: 'grid', gridTemplateColumns: '76px 1fr 1fr 52px 18px', gap: 6, padding: '0 6px 2px', fontFamily: 'var(--qe-mono)', fontSize: '0.5rem', color: 'var(--qe-muted)', letterSpacing: '0.06em' }}>
             <span>CRITERION</span><span>CALC {String(cand.calc_id).slice(-6)}</span><span>ORDER #{item.id}</span><span>DIFF</span><span style={{ textAlign: 'right' }}>OK</span>
           </div>

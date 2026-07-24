@@ -412,6 +412,84 @@ class TestListNeedsReview:
         await _seed_order(linkdb, eoid="E1", link_status="LINKED", calc_id="C-Y")
         assert await list_needs_review(ACCOUNT_ID) == []
 
+    # ── operator-bug #5: resolver-detail enrichment ────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_order_detail_fields_selected(self, linkdb):
+        """The order row must carry quantity / client_order_id / operator_id —
+        the Size / Notional / Operator / Client-order-id the resolver renders.
+        Pre-fix the SELECT omitted them (the fields the design shows were
+        simply not in the payload)."""
+        from core.link_actions import list_needs_review
+        oid = await _seed_order(linkdb, eoid="OD1",
+                                link_status="NEEDS_MANUAL_REVIEW", price=50000.0)
+        await linkdb._conn.execute(
+            "UPDATE orders SET quantity=?, operator_id=?, client_order_id=? "
+            "WHERE id=?", (0.5, "op-7", "x-QT-abc123", oid))
+        await linkdb._conn.commit()
+
+        order = next(o for o in await list_needs_review(ACCOUNT_ID)
+                     if o["id"] == oid)
+        assert order["quantity"] == 0.5
+        assert order["operator_id"] == "op-7"
+        assert order["client_order_id"] == "x-QT-abc123"
+
+    @pytest.mark.asyncio
+    async def test_candidate_enriched_with_model_r_tags(self, linkdb):
+        """Each candidate gets model / r / tags from pre_trade_log — the meta
+        line ('momentum_v3 · R 2.25 · #asia_session') dropped in P4."""
+        from core.link_actions import list_needs_review
+        oid = await _seed_order(linkdb, eoid="OD2",
+                                link_status="NEEDS_MANUAL_REVIEW",
+                                price=50000.0, tp=55000.0, sl=48000.0)
+        await _seed_calc(linkdb, calc_id="C-ENR", status="active",
+                         entry=50000.0, tp=55000.0, sl=48000.0)
+        await linkdb._conn.execute(
+            "UPDATE pre_trade_log SET model_name=?, est_r=?, tags=? "
+            "WHERE calc_id=?", ("momentum_v3", 2.25, '["asia_session"]', "C-ENR"))
+        await linkdb._conn.commit()
+
+        order = next(o for o in await list_needs_review(ACCOUNT_ID)
+                     if o["id"] == oid)
+        cand = next(c for c in order["candidates"] if c["calc_id"] == "C-ENR")
+        assert cand["model"] == "momentum_v3"
+        assert cand["r"] == 2.25
+        assert cand["tags"] == ["asia_session"]
+
+    @pytest.mark.asyncio
+    async def test_model_falls_back_to_id_and_tags_default_empty(self, linkdb):
+        """model_name empty (the LIVE shape — operator runs calcs unnamed) →
+        fall back to the model_id FK (F11 rule). tags column is DORMANT
+        (pre_trade_log never writes it) → []."""
+        from core.link_actions import list_needs_review
+        oid = await _seed_order(linkdb, eoid="OD3",
+                                link_status="NEEDS_MANUAL_REVIEW",
+                                price=50000.0, tp=55000.0, sl=48000.0)
+        await _seed_calc(linkdb, calc_id="C-ENR3", status="active",
+                         entry=50000.0, tp=55000.0, sl=48000.0)
+        await linkdb._conn.execute(
+            "UPDATE pre_trade_log SET model_name='', model_id=7, est_r=3.1 "
+            "WHERE calc_id=?", ("C-ENR3",))
+        await linkdb._conn.commit()
+
+        order = next(o for o in await list_needs_review(ACCOUNT_ID)
+                     if o["id"] == oid)
+        cand = next(c for c in order["candidates"] if c["calc_id"] == "C-ENR3")
+        assert cand["model"] == "model #7"
+        assert cand["r"] == 3.1
+        assert cand["tags"] == []            # dormant column → empty
+
+    def test_parse_tags_tolerates_every_format(self):
+        from core.link_actions import _parse_tags
+        assert _parse_tags(None) == []
+        assert _parse_tags("") == []
+        assert _parse_tags("   ") == []
+        assert _parse_tags('["a","b"]') == ["a", "b"]
+        assert _parse_tags("a, b, c") == ["a", "b", "c"]
+        assert _parse_tags("x y") == ["x", "y"]
+        assert _parse_tags(["p", "q"]) == ["p", "q"]
+        assert _parse_tags("solo") == ["solo"]
+
 
 # ── route registration import-smoke (no TestClient — gotcha #9) ─────────
 

@@ -57,6 +57,35 @@ from core.link_state import (
 log = logging.getLogger("link_actions")
 
 
+def _parse_tags(raw: Any) -> List[str]:
+    """Normalise a pre_trade_log ``tags`` cell to a list of strings.
+
+    v3.0 operator-bug #5: pre_trade_log.tags is a DORMANT column — the
+    ``insert_pre_trade_log`` writer (core/db_trades.py) never populates it, so
+    it is NULL on every live row today (the calc's session tags ride the
+    calc_created EVENT instead). This parser is deliberately format-tolerant
+    (JSON array | comma/space-separated | already-a-list) so the resolver's tag
+    chips light up automatically if that column is ever wired, with no frontend
+    change. Until then it returns [] and the frontend omits the tag chips.
+    """
+    if not raw:
+        return []
+    if isinstance(raw, (list, tuple)):
+        return [str(t).strip() for t in raw if str(t).strip()]
+    s = str(raw).strip()
+    if not s:
+        return []
+    if s.startswith("["):
+        import json
+        try:
+            parsed = json.loads(s)
+            if isinstance(parsed, list):
+                return [str(t).strip() for t in parsed if str(t).strip()]
+        except (ValueError, TypeError):
+            pass
+    return [t.strip() for t in s.replace(",", " ").split() if t.strip()]
+
+
 async def manual_link_order(account_id: int, order_id: int, calc_id: str) -> str:
     """Operator manually links an order to a calc (spec §6 operator-link).
 
@@ -399,8 +428,13 @@ async def list_needs_review(account_id: int, limit: int = 100) -> List[Dict[str,
     """
     from core.calc_correlation import find_candidate_calcs
 
+    # v3.0 operator-bug #5: the resolver detail (frontend LkLinkResolver) shows
+    # the order's Size / Notional / Operator / Client-order-id — columns that
+    # already exist on `orders` but were never selected here. quantity drives
+    # both Size and the computed Notional (price × quantity).
     async with db._conn.execute(
         "SELECT id, exchange_order_id, symbol, side, order_type, price, "
+        "       quantity, client_order_id, operator_id, "
         "       tp_trigger_price, sl_trigger_price, created_at_ms, link_status "
         "FROM orders "
         "WHERE account_id = ? AND link_status IN (?, ?) "
@@ -430,4 +464,36 @@ async def list_needs_review(account_id: int, limit: int = 100) -> List[Dict[str,
             )
             order["candidates"] = []
         out.append(order)
+
+    # v3.0 operator-bug #5: enrich every candidate with its calc's
+    # model / R-multiple / tags. CandidateCalc (calc_correlation) carries only
+    # the match-diff legs, so the resolver's "momentum_v3 · R 2.25 · #session"
+    # meta line was dropped in P4 (HANDOFF: "not in the needs_review payload").
+    # These live on pre_trade_log keyed by calc_id — one batch fetch across ALL
+    # candidates in the queue (no N+1). Best-effort: a lookup miss leaves the
+    # candidate's meta as None and the frontend simply omits the line.
+    all_calc_ids = [
+        c.get("calc_id") for o in out for c in o.get("candidates", [])
+        if c.get("calc_id")
+    ]
+    if all_calc_ids:
+        try:
+            ptl_by_id = await db.get_pretrade_logs_by_calc_ids(all_calc_ids)
+        except Exception:
+            log.debug("needs_review: pre_trade_log enrichment failed", exc_info=True)
+            ptl_by_id = {}
+        for o in out:
+            for c in o.get("candidates", []):
+                ptl = ptl_by_id.get(c.get("calc_id"))
+                if not ptl:
+                    continue
+                # model_name is the operator's free-text label; fall back to the
+                # model_id FK (F11 rendering rule) so picker-tagged calcs that
+                # carry no free text still show an identity.
+                c["model"] = ptl.get("model_name") or (
+                    f"model #{ptl['model_id']}" if ptl.get("model_id") else None
+                )
+                c["model_id"] = ptl.get("model_id")
+                c["r"] = ptl.get("est_r")
+                c["tags"] = _parse_tags(ptl.get("tags"))
     return out
