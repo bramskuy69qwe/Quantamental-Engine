@@ -1,9 +1,119 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-07-24 (**v3.0 EXECUTION — P0-P7 SHIPPED + P8 AUDIT FULLY REMEDIATED: ledger `d8bd5c8` → wave 1 `37d012e` (fabrication) → wave 2 `15e77bb` (D2/D3 code) → doc wave `0c2da37` (doc-truth + sweep). EVERY audit finding is closed; NEXT = the 3 operator decision points → acceptance-gated retirement.** A live-DB incident earlier in the arc was caught + FULLY restored — details in the P2 block.)
-**Branch**: **`v3.0/ui-plan-audit` — LOCAL ONLY (unpushed), HEAD `2f05663`, working tree CLEAN.** Commit chain on top of the plan-audit docs (`9e9e5f4`): `b14b3b3` render-as-is clarify · **`1221b16` P0** · **`8b23417` P1** · **`35ffff1`+`cca3eb7` P2** · `9e85249` launch-v3.bat · **`a1fde0b` P3** · **`319daa3`+`b55d317` P4** · `44a4077` P5-charge docs · **`13c62de` P5 Analytics** · **`81a6594` P6 Regime** · `0116083`+`e43a7e1` PaneFoot arc · **`22b03b9` P7 Models** · `1bfb244` wrap · **`3e6bb45` PaneFoot completeness** · `4b2370a` wrap · **`d8bd5c8` P8 audit ledger** · **`37d012e` P8 wave 1** · `48248b9` wrap · **`15e77bb` P8 wave 2** · `113006c` wrap · **`0c2da37` P8 doc wave** · `2f05663` session wrap (HEAD). Base = the v2.7 line (`92b753b`, pushed). **Operator merges/pushes v3.0 at their call.**
-**Tests**: **4255 passed / 7 skipped / 3 deselected** (SOLO, `.venv`, FULL gate green at the doc-wave close — the last of 6 green full runs this session; +31 P7 pins, +3 wave-2 pins over the P6 bundle). **NB the F5 tripwire fires its BENIGN branch while the engine runs alongside** (engine log + news-scheduler upserts = expected drift; investigated at wave 1 — NOT a test leak; re-run with the engine stopped for a silent gate). Watch item (older): a once-off collection-order ERROR in `test_phase8_audit_followup.py::TestSizeDriftNotification` (one P7-era run; never reproduced). ALWAYS run SOLO on the **`.venv`** interpreter (user-site Python lacks `pytest-timeout` → drops the 30 s guardrail). Fresh worktree/clone: run `scripts/provision_test_env.py` FIRST (CLAUDE.md § "Fresh worktree / clone").
-**Engine**: **RUNNING since 2026-07-23 18:42** (operator-started, 2× uvicorn :8000, the HANDOFF recipe) — serves `static/v3` per-request, so a browser refresh picks up the current bundle **`36ffe0a5ee`**. **NB wave 2 changed PYTHON routes** (`_journal_stats_context` daily_pnl + signals `series`) — the running engine predates them, so the Monthly bar chart + macro sparklines render their empty-states until the NEXT engine restart (every other P8 fix is JSX/docs-only and live on refresh). Surfaced observations from the live log (NOT filed): the news fetcher upserts 100 items every ~16 s (confirm the cadence is intended); httpx INFO lines write the **Finnhub API token in cleartext** into `data/logs/risk_engine.jsonl` (pre-existing leak — ledger candidate).
+**Date**: 2026-07-25 (**v3.0 OPERATOR BUG-LIST PASS — all 8 reported bugs + 2 follow-up design-parity rounds SHIPPED; the 3 P8 decision points are ANSWERED. NEXT PROGRAM = inconsistency audit of the built `/v3` frontend vs the Meridian standalone benchmark** — now committed in-repo, see § "▶▶ NEXT SESSION".)
+**Branch**: **`v3.0/ui-plan-audit` — LOCAL ONLY (unpushed), working tree CLEAN.** 16 commits this session on top of `361b98b`: `23d04de` #1 equity · `4ce6516` #4 snapshot-reader · `ff368be` phantom-equity tool · `f5b5f93`+`9125d6e` #2 DataList tools · `4b21db6` #5 manual-link · `c39119f` #6 dialog + #7 calendar · `88ce716`+`a1390a1`+`c871c18` clock arc · `7617b73` #8a MFE/MAE re-source · `74e687f` #8b excursion tool · `0988882` REASON resolver · `7fb64fc` linkage inbox · `5251d0d` history #1-3 · this wrap (HEAD). Base = the v2.7 line (`92b753b`, pushed). **Operator merges/pushes v3.0 at their call.**
+**Tests**: **4326 passed / 7 skipped / 3 deselected** (SOLO, `.venv`, FULL gate green — 9 green full runs this session; +71 pins over the P8 bundle's 4255). ALWAYS run SOLO on the **`.venv`** interpreter (user-site Python lacks `pytest-timeout` → drops the 30 s guardrail). The F5 tripwire fires its BENIGN branch only when the engine runs alongside — it was STOPPED for the later runs, so those gates are silent. Fresh worktree/clone: run `scripts/provision_test_env.py` FIRST (CLAUDE.md § "Fresh worktree / clone").
+**Engine**: **STOPPED.** The operator hit a port-8000 conflict at session end; both operator-started uvicorn PIDs (32520/45848, up since 2026-07-24 23:44) were confirmed as the engine and killed — port verified free. **A RESTART IS REQUIRED and lands four backend changes at once**: the CCXT clock auto-fix, `/api/state`'s clock fields (feeds the drift banner), the MFE/MAE re-source, and P8 wave-2's Python routes (Monthly bar + macro sparklines). Bundle on disk **`10983f236b`**; hard-refresh after restart. Unfiled live-log observations (still open): news fetcher upserts 100 items every ~16 s; httpx INFO writes the **Finnhub API token in cleartext** into `data/logs/risk_engine.jsonl` (pre-existing leak — ledger candidate).
+
+## ▶ SESSION CLOSE 2026-07-25 — operator bug-list pass (8 bugs) + 2 design-parity rounds
+
+The operator live-drove `/v3` and reported 8 bugs, then twice more caught
+design mismatches against Claude-design screenshots. All are shipped. **Every
+fix was verified SOLO — subagents were not enabled this session, so there are
+NO independent-agent audits on any of these commits** (a deliberate,
+operator-known deviation from the house cycle; each commit says so).
+
+| # | Bug | Commit | Mechanism (investigated, not assumed) |
+|---|---|---|---|
+| 1 | Equity curve flips to $278 | `23d04de` | Binance adapter mapped `totalWalletBalance` (wallet, EXCLUDES uPnL) onto `total_equity`; every REST poll knocked equity down by exactly the open uPnL, the next mark tick restored it. Same class as **FE-9**, on the REST path. |
+| — | phantom rows already persisted | `ff368be` | cleanup tool; **operator APPLIED it** — 4569 rows corrected, then I cleared the `min_total_equity` ratchet latch. |
+| 2 | No search/sort/filter in DataLists | `f5b5f93`+`9125d6e` | 16 sites forced `tools={false}`; lifting them wasn't enough — `DL_AUTO_MIN=5` was tuned to the design's DENSE mock data, so sparse live tables stayed dark. |
+| 3 | No daily-PnL bar | — | NOT A BUG — engine predated wave-2 Python. |
+| 4 | Log says "snapshot 82.19" | `4ce6516` | split-migration residue: writer → legacy `risk_engine.db` (current), reader → `per_account/*.db` (frozen at 2026-04-28). |
+| 5 | Manual-link ≠ design | `4b21db6` | backend never SELECTed `quantity/operator_id/client_order_id`; candidates carried no model/R/tags. |
+| 6 | Cancel-calc dialog undesigned | `c39119f` | `ModelDialog` hoisted to primitives; replaced `window.confirm`. |
+| 7 | Calendar cells flat | `c39119f` | `aspect-ratio: 3/2` (interpreted 2:3 as height:width — **flagged, unconfirmed**). |
+| 8 | SPCX MAE −284/−270 never lost | `7617b73`+`74e687f` | `exchange_history` stores excursions PER income-row; reconciler assigns ONE full-position hi/lo to every partial scaled by qty. `calc_mfe_mae`'s own docstring had flagged this over-reporting as "needs separate investigation". |
+| + | OS clock drift | `88ce716`·`a1390a1`·`c871c18` | "synced" came from the UNSIGNED `/fapi/v1/time`; SIGNED reads failed **-1021** (>1000ms ahead, recvWindow only tolerates being LATE). |
+
+**Design-parity rounds** (operator screenshots as benchmark): `0988882`
+REASON-resolver fields (Hold / Closed at / Detected / P&L% / closed-time /
+Later) · `7fb64fc` linkage inbox 3-line strip (side badge, timestamp,
+`#order·age`, context line) — all were P8-era trims, all data already in the
+payload · `5251d0d` history tab-counts on INACTIVE tabs + SIDE/REASON facets +
+default page 75→50.
+
+**★ THE 3 P8 DECISION POINTS ARE ANSWERED** (were blocking retirement):
+1. **Primitives in nav** → **KEEP the DEV chip** ("still in development phase").
+2. **`tools={false}` convention** → **LIFTED** (bug #2 answered it); History
+   page size 25/50/**75**/100, default **50**.
+3. **WS account-namespacing** → **DEFERRED** (operator: "defer first").
+
+**▶▶ NEXT SESSION = INCONSISTENCY AUDIT vs the Meridian standalone.**
+The operator downloaded a **fully self-contained** design export, now committed
+at **`docs/design/meridian_v3/Meridian v3.0 (standalone).html`** (2.1 MB).
+It is NOT redundant with the existing `Meridian v3.0.html` (9.3 KB) — that one
+is a *loader* needing CDN React + Google Fonts + localhost HTTP; the standalone
+inlines React/ReactDOM/ECharts/GridStack/fonts/all 20 modules and **runs
+offline by double-click**. Charge: audit the BUILT `/v3` frontend against it
+and fix the drift.
+
+**★ VERIFIED THIS SESSION — the benchmark and the in-repo reference AGREE.**
+I extracted all 34 manifest entries and diffed the 20 app modules against
+`docs/design/meridian_v3/v25/src/*.jsx`: **16 byte-identical, 4 differing ONLY
+by unicode escaping** (`·`→`·`, `—`→`—`, `×`→`×`). So the
+vendored reference is CURRENT and trustworthy — **the operator's repeated
+mismatches were genuine PORT gaps in our React implementation, never a stale
+reference.** Practical consequence: audit **source-to-source against
+`v25/src/*.jsx`** (fast, greppable) and use the standalone as the *rendered*
+oracle. Extraction recipe if needed again:
+```python
+# sources live gzip+base64 inside <script type="__bundler/manifest">
+import re, json, base64, gzip
+s = open("docs/design/meridian_v3/Meridian v3.0 (standalone).html", encoding="utf-8", errors="replace").read()
+man = json.loads(re.search(r'<script type="__bundler/manifest">(.*?)</script>', s, re.S).group(1).strip())
+for k, v in man.items():
+    raw = base64.b64decode(v["data"])
+    if v.get("compressed"): raw = gzip.decompress(raw)   # skip b"wOF2" (fonts) + the 5 vendor blobs
+```
+Audit-scope warning: the design is **mock-data-shaped** (dense tables, fabricated
+values). Judge STRUCTURE/affordances, not the numbers — several "missing" design
+elements are deliberately-dropped fabrications (P8 wave 1 killed that class).
+Named still-open deviations to NOT re-file as new: History search sits ABOVE the
+tabs (server-paged — a client box would miss other pages); "Detected" shows the
+real `exit_reason`, not the mock's "opposite-side mkt"; models-report keeps
+`tools={false}` (verbatim-capture fidelity).
+
+**▶ OPERATOR ACTIONS PENDING:**
+1. **Restart the engine** (see the Engine line — lands 4 backend changes).
+2. **Optional `--apply`**: `scripts/clean_overattributed_excursions.py` —
+   dry-run verified, **67 rows / 10 symbols** (SPCX 34 worst −284; SAGA 60%,
+   LAB 45%, BSB 27% adverse). Pure DB hygiene: the analytics already read
+   `closed_positions` after `7617b73`, so it changes no displayed number.
+   Engine must be stopped (the tool REFUSES on a non-empty `-wal`).
+3. Confirm **#7's aspect direction** (`3/2` shipped; flip both literals to
+   `'2 / 3'` if portrait was meant).
+4. Push/merge `v3.0/ui-plan-audit` at your call (still local-only).
+
+**★ MECHANISMS + GOTCHAS worth keeping:**
+- **`NormalizedAccount` now splits `total_equity` (margin balance) vs
+  `wallet_balance` (settled cash).** `data_cache.balance_usdt` MUST take the
+  wallet figure — it's the base `apply_mark_price` adds uPnL onto. Feeding it
+  equity double-counts. MEXC is a **named residue**: CCXT gives no uPnL split,
+  so wallet==equity there (unverified; ledger candidate).
+- **`DL_AUTO_MIN = 1`** (was 5). Empty tables short-circuit to EmptyState
+  ABOVE the toolbar and facets need ≥2 distinct values, so 1-row tables show
+  search+sort only. Don't "restore" 5 — sparse live data is the real shape.
+- **The v3 bundle is ONE concatenated top-level scope** (`build.mjs` joins with
+  `;`, no IIFE). A duplicate top-level `const` is a BUILD-TIME parse failure —
+  that's why hoisting `ModelDialog` into primitives required DELETING it from
+  `pages-models.jsx`. The `vm.Script` guard is PARSE-only: it still cannot
+  catch unbound identifiers (the P6-arc CRIT class).
+- **`pre_trade_log.tags` is a DORMANT column** — `insert_pre_trade_log` never
+  writes it (session tags ride the `calc_created` EVENT), so it is NULL on
+  every live row; the resolver's tag chips stay empty by design. Live
+  `model_name` is `''` too — the meta line honestly shows R + created/age only.
+- **`account_snapshots` split residue**: writer → legacy DB, an orphan copy
+  sits in `per_account/*.db` (frozen 2026-04-28, 82.19) and a third in
+  `global.db`. Bug #4 pointed the reader at the writer's store; a real
+  migration is still unfiled.
+- **`get_trade_distribution_series` deliberately still reads
+  `exchange_history`** — its `income` is per-event realized PnL (correct); only
+  the excursion columns were over-attributed.
+- Two live-DB cleanup tools now exist and share one discipline (dry-run
+  default, verbatim planned changes, timestamped backup, refuse on non-empty
+  `-wal`): `clean_phantom_equity_snapshots.py` (APPLIED) and
+  `clean_overattributed_excursions.py` (PENDING).
 
 ## ▶ SESSION CLOSE 2026-07-24 — P7 Models + the whole P8 audit-and-remediation arc
 
