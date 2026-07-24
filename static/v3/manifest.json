@@ -1,8 +1,8 @@
 {
-  "hash": "67ff2e99c2",
-  "app": "app.67ff2e99c2.js",
-  "tokens": "tokens.67ff2e99c2.css",
-  "shell": "shell.67ff2e99c2.css",
+  "hash": "edc6e351ea",
+  "app": "app.edc6e351ea.js",
+  "tokens": "tokens.edc6e351ea.css",
+  "shell": "shell.edc6e351ea.css",
   "modules": [
     "primitives.jsx",
     "charts.jsx",

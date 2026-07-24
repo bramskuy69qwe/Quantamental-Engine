@@ -48,6 +48,20 @@ const _lkAgeH = (h) => {
   const hh = Math.floor(h);
   return `${hh}h ${Math.round((h - hh) * 60)}m`;
 };
+// design-parity #2: hold-duration (ms → "6m 18s") + wall-clock HH:MM from ms.
+const _lkDur = (ms) => {
+  if (ms == null || isNaN(ms) || ms < 0) return '—';
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
+  const h = Math.floor(s / 3600);
+  return `${h}h ${Math.floor((s % 3600) / 60)}m`;
+};
+const _lkHM = (ms) => {
+  if (!ms) return '—';
+  const d = new Date(ms);
+  return isNaN(d) ? '—' : d.toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit' });
+};
 
 const LkLinkResolver = ({ item, onDone }) => {
   const cands = item.candidates || [];
@@ -78,7 +92,8 @@ const LkLinkResolver = ({ item, onDone }) => {
         <Badge tone={(item.side || '').toUpperCase() === 'BUY' || (item.side || '').toUpperCase() === 'LONG' ? 'ok' : 'err'}>{(item.side || '').toUpperCase()}</Badge>
         <LinkBadge status={item.link_status} />
         <div className="qe-grow" />
-        <span className="qe-mono" style={{ fontSize: '0.52rem', color: 'var(--qe-muted)' }}><PtAge ts={item.created_at_ms} /></span>
+        {/* design-parity #2: absolute placed-at time + relative age (was age only). */}
+        <span className="qe-mono" style={{ fontSize: '0.52rem', color: 'var(--qe-muted)' }}>{_lkHM(item.created_at_ms)} · <PtAge ts={item.created_at_ms} /></span>
       </div>
       {/* operator-bug #5: order-detail block matches the Meridian design —
           Size / Notional / Operator / Client-order-id (backend now selects
@@ -174,15 +189,26 @@ const LkReasonResolver = ({ item, onDone }) => {
   };
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      {/* design-parity #2: header carries P&L% + the closed-at time; the grid
+          fills in Hold / Closed at / Detected (all from the close row) — these
+          were the fields missing vs the Meridian ReasonResolver. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 6 }}>
         <span className="qe-mono" style={{ color: 'var(--qe-cyan)', fontWeight: 700, fontSize: '0.72rem' }}>{item.symbol}</span>
         <Badge tone={item.direction === 'LONG' ? 'ok' : 'err'}>{item.direction}</Badge>
-        <span className="qe-mono" style={{ fontWeight: 700, color: lpSgn(item.net_pnl) }}>{lpUsd(item.net_pnl)}</span>
+        <span className="qe-mono" style={{ fontWeight: 700, color: lpSgn(item.net_pnl) }}>
+          {lpUsd(item.net_pnl)}{(item.entry_price && item.quantity)
+            ? ` (${lpPct(item.net_pnl / (item.entry_price * item.quantity) * 100)})` : ''}
+        </span>
+        <div className="qe-grow" />
+        <span className="qe-mono" style={{ fontSize: '0.52rem', color: 'var(--qe-muted)' }}>closed {_lkHM(item.exit_time_ms)}</span>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '5px 10px', padding: '6px 8px', border: '1px solid var(--qe-line)', marginBottom: 8 }}>
         <KV l="Entry" v={lpPx(item.entry_price)} />
         <KV l="Exit" v={lpPx(item.exit_price)} />
+        <KV l="Hold" v={_lkDur(item.hold_time_ms)} />
         <KV l="Funding" v={lpUsd(item.funding_fees, 3)} color={lpSgn(item.funding_fees)} />
+        <KV l="Closed at" v={_lkHM(item.exit_time_ms)} />
+        <KV l="Detected" v={(LP_EXIT_REASONS[item.exit_reason] || {}).label || item.exit_reason || '—'} />
       </div>
       <div className="qe-mono" style={{ fontSize: '0.54rem', color: 'var(--qe-muted)', marginBottom: 7 }}>No calc matched this close — categorize it (optional, never blocks).</div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 5, marginBottom: 8 }}>
@@ -199,6 +225,10 @@ const LkReasonResolver = ({ item, onDone }) => {
       </div>
       <input className="qe-input" placeholder="optional note…" value={note} onChange={(e) => setNote(e.target.value)} />
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 8 }}>
+        {/* design-parity #2: "Later" defers the close — it stays pending in the
+            queue (nothing written), just dismisses the active detail. */}
+        <button className="qe-btn qe-btn-sm qe-btn-ghost" disabled={busy}
+          onClick={() => onDone(`${item.symbol} — left for later`)}>Later</button>
         <button className="qe-btn qe-btn-sm qe-btn-primary" disabled={!pick || busy} style={{ opacity: pick ? 1 : 0.45 }} onClick={save}>
           {busy ? <Spinner size="0.62rem" /> : 'Save'}
         </button>
