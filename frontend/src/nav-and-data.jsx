@@ -150,6 +150,34 @@ const WorkspaceBar = ({ interactive = false, persistId = 'dashboard' }) => {
   );
 };
 
+// ── OS-clock-drift banner (operator clock-drift bug) ────────────────────────
+// Renders in the SAME shared under-nav slot as the halt banner (NotifBanner),
+// stacked ABOVE it (system alert takes priority), on EVERY page — a drifted OS
+// clock breaks every SIGNED exchange read (Binance -1021, >1000ms ahead), not
+// one page. Reads the shared QE_CHROME store (/api/state clock_severity ·
+// offset = exchange − local, so local drift = −offset; positive ⇒ AHEAD, the
+// -1021 direction). Null (0-height) when the clock is ok.
+const ClockDriftBanner = () => {
+  const ch = useQeChrome();
+  const state = (ch && ch.state) || {};
+  const sev = state.clock_severity;
+  if (!sev || sev === 'ok') return null;
+  const drift = -Math.round(state.clock_offset_ms || 0);
+  const driftStr = (drift >= 0 ? '+' : '') + drift + 'ms';
+  const failed = sev === 'failed';
+  return (
+    <Banner
+      tone={sev === 'warn' ? 'warn' : 'err'}
+      tag="CLOCK"
+      title={failed ? 'CLOCK SYNC FAILED — exchange server time unreachable'
+                    : 'OS CLOCK DRIFT — exchange requests may be rejected'}
+      detail={failed
+        ? 'Could not reach exchange server time; if account/funding reads keep failing, sync the OS clock.'
+        : `local clock ${driftStr} vs exchange · Binance rejects signed reads >1000ms ahead (-1021) · sync the OS clock`}
+    />
+  );
+};
+
 const TopNavStd = ({page='Dashboard', onChange, variant='line', dense=false}) => {
   const [locked, toggleLock] = useWorkspaceLock();
   const ch = useQeChrome();
@@ -264,6 +292,9 @@ const TopNavStd = ({page='Dashboard', onChange, variant='line', dense=false}) =>
       </span>
     </div>
   </div>
+  {/* operator clock-drift bug: OS-drift banner stacks ABOVE the halt banner in
+      the shared under-nav slot (system alert first, like a notification stack). */}
+  <ClockDriftBanner/>
   <NotifBanner/>
   <WorkspaceBar interactive={page === 'Dashboard'} />
   </React.Fragment>
