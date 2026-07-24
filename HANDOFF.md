@@ -39,7 +39,24 @@ default page 75→50.
    page size 25/50/**75**/100, default **50**.
 3. **WS account-namespacing** → **DEFERRED** (operator: "defer first").
 
-**▶▶ NEXT SESSION = INCONSISTENCY AUDIT vs the Meridian standalone.**
+**★★ THE INCONSISTENCY AUDIT IS DONE (2026-07-25) — ledger
+`docs/audits/2026-07-25-v3.0-meridian-design-consistency-audit.md`.**
+14 agents (10 surface finders → dedupe barrier → 4 adversarial verifiers,
+run `wf_e6568dce-4d1`, 0 errors/0 empty). **34 confirmed: 0 CRIT, 0 HIGH,
+5 MED, 21 LOW, 8 NIT; 5 refuted; 17 of 34 severities corrected by the verify
+pass** (treat finder output as a draft — that ratio is the calibration record).
+The port is materially faithful: no missing page/tab/pane anywhere, and 6 of 10
+surfaces carry nothing above LOW (`primitives` byte-clean, `regime` 0 confirmed).
+Drift is concentrated in dropped derived readouts + a few lost affordances.
+The 5 MED: Config DD/weekly warn+hard-stop thresholds not editable anywhere ·
+History Orders tab has no trigger-price column (109/258 live rows render
+`PRICE 0.000000`) · Pre-Trade Order Inputs foot claims `local` while hosting a
+1 Hz price poll that swallows failures AND feeds market-order sizing ·
+chrome Desktop-notification switch is inert · no exchange feed-health dot in the
+chrome. **REMEDIATION IS NOT STARTED — operator picks scope.** The ledger's
+Refuted section records the false-positive classes; don't re-file them.
+
+**▶ (superseded, kept for context) NEXT SESSION = INCONSISTENCY AUDIT vs the Meridian standalone.**
 The operator downloaded a **fully self-contained** design export, now committed
 at **`docs/design/meridian_v3/Meridian v3.0 (standalone).html`** (2.1 MB).
 It is NOT redundant with the existing `Meridian v3.0.html` (9.3 KB) — that one
