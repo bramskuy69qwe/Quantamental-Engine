@@ -331,29 +331,42 @@ async def _history_refresh_loop():
 
 # ── Startup equity delta check (v2.4 Priority 2d) ───────────────────────────
 
-def _check_startup_equity_delta() -> None:
-    """Compare live equity to latest snapshot; warn if delta > 1%."""
+async def _check_startup_equity_delta() -> None:
+    """Compare live equity to latest snapshot; warn if delta > 1%.
+
+    **Reads through `db.get_last_account_state` — the store the snapshot
+    WRITER actually uses (v3.0 operator-bug #4).** This check used to open
+    its own connection on `db_account_settings._resolve_db_path(aid)`, i.e.
+    the PER-ACCOUNT database, while `db.insert_account_snapshot` writes
+    `account_snapshots` through the legacy combined DB. `db_router`'s
+    documented target layout does put snapshots per-account, but the writer
+    never migrated, so the per-account copy is an orphan frozen at the split
+    date — the operator saw every startup log a ~280% delta against a
+    three-month-old row (`snapshot=82.19`) while crash recovery, which reads
+    the legacy store correctly, logged the true ~306 in the same boot.
+
+    Routing this through the public helper also drops a hand-rolled
+    duplicate query and inherits its `ORDER BY id DESC`: `snapshot_ts` is
+    TEXT and the live table holds two different ISO widths (25- and
+    32-char), so lexicographic ordering on it is fragile by construction.
+
+    Migrating the WRITER to the per-account store per the router's target
+    layout is the real end state, but that is a data migration on the live
+    write path — deliberately out of scope here (ledger candidate), as is
+    the stale orphan copy sitting in both `global.db` and `per_account/`.
+    """
     try:
         aid = app_state.active_account_id
         live_equity = app_state.account_state.total_equity
         if live_equity <= 0:
             return
 
-        import sqlite3
-        from core.db_account_settings import _resolve_db_path
-        db_path = _resolve_db_path(aid)
-        conn = sqlite3.connect(db_path)
-        row = conn.execute(
-            "SELECT total_equity, snapshot_ts FROM account_snapshots "
-            "WHERE account_id = ? ORDER BY snapshot_ts DESC LIMIT 1",
-            (aid,),
-        ).fetchone()
-        conn.close()
-
-        if not row or not row[0]:
+        from core.database import db
+        snap = await db.get_last_account_state(account_id=aid)
+        if not snap or not snap.get("total_equity"):
             return
-        snap_equity = row[0]
-        snap_ts = row[1]
+        snap_equity = snap["total_equity"]
+        snap_ts = snap.get("snapshot_ts")
 
         if snap_equity <= 0:
             return
@@ -441,7 +454,7 @@ async def _startup_fetch():
             app_state.ws_status.add_log(f"INIT ERROR ({label}): {e}")
 
     # v2.4 Priority 2d: equity delta warning on startup
-    _check_startup_equity_delta()
+    await _check_startup_equity_delta()
 
     # OM-5b: one-shot basic order sync on startup.
     # Catches pre-existing orders placed before engine started.
