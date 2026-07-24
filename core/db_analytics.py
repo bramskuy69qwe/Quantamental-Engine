@@ -194,18 +194,38 @@ class AnalyticsMixin:
         return rows
 
     async def get_mfe_mae_series(self, from_ms: int, to_ms: int, account_id: int = 1) -> List[Dict[str, Any]]:
-        """Returns reconciled trades with MFE/MAE for scatter plot and ratio calcs."""
+        """Per-trade MFE/MAE for the Excursions scatter + Sharpe/Sortino ratios.
+
+        SOURCED FROM closed_positions (v3.0 MFE/MAE-integrity bug), NOT
+        exchange_history. exchange_history stores excursions PER income-row
+        (per partial close) and the reconciler computes ONE high/low over the
+        whole position's window, assigning it to every partial scaled by qty —
+        so a scale-in/out position over-attributes the full-position excursion
+        to each row (SPCX read MAE -284 vs the true -111; SAGA/LAB read
+        45-61% adverse, liquidation territory). closed_positions is rebuilt
+        from the real Binance userTrades — one CORRECT excursion per position,
+        and MORE comprehensive than exchange_history (see the analytics ledger
+        entry). This is also the right GRANULARITY: a "Per-Trade Excursions"
+        scatter wants one point per trade, not per partial fill.
+
+        Field names preserved (trade_key/income/notional/qty/hold_ms) so the
+        two consumers — the scatter route and sharpe_mfe/sortino_mae — need no
+        change. income = net_pnl (net realized); notional = qty×entry.
+        """
         async with self._conn.execute(
             """
-            SELECT trade_key, symbol, direction, income, notional, mfe, mae,
-                   entry_price, qty,
-                   (time - open_time) AS hold_ms
-            FROM exchange_history
-            WHERE account_id = ? AND time >= ? AND time <= ?
-              AND open_time > 0
+            SELECT ('cp-' || id)              AS trade_key,
+                   symbol, direction,
+                   net_pnl                    AS income,
+                   (quantity * entry_price)   AS notional,
+                   mfe, mae,
+                   entry_price,
+                   quantity                   AS qty,
+                   hold_time_ms               AS hold_ms
+            FROM closed_positions
+            WHERE account_id = ? AND exit_time_ms >= ? AND exit_time_ms <= ?
               AND (mfe != 0 OR mae != 0)
-              AND income_type NOT IN ('FUNDING_FEE','TRANSFER')
-            ORDER BY time DESC
+            ORDER BY exit_time_ms DESC
             """,
             (account_id, from_ms, to_ms),
         ) as cur:

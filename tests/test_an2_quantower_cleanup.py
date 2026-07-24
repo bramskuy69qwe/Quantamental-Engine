@@ -84,6 +84,21 @@ async def test_db():
                VALUES (1, ?, 'BTCUSDT', 'BUY', 'LONG', 68000.0, 0.003, 0.10, 1775300000000)""",
             (tk,),
         )
+    # v3.0 MFE/MAE-integrity: get_mfe_mae_series now reads closed_positions
+    # (the authoritative userTrades rebuild), not exchange_history. Seed the
+    # two real trades there too so the scatter/ratio path has its source.
+    for eoid, sym, dr, q, ep, xp, pnl, mfe_, mae_, xt in [
+        ("cp-btc", "BTCUSDT", "LONG",  0.003, 68000.0, 68500.0,  5.25, 0.52, -0.10, 1775300000000),
+        ("cp-eth", "ETHUSDT", "SHORT", 0.1,   3800.0,  3820.0,  -2.10, 0.05, -0.21, 1775310000000),
+    ]:
+        await db._conn.execute(
+            """INSERT INTO closed_positions
+               (account_id, exchange_position_id, symbol, direction, quantity,
+                entry_price, exit_price, entry_time_ms, exit_time_ms,
+                realized_pnl, net_pnl, mfe, mae, hold_time_ms, source)
+               VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'rebuilt_from_fills')""",
+            (eoid, sym, dr, q, ep, xp, xt - 600000, xt, pnl, pnl, mfe_, mae_, 600000),
+        )
     await db._conn.commit()
 
     # Apply AN-2 migration SQL (simulates what _run_once does on a DB that
@@ -172,17 +187,20 @@ async def test_journal_stats_exclude_qt_rows(test_db):
 
 
 @pytest.mark.asyncio
-async def test_mfe_mae_series_exclude_qt_rows(test_db):
-    """get_mfe_mae_series returns only real trades — no qt: MAE corruption."""
+async def test_mfe_mae_series_reads_closed_positions(test_db):
+    """get_mfe_mae_series now sources from closed_positions (v3.0 MFE/MAE
+    integrity) — the authoritative userTrades rebuild — so qt: / over-
+    attributed exchange_history rows can never reach the excursion scatter."""
     trades = await test_db.get_mfe_mae_series(0, 2000000000000)
     symbols = [t["symbol"] for t in trades]
-    # No SIRENUSDT or STOUSDT qt: rows
+    # No SIRENUSDT / STOUSDT — those only ever existed as exchange_history rows,
+    # which this method no longer reads.
     assert "SIRENUSDT" not in symbols
-    # Real rows present
+    assert set(symbols) == {"BTCUSDT", "ETHUSDT"}
     assert len(trades) == 2
     for t in trades:
-        # No impossible MAE values
         assert t["mae"] > -10.0, f"Corrupted MAE {t['mae']} on {t['symbol']}"
+        assert str(t["trade_key"]).startswith("cp-")   # closed_positions key
 
 
 @pytest.mark.asyncio
