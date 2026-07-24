@@ -624,8 +624,7 @@ const RegimeTabOverview = ({ current, curFoot, mults, multsFoot, onGoBackfill })
         <Pane title="Recent Regime Changes" count={changes.length} style={{ height: '100%' }} bodyStyle={{ padding: 0 }}
           foot={tlFoot}>
           <DataList
-            selKey="date" tools={false}
-            onClick={(r) => setSelChange((s) => (s === r.date ? null : r.date))}
+            selKey="date"            onClick={(r) => setSelChange((s) => (s === r.date ? null : r.date))}
             selected={selChange}
             columns={[
               { key: 'date', label: 'DATE', cell: 'dim' },
@@ -769,8 +768,7 @@ const RegimeTabBackfill = ({ job, onStart }) => {
             <EmptyState tone="warn" glyph="⚠" msg="coverage fetch failed" hint="engine unreachable?" />
           ) : (
             <DataList
-              selKey="signal_name" tools={false}
-              columns={[
+              selKey="signal_name"              columns={[
                 { key: 'signal_name', label: 'SIGNAL', render: (r) => <span style={{ color: (r.count || 0) > 0 ? 'var(--qe-text)' : 'var(--qe-sub)', fontWeight: 600 }}>{labelOf(r.signal_name)}</span> },
                 { key: 'source', label: 'SOURCE', cell: 'dim' },
                 { key: 'min_date', label: 'FROM', cell: 'dim', render: (r) => r.min_date || <span style={{ color: 'var(--qe-muted)' }}>—</span> },
@@ -949,8 +947,7 @@ const RegimeTabNews = () => {
             </div>
           ) : (
             <DataList
-              selKey="id" dense tools={false}
-              onClick={(n) => { setNewsView('magazine'); setExpanded(n.id); }}
+              selKey="id" dense              onClick={(n) => { setNewsView('magazine'); setExpanded(n.id); }}
               columns={[
                 { key: 'published_at', label: 'TIME', cell: 'dim', render: (n) => _rgRel(n.published_at, nowMs) },
                 { key: 'source', label: 'SRC', render: (n) => <span style={{ ...srcPill(n.source), padding: '1px 5px', fontSize: '0.5rem', fontWeight: 700, fontFamily: 'var(--qe-mono)', letterSpacing: '0.06em' }}>{(n.source || '?').toUpperCase()}</span> },

@@ -450,7 +450,6 @@ const CfgConnectionsTab = () => {
               <DataList
                 dense={false}
                 selKey="provider"
-                tools={false}
                 emptyMsg="no connections"
                 columns={[
                   { key: 'label',    label: 'PROVIDER', render: (c) => <span style={{ fontWeight: 700 }}>{c.label}</span> },

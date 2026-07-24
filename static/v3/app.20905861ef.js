@@ -3172,7 +3172,6 @@ const CfgConnectionsTab = () => {
       {
         dense: false,
         selKey: "provider",
-        tools: false,
         emptyMsg: "no connections",
         columns: [
           { key: "label", label: "PROVIDER", render: (c) => /* @__PURE__ */ React.createElement("span", { style: { fontWeight: 700 } }, c.label) },
@@ -4642,7 +4641,7 @@ const LinkagePage = () => {
       bodyStyle: { padding: 0 },
       foot: lkFoot("positions", positions != null)
     },
-    positions == null ? /* @__PURE__ */ React.createElement("div", { style: { padding: 10 } }, /* @__PURE__ */ React.createElement(Spinner, { label: "loading" })) : /* @__PURE__ */ React.createElement(DataList, { columns: posCols, rows: positions, selKey: "position_id", tools: false, emptyMsg: "no open positions" })
+    positions == null ? /* @__PURE__ */ React.createElement("div", { style: { padding: 10 } }, /* @__PURE__ */ React.createElement(Spinner, { label: "loading" })) : /* @__PURE__ */ React.createElement(DataList, { columns: posCols, rows: positions, selKey: "position_id", emptyMsg: "no open positions" })
   )), /* @__PURE__ */ React.createElement(GridItem, { x: 9, y: 9, w: 8, h: 8, minW: 4, minH: 5 }, /* @__PURE__ */ React.createElement(
     Pane,
     {
@@ -4651,7 +4650,7 @@ const LinkagePage = () => {
       bodyStyle: { padding: 0 },
       foot: lkFoot("calcs", calcs != null)
     },
-    calcs == null ? /* @__PURE__ */ React.createElement("div", { style: { padding: 10 } }, /* @__PURE__ */ React.createElement(Spinner, { label: "loading" })) : /* @__PURE__ */ React.createElement(DataList, { columns: calcCols, rows: calcs, selKey: "calc_id", tools: false, emptyMsg: "no active calcs" })
+    calcs == null ? /* @__PURE__ */ React.createElement("div", { style: { padding: 10 } }, /* @__PURE__ */ React.createElement(Spinner, { label: "loading" })) : /* @__PURE__ */ React.createElement(DataList, { columns: calcCols, rows: calcs, selKey: "calc_id", emptyMsg: "no active calcs" })
   )), /* @__PURE__ */ React.createElement(GridItem, { x: 17, y: 9, w: 7, h: 8, minW: 4, minH: 5 }, /* @__PURE__ */ React.createElement(
     Pane,
     {
@@ -4667,7 +4666,6 @@ const LinkagePage = () => {
         columns: fundCols,
         rows: funding.rows || [],
         selKey: "position_id",
-        tools: false,
         emptyMsg: "no open positions",
         summary: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", null, "net next ", funding.countdown_s != null ? lpClock(funding.countdown_s) : "\u2014"), /* @__PURE__ */ React.createElement("span", { style: { color: lpSgn(funding.net_next) } }, lpUsd(funding.net_next, 3)))
       }
@@ -4680,7 +4678,7 @@ const LinkagePage = () => {
       bodyStyle: { padding: 0 },
       foot: lkFoot("closes", closes != null)
     },
-    closes == null ? /* @__PURE__ */ React.createElement("div", { style: { padding: 10 } }, /* @__PURE__ */ React.createElement(Spinner, { label: "loading" })) : /* @__PURE__ */ React.createElement(DataList, { columns: closeCols, rows: closes, selKey: "id", tools: false, emptyMsg: "no recent closes" })
+    closes == null ? /* @__PURE__ */ React.createElement("div", { style: { padding: 10 } }, /* @__PURE__ */ React.createElement(Spinner, { label: "loading" })) : /* @__PURE__ */ React.createElement(DataList, { columns: closeCols, rows: closes, selKey: "id", emptyMsg: "no recent closes" })
   )))), toast && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", bottom: 14, left: "50%", transform: "translateX(-50%)", zIndex: 80, display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", background: "var(--qe-bg)", border: "1px solid var(--qe-green)" } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-green)" } }, "\u2713"), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.62rem", color: "var(--qe-text)" } }, toast)), /* @__PURE__ */ React.createElement(StatusFooter, null));
 };
 Object.assign(window, { LinkagePage });
@@ -4769,7 +4767,7 @@ const HistoryPage = () => {
   const [period, setPeriod] = React.useState("30d");
   const [q, setQ] = React.useState("");
   const [page, setPage] = React.useState(1);
-  const [perPage, setPerPage] = React.useState(20);
+  const [perPage, setPerPage] = React.useState(75);
   const [data, setData] = React.useState(null);
   const [loading, setLoading] = React.useState(false);
   const [sel, setSel] = React.useState(null);
@@ -4985,18 +4983,26 @@ const HistoryPage = () => {
       bodyStyle: { padding: 0, display: "flex", flexDirection: "column" },
       foot: qeFootState({ loading: net.ms == null && !net.err, err: net.err, hasData: rows.length > 0, ms: net.ms, retrying: true })
     },
-    /* @__PURE__ */ React.createElement("div", { style: { flex: 1, overflow: "auto" } }, loading && !data ? /* @__PURE__ */ React.createElement("div", { style: { padding: 10 } }, /* @__PURE__ */ React.createElement(Spinner, { label: "loading" })) : /* @__PURE__ */ React.createElement(
-      DataList,
-      {
-        dense: true,
-        tools: false,
-        columns: COLS[tab],
-        rows,
-        selKey: "id",
-        selected: tab === "positions" && sel ? sel.id : null,
-        onClick: tab === "positions" ? (r) => openDrill(r) : void 0,
-        emptyMsg: "no rows in this window"
-      }
+    /* @__PURE__ */ React.createElement("div", { style: { flex: 1, overflow: "auto" } }, loading && !data ? /* @__PURE__ */ React.createElement("div", { style: { padding: 10 } }, /* @__PURE__ */ React.createElement(Spinner, { label: "loading" })) : (
+      // operator-bug #2: tools stay OFF here by design — this table is
+      // SERVER-PAGED (rows = one page only), and the page already owns
+      // search (symbol filter → server `search`), date presets, and
+      // paging. Client-side DataList tools would search/sort just the
+      // visible page, contradicting the server-owned window. Page size
+      // is operator-selectable (25/50/75/100, default 75) instead.
+      /* @__PURE__ */ React.createElement(
+        DataList,
+        {
+          dense: true,
+          tools: false,
+          columns: COLS[tab],
+          rows,
+          selKey: "id",
+          selected: tab === "positions" && sel ? sel.id : null,
+          onClick: tab === "positions" ? (r) => openDrill(r) : void 0,
+          emptyMsg: "no rows in this window"
+        }
+      )
     )),
     /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, padding: "4px 8px", borderTop: "1px solid var(--qe-line)", fontFamily: "var(--qe-mono)", fontSize: "0.58rem" } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, total, " rows \xB7 page ", page, "/", totalPages), /* @__PURE__ */ React.createElement("div", { className: "qe-grow" }), /* @__PURE__ */ React.createElement(
       "select",
@@ -5009,8 +5015,10 @@ const HistoryPage = () => {
           setPage(1);
         }
       },
-      /* @__PURE__ */ React.createElement("option", { value: "20" }, "20"),
-      /* @__PURE__ */ React.createElement("option", { value: "50" }, "50")
+      /* @__PURE__ */ React.createElement("option", { value: "25" }, "25"),
+      /* @__PURE__ */ React.createElement("option", { value: "50" }, "50"),
+      /* @__PURE__ */ React.createElement("option", { value: "75" }, "75"),
+      /* @__PURE__ */ React.createElement("option", { value: "100" }, "100")
     ), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-ghost", disabled: page <= 1, onClick: () => setPage((p) => p - 1) }, "\u2039"), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-ghost", disabled: page >= totalPages, onClick: () => setPage((p) => p + 1) }, "\u203A"))
   )), /* @__PURE__ */ React.createElement(GridItem, { x: 16, y: 0, w: 8, h: 24, minW: 6, minH: 6 }, /* @__PURE__ */ React.createElement(
     Pane,
@@ -5023,13 +5031,17 @@ const HistoryPage = () => {
     !dp ? /* @__PURE__ */ React.createElement(EmptyState, { tone: "neutral", glyph: "\u25CE", msg: "Select a closed position", hint: "Click a row to inspect its fills, exec link and amendments." }) : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, /* @__PURE__ */ React.createElement(SecLbl, { rule: true, right: /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-ghost", onClick: () => {
       setSel(null);
       setDrill(null);
-    } }, "\u2715") }, dp.symbol, " \xB7 CLOSED \xB7 ", dp.direction), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 10px" } }, /* @__PURE__ */ React.createElement(KV, { l: "Net", v: lpUsd(dp.net_pnl), color: lpSgn(dp.net_pnl) }), /* @__PURE__ */ React.createElement(KV, { l: "Duration", v: _hDur(dp.hold_time_ms) }), /* @__PURE__ */ React.createElement(KV, { l: "Entry", v: lpPx(dp.entry_price) }), /* @__PURE__ */ React.createElement(KV, { l: "Exit", v: lpPx(dp.exit_price) }), /* @__PURE__ */ React.createElement(KV, { l: "TP plan", v: lpPx(dp.tp_price), color: "var(--qe-green)" }), /* @__PURE__ */ React.createElement(KV, { l: "SL plan", v: lpPx(dp.sl_price), color: "var(--qe-red)" }), /* @__PURE__ */ React.createElement(KV, { l: "MFE / MAE", v: `${_ptFmtN(dp.mfe)} / ${_ptFmtN(dp.mae)}` }), /* @__PURE__ */ React.createElement(KV, { l: "Funding", v: lpUsd(dp.funding_fees, 3), color: lpSgn(dp.funding_fees) }), /* @__PURE__ */ React.createElement(KV, { l: "Model", v: dp.model_name || "\u2014" }), /* @__PURE__ */ React.createElement(KV, { l: "Calc", v: dp.calc_id ? String(dp.calc_id).slice(-8) : "\u2014", color: "var(--qe-cyan)" })), /* @__PURE__ */ React.createElement("div", { style: { borderTop: "1px solid var(--qe-line)" } }), /* @__PURE__ */ React.createElement(SecLbl, { rule: true }, "Fills"), drill == null ? /* @__PURE__ */ React.createElement(Spinner, { label: "loading" }) : !drill.fills.length ? /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.58rem", color: "var(--qe-muted)" } }, "No fills recorded for this position.") : /* @__PURE__ */ React.createElement(DataList, { dense: true, tools: false, selKey: "id", columns: [
-      { key: "timestamp_ms", label: "TIME", render: (f) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, _hFmtTs(f.timestamp_ms)) },
-      { key: "is_close", label: "ACT", render: (f) => /* @__PURE__ */ React.createElement(Badge, { tone: f.is_close ? "mute" : "info" }, f.is_close ? "C" : "O") },
-      { key: "price", label: "PRICE", align: "right", render: (f) => lpPx(f.price) },
-      { key: "quantity", label: "QTY", align: "right" },
-      { key: "exec", label: "EXEC LINK", sort: false, render: (f) => f.is_close || !f.calc_id ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014") : f.exec_link_status === "linked" ? /* @__PURE__ */ React.createElement(Badge, { tone: "ok" }, "\u25CF LINKED") : f.exec_link_status === "partial" ? /* @__PURE__ */ React.createElement(Badge, { tone: "warn" }, "\u26A0 ", f.exec_match_count, "/1") : /* @__PURE__ */ React.createElement(Badge, { tone: "err" }, "\u2717 UNLINKED") }
-    ], rows: drill.fills }), drill && drill.ctx && Array.isArray(drill.ctx.amendments) && drill.ctx.amendments.length ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(SecLbl, { rule: true }, "Amendments \xB7 ", drill.ctx.amendments.length), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 2 } }, drill.ctx.amendments.slice(0, 12).map((a, i) => /* @__PURE__ */ React.createElement("div", { key: i, className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-sub)" } }, _hFmtTs(a.ts_ms), " \xB7 ", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-amber)" } }, a.field), " ", a.old_value, " \u2192 ", a.new_value, a.deviation_pct != null ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, " (", lpPct(a.deviation_pct), ")") : null)))) : null)
+    } }, "\u2715") }, dp.symbol, " \xB7 CLOSED \xB7 ", dp.direction), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 10px" } }, /* @__PURE__ */ React.createElement(KV, { l: "Net", v: lpUsd(dp.net_pnl), color: lpSgn(dp.net_pnl) }), /* @__PURE__ */ React.createElement(KV, { l: "Duration", v: _hDur(dp.hold_time_ms) }), /* @__PURE__ */ React.createElement(KV, { l: "Entry", v: lpPx(dp.entry_price) }), /* @__PURE__ */ React.createElement(KV, { l: "Exit", v: lpPx(dp.exit_price) }), /* @__PURE__ */ React.createElement(KV, { l: "TP plan", v: lpPx(dp.tp_price), color: "var(--qe-green)" }), /* @__PURE__ */ React.createElement(KV, { l: "SL plan", v: lpPx(dp.sl_price), color: "var(--qe-red)" }), /* @__PURE__ */ React.createElement(KV, { l: "MFE / MAE", v: `${_ptFmtN(dp.mfe)} / ${_ptFmtN(dp.mae)}` }), /* @__PURE__ */ React.createElement(KV, { l: "Funding", v: lpUsd(dp.funding_fees, 3), color: lpSgn(dp.funding_fees) }), /* @__PURE__ */ React.createElement(KV, { l: "Model", v: dp.model_name || "\u2014" }), /* @__PURE__ */ React.createElement(KV, { l: "Calc", v: dp.calc_id ? String(dp.calc_id).slice(-8) : "\u2014", color: "var(--qe-cyan)" })), /* @__PURE__ */ React.createElement("div", { style: { borderTop: "1px solid var(--qe-line)" } }), /* @__PURE__ */ React.createElement(SecLbl, { rule: true }, "Fills"), drill == null ? /* @__PURE__ */ React.createElement(Spinner, { label: "loading" }) : !drill.fills.length ? /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.58rem", color: "var(--qe-muted)" } }, "No fills recorded for this position.") : (
+      // operator-bug #2: drilldown fills — tools off; a handful of
+      // rows inside a modal, no search/sort need.
+      /* @__PURE__ */ React.createElement(DataList, { dense: true, tools: false, selKey: "id", columns: [
+        { key: "timestamp_ms", label: "TIME", render: (f) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, _hFmtTs(f.timestamp_ms)) },
+        { key: "is_close", label: "ACT", render: (f) => /* @__PURE__ */ React.createElement(Badge, { tone: f.is_close ? "mute" : "info" }, f.is_close ? "C" : "O") },
+        { key: "price", label: "PRICE", align: "right", render: (f) => lpPx(f.price) },
+        { key: "quantity", label: "QTY", align: "right" },
+        { key: "exec", label: "EXEC LINK", sort: false, render: (f) => f.is_close || !f.calc_id ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014") : f.exec_link_status === "linked" ? /* @__PURE__ */ React.createElement(Badge, { tone: "ok" }, "\u25CF LINKED") : f.exec_link_status === "partial" ? /* @__PURE__ */ React.createElement(Badge, { tone: "warn" }, "\u26A0 ", f.exec_match_count, "/1") : /* @__PURE__ */ React.createElement(Badge, { tone: "err" }, "\u2717 UNLINKED") }
+      ], rows: drill.fills })
+    ), drill && drill.ctx && Array.isArray(drill.ctx.amendments) && drill.ctx.amendments.length ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(SecLbl, { rule: true }, "Amendments \xB7 ", drill.ctx.amendments.length), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 2 } }, drill.ctx.amendments.slice(0, 12).map((a, i) => /* @__PURE__ */ React.createElement("div", { key: i, className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-sub)" } }, _hFmtTs(a.ts_ms), " \xB7 ", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-amber)" } }, a.field), " ", a.old_value, " \u2192 ", a.new_value, a.deviation_pct != null ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, " (", lpPct(a.deviation_pct), ")") : null)))) : null)
   )))), modal ? /* @__PURE__ */ React.createElement(HReasonModal, { row: modal, onClose: () => setModal(null), onSaved: load }) : null, /* @__PURE__ */ React.createElement(StatusFooter, null));
 };
 Object.assign(window, { HistoryPage });
@@ -5633,7 +5645,6 @@ const AnaTabPairs = ({ period, offset, onLabel }) => {
       {
         selKey: "symbol",
         dense: false,
-        tools: false,
         columns: [
           { key: "symbol", label: "SYMBOL", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, r.symbol) },
           { key: "total", label: "TRADES", align: "right" },
@@ -5685,7 +5696,6 @@ const AnaTabExcursions = ({ period, offset, onLabel }) => {
       DataList,
       {
         selKey: "trade_key",
-        tools: false,
         columns: [
           { key: "symbol", label: "SYMBOL", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, r.symbol) },
           { key: "direction", label: "DIR", render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: r.direction === "LONG" ? "ok" : "err" }, r.direction) },
@@ -5882,7 +5892,6 @@ const AnaTabExecution = () => {
       DataList,
       {
         selKey: "fill_id",
-        tools: false,
         columns: [
           { key: "time_ms", label: "TIME", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, _hFmtTs(r.time_ms)) },
           { key: "symbol", label: "SYM", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, r.symbol) },
@@ -5933,7 +5942,6 @@ const AnaTabFunding = () => {
       {
         selKey: "_k",
         dense: false,
-        tools: false,
         columns: [
           { key: "ticker", label: "SYMBOL", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, r.ticker) },
           { key: "direction", label: "DIR", render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: r.direction === "LONG" ? "ok" : "err" }, r.direction) },
@@ -5974,7 +5982,6 @@ const AnaTabBeta = () => {
       {
         selKey: "_k",
         dense: false,
-        tools: false,
         columns: [
           { key: "ticker", label: "SYMBOL", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, r.ticker) },
           { key: "direction", label: "DIR", render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: r.direction === "LONG" ? "ok" : "err" }, r.direction) },
@@ -6683,7 +6690,6 @@ const RegimeTabOverview = ({ current, curFoot, mults, multsFoot, onGoBackfill })
       DataList,
       {
         selKey: "date",
-        tools: false,
         onClick: (r) => setSelChange((s) => s === r.date ? null : r.date),
         selected: selChange,
         columns: [
@@ -6785,7 +6791,6 @@ const RegimeTabBackfill = ({ job, onStart }) => {
       DataList,
       {
         selKey: "signal_name",
-        tools: false,
         columns: [
           { key: "signal_name", label: "SIGNAL", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: (r.count || 0) > 0 ? "var(--qe-text)" : "var(--qe-sub)", fontWeight: 600 } }, labelOf(r.signal_name)) },
           { key: "source", label: "SOURCE", cell: "dim" },
@@ -6928,7 +6933,6 @@ const RegimeTabNews = () => {
       {
         selKey: "id",
         dense: true,
-        tools: false,
         onClick: (n) => {
           setNewsView("magazine");
           setExpanded(n.id);

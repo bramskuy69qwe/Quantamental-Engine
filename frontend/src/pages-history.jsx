@@ -136,7 +136,7 @@ const HistoryPage = () => {
   const [period, setPeriod] = React.useState('30d');
   const [q, setQ]           = React.useState('');
   const [page, setPage]     = React.useState(1);
-  const [perPage, setPerPage] = React.useState(20);
+  const [perPage, setPerPage] = React.useState(75);   // operator-bug #2: 20 -> 75 default
   const [data, setData]     = React.useState(null);   // {rows, total, ...}
   const [loading, setLoading] = React.useState(false);
   const [sel, setSel]       = React.useState(null);   // selected closed row
@@ -341,6 +341,12 @@ const HistoryPage = () => {
               foot={qeFootState({ loading: net.ms == null && !net.err, err: net.err, hasData: rows.length > 0, ms: net.ms, retrying: true })}>
               <div style={{ flex: 1, overflow: 'auto' }}>
                 {loading && !data ? <div style={{ padding: 10 }}><Spinner label="loading" /></div> :
+                 // operator-bug #2: tools stay OFF here by design — this table is
+                 // SERVER-PAGED (rows = one page only), and the page already owns
+                 // search (symbol filter → server `search`), date presets, and
+                 // paging. Client-side DataList tools would search/sort just the
+                 // visible page, contradicting the server-owned window. Page size
+                 // is operator-selectable (25/50/75/100, default 75) instead.
                  <DataList dense tools={false} columns={COLS[tab]} rows={rows}
                    selKey="id" selected={tab === 'positions' && sel ? sel.id : null}
                    onClick={tab === 'positions' ? (r) => openDrill(r) : undefined}
@@ -351,7 +357,8 @@ const HistoryPage = () => {
                 <div className="qe-grow" />
                 <select className="qe-input qe-select" style={{ width: 'auto', height: 20, fontSize: '0.56rem' }} value={String(perPage)}
                   onChange={(e) => { setPerPage(+e.target.value); setPage(1); }}>
-                  <option value="20">20</option><option value="50">50</option>
+                  <option value="25">25</option><option value="50">50</option>
+                  <option value="75">75</option><option value="100">100</option>
                 </select>
                 <button className="qe-btn qe-btn-sm qe-btn-ghost" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>‹</button>
                 <button className="qe-btn qe-btn-sm qe-btn-ghost" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>›</button>
@@ -386,6 +393,8 @@ const HistoryPage = () => {
                   <SecLbl rule>Fills</SecLbl>
                   {drill == null ? <Spinner label="loading" /> :
                    !drill.fills.length ? <div className="qe-mono" style={{ fontSize: '0.58rem', color: 'var(--qe-muted)' }}>No fills recorded for this position.</div> : (
+                    // operator-bug #2: drilldown fills — tools off; a handful of
+                    // rows inside a modal, no search/sort need.
                     <DataList dense tools={false} selKey="id" columns={[
                       { key: 'timestamp_ms', label: 'TIME', render: (f) => <span style={{ color: 'var(--qe-muted)' }}>{_hFmtTs(f.timestamp_ms)}</span> },
                       { key: 'is_close', label: 'ACT', render: (f) => <Badge tone={f.is_close ? 'mute' : 'info'}>{f.is_close ? 'C' : 'O'}</Badge> },

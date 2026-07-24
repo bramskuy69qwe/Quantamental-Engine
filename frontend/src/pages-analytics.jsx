@@ -653,8 +653,7 @@ const AnaTabPairs = ({ period, offset, onLabel }) => {
       <Pane title="Traded Pairs" count={`${rows.length} symbols`} tag={data.period_label} style={{ height: '100%' }} bodyStyle={{ padding: 0 }}
         foot={foot}>
         <DataList
-          selKey="symbol" dense={false} tools={false}
-          columns={[
+          selKey="symbol" dense={false}          columns={[
             { key: 'symbol', label: 'SYMBOL', render: (r) => <span style={{ color: 'var(--qe-cyan)', fontWeight: 700 }}>{r.symbol}</span> },
             { key: 'total', label: 'TRADES', align: 'right' },
             { key: 'longs', label: 'LONGS', align: 'right', cell: 'up' },
@@ -712,8 +711,7 @@ const AnaTabExcursions = ({ period, offset, onLabel }) => {
           count={points.length > trades.length ? `${trades.length} of ${points.length}` : trades.length}
           style={{ height: '100%' }} bodyStyle={{ padding: 0 }} foot={foot}>
           <DataList
-            selKey="trade_key" tools={false}
-            columns={[
+            selKey="trade_key"            columns={[
               { key: 'symbol', label: 'SYMBOL', render: (r) => <span style={{ color: 'var(--qe-cyan)', fontWeight: 700 }}>{r.symbol}</span> },
               { key: 'direction', label: 'DIR', render: (r) => <Badge tone={r.direction === 'LONG' ? 'ok' : 'err'}>{r.direction}</Badge> },
               { key: 'mfe', label: 'MFE', align: 'right', cell: 'up', render: (r) => (r.mfe || 0).toFixed(2) },
@@ -1052,8 +1050,7 @@ const AnaTabExecution = () => {
           }
           bodyStyle={{ padding: 0, display: 'flex', flexDirection: 'column' }}>
           <DataList
-            selKey="fill_id" tools={false}
-            columns={[
+            selKey="fill_id"            columns={[
               { key: 'time_ms', label: 'TIME', render: (r) => <span style={{ color: 'var(--qe-sub)' }}>{_hFmtTs(r.time_ms)}</span> },
               { key: 'symbol', label: 'SYM', render: (r) => <span style={{ color: 'var(--qe-cyan)', fontWeight: 700 }}>{r.symbol}</span> },
               { key: 'fill_type', label: 'FILL', render: (r) => <span style={{ color: ANA_FT_COLOR[r.fill_type] || 'var(--qe-muted)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', fontSize: '0.58rem' }}>{r.fill_type || '—'}</span> },
@@ -1105,8 +1102,7 @@ const AnaTabFunding = () => {
         style={{ height: '100%' }} bodyStyle={{ padding: 0 }}
         foot={foot}>
         <DataList
-          selKey="_k" dense={false} tools={false}
-          columns={[
+          selKey="_k" dense={false}          columns={[
             { key: 'ticker', label: 'SYMBOL', render: (r) => <span style={{ color: 'var(--qe-cyan)', fontWeight: 700 }}>{r.ticker}</span> },
             { key: 'direction', label: 'DIR', render: (r) => <Badge tone={r.direction === 'LONG' ? 'ok' : 'err'}>{r.direction}</Badge> },
             { key: 'notional', label: 'NOTIONAL', align: 'right', cell: 'dim', render: (r) => `$${(r.notional || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}` },
@@ -1150,8 +1146,7 @@ const AnaTabBeta = () => {
           style={{ height: '100%' }} bodyStyle={{ padding: 0 }}
           foot={foot}>
           <DataList
-            selKey="_k" dense={false} tools={false}
-            columns={[
+            selKey="_k" dense={false}            columns={[
               { key: 'ticker', label: 'SYMBOL', render: (r) => <span style={{ color: 'var(--qe-cyan)', fontWeight: 700 }}>{r.ticker}</span> },
               { key: 'direction', label: 'DIR', render: (r) => <Badge tone={r.direction === 'LONG' ? 'ok' : 'err'}>{r.direction}</Badge> },
               { key: 'sector', label: 'SECTOR', cell: 'dim' },

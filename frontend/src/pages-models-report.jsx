@@ -86,6 +86,11 @@ const MdlSheetSections = ({ sheet, emptyMsg = 'sheet empty in this export' }) =>
             {sec.title && <SecLbl rule style={{ margin: '8px 7px 2px' }}>{sec.title}</SecLbl>}
             {/* a title-only section (MC's "Title / blank / data" layout)
                 renders its header alone — no false "no rows" band (LOW-1) */}
+            {/* operator-bug #2: tools stay OFF here by design — this is the
+                render-as-is backtest report (P7). Each section reproduces a
+                MultiCharts workbook VERBATIM; letting the user re-sort/filter a
+                faithful capture would break the reproduction (and most sections
+                are label/value stat blocks, not sortable record lists). */}
             {rows.length > 0 && <DataList columns={cols} rows={rows} dense={false} selKey="id" tools={false} />}
           </div>
         );

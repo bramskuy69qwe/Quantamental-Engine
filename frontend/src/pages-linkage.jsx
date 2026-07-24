@@ -359,7 +359,7 @@ const LinkagePage = () => {
               onRefresh={() => load('fast')} bodyStyle={{ padding: 0 }}
               foot={lkFoot('positions', positions != null)}>
               {positions == null ? <div style={{ padding: 10 }}><Spinner label="loading" /></div> :
-               <DataList columns={posCols} rows={positions} selKey="position_id" tools={false} emptyMsg="no open positions" />}
+               <DataList columns={posCols} rows={positions} selKey="position_id" emptyMsg="no open positions" />}
             </Pane>
           </GridItem>
 
@@ -367,15 +367,14 @@ const LinkagePage = () => {
             <Pane title="Active Calcs" count={calcs ? calcs.length : null} bodyStyle={{ padding: 0 }}
               foot={lkFoot('calcs', calcs != null)}>
               {calcs == null ? <div style={{ padding: 10 }}><Spinner label="loading" /></div> :
-               <DataList columns={calcCols} rows={calcs} selKey="calc_id" tools={false} emptyMsg="no active calcs" />}
+               <DataList columns={calcCols} rows={calcs} selKey="calc_id" emptyMsg="no active calcs" />}
             </Pane>
           </GridItem>
           <GridItem x={17} y={9} w={7} h={8} minW={4} minH={5}>
             <Pane title="Funding" tag="LIVE" bodyStyle={{ padding: 0 }} onRefresh={() => load('slow')}
               foot={lkFoot('funding', funding != null)}>
               {funding == null ? <div style={{ padding: 10 }}><Spinner label="loading" /></div> :
-               <DataList columns={fundCols} rows={funding.rows || []} selKey="position_id" tools={false}
-                 emptyMsg="no open positions"
+               <DataList columns={fundCols} rows={funding.rows || []} selKey="position_id"                 emptyMsg="no open positions"
                  summary={<><span>net next {funding.countdown_s != null ? lpClock(funding.countdown_s) : '—'}</span><span style={{ color: lpSgn(funding.net_next) }}>{lpUsd(funding.net_next, 3)}</span></>} />}
             </Pane>
           </GridItem>
@@ -384,7 +383,7 @@ const LinkagePage = () => {
             <Pane title="Recent Closes" count={closes ? closes.length : null} bodyStyle={{ padding: 0 }}
               foot={lkFoot('closes', closes != null)}>
               {closes == null ? <div style={{ padding: 10 }}><Spinner label="loading" /></div> :
-               <DataList columns={closeCols} rows={closes} selKey="id" tools={false} emptyMsg="no recent closes" />}
+               <DataList columns={closeCols} rows={closes} selKey="id" emptyMsg="no recent closes" />}
             </Pane>
           </GridItem>
         </GridWorkspace>
