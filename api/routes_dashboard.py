@@ -597,6 +597,7 @@ async def api_state():
     # (advisory "at cap").
     from core.dd_gate import dd_gate_allows_new_entry
     from core.db_account_settings import get_account_settings
+    from core import time_sync
     allowed, halt_reason = dd_gate_allows_new_entry(aid)
     try:
         _s = get_account_settings(aid)
@@ -622,6 +623,14 @@ async def api_state():
         "dd_enforcement_mode":         dd_mode,
         "weekly_pnl_enforcement_mode": wk_mode,
         "dd_manually_unblocked":       aid in app_state.dd_manually_unblocked,
+        # v3.0 clock-drift bug: the shared chrome (QE_CHROME polls this every
+        # 10s on every page) raises an app-wide drift banner from these. worst
+        # across exchanges; offset = exchange − local (negative ⇒ local ahead,
+        # the -1021 direction).
+        "clock_severity":   time_sync.worst_severity(),
+        "clock_offset_ms":  next(
+            (s.offset_ms for s in time_sync.get_all().values()), 0.0,
+        ),
     }
 
 

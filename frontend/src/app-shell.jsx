@@ -597,6 +597,34 @@ const readHashPage = () => {
   return QE_PAGES[h] ? h : null;
 };
 
+/* ── App-wide OS-clock-drift banner (operator clock-drift bug) ───────────────
+   Reads the shared QE_CHROME store (/api/state · 10s, every page). Renders like
+   the trading-halt banner but app-wide, because a drifted OS clock breaks every
+   SIGNED exchange read (Binance -1021, >1000ms ahead) — not one page. Null
+   (0-height) when the clock is ok, so it never disturbs layout in the common
+   case. offset = exchange − local, so local drift = −offset (positive ⇒ the OS
+   clock is AHEAD, the -1021 direction). */
+const ClockDriftBanner = () => {
+  const chrome = useQeChrome();
+  const state = (chrome && chrome.state) || {};
+  const sev = state.clock_severity;
+  if (!sev || sev === 'ok') return null;
+  const drift = -Math.round(state.clock_offset_ms || 0);
+  const driftStr = (drift >= 0 ? '+' : '') + drift + 'ms';
+  const failed = sev === 'failed';
+  return (
+    <Banner
+      tone={sev === 'warn' ? 'warn' : 'err'}
+      tag="CLOCK"
+      title={failed ? 'CLOCK SYNC FAILED — exchange server time unreachable'
+                    : 'OS CLOCK DRIFT — exchange requests may be rejected'}
+      detail={failed
+        ? 'Could not reach exchange server time; if account/funding reads keep failing, sync the OS clock.'
+        : `local clock ${driftStr} vs exchange · Binance rejects signed reads >1000ms ahead (-1021) · sync the OS clock`}
+    />
+  );
+};
+
 const App = () => {
   const [page, setPage] = React.useState(() => {
     const fromHash = readHashPage();
@@ -624,7 +652,10 @@ const App = () => {
   const PageComp = QE_PAGES[page] || PrimitivesPage;
   return (
     <NotificationProvider>
-      <PageComp/>
+      <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', minHeight: 0 }}>
+        <ClockDriftBanner/>
+        <div style={{ flex: 1, minHeight: 0 }}><PageComp/></div>
+      </div>
     </NotificationProvider>
   );
 };

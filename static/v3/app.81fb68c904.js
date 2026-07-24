@@ -8746,6 +8746,24 @@ const readHashPage = () => {
   const h = decodeURIComponent((window.location.hash || "").replace(/^#/, ""));
   return QE_PAGES[h] ? h : null;
 };
+const ClockDriftBanner = () => {
+  const chrome = useQeChrome();
+  const state = chrome && chrome.state || {};
+  const sev = state.clock_severity;
+  if (!sev || sev === "ok") return null;
+  const drift = -Math.round(state.clock_offset_ms || 0);
+  const driftStr = (drift >= 0 ? "+" : "") + drift + "ms";
+  const failed = sev === "failed";
+  return /* @__PURE__ */ React.createElement(
+    Banner,
+    {
+      tone: sev === "warn" ? "warn" : "err",
+      tag: "CLOCK",
+      title: failed ? "CLOCK SYNC FAILED \u2014 exchange server time unreachable" : "OS CLOCK DRIFT \u2014 exchange requests may be rejected",
+      detail: failed ? "Could not reach exchange server time; if account/funding reads keep failing, sync the OS clock." : `local clock ${driftStr} vs exchange \xB7 Binance rejects signed reads >1000ms ahead (-1021) \xB7 sync the OS clock`
+    }
+  );
+};
 const App = () => {
   const [page, setPage] = React.useState(() => {
     const fromHash = readHashPage();
@@ -8783,7 +8801,7 @@ const App = () => {
     document.title = _brand + " \u2014 " + page;
   }, [page]);
   const PageComp = QE_PAGES[page] || PrimitivesPage;
-  return /* @__PURE__ */ React.createElement(NotificationProvider, null, /* @__PURE__ */ React.createElement(PageComp, null));
+  return /* @__PURE__ */ React.createElement(NotificationProvider, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", width: "100%", height: "100%", minHeight: 0 } }, /* @__PURE__ */ React.createElement(ClockDriftBanner, null), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0 } }, /* @__PURE__ */ React.createElement(PageComp, null))));
 };
 const _qeRoot = ReactDOM.createRoot(document.getElementById("root"));
 _qeRoot.render(/* @__PURE__ */ React.createElement(App, null));

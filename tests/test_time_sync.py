@@ -50,6 +50,22 @@ class TestSeverity:
         time_sync.update("binance", 2500.0)
         assert time_sync.get_status("binance").severity == "critical"
 
+    def test_critical_at_1000ms(self):
+        """v3.0 clock-drift bug: CRITICAL lowered to 1000ms (Binance -1021 hard
+        limit). A drift that breaks every signed read must not read 'warn'."""
+        time_sync.update("binance", 1000.0)
+        assert time_sync.get_status("binance").severity == "critical"
+
+    def test_operator_case_local_1000ms_ahead_is_critical(self):
+        """The reported case: OS clock ~1000ms AHEAD → offset = server - local
+        ≈ -1000 → -1021 territory → must be critical, not warn."""
+        time_sync.update("binance", -1000.0)
+        assert time_sync.get_status("binance").severity == "critical"
+
+    def test_warn_just_below_critical(self):
+        time_sync.update("binance", 999.0)
+        assert time_sync.get_status("binance").severity == "warn"
+
     def test_failed_state(self):
         time_sync.mark_failed("binance")
         assert time_sync.get_status("binance").severity == "failed"
@@ -59,6 +75,58 @@ class TestSeverity:
         time_sync.mark_failed("binance")
         assert time_sync.get_offset_ms("binance") == 150.0
         assert time_sync.get_status("binance").sync_failed is True
+
+
+class TestDriftLogging:
+    """v3.0 clock-drift bug: update() emits an honest WARNING on the TRANSITION
+    into warn/critical — the fix for 'terminal says synced but errors below'
+    (the unsigned server-time fetch succeeds while signed reads fail -1021)."""
+
+    def setup_method(self):
+        time_sync._statuses.clear()
+
+    def test_transition_into_critical_logs_warning(self, caplog):
+        import logging
+        with caplog.at_level(logging.WARNING, logger="time_sync"):
+            time_sync.update("binance", -1200.0)   # local 1200ms ahead
+        msgs = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("CLOCK DRIFT" in m and "-1021" in m for m in msgs), msgs
+        # local drift is reported as +1200ms (ahead), not the raw -1200 offset
+        assert any("+1200ms" in m for m in msgs), msgs
+
+    def test_ok_does_not_warn(self, caplog):
+        import logging
+        with caplog.at_level(logging.WARNING, logger="time_sync"):
+            time_sync.update("binance", 100.0)
+        assert not [r for r in caplog.records if r.levelno == logging.WARNING]
+
+    def test_repeated_same_severity_does_not_respam(self, caplog):
+        import logging
+        time_sync.update("binance", -1200.0)       # first: warns
+        caplog.clear()                             # forget the first warning
+        with caplog.at_level(logging.WARNING, logger="time_sync"):
+            time_sync.update("binance", -1250.0)   # still critical: quiet
+        assert not [r for r in caplog.records if r.levelno == logging.WARNING]
+
+    def test_clearing_logs_info(self, caplog):
+        import logging
+        time_sync.update("binance", -1200.0)       # critical
+        with caplog.at_level(logging.INFO, logger="time_sync"):
+            time_sync.update("binance", 50.0)      # back to ok
+        assert any("cleared" in r.message.lower()
+                   for r in caplog.records if r.levelno == logging.INFO)
+
+
+class TestApiStateExposesClock:
+    """The shared chrome (QE_CHROME polls /api/state) raises the app-wide drift
+    banner from these fields — source-pin they stay on the endpoint."""
+
+    def test_api_state_includes_clock_fields(self):
+        from api import routes_dashboard
+        src = inspect.getsource(routes_dashboard.api_state)
+        assert "clock_severity" in src
+        assert "clock_offset_ms" in src
+        assert "time_sync" in src
 
 
 class TestWorstSeverity:
