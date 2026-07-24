@@ -62,6 +62,11 @@ const _lkHM = (ms) => {
   const d = new Date(ms);
   return isNaN(d) ? '—' : d.toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit' });
 };
+const _lkHMS = (ms) => {
+  if (!ms) return '—';
+  const d = new Date(ms);
+  return isNaN(d) ? '—' : d.toLocaleTimeString([], { hour12: false });
+};
 
 const LkLinkResolver = ({ item, onDone }) => {
   const cands = item.candidates || [];
@@ -392,6 +397,13 @@ const LinkagePage = () => {
                     {inbox.map((item) => {
                       const on = active && item.key === active.key;
                       const accent = item.kind === 'link' ? 'var(--qe-amber)' : 'var(--qe-magenta)';
+                      // design-parity #4: the inbox strip carries side + placed/closed
+                      // time (row 1), status + #order/age or pnl (row 2), and a
+                      // context line (row 3) — all previously trimmed (P8 note).
+                      const sideRaw = (item.kind === 'link' ? item.side : item.direction) || '';
+                      const isLong = sideRaw.toUpperCase() === 'BUY' || sideRaw.toUpperCase() === 'LONG';
+                      const ts = item.kind === 'link' ? item.created_at_ms : item.exit_time_ms;
+                      const notional = (item.price && item.quantity) ? (item.price * item.quantity).toFixed(2) : null;
                       return (
                         <div key={item.key} onClick={() => setSel(item.key)} style={{
                           display: 'flex', flexDirection: 'column', gap: 3, padding: '7px 8px', cursor: 'pointer',
@@ -401,14 +413,23 @@ const LinkagePage = () => {
                           <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                             <span className="qe-mono" style={{ fontSize: '0.5rem', color: accent, fontWeight: 700, letterSpacing: '0.08em' }}>{item.kind === 'link' ? 'LINK' : 'REASON'}</span>
                             <span className="qe-mono" style={{ fontSize: '0.62rem', color: 'var(--qe-cyan)', fontWeight: 700 }}>{(item.symbol || '').replace('USDT', '')}</span>
+                            {sideRaw ? <Badge tone={isLong ? 'ok' : 'err'}>{isLong ? 'L' : 'S'}</Badge> : null}
+                            <span className="qe-mono" style={{ fontSize: '0.5rem', color: 'var(--qe-muted)', marginLeft: 'auto' }}>{_lkHMS(ts)}</span>
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                             {item.kind === 'link'
                               ? <LinkBadge status={item.link_status} variant={3} />
                               : <span className="qe-mono" style={{ fontSize: '0.52rem', color: 'var(--qe-magenta)' }}>set reason</span>}
                             <span className="qe-mono" style={{ fontSize: '0.5rem', marginLeft: 'auto', color: item.kind === 'link' ? 'var(--qe-muted)' : lpSgn(item.net_pnl) }}>
-                              {item.kind === 'link' ? `#${item.id}` : lpUsd(item.net_pnl)}
+                              {item.kind === 'link'
+                                ? <React.Fragment>#{item.id} · <PtAge ts={item.created_at_ms} /></React.Fragment>
+                                : lpUsd(item.net_pnl)}
                             </span>
+                          </div>
+                          <div className="qe-mono" style={{ fontSize: '0.5rem', color: 'var(--qe-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {item.kind === 'link'
+                              ? `${(item.order_type || '').toUpperCase()} @ ${lpPx(item.price)}${notional ? ` · ${notional}U` : ''}`
+                              : `${_lkDur(item.hold_time_ms)} · ${lpPx(item.entry_price)}→${lpPx(item.exit_price)}`}
                           </div>
                         </div>
                       );

@@ -4520,6 +4520,11 @@ const _lkHM = (ms) => {
   const d = new Date(ms);
   return isNaN(d) ? "\u2014" : d.toLocaleTimeString([], { hour12: false, hour: "2-digit", minute: "2-digit" });
 };
+const _lkHMS = (ms) => {
+  if (!ms) return "\u2014";
+  const d = new Date(ms);
+  return isNaN(d) ? "\u2014" : d.toLocaleTimeString([], { hour12: false });
+};
 const LkLinkResolver = ({ item, onDone }) => {
   const cands = item.candidates || [];
   const [selCand, setSelCand] = React.useState(cands[0] && cands[0].calc_id);
@@ -4727,6 +4732,10 @@ const LinkagePage = () => {
     needs == null ? /* @__PURE__ */ React.createElement("div", { style: { padding: 10 } }, /* @__PURE__ */ React.createElement(Spinner, { label: "loading" })) : !inbox.length ? /* @__PURE__ */ React.createElement("div", { style: { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 10 } }, /* @__PURE__ */ React.createElement(EmptyState, { tone: "info", glyph: "\u2713", msg: "Inbox clear", hint: "Every order is linked and every close is categorized." })) : /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "162px 1fr" } }, /* @__PURE__ */ React.createElement("div", { style: { overflow: "auto", borderRight: "1px solid var(--qe-line)" } }, inbox.map((item) => {
       const on = active && item.key === active.key;
       const accent = item.kind === "link" ? "var(--qe-amber)" : "var(--qe-magenta)";
+      const sideRaw = (item.kind === "link" ? item.side : item.direction) || "";
+      const isLong = sideRaw.toUpperCase() === "BUY" || sideRaw.toUpperCase() === "LONG";
+      const ts = item.kind === "link" ? item.created_at_ms : item.exit_time_ms;
+      const notional = item.price && item.quantity ? (item.price * item.quantity).toFixed(2) : null;
       return /* @__PURE__ */ React.createElement("div", { key: item.key, onClick: () => setSel(item.key), style: {
         display: "flex",
         flexDirection: "column",
@@ -4736,7 +4745,7 @@ const LinkagePage = () => {
         borderBottom: "1px solid var(--qe-faint)",
         borderLeft: `3px solid ${on ? "var(--qe-cyan)" : "transparent"}`,
         background: on ? "var(--qe-active)" : "transparent"
-      } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 5 } }, /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.5rem", color: accent, fontWeight: 700, letterSpacing: "0.08em" } }, item.kind === "link" ? "LINK" : "REASON"), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.62rem", color: "var(--qe-cyan)", fontWeight: 700 } }, (item.symbol || "").replace("USDT", ""))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 5 } }, item.kind === "link" ? /* @__PURE__ */ React.createElement(LinkBadge, { status: item.link_status, variant: 3 }) : /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.52rem", color: "var(--qe-magenta)" } }, "set reason"), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.5rem", marginLeft: "auto", color: item.kind === "link" ? "var(--qe-muted)" : lpSgn(item.net_pnl) } }, item.kind === "link" ? `#${item.id}` : lpUsd(item.net_pnl))));
+      } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 5 } }, /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.5rem", color: accent, fontWeight: 700, letterSpacing: "0.08em" } }, item.kind === "link" ? "LINK" : "REASON"), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.62rem", color: "var(--qe-cyan)", fontWeight: 700 } }, (item.symbol || "").replace("USDT", "")), sideRaw ? /* @__PURE__ */ React.createElement(Badge, { tone: isLong ? "ok" : "err" }, isLong ? "L" : "S") : null, /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.5rem", color: "var(--qe-muted)", marginLeft: "auto" } }, _lkHMS(ts))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 5 } }, item.kind === "link" ? /* @__PURE__ */ React.createElement(LinkBadge, { status: item.link_status, variant: 3 }) : /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.52rem", color: "var(--qe-magenta)" } }, "set reason"), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.5rem", marginLeft: "auto", color: item.kind === "link" ? "var(--qe-muted)" : lpSgn(item.net_pnl) } }, item.kind === "link" ? /* @__PURE__ */ React.createElement(React.Fragment, null, "#", item.id, " \xB7 ", /* @__PURE__ */ React.createElement(PtAge, { ts: item.created_at_ms })) : lpUsd(item.net_pnl))), /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.5rem", color: "var(--qe-muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, item.kind === "link" ? `${(item.order_type || "").toUpperCase()} @ ${lpPx(item.price)}${notional ? ` \xB7 ${notional}U` : ""}` : `${_lkDur(item.hold_time_ms)} \xB7 ${lpPx(item.entry_price)}\u2192${lpPx(item.exit_price)}`));
     })), /* @__PURE__ */ React.createElement("div", { style: { overflow: "auto", padding: 8 } }, active && (active.kind === "link" ? /* @__PURE__ */ React.createElement(LkLinkResolver, { key: active.key, item: active, onDone: resolveDone }) : /* @__PURE__ */ React.createElement(LkReasonResolver, { key: active.key, item: active, onDone: resolveDone }))))
   )), /* @__PURE__ */ React.createElement(GridItem, { x: 9, y: 0, w: 15, h: 9, minW: 6, minH: 5 }, /* @__PURE__ */ React.createElement(
     Pane,
