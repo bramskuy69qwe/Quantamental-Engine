@@ -45,6 +45,18 @@ def _make_ccxt_instance(
             # api.binance.com/sapi/v1/capital/config/getall (Spot API, unreachable
             # when only fapi.binance.com is accessible via proxy).
             "fetchCurrencies": False,
+            # v3.0 clock-drift auto-fix (operator opt-in): make the engine
+            # RESILIENT to an unsynced OS clock. CCXT fetches server time and
+            # offsets every SIGNED request's timestamp by the measured
+            # difference, so a local clock >1000ms AHEAD no longer trips
+            # Binance -1021 ("Timestamp … ahead of the server's time") — the
+            # account/funding/positions reads keep working without the operator
+            # touching the OS clock. SAFE here: under the observe-only
+            # architecture (v2.6) the engine places NO orders — every signed
+            # request is a READ. NB this does NOT silence the drift banner:
+            # time_sync still measures + surfaces the drift so the operator is
+            # told to fix the OS clock; this just stops it from breaking data.
+            "adjustForTimeDifference": True,
         },
         "enableRateLimit": True,
     }
