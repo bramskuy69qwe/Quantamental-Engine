@@ -181,8 +181,8 @@ const NotifSeg = ({ options, active, onPick }) => (
   </div>
 );
 
-const NotifSwitch = ({ label, on, onToggle, title }) =>
-  <Switch label={label} checked={on} onChange={onToggle} title={title} />;
+const NotifSwitch = ({ label, on, onToggle, title, disabled = false }) =>
+  <Switch label={label} checked={on} onChange={onToggle} title={title} disabled={disabled} />;
 
 // ── toast (thin wrapper over the <Toast> primitive) ──────────────────────
 const NotifToast = ({ ev, onClick, onClose }) =>
@@ -334,9 +334,15 @@ function NotificationProvider({ children, demo = false }) {
   const markAll = () => setEvents(l => l.map(e => ({ ...e, unread: false })));
   const clearAll = () => setEvents([]);
   const toggleMute = (ch) => setMuted(m => ({ ...m, [ch]: !m[ch] }));
-  // P0: no browser Notification.requestPermission() prompt (plan §4). The toggle
-  // just flips the flag; desktop dispatch stays gated behind pushEvent (demo-only)
-  // so nothing fires. Real desktop-notification support is deferred.
+  // Desktop notifications are DEFERRED (plan §7 explicit defer list): no browser
+  // Notification.requestPermission() prompt, and the only dispatch site is inside
+  // pushEvent, which is demo-only. shell-chrome-2 (Meridian audit) made the fact
+  // visible instead of implicit — the drawer's Desktop switch now renders
+  // disabled, so `desktop` can no longer be turned on. `desktop` is in-memory
+  // only (nothing in this file persists it) and is still read by pushEvent's
+  // dispatch guard. toggleDesktop is currently unreferenced and kept as the
+  // documented hook for whoever ships the capability: wire the permission
+  // request here and dispatch from poll(), beside the nBeep call.
   const toggleDesktop = () => setDesktop(v => !v);
   const reset = () => { setEvents([]); setHaltUntil(0); try { localStorage.removeItem(HALT_KEY); } catch (e) {} setHaltAt(0); try { localStorage.removeItem(HALT_AT_KEY); } catch (e) {} setToasts([]); setFilter('All'); setPriority('All'); setMuted({}); };
 
@@ -400,7 +406,16 @@ function NotificationProvider({ children, demo = false }) {
             </div>
             <div style={{ flexShrink:0, padding:'7px 11px', borderTop:'1px solid var(--qe-line)', background:'var(--qe-panel)', display:'flex', alignItems:'center', gap:14 }}>
               <NotifSwitch label="Sound" on={sound} onToggle={()=>setSound(v=>!v)} title="Play a cue on incoming" />
-              <NotifSwitch label="Desktop" on={desktop} onToggle={toggleDesktop} title="Browser push notifications" />
+              {/* shell-chrome-2 (2026-07-25 Meridian audit): rendered DISABLED, not
+                  live. Desktop notifications are on plan §7's explicit defer list
+                  and no dispatch exists on the real feed path, so a live-looking
+                  switch promised out-of-focus reachability it could not deliver —
+                  worse than either wiring it or showing it off. Operator decision
+                  2026-07-25: keep the deferral, make the control honest. To ship
+                  it later: request permission in toggleDesktop and dispatch from
+                  poll() beside the nBeep call, respecting muted/dnd. */}
+              <NotifSwitch label="Desktop" on={false} disabled
+                title="Desktop notifications are deferred (plan §7) — not yet implemented" />
               <NotifSwitch label="DND" on={dnd} onToggle={()=>setDnd(v=>!v)} title="Do not disturb" />
             </div>
           </div>

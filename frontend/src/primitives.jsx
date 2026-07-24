@@ -1234,12 +1234,23 @@ const NewsTickerBar = React.memo(function NewsTickerBar({
 // Switch — boolean toggle. The canonical on/off control (Sound, DND,
 // auto-refresh, etc.). Distinct from LockButton (a button) and PeriodSelector.
 // ─────────────────────────────────────────────────────────────────
-const Switch = ({checked=false, onChange, label=null, title=null, accent='var(--qe-sub)'}) => (
-  <div onClick={onChange} title={title} style={{display:'flex', alignItems:'center', gap:7, cursor:'pointer'}}>
-    <span style={{width:26, height:14, background: checked?accent:'var(--qe-faint)', position:'relative', flexShrink:0, transition:'background .12s'}}>
-      <span style={{position:'absolute', top:2, left: checked?14:2, width:10, height:10, background:'var(--qe-bg)', transition:'left .12s'}}/>
+// `disabled` (added 2026-07-25, Meridian audit shell-chrome-2) is ADDITIVE and
+// defaults false, so every existing call site is unchanged. Use it for a control
+// whose capability is deliberately not shipped yet: a switch that renders live
+// but cannot act is a misrepresentation, and hiding it loses the signal that the
+// feature is planned. Disabled swallows onChange — it never silently no-ops
+// through the caller's handler.
+const Switch = ({checked=false, onChange, label=null, title=null, accent='var(--qe-sub)', disabled=false}) => (
+  <div onClick={disabled ? undefined : onChange} title={title}
+    style={{display:'flex', alignItems:'center', gap:7,
+            cursor: disabled?'not-allowed':'pointer', opacity: disabled?0.45:1}}>
+    <span style={{width:26, height:14, background: checked&&!disabled?accent:'var(--qe-faint)', position:'relative', flexShrink:0, transition:'background .12s'}}>
+      <span style={{position:'absolute', top:2, left: checked&&!disabled?14:2, width:10, height:10, background:'var(--qe-bg)', transition:'left .12s'}}/>
     </span>
-    {label && <span style={{fontFamily:'var(--qe-ui)', fontSize:'0.6rem', fontWeight:600, color: checked?'var(--qe-text)':'var(--qe-muted)'}}>{label}</span>}
+    {/* deliberately NOT line-through: that is Chip's `muted` idiom and reads as
+        "the user silenced this", not "not shipped yet". Dimming alone + the
+        not-allowed cursor + the title carry it. */}
+    {label && <span style={{fontFamily:'var(--qe-ui)', fontSize:'0.6rem', fontWeight:600, color: checked&&!disabled?'var(--qe-text)':'var(--qe-muted)'}}>{label}</span>}
   </div>
 );
 

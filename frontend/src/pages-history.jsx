@@ -281,8 +281,32 @@ const HistoryPage = () => {
       { key: 'side', label: 'SIDE', render: (r) => <Badge tone={(r.side || '').toUpperCase() === 'BUY' ? 'ok' : 'err'}>{(r.side || '').toUpperCase()}</Badge> },
       { key: 'order_type', label: 'TYPE', render: (r) => <Badge tone="mute">{(r.order_type || '').toUpperCase()}</Badge> },
       { key: 'quantity', label: 'QTY', align: 'right' },
-      { key: 'price', label: 'PRICE', align: 'right', render: (r) => lpPx(r.price) },
-      { key: 'avg_fill_price', label: 'AVG FILL', align: 'right', render: (r) => lpPx(r.avg_fill_price) },
+      /* history-1 (2026-07-25 Meridian audit): a stop/TP order carries its level
+         in stop_price, NOT price — price is 0 on every one of them (109 of 258
+         live rows). lpPx(0) formats as '0.000000', which read as a real level, so
+         PRICE now blanks on 0 and the TRIGGER column carries the actual level.
+         DEVIATION from the design, which had two columns (TP + SL) sourced from
+         tp_trigger_price / sl_trigger_price. Those are the PLAN levels attached
+         to an ENTRY order — a different fact from "the level this order triggers
+         at" — and they are populated on only 17 of 258 rows, so two columns
+         would be ~93% empty while still never showing the stop level. One
+         TRIGGER column on stop_price matches the shipped Jinja twin of this same
+         table (fragments/history/order_history_table.html sorts a "Trigger"
+         column on stop_price) and covers the rows that actually needed it.
+         A tp/sl fallback was tried and REVERTED in review: it printed an entry
+         order's take-profit plan as though it were that order's trigger, dropped
+         the SL half silently, and made the column sort disagree with itself
+         (DataList sorts row[col.key], i.e. raw stop_price = 0 for those rows). */
+      { key: 'price', label: 'PRICE', align: 'right',
+        render: (r) => (r.price == null || +r.price === 0)
+          ? <span style={{ color: 'var(--qe-muted)' }}>—</span> : lpPx(r.price) },
+      { key: 'stop_price', label: 'TRIGGER', align: 'right',
+        render: (r) => (r.stop_price == null || +r.stop_price === 0)
+          ? <span style={{ color: 'var(--qe-muted)' }}>—</span>
+          : <span style={{ color: 'var(--qe-amber)' }}>{lpPx(r.stop_price)}</span> },
+      { key: 'avg_fill_price', label: 'AVG FILL', align: 'right',
+        render: (r) => (r.avg_fill_price == null || +r.avg_fill_price === 0)
+          ? <span style={{ color: 'var(--qe-muted)' }}>—</span> : lpPx(r.avg_fill_price) },
       { key: 'status', label: 'STATUS', render: (r) => <Badge tone={r.status === 'filled' ? 'ok' : r.status === 'new' ? 'info' : 'mute'}>{(r.status || '').toUpperCase()}</Badge> },
       { key: 'link_status', label: 'LINK', render: (r) => <LinkBadge status={r.link_status} variant={3} /> },
     ],

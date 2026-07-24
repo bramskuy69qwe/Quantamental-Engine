@@ -587,6 +587,7 @@ async def api_state():
     acc = app_state.account_state
     pf  = app_state.portfolio
     aid = app_state.active_account_id
+    ws  = app_state.ws_status
     # G-O2 (v3.0 P1): expose the REAL hard-halt so the React cockpit drives the
     # Pre-Trade freeze overlay + banner (plan §1.3) without a second call. The
     # ONLY engine gate is DD (core/dd_gate) — weekly_pnl has no enforcement gate,
@@ -631,6 +632,31 @@ async def api_state():
         "clock_offset_ms":  next(
             (s.offset_ms for s in time_sync.get_all().values()), 0.0,
         ),
+        # shell-chrome-3 (2026-07-25 Meridian design-consistency audit):
+        # EXCHANGE MARKET-DATA feed health. Independent of the browser<->engine
+        # SSE stream the chrome already shows: the SSE dot can read "live" while
+        # the market feed is down and every price on screen is frozen. Before
+        # this, no React surface read it at all — it was served only as the
+        # legacy Jinja fragment /fragments/dashboard/exchange_info.
+        #
+        # These are the MARKET-socket fields, NOT `ws.connected`/`ws.last_update`.
+        # Those belong to the USER-DATA socket (ws_manager writes `connected`
+        # only in _user_data_loop) and `last_update` is additionally floored by
+        # the 30 s REST account refresh — wiring the feed dot to them made it lie
+        # in both directions: a red "prices frozen" on a user-socket blip, and a
+        # green dot through a real market-feed outage. Caught pre-commit by the
+        # fix-review pass; the original audit finding named the wrong source.
+        #
+        # latency_ms is None (never 0.0) when disconnected OR never stamped, so
+        # the chrome renders '—' instead of a fabricated perfect 0 ms — the same
+        # falsy guard templates/fragments/ws_status.html has always applied.
+        "exchange_ws": {
+            "connected":      ws.market_connected,
+            "latency_ms":     round(ws.market_latency_ms, 1)
+                              if (ws.market_connected and ws.market_latency_ms) else None,
+            "stale_s":        round(ws.market_seconds_since_update, 1),
+            "using_fallback": ws.using_fallback,
+        },
     }
 
 

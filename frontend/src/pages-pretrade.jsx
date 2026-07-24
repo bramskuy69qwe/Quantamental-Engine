@@ -304,16 +304,44 @@ const PreTradePage = () => {
   /* ── 1 Hz live price poll (debounced on ticker; also keeps the backend
         calc-symbol subscription current — /api/price side effect) ── */
   const tickerNorm = form.ticker.trim().toUpperCase();
+  /* pretrade-4 (2026-07-25 Meridian audit): this poll's failures used to be
+     swallowed silently while the pane foot asserted a static ok/'local'. In
+     MARKET mode `livePrice` IS the sizing entry (doCalculate reads liveRef), so
+     a dead poll sized off a stale price with nothing on screen saying so. Track
+     the pipe like every other polled pane on this page (see netOb below) and
+     feed qeFootState. */
+  const [netPx, setNetPx] = React.useState({});   // price 1s pipe (qeFootState)
   React.useEffect(() => {
     tickerRef.current = tickerNorm;
     setLivePrice(null);
+    setNetPx({});
     if (!tickerNorm) return;
     let alive = true, timer = null;
+    // Whether THIS ticker has ever yielded a price. Scoped to the effect so a
+    // ticker switch resets it; a ref would leak the previous symbol's state.
+    let hadPrice = false;
     const poll = async () => {
+      const t0 = performance.now();
       try {
         const d = await _ptJson('/api/price/' + encodeURIComponent(tickerNorm));
-        if (alive && tickerRef.current === tickerNorm && d.price) setLivePrice(d.price);
-      } catch (e) { /* keep last */ }
+        if (alive && tickerRef.current === tickerNorm) {
+          const ms = performance.now() - t0;
+          if (d.price) { hadPrice = true; setLivePrice(d.price); }
+          // A 200 carrying no price AFTER we already latched one is feed death,
+          // not health: livePrice keeps its last value (the intended keep-last)
+          // and in MARKET mode that latched value still drives sizing, so a green
+          // foot there would paint health over a stale sizing input — the exact
+          // class this fix exists to remove. `corrupt` selects qeFootState's
+          // keep-last-good warn tier ("showing last data").
+          // Before the first price there is nothing latched and Entry Price
+          // honestly reads '—', so the pipe is simply ok — flagging that would
+          // fire a red foot through normal warm-up.
+          setNetPx((!d.price && hadPrice) ? { err: { corrupt: true }, ms }
+                                          : { err: null, ms });
+        }
+      } catch (err) {
+        if (alive && tickerRef.current === tickerNorm) setNetPx((n) => ({ ...n, err }));
+      }
       if (alive) timer = setTimeout(poll, 1000);
     };
     const debounce = setTimeout(poll, 500);
@@ -635,7 +663,11 @@ const PreTradePage = () => {
           <GridItem x={0} y={0} w={10} h={12} minW={6} minH={8}>
             <Pane title="Order Inputs" style={{ height: '100%' }} bodyStyle={{ overflow: 'auto' }}
               right={<Badge tone={form.orderType === 'limit' ? 'ok' : 'warn'}>{form.orderType === 'limit' ? 'MAKER FEE' : 'TAKER FEE'}</Badge>}
-              foot={{ tone: 'ok', msg: 'local' }}>
+              /* pretrade-4: the foot now carries the 1 Hz price poll's REAL state
+                 (it used to assert a static ok/'local' while hosting that poll). */
+              foot={!tickerNorm ? { tone: 'sub', msg: 'local · enter a ticker to poll price' }
+                : qeFootState({ loading: netPx.ms == null && !netPx.err, err: netPx.err,
+                                hasData: livePrice != null, ms: netPx.ms, retrying: true })}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
 
                 <div>

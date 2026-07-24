@@ -823,7 +823,22 @@ const NewsTickerBar = React.memo(function NewsTickerBar2({
   const runItems = (prefix) => items.map((n, i) => /* @__PURE__ */ React.createElement("span", { key: prefix + n.id + "-" + i, className: "qe-newsticker-item" }, /* @__PURE__ */ React.createElement("span", { className: "qe-newsticker-dot", style: { background: impactColor[n.impact] || "var(--qe-muted)" } }), /* @__PURE__ */ React.createElement("span", { className: "qe-newsticker-src" }, n.source.toUpperCase()), /* @__PURE__ */ React.createElement("span", { className: "qe-newsticker-head" }, n.headline), n.tickers && /* @__PURE__ */ React.createElement("span", { className: "qe-newsticker-tk" }, n.tickers), /* @__PURE__ */ React.createElement("span", { className: "qe-newsticker-time" }, rel(n.published_at), " ago"), /* @__PURE__ */ React.createElement("span", { className: "qe-newsticker-sep" }, "\u25C6")));
   return /* @__PURE__ */ React.createElement("div", { className: "qe-newsticker" }, /* @__PURE__ */ React.createElement("span", { className: "qe-newsticker-label" }, /* @__PURE__ */ React.createElement("span", { className: "qe-newsticker-live" }), label), /* @__PURE__ */ React.createElement("div", { className: "qe-newsticker-track" }, /* @__PURE__ */ React.createElement("span", { className: "qe-newsticker-run" }, runItems("a")), /* @__PURE__ */ React.createElement("span", { className: "qe-newsticker-run", "aria-hidden": "true" }, runItems("b"))), meta && /* @__PURE__ */ React.createElement("span", { className: "qe-newsticker-meta" }, meta));
 });
-const Switch = ({ checked = false, onChange, label = null, title = null, accent = "var(--qe-sub)" }) => /* @__PURE__ */ React.createElement("div", { onClick: onChange, title, style: { display: "flex", alignItems: "center", gap: 7, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("span", { style: { width: 26, height: 14, background: checked ? accent : "var(--qe-faint)", position: "relative", flexShrink: 0, transition: "background .12s" } }, /* @__PURE__ */ React.createElement("span", { style: { position: "absolute", top: 2, left: checked ? 14 : 2, width: 10, height: 10, background: "var(--qe-bg)", transition: "left .12s" } })), label && /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-ui)", fontSize: "0.6rem", fontWeight: 600, color: checked ? "var(--qe-text)" : "var(--qe-muted)" } }, label));
+const Switch = ({ checked = false, onChange, label = null, title = null, accent = "var(--qe-sub)", disabled = false }) => /* @__PURE__ */ React.createElement(
+  "div",
+  {
+    onClick: disabled ? void 0 : onChange,
+    title,
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 7,
+      cursor: disabled ? "not-allowed" : "pointer",
+      opacity: disabled ? 0.45 : 1
+    }
+  },
+  /* @__PURE__ */ React.createElement("span", { style: { width: 26, height: 14, background: checked && !disabled ? accent : "var(--qe-faint)", position: "relative", flexShrink: 0, transition: "background .12s" } }, /* @__PURE__ */ React.createElement("span", { style: { position: "absolute", top: 2, left: checked && !disabled ? 14 : 2, width: 10, height: 10, background: "var(--qe-bg)", transition: "left .12s" } })),
+  label && /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-ui)", fontSize: "0.6rem", fontWeight: 600, color: checked && !disabled ? "var(--qe-text)" : "var(--qe-muted)" } }, label)
+);
 const Chip = ({ label, count = null, active = false, muted = false, onClick, onMute = null }) => /* @__PURE__ */ React.createElement("div", { onClick, style: {
   display: "inline-flex",
   alignItems: "center",
@@ -1523,6 +1538,40 @@ const NAV_REGIME_TONE = {
   risk_off_panic: "panic"
 };
 const NAV_SSE_TONE = { open: "ok", connecting: "warn", error: "err", idle: "off", disabled: "off" };
+const NAV_FEED_STALE_S = 30;
+const _navFeed = (ch) => {
+  if (ch && ch.stateErr) return {
+    tone: "off",
+    value: "\u2014",
+    title: "Exchange feed: reading unavailable \u2014 /api/state is not responding"
+  };
+  const w = ch && ch.state && ch.state.exchange_ws || null;
+  if (!w) return {
+    tone: "off",
+    value: "\u2014",
+    title: "Exchange market-data feed: no reading yet (/api/state)"
+  };
+  if (!w.connected) return {
+    tone: "err",
+    value: "down",
+    title: "Exchange market-data websocket is DOWN \u2014 prices on screen are frozen"
+  };
+  if (w.stale_s != null && w.stale_s > NAV_FEED_STALE_S) return {
+    tone: "warn",
+    value: Math.round(w.stale_s) + "s",
+    title: `Exchange feed connected but no message for ${Math.round(w.stale_s)}s \u2014 prices may be stale`
+  };
+  if (w.using_fallback) return {
+    tone: "warn",
+    value: "REST",
+    title: "Exchange market-data on REST FALLBACK \u2014 the websocket is not delivering; prices update on the poll interval"
+  };
+  return {
+    tone: "ok",
+    value: w.latency_ms == null ? "\u2014" : Math.round(w.latency_ms) + "ms",
+    title: "Exchange market-data websocket live" + (w.latency_ms == null ? " \xB7 latency not measured yet" : ` \xB7 ${Math.round(w.latency_ms)}ms per-frame latency`)
+  };
+};
 const _navCap = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1) : "\u2014";
 const _navPct = (v) => v == null ? "\u2014" : (v > 0 ? "+" : "") + v.toFixed(2) + "%";
 const _navPctCol = (v) => v == null ? "var(--qe-muted)" : v > 0 ? "var(--qe-green)" : v < 0 ? "var(--qe-red)" : "var(--qe-sub)";
@@ -1613,8 +1662,12 @@ const WorkspaceBar = ({ interactive = false, persistId = "dashboard" }) => {
     const dPct = eq ? eq.daily_pnl_pct : null;
     const wPct = eq ? eq.weekly_pnl_pct : null;
     const mPct = jr ? jr.monthly_pnl_pct : null;
+    const feed = _navFeed(ch);
     return [
       { label: "EXCH", value: active ? _navCap(active.exchange) : "\u2014" },
+      { label: "LAT", value: /* @__PURE__ */ React.createElement("span", { title: feed.title, style: {
+        color: feed.tone === "err" ? "var(--qe-red)" : feed.tone === "warn" ? "var(--qe-amber)" : feed.tone === "off" ? "var(--qe-muted)" : "var(--qe-sub)"
+      } }, feed.value) },
       { label: "REGIME", value: rg && rg.label && NAV_REGIME_TONE[rg.label] ? /* @__PURE__ */ React.createElement(RegimeBadge, { tone: NAV_REGIME_TONE[rg.label] }) : /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014") },
       { label: "P&L\xB7D", value: /* @__PURE__ */ React.createElement(LiveValue, { id: "ws.pnl.d", value: dPct == null ? "\u2014" : dPct, format: () => _navPct(dPct), style: { color: _navPctCol(dPct), fontWeight: 700 } }) },
       { label: "P&L\xB7W", value: /* @__PURE__ */ React.createElement(LiveValue, { id: "ws.pnl.w", value: wPct == null ? "\u2014" : wPct, format: () => _navPct(wPct), style: { color: _navPctCol(wPct), fontWeight: 700 } }) },
@@ -1670,6 +1723,7 @@ const TopNavStd = ({ page = "Dashboard", onChange, variant = "line", dense = fal
     setTimeout(() => setSwitchErr(false), 4e3);
   };
   const sseTone = NAV_SSE_TONE[ch.sse] || "off";
+  const feed = _navFeed(ch);
   return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "qe-hscroll", style: {
     display: "flex",
     alignItems: "center",
@@ -1740,7 +1794,7 @@ const TopNavStd = ({ page = "Dashboard", onChange, variant = "line", dense = fal
       title: "Switch active account (reloads)"
     },
     accounts.map((a) => /* @__PURE__ */ React.createElement("option", { key: a.id, value: String(a.id) }, a.name, " (", _navCap(a.exchange), ")", a.is_active ? "" : " \u2014 inactive"))
-  ) : /* @__PURE__ */ React.createElement("select", { className: "qe-input qe-select", style: { height: 22, fontSize: "0.62rem", width: 175 }, disabled: true, value: "" }, /* @__PURE__ */ React.createElement("option", { value: "" }, "\u2014 no accounts \u2014")), switchErr && /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.54rem", color: "var(--qe-red)" } }, "switch failed")), /* @__PURE__ */ React.createElement(StatusDot, { tone: sseTone, label: "SSE", value: ch.sse === "open" ? "live" : ch.sse }), /* @__PURE__ */ React.createElement("span", { style: {
+  ) : /* @__PURE__ */ React.createElement("select", { className: "qe-input qe-select", style: { height: 22, fontSize: "0.62rem", width: 175 }, disabled: true, value: "" }, /* @__PURE__ */ React.createElement("option", { value: "" }, "\u2014 no accounts \u2014")), switchErr && /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.54rem", color: "var(--qe-red)" } }, "switch failed")), /* @__PURE__ */ React.createElement(StatusDot, { tone: sseTone, label: "SSE", value: ch.sse === "open" ? "live" : ch.sse }), /* @__PURE__ */ React.createElement("span", { title: feed.title, style: { display: "inline-flex" } }, /* @__PURE__ */ React.createElement(StatusDot, { tone: feed.tone, label: "FEED", value: feed.value })), /* @__PURE__ */ React.createElement("span", { style: {
     fontFamily: "var(--qe-mono)",
     fontSize: "0.56rem",
     color: "var(--qe-muted)",
@@ -1781,6 +1835,7 @@ const StatusFooter = () => {
   const ch = useQeChrome();
   const engineTone = ch.stateErr ? "var(--qe-red)" : ch.state ? "var(--qe-green)" : "var(--qe-muted)";
   const sseTone = ch.sse === "open" ? "var(--qe-green)" : ch.sse === "connecting" ? "var(--qe-amber)" : ch.sse === "error" ? "var(--qe-red)" : "var(--qe-muted)";
+  const feed = _navFeed(ch);
   return /* @__PURE__ */ React.createElement("div", { style: {
     display: "flex",
     alignItems: "center",
@@ -1793,7 +1848,9 @@ const StatusFooter = () => {
     fontFamily: "var(--qe-mono)",
     fontSize: "0.54rem",
     color: "var(--qe-muted)"
-  } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, (window.QE_BOOTSTRAP && window.QE_BOOTSTRAP.projectShortName || "QRE") + " " + (window.QE_BOOTSTRAP && window.QE_BOOTSTRAP.projectVersion || "v3")), /* @__PURE__ */ React.createElement("span", null, "\xB7"), /* @__PURE__ */ React.createElement("span", null, "uptime ", /* @__PURE__ */ React.createElement(LiveValue, { id: "sb.uptime", value: ch.sys ? ch.sys.uptime_s : "\u2014", format: () => _navUptime(ch.sys ? ch.sys.uptime_s : null) })), /* @__PURE__ */ React.createElement("div", { className: "qe-grow" }), /* @__PURE__ */ React.createElement("span", { style: { color: engineTone } }, "\u25CF engine"), /* @__PURE__ */ React.createElement("span", { style: { color: sseTone } }, "\u25CF sse"), /* @__PURE__ */ React.createElement(LiveClock, { id: "sb.clock", format: qeClockFmt, style: { color: "var(--qe-muted)" } }));
+  } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, (window.QE_BOOTSTRAP && window.QE_BOOTSTRAP.projectShortName || "QRE") + " " + (window.QE_BOOTSTRAP && window.QE_BOOTSTRAP.projectVersion || "v3")), /* @__PURE__ */ React.createElement("span", null, "\xB7"), /* @__PURE__ */ React.createElement("span", null, "uptime ", /* @__PURE__ */ React.createElement(LiveValue, { id: "sb.uptime", value: ch.sys ? ch.sys.uptime_s : "\u2014", format: () => _navUptime(ch.sys ? ch.sys.uptime_s : null) })), /* @__PURE__ */ React.createElement("div", { className: "qe-grow" }), /* @__PURE__ */ React.createElement("span", { style: { color: engineTone } }, "\u25CF engine"), /* @__PURE__ */ React.createElement("span", { style: { color: sseTone } }, "\u25CF sse"), /* @__PURE__ */ React.createElement("span", { title: feed.title, style: {
+    color: feed.tone === "ok" ? "var(--qe-green)" : feed.tone === "warn" ? "var(--qe-amber)" : feed.tone === "err" ? "var(--qe-red)" : "var(--qe-muted)"
+  } }, "\u25CF feed"), /* @__PURE__ */ React.createElement(LiveClock, { id: "sb.clock", format: qeClockFmt, style: { color: "var(--qe-muted)" } }));
 };
 Object.assign(window, {
   NAV_ITEMS,
@@ -2025,7 +2082,7 @@ const NotifSeg = ({ options, active, onPick }) => /* @__PURE__ */ React.createEl
   background: o === active ? "var(--qe-active)" : "transparent",
   color: o === active ? "var(--qe-text)" : "var(--qe-muted)"
 } }, o)));
-const NotifSwitch = ({ label, on, onToggle, title }) => /* @__PURE__ */ React.createElement(Switch, { label, checked: on, onChange: onToggle, title });
+const NotifSwitch = ({ label, on, onToggle, title, disabled = false }) => /* @__PURE__ */ React.createElement(Switch, { label, checked: on, onChange: onToggle, title, disabled });
 const NotifToast = ({ ev, onClick, onClose }) => /* @__PURE__ */ React.createElement(
   Toast,
   {
@@ -2220,7 +2277,15 @@ function NotificationProvider({ children, demo = false }) {
   return /* @__PURE__ */ React.createElement(NotifCtx.Provider, { value: ctx }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative", height: "100%", width: "100%", overflow: "hidden" } }, children, open && /* @__PURE__ */ React.createElement("div", { onClick: () => setOpen(false), style: { position: "absolute", top: navH, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.4)", zIndex: 55 } }), open && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: navH, right: 0, bottom: 0, width: 362, zIndex: 58, background: "var(--qe-card)", borderLeft: "1px solid var(--qe-line-2)", borderTop: "1px solid var(--qe-line-2)", boxShadow: "-14px 0 40px rgba(0,0,0,0.6)", display: "flex", flexDirection: "column" } }, /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, padding: "8px 11px", borderBottom: "1px solid var(--qe-line)", display: "flex", flexDirection: "column", gap: 7 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-ui)", fontWeight: 700, fontSize: "0.72rem", letterSpacing: "0.12em", color: "var(--qe-text)" } }, "NOTIFICATIONS"), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.56rem", color: unread ? "var(--qe-sub)" : "var(--qe-muted)" } }, unread, " unread"), dnd && /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.5rem", fontWeight: 700, letterSpacing: "0.1em", color: "var(--qe-amber)", border: "1px solid var(--qe-amber)", padding: "0 4px" } }, "DND"), /* @__PURE__ */ React.createElement("span", { className: "qe-grow" }), /* @__PURE__ */ React.createElement("button", { onClick: markAll, className: "qe-btn qe-btn-ghost qe-btn-sm", style: { opacity: unread ? 1 : 0.4 } }, "MARK ALL READ"), /* @__PURE__ */ React.createElement("button", { onClick: clearAll, className: "qe-btn qe-btn-ghost qe-btn-sm", style: { opacity: events.length ? 1 : 0.4 } }, "CLEAR"), /* @__PURE__ */ React.createElement("span", { onClick: () => setOpen(false), title: "Close", style: { color: "var(--qe-muted)", fontSize: "0.95rem", cursor: "pointer", paddingLeft: 2 } }, "\xD7")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 4 } }, /* @__PURE__ */ React.createElement(NotifChip, { label: "All", count: events.length, active: filter === "All", onFilter: () => setFilter("All") }), N_CHANNELS.map((ch) => /* @__PURE__ */ React.createElement(NotifChip, { key: ch, label: ch, count: counts[ch], active: filter === ch, muted: !!muted[ch], onFilter: () => setFilter(ch), onMute: () => toggleMute(ch) }))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-ui)", fontSize: "0.52rem", fontWeight: 700, letterSpacing: "0.12em", color: "var(--qe-muted)", textTransform: "uppercase" } }, "PRIORITY"), /* @__PURE__ */ React.createElement(NotifSeg, { options: ["All", "Risk+", "Halt"], active: priority, onPick: setPriority }))), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0, overflowY: "auto" } }, visible.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "qe-empty", style: { margin: 12 } }, /* @__PURE__ */ React.createElement("div", { className: "qe-empty-glyph" }, "\u2014 \u2014 \u2014"), /* @__PURE__ */ React.createElement("div", { className: "qe-empty-msg" }, events.length ? "Nothing matches this filter" : "No notifications"), events.length > 0 && /* @__PURE__ */ React.createElement("button", { onClick: () => {
     setFilter("All");
     setPriority("All");
-  }, className: "qe-btn qe-btn-sm qe-empty-cta" }, "Clear filters")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Group, { title: "Just now", rows: justNow }), /* @__PURE__ */ React.createElement(Group, { title: "Earlier today", rows: earlier }))), /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, padding: "7px 11px", borderTop: "1px solid var(--qe-line)", background: "var(--qe-panel)", display: "flex", alignItems: "center", gap: 14 } }, /* @__PURE__ */ React.createElement(NotifSwitch, { label: "Sound", on: sound, onToggle: () => setSound((v) => !v), title: "Play a cue on incoming" }), /* @__PURE__ */ React.createElement(NotifSwitch, { label: "Desktop", on: desktop, onToggle: toggleDesktop, title: "Browser push notifications" }), /* @__PURE__ */ React.createElement(NotifSwitch, { label: "DND", on: dnd, onToggle: () => setDnd((v) => !v), title: "Do not disturb" }))), toasts.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: banner ? 92 : 62, right: open ? 370 : 8, zIndex: 60, display: "flex", flexDirection: "column", gap: 5, transition: "right .18s ease" } }, toasts.map((t) => /* @__PURE__ */ React.createElement(NotifToast, { key: t.id, ev: t, onClick: () => {
+  }, className: "qe-btn qe-btn-sm qe-empty-cta" }, "Clear filters")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Group, { title: "Just now", rows: justNow }), /* @__PURE__ */ React.createElement(Group, { title: "Earlier today", rows: earlier }))), /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, padding: "7px 11px", borderTop: "1px solid var(--qe-line)", background: "var(--qe-panel)", display: "flex", alignItems: "center", gap: 14 } }, /* @__PURE__ */ React.createElement(NotifSwitch, { label: "Sound", on: sound, onToggle: () => setSound((v) => !v), title: "Play a cue on incoming" }), /* @__PURE__ */ React.createElement(
+    NotifSwitch,
+    {
+      label: "Desktop",
+      on: false,
+      disabled: true,
+      title: "Desktop notifications are deferred (plan \xA77) \u2014 not yet implemented"
+    }
+  ), /* @__PURE__ */ React.createElement(NotifSwitch, { label: "DND", on: dnd, onToggle: () => setDnd((v) => !v), title: "Do not disturb" }))), toasts.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: banner ? 92 : 62, right: open ? 370 : 8, zIndex: 60, display: "flex", flexDirection: "column", gap: 5, transition: "right .18s ease" } }, toasts.map((t) => /* @__PURE__ */ React.createElement(NotifToast, { key: t.id, ev: t, onClick: () => {
     setOpen(true);
     markRead(t.id);
     removeToast(t.id);
@@ -2937,6 +3002,34 @@ const CfgMsgLine = ({ msg }) => msg ? /* @__PURE__ */ React.createElement("div",
   marginTop: 6,
   color: msg.tone === "ok" ? "var(--qe-green)" : msg.tone === "err" ? "var(--qe-red)" : "var(--qe-sub)"
 } }, msg.text) : null;
+const CFG_RATIO_PAIRS = [
+  ["max_dd_warning_pct", "max_dd_limit_pct"],
+  ["weekly_loss_warning_pct", "weekly_loss_limit_pct"]
+];
+const cfgRatioPairs = (form, stored) => {
+  const out = {};
+  for (const [warnKey, limitKey] of CFG_RATIO_PAIRS) {
+    const w = (form[warnKey] || "").trim();
+    const l = (form[limitKey] || "").trim();
+    if (!w && !l) continue;
+    const fallback = (k) => stored && stored[k] != null ? String(stored[k]) : null;
+    out[warnKey] = w || fallback(warnKey);
+    out[limitKey] = l || fallback(limitKey);
+  }
+  return out;
+};
+const cfgRatioError = (form) => {
+  for (const [warnKey, limitKey] of CFG_RATIO_PAIRS) {
+    const w = parseFloat(form[warnKey]), l = parseFloat(form[limitKey]);
+    if (!isNaN(w) && !isNaN(l) && w >= l) {
+      return `${warnKey} (${w}) must be BELOW ${limitKey} (${l})`;
+    }
+    for (const [k, v] of [[warnKey, w], [limitKey, l]]) {
+      if (!isNaN(v) && (v < 0.5 || v > 1)) return `${k} (${v}) is outside 0.50\u20131.00`;
+    }
+  }
+  return null;
+};
 const CfgAccountForm = ({ account, detail, onReload }) => {
   const p = detail.params || {};
   const s = detail.settings || {};
@@ -2952,7 +3045,18 @@ const CfgAccountForm = ({ account, detail, onReload }) => {
     max_dd_percent: p.max_dd_percent != null ? String(p.max_dd_percent) : "",
     max_exposure: p.max_exposure != null ? String(p.max_exposure) : "",
     max_position_count: p.max_position_count != null ? String(p.max_position_count) : "",
-    max_correlated_exposure: p.max_correlated_exposure != null ? String(p.max_correlated_exposure) : ""
+    max_correlated_exposure: p.max_correlated_exposure != null ? String(p.max_correlated_exposure) : "",
+    /* config-1 (2026-07-25 Meridian audit): the four warn/hard-stop RATIOS. They
+       live in account_params (NOT the account_settings block rendered read-only
+       below), are bounded in core/state.PARAM_BOUNDS, pair-validated warn<limit
+       by validate_params, live-consumed by core/data_cache for pf.dd_state and
+       pf.weekly_pnl_state — and POST /accounts/{id}/update already accepted them
+       as Form fields. The form simply never sent them, so they were editable
+       nowhere in v3 (the legacy Jinja account form still exposes all four). */
+    weekly_loss_warning_pct: p.weekly_loss_warning_pct != null ? String(p.weekly_loss_warning_pct) : "",
+    weekly_loss_limit_pct: p.weekly_loss_limit_pct != null ? String(p.weekly_loss_limit_pct) : "",
+    max_dd_warning_pct: p.max_dd_warning_pct != null ? String(p.max_dd_warning_pct) : "",
+    max_dd_limit_pct: p.max_dd_limit_pct != null ? String(p.max_dd_limit_pct) : ""
   }));
   const [busy, setBusy] = React.useState(null);
   const [msg, setMsg] = React.useState(null);
@@ -2961,6 +3065,11 @@ const CfgAccountForm = ({ account, detail, onReload }) => {
     setForm((f) => ({ ...f, [k]: v }));
   };
   const doSave = async () => {
+    const ratioErr = cfgRatioError(form);
+    if (ratioErr) {
+      setMsg({ text: ratioErr, tone: "err" });
+      return;
+    }
     setBusy("save");
     setMsg(null);
     try {
@@ -2978,7 +3087,9 @@ const CfgAccountForm = ({ account, detail, onReload }) => {
         max_dd_percent: form.max_dd_percent.trim() || null,
         max_exposure: form.max_exposure.trim() || null,
         max_position_count: form.max_position_count.trim() || null,
-        max_correlated_exposure: form.max_correlated_exposure.trim() || null
+        max_correlated_exposure: form.max_correlated_exposure.trim() || null,
+        // config-1: warn/hard-stop ratios, sent PAIRWISE — see _cfgPair.
+        ...cfgRatioPairs(form, p)
       });
       const ok = r.ok && /saved/i.test(r.text);
       setMsg({ text: r.text || (r.ok ? "Saved." : "save failed"), tone: ok ? "ok" : "err" });
@@ -3022,7 +3133,7 @@ const CfgAccountForm = ({ account, detail, onReload }) => {
     setBusy(null);
   };
   const envTone = account.environment === "live" ? "err" : account.environment === "testnet" ? "info" : "blue";
-  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.9rem", fontWeight: 700 } }, account.name), account.is_active ? /* @__PURE__ */ React.createElement(Badge, { tone: "ok" }, "Active") : null, /* @__PURE__ */ React.createElement(Badge, { tone: envTone }, (account.environment || "live").toUpperCase()), /* @__PURE__ */ React.createElement("div", { className: "qe-grow" }), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", onClick: doTest, disabled: !!busy }, busy === "test" ? /* @__PURE__ */ React.createElement(Spinner, { size: "0.7rem", label: "testing" }) : "Test Connection")), /* @__PURE__ */ React.createElement(SecLbl, { rule: true }, "Credentials"), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Exchange"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.exchange, onChange: set("exchange"), placeholder: "binance" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Market Type"), /* @__PURE__ */ React.createElement("select", { className: "qe-input qe-select", value: form.market_type, onChange: set("market_type") }, /* @__PURE__ */ React.createElement("option", { value: "future" }, "USD-M Futures"), /* @__PURE__ */ React.createElement("option", { value: "spot" }, "Spot"))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Environment"), /* @__PURE__ */ React.createElement("select", { className: "qe-input qe-select", value: form.environment, onChange: set("environment") }, /* @__PURE__ */ React.createElement("option", { value: "live" }, "Live"), /* @__PURE__ */ React.createElement("option", { value: "paper" }, "Paper"), /* @__PURE__ */ React.createElement("option", { value: "testnet" }, "Testnet"))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "API Key"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", type: "password", value: form.api_key, onChange: set("api_key"), placeholder: "Leave blank to keep current" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "API Secret"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", type: "password", value: form.api_secret, onChange: set("api_secret"), placeholder: "Leave blank to keep current" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Broker Account ID"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.broker_account_id, onChange: set("broker_account_id") }))), /* @__PURE__ */ React.createElement(SecLbl, { rule: true }, "Risk Parameters \xB7 sizing (account_params)"), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Risk / Trade (fraction)"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.individual_risk_per_trade, onChange: set("individual_risk_per_trade"), placeholder: "0.01" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Weekly Loss (fraction)"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_w_loss_percent, onChange: set("max_w_loss_percent"), placeholder: "0.05" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Drawdown (fraction)"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_dd_percent, onChange: set("max_dd_percent"), placeholder: "0.10" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Exposure \xD7"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_exposure, onChange: set("max_exposure"), placeholder: "5.0" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Positions"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_position_count, onChange: set("max_position_count"), placeholder: "10" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Corr. Exposure (fraction)"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_correlated_exposure, onChange: set("max_correlated_exposure"), placeholder: "0.50" }))), /* @__PURE__ */ React.createElement(SecLbl, { rule: true, right: /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)", fontSize: "0.54rem" } }, "READ-ONLY \xB7 set via Presets tab") }, "Enforcement & Recovery \xB7 DD posture (account_settings)"), /* @__PURE__ */ React.createElement(FieldList, { cols: 2, rows: [
+  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.9rem", fontWeight: 700 } }, account.name), account.is_active ? /* @__PURE__ */ React.createElement(Badge, { tone: "ok" }, "Active") : null, /* @__PURE__ */ React.createElement(Badge, { tone: envTone }, (account.environment || "live").toUpperCase()), /* @__PURE__ */ React.createElement("div", { className: "qe-grow" }), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", onClick: doTest, disabled: !!busy }, busy === "test" ? /* @__PURE__ */ React.createElement(Spinner, { size: "0.7rem", label: "testing" }) : "Test Connection")), /* @__PURE__ */ React.createElement(SecLbl, { rule: true }, "Credentials"), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Exchange"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.exchange, onChange: set("exchange"), placeholder: "binance" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Market Type"), /* @__PURE__ */ React.createElement("select", { className: "qe-input qe-select", value: form.market_type, onChange: set("market_type") }, /* @__PURE__ */ React.createElement("option", { value: "future" }, "USD-M Futures"), /* @__PURE__ */ React.createElement("option", { value: "spot" }, "Spot"))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Environment"), /* @__PURE__ */ React.createElement("select", { className: "qe-input qe-select", value: form.environment, onChange: set("environment") }, /* @__PURE__ */ React.createElement("option", { value: "live" }, "Live"), /* @__PURE__ */ React.createElement("option", { value: "paper" }, "Paper"), /* @__PURE__ */ React.createElement("option", { value: "testnet" }, "Testnet"))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "API Key"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", type: "password", value: form.api_key, onChange: set("api_key"), placeholder: "Leave blank to keep current" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "API Secret"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", type: "password", value: form.api_secret, onChange: set("api_secret"), placeholder: "Leave blank to keep current" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Broker Account ID"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.broker_account_id, onChange: set("broker_account_id") }))), /* @__PURE__ */ React.createElement(SecLbl, { rule: true }, "Risk Parameters \xB7 sizing (account_params)"), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Risk / Trade (fraction)"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.individual_risk_per_trade, onChange: set("individual_risk_per_trade"), placeholder: "0.01" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Weekly Loss (fraction)"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_w_loss_percent, onChange: set("max_w_loss_percent"), placeholder: "0.05" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Drawdown (fraction)"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_dd_percent, onChange: set("max_dd_percent"), placeholder: "0.10" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Exposure \xD7"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_exposure, onChange: set("max_exposure"), placeholder: "5.0" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Positions"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_position_count, onChange: set("max_position_count"), placeholder: "10" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Corr. Exposure (fraction)"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_correlated_exposure, onChange: set("max_correlated_exposure"), placeholder: "0.50" }))), /* @__PURE__ */ React.createElement(SecLbl, { rule: true, right: /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)", fontSize: "0.54rem" } }, "fraction of the budget above \xB7 warn < limit") }, "Warn & Hard-stop ratios (account_params)"), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, marginBottom: 4 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "DD Warn \xD7 Max DD"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_dd_warning_pct, onChange: set("max_dd_warning_pct"), placeholder: "0.80" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "DD Hard-stop \xD7 Max DD"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_dd_limit_pct, onChange: set("max_dd_limit_pct"), placeholder: "0.95" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Weekly Warn \xD7 Max W. Loss"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.weekly_loss_warning_pct, onChange: set("weekly_loss_warning_pct"), placeholder: "0.80" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Weekly Hard-stop \xD7 Max W. Loss"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.weekly_loss_limit_pct, onChange: set("weekly_loss_limit_pct"), placeholder: "0.95" }))), /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-muted)", margin: "0 0 10px", lineHeight: 1.5 } }, "Range 0.50\u20130.99 (hard-stop to 1.00); warn must stay below its hard-stop or the save is rejected. Leave a field blank to keep its stored value \u2014 edit either half of a pair and both are sent.", /* @__PURE__ */ React.createElement("br", null), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, "WEEKLY"), " drives the live weekly state machine.", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, " DD"), " is a FALLBACK only \u2014 the rolling-DD path uses the absolute thresholds below, and these two are read solely if that path errors."), /* @__PURE__ */ React.createElement(SecLbl, { rule: true, right: /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)", fontSize: "0.54rem" } }, "READ-ONLY \xB7 set via Presets tab") }, "Enforcement & Recovery \xB7 DD posture (account_settings)"), /* @__PURE__ */ React.createElement(FieldList, { cols: 2, rows: [
     { label: "Strategy preset", value: (s.strategy_preset || "custom").toUpperCase(), color: "cyan" },
     { label: "DD window", value: s.dd_rolling_window_days != null ? s.dd_rolling_window_days + "d" : "\u2014" },
     { label: "DD warn", value: _cfgPct(s.dd_warning_threshold), color: "amber" },
@@ -3032,7 +3143,7 @@ const CfgAccountForm = ({ account, detail, onReload }) => {
     { label: "Weekly warn", value: _cfgPct(s.weekly_pnl_warning_threshold), color: "amber" },
     { label: "Weekly limit", value: _cfgPct(s.weekly_pnl_limit_threshold), color: "red" },
     { label: "Weekly enforcement", value: (s.weekly_pnl_enforcement_mode || "\u2014").toUpperCase() }
-  ] }), /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-muted)", margin: "6px 0 10px", lineHeight: 1.5 } }, "The DD gate reads THIS store. Values are written by preset Apply (Presets tab). The advisory\u2192enforced flip ships with its name-confirm safety gate in a later phase."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 8, alignItems: "center" } }, /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-primary", onClick: doSave, disabled: !!busy }, busy === "save" ? /* @__PURE__ */ React.createElement(Spinner, { size: "0.7rem", label: "saving" }) : "Save"), /* @__PURE__ */ React.createElement(
+  ] }), /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-muted)", margin: "6px 0 10px", lineHeight: 1.5 } }, "The rolling-DD gate reads THIS store \u2014 ABSOLUTE thresholds, written by preset Apply (Presets tab). Disjoint from the ratios above, which live in account_params. Note a preset rewrites these thresholds and the six sizing knobs, but NOT the four ratios \u2014 those stay as you set them. The advisory\u2192enforced flip ships with its name-confirm safety gate in a later phase."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 8, alignItems: "center" } }, /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-primary", onClick: doSave, disabled: !!busy }, busy === "save" ? /* @__PURE__ */ React.createElement(Spinner, { size: "0.7rem", label: "saving" }) : "Save"), /* @__PURE__ */ React.createElement(
     "button",
     {
       className: "qe-btn",
@@ -3759,16 +3870,28 @@ const PreTradePage = () => {
     applyPrefill(qid);
   }, [applyPrefill]);
   const tickerNorm = form.ticker.trim().toUpperCase();
+  const [netPx, setNetPx] = React.useState({});
   React.useEffect(() => {
     tickerRef.current = tickerNorm;
     setLivePrice(null);
+    setNetPx({});
     if (!tickerNorm) return;
     let alive = true, timer = null;
+    let hadPrice = false;
     const poll = async () => {
+      const t0 = performance.now();
       try {
         const d = await _ptJson("/api/price/" + encodeURIComponent(tickerNorm));
-        if (alive && tickerRef.current === tickerNorm && d.price) setLivePrice(d.price);
-      } catch (e) {
+        if (alive && tickerRef.current === tickerNorm) {
+          const ms = performance.now() - t0;
+          if (d.price) {
+            hadPrice = true;
+            setLivePrice(d.price);
+          }
+          setNetPx(!d.price && hadPrice ? { err: { corrupt: true }, ms } : { err: null, ms });
+        }
+      } catch (err) {
+        if (alive && tickerRef.current === tickerNorm) setNetPx((n) => ({ ...n, err }));
       }
       if (alive) timer = setTimeout(poll, 1e3);
     };
@@ -4083,7 +4206,13 @@ const PreTradePage = () => {
       style: { height: "100%" },
       bodyStyle: { overflow: "auto" },
       right: /* @__PURE__ */ React.createElement(Badge, { tone: form.orderType === "limit" ? "ok" : "warn" }, form.orderType === "limit" ? "MAKER FEE" : "TAKER FEE"),
-      foot: { tone: "ok", msg: "local" }
+      foot: !tickerNorm ? { tone: "sub", msg: "local \xB7 enter a ticker to poll price" } : qeFootState({
+        loading: netPx.ms == null && !netPx.err,
+        err: netPx.err,
+        hasData: livePrice != null,
+        ms: netPx.ms,
+        retrying: true
+      })
     },
     /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Order Type"), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4, marginTop: 3 } }, [["market", "MARKET"], ["limit", "LIMIT"], ["stop", "STOP"]].map(([k, l]) => /* @__PURE__ */ React.createElement("button", { key: k, onClick: () => setOrderType(k), className: `qe-btn ${form.orderType === k ? "qe-btn-primary" : ""}`, style: { height: 26, justifyContent: "center" } }, l)))), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Ticker"), /* @__PURE__ */ React.createElement(
       "input",
@@ -5107,8 +5236,40 @@ const HistoryPage = () => {
       { key: "side", label: "SIDE", render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: (r.side || "").toUpperCase() === "BUY" ? "ok" : "err" }, (r.side || "").toUpperCase()) },
       { key: "order_type", label: "TYPE", render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: "mute" }, (r.order_type || "").toUpperCase()) },
       { key: "quantity", label: "QTY", align: "right" },
-      { key: "price", label: "PRICE", align: "right", render: (r) => lpPx(r.price) },
-      { key: "avg_fill_price", label: "AVG FILL", align: "right", render: (r) => lpPx(r.avg_fill_price) },
+      /* history-1 (2026-07-25 Meridian audit): a stop/TP order carries its level
+         in stop_price, NOT price — price is 0 on every one of them (109 of 258
+         live rows). lpPx(0) formats as '0.000000', which read as a real level, so
+         PRICE now blanks on 0 and the TRIGGER column carries the actual level.
+         DEVIATION from the design, which had two columns (TP + SL) sourced from
+         tp_trigger_price / sl_trigger_price. Those are the PLAN levels attached
+         to an ENTRY order — a different fact from "the level this order triggers
+         at" — and they are populated on only 17 of 258 rows, so two columns
+         would be ~93% empty while still never showing the stop level. One
+         TRIGGER column on stop_price matches the shipped Jinja twin of this same
+         table (fragments/history/order_history_table.html sorts a "Trigger"
+         column on stop_price) and covers the rows that actually needed it.
+         A tp/sl fallback was tried and REVERTED in review: it printed an entry
+         order's take-profit plan as though it were that order's trigger, dropped
+         the SL half silently, and made the column sort disagree with itself
+         (DataList sorts row[col.key], i.e. raw stop_price = 0 for those rows). */
+      {
+        key: "price",
+        label: "PRICE",
+        align: "right",
+        render: (r) => r.price == null || +r.price === 0 ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014") : lpPx(r.price)
+      },
+      {
+        key: "stop_price",
+        label: "TRIGGER",
+        align: "right",
+        render: (r) => r.stop_price == null || +r.stop_price === 0 ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014") : /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-amber)" } }, lpPx(r.stop_price))
+      },
+      {
+        key: "avg_fill_price",
+        label: "AVG FILL",
+        align: "right",
+        render: (r) => r.avg_fill_price == null || +r.avg_fill_price === 0 ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014") : lpPx(r.avg_fill_price)
+      },
       { key: "status", label: "STATUS", render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: r.status === "filled" ? "ok" : r.status === "new" ? "info" : "mute" }, (r.status || "").toUpperCase()) },
       { key: "link_status", label: "LINK", render: (r) => /* @__PURE__ */ React.createElement(LinkBadge, { status: r.link_status, variant: 3 }) }
     ],

@@ -753,6 +753,9 @@ async def _market_stream_loop(attempt: int = 0) -> None:
             ping_timeout=30,
         ) as sock:
             ws.add_log("Market WS connected.")
+            # shell-chrome-3: the MARKET socket's own liveness. `ws.connected` is
+            # the user-data socket and is deliberately left alone here.
+            ws.market_connected = True
             _connected_at = time.monotonic()
             # corr-tap: ws_connected
             correlation_log.emit("ws_manager", "binance", "internal",
@@ -769,6 +772,10 @@ async def _market_stream_loop(attempt: int = 0) -> None:
                     if evt_ms:
                         offset = time_sync.get_offset_ms(_exchange_id())
                         ws.latency_ms = round((time.time() * 1000 + offset) - evt_ms, 1)
+                        # shell-chrome-3: keep a MARKET-only copy. ws.latency_ms is
+                        # also written by the user-data loop, so it cannot be
+                        # attributed to the market feed on its own.
+                        ws.market_latency_ms = ws.latency_ms
                     # corr-tap: entry point — one chain per market frame
                     # (spec §3.2 wsm-*; categories volume-gated in emit)
                     correlation_log.tick("wsm")
@@ -790,8 +797,13 @@ async def _market_stream_loop(attempt: int = 0) -> None:
                 except Exception as exc:
                     log.warning("Market WS message error: %s", exc)
                 ws.last_update = datetime.now(timezone.utc)
+                # shell-chrome-3: market-only frame clock — ws.last_update is also
+                # stamped by the user socket AND floored by the 30 s REST refresh,
+                # so only this one can detect a silently half-open market feed.
+                ws.market_last_update = ws.last_update
 
     except Exception as exc:
+        ws.market_connected = False
         ws.add_log(f"Market WS disconnected: {exc}")
         # corr-tap: ws_disconnect (spec §5.4b)
         correlation_log.emit(
@@ -970,5 +982,6 @@ async def stop() -> None:
     _fallback_task  = None
 
     app_state.ws_status.connected = False
+    app_state.ws_status.market_connected = False      # shell-chrome-3
     app_state.ws_status.using_fallback = False
     app_state.ws_status.add_log("WS stopped (account switch).")

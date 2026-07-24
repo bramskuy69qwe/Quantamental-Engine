@@ -15,6 +15,62 @@ const NAV_REGIME_TONE = {
 // SSE status → StatusDot tone (sse-adapter status values).
 const NAV_SSE_TONE = { open: 'ok', connecting: 'warn', error: 'err', idle: 'off', disabled: 'off' };
 
+/* shell-chrome-3 (2026-07-25 Meridian design-consistency audit) — EXCHANGE
+ * MARKET-DATA feed health, read from `/api/state.exchange_ws` (QE_CHROME polls
+ * /api/state every 10s, so this costs no extra request).
+ *
+ * INDEPENDENT of the SSE dot beside it: SSE is browser<->engine, this is
+ * engine<->exchange. When the market feed drops, every price on screen freezes
+ * while SSE keeps reporting "live" — so both dots must exist, and the audit's
+ * finding was that only the SSE one did.
+ *
+ * The endpoint feeds this from the MARKET socket's own flags. It must never be
+ * re-pointed at ws.connected / ws.last_update: those are the USER-DATA socket
+ * (and last_update is floored by the 30s REST refresh), which is exactly the
+ * mis-wiring the fix-review pass caught here before commit — it made this dot
+ * lie in both directions.
+ *
+ * Supersedes this file's former justification for dropping the LAT cell, which
+ * asserted the engine had no per-frame latency reading. It does — core/ws_manager
+ * stamps one on every market frame, and the Jinja exchange_info fragment already
+ * preferred it over the REST ping.
+ *
+ * STALE_S — the socket can claim connected while no frame has arrived for a
+ * long time (silent half-open). Past this many seconds we degrade to warn and
+ * show the age instead of the latency, because the age is the load-bearing
+ * fact. Safe to keep tight now that the clock is market-frames-only: a live
+ * feed stamps sub-second, so a healthy engine cannot drift across it.
+ */
+const NAV_FEED_STALE_S = 30;
+const _navFeed = (ch) => {
+  // A health indicator must not stay green when its own SOURCE is dead:
+  // chrome-live keeps the last-good /api/state payload and only raises stateErr,
+  // so without this branch the dot would show a stale 'ok' forever after the
+  // engine goes away. Checked FIRST, before the last-good payload is read.
+  if (ch && ch.stateErr) return { tone: 'off', value: '—',
+    title: 'Exchange feed: reading unavailable — /api/state is not responding' };
+  const w = (ch && ch.state && ch.state.exchange_ws) || null;
+  if (!w) return { tone: 'off', value: '—',
+    title: 'Exchange market-data feed: no reading yet (/api/state)' };
+  if (!w.connected) return { tone: 'err', value: 'down',
+    title: 'Exchange market-data websocket is DOWN — prices on screen are frozen' };
+  if (w.stale_s != null && w.stale_s > NAV_FEED_STALE_S) return {
+    tone: 'warn', value: Math.round(w.stale_s) + 's',
+    title: `Exchange feed connected but no message for ${Math.round(w.stale_s)}s — prices may be stale`,
+  };
+  // On REST fallback the websocket is NOT delivering, so latency_ms is frozen at
+  // whatever the last live frame measured. Showing it would present a stale
+  // number as current — say REST instead.
+  if (w.using_fallback) return { tone: 'warn', value: 'REST',
+    title: 'Exchange market-data on REST FALLBACK — the websocket is not delivering; prices update on the poll interval' };
+  return {
+    tone: 'ok',
+    value: w.latency_ms == null ? '—' : Math.round(w.latency_ms) + 'ms',
+    title: 'Exchange market-data websocket live'
+      + (w.latency_ms == null ? ' · latency not measured yet' : ` · ${Math.round(w.latency_ms)}ms per-frame latency`),
+  };
+};
+
 const _navCap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : '—');
 const _navPct = (v) => (v == null ? '—' : (v > 0 ? '+' : '') + v.toFixed(2) + '%');
 const _navPctCol = (v) => (v == null ? 'var(--qe-muted)'
@@ -120,9 +176,13 @@ const WorkspaceBar = ({ interactive = false, persistId = 'dashboard' }) => {
       <div className="qe-grow" />
 
       {/* P8 wave 1: real chrome strip — /api/state (10s) + snapshot (30s);
-          '—' when a source has no data yet (never fabricate). The design's
-          LAT cell is dropped: no real per-message latency source exists
-          (the WS dot in the top nav carries SSE connection state). */}
+          '—' when a source has no data yet (never fabricate).
+          shell-chrome-3 (Meridian audit) RESTORED the design's LAT cell. The
+          justification that used to sit here — that the engine had no
+          per-market-frame latency reading — was simply untrue: core/ws_manager
+          stamps one on every market frame, and it now rides
+          /api/state.exchange_ws. LAT is the EXCHANGE FEED's latency; the SSE dot
+          in the top nav is a different pipe entirely. */}
       <Strip dense items={(() => {
         const st = ch.state, eq = ch.snap && ch.snap.equity, rk = ch.snap && ch.snap.risk;
         const jr = ch.snap && ch.snap.journal, rg = ch.snap && ch.snap.regime;
@@ -130,8 +190,14 @@ const WorkspaceBar = ({ interactive = false, persistId = 'dashboard' }) => {
         const dPct = eq ? eq.daily_pnl_pct : null;
         const wPct = eq ? eq.weekly_pnl_pct : null;
         const mPct = jr ? jr.monthly_pnl_pct : null;
+        const feed = _navFeed(ch);
         return [
           { label: 'EXCH',   value: active ? _navCap(active.exchange) : '—' },
+          { label: 'LAT',    value: <span title={feed.title} style={{
+              color: feed.tone === 'err' ? 'var(--qe-red)'
+                : feed.tone === 'warn' ? 'var(--qe-amber)'
+                : feed.tone === 'off' ? 'var(--qe-muted)' : 'var(--qe-sub)',
+            }}>{feed.value}</span> },
           { label: 'REGIME', value: rg && rg.label && NAV_REGIME_TONE[rg.label]
               ? <RegimeBadge tone={NAV_REGIME_TONE[rg.label]} />
               : <span style={{ color: 'var(--qe-muted)' }}>—</span> },
@@ -202,6 +268,7 @@ const TopNavStd = ({page='Dashboard', onChange, variant='line', dense=false}) =>
     setTimeout(() => setSwitchErr(false), 4000);
   };
   const sseTone = NAV_SSE_TONE[ch.sse] || 'off';
+  const feed = _navFeed(ch);
   return (
   <React.Fragment>
   <div className="qe-hscroll" style={{
@@ -275,6 +342,11 @@ const TopNavStd = ({page='Dashboard', onChange, variant='line', dense=false}) =>
         {switchErr && <span className="qe-mono" style={{fontSize:'0.54rem', color:'var(--qe-red)'}}>switch failed</span>}
       </span>
       <StatusDot tone={sseTone} label="SSE" value={ch.sse === 'open' ? 'live' : ch.sse}/>
+      {/* shell-chrome-3: exchange feed health sits BESIDE the SSE dot because the
+          two are independent pipes — see _navFeed. */}
+      <span title={feed.title} style={{display:'inline-flex'}}>
+        <StatusDot tone={feed.tone} label="FEED" value={feed.value}/>
+      </span>
       <span style={{
         fontFamily:'var(--qe-mono)', fontSize:'0.56rem', color:'var(--qe-muted)',
         letterSpacing:'0.04em',
@@ -313,6 +385,7 @@ const StatusFooter = () => {
   const sseTone = ch.sse === 'open' ? 'var(--qe-green)'
     : ch.sse === 'connecting' ? 'var(--qe-amber)'
     : ch.sse === 'error' ? 'var(--qe-red)' : 'var(--qe-muted)';
+  const feed = _navFeed(ch);
   return (
     <div style={{
       display:'flex', alignItems:'center', gap:10,
@@ -326,6 +399,12 @@ const StatusFooter = () => {
       <div className="qe-grow"/>
       <span style={{color:engineTone}}>● engine</span>
       <span style={{color:sseTone}}>● sse</span>
+      {/* shell-chrome-3: the design's third footer dot was the EXCHANGE feed. */}
+      <span title={feed.title} style={{color:
+        feed.tone === 'ok' ? 'var(--qe-green)'
+        : feed.tone === 'warn' ? 'var(--qe-amber)'
+        : feed.tone === 'err' ? 'var(--qe-red)' : 'var(--qe-muted)'
+      }}>● feed</span>
       <LiveClock id="sb.clock" format={qeClockFmt} style={{color:'var(--qe-muted)'}}/>
     </div>
   );

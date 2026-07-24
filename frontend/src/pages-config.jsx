@@ -106,6 +106,58 @@ const CfgMsgLine = ({ msg }) => msg ? (
   }}>{msg.text}</div>
 ) : null;
 
+/* config-1 — the warn/hard-stop ratios must be posted PAIRWISE.
+ *
+ * core.state.validate_params gates its warn<limit check on BOTH keys being
+ * present in the dict it receives, and routes_accounts hands it the SUPPLIED
+ * subset — not the merged result. So sending only one member of a pair skips
+ * the cross-check entirely and the merged store can end up inverted
+ * (warn >= limit), with the endpoint still answering 200 "Saved.". An inversion
+ * is not cosmetic: the weekly pair is consumed unconditionally by
+ * core/data_cache and the limit branch is evaluated first, so it deletes the
+ * whole "warning" tier.
+ *
+ * Blank still means "leave unchanged" — but if EITHER member of a pair is
+ * filled we send BOTH, backfilling the blank one from the stored value so the
+ * validator always sees a complete pair. If both are blank the pair is omitted
+ * entirely and nothing about it changes.
+ */
+const CFG_RATIO_PAIRS = [
+  ['max_dd_warning_pct', 'max_dd_limit_pct'],
+  ['weekly_loss_warning_pct', 'weekly_loss_limit_pct'],
+];
+
+const cfgRatioPairs = (form, stored) => {
+  const out = {};
+  for (const [warnKey, limitKey] of CFG_RATIO_PAIRS) {
+    const w = (form[warnKey] || '').trim();
+    const l = (form[limitKey] || '').trim();
+    if (!w && !l) continue;                       // untouched pair — omit both
+    const fallback = (k) => (stored && stored[k] != null ? String(stored[k]) : null);
+    out[warnKey]  = w || fallback(warnKey);
+    out[limitKey] = l || fallback(limitKey);
+  }
+  return out;
+};
+
+/* Client-side pre-check so an inverted pair is rejected before it reaches the
+ * endpoint's partial-write path (params are written field-by-field BEFORE
+ * validate_params runs — a pre-existing behaviour shared with the Jinja form,
+ * which this keeps out of reach rather than widening). Returns an error string
+ * or null. */
+const cfgRatioError = (form) => {
+  for (const [warnKey, limitKey] of CFG_RATIO_PAIRS) {
+    const w = parseFloat(form[warnKey]), l = parseFloat(form[limitKey]);
+    if (!isNaN(w) && !isNaN(l) && w >= l) {
+      return `${warnKey} (${w}) must be BELOW ${limitKey} (${l})`;
+    }
+    for (const [k, v] of [[warnKey, w], [limitKey, l]]) {
+      if (!isNaN(v) && (v < 0.5 || v > 1.0)) return `${k} (${v}) is outside 0.50–1.00`;
+    }
+  }
+  return null;
+};
+
 /* ── Accounts tab ────────────────────────────────────────────────────────── */
 const CfgAccountForm = ({ account, detail, onReload }) => {
   const p = detail.params || {};
@@ -122,6 +174,17 @@ const CfgAccountForm = ({ account, detail, onReload }) => {
     max_exposure:              p.max_exposure              != null ? String(p.max_exposure)              : '',
     max_position_count:        p.max_position_count        != null ? String(p.max_position_count)        : '',
     max_correlated_exposure:   p.max_correlated_exposure   != null ? String(p.max_correlated_exposure)   : '',
+    /* config-1 (2026-07-25 Meridian audit): the four warn/hard-stop RATIOS. They
+       live in account_params (NOT the account_settings block rendered read-only
+       below), are bounded in core/state.PARAM_BOUNDS, pair-validated warn<limit
+       by validate_params, live-consumed by core/data_cache for pf.dd_state and
+       pf.weekly_pnl_state — and POST /accounts/{id}/update already accepted them
+       as Form fields. The form simply never sent them, so they were editable
+       nowhere in v3 (the legacy Jinja account form still exposes all four). */
+    weekly_loss_warning_pct:   p.weekly_loss_warning_pct   != null ? String(p.weekly_loss_warning_pct)   : '',
+    weekly_loss_limit_pct:     p.weekly_loss_limit_pct     != null ? String(p.weekly_loss_limit_pct)     : '',
+    max_dd_warning_pct:        p.max_dd_warning_pct        != null ? String(p.max_dd_warning_pct)        : '',
+    max_dd_limit_pct:          p.max_dd_limit_pct          != null ? String(p.max_dd_limit_pct)          : '',
   }));
   const [busy, setBusy] = React.useState(null);   // 'save' | 'test' | 'activate'
   const [msg, setMsg]   = React.useState(null);
@@ -129,6 +192,12 @@ const CfgAccountForm = ({ account, detail, onReload }) => {
   const set = (k) => (e) => { const v = e.target.value; setForm((f) => ({ ...f, [k]: v })); };
 
   const doSave = async () => {
+    // config-1: refuse an inverted / out-of-range ratio pair locally. The
+    // endpoint writes params field-by-field BEFORE validating, so a rejected
+    // save can still have moved other fields — keeping this unreachable is
+    // cheaper than widening that window.
+    const ratioErr = cfgRatioError(form);
+    if (ratioErr) { setMsg({ text: ratioErr, tone: 'err' }); return; }
     setBusy('save'); setMsg(null);
     try {
       const r = await _cfgPostForm(`/accounts/${account.id}/update`, {
@@ -146,6 +215,8 @@ const CfgAccountForm = ({ account, detail, onReload }) => {
         max_exposure:              form.max_exposure.trim()              || null,
         max_position_count:        form.max_position_count.trim()        || null,
         max_correlated_exposure:   form.max_correlated_exposure.trim()   || null,
+        // config-1: warn/hard-stop ratios, sent PAIRWISE — see _cfgPair.
+        ...cfgRatioPairs(form, p),
       });
       const ok = r.ok && /saved/i.test(r.text);
       setMsg({ text: r.text || (r.ok ? 'Saved.' : 'save failed'), tone: ok ? 'ok' : 'err' });
@@ -229,6 +300,27 @@ const CfgAccountForm = ({ account, detail, onReload }) => {
         <div><Lbl>Max Corr. Exposure (fraction)</Lbl><input className="qe-input" value={form.max_correlated_exposure} onChange={set('max_correlated_exposure')} placeholder="0.50" /></div>
       </div>
 
+      {/* config-1: the warn / hard-stop ratios. Expressed as a FRACTION OF the
+          budget above them (0.80 = warn once 80% of the Max-DD budget is used),
+          which is exactly how core/migrations/convert_thresholds derives the
+          absolute account_settings thresholds shown read-only below. */}
+      <SecLbl rule right={<span style={{ color: 'var(--qe-muted)', fontSize: '0.54rem' }}>fraction of the budget above · warn &lt; limit</span>}>
+        Warn &amp; Hard-stop ratios (account_params)
+      </SecLbl>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8, marginBottom: 4 }}>
+        <div><Lbl>DD Warn × Max DD</Lbl><input className="qe-input" value={form.max_dd_warning_pct} onChange={set('max_dd_warning_pct')} placeholder="0.80" /></div>
+        <div><Lbl>DD Hard-stop × Max DD</Lbl><input className="qe-input" value={form.max_dd_limit_pct} onChange={set('max_dd_limit_pct')} placeholder="0.95" /></div>
+        <div><Lbl>Weekly Warn × Max W. Loss</Lbl><input className="qe-input" value={form.weekly_loss_warning_pct} onChange={set('weekly_loss_warning_pct')} placeholder="0.80" /></div>
+        <div><Lbl>Weekly Hard-stop × Max W. Loss</Lbl><input className="qe-input" value={form.weekly_loss_limit_pct} onChange={set('weekly_loss_limit_pct')} placeholder="0.95" /></div>
+      </div>
+      <div className="qe-mono" style={{ fontSize: '0.56rem', color: 'var(--qe-muted)', margin: '0 0 10px', lineHeight: 1.5 }}>
+        Range 0.50–0.99 (hard-stop to 1.00); warn must stay below its hard-stop or the save is rejected.
+        Leave a field blank to keep its stored value — edit either half of a pair and both are sent.<br />
+        <span style={{ color: 'var(--qe-sub)' }}>WEEKLY</span> drives the live weekly state machine.
+        <span style={{ color: 'var(--qe-sub)' }}> DD</span> is a FALLBACK only — the rolling-DD path uses the
+        absolute thresholds below, and these two are read solely if that path errors.
+      </div>
+
       <SecLbl rule right={<span style={{ color: 'var(--qe-muted)', fontSize: '0.54rem' }}>READ-ONLY · set via Presets tab</span>}>
         Enforcement &amp; Recovery · DD posture (account_settings)
       </SecLbl>
@@ -244,7 +336,9 @@ const CfgAccountForm = ({ account, detail, onReload }) => {
         { label: 'Weekly enforcement', value: (s.weekly_pnl_enforcement_mode || '—').toUpperCase() },
       ]} />
       <div className="qe-mono" style={{ fontSize: '0.56rem', color: 'var(--qe-muted)', margin: '6px 0 10px', lineHeight: 1.5 }}>
-        The DD gate reads THIS store. Values are written by preset Apply (Presets tab).
+        The rolling-DD gate reads THIS store — ABSOLUTE thresholds, written by preset Apply (Presets tab).
+        Disjoint from the ratios above, which live in account_params. Note a preset rewrites these
+        thresholds and the six sizing knobs, but NOT the four ratios — those stay as you set them.
         The advisory→enforced flip ships with its name-confirm safety gate in a later phase.
       </div>
 

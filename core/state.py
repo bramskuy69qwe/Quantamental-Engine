@@ -297,6 +297,11 @@ class PortfolioStats:
 
 @dataclass
 class WSStatus:
+    # `connected` / `last_update` / `latency_ms` are the USER-DATA socket
+    # (account, order and position frames). ws_manager writes `connected` only in
+    # _user_data_loop; `last_update` is written by BOTH loops and is additionally
+    # refreshed by the 30 s REST account refresh, so it is a "something is alive"
+    # signal, not a market-feed one.
     connected:          bool  = False
     last_update:        Optional[datetime] = None
     latency_ms:         float = 0.0
@@ -304,6 +309,16 @@ class WSStatus:
     using_fallback:     bool  = False
     rate_limited_until: Optional[datetime] = None  # RL-1: 429/418 backoff
     logs:               List[str] = field(default_factory=list)
+    # ── MARKET-DATA socket (kline / depth / markPrice) ───────────────────────
+    # Separate because the two sockets fail INDEPENDENTLY: the market stream can
+    # die while the user stream is healthy, which freezes every price on screen
+    # without touching `connected`. Added 2026-07-25 (Meridian audit
+    # shell-chrome-3): the chrome's feed indicator was first wired to
+    # `connected`, which made it lie in both directions — false "feed down" on a
+    # user-socket blip, and a green dot during an actual market-feed outage.
+    market_connected:   bool  = False
+    market_last_update: Optional[datetime] = None
+    market_latency_ms:  float = 0.0
 
     def add_log(self, msg: str):
         try:
@@ -320,6 +335,15 @@ class WSStatus:
         if self.last_update is None:
             return 9999.0
         return (datetime.now(timezone.utc) - self.last_update).total_seconds()
+
+    @property
+    def market_seconds_since_update(self) -> float:
+        """Age of the last MARKET frame. Distinct from seconds_since_update,
+        which the REST account refresh keeps floored at ~30 s and which the user
+        socket also stamps — so it can never detect a dead market feed."""
+        if self.market_last_update is None:
+            return 9999.0
+        return (datetime.now(timezone.utc) - self.market_last_update).total_seconds()
 
     @property
     def is_stale(self) -> bool:

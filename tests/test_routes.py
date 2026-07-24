@@ -148,6 +148,28 @@ def test_api_state_has_halt_surface(client):
     assert isinstance(data["blocked"], bool)
 
 
+def test_api_state_has_exchange_feed_health(client):
+    """shell-chrome-3 (2026-07-25 Meridian audit): /api/state carries EXCHANGE
+    market-data feed health so the shared chrome can show it.
+
+    Why it must live here and not be inferred from the SSE dot: SSE is
+    browser<->engine, this is engine<->exchange. They fail independently — the
+    SSE dot reads "live" while the market feed is down and every price on screen
+    is frozen. QE_CHROME already polls /api/state every 10s, so this rides an
+    existing request rather than adding one.
+    """
+    ws = client.get("/api/state").json().get("exchange_ws")
+    assert ws is not None, "/api/state must expose exchange_ws"
+    for k in ("connected", "latency_ms", "stale_s", "using_fallback"):
+        assert k in ws, f"exchange_ws missing {k}"
+    assert isinstance(ws["connected"], bool)
+    assert isinstance(ws["using_fallback"], bool)
+    # latency_ms is deliberately None (not 0.0) when disconnected, so the chrome
+    # renders '—' instead of a fabricated 0 ms.
+    if not ws["connected"]:
+        assert ws["latency_ms"] is None
+
+
 def test_dashboard_snapshot_shape(client):
     """G-O12: /api/dashboard/snapshot aggregates the tile sections."""
     data = client.get("/api/dashboard/snapshot").json()

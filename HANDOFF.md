@@ -2,7 +2,7 @@
 
 **Date**: 2026-07-25 (**v3.0 OPERATOR BUG-LIST PASS — all 8 reported bugs + 2 follow-up design-parity rounds SHIPPED; the 3 P8 decision points are ANSWERED. NEXT PROGRAM = inconsistency audit of the built `/v3` frontend vs the Meridian standalone benchmark** — now committed in-repo, see § "▶▶ NEXT SESSION".)
 **Branch**: **`v3.0/ui-plan-audit` — LOCAL ONLY (unpushed), working tree CLEAN.** 16 commits this session on top of `361b98b`: `23d04de` #1 equity · `4ce6516` #4 snapshot-reader · `ff368be` phantom-equity tool · `f5b5f93`+`9125d6e` #2 DataList tools · `4b21db6` #5 manual-link · `c39119f` #6 dialog + #7 calendar · `88ce716`+`a1390a1`+`c871c18` clock arc · `7617b73` #8a MFE/MAE re-source · `74e687f` #8b excursion tool · `0988882` REASON resolver · `7fb64fc` linkage inbox · `5251d0d` history #1-3 · this wrap (HEAD). Base = the v2.7 line (`92b753b`, pushed). **Operator merges/pushes v3.0 at their call.**
-**Tests**: **4328 passed / 7 skipped / 3 deselected** (SOLO, `.venv`, FULL gate green — 10 green full runs; +73 pins over the P8 bundle's 4255; the last +2 pin the excursion-cleanup durability vs the reconciler's pending predicate). ALWAYS run SOLO on the **`.venv`** interpreter (user-site Python lacks `pytest-timeout` → drops the 30 s guardrail). The F5 tripwire fires its BENIGN branch only when the engine runs alongside — it was STOPPED for the later runs, so those gates are silent. Fresh worktree/clone: run `scripts/provision_test_env.py` FIRST (CLAUDE.md § "Fresh worktree / clone").
+**Tests**: **4369 passed / 7 skipped / 3 deselected** (SOLO, `.venv`, FULL gate green — 12 green full runs; +114 pins over the P8 bundle's 4255; the last +41 = excursion-cleanup durability vs the reconciler's pending predicate, then the 5 Meridian MED fixes incl. their fix-review corrections). ALWAYS run SOLO on the **`.venv`** interpreter (user-site Python lacks `pytest-timeout` → drops the 30 s guardrail). The F5 tripwire fires its BENIGN branch only when the engine runs alongside — it was STOPPED for the later runs, so those gates are silent. Fresh worktree/clone: run `scripts/provision_test_env.py` FIRST (CLAUDE.md § "Fresh worktree / clone").
 **Engine**: **STOPPED.** The operator hit a port-8000 conflict at session end; both operator-started uvicorn PIDs (32520/45848, up since 2026-07-24 23:44) were confirmed as the engine and killed — port verified free. **A RESTART IS REQUIRED and lands four backend changes at once**: the CCXT clock auto-fix, `/api/state`'s clock fields (feeds the drift banner), the MFE/MAE re-source, and P8 wave-2's Python routes (Monthly bar + macro sparklines). Bundle on disk **`10983f236b`**; hard-refresh after restart. Unfiled live-log observations (still open): news fetcher upserts 100 items every ~16 s; httpx INFO writes the **Finnhub API token in cleartext** into `data/logs/risk_engine.jsonl` (pre-existing leak — ledger candidate).
 
 ## ▶ SESSION CLOSE 2026-07-25 — operator bug-list pass (8 bugs) + 2 design-parity rounds
@@ -48,13 +48,40 @@ pass** (treat finder output as a draft — that ratio is the calibration record)
 The port is materially faithful: no missing page/tab/pane anywhere, and 6 of 10
 surfaces carry nothing above LOW (`primitives` byte-clean, `regime` 0 confirmed).
 Drift is concentrated in dropped derived readouts + a few lost affordances.
-The 5 MED: Config DD/weekly warn+hard-stop thresholds not editable anywhere ·
-History Orders tab has no trigger-price column (109/258 live rows render
-`PRICE 0.000000`) · Pre-Trade Order Inputs foot claims `local` while hosting a
-1 Hz price poll that swallows failures AND feeds market-order sizing ·
-chrome Desktop-notification switch is inert · no exchange feed-health dot in the
-chrome. **REMEDIATION IS NOT STARTED — operator picks scope.** The ledger's
-Refuted section records the false-positive classes; don't re-file them.
+**★ THE 5 MED ARE FIXED + PUSHED** (gate 4369/7/3, bundle `2ba081894e`; pins
+`tests/test_meridian_med_fixes.py` + 1 `/api/state` contract in test_routes):
+Config ratios editable again (posted PAIRWISE) · History TRIGGER column +
+PRICE/AVG-FILL blank on 0 · Pre-Trade foot on a real `netPx` pipe · Desktop
+switch DISABLED ("deferred, plan §7" — **operator decision: keep the deferral,
+make the control honest**, via a new additive `disabled` prop on `Switch`) ·
+`/api/state.exchange_ws` + FEED dot / LAT cell / footer dot.
+**LOW + NIT (29) REMAIN OPEN — operator picks scope.** The ledger's Refuted
+section records the false-positive classes; don't re-file them.
+
+**★★ READ THE LEDGER'S DISPOSITION BEFORE TRUSTING ANY FINDING TEXT.** A 5-lens
+fix-review returned 3 DO-NOT-SHIP / 24 findings and materially corrected TWO of
+the five fixes — both invisible to a green gate:
+- **shell-chrome-3 named the WRONG SOURCE.** `app_state.ws_status.connected` is
+  the **user-data** socket (ws_manager writes it only in `_user_data_loop`
+  :529/:621 + `stop()`; the market loop :755/:795 only logs), and `last_update`
+  is stamped by BOTH loops AND floored by the 30 s REST refresh. As first built
+  the FEED dot lied BOTH ways. Now backed by real market-socket tracking:
+  `WSStatus.market_connected` / `market_last_update` / `market_latency_ms` +
+  `market_seconds_since_update`. **Symptom real, mechanism wrong** —
+  audit-impact-imprecision, this time inside an audit finding.
+- **config-1's first fix could write an INVERTED risk config.**
+  `validate_params` gates warn<limit on BOTH keys present and validates the
+  SUPPLIED subset, so "blank = keep" skipped the check → `warn >= limit` behind a
+  200 "Saved.". The weekly pair is consumed unconditionally and the limit branch
+  is first, so an inversion deletes the warning tier. Now pairwise + a
+  client-side pre-check.
+Also folded: fabricated `0ms` latency (legacy Jinja falsy guard not carried
+over) · `_navFeed` ignoring `ch.stateErr` · REST-fallback showing a frozen
+latency as current · Pre-Trade 200-with-no-price painting health over a latched
+stale sizing price · **revert of this pass's own TRIGGER tp/sl fallback** (it
+printed an entry order's TP PLAN level as its trigger and desynced the column
+from its sort). Copy corrections: the DD ratios are read ONLY in the rolling-DD
+`except` fallback, and `PRESET_PARAMS` carries no ratios.
 
 **▶ (superseded, kept for context) NEXT SESSION = INCONSISTENCY AUDIT vs the Meridian standalone.**
 The operator downloaded a **fully self-contained** design export, now committed
