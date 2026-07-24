@@ -2,7 +2,7 @@
 
 **Date**: 2026-07-25 (**v3.0 OPERATOR BUG-LIST PASS — all 8 reported bugs + 2 follow-up design-parity rounds SHIPPED; the 3 P8 decision points are ANSWERED. NEXT PROGRAM = inconsistency audit of the built `/v3` frontend vs the Meridian standalone benchmark** — now committed in-repo, see § "▶▶ NEXT SESSION".)
 **Branch**: **`v3.0/ui-plan-audit` — LOCAL ONLY (unpushed), working tree CLEAN.** 16 commits this session on top of `361b98b`: `23d04de` #1 equity · `4ce6516` #4 snapshot-reader · `ff368be` phantom-equity tool · `f5b5f93`+`9125d6e` #2 DataList tools · `4b21db6` #5 manual-link · `c39119f` #6 dialog + #7 calendar · `88ce716`+`a1390a1`+`c871c18` clock arc · `7617b73` #8a MFE/MAE re-source · `74e687f` #8b excursion tool · `0988882` REASON resolver · `7fb64fc` linkage inbox · `5251d0d` history #1-3 · this wrap (HEAD). Base = the v2.7 line (`92b753b`, pushed). **Operator merges/pushes v3.0 at their call.**
-**Tests**: **4326 passed / 7 skipped / 3 deselected** (SOLO, `.venv`, FULL gate green — 9 green full runs this session; +71 pins over the P8 bundle's 4255). ALWAYS run SOLO on the **`.venv`** interpreter (user-site Python lacks `pytest-timeout` → drops the 30 s guardrail). The F5 tripwire fires its BENIGN branch only when the engine runs alongside — it was STOPPED for the later runs, so those gates are silent. Fresh worktree/clone: run `scripts/provision_test_env.py` FIRST (CLAUDE.md § "Fresh worktree / clone").
+**Tests**: **4328 passed / 7 skipped / 3 deselected** (SOLO, `.venv`, FULL gate green — 10 green full runs; +73 pins over the P8 bundle's 4255; the last +2 pin the excursion-cleanup durability vs the reconciler's pending predicate). ALWAYS run SOLO on the **`.venv`** interpreter (user-site Python lacks `pytest-timeout` → drops the 30 s guardrail). The F5 tripwire fires its BENIGN branch only when the engine runs alongside — it was STOPPED for the later runs, so those gates are silent. Fresh worktree/clone: run `scripts/provision_test_env.py` FIRST (CLAUDE.md § "Fresh worktree / clone").
 **Engine**: **STOPPED.** The operator hit a port-8000 conflict at session end; both operator-started uvicorn PIDs (32520/45848, up since 2026-07-24 23:44) were confirmed as the engine and killed — port verified free. **A RESTART IS REQUIRED and lands four backend changes at once**: the CCXT clock auto-fix, `/api/state`'s clock fields (feeds the drift banner), the MFE/MAE re-source, and P8 wave-2's Python routes (Monthly bar + macro sparklines). Bundle on disk **`10983f236b`**; hard-refresh after restart. Unfiled live-log observations (still open): news fetcher upserts 100 items every ~16 s; httpx INFO writes the **Finnhub API token in cleartext** into `data/logs/risk_engine.jsonl` (pre-existing leak — ledger candidate).
 
 ## ▶ SESSION CLOSE 2026-07-25 — operator bug-list pass (8 bugs) + 2 design-parity rounds
@@ -76,11 +76,29 @@ real `exit_reason`, not the mock's "opposite-side mkt"; models-report keeps
 
 **▶ OPERATOR ACTIONS PENDING:**
 1. **Restart the engine** (see the Engine line — lands 4 backend changes).
-2. **Optional `--apply`**: `scripts/clean_overattributed_excursions.py` —
-   dry-run verified, **67 rows / 10 symbols** (SPCX 34 worst −284; SAGA 60%,
-   LAB 45%, BSB 27% adverse). Pure DB hygiene: the analytics already read
-   `closed_positions` after `7617b73`, so it changes no displayed number.
-   Engine must be stopped (the tool REFUSES on a non-empty `-wal`).
+2. ~~Optional `--apply`~~ **DONE 2026-07-25** —
+   `scripts/clean_overattributed_excursions.py --apply`: **67 rows / 10 symbols**
+   nulled (SPCX 34 worst −284; SAGA 60%, LAB 45%, BSB 27% adverse). Backup
+   `data/risk_engine.db.bak_pre_excursion_clean_20260724_174246`. Changed no
+   displayed number (analytics read `closed_positions` since `7617b73`).
+   **A LATENT DEFECT WAS FIXED FIRST — the tool was self-undoing.** It wrote
+   `backfill_completed=0`, which is the reconciler's WORK-QUEUE flag, not an
+   inert "unknown": `backfill_all()` is spawned unconditionally at every engine
+   start (`core/schedulers.py:409`) and selects
+   `WHERE NOT backfill_completed AND open_time>0 AND trade_key NOT LIKE 'qt:%'`
+   (`core/db_exchange.py:240`), recomputing through the same
+   full-position-window `calc_mfe_mae` that over-attributed the rows. Applying
+   as-written would have durably cleaned **5 of 67** — the pending restart would
+   have restored the other 62. Now writes `backfill_completed=1`
+   (reconciler-DONE). Verified post-apply against the backup: 67/67 zeroed +
+   flagged, **0 re-queued**, zero drift in income/notional/entry_price/qty/
+   open_time, reconciler backlog unchanged at 349. NB the 67 rows are now
+   permanently out of the reconciler — correct today (a per-partial excursion
+   is not recoverable from a full-position window), reversible via the backup
+   or `UPDATE exchange_history SET backfill_completed=0 WHERE ...`.
+   **Contrast worth keeping**: `core.database`'s v1-v4 `reset_mfe_mae_*`
+   migrations DO leave the flag alone — their intent is the opposite (zero so
+   the reconciler RECOMPUTES with a corrected formula).
 3. Confirm **#7's aspect direction** (`3/2` shipped; flip both literals to
    `'2 / 3'` if portrait was meant).
 4. Push/merge `v3.0/ui-plan-audit` at your call (still local-only).
@@ -113,7 +131,11 @@ real `exit_reason`, not the mock's "opposite-side mkt"; models-report keeps
 - Two live-DB cleanup tools now exist and share one discipline (dry-run
   default, verbatim planned changes, timestamped backup, refuse on non-empty
   `-wal`): `clean_phantom_equity_snapshots.py` (APPLIED) and
-  `clean_overattributed_excursions.py` (PENDING).
+  `clean_overattributed_excursions.py` (**APPLIED 2026-07-25** — 67 rows; see
+  Operator-action 2 for the self-undoing `backfill_completed` defect fixed
+  first). **Discipline addition for the next such tool**: a cleanup that resets
+  a column ALSO owns the question "does a background worker treat this value as
+  its work queue?" — grep the sentinel's readers before writing it.
 
 ## ▶ SESSION CLOSE 2026-07-24 — P7 Models + the whole P8 audit-and-remediation arc
 

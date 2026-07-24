@@ -99,10 +99,11 @@ class TestDryRunAndApply:
         db = _make_db(tmp_path)
         res = run(db_path=db, apply=True, verbose=False)
         assert res["applied"] is True and res["affected"] == 3
-        # flagged rows nulled + backfill reset
+        # flagged rows nulled + marked reconciler-DONE (NOT 0 — see
+        # TestSurvivesReconciler and the script's "THE FIX" docstring)
         for tk in ("s1", "s2", "g1"):
             r = _fetch(db, tk)
-            assert r["mfe"] == 0 and r["mae"] == 0 and r["backfill_completed"] == 0
+            assert r["mfe"] == 0 and r["mae"] == 0 and r["backfill_completed"] == 1
         # normal row untouched
         n1 = _fetch(db, "n1")
         assert n1["mae"] == pytest.approx(-0.10) and n1["mfe"] == pytest.approx(0.52)
@@ -128,3 +129,54 @@ class TestDryRunAndApply:
         res_hi = run(db_path=db, min_pct=50.0, apply=False, verbose=False)
         # only SAGA (61%) exceeds 50%
         assert res_hi["flagged"] == 1
+
+
+# The reconciler's pending-work filter, verbatim from
+# core/db_exchange.py::get_pending_reconciler_symbols / get_uncalculated_exchange_rows.
+# Duplicated (not imported) on purpose: these are async aiosqlite methods, and the
+# point of the pin is that THIS predicate must not select a cleaned row.
+_RECONCILER_PENDING = (
+    "SELECT trade_key FROM exchange_history "
+    "WHERE NOT backfill_completed AND open_time>0 AND trade_key NOT LIKE 'qt:%'"
+)
+
+
+class TestSurvivesReconciler:
+    """The cleanup must be DURABLE across an engine restart.
+
+    Regression: the tool originally wrote backfill_completed=0, which is the
+    reconciler's WORK-QUEUE flag — not an inert "unknown" marker.
+    ReconcilerWorker.backfill_all() is spawned unconditionally at every engine
+    start and recomputes any row matching _RECONCILER_PENDING through the same
+    full-position-window calc_mfe_mae that over-attributed these rows, writing
+    the identical garbage back. On the live DB that was 62 of 67 rows, i.e. the
+    cleanup undid itself at the operator's next restart.
+    """
+
+    def test_cleaned_rows_are_not_reconciler_pending(self, tmp_path):
+        db = _make_db(tmp_path)
+        run(db_path=db, apply=True, verbose=False)
+        conn = sqlite3.connect(db)
+        pending = {r[0] for r in conn.execute(_RECONCILER_PENDING).fetchall()}
+        conn.close()
+        assert pending.isdisjoint({"s1", "s2", "g1"}), (
+            "cleaned rows re-entered the reconciler queue — backfill_all() would "
+            "recompute and restore the over-attributed MFE/MAE on next startup"
+        )
+
+    def test_untouched_pending_rows_still_queue(self, tmp_path):
+        """The flag flip must not evict rows the reconciler legitimately owes."""
+        db = _make_db(tmp_path)
+        conn = sqlite3.connect(db)
+        # a genuinely never-computed row: zero excursion, not flagged by the scan
+        conn.execute(
+            "INSERT INTO exchange_history "
+            "(trade_key, account_id, symbol, direction, income, notional, mfe, mae,"
+            " entry_price, qty, open_time, time, backfill_completed) "
+            "VALUES ('p1',1,'ETHUSDT','LONG',1.0,500.0,0,0,3000.0,0.16,700,1700,0)")
+        conn.commit(); conn.close()
+        run(db_path=db, apply=True, verbose=False)
+        conn = sqlite3.connect(db)
+        pending = {r[0] for r in conn.execute(_RECONCILER_PENDING).fetchall()}
+        conn.close()
+        assert "p1" in pending

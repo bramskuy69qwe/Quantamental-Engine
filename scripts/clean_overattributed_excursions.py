@@ -29,10 +29,33 @@ shared-window class. Rows with notional<=0 are skipped (can't judge).
 
 THE FIX
 -------
-Flagged rows get mfe=0, mae=0, backfill_completed=0 — i.e. reset to the
-never-computed sentinel (parity with core.database's own mfe/mae reset SQL),
-so any excursion query (filter `mfe!=0 OR mae!=0`) simply skips them. income /
-notional / prices are LEFT INTACT — only the excursion columns were wrong.
+Flagged rows get mfe=0, mae=0, backfill_completed=1 — zeroed so any excursion
+query (filter `mfe!=0 OR mae!=0`) skips them, and marked reconciler-DONE so the
+zeroes STAY.
+
+Why backfill_completed=1 and NOT 0 (the never-computed sentinel): 0 is the
+reconciler's WORK-QUEUE flag, not an inert "unknown" marker.
+``ReconcilerWorker.backfill_all()`` — spawned unconditionally at every engine
+start (``core/schedulers.py``) — selects
+``WHERE NOT backfill_completed AND open_time>0 AND trade_key NOT LIKE 'qt:%'``
+(``core/db_exchange.py``) and recomputes MFE/MAE through the very
+full-position-window ``calc_mfe_mae`` call that over-attributed them in the
+first place. Writing 0 here re-queues 62 of the 67 live rows and restores the
+exact garbage on the next restart — a self-undoing cleanup.
+
+The ``core.database`` reset migrations (v1-v4) DO leave the flag alone, but
+their intent is the OPPOSITE of this tool's: they zero the columns so the
+reconciler RECOMPUTES with a corrected formula. Nothing is corrected here — a
+per-partial excursion is not recoverable from a full-position window — so these
+rows must stay OUT of the queue permanently.
+
+income / notional / prices are LEFT INTACT — only the excursion columns were
+wrong. Nothing reads exchange_history's mfe/mae for display any more (commit
+7617b73 re-sourced the Analytics excursion scatter to ``closed_positions``;
+``get_trade_distribution_series`` reads this table for PnL/hold-time only), so
+the flag flip changes no rendered number. Reversible from the backup, or by
+``UPDATE exchange_history SET backfill_completed=0 WHERE ...`` if a future
+reconciler fix ever makes per-partial excursions well-defined.
 
 SAFETY (CLAUDE.md § "Live-DB dry-run before any destructive --apply")
 ---------------------------------------------------------------------
@@ -120,10 +143,13 @@ def _report(flagged: List[Dict[str, Any]], min_pct: float) -> None:
 
 
 def apply_null(conn: sqlite3.Connection, flagged: List[Dict[str, Any]]) -> int:
+    # backfill_completed=1 (NOT 0) — see the module docstring's "THE FIX": 0 is
+    # the reconciler's work-queue flag, so writing it would hand these rows
+    # straight back to the over-attributing calc_mfe_mae at the next engine start.
     cur = conn.cursor()
     for r in flagged:
         cur.execute(
-            "UPDATE exchange_history SET mfe=0, mae=0, backfill_completed=0 "
+            "UPDATE exchange_history SET mfe=0, mae=0, backfill_completed=1 "
             "WHERE trade_key=?", (r["trade_key"],))
     conn.commit()
     return len(flagged)
