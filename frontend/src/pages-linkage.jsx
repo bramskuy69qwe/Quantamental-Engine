@@ -216,6 +216,11 @@ const LinkagePage = () => {
   const [closes, setCloses]   = React.useState(null);
   const [sel, setSel]         = React.useState(null);
   const [toast, setToast]     = React.useState(null);
+  // operator-bug #6: calc-cancel confirm dialog (ModelDialog primitive) —
+  // replaces the browser window.confirm. Holds the calc row pending confirm.
+  const [cancelCalc, setCancelCalc]     = React.useState(null);
+  const [cancelReason, setCancelReason] = React.useState('');
+  const [cancelBusy, setCancelBusy]     = React.useState(false);
 
   // Per-SOURCE pipe state (audit MED-1: the lanes span different routers —
   // /orders/* vs /api/linkage/* — so a lane-representative foot would
@@ -309,13 +314,9 @@ const LinkagePage = () => {
     { key: 'sl_price', label: 'SL', align: 'right', render: (r) => <span className="qe-dn">{lpPx(r.sl_price)}</span> },
     { key: 'cd', label: 'Link window', align: 'right', sort: false, render: (r) => <CalcCountdown expiry={r.expiry_ms} window={r.window_seconds} /> },
     { key: 'act', label: '', align: 'right', sort: false, render: (r) => (
+        // operator-bug #6: open the ModelDialog confirm instead of window.confirm.
         <button className="qe-btn qe-btn-sm qe-btn-ghost" title="Cancel this calc"
-          onClick={async (e) => {
-            e.stopPropagation();
-            if (!window.confirm(`Cancel calc ${String(r.calc_id).slice(-8)}?`)) return;
-            try { const res = await _lkForm(`/calculator/cancel/${r.calc_id}`, {}); flash(res.text || 'cancel sent'); load('fast'); }
-            catch (err) { flash('cancel failed'); }
-          }}>✕</button>
+          onClick={(e) => { e.stopPropagation(); setCancelReason(''); setCancelCalc(r); }}>✕</button>
       ) },
   ];
   const fundCols = [
@@ -427,6 +428,55 @@ const LinkagePage = () => {
           </GridItem>
         </GridWorkspace>
       </div>
+
+      {/* operator-bug #6: calc-cancel confirm — ModelDialog primitive (hoisted
+          to primitives.jsx), the "basic pane with a close button" pattern.
+          Scrim-click + ✕ + Keep all dismiss; Cancel calc POSTs the existing
+          /calculator/cancel/{id} endpoint (optional reason). */}
+      {cancelCalc && (
+        <ModelDialog
+          title={`Cancel calc · ${String(cancelCalc.calc_id).slice(-8)}`}
+          width={420}
+          onClose={() => { if (!cancelBusy) { setCancelCalc(null); setCancelReason(''); } }}
+          footer={<React.Fragment>
+            <button className="qe-btn qe-btn-sm qe-btn-ghost" disabled={cancelBusy}
+              onClick={() => { setCancelCalc(null); setCancelReason(''); }}>Keep calc</button>
+            <button className="qe-btn qe-btn-sm qe-btn-danger" disabled={cancelBusy}
+              onClick={async () => {
+                setCancelBusy(true);
+                try {
+                  const res = await _lkForm(`/calculator/cancel/${cancelCalc.calc_id}`,
+                    cancelReason.trim() ? { reason: cancelReason.trim() } : {});
+                  flash(res.text || 'cancel sent');
+                  setCancelCalc(null); setCancelReason(''); load('fast');
+                } catch (err) { flash('cancel failed — engine unreachable?'); }
+                setCancelBusy(false);
+              }}>{cancelBusy ? <Spinner size="0.62rem" /> : 'Cancel calc'}</button>
+          </React.Fragment>}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+              <span className="qe-mono" style={{ color: 'var(--qe-cyan)', fontWeight: 700, fontSize: '0.72rem' }}>{cancelCalc.ticker}</span>
+              <Badge tone={(cancelCalc.side || '').toLowerCase() === 'long' ? 'ok' : 'err'}>{(cancelCalc.side || '').toUpperCase()}</Badge>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '5px 10px', padding: '6px 8px', border: '1px solid var(--qe-line)' }}>
+              <KV l="Entry" v={lpPx(cancelCalc.average)} />
+              <KV l="TP" v={lpPx(cancelCalc.tp_price)} color="var(--qe-green)" />
+              <KV l="SL" v={lpPx(cancelCalc.sl_price)} color="var(--qe-red)" />
+            </div>
+            <div className="qe-mono" style={{ fontSize: '0.56rem', color: 'var(--qe-muted)', lineHeight: 1.4 }}>
+              Cancelling releases this calc's link window. A fill after this lands
+              UNPLANNED unless a fresh calc is run for the ticker.
+            </div>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontFamily: 'var(--qe-ui)', fontSize: '0.52rem', fontWeight: 700, letterSpacing: '0.09em', textTransform: 'uppercase', color: 'var(--qe-sub)' }}>Reason (optional)</span>
+              <input className="qe-input" value={cancelReason} placeholder="why…"
+                onChange={(e) => setCancelReason(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Escape' && !cancelBusy) { setCancelCalc(null); setCancelReason(''); } }}
+                style={{ height: 22, boxSizing: 'border-box' }} />
+            </label>
+          </div>
+        </ModelDialog>
+      )}
 
       {toast && (
         <div style={{ position: 'absolute', bottom: 14, left: '50%', transform: 'translateX(-50%)', zIndex: 80, display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', background: 'var(--qe-bg)', border: '1px solid var(--qe-green)' }}>

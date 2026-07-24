@@ -589,7 +589,10 @@ const AnaTabCalendar = () => {
                 return (
                   <div key={i} title={`${cell.date}: no trades`} style={{
                     background: 'var(--qe-panel)', border: '1px solid color-mix(in srgb, var(--qe-text) 4%, transparent)',
-                    padding: '4px 6px', minHeight: 46, opacity: 0.45,
+                    // operator-bug #7: day cells sized 2:3 (height:width) via
+                    // aspect-ratio 3/2 — was flat (minHeight 46 only). minHeight
+                    // kept as a floor for narrow panes.
+                    padding: '4px 6px', aspectRatio: '3 / 2', minHeight: 46, opacity: 0.45,
                   }}>
                     <span style={{ fontSize: '0.6rem', fontFamily: 'var(--qe-mono)', color: 'var(--qe-muted)' }}>{cell.day}</span>
                   </div>
@@ -602,7 +605,7 @@ const AnaTabCalendar = () => {
               const tc = cell.pnl >= 0 ? 'var(--qe-green)' : 'var(--qe-red)';
               return (
                 <div key={i} title={`${cell.date}: $${cell.pnl.toFixed(2)} · ${cell.trades || 0}T · ${((cell.win_rate || 0) * 100).toFixed(0)}% WR`}
-                  style={{ background: bg, border: '1px solid color-mix(in srgb, var(--qe-text) 4%, transparent)', padding: '4px 6px', display: 'flex', flexDirection: 'column', minHeight: 46 }}>
+                  style={{ background: bg, border: '1px solid color-mix(in srgb, var(--qe-text) 4%, transparent)', padding: '4px 6px', display: 'flex', flexDirection: 'column', aspectRatio: '3 / 2', minHeight: 46 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.6rem', fontFamily: 'var(--qe-mono)' }}>
                     <span style={{ color: tc, fontWeight: 600 }}>{cell.day}</span>
                     {cell.trades > 0 && <span style={{ color: tc, opacity: 0.7 }}>{((cell.win_rate || 0) * 100).toFixed(0)}%</span>}

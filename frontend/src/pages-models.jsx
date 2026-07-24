@@ -5,26 +5,9 @@
    last-submit pattern (DESIGN.md §5 non-fetch panes); page panes bind the
    overview feed's qeFootState line. */
 
-/* Shared overlay shell — a Pane, layered (scrim + centering + close ✕). */
-const ModelDialog = ({ title, onClose, width = 460, children, footer, foot = null, hot = true }) => (
-  <div style={{ position: 'absolute', inset: 0, zIndex: 50, background: 'rgba(0,0,0,0.66)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
-    onClick={onClose}>
-    <div onClick={(e) => e.stopPropagation()} style={{ width, maxWidth: '100%', maxHeight: '100%', display: 'flex', flexDirection: 'column', position: 'relative',
-      background: 'var(--qe-card)', border: '1px solid var(--qe-line-2)', boxShadow: '0 24px 70px -16px var(--qe-bg)' }}>
-      <PaneHead title={title} hot={hot}
-        right={<button onClick={onClose} title="Close"
-          style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 14,
-            border: '1px solid var(--qe-faint)', background: 'transparent', color: 'var(--qe-muted)', cursor: 'pointer',
-            fontSize: '0.7rem', lineHeight: 1, padding: 0 }}
-          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--qe-red)'; e.currentTarget.style.borderColor = 'var(--qe-red)'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--qe-muted)'; e.currentTarget.style.borderColor = 'var(--qe-faint)'; }}>✕</button>} />
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 10 }}>{children}</div>
-      {foot && <PaneFoot {...foot} />}
-      {footer && <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6, padding: '7px 9px', borderTop: '1px solid var(--qe-line)', background: 'var(--qe-panel)', flexShrink: 0 }}>{footer}</div>}
-      <span className="qe-grip" style={{ pointerEvents: 'none' }} />
-    </div>
-  </div>
-);
+/* ModelDialog — the shared overlay shell — is now a primitive (primitives.jsx),
+   hoisted in operator-bug #6 so Linkage's calc-cancel confirm can reuse it.
+   Referenced here as a bare identifier (single concatenated bundle scope). */
 
 const _MdlField = ({ label, children, hint, error }) => (
   <label style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
@@ -616,4 +599,4 @@ const ModelsPage = () => {
   );
 };
 
-Object.assign(window, { ModelsPage, ModelTabStrip, ModelFormModal, ImportModal, ModelDialog });
+Object.assign(window, { ModelsPage, ModelTabStrip, ModelFormModal, ImportModal });

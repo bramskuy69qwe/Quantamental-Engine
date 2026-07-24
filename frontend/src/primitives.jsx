@@ -691,6 +691,33 @@ const Pane = ({title, count, right, hot, tag, foot=null, resizable=true, onRefre
   );
 };
 
+// ── ModelDialog — shared overlay shell (scrim + centering + close ✕) ───────
+// A Pane, layered as a modal. Hoisted here from pages-models.jsx
+// (operator-bug #6) so any page can raise a confirm/detail dialog — the calc-
+// cancel confirm on Linkage is the first non-Models consumer. Bare-identifier
+// visible to every later module (single concatenated bundle scope) and also
+// window-exported below. `footer` = right-aligned action row; `foot` = a
+// PaneFoot state line; onClick-scrim + ✕ both close.
+const ModelDialog = ({ title, onClose, width = 460, children, footer, foot = null, hot = true }) => (
+  <div style={{ position: 'absolute', inset: 0, zIndex: 50, background: 'rgba(0,0,0,0.66)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
+    onClick={onClose}>
+    <div onClick={(e) => e.stopPropagation()} style={{ width, maxWidth: '100%', maxHeight: '100%', display: 'flex', flexDirection: 'column', position: 'relative',
+      background: 'var(--qe-card)', border: '1px solid var(--qe-line-2)', boxShadow: '0 24px 70px -16px var(--qe-bg)' }}>
+      <PaneHead title={title} hot={hot}
+        right={<button onClick={onClose} title="Close"
+          style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 14,
+            border: '1px solid var(--qe-faint)', background: 'transparent', color: 'var(--qe-muted)', cursor: 'pointer',
+            fontSize: '0.7rem', lineHeight: 1, padding: 0 }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--qe-red)'; e.currentTarget.style.borderColor = 'var(--qe-red)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--qe-muted)'; e.currentTarget.style.borderColor = 'var(--qe-faint)'; }}>✕</button>} />
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 10 }}>{children}</div>
+      {foot && <PaneFoot {...foot} />}
+      {footer && <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6, padding: '7px 9px', borderTop: '1px solid var(--qe-line)', background: 'var(--qe-panel)', flexShrink: 0 }}>{footer}</div>}
+      <span className="qe-grip" style={{ pointerEvents: 'none' }} />
+    </div>
+  </div>
+);
+
 // ── DataList tooling helpers (search / sort / filter) ─────────────────────
 // Thresholds that govern the AUTO behaviour. Tools light up on any list with
 // >= DL_AUTO_MIN rows; categorical columns with a small distinct-value set
@@ -1316,6 +1343,6 @@ Object.assign(window, {
   StatusDot, Badge, RegimeBadge, PeriodSelector, Gauge, EmptyState,
   Tabs, Strip, FlashCell, LiveValue, LiveClock,
   asciiSpark, ASCII_SPARK,
-  Pane, PaneHead, PaneFoot, qeFootState, qeFootCause, _ptJson, RefreshButton, ReloadGlyph, ReloadIconSVG, BrailleSquares, Spinner, useSpinFrame, RELOAD_MS, PaneErrorBoundary, DataList, FieldList, StepperInput, LockButton, NewsTickerBar,
+  Pane, PaneHead, PaneFoot, ModelDialog, qeFootState, qeFootCause, _ptJson, RefreshButton, ReloadGlyph, ReloadIconSVG, BrailleSquares, Spinner, useSpinFrame, RELOAD_MS, PaneErrorBoundary, DataList, FieldList, StepperInput, LockButton, NewsTickerBar,
   Switch, Chip, Banner, Toast, PageHeader,
 });

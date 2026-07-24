@@ -407,6 +407,60 @@ const Pane = ({ title, count, right, hot, tag, foot = null, resizable = true, on
     }
   ), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0, padding: "5px 7px", overflow: "auto", ...bodyStyle } }, /* @__PURE__ */ React.createElement(PaneErrorBoundary, { key: nonce, title, onReload: doRefresh, onError: () => setErrored(true) }, children)), effFoot && /* @__PURE__ */ React.createElement(PaneFoot, { ...effFoot }), refreshing && /* @__PURE__ */ React.createElement(PaneReloadBody, { hasFoot: !!effFoot }), resizable && /* @__PURE__ */ React.createElement("span", { className: "qe-grip", title: "resize", style: { pointerEvents: "none" } }));
 };
+const ModelDialog = ({ title, onClose, width = 460, children, footer, foot = null, hot = true }) => /* @__PURE__ */ React.createElement(
+  "div",
+  {
+    style: { position: "absolute", inset: 0, zIndex: 50, background: "rgba(0,0,0,0.66)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 },
+    onClick: onClose
+  },
+  /* @__PURE__ */ React.createElement("div", { onClick: (e) => e.stopPropagation(), style: {
+    width,
+    maxWidth: "100%",
+    maxHeight: "100%",
+    display: "flex",
+    flexDirection: "column",
+    position: "relative",
+    background: "var(--qe-card)",
+    border: "1px solid var(--qe-line-2)",
+    boxShadow: "0 24px 70px -16px var(--qe-bg)"
+  } }, /* @__PURE__ */ React.createElement(
+    PaneHead,
+    {
+      title,
+      hot,
+      right: /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          onClick: onClose,
+          title: "Close",
+          style: {
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 14,
+            height: 14,
+            border: "1px solid var(--qe-faint)",
+            background: "transparent",
+            color: "var(--qe-muted)",
+            cursor: "pointer",
+            fontSize: "0.7rem",
+            lineHeight: 1,
+            padding: 0
+          },
+          onMouseEnter: (e) => {
+            e.currentTarget.style.color = "var(--qe-red)";
+            e.currentTarget.style.borderColor = "var(--qe-red)";
+          },
+          onMouseLeave: (e) => {
+            e.currentTarget.style.color = "var(--qe-muted)";
+            e.currentTarget.style.borderColor = "var(--qe-faint)";
+          }
+        },
+        "\u2715"
+      )
+    }
+  ), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0, overflow: "auto", padding: 10 } }, children), foot && /* @__PURE__ */ React.createElement(PaneFoot, { ...foot }), footer && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6, padding: "7px 9px", borderTop: "1px solid var(--qe-line)", background: "var(--qe-panel)", flexShrink: 0 } }, footer), /* @__PURE__ */ React.createElement("span", { className: "qe-grip", style: { pointerEvents: "none" } }))
+);
 const DL_AUTO_MIN = 1;
 const DL_AUTO_MIN_FACET = 1;
 const DL_FACET_AUTO_MAX = 6;
@@ -852,6 +906,7 @@ Object.assign(window, {
   Pane,
   PaneHead,
   PaneFoot,
+  ModelDialog,
   qeFootState,
   qeFootCause,
   _ptJson,
@@ -4501,6 +4556,9 @@ const LinkagePage = () => {
   const [closes, setCloses] = React.useState(null);
   const [sel, setSel] = React.useState(null);
   const [toast, setToast] = React.useState(null);
+  const [cancelCalc, setCancelCalc] = React.useState(null);
+  const [cancelReason, setCancelReason] = React.useState("");
+  const [cancelBusy, setCancelBusy] = React.useState(false);
   const [nets, setNets] = React.useState({});
   const load = React.useCallback((which) => {
     const get = (url, fn, pick, key) => {
@@ -4585,24 +4643,21 @@ const LinkagePage = () => {
     { key: "tp_price", label: "TP", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { className: "qe-up" }, lpPx(r.tp_price)) },
     { key: "sl_price", label: "SL", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { className: "qe-dn" }, lpPx(r.sl_price)) },
     { key: "cd", label: "Link window", align: "right", sort: false, render: (r) => /* @__PURE__ */ React.createElement(CalcCountdown, { expiry: r.expiry_ms, window: r.window_seconds }) },
-    { key: "act", label: "", align: "right", sort: false, render: (r) => /* @__PURE__ */ React.createElement(
-      "button",
-      {
-        className: "qe-btn qe-btn-sm qe-btn-ghost",
-        title: "Cancel this calc",
-        onClick: async (e) => {
-          e.stopPropagation();
-          if (!window.confirm(`Cancel calc ${String(r.calc_id).slice(-8)}?`)) return;
-          try {
-            const res = await _lkForm(`/calculator/cancel/${r.calc_id}`, {});
-            flash(res.text || "cancel sent");
-            load("fast");
-          } catch (err) {
-            flash("cancel failed");
+    { key: "act", label: "", align: "right", sort: false, render: (r) => (
+      // operator-bug #6: open the ModelDialog confirm instead of window.confirm.
+      /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          className: "qe-btn qe-btn-sm qe-btn-ghost",
+          title: "Cancel this calc",
+          onClick: (e) => {
+            e.stopPropagation();
+            setCancelReason("");
+            setCancelCalc(r);
           }
-        }
-      },
-      "\u2715"
+        },
+        "\u2715"
+      )
     ) }
   ];
   const fundCols = [
@@ -4691,7 +4746,70 @@ const LinkagePage = () => {
       foot: lkFoot("closes", closes != null)
     },
     closes == null ? /* @__PURE__ */ React.createElement("div", { style: { padding: 10 } }, /* @__PURE__ */ React.createElement(Spinner, { label: "loading" })) : /* @__PURE__ */ React.createElement(DataList, { columns: closeCols, rows: closes, selKey: "id", emptyMsg: "no recent closes" })
-  )))), toast && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", bottom: 14, left: "50%", transform: "translateX(-50%)", zIndex: 80, display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", background: "var(--qe-bg)", border: "1px solid var(--qe-green)" } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-green)" } }, "\u2713"), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.62rem", color: "var(--qe-text)" } }, toast)), /* @__PURE__ */ React.createElement(StatusFooter, null));
+  )))), cancelCalc && /* @__PURE__ */ React.createElement(
+    ModelDialog,
+    {
+      title: `Cancel calc \xB7 ${String(cancelCalc.calc_id).slice(-8)}`,
+      width: 420,
+      onClose: () => {
+        if (!cancelBusy) {
+          setCancelCalc(null);
+          setCancelReason("");
+        }
+      },
+      footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          className: "qe-btn qe-btn-sm qe-btn-ghost",
+          disabled: cancelBusy,
+          onClick: () => {
+            setCancelCalc(null);
+            setCancelReason("");
+          }
+        },
+        "Keep calc"
+      ), /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          className: "qe-btn qe-btn-sm qe-btn-danger",
+          disabled: cancelBusy,
+          onClick: async () => {
+            setCancelBusy(true);
+            try {
+              const res = await _lkForm(
+                `/calculator/cancel/${cancelCalc.calc_id}`,
+                cancelReason.trim() ? { reason: cancelReason.trim() } : {}
+              );
+              flash(res.text || "cancel sent");
+              setCancelCalc(null);
+              setCancelReason("");
+              load("fast");
+            } catch (err) {
+              flash("cancel failed \u2014 engine unreachable?");
+            }
+            setCancelBusy(false);
+          }
+        },
+        cancelBusy ? /* @__PURE__ */ React.createElement(Spinner, { size: "0.62rem" }) : "Cancel calc"
+      ))
+    },
+    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 7 } }, /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-cyan)", fontWeight: 700, fontSize: "0.72rem" } }, cancelCalc.ticker), /* @__PURE__ */ React.createElement(Badge, { tone: (cancelCalc.side || "").toLowerCase() === "long" ? "ok" : "err" }, (cancelCalc.side || "").toUpperCase())), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "5px 10px", padding: "6px 8px", border: "1px solid var(--qe-line)" } }, /* @__PURE__ */ React.createElement(KV, { l: "Entry", v: lpPx(cancelCalc.average) }), /* @__PURE__ */ React.createElement(KV, { l: "TP", v: lpPx(cancelCalc.tp_price), color: "var(--qe-green)" }), /* @__PURE__ */ React.createElement(KV, { l: "SL", v: lpPx(cancelCalc.sl_price), color: "var(--qe-red)" })), /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-muted)", lineHeight: 1.4 } }, "Cancelling releases this calc's link window. A fill after this lands UNPLANNED unless a fresh calc is run for the ticker."), /* @__PURE__ */ React.createElement("label", { style: { display: "flex", flexDirection: "column", gap: 4 } }, /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-ui)", fontSize: "0.52rem", fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", color: "var(--qe-sub)" } }, "Reason (optional)"), /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        className: "qe-input",
+        value: cancelReason,
+        placeholder: "why\u2026",
+        onChange: (e) => setCancelReason(e.target.value),
+        onKeyDown: (e) => {
+          if (e.key === "Escape" && !cancelBusy) {
+            setCancelCalc(null);
+            setCancelReason("");
+          }
+        },
+        style: { height: 22, boxSizing: "border-box" }
+      }
+    )))
+  ), toast && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", bottom: 14, left: "50%", transform: "translateX(-50%)", zIndex: 80, display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", background: "var(--qe-bg)", border: "1px solid var(--qe-green)" } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-green)" } }, "\u2713"), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.62rem", color: "var(--qe-text)" } }, toast)), /* @__PURE__ */ React.createElement(StatusFooter, null));
 };
 Object.assign(window, { LinkagePage });
 
@@ -5608,7 +5726,11 @@ const AnaTabCalendar = () => {
         return /* @__PURE__ */ React.createElement("div", { key: i, title: `${cell.date}: no trades`, style: {
           background: "var(--qe-panel)",
           border: "1px solid color-mix(in srgb, var(--qe-text) 4%, transparent)",
+          // operator-bug #7: day cells sized 2:3 (height:width) via
+          // aspect-ratio 3/2 — was flat (minHeight 46 only). minHeight
+          // kept as a floor for narrow panes.
           padding: "4px 6px",
+          aspectRatio: "3 / 2",
           minHeight: 46,
           opacity: 0.45
         } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.6rem", fontFamily: "var(--qe-mono)", color: "var(--qe-muted)" } }, cell.day));
@@ -5621,7 +5743,7 @@ const AnaTabCalendar = () => {
         {
           key: i,
           title: `${cell.date}: $${cell.pnl.toFixed(2)} \xB7 ${cell.trades || 0}T \xB7 ${((cell.win_rate || 0) * 100).toFixed(0)}% WR`,
-          style: { background: bg, border: "1px solid color-mix(in srgb, var(--qe-text) 4%, transparent)", padding: "4px 6px", display: "flex", flexDirection: "column", minHeight: 46 }
+          style: { background: bg, border: "1px solid color-mix(in srgb, var(--qe-text) 4%, transparent)", padding: "4px 6px", display: "flex", flexDirection: "column", aspectRatio: "3 / 2", minHeight: 46 }
         },
         /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "0.6rem", fontFamily: "var(--qe-mono)" } }, /* @__PURE__ */ React.createElement("span", { style: { color: tc, fontWeight: 600 } }, cell.day), cell.trades > 0 && /* @__PURE__ */ React.createElement("span", { style: { color: tc, opacity: 0.7 } }, ((cell.win_rate || 0) * 100).toFixed(0), "%")),
         /* @__PURE__ */ React.createElement("div", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.7rem", fontWeight: 700, color: tc, marginTop: 3 } }, cell.pnl >= 0 ? "+" : "-", "$", Math.abs(cell.pnl).toFixed(2)),
@@ -7990,60 +8112,6 @@ Object.assign(window, { ModelView, ModelOverviewTab });
 ;
 
 /* ==== pages-models.jsx ==== */
-const ModelDialog = ({ title, onClose, width = 460, children, footer, foot = null, hot = true }) => /* @__PURE__ */ React.createElement(
-  "div",
-  {
-    style: { position: "absolute", inset: 0, zIndex: 50, background: "rgba(0,0,0,0.66)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 },
-    onClick: onClose
-  },
-  /* @__PURE__ */ React.createElement("div", { onClick: (e) => e.stopPropagation(), style: {
-    width,
-    maxWidth: "100%",
-    maxHeight: "100%",
-    display: "flex",
-    flexDirection: "column",
-    position: "relative",
-    background: "var(--qe-card)",
-    border: "1px solid var(--qe-line-2)",
-    boxShadow: "0 24px 70px -16px var(--qe-bg)"
-  } }, /* @__PURE__ */ React.createElement(
-    PaneHead,
-    {
-      title,
-      hot,
-      right: /* @__PURE__ */ React.createElement(
-        "button",
-        {
-          onClick: onClose,
-          title: "Close",
-          style: {
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: 14,
-            height: 14,
-            border: "1px solid var(--qe-faint)",
-            background: "transparent",
-            color: "var(--qe-muted)",
-            cursor: "pointer",
-            fontSize: "0.7rem",
-            lineHeight: 1,
-            padding: 0
-          },
-          onMouseEnter: (e) => {
-            e.currentTarget.style.color = "var(--qe-red)";
-            e.currentTarget.style.borderColor = "var(--qe-red)";
-          },
-          onMouseLeave: (e) => {
-            e.currentTarget.style.color = "var(--qe-muted)";
-            e.currentTarget.style.borderColor = "var(--qe-faint)";
-          }
-        },
-        "\u2715"
-      )
-    }
-  ), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0, overflow: "auto", padding: 10 } }, children), foot && /* @__PURE__ */ React.createElement(PaneFoot, { ...foot }), footer && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6, padding: "7px 9px", borderTop: "1px solid var(--qe-line)", background: "var(--qe-panel)", flexShrink: 0 } }, footer), /* @__PURE__ */ React.createElement("span", { className: "qe-grip", style: { pointerEvents: "none" } }))
-);
 const _MdlField = ({ label, children, hint, error }) => /* @__PURE__ */ React.createElement("label", { style: { display: "flex", flexDirection: "column", gap: 4, minWidth: 0 } }, /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-ui)", fontSize: "0.52rem", fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", color: error ? "var(--qe-red)" : "var(--qe-sub)" } }, label), children, error ? /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.5rem", color: "var(--qe-red)" } }, error) : hint && /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.5rem", color: "var(--qe-muted)" } }, hint));
 const _MdlSec = ({ title, sub, children }) => /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-ui)", fontSize: "0.54rem", fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", color: "var(--qe-sub)", whiteSpace: "nowrap" } }, title), sub && /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.5rem", color: "var(--qe-muted)", whiteSpace: "nowrap" } }, sub), /* @__PURE__ */ React.createElement("span", { style: { flex: 1, height: 1, background: "var(--qe-line)" } })), children);
 const _MdlFileBtn = ({ label, onFile, className = "qe-btn qe-btn-sm qe-btn-on", accept = ".xlsx,.xml" }) => {
@@ -8491,7 +8559,7 @@ const ModelsPage = () => {
     boxShadow: "0 8px 30px var(--qe-bg)"
   } }, /* @__PURE__ */ React.createElement("span", { style: { width: 7, height: 7, borderRadius: "50%", background: toast.tone === "err" ? "var(--qe-red)" : "var(--qe-green)" } }), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.6rem", color: "var(--qe-text)" } }, toast.msg)), /* @__PURE__ */ React.createElement(StatusFooter, null));
 };
-Object.assign(window, { ModelsPage, ModelTabStrip, ModelFormModal, ImportModal, ModelDialog });
+Object.assign(window, { ModelsPage, ModelTabStrip, ModelFormModal, ImportModal });
 
 ;
 
