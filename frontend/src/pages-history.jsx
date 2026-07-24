@@ -341,13 +341,16 @@ const HistoryPage = () => {
               foot={qeFootState({ loading: net.ms == null && !net.err, err: net.err, hasData: rows.length > 0, ms: net.ms, retrying: true })}>
               <div style={{ flex: 1, overflow: 'auto' }}>
                 {loading && !data ? <div style={{ padding: 10 }}><Spinner label="loading" /></div> :
-                 // operator-bug #2: tools stay OFF here by design — this table is
-                 // SERVER-PAGED (rows = one page only), and the page already owns
-                 // search (symbol filter → server `search`), date presets, and
-                 // paging. Client-side DataList tools would search/sort just the
-                 // visible page, contradicting the server-owned window. Page size
-                 // is operator-selectable (25/50/75/100, default 75) instead.
-                 <DataList dense tools={false} columns={COLS[tab]} rows={rows}
+                 // operator-bug #2 follow-up: this table is SERVER-PAGED (rows =
+                 // one page). SEARCH and FILTER stay server-owned — the page's
+                 // own symbol input (→ server `search`) + date presets cover the
+                 // FULL set, whereas a client search/facet would silently act on
+                 // just the visible page. SORT is enabled (page-scoped): clicking
+                 // a header orders the loaded page (up to 100 rows), a common,
+                 // understood operation. Global sort would need the header wired
+                 // to the backend sort_by/sort_dir — a named follow-up.
+                 <DataList dense tools={{ search: false, sort: true, filter: false }}
+                   columns={COLS[tab]} rows={rows}
                    selKey="id" selected={tab === 'positions' && sel ? sel.id : null}
                    onClick={tab === 'positions' ? (r) => openDrill(r) : undefined}
                    emptyMsg="no rows in this window" />}

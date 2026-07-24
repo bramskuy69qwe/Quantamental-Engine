@@ -695,8 +695,19 @@ const Pane = ({title, count, right, hot, tag, foot=null, resizable=true, onRefre
 // Thresholds that govern the AUTO behaviour. Tools light up on any list with
 // >= DL_AUTO_MIN rows; categorical columns with a small distinct-value set
 // auto-become facet filters.
-const DL_AUTO_MIN        = 5;   // rows to auto-enable tools on ANY table (search+sort)
-const DL_AUTO_MIN_FACET  = 3;   // rows to auto-enable when a categorical column exists
+//
+// operator-bug #2 follow-up: DL_AUTO_MIN was 5, tuned against the Meridian
+// design's DENSE mock data (its tables carry 5-6 rows, so AUTO lit up). In
+// production the live account is SPARSE — often 1-2 open positions — so the
+// dashboard/linkage/analytics/regime tables stayed dark and the operator saw
+// no search/sort/filter at all. Lowered to 1 so tools appear on any NON-empty
+// data table (a truly-empty table still short-circuits to EmptyState above the
+// toolbar, and facet dropdowns still require >= 2 distinct values, so a 1-row
+// table shows just search + sortable headers — no empty chrome). This keeps
+// the design's AUTO philosophy (only 1 explicit tools= override in the whole
+// reference) and simply retunes the threshold for real data density.
+const DL_AUTO_MIN        = 1;   // rows to auto-enable tools on ANY non-empty table
+const DL_AUTO_MIN_FACET  = 1;   // (moot once DL_AUTO_MIN=1, kept for the OR clause)
 const DL_FACET_AUTO_MAX  = 6;   // max distinct values for an AUTO facet
 const DL_FACET_AUTO_ABS  = 4;   // distinct <= this always qualifies (side/status/type)
 const DL_FACET_CARD_RATIO= 0.6; // larger sets must group (distinct <= rows*ratio)
