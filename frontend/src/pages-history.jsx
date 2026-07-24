@@ -136,7 +136,8 @@ const HistoryPage = () => {
   const [period, setPeriod] = React.useState('30d');
   const [q, setQ]           = React.useState('');
   const [page, setPage]     = React.useState(1);
-  const [perPage, setPerPage] = React.useState(75);   // operator-bug #2: 20 -> 75 default
+  const [perPage, setPerPage] = React.useState(50);   // design #3: 75 felt too tall → 50
+  const [counts, setCounts] = React.useState({});     // design #2: per-tab totals (all tabs)
   const [data, setData]     = React.useState(null);   // {rows, total, ...}
   const [loading, setLoading] = React.useState(false);
   const [sel, setSel]       = React.useState(null);   // selected closed row
@@ -169,6 +170,24 @@ const HistoryPage = () => {
   React.useEffect(() => { load(); }, [load]);
   React.useEffect(() => { const t = setInterval(load, 30000); return () => clearInterval(t); }, [load]);
   React.useEffect(() => { setPage(1); setSel(null); setDrill(null); }, [tab, period, q]);
+
+  // design #2: fetch every tab's total (period-scoped) so INACTIVE tabs show
+  // their count too — one light per_page=1 request per tab. Period-scoped (not
+  // search-filtered) so the tab badges are a stable category-size indicator;
+  // the active tab's Pane title still shows the precise search-filtered total.
+  const loadCounts = React.useCallback(async () => {
+    const { date_from, date_to } = _hRange(period);
+    const out = {};
+    await Promise.all(H_TABS.map(async ([k, , ep]) => {
+      try {
+        const d = await _ptJson(ep + '?' + new URLSearchParams({
+          format: 'json', page: '1', per_page: '1', date_from, date_to }).toString());
+        out[k] = (d && d.total != null) ? d.total : null;
+      } catch (e) { out[k] = null; }
+    }));
+    setCounts(out);
+  }, [period]);
+  React.useEffect(() => { loadCounts(); }, [loadCounts]);
 
   /* drilldown for a selected closed position */
   const drillSeq = React.useRef(0);
@@ -331,7 +350,9 @@ const HistoryPage = () => {
 
       {summary ? <Strip dense style={{ margin: 6, marginBottom: 0 }} items={summary} /> : null}
 
-      <TabStrip value={tab} onChange={setTab} tabs={H_TABS.map(([k, l]) => [k, l, tab === k && data ? total : null])} />
+      <TabStrip value={tab} onChange={setTab} tabs={H_TABS.map(([k, l]) => [k, l,
+        k === tab ? (data ? total : (counts[k] != null ? counts[k] : null))
+                  : (counts[k] != null ? counts[k] : null)])} />
 
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         <GridWorkspace>
@@ -341,15 +362,15 @@ const HistoryPage = () => {
               foot={qeFootState({ loading: net.ms == null && !net.err, err: net.err, hasData: rows.length > 0, ms: net.ms, retrying: true })}>
               <div style={{ flex: 1, overflow: 'auto' }}>
                 {loading && !data ? <div style={{ padding: 10 }}><Spinner label="loading" /></div> :
-                 // operator-bug #2 follow-up: this table is SERVER-PAGED (rows =
-                 // one page). SEARCH and FILTER stay server-owned — the page's
-                 // own symbol input (→ server `search`) + date presets cover the
-                 // FULL set, whereas a client search/facet would silently act on
-                 // just the visible page. SORT is enabled (page-scoped): clicking
-                 // a header orders the loaded page (up to 100 rows), a common,
-                 // understood operation. Global sort would need the header wired
-                 // to the backend sort_by/sort_dir — a named follow-up.
-                 <DataList dense tools={{ search: false, sort: true, filter: false }}
+                 // design #1: this table is SERVER-PAGED (rows = one page). SEARCH
+                 // stays server-owned — the page's symbol input (→ server `search`)
+                 // covers the FULL set across pages; a client search box would
+                 // silently miss a symbol sitting on another page. FILTER (the
+                 // SIDE/REASON facets the operator wanted from the design) + SORT
+                 // are enabled: they act on the loaded page (up to 100 rows), an
+                 // understood in-view refinement. Global server-wired facets/sort
+                 // is a named follow-up.
+                 <DataList dense tools={{ search: false, sort: true, filter: true }}
                    columns={COLS[tab]} rows={rows}
                    selKey="id" selected={tab === 'positions' && sel ? sel.id : null}
                    onClick={tab === 'positions' ? (r) => openDrill(r) : undefined}

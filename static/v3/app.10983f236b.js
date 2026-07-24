@@ -4945,7 +4945,8 @@ const HistoryPage = () => {
   const [period, setPeriod] = React.useState("30d");
   const [q, setQ] = React.useState("");
   const [page, setPage] = React.useState(1);
-  const [perPage, setPerPage] = React.useState(75);
+  const [perPage, setPerPage] = React.useState(50);
+  const [counts, setCounts] = React.useState({});
   const [data, setData] = React.useState(null);
   const [loading, setLoading] = React.useState(false);
   const [sel, setSel] = React.useState(null);
@@ -4994,6 +4995,28 @@ const HistoryPage = () => {
     setSel(null);
     setDrill(null);
   }, [tab, period, q]);
+  const loadCounts = React.useCallback(async () => {
+    const { date_from, date_to } = _hRange(period);
+    const out = {};
+    await Promise.all(H_TABS.map(async ([k, , ep]) => {
+      try {
+        const d = await _ptJson(ep + "?" + new URLSearchParams({
+          format: "json",
+          page: "1",
+          per_page: "1",
+          date_from,
+          date_to
+        }).toString());
+        out[k] = d && d.total != null ? d.total : null;
+      } catch (e) {
+        out[k] = null;
+      }
+    }));
+    setCounts(out);
+  }, [period]);
+  React.useEffect(() => {
+    loadCounts();
+  }, [loadCounts]);
   const drillSeq = React.useRef(0);
   const openDrill = async (row) => {
     if (sel && sel.id === row.id) {
@@ -5151,7 +5174,11 @@ const HistoryPage = () => {
       },
       style: { width: 180, height: 22, boxSizing: "border-box" }
     }
-  ), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", onClick: exportCsv, title: "Download the loaded rows as CSV" }, "Export CSV")), summary ? /* @__PURE__ */ React.createElement(Strip, { dense: true, style: { margin: 6, marginBottom: 0 }, items: summary }) : null, /* @__PURE__ */ React.createElement(TabStrip, { value: tab, onChange: setTab, tabs: H_TABS.map(([k, l]) => [k, l, tab === k && data ? total : null]) }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column" } }, /* @__PURE__ */ React.createElement(GridWorkspace, null, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 16, h: 24, minW: 8, minH: 6 }, /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", onClick: exportCsv, title: "Download the loaded rows as CSV" }, "Export CSV")), summary ? /* @__PURE__ */ React.createElement(Strip, { dense: true, style: { margin: 6, marginBottom: 0 }, items: summary }) : null, /* @__PURE__ */ React.createElement(TabStrip, { value: tab, onChange: setTab, tabs: H_TABS.map(([k, l]) => [
+    k,
+    l,
+    k === tab ? data ? total : counts[k] != null ? counts[k] : null : counts[k] != null ? counts[k] : null
+  ]) }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column" } }, /* @__PURE__ */ React.createElement(GridWorkspace, null, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 16, h: 24, minW: 8, minH: 6 }, /* @__PURE__ */ React.createElement(
     Pane,
     {
       title: H_TABS.find(([k]) => k === tab)[1],
@@ -5162,19 +5189,19 @@ const HistoryPage = () => {
       foot: qeFootState({ loading: net.ms == null && !net.err, err: net.err, hasData: rows.length > 0, ms: net.ms, retrying: true })
     },
     /* @__PURE__ */ React.createElement("div", { style: { flex: 1, overflow: "auto" } }, loading && !data ? /* @__PURE__ */ React.createElement("div", { style: { padding: 10 } }, /* @__PURE__ */ React.createElement(Spinner, { label: "loading" })) : (
-      // operator-bug #2 follow-up: this table is SERVER-PAGED (rows =
-      // one page). SEARCH and FILTER stay server-owned — the page's
-      // own symbol input (→ server `search`) + date presets cover the
-      // FULL set, whereas a client search/facet would silently act on
-      // just the visible page. SORT is enabled (page-scoped): clicking
-      // a header orders the loaded page (up to 100 rows), a common,
-      // understood operation. Global sort would need the header wired
-      // to the backend sort_by/sort_dir — a named follow-up.
+      // design #1: this table is SERVER-PAGED (rows = one page). SEARCH
+      // stays server-owned — the page's symbol input (→ server `search`)
+      // covers the FULL set across pages; a client search box would
+      // silently miss a symbol sitting on another page. FILTER (the
+      // SIDE/REASON facets the operator wanted from the design) + SORT
+      // are enabled: they act on the loaded page (up to 100 rows), an
+      // understood in-view refinement. Global server-wired facets/sort
+      // is a named follow-up.
       /* @__PURE__ */ React.createElement(
         DataList,
         {
           dense: true,
-          tools: { search: false, sort: true, filter: false },
+          tools: { search: false, sort: true, filter: true },
           columns: COLS[tab],
           rows,
           selKey: "id",
