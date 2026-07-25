@@ -41,8 +41,9 @@ def _bounded_float_env(name: str, default: str, *, lo: float, hi: float) -> floa
 PROJECT_NAME_    = "MERIDIAN"
 PROJECT_VERSION_ = "v3.0"
 PROJECT_NAME     = f"{PROJECT_NAME_} {PROJECT_VERSION_}"
-# PWA identity (main.py /manifest.json route). short_name ≤ 12 chars.
-PROJECT_SHORT_NAME  = "MRDN"
+# PWA identity (main.py /manifest.json route). short_name ≤ 12 chars —
+# "MERIDIAN" is 8, so the product name is never abbreviated.
+PROJECT_SHORT_NAME  = "MERIDIAN"
 PROJECT_DESCRIPTION = "Pre-trade gatekeeper for discretionary crypto futures trading"
 
 # ── Exchange ──────────────────────────────────────────────────────────────────

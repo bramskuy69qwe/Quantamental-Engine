@@ -214,3 +214,62 @@ class TestHeatBarStandard:
 
     def test_reaches_the_bundle(self, emitted):
         assert "HeatBar" in emitted["app"]
+
+
+class TestNewsTickerReadableSpeed:
+    """Operator 2026-07-25: the dashboard news marquee scrolled too fast to read.
+
+    Cause: the keyframe translates -100% of the RUN's own width, so a FIXED
+    duration makes the rate depend on how much news there is. The design's 46s
+    over its ~8 mock items is ~52 px/s; the same 46s over the 40-item live feed
+    is ~347 px/s — about 6.7x faster. The fix derives the duration from the
+    measured run width so the rate is constant.
+
+    Verified in a browser on the shipped bundle before commit: 3 / 8 / 40 items
+    -> 52.7 / 52.3 / 51.9 px/s (spread 0.8).
+    """
+
+    def test_duration_is_derived_from_measured_width(self):
+        s = _src("primitives.jsx")
+        fn = s[s.index("const NewsTickerBar"):]
+        assert "scrollWidth" in fn[:3000]
+        assert "w / pxPerSec" in fn[:3000], "duration must come from the measured run"
+        assert "animationDuration" in fn[:3500]
+
+    def test_speed_is_a_tunable_prop(self):
+        s = _src("primitives.jsx")
+        assert "pxPerSec = 52" in s, "the reference's effective rate, now explicit"
+
+    def test_both_runs_share_the_duration(self):
+        """The bar renders the run TWICE for a seamless loop — if only one span
+        carries the derived duration the two halves desynchronise."""
+        s = _src("primitives.jsx")
+        fn = s[s.index("qe-newsticker-track"):]
+        fn = fn[:fn.index("</div>")]
+        assert fn.count("style={runStyle}") == 2
+
+    def test_css_keeps_a_fallback_duration(self):
+        """Covers the frame before measurement and a null ref."""
+        css = _src("tokens.css")
+        assert "animation: qe-news-marquee 46s linear infinite" in css
+
+    def test_reduced_motion_still_wins(self):
+        """An inline animation-duration cannot revive a missing animation-name,
+        so the reduced-motion opt-out must stay a full `animation: none`."""
+        css = _src("tokens.css")
+        i = css.index("prefers-reduced-motion")
+        assert "animation: none" in css[i:i + 220]
+
+
+class TestProjectNameIsNotAbbreviated:
+    def test_short_name_is_the_full_product_name(self):
+        import config
+        assert config.PROJECT_SHORT_NAME == "MERIDIAN"
+        # and it still satisfies the PWA short_name guidance the meta test pins
+        assert len(config.PROJECT_SHORT_NAME) <= 12
+
+    def test_no_contraction_survives_anywhere_in_config(self):
+        with open(os.path.join(ROOT, "config.py"), encoding="utf-8") as fh:
+            c = fh.read()
+        assert "MRDN" not in c
+        assert 'PROJECT_NAME_    = "MERIDIAN"' in c

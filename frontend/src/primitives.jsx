@@ -1304,6 +1304,7 @@ const LockButton = ({locked, onToggle, compact=false, style={}}) => (
 // ─────────────────────────────────────────────────────────────────────────
 const NewsTickerBar = React.memo(function NewsTickerBar({
   news, label = 'NEWS', meta = 'REGIME FEED · finnhub + bwe', pollMs = 4000,
+  pxPerSec = 52,
 }) {
   const sortFeed = () => {
     // P8 wave 1: the never-defined MOCK_REGIME fallback is gone — no prop,
@@ -1343,6 +1344,27 @@ const NewsTickerBar = React.memo(function NewsTickerBar({
     return h < 24 ? h + 'h' : Math.round(h / 24) + 'd';
   };
 
+  /* CONSTANT SPEED, not constant duration.
+     The keyframe translates -100% of the RUN's own width, so a fixed duration
+     makes the scroll rate depend on how much news there is: the reference's
+     46s over its ~8 mock items is ~52 px/s, but the same 46s over a 40-item
+     live feed is roughly five times faster — unreadable, which is exactly what
+     the operator hit. Measure the run and derive the duration instead, so the
+     text moves at `pxPerSec` no matter how many items arrive.
+     The CSS keeps 46s as the fallback for the frame before measurement (and if
+     the ref never resolves); prefers-reduced-motion still wins outright,
+     because it drops `animation` entirely and an inline duration cannot revive
+     a missing animation-name. */
+  const runRef = React.useRef(null);
+  const [runSec, setRunSec] = React.useState(null);
+  React.useLayoutEffect(() => {
+    const el = runRef.current;
+    if (!el) return;
+    const w = el.scrollWidth;
+    if (w > 0) setRunSec(Math.max(8, Math.round(w / pxPerSec)));
+  }, [items, pxPerSec]);
+  const runStyle = runSec ? { animationDuration: runSec + 's' } : undefined;
+
   // Build run content once; render twice (duplicate for a seamless loop).
   // Inlined — NOT a per-render component, so the animated node is never
   // recreated on re-render.
@@ -1363,8 +1385,8 @@ const NewsTickerBar = React.memo(function NewsTickerBar({
         <span className="qe-newsticker-live"/>{label}
       </span>
       <div className="qe-newsticker-track">
-        <span className="qe-newsticker-run">{runItems('a')}</span>
-        <span className="qe-newsticker-run" aria-hidden="true">{runItems('b')}</span>
+        <span ref={runRef} className="qe-newsticker-run" style={runStyle}>{runItems('a')}</span>
+        <span className="qe-newsticker-run" style={runStyle} aria-hidden="true">{runItems('b')}</span>
       </div>
       {meta && <span className="qe-newsticker-meta">{meta}</span>}
     </div>

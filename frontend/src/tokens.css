@@ -738,8 +738,11 @@
 .qe-newsticker-run {
   display: inline-flex; align-items: center; flex-shrink: 0;
   white-space: nowrap; padding-left: 18px;
-  /* 1s hold (line shown still) then scroll one full run width, repeat.
-     duration = scroll(45s) + hold(1s); 1s / 46s ≈ 2.17% held at start. */
+  /* Scroll one full run width, with a brief hold at the start (2.17% of the
+     cycle) so the first headline is readable before motion begins.
+     46s is only the FALLBACK: NewsTickerBar measures the run and sets
+     animation-duration inline so the rate is a constant px/sec regardless of
+     item count — a fixed duration scrolls a long feed unreadably fast. */
   animation: qe-news-marquee 46s linear infinite;
 }
 .qe-newsticker-track:hover .qe-newsticker-run { animation-play-state: paused; }

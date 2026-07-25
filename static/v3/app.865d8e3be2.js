@@ -890,7 +890,8 @@ const NewsTickerBar = React.memo(function NewsTickerBar2({
   news,
   label = "NEWS",
   meta = "REGIME FEED \xB7 finnhub + bwe",
-  pollMs = 4e3
+  pollMs = 4e3,
+  pxPerSec = 52
 }) {
   const sortFeed = () => {
     const feed = news || [];
@@ -923,8 +924,17 @@ const NewsTickerBar = React.memo(function NewsTickerBar2({
     const h = Math.round(m / 60);
     return h < 24 ? h + "h" : Math.round(h / 24) + "d";
   };
+  const runRef = React.useRef(null);
+  const [runSec, setRunSec] = React.useState(null);
+  React.useLayoutEffect(() => {
+    const el = runRef.current;
+    if (!el) return;
+    const w = el.scrollWidth;
+    if (w > 0) setRunSec(Math.max(8, Math.round(w / pxPerSec)));
+  }, [items, pxPerSec]);
+  const runStyle = runSec ? { animationDuration: runSec + "s" } : void 0;
   const runItems = (prefix) => items.map((n, i) => /* @__PURE__ */ React.createElement("span", { key: prefix + n.id + "-" + i, className: "qe-newsticker-item" }, /* @__PURE__ */ React.createElement("span", { className: "qe-newsticker-dot", style: { background: impactColor[n.impact] || "var(--qe-muted)" } }), /* @__PURE__ */ React.createElement("span", { className: "qe-newsticker-src" }, n.source.toUpperCase()), /* @__PURE__ */ React.createElement("span", { className: "qe-newsticker-head" }, n.headline), n.tickers && /* @__PURE__ */ React.createElement("span", { className: "qe-newsticker-tk" }, n.tickers), /* @__PURE__ */ React.createElement("span", { className: "qe-newsticker-time" }, rel(n.published_at), " ago"), /* @__PURE__ */ React.createElement("span", { className: "qe-newsticker-sep" }, "\u25C6")));
-  return /* @__PURE__ */ React.createElement("div", { className: "qe-newsticker" }, /* @__PURE__ */ React.createElement("span", { className: "qe-newsticker-label" }, /* @__PURE__ */ React.createElement("span", { className: "qe-newsticker-live" }), label), /* @__PURE__ */ React.createElement("div", { className: "qe-newsticker-track" }, /* @__PURE__ */ React.createElement("span", { className: "qe-newsticker-run" }, runItems("a")), /* @__PURE__ */ React.createElement("span", { className: "qe-newsticker-run", "aria-hidden": "true" }, runItems("b"))), meta && /* @__PURE__ */ React.createElement("span", { className: "qe-newsticker-meta" }, meta));
+  return /* @__PURE__ */ React.createElement("div", { className: "qe-newsticker" }, /* @__PURE__ */ React.createElement("span", { className: "qe-newsticker-label" }, /* @__PURE__ */ React.createElement("span", { className: "qe-newsticker-live" }), label), /* @__PURE__ */ React.createElement("div", { className: "qe-newsticker-track" }, /* @__PURE__ */ React.createElement("span", { ref: runRef, className: "qe-newsticker-run", style: runStyle }, runItems("a")), /* @__PURE__ */ React.createElement("span", { className: "qe-newsticker-run", style: runStyle, "aria-hidden": "true" }, runItems("b"))), meta && /* @__PURE__ */ React.createElement("span", { className: "qe-newsticker-meta" }, meta));
 });
 const Switch = ({ checked = false, onChange, label = null, title = null, accent = "var(--qe-sub)", disabled = false }) => /* @__PURE__ */ React.createElement(
   "div",
