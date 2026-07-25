@@ -223,6 +223,39 @@ const WorkspaceBar = ({ interactive = false, persistId = 'dashboard' }) => {
 // one page. Reads the shared QE_CHROME store (/api/state clock_severity ·
 // offset = exchange − local, so local drift = −offset; positive ⇒ AHEAD, the
 // -1021 direction). Null (0-height) when the clock is ok.
+/* shell-chrome-1 — the REAL halt/limit banner, chrome-wide.
+   Driver: /api/state's `halted` (DD-enforced hard block) and `blocked` (either
+   state at limit, advisory). NOT dismissible when halted: an entry gate the
+   operator cannot see is the failure mode this exists to prevent.
+   Deliberately says only what the engine says — no countdown, because the
+   engine publishes no release time (the design's countdown was fiction). */
+/* shell-chrome-4 — how many under-nav banners are currently visible. The scrim
+   offset used to be derived from the (permanently false) halt flag, so with the
+   clock-drift banner up the drawer covered the whole workspace bar and the
+   bottom of a LIVE system alert. Both banners are Banner primitives: 30px + 1px
+   border. */
+const qeChromeBannerCount = () => {
+  const st = (window.QE_CHROME && window.QE_CHROME.get().state) || {};
+  let k = 0;
+  if (st.clock_severity && st.clock_severity !== 'ok') k += 1;
+  if (st.halted || st.blocked) k += 1;
+  return k;
+};
+
+const ChromeHaltBanner = () => {
+  const ch = useQeChrome();
+  const st = (ch && ch.state) || {};
+  if (!st.halted && !st.blocked) return null;
+  const hard = !!st.halted;
+  return (
+    <Banner tone={hard ? 'err' : 'warn'} tag={hard ? 'HALT' : 'AT CAP'}
+      title={hard ? 'NEW ENTRIES BLOCKED' : 'RISK LIMIT REACHED'}
+      detail={st.halt_reason
+        || (st.dd_state === 'limit' ? 'drawdown at limit' : 'weekly loss at limit')
+        + (hard ? '' : ' · advisory — entries are NOT blocked')} />
+  );
+};
+
 const ClockDriftBanner = () => {
   const ch = useQeChrome();
   const state = (ch && ch.state) || {};
@@ -367,7 +400,7 @@ const TopNavStd = ({page='Dashboard', onChange, variant='line', dense=false}) =>
   {/* operator clock-drift bug: OS-drift banner stacks ABOVE the halt banner in
       the shared under-nav slot (system alert first, like a notification stack). */}
   <ClockDriftBanner/>
-  <NotifBanner/>
+  <ChromeHaltBanner/>
   <WorkspaceBar interactive={page === 'Dashboard'} />
   </React.Fragment>
   );
@@ -413,4 +446,10 @@ const StatusFooter = () => {
 Object.assign(window, {
   NAV_ITEMS, TopNavStd, WorkspaceBar, StatusFooter,
   QE_CLOCK_OFFSET, qeClockFmt,
+  // the ONE regime label -> tone map. Exported because Pre-Trade tone-codes the
+  // same live label (pretrade-2); never re-declare it per page.
+  NAV_REGIME_TONE,
+  // shell-chrome-4: the notification scrim must start BELOW every under-nav
+  // banner. One counter, so the two can never disagree.
+  qeChromeBannerCount,
 });

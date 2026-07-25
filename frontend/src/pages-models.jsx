@@ -255,7 +255,7 @@ const ModelFormModal = ({ model, onClose, onSave }) => {
           </div>
         </_MdlSec>
 
-        <_MdlSec title="Source Binding" sub="where the model was backtested (§3 — the model owns it)">
+        <_MdlSec title="Source Binding" sub="where the model was backtested — the model owns its source, not the account">
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '14px 12px' }}>
             <_MdlField label="Source app">
               <select className="qe-input qe-select" value={f.app} onChange={(e) => set('app', e.target.value)}>
@@ -436,7 +436,16 @@ const ImportModal = ({ model, onClose, onDone }) => {
             <KpiTile label="Trades" value={pvk.nTrades} />
           </div>
           <div style={{ fontSize: '0.54rem', color: 'var(--qe-muted)', fontFamily: 'var(--qe-mono)' }}>
-            {preview.session_name} · {preview.trades_count} trades · {(preview.sheets || []).length} sheets captured
+            {preview.session_name}
+            {/* models-2: the WINDOW is the discriminator between two exports of
+                the same strategy on the same symbol. session_name carries the
+                symbol, so without the period a 2024-2025 run and a 2023-2025
+                re-export look identical at the one point of no return. It is
+                already in the payload the modal holds (summary.period_*). */}
+            {(preview.summary && (preview.summary.period_start || preview.summary.period_end))
+              ? ` · ${preview.summary.period_start || '?'} → ${preview.summary.period_end || '?'}`
+              : ''}
+            {` · ${preview.trades_count} trades · ${(preview.sheets || []).length} sheets captured`}
           </div>
           {(preview.warnings || []).map((w, i) => (
             <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: '0.54rem', color: 'var(--qe-amber)' }}>

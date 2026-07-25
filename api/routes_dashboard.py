@@ -318,6 +318,17 @@ async def _journal_stats_context(aid: int, tz) -> dict:
         "max_open_positions":        prm.get("max_position_count", 10),
         "max_correlated_exposure":   prm.get("max_correlated_exposure", 0.5),
     }
+    # dashboard-4 (2026-07-25 Meridian audit): the named risk preset the account
+    # is running. It lives in account_settings, NOT account_params, so it is read
+    # separately from `prm` above. Nothing else on the dashboard names it.
+    # Emitted as None (not "custom") when unreadable — the tile hides the badge
+    # rather than asserting a preset the operator never chose.
+    try:
+        from core.db_account_settings import get_account_settings
+        params_view["strategy_preset"] = get_account_settings(
+            app_state.active_account_id).strategy_preset or None
+    except Exception:
+        params_view["strategy_preset"] = None
 
     return {
         "month_label":       period_label,

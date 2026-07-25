@@ -172,3 +172,162 @@ class TestReachesTheBundle:
     def test_new_symbols_are_emitted(self, bundle):
         for token in ("HeatBarLabelled", "_hEvtTone", "_hNetPct", "_lkSettleAt", "est_r"):
             assert token in bundle, f"{token} never reached the emitted bundle"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SLICE 2 — the remaining frontend LOW/NIT: analytics · dashboard · models ·
+# pretrade · shell-chrome. Same rule as slice 1: restore what the design had
+# where the data already exists. One backend field was needed (dashboard-4's
+# strategy_preset) and is pinned on the route.
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestAnalytics:
+    def test_analytics_1_daily_avg_pct_restores_the_pairing(self):
+        """The pane pairs each absolute with its percent; Daily Avg PnL stood
+        alone in dollars. pnlPct/days — both already in scope."""
+        s = _src("pages-analytics.jsx")
+        assert "'Daily Avg PnL %'" in s
+        assert "(pnlPct / days)" in s
+
+    def test_analytics_1_under_chart_strip(self):
+        s = _src("pages-analytics.jsx")
+        assert "start $" in s and "end $" in s
+
+    def test_analytics_2_adj_chg(self):
+        """Chg includes deposits; on a bar carrying one it overstates
+        performance by exactly cf with nothing labelling it."""
+        s = _src("pages-analytics.jsx")
+        assert "Adj Chg" in s
+        assert "chg - (+last.cf || 0)" in s
+
+    def test_analytics_3_dispersion(self):
+        """A mean near zero with a wide spread is a different situation from a
+        mean near zero with a tight one — only the spread separates them."""
+        s = _src("pages-analytics.jsx")
+        assert "const _anaStd" in s and "_anaStd(entryCosts)" in s
+
+    def test_analytics_3_std_is_population_not_sample(self):
+        """It describes the window on screen, not an inference about a wider
+        population — and an empty sample must be '—', never 0."""
+        s = _src("pages-analytics.jsx")
+        fn = s[s.index("const _anaStd"):]
+        fn = fn[:fn.index("\n};")]
+        assert "/ a.length)" in fn and "a.length - 1" not in fn
+        assert "return null" in fn
+
+
+class TestDashboard:
+    def test_dashboard_2_monthly_replaces_the_duplicate(self):
+        """The 2x2 is a period LADDER. One prime slot rendered Available, which
+        is already the FieldList's first row two lines below."""
+        s = _src("dash-tiled.jsx")
+        i = s.index("const EquityStatsPane")
+        grid = s[i:i + 2600]
+        assert "<Lbl>Monthly</Lbl>" in grid
+        assert grid.count("<Lbl>Available</Lbl>") == 0, "Available is still duplicated in the 2x2"
+
+    def test_dashboard_3_funding_line_is_labelled(self):
+        """A bare 'SYM ±0.01%' list gives no cue it is the 8h funding rate."""
+        s = _src("dash-tiled.jsx")
+        i = s.index("funding_lines")
+        assert "FUNDING " in s[i - 400:i + 500]
+
+    def test_dashboard_3_does_not_fabricate_state_badges(self):
+        """No sector_state / funding_state is computed anywhere in the backend,
+        so the design's IN CAP / +0.02-8h badges could only be fabricated."""
+        s = _src("dash-tiled.jsx")
+        assert "IN CAP" not in s
+
+    def test_dashboard_4_preset_badge_and_backend_field(self):
+        s = _src("dash-tiled.jsx")
+        assert "PRESET: " in s
+        assert "p.strategy_preset" in s
+        with open(os.path.join(ROOT, "api", "routes_dashboard.py"), encoding="utf-8") as fh:
+            r = fh.read()
+        assert 'params_view["strategy_preset"]' in r
+
+    def test_dashboard_4_absent_preset_hides_the_badge(self):
+        """An unreadable setting must not assert a preset the operator never
+        chose — the route emits None and the tile renders nothing."""
+        s = _src("dash-tiled.jsx")
+        assert "{preset ? (" in s
+
+    def test_dashboard_5_cash_flow_lifted_through_onbar(self):
+        """cf was already IN the payload and dropped during the row map — the
+        field was unread, not unbacked."""
+        s = _src("dash-tiled.jsx")
+        assert "cf: last.cf" in s
+        assert "Cash Flow" in s
+
+
+class TestModelsAndPretrade:
+    def test_models_2_import_confirm_shows_the_window(self):
+        s = _src("pages-models.jsx")
+        assert "period_start" in s and "period_end" in s
+
+    def test_models_3_no_spec_jargon_in_rendered_copy(self):
+        """'§3' resolves to nothing the operator can open."""
+        s = _src("pages-models.jsx")
+        assert "§3" not in s
+
+    def test_pretrade_1_controlled_stepper_exists(self):
+        """The existing StepperInput is UNCONTROLLED and would fight a form that
+        owns its values — programmatic changes (prefill, Clear, recall) would
+        never reach the input."""
+        s = _src("primitives.jsx")
+        assert "const StepperNumber" in s
+        fn = s[s.index("const StepperNumber"):s.index("const StepperInput")]
+        assert "React.useState" not in fn, "a controlled input must hold no value state"
+        assert "ArrowUp" in fn and "ArrowDown" in fn
+
+    def test_pretrade_1_all_four_tp_sl_fields_use_it(self):
+        s = _src("pages-pretrade.jsx")
+        assert s.count("<StepperNumber id=") == 4
+
+    def test_pretrade_2_regime_is_tone_coded(self):
+        """The 'no engine feed' rationale was false — NAV_REGIME_TONE ships in
+        the build and the workspace strip already renders a live badge from it."""
+        s = _src("pages-pretrade.jsx")
+        assert "NAV_REGIME_TONE" in s
+        assert s.count("<RegimeBadge tone={regTone}") == 2
+
+    def test_pretrade_2_unknown_label_does_not_guess(self):
+        s = _src("pages-pretrade.jsx")
+        assert "|| null;" in s[s.index("const regTone"):s.index("const regTone") + 120]
+
+    def test_pretrade_5_no_duplicate_exposure_row(self):
+        """The Position sub-pane printed the After-Costs portfolio figure under a
+        Position-scoped label; est_exposure IS portfolio-level."""
+        s = _src("pages-pretrade.jsx")
+        assert s.count("_ptFmtN(c.est_exposure, 2)") == 1
+
+
+class TestShellChrome:
+    def test_shell_chrome_1_real_halt_banner(self):
+        """The slot rendered an inert NotifBanner whose source is hardcoded 0,
+        so halt state reached only 2 of 9 pages."""
+        s = _src("nav-and-data.jsx")
+        assert "const ChromeHaltBanner" in s
+        assert "<ChromeHaltBanner/>" in s
+        assert "<NotifBanner/>" not in s, "the inert banner is back in the chrome slot"
+
+    def test_shell_chrome_1_driven_by_api_state(self):
+        s = _src("nav-and-data.jsx")
+        fn = s[s.index("const ChromeHaltBanner"):]
+        fn = fn[:fn.index("\n};")]
+        assert "st.halted" in fn and "st.blocked" in fn
+        assert "localStorage" not in fn, "the halt authority must not return to localStorage"
+
+    def test_shell_chrome_4_navh_counts_visible_banners(self):
+        """It used to derive from the permanently-false halt flag while the build
+        had added a SECOND under-nav banner the constant knew nothing about."""
+        s = _src("notifications.jsx")
+        assert "qeChromeBannerCount" in s
+        assert "const navH = banner ? 84 : 54;" not in s
+
+    def test_shell_chrome_4_counter_covers_both_banners(self):
+        s = _src("nav-and-data.jsx")
+        fn = s[s.index("const qeChromeBannerCount"):]
+        fn = fn[:fn.index("\n};")]
+        assert "clock_severity" in fn
+        assert "halted" in fn and "blocked" in fn

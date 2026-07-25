@@ -1170,6 +1170,54 @@ const FieldList = ({rows, cols=1, dense=false, style={}}) => (
 // the value. Holds its own value state. Use for nudgeable numeric fields
 // (TP/SL price, TP/SL %, etc).
 // ─────────────────────────────────────────────────────────────────────────
+/* StepperNumber — the CONTROLLED sibling of StepperInput.
+   Same affordance (▲▼ buttons, ArrowUp/ArrowDown, min clamp, blur-commit
+   rounding) but the value lives in the CALLER's state, which is why the
+   uncontrolled StepperInput could not be used on the Pre-Trade form
+   (pretrade-1): that form owns tpPrice/slPrice/tpPct/slPct and an internal
+   useState would fight it — typing would work but any programmatic change
+   (prefill from a model, Clear, a recalled setup) would not reach the input.
+
+   Deliberately does NOT round while typing: `value` is echoed verbatim so an
+   in-progress "0." or "1.2" is never rewritten under the cursor. Rounding to
+   `decimals` happens on blur and on every button/arrow bump, matching
+   StepperInput's commit semantics. */
+const StepperNumber = ({value, onChange, step=1, decimals=2, min=null, id, placeholder, title, onKeyDown, style}) => {
+  const clamp = (n) => { let x = +(+n).toFixed(decimals); if (min != null && x < min) x = min; return x; };
+  const bump = (d) => {
+    const n = parseFloat(value);
+    onChange(String(clamp((Number.isNaN(n) ? 0 : n) + d * step)));
+  };
+  const btn = {
+    width:16, flex:1, minHeight:0, padding:0, boxSizing:'border-box',
+    display:'flex', alignItems:'center', justifyContent:'center',
+    background:'transparent', border:'none', cursor:'pointer',
+  };
+  const tri = (up) => ({
+    width:0, height:0,
+    borderLeft:'3px solid transparent', borderRight:'3px solid transparent',
+    [up ? 'borderBottom' : 'borderTop']: '4px solid var(--qe-muted)',
+  });
+  return (
+    <div style={{display:'flex', alignItems:'stretch', height:22, background:'var(--qe-panel)', border:'1px solid var(--qe-line)', ...style}}>
+      <input id={id} className="qe-input" value={value} placeholder={placeholder} title={title}
+        onChange={(e) => onChange(e.target.value)}
+        onBlur={() => { const n = parseFloat(value); if (!Number.isNaN(n)) onChange(String(clamp(n))); }}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowUp')        { e.preventDefault(); bump(+1); }
+          else if (e.key === 'ArrowDown') { e.preventDefault(); bump(-1); }
+          else if (onKeyDown)             { onKeyDown(e); }
+        }}
+        style={{flex:1, minWidth:0, height:'100%', border:'none', background:'transparent'}}/>
+      <div style={{display:'flex', flexDirection:'column', borderLeft:'1px solid var(--qe-line)'}}>
+        <button type="button" tabIndex={-1} title="increase" onClick={() => bump(+1)} style={btn}><span style={tri(true)}/></button>
+        <button type="button" tabIndex={-1} title="decrease" onClick={() => bump(-1)} style={{...btn, borderTop:'1px solid var(--qe-line)'}}><span style={tri(false)}/></button>
+      </div>
+    </div>
+  );
+};
+Object.assign(window, { StepperNumber });
+
 const StepperInput = ({defaultValue, step=1, decimals=2, min=null, color}) => {
   const [v, setV]       = React.useState(parseFloat(defaultValue));
   const [text, setText] = React.useState(() => parseFloat(defaultValue).toFixed(decimals));

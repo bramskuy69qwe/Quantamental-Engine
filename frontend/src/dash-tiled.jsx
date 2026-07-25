@@ -233,6 +233,9 @@ const PosUnrealSum = () => { const d = useDash(); const s = d.positions.reduce((
 const EquityStatsPane = () => {
   const d = useDash();
   const eq = d.equity;
+  // dashboard-2: month-to-date lives in the JOURNAL block of the same snapshot,
+  // not the equity block — which is why the ladder's third rung went missing.
+  const j = d.journal || {};
   const blocks = [
     ['Available',    eq.available_margin],
     ['Margin Used',  eq.margin_used],
@@ -251,8 +254,8 @@ const EquityStatsPane = () => {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
           <div><Lbl>Daily</Lbl><DeltaPct id="eq.daily" value={eq.daily_pnl_pct} /></div>
           <div><Lbl>Weekly</Lbl><DeltaPct id="eq.weekly" value={eq.weekly_pnl_pct} /></div>
+          <div><Lbl>Monthly</Lbl><DeltaPct id="eq.monthly" value={j.monthly_pnl_pct} /></div>
           <div><Lbl>Unrealized</Lbl><LiveValue id="eq.unreal" value={eq.unrealized_pnl == null ? 0 : eq.unrealized_pnl} format={(x) => _sn(x)} style={{ color: (eq.unrealized_pnl || 0) >= 0 ? 'var(--qe-green)' : 'var(--qe-red)', fontWeight: 700, fontSize: 'var(--qe-fs-md)' }} /></div>
-          <div><Lbl>Available</Lbl><span className="qe-mono" style={{ fontWeight: 700 }}>{_n(eq.available_margin)}</span></div>
         </div>
         <div className="qe-divider-h" />
         <FieldList cols={2} dense rows={blocks.map(([label, v]) => ({ label, value: _n(v) }))} />
@@ -280,7 +283,7 @@ const EquityOhlcChart = React.memo(function EquityOhlcChart({ tf, onNet, onBar }
             const n = j.candles || [];
             const last = n[n.length - 1] || null;
             const prev = n.length > 1 ? n[n.length - 2] : last;
-            onBar(last ? { o: last.o, h: last.h, l: last.l, prevC: prev ? prev.c : null } : null);
+            onBar(last ? { o: last.o, h: last.h, l: last.l, prevC: prev ? prev.c : null, cf: last.cf } : null);
           }
         }
       } catch (err) { if (alive && onNet) onNet((n) => ({ ...n, err })); }
@@ -315,6 +318,9 @@ const EquityCurvePane = () => {
           <span><span style={{ color: 'var(--qe-muted)' }}>C</span> <LiveValue id="ohlc.c" value={c == null ? 0 : c} format={(x) => '$' + _n(x)} style={{ color: 'var(--qe-text)', fontWeight: 700 }} /></span>
           <span><span style={{ color: 'var(--qe-muted)' }}>Chg</span> <span style={{ color: chg == null ? 'var(--qe-muted)' : chg >= 0 ? 'var(--qe-green)' : 'var(--qe-red)' }}>{chg == null ? '—' : _sn(chg)}</span></span>
           <span><span style={{ color: 'var(--qe-muted)' }}>Bar Range</span> <span>{bar ? '$' + _n(bar.h - bar.l) : '—'}</span></span>
+          {/* dashboard-5: a jump in the curve is either performance or a
+              transfer — without this the two are indistinguishable. */}
+          <span><span style={{ color: 'var(--qe-muted)' }}>Cash Flow</span> <span style={{ color: 'var(--qe-blue)' }}>{bar && bar.cf ? `${bar.cf >= 0 ? '+' : '-'}$${_n(Math.abs(+bar.cf))}` : '$0.00'}</span></span>
           <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
             <span style={{ color: net.err ? 'var(--qe-red)' : 'var(--qe-muted)' }}>{net.err ? 'stalled' : 'poll 5s'}</span>
           </span>
@@ -357,7 +363,9 @@ const RiskMonitorPane = () => {
           <div><Lbl>WEEKLY</Lbl><Badge tone={_stateTone(st.weekly_pnl_state || rk.weekly_pnl_state)}>{_stateLabel(st.weekly_pnl_state || rk.weekly_pnl_state)}</Badge></div>
         </div>
         {(rk.funding_lines || []).length > 0 &&
-          <div className="qe-mono" style={{ fontSize: '0.56rem', color: 'var(--qe-muted)' }}>{(rk.funding_lines || []).join(' · ')}</div>}
+          <div className="qe-mono" style={{ fontSize: '0.56rem', color: 'var(--qe-muted)' }}>
+            <span style={{ color: 'var(--qe-sub)' }}>FUNDING </span>{(rk.funding_lines || []).join(' · ')}
+          </div>}
         {/* sector concentration — the backend computed + shipped this every
             snapshot with zero readers (audit F3) */}
         {(rk.sector_lines || []).length > 0 &&
@@ -496,12 +504,24 @@ const ActiveParamsPane = () => {
     { label: 'Max positions',   value: String(p.max_open_positions != null ? p.max_open_positions : '—') },
     { label: 'Max corr.',       value: _n((p.max_correlated_exposure || 0) * 100) + '%' },
   ];
+  // dashboard-4: which named risk preset the account runs. Nothing else on the
+  // dashboard names it. Renders only when the backend supplies it — an absent
+  // value must not fabricate 'CUSTOM'.
+  const preset = p.strategy_preset;
   return (
     <Pane title="Active Parameters" tag="VIEW" style={{ height: '100%' }}
       right={<button className="qe-btn qe-btn-sm qe-btn-ghost" title="Edit risk parameters in Configuration" onClick={() => window.qeNav && window.qeNav('Config')}>Edit</button>}
       foot={_dashFoot(d, 'snapshot', d.loaded)}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         <FieldList rows={rows} />
+        {preset ? (
+          <React.Fragment>
+            <div className="qe-divider-h" />
+            <div style={{ display: 'flex', gap: 6 }}>
+              <Badge tone="info">PRESET: {String(preset).toUpperCase()}</Badge>
+            </div>
+          </React.Fragment>
+        ) : null}
       </div>
     </Pane>
   );

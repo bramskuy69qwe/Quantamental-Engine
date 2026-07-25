@@ -37,8 +37,11 @@
        amounts/model/pct-mode);
      · form state persists on successful manual calcs (Jinja saved every
        keystroke debounced);
-     · pane-foot last-response lines and the design's RegimeBadge tone-mapping
-       are omitted (no engine feed for either). */
+     · pane-foot last-response lines are omitted (no engine feed).
+     CORRECTED 2026-07-25 (pretrade-2): the RegimeBadge tone-mapping is NOT
+     feed-less — NAV_REGIME_TONE (nav-and-data.jsx) is keyed on the same live
+     snake_case label this page holds, and the workspace strip already renders a
+     live RegimeBadge from it. Both in-pane sites now tone-code the regime. */
 
 /* ── helpers ─────────────────────────────────────────────────────────────── */
 /* Last-submit result foot for the calc-result family of panes (Position
@@ -595,7 +598,12 @@ const PreTradePage = () => {
   const c = calc || {};
   // display form: snake_case keys read as words (P8 audit L2-NIT-6 — the
   // ratified RegimeBadge-map omission left raw RISK_ON_CHOPPY on 4 sites)
-  const regLabel = ((calc && calc.regime_label) || (regime && regime.label) || '—').replace(/_/g, ' ');
+  const regRaw   = (calc && calc.regime_label) || (regime && regime.label) || '';
+  const regLabel = (regRaw || '—').replace(/_/g, ' ');
+  // pretrade-2: raw snake_case key -> RegimeBadge tone. NAV_REGIME_TONE is the
+  // single mapping (nav-and-data.jsx); unknown labels fall through to no badge
+  // rather than a guessed tone.
+  const regTone  = (NAV_REGIME_TONE || {})[regRaw] || null;
   const regMult  = (calc && calc.regime_multiplier != null) ? calc.regime_multiplier
                  : (regime && regime.multiplier != null) ? regime.multiplier : 1;
 
@@ -710,13 +718,13 @@ const PreTradePage = () => {
                   </div>
                   {form.tpslMode === 'price' ? (
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-                      <div><Lbl>TP Price</Lbl><input id="pt-tp" className="qe-input" value={form.tpPrice} onChange={set('tpPrice')} onKeyDown={enterTo(focusId('pt-sl'))} style={{ color: 'var(--qe-green)' }} /></div>
-                      <div><Lbl>SL Price</Lbl><input id="pt-sl" className="qe-input" value={form.slPrice} onChange={set('slPrice')} onKeyDown={enterTo(() => doCalculate(false))} style={{ color: 'var(--qe-red)' }} /></div>
+                      <div><Lbl>TP Price</Lbl><StepperNumber id="pt-tp" value={form.tpPrice} onChange={set('tpPrice')} step={0.01} decimals={4} min={0} onKeyDown={enterTo(focusId('pt-sl'))} style={{ color: 'var(--qe-green)' }} /></div>
+                      <div><Lbl>SL Price</Lbl><StepperNumber id="pt-sl" value={form.slPrice} onChange={set('slPrice')} step={0.01} decimals={4} min={0} onKeyDown={enterTo(() => doCalculate(false))} style={{ color: 'var(--qe-red)' }} /></div>
                     </div>
                   ) : (
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-                      <div><Lbl>TP %</Lbl><input id="pt-tp" className="qe-input" value={form.tpPct} onChange={set('tpPct')} onKeyDown={enterTo(focusId('pt-sl'))} style={{ color: 'var(--qe-green)' }} /></div>
-                      <div><Lbl>SL %</Lbl><input id="pt-sl" className="qe-input" value={form.slPct} onChange={set('slPct')} onKeyDown={enterTo(() => doCalculate(false))} style={{ color: 'var(--qe-red)' }} /></div>
+                      <div><Lbl>TP %</Lbl><StepperNumber id="pt-tp" value={form.tpPct} onChange={set('tpPct')} step={0.1} decimals={1} min={0} onKeyDown={enterTo(focusId('pt-sl'))} style={{ color: 'var(--qe-green)' }} /></div>
+                      <div><Lbl>SL %</Lbl><StepperNumber id="pt-sl" value={form.slPct} onChange={set('slPct')} step={0.1} decimals={1} min={0} onKeyDown={enterTo(() => doCalculate(false))} style={{ color: 'var(--qe-red)' }} /></div>
                     </div>
                   )}
                   {(() => {  /* live TP/SL preview (clamped >100% — FE-LOW-024) */
@@ -829,7 +837,8 @@ const PreTradePage = () => {
                     Apply regime multiplier
                   </label>
                   <div className="qe-grow" />
-                  <span className="qe-mono" style={{ fontSize: '0.6rem', color: 'var(--qe-sub)' }}>{regLabel}</span>
+                  {regTone ? <RegimeBadge tone={regTone} label={String(regLabel).toUpperCase()} />
+                    : <span className="qe-mono" style={{ fontSize: '0.6rem', color: 'var(--qe-sub)' }}>{regLabel}</span>}
                   <span style={{ fontFamily: 'var(--qe-mono)', fontSize: '0.62rem', color: 'var(--qe-cyan)', fontWeight: 700 }}>×{_ptFmtN(regMult, 1)} size</span>
                 </div>
 
@@ -931,7 +940,8 @@ const PreTradePage = () => {
                 <div>
                   <Lbl>Current Regime</Lbl>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
-                    <span className="qe-mono" style={{ fontSize: '0.74rem', fontWeight: 700, color: 'var(--qe-cyan)' }}>{String(regLabel).toUpperCase()}</span>
+                    {regTone ? <RegimeBadge tone={regTone} label={String(regLabel).toUpperCase()} />
+                      : <span className="qe-mono" style={{ fontSize: '0.74rem', fontWeight: 700, color: 'var(--qe-cyan)' }}>{String(regLabel).toUpperCase()}</span>}
                     {(calc && calc.regime_stale) || (!calc && regime && regime.label == null) ? <Badge tone="warn">STALE</Badge> : null}
                     <span className="qe-mono" style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--qe-cyan)' }}>×{_ptFmtN(regMult, 1)} size</span>
                   </div>
@@ -990,7 +1000,10 @@ const PreTradePage = () => {
                       </div>
                       <FieldList rows={[
                         { label: 'Notional', value: _ptFmtN(c.notional) + ' USDT' },
-                        { label: 'Exposure ×', value: _ptFmtN(c.est_exposure, 2) + '×' },
+                        /* pretrade-5: no 'Exposure ×' row here — it duplicated the
+                   After-Costs 'Portfolio Exp.' under a Position-scoped label.
+                   est_exposure IS portfolio-level, and the design's Leverage row
+                   this slot once held was a mock literal with no payload key. */
                         { label: 'TP → Profit', value: _ptSign(c.tp_usdt), color: 'green' },
                         { label: 'SL → Loss', value: _ptSign(c.sl_usdt != null ? -Math.abs(c.sl_usdt) : null), color: 'red' },
                       ]} />

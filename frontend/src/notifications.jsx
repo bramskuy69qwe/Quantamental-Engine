@@ -356,7 +356,10 @@ function NotificationProvider({ children, demo = false }) {
   const ctx = { unread, open, banner, haltUntil, haltAt, toggleOpen: () => setOpen(o => !o) };
   // height of the nav chrome (dense nav 32 + workspace bar 22, + halt banner 30)
   // so the center / scrim sit BELOW the title bar and never cover or dim it.
-  const navH = banner ? 84 : 54;
+  // 54 = dense nav 32 + workspace bar 22. Each under-nav Banner is 30px + 1px
+  // border. qeChromeBannerCount (nav-and-data) is the single source of truth so
+  // the offset and the banners can never disagree.
+  const navH = 54 + 31 * (typeof qeChromeBannerCount === 'function' ? qeChromeBannerCount() : 0);
 
   const Group = ({ title, rows }) => rows.length === 0 ? null : (
     <React.Fragment>

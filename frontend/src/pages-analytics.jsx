@@ -60,6 +60,18 @@ const ANA_PERIOD_TABS = new Set(['overview', 'dist', 'pairs', 'excursions', 'rmu
 const ANA_NO_NAV = new Set(['rolling_30d', 'rolling_90d', 'all_time']);
 
 const _anaPnl = (v) => (v > 0 ? 'var(--qe-green)' : v < 0 ? 'var(--qe-red)' : 'var(--qe-sub)');
+
+/* analytics-3 — centre + spread for a bp sample. POPULATION std (÷n, not ÷n-1):
+   this describes the spread of the window actually on screen, it is not an
+   inference about a wider population. Empty sample → null → rendered '—',
+   never 0, which would read as "perfectly tight". */
+const _anaMean = (a) => (a && a.length ? a.reduce((s, v) => s + v, 0) / a.length : null);
+const _anaStd = (a) => {
+  if (!a || !a.length) return null;
+  const m = _anaMean(a);
+  return Math.sqrt(a.reduce((s, v) => s + (v - m) * (v - m), 0) / a.length);
+};
+const _anaBp = (v) => (v == null || isNaN(v) ? '—' : `${v >= 0 ? '' : ''}${v.toFixed(2)}bp`);
 const _anaQS = (period, offset) => `period=${encodeURIComponent(period)}&offset=${offset}`;
 const _anaRatio = (v) => (v == null ? '—' : (v >= 999 ? '∞' : (+v).toFixed(2)));
 const _anaMs = (ms) => {
@@ -345,6 +357,7 @@ const AnaTabOverview = ({ period, offset, onLabel }) => {
                 { label: 'Period PnL', value: `$${pnl.toFixed(2)}`, color: _anaPnl(pnl) },
                 { label: 'Period PnL %', value: pnlPct == null ? '—' : `${pnlPct.toFixed(2)}%`, color: _anaPnl(pnlPct || 0) },
                 { label: 'Daily Avg PnL', value: days ? `$${(pnl / days).toFixed(2)}` : '—', color: _anaPnl(pnl) },
+                { label: 'Daily Avg PnL %', value: (days && pnlPct != null) ? `${(pnlPct / days).toFixed(3)}%` : '—', color: _anaPnl(pnlPct || 0) },
                 { label: 'Trading Days', value: days },
               ]} />
             </div>
@@ -356,6 +369,14 @@ const AnaTabOverview = ({ period, offset, onLabel }) => {
                   ? <EquityChart data={eqSeries} color={_anaPnl(pnl)} baseline={initial || null} height="100%" />
                   : <div className="qe-mono" style={{ fontSize: '0.62rem', color: 'var(--qe-muted)', padding: 8 }}>not enough snapshots in window</div>}
               </div>
+              {/* analytics-1: start / Δ% / end directly under the curve. */}
+              {eqSeries.length >= 2 ? (
+                <div className="qe-mono" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.56rem', color: 'var(--qe-muted)', marginTop: 3 }}>
+                  <span>start ${initial.toFixed(2)}</span>
+                  <span style={{ color: _anaPnl(pnlPct || 0) }}>{pnlPct == null ? '—' : `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%`}</span>
+                  <span>end ${(b.final_equity || 0).toFixed(2)}</span>
+                </div>
+              ) : null}
             </div>
           </div>
         </Pane>
@@ -444,6 +465,10 @@ const AnaTabEquity = () => {
             <span><span style={{ color: 'var(--qe-muted)' }}>Chg</span> <span style={{ color: _anaPnl(chg) }}>{`${chg >= 0 ? '+' : ''}$${chg.toFixed(2)} (${chgPct >= 0 ? '+' : ''}${chgPct.toFixed(2)}%)`}</span></span>
             <span><span style={{ color: 'var(--qe-muted)' }}>Bar Range</span> <span>{(last.h != null && last.l != null) ? `$${(last.h - last.l).toFixed(2)}` : '—'}</span></span>
             <span><span style={{ color: 'var(--qe-muted)' }}>Cash Flow</span> <span style={{ color: 'var(--qe-blue)' }}>{last.cf ? `${last.cf >= 0 ? '+' : '-'}$${Math.abs(+last.cf).toFixed(2)}` : '+$0.00'}</span></span>
+            {/* analytics-2: the trading-driven change. Chg includes deposits and
+                withdrawals; on a bar carrying one it overstates performance by
+                exactly cf, with nothing else in the strip labelling it. */}
+            <span><span style={{ color: 'var(--qe-muted)' }}>Adj Chg</span> <span style={{ color: _anaPnl(chg - (+last.cf || 0)) }}>{`${(chg - (+last.cf || 0)) >= 0 ? '+' : ''}$${(chg - (+last.cf || 0)).toFixed(2)}`}</span></span>
           </div>
           <div style={{ flex: 1, minHeight: 0 }}>
             {ddMode
@@ -1006,8 +1031,11 @@ const AnaTabExecution = () => {
           <div style={{ flex: 1, minHeight: 0 }}>
             {entryCosts.length ? <AnaHistChart bins={slipBins} color="var(--qe-blue)" noun="fill" /> : <EmptyState msg="no calc-backed entry fills yet" />}
           </div>
-          <div style={{ fontSize: '0.58rem', color: 'var(--qe-muted)', marginTop: 6, fontFamily: 'var(--qe-mono)' }}>
-            {'<0 = filled better than plan · '}n={entryCosts.length}
+          <div style={{ display: 'flex', gap: 14, fontSize: '0.58rem', color: 'var(--qe-muted)', marginTop: 6, fontFamily: 'var(--qe-mono)' }}>
+            <span>avg {_anaBp(_anaMean(entryCosts))}</span>
+            <span>std {_anaBp(_anaStd(entryCosts))}</span>
+            <span>n={entryCosts.length}</span>
+            <span style={{ marginLeft: 'auto' }}>&lt;0 = filled better than plan</span>
           </div>
         </Pane>
       </GridItem>
