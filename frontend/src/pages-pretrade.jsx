@@ -855,7 +855,7 @@ const PreTradePage = () => {
               right={<PeriodSelector
                 options={isCommodity ? [['notional', 'NOTIONAL'], ['contracts', 'CONTRACTS'], ['lot', 'LOT']] : [['notional', 'NOTIONAL'], ['contracts', 'CONTRACTS']]}
                 value={effSizeUnit} onChange={setSizeUnit} />}>
-              {!calc ? <EmptyState tone="neutral" glyph="◇" msg="No calc yet" hint="Run Calculate to populate the paste-ready setup." /> : (() => {
+              {!calc ? <EmptyState fill tone="neutral" glyph="◇" msg="No calc yet" hint="Run Calculate to populate the paste-ready setup." /> : (() => {
                 const sideUp = (c.side || '').toUpperCase();
                 const szVal  = effSizeUnit === 'notional' ? c.notional : c.size;
                 const szDisp = effSizeUnit === 'notional' ? _ptFmtN(c.notional) : _ptFmtSz(c.size);
@@ -896,7 +896,7 @@ const PreTradePage = () => {
           <GridItem x={10} y={0} w={7} h={5} minW={5} minH={4}>
             <Pane title="Recent Setups" count={recent.length} style={{ height: '100%' }}
               foot={{ tone: 'ok', msg: 'local' }}>
-              {!recent.length ? <EmptyState tone="neutral" glyph="◇" msg="No recent setups" /> : (
+              {!recent.length ? <EmptyState fill tone="neutral" glyph="◇" msg="No recent setups" /> : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                   {recent.map((r, i) => (
                     <div key={i} onClick={() => recall(r)} title="Click to recall into the form" style={{
@@ -965,7 +965,7 @@ const PreTradePage = () => {
               right={calc ? <Badge tone={c.eligible ? 'ok' : 'err'}>{c.eligible ? '✓ ELIGIBLE' : '⛔ INELIGIBLE'}</Badge> : null}
               bodyStyle={{ padding: 0 }}
               foot={_ptCalcFoot(busy, calcErr, calc)}>
-              {!calc ? <div style={{ padding: 10 }}><EmptyState tone="neutral" glyph="◇" msg="No calc yet" hint="Size a setup to see the position result." /></div> : (
+              {!calc ? <div style={{ padding: 10 }}><EmptyState fill tone="neutral" glyph="◇" msg="No calc yet" hint="Size a setup to see the position result." /></div> : (
                 <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
                   {!c.eligible && c.ineligible_reason ? (
                     <div className="qe-mono" style={{ fontSize: '0.62rem', color: 'var(--qe-red)', padding: '4px 8px', borderBottom: '1px solid var(--qe-line)' }}>⛔ {c.ineligible_reason}</div>
@@ -1033,7 +1033,7 @@ const PreTradePage = () => {
           <GridItem x={10} y={12} w={7} h={6} minW={5} minH={4}>
             <Pane title="Correlated Sector Exposure" style={{ height: '100%' }}
               foot={_ptCalcFoot(busy, calcErr, calc)}>
-              {!calc || !c.correlated_exposure ? <EmptyState tone="neutral" glyph="◇" msg="No calc yet" /> : (
+              {!calc || !c.correlated_exposure ? <EmptyState fill tone="neutral" glyph="◇" msg="No calc yet" /> : (
                 <React.Fragment>
                   {c.exceeds_corr_limit ? (
                     <div className="qe-mono" style={{ fontSize: '0.6rem', color: 'var(--qe-red)', marginBottom: 4 }}>⛔ correlated-exposure cap exceeded</div>
@@ -1056,7 +1056,7 @@ const PreTradePage = () => {
               foot={!tickerNorm ? { tone: 'sub', msg: 'enter a ticker' }
                 : qeFootState({ loading: netOb.ms == null && !netOb.err, err: netOb.err, hasData: ob != null, ms: netOb.ms, retrying: true })}>
               {!ob || (!(ob.bids || []).length && !(ob.asks || []).length) ? (
-                <EmptyState tone="neutral" glyph="〇" msg={tickerNorm ? 'No depth yet' : 'Enter a ticker'} />
+                <EmptyState fill tone="neutral" glyph="〇" msg={tickerNorm ? 'No depth yet' : 'Enter a ticker'} />
               ) : (
                 (() => {  /* depth-shading normalized to the visible book's max qty */
                   const maxQ = Math.max(...[...(ob.bids || []), ...(ob.asks || [])].map(([, q]) => parseFloat(q) || 0), 1e-9);

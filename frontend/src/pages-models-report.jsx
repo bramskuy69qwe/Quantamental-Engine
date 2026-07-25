@@ -51,13 +51,13 @@ const MdlCellR = ({ cell, label, bold }) => {
 const MdlSheetSections = ({ sheet, emptyMsg = 'sheet empty in this export' }) => {
   if (!sheet) {
     return <div style={{ padding: 8, height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <EmptyState tone="neutral" glyph="◇" msg={emptyMsg} />
+      <EmptyState fill tone="neutral" glyph="◇" msg={emptyMsg} />
     </div>;
   }
   const secs = mdlSections(sheet.rows);
   if (!secs.length) {
     return <div style={{ padding: 8, height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <EmptyState tone="neutral" glyph="◇" msg={emptyMsg} />
+      <EmptyState fill tone="neutral" glyph="◇" msg={emptyMsg} />
     </div>;
   }
   return (
@@ -144,7 +144,7 @@ const GraphsTab = ({ rep, foot }) => {
   const dd = eqRows.length ? [0, ...eqRows.map((r) => -Math.abs(r.drawdown))] : [];
   const empty = (msg) => (
     <div style={{ padding: 8, height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <EmptyState tone="neutral" glyph="◇" msg={msg} />
+      <EmptyState fill tone="neutral" glyph="◇" msg={msg} />
     </div>
   );
   return (
@@ -294,7 +294,7 @@ const PeriodicalTab = ({ rep, foot }) => {
             <div style={{ flex: 1, minHeight: 0 }}><BarChart data={hourly.map((x) => x.profit)} categories={hourly.map((x) => x.hour)} color="var(--qe-cyan)" /></div>
           ) : (
             <div style={{ padding: 8, height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <EmptyState tone="neutral" glyph="◇" msg="no timed trades to bucket" />
+              <EmptyState fill tone="neutral" glyph="◇" msg="no timed trades to bucket" />
             </div>
           )}
         </Pane>

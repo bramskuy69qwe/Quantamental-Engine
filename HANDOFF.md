@@ -164,6 +164,50 @@ inner `filter: {...}` object and makes the pin vacuous. Runtime scope verified
 by evaluating the emitted bundle in a stubbed vm (13 cross-module identifiers
 resolve) — the esbuild guard is parse-only.
 
+## ▶ NO-DATA STANDARD (2026-07-25, operator directive)
+
+**Directive**: the dashed frame sits **2× the standard inter-pane space** inside
+the pane wall, surrounds the **entire pane body**, content centred both axes.
+
+**Geometry**: the standard inter-pane space IS `--qe-pane-gap` (GridStack insets
+each tile by GAP/2 per edge ⇒ the gap BETWEEN panes is the full token). So the
+offset is `calc(var(--qe-pane-gap) * 2)` = 8px.
+
+**Why absolute and NOT a margin** (the load-bearing decision): the pane body
+carries its own padding — `'5px 7px'` by default, overridden per call site
+(`padding:0` is common, 47 `bodyStyle` overrides exist). A margin would land at a
+DIFFERENT offset on every pane, which is the exact inconsistency the directive
+removes. An absolutely-positioned box resolves `inset` against its ancestor's
+PADDING BOX, whose edge is the pane's inner border ⇒ exactly 2× the gap
+regardless of body padding. **Measured in a real browser before commit: 8/8/8/8
+uniform across default padding, `padding:0`, AND `padding:18px 24px`.**
+
+**Two guards, both deliberate and both pinned:**
+1. The CSS selector REQUIRES a `.qe-pane-body` ancestor
+   (`.qe-pane-body .qe-empty.fill`). Without it an EmptyState inside a modal
+   would position against the dialog panel and cover its head + footer. With it,
+   modal/inbox/inline uses keep normal flow AUTOMATICALLY.
+2. `fill` is **opt-in** (`EmptyState fill`). A zero-state rendered ALONGSIDE
+   siblings in a pane body (a list's "none yet" notice above the list) must stay
+   in flow or it would cover them.
+
+**Applied at 30 sites** = 2 central + 28 page-level. The 2 central ones carry
+most of the app: `DataList`'s truly-empty short-circuit (ONE line = the no-data
+state of **21 table panes**) and `PaneErrorBoundary`.
+
+**★ ONE HARD EXCLUSION — do not "finish the job" by adding fill here:** the
+DataList **filtered-to-zero** branch (`.qe-dl-empty`). Rows exist but the
+search/facets excluded them all, so the sticky toolbar is STILL rendered above
+and is the only way out of that state. An absolute inset box would paint over it
+and trap the operator with no way to clear the filter. Pinned by
+`test_filtered_to_zero_does_NOT_fill`.
+
+Inventory that drove this: 8 agents, **154 no-data treatments** (68 EmptyState ·
+21 DataList-emptyMsg · 46 ad-hoc · 19 spinner-only), 55 verified absolute-fill
+SAFE, 99 unsafe — which is why a blanket rule was rejected. Spinner-only sites
+were left alone: a loading state is not a no-data state. Pins:
+`tests/test_empty_state_standard.py` (13). Bundle `29bd25af1b`.
+
 ## ▶ CLOCK DRIFT — the CCXT auto-sync answer (2026-07-25)
 
 Operator saw `CLOCK DRIFT: local clock is -9987ms vs binance (severity=critical)`

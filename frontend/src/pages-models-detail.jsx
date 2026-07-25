@@ -88,7 +88,7 @@ const ModelOverviewTab = ({ m, runs, runsFoot, usage, usageFoot, ovFoot, onOpenR
               rows={runs} />
           ) : (
             <div style={{ padding: 10, height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <EmptyState tone="warn" glyph="⤓" msg="No backtests imported yet"
+              <EmptyState fill tone="warn" glyph="⤓" msg="No backtests imported yet"
                 hint="Performance only ever comes from imported reports (MultiCharts .xlsx / .xml)."
                 cta={<button className="qe-btn qe-btn-sm qe-btn-primary" onClick={onImport}>⤓ Import a report</button>} />
             </div>
@@ -136,7 +136,7 @@ const ModelOverviewTab = ({ m, runs, runsFoot, usage, usageFoot, ovFoot, onOpenR
             </div>
           ) : (
             <div style={{ padding: 10, height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <EmptyState tone="neutral" glyph="∅" msg="Not used by any positions yet"
+              <EmptyState fill tone="neutral" glyph="∅" msg="Not used by any positions yet"
                 hint="Closed positions and pre-trade plans tagged with this model appear here (open positions appear once closed)." />
             </div>
           )}

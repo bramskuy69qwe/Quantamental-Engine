@@ -420,7 +420,7 @@ const CfgAccountsTab = () => {
           onRefresh={() => loadAccounts(true)}
           foot={qeFootState({ loading: netA.ms == null && !netA.err, err: netA.err, hasData: accounts != null && accounts.length > 0, ms: netA.ms })}>
           {accounts == null ? <Spinner label="loading" /> :
-           !accounts.length ? <EmptyState tone="warn" glyph="∅" msg="No accounts" hint="Engine unreachable, or no accounts configured." /> : (
+           !accounts.length ? <EmptyState fill tone="warn" glyph="∅" msg="No accounts" hint="Engine unreachable, or no accounts configured." /> : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               {accounts.map((a) => (
                 <Card key={a.id} tight style={{
@@ -454,7 +454,7 @@ const CfgAccountsTab = () => {
           onRefresh={() => reload(true)}
           foot={!sel ? { tone: 'sub', msg: 'no account selected' }
             : qeFootState({ loading: detail == null && !netD.err, err: netD.err, hasData: detail != null && !detail._placeholder, ms: netD.ms })}>
-          {!sel ? <EmptyState tone="neutral" glyph="◇" msg="No account selected" /> :
+          {!sel ? <EmptyState fill tone="neutral" glyph="◇" msg="No account selected" /> :
            detail == null ? <Spinner label="loading" /> :
            <CfgAccountForm key={sel.id} account={sel} detail={detail} onReload={reload} />}
         </Pane>
@@ -756,7 +756,7 @@ const CfgSystemTab = () => {
         <Pane title="System" style={{ height: '100%' }} bodyStyle={{ overflow: 'auto' }} onRefresh={load}
           foot={qeFootState({ loading: net.ms == null && !net.err, err: net.err, hasData: !!(sys && sys.version), ms: net.ms })}>
           {sys == null ? <Spinner label="loading" /> :
-           !sys.version ? <EmptyState tone="warn" glyph="∅" msg="Engine unreachable" hint="/api/system did not answer." /> : (
+           !sys.version ? <EmptyState fill tone="warn" glyph="∅" msg="Engine unreachable" hint="/api/system did not answer." /> : (
             <React.Fragment>
               <SecLbl rule right={<span style={{ color: 'var(--qe-muted)', fontSize: '0.54rem' }}>READ-ONLY · G-O8</span>}>Engine</SecLbl>
               <FieldList cols={2} rows={[

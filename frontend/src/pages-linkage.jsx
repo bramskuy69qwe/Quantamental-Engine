@@ -459,7 +459,7 @@ const LinkagePage = () => {
               {needs == null ? <div style={{ padding: 10 }}><Spinner label="loading" /></div> :
                !inbox.length ? (
                 <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 10 }}>
-                  <EmptyState tone="info" glyph="✓" msg="Inbox clear" hint="Every order is linked and every close is categorized." />
+                  <EmptyState fill tone="info" glyph="✓" msg="Inbox clear" hint="Every order is linked and every close is categorized." />
                 </div>
               ) : (
                 <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '162px 1fr' }}>

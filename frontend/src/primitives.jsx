@@ -141,8 +141,16 @@ const Gauge = ({label, value, max, current, maxLabel, ticks=[], hint=null}) => {
 
 // EmptyState — REPLACES the 7 ad-hoc treatments
 // tones: info | warn | err | neutral
-const EmptyState = ({tone='neutral', glyph='∅', msg, hint, cta=null}) => (
-  <div className={`qe-empty ${tone==='neutral'?'':tone}`}>
+// `fill` = this empty state IS the pane's whole content, so the dashed frame
+// surrounds the entire pane body, offset 2x the standard pane gap from the pane
+// wall, content centred both axes (the no-data standard — see tokens.css
+// ".qe-pane-body .qe-empty.fill"). OPT-IN, and deliberately so: an EmptyState
+// rendered alongside siblings inside a pane body (a list's zero-state, a chart
+// pane's "no series" notice above a legend) must stay in flow or it would cover
+// them. The CSS additionally requires a .qe-pane-body ancestor, so passing
+// `fill` in a modal or an inbox list is inert rather than destructive.
+const EmptyState = ({tone='neutral', glyph='∅', msg, hint, cta=null, fill=false}) => (
+  <div className={`qe-empty ${tone==='neutral'?'':tone}${fill?' fill':''}`}>
     <div className="qe-empty-glyph">{glyph}</div>
     <div className="qe-empty-msg">{msg}</div>
     {hint && <div style={{fontSize:'var(--qe-fs-xs)', color:'var(--qe-muted)', textAlign:'center'}}>{hint}</div>}
@@ -445,7 +453,7 @@ class PaneErrorBoundary extends React.Component {
   render(){
     if (this.state.hasError) {
       return (
-        <EmptyState tone="err" glyph="⚠"
+        <EmptyState fill tone="err" glyph="⚠"
           msg={`${this.props.title || 'Pane'} failed to render`}
           hint={this.state.msg}
           cta={<button type="button" className="qe-btn qe-btn-sm qe-btn-danger" onClick={this.props.onReload}>
@@ -679,7 +687,12 @@ const Pane = ({title, count, right, hot, tag, foot=null, resizable=true, onRefre
     }}>
       <PaneHead title={title} count={count} right={right} hot={hot} tag={tag}
         onRefresh={doRefresh} refreshing={refreshing} refreshTone={errored ? 'err' : 'default'}/>
-      <div style={{flex:1, minHeight:0, padding:'5px 7px', overflow:'auto', ...bodyStyle}}>
+      {/* qe-pane-body + position:relative are the anchor for the no-data
+          standard (tokens.css). position:relative is additive here: the reload
+          veil is a SIBLING of this div (child of the pane root, below), and the
+          DataList toolbar is position:sticky — which resolves against the
+          scroll container, i.e. this div, unchanged. */}
+      <div className="qe-pane-body" style={{flex:1, minHeight:0, padding:'5px 7px', overflow:'auto', position:'relative', ...bodyStyle}}>
         <PaneErrorBoundary key={nonce} title={title} onReload={doRefresh} onError={() => setErrored(true)}>
           {children}
         </PaneErrorBoundary>
@@ -917,7 +930,7 @@ const DataList = ({columns, rows, dense=true, onClick, selKey='id', selected=nul
 
   // ── truly-empty data → canonical EmptyState (no toolbar) ──
   if (!allRows.length) {
-    return <EmptyState tone="neutral" glyph="◇" msg={emptyMsg}/>;
+    return <EmptyState fill tone="neutral" glyph="◇" msg={emptyMsg}/>;
   }
 
   const fixed     = columns.some(c => c.width);

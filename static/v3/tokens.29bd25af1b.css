@@ -362,6 +362,41 @@
   border: 1px dashed var(--qe-line);
   background: repeating-linear-gradient(45deg, transparent 0 6px, rgba(58,77,106,0.04) 6px 7px);
 }
+
+/* NO-DATA STANDARD (operator directive 2026-07-25)
+   "the dotted lines offset from pane wall is twice the standardized space
+    between each panes. the dotted lines are surrounding entire main pane, with
+    the information correlated to the pane in the center both vertical and
+    horizontal."
+
+   Geometry: the standard inter-pane space IS --qe-pane-gap — GridStack insets
+   each tile by GAP/2 per edge, so the gap BETWEEN two panes is the full token.
+   Twice that = calc(var(--qe-pane-gap) * 2), uniform on all four sides.
+
+   Why absolute and not margin: the pane body carries its own padding
+   ('5px 7px' by default, overridden per call site — padding:0 is common), so a
+   margin would land at a DIFFERENT offset on every pane, which is the exact
+   inconsistency this rule removes. An absolutely-positioned box resolves inset
+   against its ancestor's PADDING BOX, whose edge is the pane's inner border —
+   so the offset is exactly 2x the gap regardless of what the body padding is.
+
+   Why the .qe-pane-body ancestor is IN THE SELECTOR: EmptyState is also used in
+   modals, inbox lists and inline "no rows yet" spots. Requiring a pane-body
+   ancestor means those keep normal flow automatically and can never be
+   overlaid — the fill geometry simply does not activate outside a pane body.
+   The `fill` prop stays opt-in on top of that, because an EmptyState rendered
+   ALONGSIDE siblings inside a pane body (a list's zero-state) must not cover
+   them either.
+
+   overflow:auto because an absolute box cannot grow its parent — a long hint
+   (the error boundary passes a raw exception message) must scroll, not clip
+   its Reload CTA out of reach. */
+.qe-pane-body .qe-empty.fill {
+  position: absolute;
+  inset: calc(var(--qe-pane-gap) * 2);
+  margin: 0;
+  overflow: auto;
+}
 .qe-empty-glyph {
   font-family: var(--qe-mono); font-size: 0.78rem;
   color: var(--qe-muted); letter-spacing: 0.2em;

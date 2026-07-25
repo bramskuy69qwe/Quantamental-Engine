@@ -524,12 +524,12 @@ const AnaTabDistributions = ({ period, offset, onLabel }) => {
         <Pane title="R-Multiple Distribution" style={{ height: '100%' }} tag="1R bins"
           right={<span style={{ fontSize: '0.54rem', color: 'var(--qe-muted)', fontFamily: 'var(--qe-mono)' }}>n={(data.r_values || []).length} · positional R from plan SL</span>}
           foot={foot}>
-          {rBins.length ? <AnaHistChart bins={rBins} divergent noun="trade" /> : <EmptyState msg="no R-multiples in window" />}
+          {rBins.length ? <AnaHistChart bins={rBins} divergent noun="trade" /> : <EmptyState fill msg="no R-multiples in window" />}
         </Pane>
       </GridItem>
       <GridItem x={0} y={6} w={12} h={6} minW={6} minH={5}>
         <Pane title="Hold Time Distribution" style={{ height: '100%' }} tag="min" foot={foot}>
-          {holds.length ? <AnaHistChart bins={holdBins} color="var(--qe-blue)" noun="trade" /> : <EmptyState msg="no hold-time data (open_time unknown)" />}
+          {holds.length ? <AnaHistChart bins={holdBins} color="var(--qe-blue)" noun="trade" /> : <EmptyState fill msg="no hold-time data (open_time unknown)" />}
         </Pane>
       </GridItem>
       <GridItem x={12} y={6} w={12} h={6} minW={6} minH={5}>
@@ -703,7 +703,7 @@ const AnaTabExcursions = ({ period, offset, onLabel }) => {
           right={<PeriodSelector options={[['all', 'All'], ['LONG', 'Long'], ['SHORT', 'Short']]} value={dir} onChange={setDir} />}
           style={{ height: '100%' }} bodyStyle={{ padding: 6 }}
           foot={foot}>
-          {points.length ? <ScatterChart points={points} xName="MFE ($)" yName="MAE ($)" /> : <EmptyState msg="no reconciled excursions in window" />}
+          {points.length ? <ScatterChart points={points} xName="MFE ($)" yName="MAE ($)" /> : <EmptyState fill msg="no reconciled excursions in window" />}
         </Pane>
       </GridItem>
       <GridItem x={16} y={0} w={8} h={5} minW={5} minH={4}>
@@ -983,7 +983,7 @@ const AnaTabExecution = () => {
             </span>
           }
           bodyStyle={{ padding: '8px 10px' }} foot={foot}>
-          {scatterPts.length ? <AnaExecScatter points={scatterPts} /> : <EmptyState msg="no calc-backed entries with both estimate and residual yet" />}
+          {scatterPts.length ? <AnaExecScatter points={scatterPts} /> : <EmptyState fill msg="no calc-backed entries with both estimate and residual yet" />}
         </Pane>
       </GridItem>
 
@@ -1215,7 +1215,7 @@ const AnaTabBeta = () => {
                 );
               })}
             </div>
-          ) : <EmptyState msg="no sector data" />}
+          ) : <EmptyState fill msg="no sector data" />}
         </Pane>
       </GridItem>
       <GridItem x={14} y={7} w={10} h={6} minW={6} minH={4}>

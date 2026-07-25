@@ -540,7 +540,7 @@ const RegimeTabOverview = ({ current, curFoot, mults, multsFoot, onGoBackfill })
           right={<span style={{ fontSize: '0.54rem', color: 'var(--qe-muted)', fontFamily: 'var(--qe-mono)' }}>{total} days observed</span>}
           foot={tlFoot}>
           {total === 0 ? (
-            <EmptyState tone={tlErr ? 'warn' : 'info'} glyph="〇"
+            <EmptyState fill tone={tlErr ? 'warn' : 'info'} glyph="〇"
               msg={tlErr ? 'timeline fetch failed' : 'no regime labels in window'}
               hint={tlErr ? 'engine unreachable?' : 'run a backfill to classify history'} />
           ) : (
@@ -588,7 +588,7 @@ const RegimeTabOverview = ({ current, curFoot, mults, multsFoot, onGoBackfill })
           </>}
           foot={tlFoot}>
           {timeline.length === 0 && tlErr ? (
-            <EmptyState tone="warn" glyph="⚠" msg="timeline fetch failed" hint="engine unreachable?" />
+            <EmptyState fill tone="warn" glyph="⚠" msg="timeline fetch failed" hint="engine unreachable?" />
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <TimelineSvg data={timeline} style={tlStyle} />
@@ -774,7 +774,7 @@ const RegimeTabBackfill = ({ job, onStart }) => {
           bodyStyle={{ padding: 0 }}
           foot={covFoot}>
           {covErr && srvRows.length === 0 ? (
-            <EmptyState tone="warn" glyph="⚠" msg="coverage fetch failed" hint="engine unreachable?" />
+            <EmptyState fill tone="warn" glyph="⚠" msg="coverage fetch failed" hint="engine unreachable?" />
           ) : (
             <DataList
               selKey="signal_name"              columns={[
@@ -943,7 +943,7 @@ const RegimeTabNews = () => {
           bodyStyle={{ padding: newsView === 'magazine' ? 6 : 0 }}
           foot={feedFoot}>
           {news.length === 0 ? (
-            <EmptyState tone={feedErr ? 'warn' : 'info'} glyph="📰"
+            <EmptyState fill tone={feedErr ? 'warn' : 'info'} glyph="📰"
               msg={feedErr ? 'news fetch failed' : 'no news items stored yet'}
               hint={feedErr ? 'engine unreachable?' : 'press ↻ to fetch from finnhub (needs an API key in Connections)'} />
           ) : newsView === 'magazine' ? (
@@ -987,7 +987,7 @@ const RegimeTabNews = () => {
           bodyStyle={{ padding: 6 }}
           foot={calFoot}>
           {cal.length === 0 ? (
-            <EmptyState tone="info" glyph="◫" msg="no calendar events stored"
+            <EmptyState fill tone="info" glyph="◫" msg="no calendar events stored"
               hint="press ↻ on Market News to fetch (finnhub)" />
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>

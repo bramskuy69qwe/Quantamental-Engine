@@ -56,7 +56,7 @@ const ModelOverview = ({ models, onOpen, onNew, foot }) => {
               rows={ranked.map((x) => ({ id: x.m.id, name: x.m.name, type: x.m.type, net: x.k.net, pf: x.k.pf, win: x.k.winPct }))} />
           ) : (
             <div style={{ padding: 10, height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <EmptyState tone="neutral" glyph="◇" msg="No ranked models yet"
+              <EmptyState fill tone="neutral" glyph="◇" msg="No ranked models yet"
                 hint="Import a backtest report to put a model on the board." />
             </div>
           )}

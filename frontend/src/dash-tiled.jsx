@@ -430,7 +430,7 @@ const MacroSignalsPane = () => {
     <Pane title="Macro Signals" count={sigs.length} style={{ height: '100%' }}
       foot={_dashFoot(d, 'macro', sigs.length > 0)}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {sigs.length === 0 && <EmptyState tone="warn" glyph="∅" msg="No signal data" hint="Run regime backfill to populate." />}
+        {sigs.length === 0 && <EmptyState fill tone="warn" glyph="∅" msg="No signal data" hint="Run regime backfill to populate." />}
         {/* 4-col rows: key · 30d sparkline (audit F2 — the endpoint fetched
             the series and discarded it) · value · delta */}
         {sigs.map((s) => (
