@@ -38,11 +38,11 @@ def _bounded_float_env(name: str, default: str, *, lo: float, hi: float) -> floa
 # (api/helpers.py), FastAPI metadata + the PWA manifest (main.py), the
 # launch.bat window title. Bump PROJECT_VERSION_ at program close
 # (CLAUDE.md § "Release hygiene"); a product rename is a change HERE only.
-PROJECT_NAME_    = "QUANTAMENTAL ENGINE"
-PROJECT_VERSION_ = "v2.7"
+PROJECT_NAME_    = "MERIDIAN"
+PROJECT_VERSION_ = "v3.0"
 PROJECT_NAME     = f"{PROJECT_NAME_} {PROJECT_VERSION_}"
 # PWA identity (main.py /manifest.json route). short_name ≤ 12 chars.
-PROJECT_SHORT_NAME  = "QRE"
+PROJECT_SHORT_NAME  = "MRDN"
 PROJECT_DESCRIPTION = "Pre-trade gatekeeper for discretionary crypto futures trading"
 
 # ── Exchange ──────────────────────────────────────────────────────────────────

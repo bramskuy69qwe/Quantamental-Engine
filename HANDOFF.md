@@ -269,6 +269,51 @@ linkage match window, BOD boundaries, correlation-log stamps, the new FEED
 skew-immune by construction. **So: fix the OS clock (`w32tm /resync /force`);
 reads are safe, time-derived displays are not.**
 
+## ▶ v3.0 RENAME SHIPPED · RETIREMENT DEFERRED (2026-07-25)
+
+**Identity is now MERIDIAN v3.0** (`config.py` only, per CLAUDE.md § "Release
+hygiene"): `PROJECT_NAME_ = "MERIDIAN"` · `PROJECT_VERSION_ = "v3.0"` ·
+`PROJECT_SHORT_NAME = "MRDN"`. Every displayed surface derives from these (page
+titles, header/footer, startup overlay, FastAPI metadata, PWA manifest,
+launch.bat title, and the React chrome via `QE_BOOTSTRAP`). **MERIDIAN is
+ALL-CAPS on purpose** — `test_time_sync.py` pins that shape. UNTOUCHED, and must
+stay so: the KDF domain salt `b"qe-kdf-salt-v2:"` (renaming it breaks decryption
+of every stored credential) and the `risk_engine.db` / `.jsonl` filenames (a
+rename there is a data migration, not cosmetics).
+
+**★ THE RETIREMENT WAS BUILT, MEASURED, AND DELIBERATELY REVERTED.**
+It works — `/` served the React shell, `/v3` 307'd to it, 8 Jinja twins and
+their routes were gone, and the app booted with 4360 green. **Operator chose
+"rename only, hold the promotion"** after seeing the true cost. Everything below
+is what a future attempt needs, so nobody re-derives it:
+
+- **COST: 126 tests across 25 files.** All `FileNotFoundError` source-greps of
+  the deleted page templates — mostly `task-NNN` files encoding ~15
+  operator-driven Jinja fixes (108 · 112 · 124 · 125 · 135 · 136 · 149 ·
+  152-154 · 104b). The BEHAVIOURS were ported to React and have their own pins,
+  so capability coverage is not lost — but 126 pins must be retired with them.
+- **`base.html` CANNOT be retired** (the plan says "+ base.html plumbing" — that
+  part is wrong). SIX templates still extend it: `admin/{calc_link,
+  dd_enforcement, equity_gaps, shadow_events, trade_events}.html` and
+  `orders/needs_link.html`. None has a React replacement. `v3.html` is
+  standalone and does NOT extend it (its own header says so — a naive grep hits
+  that comment and reports a false dependency).
+- **`/config` CANNOT be retired**: React renders Add/Delete Account DISABLED
+  with the title "add accounts via the current /config page". Retiring it
+  strands account creation and deletion.
+- **Every `/fragments/*` route must SURVIVE** (50 of them) — they carry the
+  `?format=json` doors the React pages read. Only the 8 page GETs retire.
+- `POST /models` also survives — a live fragment form still posts to it
+  (pinned by `test_v27_phase3_model_routes.py`).
+- Mechanical trap hit on the first pass: deleting a route decorator with a regex
+  that stops at the next `def` leaves the HANDLER BODY orphaned. It still
+  parses, so a syntax check passes while dead functions keep referencing deleted
+  templates. Grep for the template names afterwards, not just `ast.parse`.
+- Sequencing: the acceptance gate is "operator has driven React LIVE". The
+  engine was stopped this whole session, so nothing since the DataList sweep,
+  the no-data standard, HeatBar and the 29 LOW/NIT fixes has been seen running.
+  **Restart + live-drive BEFORE retiring the fallback.**
+
 **▶ OPERATOR ACTIONS PENDING:**
 1. **Restart the engine** (see the Engine line — lands 4 backend changes).
 2. ~~Optional `--apply`~~ **DONE 2026-07-25** —
@@ -294,8 +339,15 @@ reads are safe, time-derived displays are not.**
    **Contrast worth keeping**: `core.database`'s v1-v4 `reset_mfe_mae_*`
    migrations DO leave the flag alone — their intent is the opposite (zero so
    the reconciler RECOMPUTES with a corrected formula).
-3. Confirm **#7's aspect direction** (`3/2` shipped; flip both literals to
-   `'2 / 3'` if portrait was meant).
+3. ~~Confirm #7's aspect direction~~ **RATIFIED 2026-07-25: keep `3 / 2`**
+   (landscape, as shipped). NB the re-investigation found the ratio is treating
+   a SYMPTOM: the cells were flat because our grid carries
+   `alignContent: 'start'` (pages-analytics.jsx) which the design does NOT — it
+   collapses the 6 week-rows to the 46px floor and packs them at the top,
+   leaving the pane's remaining height empty. Operator chose the current look,
+   so this is recorded, not acted on. Removing `alignContent` (and the two
+   aspectRatio literals) is the design-faithful alternative if it ever looks
+   wrong at another pane size.
 4. Push/merge `v3.0/ui-plan-audit` at your call (still local-only).
 
 **★ MECHANISMS + GOTCHAS worth keeping:**
