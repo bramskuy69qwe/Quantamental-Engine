@@ -205,8 +205,46 @@ and trap the operator with no way to clear the filter. Pinned by
 Inventory that drove this: 8 agents, **154 no-data treatments** (68 EmptyState ·
 21 DataList-emptyMsg · 46 ad-hoc · 19 spinner-only), 55 verified absolute-fill
 SAFE, 99 unsafe — which is why a blanket rule was rejected. Spinner-only sites
-were left alone: a loading state is not a no-data state. Pins:
-`tests/test_empty_state_standard.py` (13). Bundle `29bd25af1b`.
+were left alone: a loading state is not a no-data state.
+
+**Both standards are now WRITTEN DOWN in `frontend/DESIGN.md` § Data display**
+(the operator asked "have you put that principle in primitives?" — the mechanism
+was in primitives.jsx/tokens.css but the RULE was not documented; per
+[[feedback-cross-page-ui-convention-drift]] a shared-primitive usage rule has to
+live in DESIGN.md once or it drifts).
+
+## ▶ EXCURSION (MFE/MAE) STANDARD — `HeatBar` primitive (2026-07-25)
+
+The built heat cell differed materially from the design and is now ONE
+primitive, `HeatBar` (+ `HeatBarLabelled` for detail panes), ported from the
+design's `HistHeat` (`v25/src/pages.jsx:56-73`).
+
+**It has THREE load-bearing channels; the build shipped only ONE:**
+1. centre **ENTRY rule** — the datum both excursions are measured from. Without
+   it the two halves float and the cell says nothing about direction.
+2. red extent LEFT = **MAE**, green extent RIGHT = **MFE**, scaled to
+   `max(|mfe|,|mae|,|pnl|)` so the tick can never fall outside the box.
+3. bright **EXIT tick** — where the close landed INSIDE that range. This turns
+   "how far it swung" into "…and how much of it we kept"; it is NOT a
+   restatement of the NET column (the old local `HistHeat` header claimed it was,
+   which is why the channel had been dropped).
+
+The old implementation also used detached half-bars with a 2px gap, no border,
+height 7 vs 12, opacity 0.75 vs 0.42, and no minimum extent. Column label
+restored to the design's `MAE ◂ HEAT ▸ MFE`.
+
+**Our truthfulness rules on top of the mock-fed design** (keep them): `mfe` AND
+`mae` both null = NOT MEASURED → `—`, never a zero-width bar (the P8 audit's F2
+class — a `||0` coercion fabricates certainty on un-backfilled rows); `pnl` null
+→ the exit tick is OMITTED, not parked at centre, which would assert a
+break-even close that was never measured.
+
+Verified by rendering the SHIPPED bundle's own `HeatBar` in a real browser with
+vendored React across 7 shapes: every drawn bar carries the entry rule, the tick
+appears iff `pnl` is present, and the unmeasured row renders a dash.
+`dash-tiled`'s `PosMfeMae` text pair is CORRECT as-is — the design uses a text
+pair there too, not a bar. Pins: `tests/test_empty_state_standard.py`
+(21 total). Bundle `96c240a869`.
 
 ## ▶ CLOCK DRIFT — the CCXT auto-sync answer (2026-07-25)
 

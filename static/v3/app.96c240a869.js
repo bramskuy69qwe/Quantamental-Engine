@@ -50,6 +50,49 @@ const Gauge = ({ label, value, max, current, maxLabel, ticks = [], hint = null }
   return /* @__PURE__ */ React.createElement("div", { className: "qe-gauge" }, /* @__PURE__ */ React.createElement("div", { className: "qe-gauge-head" }, /* @__PURE__ */ React.createElement(Lbl, null, label), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "var(--qe-fs-md)", fontWeight: 700, color: "var(--qe-text)" } }, current)), /* @__PURE__ */ React.createElement("div", { className: "qe-gauge-track" }, /* @__PURE__ */ React.createElement("div", { className: `qe-gauge-fill ${tone}`, style: { width: pct + "%" } }), ticks.map((t, i) => /* @__PURE__ */ React.createElement("div", { key: i, className: "qe-gauge-tick", style: { left: t / max * 100 + "%" } }))), /* @__PURE__ */ React.createElement("div", { className: "qe-gauge-foot" }, /* @__PURE__ */ React.createElement("span", null, hint || `0`), /* @__PURE__ */ React.createElement("span", null, maxLabel)));
 };
 const EmptyState = ({ tone = "neutral", glyph = "\u2205", msg, hint, cta = null, fill = false }) => /* @__PURE__ */ React.createElement("div", { className: `qe-empty ${tone === "neutral" ? "" : tone}${fill ? " fill" : ""}` }, /* @__PURE__ */ React.createElement("div", { className: "qe-empty-glyph" }, glyph), /* @__PURE__ */ React.createElement("div", { className: "qe-empty-msg" }, msg), hint && /* @__PURE__ */ React.createElement("div", { style: { fontSize: "var(--qe-fs-xs)", color: "var(--qe-muted)", textAlign: "center" } }, hint), cta && /* @__PURE__ */ React.createElement("div", { className: "qe-empty-cta" }, cta));
+const HeatBar = ({ mfe, mae, pnl = null, w = 84, h = 12 }) => {
+  if (mfe == null && mae == null) return /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014");
+  const f = +mfe || 0, a = +mae || 0, p = pnl == null ? null : +pnl || 0;
+  const span = Math.max(Math.abs(f), Math.abs(a), Math.abs(p == null ? 0 : p)) || 1;
+  const half = (v) => v / span * 50;
+  const maeW = Math.max(1.5, -half(Math.min(0, a)));
+  const mfeW = Math.max(1.5, half(Math.max(0, f)));
+  const exit = p == null ? null : 50 + half(p);
+  const title = `MFE +${Math.abs(f).toFixed(2)} / MAE ${a.toFixed(2)}` + (p == null ? "" : ` \xB7 exit ${p >= 0 ? "+" : ""}${p.toFixed(2)}`);
+  return /* @__PURE__ */ React.createElement("div", { title, style: {
+    position: "relative",
+    width: w,
+    height: h,
+    background: "var(--qe-panel)",
+    border: "1px solid var(--qe-faint)",
+    flexShrink: 0,
+    display: "inline-block",
+    verticalAlign: "middle"
+  } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", left: "50%", top: 0, bottom: 0, width: 1, background: "var(--qe-line-2)" } }), /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: 2, bottom: 2, right: "50%", width: maeW + "%", background: "var(--qe-red)", opacity: 0.42 } }), /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: 2, bottom: 2, left: "50%", width: mfeW + "%", background: "var(--qe-green)", opacity: 0.42 } }), exit != null && /* @__PURE__ */ React.createElement("div", { style: {
+    position: "absolute",
+    top: -1,
+    bottom: -1,
+    left: exit + "%",
+    width: 2,
+    marginLeft: -1,
+    background: p >= 0 ? "var(--qe-green)" : "var(--qe-red)"
+  } }));
+};
+const HeatBarLabelled = ({ mfe, mae, pnl = null, pct = null, h = 16 }) => /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: {
+  display: "flex",
+  justifyContent: "space-between",
+  fontFamily: "var(--qe-mono)",
+  fontSize: "0.5rem",
+  letterSpacing: "0.06em",
+  marginBottom: 3
+} }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-red)" } }, "MAE ", mae == null ? "\u2014" : (+mae).toFixed(2)), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "ENTRY"), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-green)" } }, "MFE ", mfe == null ? "\u2014" : "+" + Math.abs(+mfe).toFixed(2))), /* @__PURE__ */ React.createElement(HeatBar, { mfe, mae, pnl, w: "100%", h }), pnl != null && /* @__PURE__ */ React.createElement("div", { style: {
+  textAlign: "center",
+  fontFamily: "var(--qe-mono)",
+  fontSize: "0.5rem",
+  color: +pnl >= 0 ? "var(--qe-green)" : "var(--qe-red)",
+  marginTop: 3
+} }, "\u25B2 exit ", +pnl >= 0 ? "+" : "", (+pnl).toFixed(2), pct == null ? "" : ` (${+pct >= 0 ? "+" : ""}${(+pct).toFixed(2)}%)`));
+Object.assign(window, { HeatBar, HeatBarLabelled });
 const Tabs = ({ tabs, value, onChange, style = null }) => /* @__PURE__ */ React.createElement("div", { className: "qe-tabs", style: style || void 0 }, tabs.map(([id, lbl, count]) => /* @__PURE__ */ React.createElement("button", { key: id, className: value === id ? "on" : "", onClick: () => onChange(id) }, lbl, count != null && /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)", marginLeft: 5, fontFamily: "var(--qe-mono)" } }, count))));
 const TabStrip = ({ tabs, value, onChange, right = null, style = {} }) => /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "stretch", padding: "0 4px", background: "var(--qe-page)", borderBottom: "1px solid var(--qe-line)", flexShrink: 0, ...style } }, /* @__PURE__ */ React.createElement("div", { className: "qe-hscroll", style: { flex: 1, minWidth: 0, display: "flex" } }, /* @__PURE__ */ React.createElement(Tabs, { value, onChange, tabs, style: { minWidth: "max-content", flex: 1 } })), right);
 Object.assign(window, { TabStrip });
@@ -5191,12 +5234,6 @@ const _hRange = (preset) => {
   } else from.setDate(now.getDate() - ({ "7d": 7, "15d": 15, "30d": 30, "90d": 90 }[preset] || 30));
   return { date_from: _hIso(from, false), date_to: _hIso(now, true) };
 };
-const HistHeat = ({ mfe, mae }) => {
-  if (mfe == null && mae == null) return /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014");
-  const f = Math.max(0, +mfe || 0), a = Math.abs(+mae || 0);
-  const span = Math.max(f, a) || 1;
-  return /* @__PURE__ */ React.createElement("span", { style: { display: "inline-flex", alignItems: "center", gap: 2, width: 74 }, title: `MFE +${f.toFixed(2)} / MAE -${a.toFixed(2)}` }, /* @__PURE__ */ React.createElement("span", { style: { flex: 1, height: 7, display: "flex", justifyContent: "flex-end", background: "var(--qe-panel)" } }, /* @__PURE__ */ React.createElement("span", { style: { width: `${a / span * 100}%`, background: "var(--qe-red)", opacity: 0.75 } })), /* @__PURE__ */ React.createElement("span", { style: { flex: 1, height: 7, display: "flex", background: "var(--qe-panel)" } }, /* @__PURE__ */ React.createElement("span", { style: { width: `${f / span * 100}%`, background: "var(--qe-green)", opacity: 0.75 } })));
-};
 const _hEvtSummary = (r) => {
   const p = r._payload || {};
   const f = (v, d = 4) => v == null || isNaN(v) ? "\u2014" : (+v).toFixed(d);
@@ -5427,13 +5464,17 @@ const HistoryPage = () => {
           return /* @__PURE__ */ React.createElement("span", { style: { color: mr >= 2 ? "var(--qe-green)" : mr >= 1 ? "var(--qe-text)" : "var(--qe-red)" } }, mr.toFixed(2));
         }
       },
-      // the bar's visual weight is the adverse excursion — sort on that.
+      // label restored to the design's 'MAE ◂ HEAT ▸ MFE'. `pnl` feeds the exit
+      // tick — the third channel — so the cell shows where the close landed
+      // within the swing. The design has this column sort:false; we keep the
+      // sort (operator DataList directive) on the adverse extent, the bar's
+      // dominant visual weight.
       {
         key: "heat",
-        label: "MAE\u25C2 \u25B8MFE",
+        label: "MAE \u25C2 HEAT \u25B8 MFE",
         align: "right",
         sortVal: (r) => r.mae == null ? null : Math.abs(+r.mae),
-        render: (r) => /* @__PURE__ */ React.createElement(HistHeat, { mfe: r.mfe, mae: r.mae })
+        render: (r) => /* @__PURE__ */ React.createElement(HeatBar, { mfe: r.mfe, mae: r.mae, pnl: r.net_pnl })
       },
       { key: "total_fees", label: "FEE", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, _ptFmtN(r.total_fees, 4)) },
       { key: "hold_time_ms", label: "DUR", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, _hDur(r.hold_time_ms)) },

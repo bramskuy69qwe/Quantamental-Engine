@@ -202,8 +202,46 @@ look with inline styles.
 - **`DataList`** `{columns, rows, dense, onClick, selected, summary, tools}` — the canonical table (built-in search · click-to-sort · auto filters); falls back to `EmptyState` when empty.
 - **`FieldList`** `{rows, cols, dense}` — vertical key→value rows (20px pane-head rhythm).
 - **`Gauge`** `{label, value, max, ticks}` — auto-tones `ok<60 / warn 60–80 / err>80`.
-- **`EmptyState`** `{tone, glyph, msg, hint, cta}` — the one empty/placeholder treatment.
+- **`EmptyState`** `{tone, glyph, msg, hint, cta, fill}` — the one empty/placeholder treatment. See **No-data standard** below for `fill`.
+- **`HeatBar`** `{mfe, mae, pnl, w, h}` — THE excursion cell. See **Excursion (MFE/MAE) standard** below.
+- **`HeatBarLabelled`** `{mfe, mae, pnl, pct, h}` — the detail-size heat bar with MAE / ENTRY / MFE labels and an exit line.
 - **`Strip`** `{items, dense}` · **`Banner`**, **`Toast`** · **`NewsTickerBar`**.
+
+#### No-data standard (operator-ratified 2026-07-25)
+Every pane whose content is "nothing to show" renders **one** treatment: a dashed
+frame **inset `calc(var(--qe-pane-gap) * 2)` from the pane wall — twice the
+standard inter-pane space — surrounding the entire pane body, with its message
+centred on both axes.**
+
+- Pass **`fill`** when the empty state IS the pane's whole content. `DataList`
+  and `PaneErrorBoundary` already do this for you, which covers most panes.
+- **Do NOT pass `fill`** when the empty state renders *alongside* siblings (a
+  list's "none yet" notice above the list) — it would cover them.
+- The geometry is `position:absolute` against `.qe-pane-body`, **not a margin**:
+  the pane body's own padding varies per call site, so a margin would land at a
+  different offset on every pane. `inset` resolves against the padding box,
+  whose edge is the pane's inner border, so the offset is exact everywhere.
+- The rule is **scoped to a `.qe-pane-body` ancestor**, so an `EmptyState` in a
+  modal or an inline list keeps normal flow automatically.
+- **Never fill the DataList "no matches" state.** Rows exist and the sticky
+  toolbar above is the only way to clear the filter; covering it traps the
+  operator. Pinned by `tests/test_empty_state_standard.py`.
+
+#### Excursion (MFE/MAE) standard
+Any MFE/MAE bar is **`HeatBar`** — never a hand-rolled pair of bars. It has
+**three load-bearing channels**; shipping a subset changes what the cell means:
+1. **centre ENTRY rule** — the datum both excursions are measured from. Without
+   it the halves float and the cell says nothing about direction.
+2. **red extent LEFT = MAE**, **green extent RIGHT = MFE**, scaled to the row's
+   own span (`max(|mfe|,|mae|,|pnl|)`) so the tick can never fall outside.
+3. **bright EXIT tick** — where the close landed *inside* that range. This is
+   what turns "how far it swung" into "…and how much of it we kept". It is not
+   a restatement of the PnL column.
+
+Truthfulness rules (these are ours, not the mock-fed design's): `mfe` and `mae`
+both null = **not measured** → render `—`, never a zero-width bar; `pnl` null →
+**omit the tick** rather than park it at centre, which would assert a
+break-even close that was never measured. Column label: `MAE ◂ HEAT ▸ MFE`.
 
 ### Pane (tiling tile)
 - **`Pane`** `{title, count, right, hot, tag, foot, onRefresh}` — head (20px) + scrolling body + optional `foot`. Independently reloadable; body wrapped in `PaneErrorBoundary` (a throwing child shows a recoverable error state, not a blank app).

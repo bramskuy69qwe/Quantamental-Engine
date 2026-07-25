@@ -47,26 +47,14 @@ const _hRange = (preset) => {
   return { date_from: _hIso(from, false), date_to: _hIso(now, true) };
 };
 
-/* MAE ◂ heat ▸ MFE excursion cell (the design's HistHeat, P8 wave 2 L3-F2):
-   two half-bars scaled to the row's own magnitudes — visual only, the
-   numbers live in the drilldown. Named deviation: the design's third
-   channel (center ENTRY rule + exit-PnL tick) is NOT ported — exit PnL
-   already has its own NET column; a zero-magnitude side renders 0-width. */
-const HistHeat = ({ mfe, mae }) => {
-  if (mfe == null && mae == null) return <span style={{ color: 'var(--qe-muted)' }}>—</span>;
-  const f = Math.max(0, +mfe || 0), a = Math.abs(+mae || 0);
-  const span = Math.max(f, a) || 1;
-  return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, width: 74 }} title={`MFE +${f.toFixed(2)} / MAE -${a.toFixed(2)}`}>
-      <span style={{ flex: 1, height: 7, display: 'flex', justifyContent: 'flex-end', background: 'var(--qe-panel)' }}>
-        <span style={{ width: `${(a / span) * 100}%`, background: 'var(--qe-red)', opacity: 0.75 }} />
-      </span>
-      <span style={{ flex: 1, height: 7, display: 'flex', background: 'var(--qe-panel)' }}>
-        <span style={{ width: `${(f / span) * 100}%`, background: 'var(--qe-green)', opacity: 0.75 }} />
-      </span>
-    </span>
-  );
-};
+/* The excursion cell now comes from the HeatBar PRIMITIVE (primitives.jsx).
+   The local implementation that used to live here shipped only ONE of the
+   design's three channels — two detached half-bars with no centre ENTRY rule
+   and no exit tick — so it read as two unrelated bars rather than "how far the
+   trade swung, and how much of that we kept". Its own header even recorded the
+   omission as a deliberate deviation ("exit PnL already has its own NET
+   column"), which undersold the point: the tick's job is to place the close
+   INSIDE the range, not to restate the number. */
 
 /* Trade-Events SUMMARY one-liner — the Jinja per-type branches ported
    verbatim (P8 wave 2 L3-F3; the payload expand-grid stays unported). */
@@ -287,10 +275,14 @@ const HistoryPage = () => {
           const mr = (+r.mfe || 0) / mae;
           return <span style={{ color: mr >= 2 ? 'var(--qe-green)' : mr >= 1 ? 'var(--qe-text)' : 'var(--qe-red)' }}>{mr.toFixed(2)}</span>;
         } },
-      // the bar's visual weight is the adverse excursion — sort on that.
-      { key: 'heat', label: 'MAE◂ ▸MFE', align: 'right',
+      // label restored to the design's 'MAE ◂ HEAT ▸ MFE'. `pnl` feeds the exit
+      // tick — the third channel — so the cell shows where the close landed
+      // within the swing. The design has this column sort:false; we keep the
+      // sort (operator DataList directive) on the adverse extent, the bar's
+      // dominant visual weight.
+      { key: 'heat', label: 'MAE ◂ HEAT ▸ MFE', align: 'right',
         sortVal: (r) => (r.mae == null ? null : Math.abs(+r.mae)),
-        render: (r) => <HistHeat mfe={r.mfe} mae={r.mae} /> },
+        render: (r) => <HeatBar mfe={r.mfe} mae={r.mae} pnl={r.net_pnl} /> },
       { key: 'total_fees', label: 'FEE', align: 'right', render: (r) => <span style={{ color: 'var(--qe-sub)' }}>{_ptFmtN(r.total_fees, 4)}</span> },
       { key: 'hold_time_ms', label: 'DUR', render: (r) => <span style={{ color: 'var(--qe-muted)' }}>{_hDur(r.hold_time_ms)}</span> },
       { key: 'exit_reason', label: 'REASON', render: exitCell },

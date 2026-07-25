@@ -155,3 +155,62 @@ class TestReachesTheBundle:
 
     def test_class_is_emitted(self, emitted):
         assert "qe-pane-body" in emitted["app"]
+
+
+class TestHeatBarStandard:
+    """The excursion cell is ONE primitive with three load-bearing channels.
+    The build previously shipped only the extents — two detached half-bars with
+    no centre entry rule and no exit tick — which reads as "how far it swung"
+    while losing "…and how much of it we kept"."""
+
+    def test_heatbar_is_a_primitive(self):
+        s = _src("primitives.jsx")
+        assert "const HeatBar = (" in s
+        assert "HeatBar, HeatBarLabelled" in s, "both must be window-exported"
+
+    def test_no_page_rolls_its_own_excursion_bar(self):
+        """The old local HistHeat lived in pages-history.jsx. Any re-appearance
+        of a hand-rolled bar is the drift this primitive exists to stop."""
+        for f in ("pages-history.jsx", "pages-analytics.jsx", "dash-tiled.jsx",
+                  "pages-linkage.jsx"):
+            body = _src(f)
+            assert "const HistHeat" not in body, f"{f} re-rolled a local heat bar"
+
+    def test_all_three_channels_present(self):
+        s = _src("primitives.jsx")
+        fn = s[s.index("const HeatBar = ("):s.index("// HeatBarLabelled")]
+        assert "left:'50%', top:0, bottom:0, width:1" in fn.replace(" ", "").replace("'", "'") \
+            or re.search(r"left:\s*'50%',\s*top:\s*0,\s*bottom:\s*0,\s*width:\s*1", fn), \
+            "channel 1 (centre ENTRY rule) missing"
+        assert "var(--qe-red)" in fn and "var(--qe-green)" in fn, "channel 2 missing"
+        assert "exit" in fn and "width:2" in fn.replace(" ", ""), "channel 3 (exit tick) missing"
+
+    def test_scale_includes_pnl_so_the_tick_cannot_escape(self):
+        s = _src("primitives.jsx")
+        fn = s[s.index("const HeatBar = ("):s.index("// HeatBarLabelled")]
+        assert "Math.abs(f), Math.abs(a)" in fn and "p == null ? 0 : p" in fn
+
+    def test_unmeasured_renders_a_dash_not_a_zero_bar(self):
+        """P8 audit F2 class: a ||0 coercion fabricates certainty on rows the
+        reconciler never backfilled."""
+        s = _src("primitives.jsx")
+        fn = s[s.index("const HeatBar = ("):s.index("// HeatBarLabelled")]
+        assert "mfe == null && mae == null" in fn
+        assert "—" in fn
+
+    def test_missing_pnl_omits_the_tick(self):
+        """Parking the tick at centre would assert a break-even close that was
+        never measured."""
+        s = _src("primitives.jsx")
+        fn = s[s.index("const HeatBar = ("):s.index("// HeatBarLabelled")]
+        assert "exit = p == null ? null" in fn
+        assert "exit != null &&" in fn
+
+    def test_history_passes_pnl_and_uses_the_design_label(self):
+        s = _src("pages-history.jsx")
+        assert "<HeatBar mfe={r.mfe} mae={r.mae} pnl={r.net_pnl} />" in s, \
+            "the exit tick needs the row's realized pnl"
+        assert "label: 'MAE ◂ HEAT ▸ MFE'" in s
+
+    def test_reaches_the_bundle(self, emitted):
+        assert "HeatBar" in emitted["app"]

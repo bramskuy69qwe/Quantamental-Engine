@@ -158,6 +158,75 @@ const EmptyState = ({tone='neutral', glyph='∅', msg, hint, cta=null, fill=fals
   </div>
 );
 
+// ─────────────────────────────────────────────────────────────────
+// HeatBar — THE excursion cell. One primitive for every MFE/MAE
+// rendering, ported from the design's HistHeat (pages.jsx:56-73).
+//
+// THREE CHANNELS, and all three are load-bearing — the build previously
+// shipped only the first and read as two disconnected bars:
+//   1. centre ENTRY rule — the datum both excursions are measured from.
+//      Without it the two halves float and the cell loses its meaning.
+//   2. red extent LEFT = MAE (heat against) · green extent RIGHT = MFE
+//      (heat in favour), both scaled to the row's own span.
+//   3. bright EXIT tick — where the trade actually closed inside its own
+//      range. This is the channel that turns the cell from "how far did
+//      it swing" into "…and how much of that did we keep".
+//
+// Scale: span = max(|mfe|, |mae|, |pnl|), so the exit tick can never fall
+// outside the box. Min extent 1.5% (design) keeps a measured-zero side
+// visible as a sliver rather than vanishing.
+//
+// REAL-DATA GUARDS (not in the mock-fed design, keep them):
+//   · mfe AND mae both null = NOT MEASURED → '—'. Never draw a zero-width
+//     bar for unknown; the P8 audit's F2 finding was exactly this class of
+//     fabricated certainty on un-backfilled rows.
+//   · pnl null → the exit tick is OMITTED rather than parked at centre,
+//     which would assert a break-even close that was never measured.
+const HeatBar = ({mfe, mae, pnl = null, w = 84, h = 12}) => {
+  if (mfe == null && mae == null) return <span style={{color:'var(--qe-muted)'}}>—</span>;
+  const f = +mfe || 0, a = +mae || 0, p = pnl == null ? null : (+pnl || 0);
+  const span = Math.max(Math.abs(f), Math.abs(a), Math.abs(p == null ? 0 : p)) || 1;
+  const half = (v) => (v / span) * 50;
+  const maeW = Math.max(1.5, -half(Math.min(0, a)));   // mae is <= 0 by convention
+  const mfeW = Math.max(1.5,  half(Math.max(0, f)));
+  const exit = p == null ? null : 50 + half(p);
+  const title = `MFE +${Math.abs(f).toFixed(2)} / MAE ${a.toFixed(2)}`
+    + (p == null ? '' : ` · exit ${p >= 0 ? '+' : ''}${p.toFixed(2)}`);
+  return (
+    <div title={title} style={{position:'relative', width:w, height:h, background:'var(--qe-panel)',
+      border:'1px solid var(--qe-faint)', flexShrink:0, display:'inline-block', verticalAlign:'middle'}}>
+      <div style={{position:'absolute', left:'50%', top:0, bottom:0, width:1, background:'var(--qe-line-2)'}}/>
+      <div style={{position:'absolute', top:2, bottom:2, right:'50%', width:maeW + '%', background:'var(--qe-red)', opacity:0.42}}/>
+      <div style={{position:'absolute', top:2, bottom:2, left:'50%',  width:mfeW + '%', background:'var(--qe-green)', opacity:0.42}}/>
+      {exit != null && <div style={{position:'absolute', top:-1, bottom:-1, left:exit + '%', width:2,
+        marginLeft:-1, background: p >= 0 ? 'var(--qe-green)' : 'var(--qe-red)'}}/>}
+    </div>
+  );
+};
+
+// HeatBarLabelled — the design's HistHeatLarge (pages.jsx:76-88): the same
+// cell at detail size with its three values spelled out. Use in a detail /
+// drilldown pane; the compact HeatBar stays the table cell.
+const HeatBarLabelled = ({mfe, mae, pnl = null, pct = null, h = 16}) => (
+  <div>
+    <div style={{display:'flex', justifyContent:'space-between', fontFamily:'var(--qe-mono)',
+      fontSize:'0.5rem', letterSpacing:'0.06em', marginBottom:3}}>
+      <span style={{color:'var(--qe-red)'}}>MAE {mae == null ? '—' : (+mae).toFixed(2)}</span>
+      <span style={{color:'var(--qe-muted)'}}>ENTRY</span>
+      <span style={{color:'var(--qe-green)'}}>MFE {mfe == null ? '—' : '+' + Math.abs(+mfe).toFixed(2)}</span>
+    </div>
+    <HeatBar mfe={mfe} mae={mae} pnl={pnl} w={'100%'} h={h}/>
+    {pnl != null && (
+      <div style={{textAlign:'center', fontFamily:'var(--qe-mono)', fontSize:'0.5rem',
+        color: (+pnl) >= 0 ? 'var(--qe-green)' : 'var(--qe-red)', marginTop:3}}>
+        ▲ exit {(+pnl) >= 0 ? '+' : ''}{(+pnl).toFixed(2)}
+        {pct == null ? '' : ` (${(+pct) >= 0 ? '+' : ''}${(+pct).toFixed(2)}%)`}
+      </div>
+    )}
+  </div>
+);
+Object.assign(window, { HeatBar, HeatBarLabelled });
+
 // Tabs — single primitive (optional style for embedding in composite strips)
 const Tabs = ({tabs, value, onChange, style=null}) => (
   <div className="qe-tabs" style={style || undefined}>
