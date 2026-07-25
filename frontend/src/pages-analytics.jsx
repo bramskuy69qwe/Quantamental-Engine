@@ -663,7 +663,14 @@ const AnaTabPairs = ({ period, offset, onLabel }) => {
             { key: 'shorts', label: 'SHORTS', align: 'right', cell: 'dn' },
             { key: 'pnl_long', label: 'PnL (L)', align: 'right', render: (r) => pnlCell(r.pnl_long || 0) },
             { key: 'pnl_short', label: 'PnL (S)', align: 'right', render: (r) => pnlCell(r.pnl_short || 0) },
-            { key: 'pnl_total', label: 'PnL TOTAL', align: 'right', render: (r) => pnlCell(r.pnl_total || 0, true) },
+            { key: 'pnl_total', label: 'PnL TOTAL', align: 'right',
+              // DataList sweep: this pane's only faceting axis. SYMBOL is
+              // unique-per-row (the query GROUP BYs it) and every other column is
+              // continuous numeric, so nothing here can auto-facet. Bucketing the
+              // sign gives at most 3 options and answers the pane's question.
+              filter: { label: 'RESULT' },
+              filterVal: (r) => ((r.pnl_total || 0) > 0 ? 'WIN' : (r.pnl_total || 0) < 0 ? 'LOSS' : 'FLAT'),
+              render: (r) => pnlCell(r.pnl_total || 0, true) },
             { key: 'win_rate', label: 'WIN RATE', align: 'right', render: (r) => <span style={{ color: (r.win_rate || 0) >= 0.5 ? 'var(--qe-green)' : 'var(--qe-red)' }}>{((r.win_rate || 0) * 100).toFixed(1)}%</span> },
             { key: 'avg_win', label: 'AVG WIN', align: 'right', render: (r) => <span style={{ color: 'var(--qe-green)' }}>{r.avg_win ? r.avg_win.toFixed(2) : '—'}</span> },
             { key: 'avg_loss', label: 'AVG LOSS', align: 'right', cell: 'dn', render: (r) => (r.avg_loss ? r.avg_loss.toFixed(2) : '—') },
@@ -719,8 +726,15 @@ const AnaTabExcursions = ({ period, offset, onLabel }) => {
               { key: 'direction', label: 'DIR', render: (r) => <Badge tone={r.direction === 'LONG' ? 'ok' : 'err'}>{r.direction}</Badge> },
               { key: 'mfe', label: 'MFE', align: 'right', cell: 'up', render: (r) => (r.mfe || 0).toFixed(2) },
               { key: 'mae', label: 'MAE', align: 'right', cell: 'dn', render: (r) => (r.mae || 0).toFixed(2) },
-              { key: 'mer', label: 'ME-R', align: 'right', render: (r) => (r.mae ? Math.abs((r.mfe || 0) / r.mae).toFixed(2) : '—') },
-              { key: 'income', label: 'PnL', align: 'right', render: (r) => <span style={{ color: (r.income || 0) >= 0 ? 'var(--qe-green)' : 'var(--qe-red)', fontWeight: 700 }}>{(r.income || 0) >= 0 ? '+' : ''}{(r.income || 0).toFixed(2)}</span> },
+              // 'mer' is computed in render — no row carries the key, so the
+              // header sorted on undefined for every row (a dead control).
+              { key: 'mer', label: 'ME-R', align: 'right',
+                sortVal: (r) => (r.mae ? Math.abs((r.mfe || 0) / r.mae) : null),
+                render: (r) => (r.mae ? Math.abs((r.mfe || 0) / r.mae).toFixed(2) : '—') },
+              { key: 'income', label: 'PnL', align: 'right',
+                filter: { label: 'RESULT' },
+                filterVal: (r) => ((r.income || 0) >= 0 ? 'WIN' : 'LOSS'),
+                render: (r) => <span style={{ color: (r.income || 0) >= 0 ? 'var(--qe-green)' : 'var(--qe-red)', fontWeight: 700 }}>{(r.income || 0) >= 0 ? '+' : ''}{(r.income || 0).toFixed(2)}</span> },
               { key: 'hold_ms', label: 'HOLD', align: 'right', cell: 'dim', render: (r) => _hDur(r.hold_ms) },
             ]}
             rows={trades}
@@ -1068,7 +1082,15 @@ const AnaTabExecution = () => {
               } },
               { key: 'time_to_fill_ms', label: 'TTF', align: 'right', render: (r) => <span style={{ color: 'var(--qe-text)' }}>{_anaMs(r.time_to_fill_ms)}</span> },
               { key: 'role', label: 'ROLE', render: (r) => (r.role ? <Badge tone={r.role === 'maker' ? 'ok' : 'warn'}>{r.role.toUpperCase()}</Badge> : <span style={{ color: 'var(--qe-muted)' }}>—</span>) },
-              { key: 'link_status', label: 'LINK', render: (r) => { const m = ANA_LINK_META[_anaLinkKey(r)]; return <span style={{ color: m.color, fontWeight: 700, fontSize: '0.58rem' }}>{m.label}</span>; } },
+              // LINK renders a DERIVED 5-bucket label via _anaLinkKey, but sorted
+              // and faceted on the raw link_status — which is a different value
+              // set, and on live data is NULL on nearly every fill, so the header
+              // did nothing. Point all three at the rendered label.
+              { key: 'link_status', label: 'LINK',
+                filter: { label: 'LINK' },
+                filterVal: (r) => ANA_LINK_META[_anaLinkKey(r)].label,
+                sortVal: (r) => ANA_LINK_META[_anaLinkKey(r)].label,
+                render: (r) => { const m = ANA_LINK_META[_anaLinkKey(r)]; return <span style={{ color: m.color, fontWeight: 700, fontSize: '0.58rem' }}>{m.label}</span>; } },
               { key: 'calc_id', label: 'CALC ID', render: (r) => <span style={{ color: r.calc_id ? 'var(--qe-sub)' : 'var(--qe-muted)' }}>{r.calc_id ? String(r.calc_id).slice(-8) : '—'}</span> },
             ]}
             rows={tableRows}
@@ -1110,11 +1132,24 @@ const AnaTabFunding = () => {
             { key: 'direction', label: 'DIR', render: (r) => <Badge tone={r.direction === 'LONG' ? 'ok' : 'err'}>{r.direction}</Badge> },
             { key: 'notional', label: 'NOTIONAL', align: 'right', cell: 'dim', render: (r) => `$${(r.notional || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}` },
             { key: 'funding_rate', label: 'FUNDING RATE', align: 'right', render: (r) => <span style={{ color: r.adverse ? 'var(--qe-red)' : 'var(--qe-green)' }}>{((r.funding_rate || 0) * 100).toFixed(4)}%</span> },
-            { key: 'per_8h', label: 'PER 8h', align: 'right', render: (r) => money(sgn(r, r.per_8h || 0)) },
-            { key: 'per_day', label: 'PER DAY', align: 'right', render: (r) => money(sgn(r, r.per_day || 0), 3) },
-            { key: 'per_week', label: 'PER WEEK', align: 'right', cell: 'dim', render: (r) => money(sgn(r, r.per_week || 0), 2) },
+            { key: 'per_8h', label: 'PER 8h', align: 'right',
+              sortVal: (r) => sgn(r, r.per_8h || 0),
+              render: (r) => money(sgn(r, r.per_8h || 0)) },
+            { key: 'per_day', label: 'PER DAY', align: 'right',
+              sortVal: (r) => sgn(r, r.per_day || 0),
+              render: (r) => money(sgn(r, r.per_day || 0), 3) },
+            { key: 'per_week', label: 'PER WEEK', align: 'right', cell: 'dim',
+              sortVal: (r) => sgn(r, r.per_week || 0),
+              render: (r) => money(sgn(r, r.per_week || 0), 2) },
             { key: 'next_funding', label: 'NEXT FUNDING', cell: 'dim' },
-            { key: 'impact', label: 'IMPACT', render: (r) => (r.adverse ? <Badge tone="err">PAY</Badge> : <Badge tone="ok">EARN</Badge>) },
+            // 'impact' is not a row field — the endpoint emits `adverse`. The
+            // column therefore never sorted and never faceted, which is why this
+            // pane showed no dropdown at all.
+            { key: 'impact', label: 'IMPACT',
+              filter: true,
+              filterVal: (r) => (r.adverse ? 'PAY' : 'EARN'),
+              sortVal: (r) => (r.adverse ? 'PAY' : 'EARN'),
+              render: (r) => (r.adverse ? <Badge tone="err">PAY</Badge> : <Badge tone="ok">EARN</Badge>) },
           ]}
           rows={rows}
           summary={<>

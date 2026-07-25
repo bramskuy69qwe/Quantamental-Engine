@@ -331,44 +331,114 @@ const LinkagePage = () => {
   const resolveDone = (m) => { flash(m); setSel(null); load(); };
 
   const posCols = [
-    { key: 'symbol', label: 'Sym', render: (r) => <span style={{ color: 'var(--qe-cyan)', fontWeight: 700 }}>{(r.symbol || '').replace('USDT', '')}</span> },
-    { key: 'direction', label: 'Side', render: (r) => <Badge tone={r.direction === 'LONG' ? 'ok' : 'err'}>{(r.direction || ' ')[0]}</Badge> },
+    { key: 'symbol', label: 'Sym', filter: true,
+      filterVal: (r) => (r.symbol || '').replace('USDT', ''),
+      sortVal:   (r) => (r.symbol || '').replace('USDT', ''),
+      render: (r) => <span style={{ color: 'var(--qe-cyan)', fontWeight: 700 }}>{(r.symbol || '').replace('USDT', '')}</span> },
+    { key: 'direction', label: 'Side', filter: { label: 'SIDE' },
+      filterVal: (r) => (r.direction || '').toUpperCase() || '—',
+      render: (r) => <Badge tone={r.direction === 'LONG' ? 'ok' : 'err'}>{(r.direction || ' ')[0]}</Badge> },
     { key: 'size', label: 'Size', align: 'right' },
     { key: 'entry', label: 'Entry', align: 'right', render: (r) => <span style={{ color: 'var(--qe-sub)' }}>{lpPx(r.entry)}</span> },
     { key: 'mark', label: 'Mark', align: 'right', render: (r) => lpPx(r.mark) },
     { key: 'upnl', label: 'uPnL', align: 'right', render: (r) => <span style={{ color: lpSgn(r.upnl), fontWeight: 700 }}>{lpUsd(r.upnl)}</span> },
-    { key: 'tpsl', label: 'TP / SL', align: 'right', sort: false, render: (r) => <span style={{ fontSize: '0.56rem' }}><span className="qe-up">{r.tp_live ? lpPx(r.tp_live) : '—'}</span><span style={{ color: 'var(--qe-muted)' }}> / </span><span className="qe-dn">{r.sl_live ? lpPx(r.sl_live) : '—'}</span></span> },
-    { key: 'link_status', label: 'Link', render: (r) => <LinkBadge status={r.link_status} /> },
-    { key: 'dev', label: 'Plan deviation', sort: false, render: (r) => <DevBadge pos={r} /> },
+    // TP/SL keeps sort:false — two independent prices, no single defensible key.
+    // It DOES gain a protection facet: "which positions are unprotected" is a
+    // real triage question and the raw fields answer it categorically.
+    { key: 'tpsl', label: 'TP / SL', align: 'right', sort: false,
+      filter: { label: 'TP/SL' },
+      filterVal: (r) => (r.tp_live ? 'TP' : '') + (r.tp_live && r.sl_live ? '+' : '') + (r.sl_live ? 'SL' : '') || 'NONE',
+      render: (r) => <span style={{ fontSize: '0.56rem' }}><span className="qe-up">{r.tp_live ? lpPx(r.tp_live) : '—'}</span><span style={{ color: 'var(--qe-muted)' }}> / </span><span className="qe-dn">{r.sl_live ? lpPx(r.sl_live) : '—'}</span></span> },
+    { key: 'link_status', label: 'Link', filter: { label: 'LINK' }, render: (r) => <LinkBadge status={r.link_status} /> },
+    // `dev` is not a row field — the badge reads deviation_badge. That made the
+    // column invisible to BOTH sort and facet derivation (defined===0), which is
+    // why it had opted out of sort entirely. sortVal/filterVal are the primitive's
+    // escape hatch for exactly this. Ascending = worst-first: this is a triage
+    // pane, so "off-plan at the top" is the useful direction.
+    { key: 'dev', label: 'Plan deviation',
+      sortVal: (r) => ({ red: 0, yellow: 1, green: 2 })[r.deviation_badge] != null
+        ? ({ red: 0, yellow: 1, green: 2 })[r.deviation_badge] : 3,
+      filter: { label: 'PLAN' },
+      filterVal: (r) => ((LP_DEV_META || {})[r.deviation_badge] || {}).label || '—',
+      render: (r) => <DevBadge pos={r} /> },
   ];
   const calcCols = [
-    { key: 'ticker', label: 'Sym', render: (r) => <span style={{ color: 'var(--qe-cyan)', fontWeight: 700 }}>{(r.ticker || '').replace('USDT', '')}</span> },
-    { key: 'side', label: 'Side', render: (r) => <Badge tone={(r.side || '').toLowerCase() === 'long' ? 'ok' : 'err'}>{(r.side || ' ')[0].toUpperCase()}</Badge> },
+    { key: 'ticker', label: 'Sym', filter: true,
+      filterVal: (r) => (r.ticker || '').replace('USDT', ''),
+      sortVal:   (r) => (r.ticker || '').replace('USDT', ''),
+      render: (r) => <span style={{ color: 'var(--qe-cyan)', fontWeight: 700 }}>{(r.ticker || '').replace('USDT', '')}</span> },
+    { key: 'side', label: 'Side', filter: { label: 'SIDE' },
+      filterVal: (r) => (r.side || '').toUpperCase() || '—',
+      render: (r) => <Badge tone={(r.side || '').toLowerCase() === 'long' ? 'ok' : 'err'}>{(r.side || ' ')[0].toUpperCase()}</Badge> },
     { key: 'average', label: 'Entry', align: 'right', render: (r) => lpPx(r.average) },
     { key: 'tp_price', label: 'TP', align: 'right', render: (r) => <span className="qe-up">{lpPx(r.tp_price)}</span> },
     { key: 'sl_price', label: 'SL', align: 'right', render: (r) => <span className="qe-dn">{lpPx(r.sl_price)}</span> },
-    { key: 'cd', label: 'Link window', align: 'right', sort: false, render: (r) => <CalcCountdown expiry={r.expiry_ms} window={r.window_seconds} /> },
-    { key: 'act', label: '', align: 'right', sort: false, render: (r) => (
+    // Same shape as posCols.dev: 'cd' is not a row field, so the column was
+    // invisible to sort and facets. It renders a countdown off the REAL numeric
+    // expiry_ms, and "which calc expires first" is the ordering this pane exists
+    // for. The STATE facet hangs here because no column declares `status`, so the
+    // facet engine could never see it.
+    { key: 'cd', label: 'Link window', align: 'right',
+      sortVal: (r) => r.expiry_ms,
+      filter: { label: 'STATE' },
+      filterVal: (r) => (r.status || '').toUpperCase() || '—',
+      render: (r) => <CalcCountdown expiry={r.expiry_ms} window={r.window_seconds} /> },
+    // 'act' stays sort:false + filter:false — it is a button, not data.
+    { key: 'act', label: '', align: 'right', sort: false, filter: false, search: false, render: (r) => (
         // operator-bug #6: open the ModelDialog confirm instead of window.confirm.
         <button className="qe-btn qe-btn-sm qe-btn-ghost" title="Cancel this calc"
           onClick={(e) => { e.stopPropagation(); setCancelReason(''); setCancelCalc(r); }}>✕</button>
       ) },
   ];
   const fundCols = [
-    { key: 'symbol', label: 'Sym', render: (r) => <span style={{ color: 'var(--qe-cyan)', fontWeight: 700 }}>{(r.symbol || '').replace('USDT', '')}</span> },
-    { key: 'direction', label: 'Side', render: (r) => <Badge tone={r.direction === 'LONG' ? 'ok' : 'err'}>{(r.direction || ' ')[0]}</Badge> },
+    { key: 'symbol', label: 'Sym', filter: true,
+      filterVal: (r) => (r.symbol || '').replace('USDT', ''),
+      sortVal:   (r) => (r.symbol || '').replace('USDT', ''),
+      render: (r) => <span style={{ color: 'var(--qe-cyan)', fontWeight: 700 }}>{(r.symbol || '').replace('USDT', '')}</span> },
+    { key: 'direction', label: 'Side', filter: { label: 'SIDE' },
+      filterVal: (r) => (r.direction || '').toUpperCase() || '—',
+      render: (r) => <Badge tone={r.direction === 'LONG' ? 'ok' : 'err'}>{(r.direction || ' ')[0]}</Badge> },
     { key: 'rate', label: 'Rate', align: 'right', render: (r) => r.rate == null ? <span style={{ color: 'var(--qe-muted)' }}>—</span> : <span style={{ color: r.rate >= 0 ? 'var(--qe-amber)' : 'var(--qe-green)' }}>{(r.rate * 100).toFixed(4)}%</span> },
-    { key: 'pays', label: 'Flow', render: (r) => r.rate == null ? <span style={{ color: 'var(--qe-muted)' }}>—</span> : <FundingWho pays={r.pays} /> },
+    // Flow is this pane's categorical axis. filterVal/searchVal must mirror the
+    // CELL, not the raw field: routes_cockpit assigns `pays` unconditionally, so
+    // a rate==null row still carries pays='venue' and would facet as EARN while
+    // rendering '—'. Returning '' for those rows drops them from the facet
+    // (raw==='' is skipped) instead of filing them under a flow they don't have.
+    { key: 'pays', label: 'Flow',
+      filter: { label: 'FLOW' },
+      filterVal: (r) => (r.rate == null ? '' : r.pays === 'you' ? 'PAY' : 'EARN'),
+      searchVal: (r) => (r.rate == null ? '' : r.pays === 'you' ? 'PAY' : 'EARN'),
+      render: (r) => r.rate == null ? <span style={{ color: 'var(--qe-muted)' }}>—</span> : <FundingWho pays={r.pays} /> },
     { key: 'est_next', label: 'Est', align: 'right', render: (r) => r.rate == null ? <span style={{ color: 'var(--qe-muted)' }}>—</span> : <span style={{ color: lpSgn(r.est_next), fontSize: '0.56rem' }}>{lpUsd(r.est_next, 4)}</span> },
     { key: 'cum', label: 'Cum', align: 'right', render: (r) => <span style={{ color: lpSgn(r.cum) }}>{lpUsd(r.cum, 3)}</span> },
   ];
   const closeCols = [
-    { key: 'symbol', label: 'Sym', render: (r) => <span style={{ color: 'var(--qe-cyan)', fontWeight: 700 }}>{(r.symbol || '').replace('USDT', '')}</span> },
-    { key: 'direction', label: 'Side', render: (r) => <Badge tone={r.direction === 'LONG' ? 'ok' : 'err'}>{(r.direction || ' ')[0]}</Badge> },
+    { key: 'symbol', label: 'Sym', filter: true,
+      filterVal: (r) => (r.symbol || '').replace('USDT', ''),
+      sortVal:   (r) => (r.symbol || '').replace('USDT', ''),
+      render: (r) => <span style={{ color: 'var(--qe-cyan)', fontWeight: 700 }}>{(r.symbol || '').replace('USDT', '')}</span> },
+    { key: 'direction', label: 'Side', filter: { label: 'SIDE' },
+      filterVal: (r) => (r.direction || '').toUpperCase() || '—',
+      render: (r) => <Badge tone={r.direction === 'LONG' ? 'ok' : 'err'}>{(r.direction || ' ')[0]}</Badge> },
     { key: 'entry_price', label: 'Entry', align: 'right', render: (r) => <span style={{ color: 'var(--qe-sub)' }}>{lpPx(r.entry_price)}</span> },
     { key: 'exit_price', label: 'Exit', align: 'right', render: (r) => lpPx(r.exit_price) },
-    { key: 'net_pnl', label: 'PnL', align: 'right', render: (r) => <span style={{ color: lpSgn(r.net_pnl), fontWeight: 700 }}>{lpUsd(r.net_pnl)}</span> },
-    { key: 'exit_reason', label: 'Exit reason', render: (r) => <ExitBadge reason={r.exit_reason} note={r.close_note} pending={r.pending_reason} /> },
+    // Bucket the continuous PnL into the sign trichotomy — the raw float is
+    // never offered as options (that would be one option per row).
+    { key: 'net_pnl', label: 'PnL', align: 'right',
+      filter: { label: 'RESULT' },
+      filterVal: (r) => ((r.net_pnl || 0) > 0 ? 'WIN' : (r.net_pnl || 0) < 0 ? 'LOSS' : 'FLAT'),
+      render: (r) => <span style={{ color: lpSgn(r.net_pnl), fontWeight: 700 }}>{lpUsd(r.net_pnl)}</span> },
+    // Facet/sort/search all follow the RENDERED badge (pending → "SET REASON",
+    // otherwise the LP_EXIT_REASONS label), so the column can no longer sort or
+    // filter on a value the operator never sees. NB the facet stays invisible
+    // while every close shares one reason — that bail is data-gated and resolves
+    // itself as soon as reasons are categorised through this page's resolver.
+    { key: 'exit_reason', label: 'Exit reason',
+      filter: { label: 'REASON' },
+      filterVal: (r) => r.pending_reason ? 'SET REASON' : (((LP_EXIT_REASONS || {})[r.exit_reason] || {}).label || r.exit_reason || '—'),
+      sortVal:   (r) => r.pending_reason ? 'SET REASON' : (((LP_EXIT_REASONS || {})[r.exit_reason] || {}).label || r.exit_reason || ''),
+      searchVal: (r) => r.pending_reason ? 'SET REASON pending' : `${((LP_EXIT_REASONS || {})[r.exit_reason] || {}).label || ''} ${r.exit_reason || ''} ${r.close_note || ''}`,
+      render: (r) => <ExitBadge reason={r.exit_reason} note={r.close_note} pending={r.pending_reason} /> },
     { key: 'funding_fees', label: 'Fund', align: 'right', render: (r) => <span style={{ color: lpSgn(r.funding_fees), fontSize: '0.56rem' }}>{lpUsd(r.funding_fees, 3)}</span> },
   ];
 

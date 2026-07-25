@@ -38,10 +38,18 @@ const ModelOverview = ({ models, onOpen, onNew, foot }) => {
               selKey="id"
               onClick={(row) => { const m = (models || []).find((x) => x.id === row.id); if (m) onOpen(m); }}
               columns={[
-                { key: 'rank', label: '#', render: (r, i) => <span className="qe-mono" style={{ color: 'var(--qe-muted)' }}>{i + 1}</span> },
-                { key: 'name', label: 'MODEL', render: (r) => <span style={{ color: 'var(--qe-cyan)', fontWeight: 700, fontSize: '0.6rem' }}>{r.name}</span> },
-                { key: 'type', label: 'TYPE', render: (r) => <TypeBadge type={r.type} /> },
-                { key: 'net', label: 'NET P/L', align: 'right', render: (r) => <span className="qe-mono" style={{ color: _mdlPl(r.net), fontWeight: 700 }}>{_mdlMoney(r.net, 0)}</span> },
+                { key: 'rank', label: '#', sort: false, filter: false, search: false, render: (r, i) => <span className="qe-mono" style={{ color: 'var(--qe-muted)' }}>{i + 1}</span> },
+                { key: 'name', label: 'MODEL', filter: false, render: (r) => <span style={{ color: 'var(--qe-cyan)', fontWeight: 700, fontSize: '0.6rem' }}>{r.name}</span> },
+                { key: 'type', label: 'TYPE', filter: true,
+                  filterVal: (r) => String(r.type || '—').toUpperCase(),
+                  render: (r) => <TypeBadge type={r.type} /> },
+                // MODEL is unique-per-row (one row per model) so it can never be
+                // a useful facet; TYPE often has a single value. Bucket the net P/L
+                // sign — this pane's actual question.
+                { key: 'net', label: 'NET P/L', align: 'right',
+                  filter: { label: 'RESULT' },
+                  filterVal: (r) => (r.net > 0 ? 'PROFIT' : r.net < 0 ? 'LOSS' : 'FLAT'),
+                  render: (r) => <span className="qe-mono" style={{ color: _mdlPl(r.net), fontWeight: 700 }}>{_mdlMoney(r.net, 0)}</span> },
                 { key: 'pf', label: 'PF', align: 'right', render: (r) => <span className="qe-mono">{r.pf.toFixed(2)}</span> },
                 { key: 'win', label: 'WIN%', align: 'right', render: (r) => <span className="qe-mono">{r.win}%</span> },
               ]}

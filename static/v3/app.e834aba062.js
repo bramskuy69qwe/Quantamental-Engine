@@ -503,7 +503,7 @@ const _dlDeriveFacets = (columns, rows) => {
     if (hasObj || defined === 0) return;
     if (tooLong && !forced) return;
     const distinct = [...counts.keys()];
-    if (distinct.length < 2) return;
+    if (distinct.length < 2 && !forced) return;
     if (forced) {
       if (distinct.length > DL_FACET_FORCE_MAX) return;
     } else {
@@ -2743,18 +2743,56 @@ const OpenPositionsPane = () => {
         selKey: "_k",
         columns: [
           { key: "sym", label: "SYM", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, r.sym) },
-          { key: "side", label: "SIDE", render: (r) => {
-            const l = (r.side || "").toLowerCase().startsWith("l");
-            return /* @__PURE__ */ React.createElement(Badge, { tone: l ? "ok" : "err" }, l ? "LONG" : "SHORT");
-          } },
+          {
+            key: "side",
+            label: "SIDE",
+            filter: { label: "SIDE" },
+            filterVal: (r) => (r.side || "").toLowerCase().startsWith("l") ? "LONG" : "SHORT",
+            render: (r) => {
+              const l = (r.side || "").toLowerCase().startsWith("l");
+              return /* @__PURE__ */ React.createElement(Badge, { tone: l ? "ok" : "err" }, l ? "LONG" : "SHORT");
+            }
+          },
           { key: "size", label: "SIZE", align: "right", render: (r) => _loc(r.size, 3) },
           { key: "entry", label: "ENTRY", align: "right", cell: "dim", render: (r) => _loc(r.entry, 2) },
           { key: "mark", label: "MARK", align: "right", render: (r) => /* @__PURE__ */ React.createElement(PosMark, { r }) },
-          { key: "pnl", label: "PnL", align: "right", render: (r) => /* @__PURE__ */ React.createElement(PosPnl, { r }) },
+          // PosPnl renders the LIVE upnl; the row's own `pnl` key is not what the
+          // cell shows, so sorting used a different number. Bucketing upnl also
+          // gives this tile its only stable facet (sym/side go homogeneous on a
+          // one-position book, every other column is continuous).
+          {
+            key: "pnl",
+            label: "PnL",
+            align: "right",
+            sortVal: (r) => r.upnl != null ? r.upnl : null,
+            filter: { label: "PnL" },
+            filterVal: (r) => (r.upnl || 0) >= 0 ? "UP" : "DOWN",
+            render: (r) => /* @__PURE__ */ React.createElement(PosPnl, { r })
+          },
           { key: "pct", label: "%", align: "right", render: (r) => /* @__PURE__ */ React.createElement(PosPct, { r }) },
-          { key: "tpsl", label: "TP / SL", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.6rem" } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-green)" } }, r.tp == null ? "\u2014" : _loc(r.tp, 2)), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, " / "), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-red)" } }, r.sl == null ? "\u2014" : _loc(r.sl, 2))) },
+          {
+            key: "tpsl",
+            label: "TP / SL",
+            align: "right",
+            sort: false,
+            filter: { label: "TP/SL" },
+            filterVal: (r) => (r.tp != null ? "TP" : "") + (r.tp != null && r.sl != null ? "+" : "") + (r.sl != null ? "SL" : "") || "NONE",
+            render: (r) => /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.6rem" } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-green)" } }, r.tp == null ? "\u2014" : _loc(r.tp, 2)), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, " / "), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-red)" } }, r.sl == null ? "\u2014" : _loc(r.sl, 2)))
+          },
           { key: "mm", label: "MFE/MAE", align: "right", render: (r) => /* @__PURE__ */ React.createElement(PosMfeMae, { r }) },
-          { key: "age", label: "AGE", align: "right", sort: false, render: (r) => /* @__PURE__ */ React.createElement(PosAge, { r }) }
+          // AGE had opted out of sort because 'age' is not a row field; PosAge
+          // parses entry_ms (a MISNAMED ISO string) at render. Sort on the parsed
+          // epoch so the header agrees with the cell — ascending = oldest first.
+          {
+            key: "age",
+            label: "AGE",
+            align: "right",
+            sortVal: (r) => {
+              const t = Date.parse(r.entry_ms);
+              return isNaN(t) ? null : t;
+            },
+            render: (r) => /* @__PURE__ */ React.createElement(PosAge, { r })
+          }
         ],
         rows,
         emptyMsg: "No open positions",
@@ -3360,7 +3398,18 @@ const CfgConnectionsTab = () => {
         columns: [
           { key: "label", label: "PROVIDER", render: (c) => /* @__PURE__ */ React.createElement("span", { style: { fontWeight: 700 } }, c.label) },
           { key: "provider", label: "ID", render: (c) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)", fontFamily: "var(--qe-mono)" } }, c.provider) },
-          { key: "status", label: "STATUS", render: (c) => c.has_key ? /* @__PURE__ */ React.createElement(StatusDot, { tone: "ok", label: "CONNECTED" }) : /* @__PURE__ */ React.createElement(StatusDot, { tone: "off", label: "NOT SET" }) },
+          /* 'status' is RENDER-ONLY — the row carries has_key, not a
+             status field — so facet derivation and presentKeys both
+             skipped it: no FILTER dropdown and an inert STATUS header.
+             Project has_key onto the same two strings the cell shows. */
+          {
+            key: "status",
+            label: "STATUS",
+            filter: true,
+            filterVal: (c) => c.has_key ? "CONNECTED" : "NOT SET",
+            sortVal: (c) => c.has_key ? "CONNECTED" : "NOT SET",
+            render: (c) => c.has_key ? /* @__PURE__ */ React.createElement(StatusDot, { tone: "ok", label: "CONNECTED" }) : /* @__PURE__ */ React.createElement(StatusDot, { tone: "off", label: "NOT SET" })
+          },
           { key: "key", label: "KEY", render: (c) => c.has_key && editing !== c.provider ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)", fontFamily: "var(--qe-mono)" } }, c.api_key_hint || "\u2022\u2022\u2022\u2022\u2022\u2022") : keyInput(c) },
           { key: "act", label: "", align: "right", render: (c) => {
             const busy = busyP === c.provider;
@@ -4799,24 +4848,87 @@ const LinkagePage = () => {
     load();
   };
   const posCols = [
-    { key: "symbol", label: "Sym", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, (r.symbol || "").replace("USDT", "")) },
-    { key: "direction", label: "Side", render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: r.direction === "LONG" ? "ok" : "err" }, (r.direction || " ")[0]) },
+    {
+      key: "symbol",
+      label: "Sym",
+      filter: true,
+      filterVal: (r) => (r.symbol || "").replace("USDT", ""),
+      sortVal: (r) => (r.symbol || "").replace("USDT", ""),
+      render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, (r.symbol || "").replace("USDT", ""))
+    },
+    {
+      key: "direction",
+      label: "Side",
+      filter: { label: "SIDE" },
+      filterVal: (r) => (r.direction || "").toUpperCase() || "\u2014",
+      render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: r.direction === "LONG" ? "ok" : "err" }, (r.direction || " ")[0])
+    },
     { key: "size", label: "Size", align: "right" },
     { key: "entry", label: "Entry", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, lpPx(r.entry)) },
     { key: "mark", label: "Mark", align: "right", render: (r) => lpPx(r.mark) },
     { key: "upnl", label: "uPnL", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: lpSgn(r.upnl), fontWeight: 700 } }, lpUsd(r.upnl)) },
-    { key: "tpsl", label: "TP / SL", align: "right", sort: false, render: (r) => /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.56rem" } }, /* @__PURE__ */ React.createElement("span", { className: "qe-up" }, r.tp_live ? lpPx(r.tp_live) : "\u2014"), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, " / "), /* @__PURE__ */ React.createElement("span", { className: "qe-dn" }, r.sl_live ? lpPx(r.sl_live) : "\u2014")) },
-    { key: "link_status", label: "Link", render: (r) => /* @__PURE__ */ React.createElement(LinkBadge, { status: r.link_status }) },
-    { key: "dev", label: "Plan deviation", sort: false, render: (r) => /* @__PURE__ */ React.createElement(DevBadge, { pos: r }) }
+    // TP/SL keeps sort:false — two independent prices, no single defensible key.
+    // It DOES gain a protection facet: "which positions are unprotected" is a
+    // real triage question and the raw fields answer it categorically.
+    {
+      key: "tpsl",
+      label: "TP / SL",
+      align: "right",
+      sort: false,
+      filter: { label: "TP/SL" },
+      filterVal: (r) => (r.tp_live ? "TP" : "") + (r.tp_live && r.sl_live ? "+" : "") + (r.sl_live ? "SL" : "") || "NONE",
+      render: (r) => /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.56rem" } }, /* @__PURE__ */ React.createElement("span", { className: "qe-up" }, r.tp_live ? lpPx(r.tp_live) : "\u2014"), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, " / "), /* @__PURE__ */ React.createElement("span", { className: "qe-dn" }, r.sl_live ? lpPx(r.sl_live) : "\u2014"))
+    },
+    { key: "link_status", label: "Link", filter: { label: "LINK" }, render: (r) => /* @__PURE__ */ React.createElement(LinkBadge, { status: r.link_status }) },
+    // `dev` is not a row field — the badge reads deviation_badge. That made the
+    // column invisible to BOTH sort and facet derivation (defined===0), which is
+    // why it had opted out of sort entirely. sortVal/filterVal are the primitive's
+    // escape hatch for exactly this. Ascending = worst-first: this is a triage
+    // pane, so "off-plan at the top" is the useful direction.
+    {
+      key: "dev",
+      label: "Plan deviation",
+      sortVal: (r) => ({ red: 0, yellow: 1, green: 2 })[r.deviation_badge] != null ? { red: 0, yellow: 1, green: 2 }[r.deviation_badge] : 3,
+      filter: { label: "PLAN" },
+      filterVal: (r) => ((LP_DEV_META || {})[r.deviation_badge] || {}).label || "\u2014",
+      render: (r) => /* @__PURE__ */ React.createElement(DevBadge, { pos: r })
+    }
   ];
   const calcCols = [
-    { key: "ticker", label: "Sym", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, (r.ticker || "").replace("USDT", "")) },
-    { key: "side", label: "Side", render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: (r.side || "").toLowerCase() === "long" ? "ok" : "err" }, (r.side || " ")[0].toUpperCase()) },
+    {
+      key: "ticker",
+      label: "Sym",
+      filter: true,
+      filterVal: (r) => (r.ticker || "").replace("USDT", ""),
+      sortVal: (r) => (r.ticker || "").replace("USDT", ""),
+      render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, (r.ticker || "").replace("USDT", ""))
+    },
+    {
+      key: "side",
+      label: "Side",
+      filter: { label: "SIDE" },
+      filterVal: (r) => (r.side || "").toUpperCase() || "\u2014",
+      render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: (r.side || "").toLowerCase() === "long" ? "ok" : "err" }, (r.side || " ")[0].toUpperCase())
+    },
     { key: "average", label: "Entry", align: "right", render: (r) => lpPx(r.average) },
     { key: "tp_price", label: "TP", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { className: "qe-up" }, lpPx(r.tp_price)) },
     { key: "sl_price", label: "SL", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { className: "qe-dn" }, lpPx(r.sl_price)) },
-    { key: "cd", label: "Link window", align: "right", sort: false, render: (r) => /* @__PURE__ */ React.createElement(CalcCountdown, { expiry: r.expiry_ms, window: r.window_seconds }) },
-    { key: "act", label: "", align: "right", sort: false, render: (r) => (
+    // Same shape as posCols.dev: 'cd' is not a row field, so the column was
+    // invisible to sort and facets. It renders a countdown off the REAL numeric
+    // expiry_ms, and "which calc expires first" is the ordering this pane exists
+    // for. The STATE facet hangs here because no column declares `status`, so the
+    // facet engine could never see it.
+    {
+      key: "cd",
+      label: "Link window",
+      align: "right",
+      sortVal: (r) => r.expiry_ms,
+      filter: { label: "STATE" },
+      filterVal: (r) => (r.status || "").toUpperCase() || "\u2014",
+      render: (r) => /* @__PURE__ */ React.createElement(CalcCountdown, { expiry: r.expiry_ms, window: r.window_seconds })
+    },
+    // 'act' stays sort:false + filter:false — it is a button, not data.
+    { key: "act", label: "", align: "right", sort: false, filter: false, search: false, render: (r) => (
       // operator-bug #6: open the ModelDialog confirm instead of window.confirm.
       /* @__PURE__ */ React.createElement(
         "button",
@@ -4834,20 +4946,80 @@ const LinkagePage = () => {
     ) }
   ];
   const fundCols = [
-    { key: "symbol", label: "Sym", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, (r.symbol || "").replace("USDT", "")) },
-    { key: "direction", label: "Side", render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: r.direction === "LONG" ? "ok" : "err" }, (r.direction || " ")[0]) },
+    {
+      key: "symbol",
+      label: "Sym",
+      filter: true,
+      filterVal: (r) => (r.symbol || "").replace("USDT", ""),
+      sortVal: (r) => (r.symbol || "").replace("USDT", ""),
+      render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, (r.symbol || "").replace("USDT", ""))
+    },
+    {
+      key: "direction",
+      label: "Side",
+      filter: { label: "SIDE" },
+      filterVal: (r) => (r.direction || "").toUpperCase() || "\u2014",
+      render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: r.direction === "LONG" ? "ok" : "err" }, (r.direction || " ")[0])
+    },
     { key: "rate", label: "Rate", align: "right", render: (r) => r.rate == null ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014") : /* @__PURE__ */ React.createElement("span", { style: { color: r.rate >= 0 ? "var(--qe-amber)" : "var(--qe-green)" } }, (r.rate * 100).toFixed(4), "%") },
-    { key: "pays", label: "Flow", render: (r) => r.rate == null ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014") : /* @__PURE__ */ React.createElement(FundingWho, { pays: r.pays }) },
+    // Flow is this pane's categorical axis. filterVal/searchVal must mirror the
+    // CELL, not the raw field: routes_cockpit assigns `pays` unconditionally, so
+    // a rate==null row still carries pays='venue' and would facet as EARN while
+    // rendering '—'. Returning '' for those rows drops them from the facet
+    // (raw==='' is skipped) instead of filing them under a flow they don't have.
+    {
+      key: "pays",
+      label: "Flow",
+      filter: { label: "FLOW" },
+      filterVal: (r) => r.rate == null ? "" : r.pays === "you" ? "PAY" : "EARN",
+      searchVal: (r) => r.rate == null ? "" : r.pays === "you" ? "PAY" : "EARN",
+      render: (r) => r.rate == null ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014") : /* @__PURE__ */ React.createElement(FundingWho, { pays: r.pays })
+    },
     { key: "est_next", label: "Est", align: "right", render: (r) => r.rate == null ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014") : /* @__PURE__ */ React.createElement("span", { style: { color: lpSgn(r.est_next), fontSize: "0.56rem" } }, lpUsd(r.est_next, 4)) },
     { key: "cum", label: "Cum", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: lpSgn(r.cum) } }, lpUsd(r.cum, 3)) }
   ];
   const closeCols = [
-    { key: "symbol", label: "Sym", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, (r.symbol || "").replace("USDT", "")) },
-    { key: "direction", label: "Side", render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: r.direction === "LONG" ? "ok" : "err" }, (r.direction || " ")[0]) },
+    {
+      key: "symbol",
+      label: "Sym",
+      filter: true,
+      filterVal: (r) => (r.symbol || "").replace("USDT", ""),
+      sortVal: (r) => (r.symbol || "").replace("USDT", ""),
+      render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, (r.symbol || "").replace("USDT", ""))
+    },
+    {
+      key: "direction",
+      label: "Side",
+      filter: { label: "SIDE" },
+      filterVal: (r) => (r.direction || "").toUpperCase() || "\u2014",
+      render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: r.direction === "LONG" ? "ok" : "err" }, (r.direction || " ")[0])
+    },
     { key: "entry_price", label: "Entry", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, lpPx(r.entry_price)) },
     { key: "exit_price", label: "Exit", align: "right", render: (r) => lpPx(r.exit_price) },
-    { key: "net_pnl", label: "PnL", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: lpSgn(r.net_pnl), fontWeight: 700 } }, lpUsd(r.net_pnl)) },
-    { key: "exit_reason", label: "Exit reason", render: (r) => /* @__PURE__ */ React.createElement(ExitBadge, { reason: r.exit_reason, note: r.close_note, pending: r.pending_reason }) },
+    // Bucket the continuous PnL into the sign trichotomy — the raw float is
+    // never offered as options (that would be one option per row).
+    {
+      key: "net_pnl",
+      label: "PnL",
+      align: "right",
+      filter: { label: "RESULT" },
+      filterVal: (r) => (r.net_pnl || 0) > 0 ? "WIN" : (r.net_pnl || 0) < 0 ? "LOSS" : "FLAT",
+      render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: lpSgn(r.net_pnl), fontWeight: 700 } }, lpUsd(r.net_pnl))
+    },
+    // Facet/sort/search all follow the RENDERED badge (pending → "SET REASON",
+    // otherwise the LP_EXIT_REASONS label), so the column can no longer sort or
+    // filter on a value the operator never sees. NB the facet stays invisible
+    // while every close shares one reason — that bail is data-gated and resolves
+    // itself as soon as reasons are categorised through this page's resolver.
+    {
+      key: "exit_reason",
+      label: "Exit reason",
+      filter: { label: "REASON" },
+      filterVal: (r) => r.pending_reason ? "SET REASON" : ((LP_EXIT_REASONS || {})[r.exit_reason] || {}).label || r.exit_reason || "\u2014",
+      sortVal: (r) => r.pending_reason ? "SET REASON" : ((LP_EXIT_REASONS || {})[r.exit_reason] || {}).label || r.exit_reason || "",
+      searchVal: (r) => r.pending_reason ? "SET REASON pending" : `${((LP_EXIT_REASONS || {})[r.exit_reason] || {}).label || ""} ${r.exit_reason || ""} ${r.close_note || ""}`,
+      render: (r) => /* @__PURE__ */ React.createElement(ExitBadge, { reason: r.exit_reason, note: r.close_note, pending: r.pending_reason })
+    },
     { key: "funding_fees", label: "Fund", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: lpSgn(r.funding_fees), fontSize: "0.56rem" } }, lpUsd(r.funding_fees, 3)) }
   ];
   return /* @__PURE__ */ React.createElement("div", { className: "qe-scope", "data-screen-label": "03 Linkage", style: { width: "100%", height: "100%", background: "var(--qe-bg)", display: "flex", flexDirection: "column", position: "relative" } }, /* @__PURE__ */ React.createElement(TopNavStd, { page: "Linkage", variant: "line", dense: true }), /* @__PURE__ */ React.createElement(PageHeader, { title: "Linkage", subtitle: "calc-linkage workspace \xB7 manual link \xB7 close reasons \xB7 positions \xB7 funding" }, /* @__PURE__ */ React.createElement(StatusDot, { tone: inbox.length ? "warn" : "ok", label: "QUEUE", value: `${inbox.length} open` })), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column" } }, /* @__PURE__ */ React.createElement(GridWorkspace, { persistId: "linkage" }, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 9, h: 24, minW: 6, minH: 10 }, /* @__PURE__ */ React.createElement(
@@ -5207,24 +5379,61 @@ const HistoryPage = () => {
       { key: "symbol", label: "SYM", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, r.symbol) },
       { key: "direction", label: "SIDE", render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: r.direction === "LONG" ? "ok" : "err" }, r.direction) },
       { key: "model_name", label: "MODEL", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, r.model_name || "\u2014") },
-      { key: "plan", label: "PLAN", sort: false, render: (r) => r.calc_id ? /* @__PURE__ */ React.createElement(DevBadge, { pos: { ...r, amendment_count: r.cumulative_amendment_count } }) : /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014") },
+      {
+        key: "plan",
+        label: "PLAN",
+        // ascending = worst-first (off-plan at the top) — this is a triage column.
+        sortVal: (r) => r.calc_id ? { red: 0, yellow: 1, green: 2 }[r.deviation_badge] != null ? { red: 0, yellow: 1, green: 2 }[r.deviation_badge] : 3 : 4,
+        filter: { label: "PLAN" },
+        filterVal: (r) => r.calc_id ? ((LP_DEV_META || {})[r.deviation_badge] || {}).label || "\u2014" : "UNPLANNED",
+        render: (r) => r.calc_id ? /* @__PURE__ */ React.createElement(DevBadge, { pos: { ...r, amendment_count: r.cumulative_amendment_count } }) : /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014")
+      },
       { key: "quantity", label: "QTY", align: "right", render: (r) => _ptFmtSz(r.quantity) },
       { key: "entry_price", label: "ENTRY", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, lpPx(r.entry_price)) },
       { key: "exit_price", label: "EXIT", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, lpPx(r.exit_price)) },
       { key: "net_pnl", label: "NET", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: lpSgn(r.net_pnl), fontWeight: 700 } }, lpUsd(r.net_pnl)) },
-      { key: "pct", label: "%", align: "right", sort: false, render: (r) => {
-        const den = (r.entry_price || 0) * (r.quantity || 0);
-        const pct = den ? r.net_pnl / den * 100 : null;
-        return pct == null ? "\u2014" : /* @__PURE__ */ React.createElement("span", { style: { color: lpSgn(pct) } }, lpPct(pct));
-      } },
-      { key: "mr", label: "M\xB7R", align: "right", sort: false, render: (r) => {
-        if (r.mae == null || r.mfe == null) return /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014");
-        const mae = Math.abs(+r.mae);
-        if (!mae) return +r.mfe > 0 ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-green)" } }, "\u221E") : /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014");
-        const mr = (+r.mfe || 0) / mae;
-        return /* @__PURE__ */ React.createElement("span", { style: { color: mr >= 2 ? "var(--qe-green)" : mr >= 1 ? "var(--qe-text)" : "var(--qe-red)" } }, mr.toFixed(2));
-      } },
-      { key: "heat", label: "MAE\u25C2 \u25B8MFE", align: "right", sort: false, render: (r) => /* @__PURE__ */ React.createElement(HistHeat, { mfe: r.mfe, mae: r.mae }) },
+      {
+        key: "pct",
+        label: "%",
+        align: "right",
+        sortVal: (r) => {
+          const den = (r.entry_price || 0) * (r.quantity || 0);
+          return den ? r.net_pnl / den * 100 : null;
+        },
+        render: (r) => {
+          const den = (r.entry_price || 0) * (r.quantity || 0);
+          const pct = den ? r.net_pnl / den * 100 : null;
+          return pct == null ? "\u2014" : /* @__PURE__ */ React.createElement("span", { style: { color: lpSgn(pct) } }, lpPct(pct));
+        }
+      },
+      {
+        key: "mr",
+        label: "M\xB7R",
+        align: "right",
+        // mirrors the render exactly: unknown -> null (sorts last), measured
+        // zero-MAE with positive MFE -> Infinity (the rendered '∞').
+        sortVal: (r) => {
+          if (r.mae == null || r.mfe == null) return null;
+          const mae = Math.abs(+r.mae);
+          if (!mae) return +r.mfe > 0 ? Infinity : null;
+          return (+r.mfe || 0) / mae;
+        },
+        render: (r) => {
+          if (r.mae == null || r.mfe == null) return /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014");
+          const mae = Math.abs(+r.mae);
+          if (!mae) return +r.mfe > 0 ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-green)" } }, "\u221E") : /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014");
+          const mr = (+r.mfe || 0) / mae;
+          return /* @__PURE__ */ React.createElement("span", { style: { color: mr >= 2 ? "var(--qe-green)" : mr >= 1 ? "var(--qe-text)" : "var(--qe-red)" } }, mr.toFixed(2));
+        }
+      },
+      // the bar's visual weight is the adverse excursion — sort on that.
+      {
+        key: "heat",
+        label: "MAE\u25C2 \u25B8MFE",
+        align: "right",
+        sortVal: (r) => r.mae == null ? null : Math.abs(+r.mae),
+        render: (r) => /* @__PURE__ */ React.createElement(HistHeat, { mfe: r.mfe, mae: r.mae })
+      },
       { key: "total_fees", label: "FEE", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, _ptFmtN(r.total_fees, 4)) },
       { key: "hold_time_ms", label: "DUR", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, _hDur(r.hold_time_ms)) },
       { key: "exit_reason", label: "REASON", render: exitCell }
@@ -5293,7 +5502,13 @@ const HistoryPage = () => {
       { key: "source", label: "SRC", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, r.source || "") },
       /* the event's SUBSTANCE — restored L3-F3 (the door parses _payload
          per row; the tab consumed only _symbol) */
-      { key: "summary", label: "SUMMARY", sort: false, render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)", fontSize: "0.6rem", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "inline-block", verticalAlign: "bottom" } }, _hEvtSummary(r) || "\u2014") }
+      {
+        key: "summary",
+        label: "SUMMARY",
+        sortVal: (r) => _hEvtSummary(r) || "",
+        searchVal: (r) => _hEvtSummary(r) || "",
+        render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)", fontSize: "0.6rem", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "inline-block", verticalAlign: "bottom" } }, _hEvtSummary(r) || "\u2014")
+      }
     ],
     pretrade: [
       { key: "timestamp", label: "TIME", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, String(r.timestamp || "").slice(0, 16).replace("T", " ")) },
@@ -5350,19 +5565,21 @@ const HistoryPage = () => {
       foot: qeFootState({ loading: net.ms == null && !net.err, err: net.err, hasData: rows.length > 0, ms: net.ms, retrying: true })
     },
     /* @__PURE__ */ React.createElement("div", { style: { flex: 1, overflow: "auto" } }, loading && !data ? /* @__PURE__ */ React.createElement("div", { style: { padding: 10 } }, /* @__PURE__ */ React.createElement(Spinner, { label: "loading" })) : (
-      // design #1: this table is SERVER-PAGED (rows = one page). SEARCH
-      // stays server-owned — the page's symbol input (→ server `search`)
-      // covers the FULL set across pages; a client search box would
-      // silently miss a symbol sitting on another page. FILTER (the
-      // SIDE/REASON facets the operator wanted from the design) + SORT
-      // are enabled: they act on the loaded page (up to 100 rows), an
-      // understood in-view refinement. Global server-wired facets/sort
-      // is a named follow-up.
+      // design #1: this table is SERVER-PAGED (rows = one page). All
+      // THREE tools are on (operator directive 2026-07-25) and all
+      // three act on the LOADED page — an in-view refinement.
+      // SEARCH was previously suppressed here to avoid implying it
+      // spanned the dataset; it is now enabled and COMPLEMENTS the
+      // symbol input above the tabs rather than duplicating it: that
+      // one is server-side and narrows the result set across every
+      // page, this one refines the page in view. Keep both — dropping
+      // the server box would silently miss rows on other pages.
+      // Global server-wired facets/sort remains a named follow-up.
       /* @__PURE__ */ React.createElement(
         DataList,
         {
           dense: true,
-          tools: { search: false, sort: true, filter: true },
+          tools: { search: true, sort: true, filter: true },
           columns: COLS[tab],
           rows,
           selKey: "id",
@@ -5400,14 +5617,23 @@ const HistoryPage = () => {
       setSel(null);
       setDrill(null);
     } }, "\u2715") }, dp.symbol, " \xB7 CLOSED \xB7 ", dp.direction), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 10px" } }, /* @__PURE__ */ React.createElement(KV, { l: "Net", v: lpUsd(dp.net_pnl), color: lpSgn(dp.net_pnl) }), /* @__PURE__ */ React.createElement(KV, { l: "Duration", v: _hDur(dp.hold_time_ms) }), /* @__PURE__ */ React.createElement(KV, { l: "Entry", v: lpPx(dp.entry_price) }), /* @__PURE__ */ React.createElement(KV, { l: "Exit", v: lpPx(dp.exit_price) }), /* @__PURE__ */ React.createElement(KV, { l: "TP plan", v: lpPx(dp.tp_price), color: "var(--qe-green)" }), /* @__PURE__ */ React.createElement(KV, { l: "SL plan", v: lpPx(dp.sl_price), color: "var(--qe-red)" }), /* @__PURE__ */ React.createElement(KV, { l: "MFE / MAE", v: `${_ptFmtN(dp.mfe)} / ${_ptFmtN(dp.mae)}` }), /* @__PURE__ */ React.createElement(KV, { l: "Funding", v: lpUsd(dp.funding_fees, 3), color: lpSgn(dp.funding_fees) }), /* @__PURE__ */ React.createElement(KV, { l: "Model", v: dp.model_name || "\u2014" }), /* @__PURE__ */ React.createElement(KV, { l: "Calc", v: dp.calc_id ? String(dp.calc_id).slice(-8) : "\u2014", color: "var(--qe-cyan)" })), /* @__PURE__ */ React.createElement("div", { style: { borderTop: "1px solid var(--qe-line)" } }), /* @__PURE__ */ React.createElement(SecLbl, { rule: true }, "Fills"), drill == null ? /* @__PURE__ */ React.createElement(Spinner, { label: "loading" }) : !drill.fills.length ? /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.58rem", color: "var(--qe-muted)" } }, "No fills recorded for this position.") : (
-      // operator-bug #2: drilldown fills — tools off; a handful of
-      // rows inside a modal, no search/sort need.
-      /* @__PURE__ */ React.createElement(DataList, { dense: true, tools: false, selKey: "id", columns: [
+      // drilldown fills. tools were off here ("a handful of rows
+      // inside a modal"); lifted 2026-07-25 per the operator
+      // directive — a scaled-in position has many legs, and that
+      // is exactly where finding one fill pays off.
+      /* @__PURE__ */ React.createElement(DataList, { dense: true, selKey: "id", columns: [
         { key: "timestamp_ms", label: "TIME", render: (f) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, _hFmtTs(f.timestamp_ms)) },
         { key: "is_close", label: "ACT", render: (f) => /* @__PURE__ */ React.createElement(Badge, { tone: f.is_close ? "mute" : "info" }, f.is_close ? "C" : "O") },
         { key: "price", label: "PRICE", align: "right", render: (f) => lpPx(f.price) },
         { key: "quantity", label: "QTY", align: "right" },
-        { key: "exec", label: "EXEC LINK", sort: false, render: (f) => f.is_close || !f.calc_id ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014") : f.exec_link_status === "linked" ? /* @__PURE__ */ React.createElement(Badge, { tone: "ok" }, "\u25CF LINKED") : f.exec_link_status === "partial" ? /* @__PURE__ */ React.createElement(Badge, { tone: "warn" }, "\u26A0 ", f.exec_match_count, "/1") : /* @__PURE__ */ React.createElement(Badge, { tone: "err" }, "\u2717 UNLINKED") }
+        {
+          key: "exec",
+          label: "EXEC LINK",
+          sortVal: (f) => String(f.exec_link_status || ""),
+          filter: { label: "EXEC" },
+          filterVal: (f) => String(f.exec_link_status || "\u2014").toUpperCase(),
+          render: (f) => f.is_close || !f.calc_id ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014") : f.exec_link_status === "linked" ? /* @__PURE__ */ React.createElement(Badge, { tone: "ok" }, "\u25CF LINKED") : f.exec_link_status === "partial" ? /* @__PURE__ */ React.createElement(Badge, { tone: "warn" }, "\u26A0 ", f.exec_match_count, "/1") : /* @__PURE__ */ React.createElement(Badge, { tone: "err" }, "\u2717 UNLINKED")
+        }
       ], rows: drill.fills })
     ), drill && drill.ctx && Array.isArray(drill.ctx.amendments) && drill.ctx.amendments.length ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(SecLbl, { rule: true }, "Amendments \xB7 ", drill.ctx.amendments.length), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 2 } }, drill.ctx.amendments.slice(0, 12).map((a, i) => /* @__PURE__ */ React.createElement("div", { key: i, className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-sub)" } }, _hFmtTs(a.ts_ms), " \xB7 ", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-amber)" } }, a.field), " ", a.old_value, " \u2192 ", a.new_value, a.deviation_pct != null ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, " (", lpPct(a.deviation_pct), ")") : null)))) : null)
   )))), modal ? /* @__PURE__ */ React.createElement(HReasonModal, { row: modal, onClose: () => setModal(null), onSaved: load }) : null, /* @__PURE__ */ React.createElement(StatusFooter, null));
@@ -6024,7 +6250,18 @@ const AnaTabPairs = ({ period, offset, onLabel }) => {
           { key: "shorts", label: "SHORTS", align: "right", cell: "dn" },
           { key: "pnl_long", label: "PnL (L)", align: "right", render: (r) => pnlCell(r.pnl_long || 0) },
           { key: "pnl_short", label: "PnL (S)", align: "right", render: (r) => pnlCell(r.pnl_short || 0) },
-          { key: "pnl_total", label: "PnL TOTAL", align: "right", render: (r) => pnlCell(r.pnl_total || 0, true) },
+          {
+            key: "pnl_total",
+            label: "PnL TOTAL",
+            align: "right",
+            // DataList sweep: this pane's only faceting axis. SYMBOL is
+            // unique-per-row (the query GROUP BYs it) and every other column is
+            // continuous numeric, so nothing here can auto-facet. Bucketing the
+            // sign gives at most 3 options and answers the pane's question.
+            filter: { label: "RESULT" },
+            filterVal: (r) => (r.pnl_total || 0) > 0 ? "WIN" : (r.pnl_total || 0) < 0 ? "LOSS" : "FLAT",
+            render: (r) => pnlCell(r.pnl_total || 0, true)
+          },
           { key: "win_rate", label: "WIN RATE", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: (r.win_rate || 0) >= 0.5 ? "var(--qe-green)" : "var(--qe-red)" } }, ((r.win_rate || 0) * 100).toFixed(1), "%") },
           { key: "avg_win", label: "AVG WIN", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-green)" } }, r.avg_win ? r.avg_win.toFixed(2) : "\u2014") },
           { key: "avg_loss", label: "AVG LOSS", align: "right", cell: "dn", render: (r) => r.avg_loss ? r.avg_loss.toFixed(2) : "\u2014" },
@@ -6073,8 +6310,23 @@ const AnaTabExcursions = ({ period, offset, onLabel }) => {
           { key: "direction", label: "DIR", render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: r.direction === "LONG" ? "ok" : "err" }, r.direction) },
           { key: "mfe", label: "MFE", align: "right", cell: "up", render: (r) => (r.mfe || 0).toFixed(2) },
           { key: "mae", label: "MAE", align: "right", cell: "dn", render: (r) => (r.mae || 0).toFixed(2) },
-          { key: "mer", label: "ME-R", align: "right", render: (r) => r.mae ? Math.abs((r.mfe || 0) / r.mae).toFixed(2) : "\u2014" },
-          { key: "income", label: "PnL", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: (r.income || 0) >= 0 ? "var(--qe-green)" : "var(--qe-red)", fontWeight: 700 } }, (r.income || 0) >= 0 ? "+" : "", (r.income || 0).toFixed(2)) },
+          // 'mer' is computed in render — no row carries the key, so the
+          // header sorted on undefined for every row (a dead control).
+          {
+            key: "mer",
+            label: "ME-R",
+            align: "right",
+            sortVal: (r) => r.mae ? Math.abs((r.mfe || 0) / r.mae) : null,
+            render: (r) => r.mae ? Math.abs((r.mfe || 0) / r.mae).toFixed(2) : "\u2014"
+          },
+          {
+            key: "income",
+            label: "PnL",
+            align: "right",
+            filter: { label: "RESULT" },
+            filterVal: (r) => (r.income || 0) >= 0 ? "WIN" : "LOSS",
+            render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: (r.income || 0) >= 0 ? "var(--qe-green)" : "var(--qe-red)", fontWeight: 700 } }, (r.income || 0) >= 0 ? "+" : "", (r.income || 0).toFixed(2))
+          },
           { key: "hold_ms", label: "HOLD", align: "right", cell: "dim", render: (r) => _hDur(r.hold_ms) }
         ],
         rows: trades,
@@ -6277,10 +6529,21 @@ const AnaTabExecution = () => {
           } },
           { key: "time_to_fill_ms", label: "TTF", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-text)" } }, _anaMs(r.time_to_fill_ms)) },
           { key: "role", label: "ROLE", render: (r) => r.role ? /* @__PURE__ */ React.createElement(Badge, { tone: r.role === "maker" ? "ok" : "warn" }, r.role.toUpperCase()) : /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014") },
-          { key: "link_status", label: "LINK", render: (r) => {
-            const m = ANA_LINK_META[_anaLinkKey(r)];
-            return /* @__PURE__ */ React.createElement("span", { style: { color: m.color, fontWeight: 700, fontSize: "0.58rem" } }, m.label);
-          } },
+          // LINK renders a DERIVED 5-bucket label via _anaLinkKey, but sorted
+          // and faceted on the raw link_status — which is a different value
+          // set, and on live data is NULL on nearly every fill, so the header
+          // did nothing. Point all three at the rendered label.
+          {
+            key: "link_status",
+            label: "LINK",
+            filter: { label: "LINK" },
+            filterVal: (r) => ANA_LINK_META[_anaLinkKey(r)].label,
+            sortVal: (r) => ANA_LINK_META[_anaLinkKey(r)].label,
+            render: (r) => {
+              const m = ANA_LINK_META[_anaLinkKey(r)];
+              return /* @__PURE__ */ React.createElement("span", { style: { color: m.color, fontWeight: 700, fontSize: "0.58rem" } }, m.label);
+            }
+          },
           { key: "calc_id", label: "CALC ID", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: r.calc_id ? "var(--qe-sub)" : "var(--qe-muted)" } }, r.calc_id ? String(r.calc_id).slice(-8) : "\u2014") }
         ],
         rows: tableRows,
@@ -6319,11 +6582,40 @@ const AnaTabFunding = () => {
           { key: "direction", label: "DIR", render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: r.direction === "LONG" ? "ok" : "err" }, r.direction) },
           { key: "notional", label: "NOTIONAL", align: "right", cell: "dim", render: (r) => `$${(r.notional || 0).toLocaleString(void 0, { maximumFractionDigits: 0 })}` },
           { key: "funding_rate", label: "FUNDING RATE", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: r.adverse ? "var(--qe-red)" : "var(--qe-green)" } }, ((r.funding_rate || 0) * 100).toFixed(4), "%") },
-          { key: "per_8h", label: "PER 8h", align: "right", render: (r) => money(sgn(r, r.per_8h || 0)) },
-          { key: "per_day", label: "PER DAY", align: "right", render: (r) => money(sgn(r, r.per_day || 0), 3) },
-          { key: "per_week", label: "PER WEEK", align: "right", cell: "dim", render: (r) => money(sgn(r, r.per_week || 0), 2) },
+          {
+            key: "per_8h",
+            label: "PER 8h",
+            align: "right",
+            sortVal: (r) => sgn(r, r.per_8h || 0),
+            render: (r) => money(sgn(r, r.per_8h || 0))
+          },
+          {
+            key: "per_day",
+            label: "PER DAY",
+            align: "right",
+            sortVal: (r) => sgn(r, r.per_day || 0),
+            render: (r) => money(sgn(r, r.per_day || 0), 3)
+          },
+          {
+            key: "per_week",
+            label: "PER WEEK",
+            align: "right",
+            cell: "dim",
+            sortVal: (r) => sgn(r, r.per_week || 0),
+            render: (r) => money(sgn(r, r.per_week || 0), 2)
+          },
           { key: "next_funding", label: "NEXT FUNDING", cell: "dim" },
-          { key: "impact", label: "IMPACT", render: (r) => r.adverse ? /* @__PURE__ */ React.createElement(Badge, { tone: "err" }, "PAY") : /* @__PURE__ */ React.createElement(Badge, { tone: "ok" }, "EARN") }
+          // 'impact' is not a row field — the endpoint emits `adverse`. The
+          // column therefore never sorted and never faceted, which is why this
+          // pane showed no dropdown at all.
+          {
+            key: "impact",
+            label: "IMPACT",
+            filter: true,
+            filterVal: (r) => r.adverse ? "PAY" : "EARN",
+            sortVal: (r) => r.adverse ? "PAY" : "EARN",
+            render: (r) => r.adverse ? /* @__PURE__ */ React.createElement(Badge, { tone: "err" }, "PAY") : /* @__PURE__ */ React.createElement(Badge, { tone: "ok" }, "EARN")
+          }
         ],
         rows,
         summary: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u03A3 NET EXPOSURE"), /* @__PURE__ */ React.createElement("span", { style: { color: tot8h >= 0 ? "var(--qe-green)" : "var(--qe-red)", fontWeight: 700 } }, "per 8h ", tot8h >= 0 ? "+" : "-", "$", Math.abs(tot8h).toFixed(4), " \xB7 per day ", totDay >= 0 ? "+" : "-", "$", Math.abs(totDay).toFixed(3)))
@@ -7066,21 +7358,54 @@ const RegimeTabOverview = ({ current, curFoot, mults, multsFoot, onGoBackfill })
         selected: selChange,
         columns: [
           { key: "date", label: "DATE", cell: "dim" },
-          { key: "label", label: "REGIME", render: (r) => {
-            const info = REGIME_INFO[r.label] || REGIME_INFO.neutral;
-            return /* @__PURE__ */ React.createElement("span", { style: { color: info.color, fontWeight: 700 } }, info.label);
-          } },
-          { key: "mode", label: "MODE", cell: "dim" },
-          { key: "vix", label: "VIX", align: "right", render: (r) => {
-            const v = sigOf(r, "vix_close");
-            return /* @__PURE__ */ React.createElement("span", { style: { color: vixColor(v) } }, fmtSig(v, 1));
-          } },
-          { key: "hy", label: "HY SPREAD", align: "right", render: (r) => fmtSig(sigOf(r, "hy_spread"), 2, "%") },
-          { key: "rvol", label: "RVOL", align: "right", render: (r) => fmtSig(sigOf(r, "btc_rvol_ratio"), 2) },
-          { key: "funding", label: "FUNDING", align: "right", render: (r) => {
-            const v = sigOf(r, "avg_funding");
-            return v == null ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014") : /* @__PURE__ */ React.createElement("span", { style: { color: v >= 0 ? "var(--qe-green)" : "var(--qe-red)" } }, (v * 100).toFixed(3), "%");
-          } }
+          {
+            key: "label",
+            label: "REGIME",
+            filter: true,
+            filterVal: (r) => (REGIME_INFO[r.label] || REGIME_INFO.neutral).label,
+            render: (r) => {
+              const info = REGIME_INFO[r.label] || REGIME_INFO.neutral;
+              return /* @__PURE__ */ React.createElement("span", { style: { color: info.color, fontWeight: 700 } }, info.label);
+            }
+          },
+          { key: "mode", label: "MODE", cell: "dim", filter: true },
+          // vix/hy/rvol/funding are NOT row fields — sigOf() reads the row's
+          // signal map at render time, so every one of these headers sorted on
+          // undefined. sortVal exposes the real number.
+          {
+            key: "vix",
+            label: "VIX",
+            align: "right",
+            sortVal: (r) => sigOf(r, "vix_close"),
+            render: (r) => {
+              const v = sigOf(r, "vix_close");
+              return /* @__PURE__ */ React.createElement("span", { style: { color: vixColor(v) } }, fmtSig(v, 1));
+            }
+          },
+          {
+            key: "hy",
+            label: "HY SPREAD",
+            align: "right",
+            sortVal: (r) => sigOf(r, "hy_spread"),
+            render: (r) => fmtSig(sigOf(r, "hy_spread"), 2, "%")
+          },
+          {
+            key: "rvol",
+            label: "RVOL",
+            align: "right",
+            sortVal: (r) => sigOf(r, "btc_rvol_ratio"),
+            render: (r) => fmtSig(sigOf(r, "btc_rvol_ratio"), 2)
+          },
+          {
+            key: "funding",
+            label: "FUNDING",
+            align: "right",
+            sortVal: (r) => sigOf(r, "avg_funding"),
+            render: (r) => {
+              const v = sigOf(r, "avg_funding");
+              return v == null ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014") : /* @__PURE__ */ React.createElement("span", { style: { color: v >= 0 ? "var(--qe-green)" : "var(--qe-red)" } }, (v * 100).toFixed(3), "%");
+            }
+          }
         ],
         rows: changes,
         emptyMsg: "no regime transitions in window"
@@ -7165,7 +7490,13 @@ const RegimeTabBackfill = ({ job, onStart }) => {
         selKey: "signal_name",
         columns: [
           { key: "signal_name", label: "SIGNAL", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: (r.count || 0) > 0 ? "var(--qe-text)" : "var(--qe-sub)", fontWeight: 600 } }, labelOf(r.signal_name)) },
-          { key: "source", label: "SOURCE", cell: "dim" },
+          {
+            key: "source",
+            label: "SOURCE",
+            cell: "dim",
+            filter: true,
+            filterVal: (r) => String(r.source || "\u2014").toUpperCase()
+          },
           { key: "min_date", label: "FROM", cell: "dim", render: (r) => r.min_date || /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014") },
           { key: "max_date", label: "TO", cell: "dim", render: (r) => r.max_date || /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014") },
           { key: "count", label: "ROWS", align: "right", render: (r) => (r.count || 0) > 0 ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-green)", fontWeight: 700 } }, (+r.count).toLocaleString()) : /* @__PURE__ */ React.createElement(Badge, { tone: "warn" }, "NOT BACKFILLED") }
@@ -7311,7 +7642,24 @@ const RegimeTabNews = () => {
         },
         columns: [
           { key: "published_at", label: "TIME", cell: "dim", render: (n) => _rgRel(n.published_at, nowMs) },
-          { key: "source", label: "SRC", render: (n) => /* @__PURE__ */ React.createElement("span", { style: { ...srcPill(n.source), padding: "1px 5px", fontSize: "0.5rem", fontWeight: 700, fontFamily: "var(--qe-mono)", letterSpacing: "0.06em" } }, (n.source || "?").toUpperCase()) },
+          {
+            key: "source",
+            label: "SRC",
+            filter: true,
+            filterVal: (n) => (n.source || "?").toUpperCase(),
+            render: (n) => /* @__PURE__ */ React.createElement("span", { style: { ...srcPill(n.source), padding: "1px 5px", fontSize: "0.5rem", fontWeight: 700, fontFamily: "var(--qe-mono)", letterSpacing: "0.06em" } }, (n.source || "?").toUpperCase())
+          },
+          // The engine's news rows carry CATEGORY (not impact — see the
+          // Magazine cards, which already render it). Surfacing it as a
+          // column gives this pane a second, genuinely categorical facet.
+          {
+            key: "category",
+            label: "CAT",
+            cell: "dim",
+            filter: true,
+            filterVal: (n) => (n.category || "news").toUpperCase(),
+            render: (n) => /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.52rem", color: "var(--qe-sub)", fontFamily: "var(--qe-mono)", letterSpacing: "0.05em" } }, (n.category || "news").toUpperCase())
+          },
           { key: "headline", label: "HEADLINE", render: (n) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-text)", fontWeight: 600 } }, n.headline) },
           { key: "tickers", label: "TICKERS", cell: "dim", render: (n) => /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.56rem" } }, n.tickers || "\u2014") }
         ],
@@ -7920,7 +8268,7 @@ const MdlSheetSections = ({ sheet, emptyMsg = "sheet empty in this export" }) =>
       label: mdlCellText(r[0]),
       cells: r
     }));
-    return /* @__PURE__ */ React.createElement("div", { key: si }, sec.title && /* @__PURE__ */ React.createElement(SecLbl, { rule: true, style: { margin: "8px 7px 2px" } }, sec.title), rows.length > 0 && /* @__PURE__ */ React.createElement(DataList, { columns: cols, rows, dense: false, selKey: "id", tools: false }));
+    return /* @__PURE__ */ React.createElement("div", { key: si }, sec.title && /* @__PURE__ */ React.createElement(SecLbl, { rule: true, style: { margin: "8px 7px 2px" } }, sec.title), rows.length > 0 && /* @__PURE__ */ React.createElement(DataList, { columns: cols, rows, dense: false, selKey: "id" }));
   }));
 };
 const StrategyAnalysisTab = ({ rep, foot }) => {
@@ -7967,15 +8315,33 @@ const TradesTab = ({ rep, foot }) => {
   if (!paired || !paired.length) {
     const rows = (rep.trades || []).map((t, i) => ({ ...t, _i: i + 1 }));
     return /* @__PURE__ */ React.createElement(GridWorkspace, { key: "tr-fb" }, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 24, h: 24, minW: 12, minH: 12 }, /* @__PURE__ */ React.createElement(Pane, { title: "List of Trades", count: rows.length, tag: "NORMALIZED", style: { height: "100%" }, bodyStyle: { padding: 0 }, foot }, rows.length ? /* @__PURE__ */ React.createElement(DataList, { selKey: "_i", rows, columns: [
-      { key: "_i", label: "#", render: (t) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-muted)" } }, t._i) },
-      { key: "side", label: "Side", render: (t) => /* @__PURE__ */ React.createElement(Badge, { tone: t.side === "long" ? "ok" : "err" }, (t.side || "").toUpperCase()) },
+      { key: "_i", label: "#", filter: false, render: (t) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-muted)" } }, t._i) },
+      {
+        key: "side",
+        label: "Side",
+        filter: { label: "SIDE" },
+        filterVal: (t) => (t.side || "\u2014").toUpperCase(),
+        render: (t) => /* @__PURE__ */ React.createElement(Badge, { tone: t.side === "long" ? "ok" : "err" }, (t.side || "").toUpperCase())
+      },
       { key: "entry_dt", label: "Entry", render: (t) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.56rem" } }, _mdlDt(t.entry_dt)) },
       { key: "exit_dt", label: "Exit", render: (t) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.56rem" } }, _mdlDt(t.exit_dt)) },
       { key: "entry_price", label: "Entry Px", align: "right", render: (t) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono" }, t.entry_price) },
       { key: "exit_price", label: "Exit Px", align: "right", render: (t) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono" }, t.exit_price) },
       { key: "contracts", label: "Cts", align: "right", render: (t) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono" }, t.contracts || "\u2014") },
-      { key: "pnl_usdt", label: "P/L $", align: "right", render: (t) => /* @__PURE__ */ React.createElement(MCNum, { v: t.pnl_usdt, fmt: "usd", bold: true }) },
-      { key: "exit_reason", label: "Exit Reason" }
+      {
+        key: "pnl_usdt",
+        label: "P/L $",
+        align: "right",
+        filter: { label: "RESULT" },
+        filterVal: (t) => (t.pnl_usdt || 0) > 0 ? "WIN" : (t.pnl_usdt || 0) < 0 ? "LOSS" : "FLAT",
+        render: (t) => /* @__PURE__ */ React.createElement(MCNum, { v: t.pnl_usdt, fmt: "usd", bold: true })
+      },
+      {
+        key: "exit_reason",
+        label: "Exit Reason",
+        filter: true,
+        filterVal: (t) => String(t.exit_reason || "\u2014")
+      }
     ], emptyMsg: "no trades on this run" }) : /* @__PURE__ */ React.createElement(MdlSheetSections, { sheet, emptyMsg: "no trades on this run" }))));
   }
   const trades = paired.filter((t) => side === "all" || t.side === side);
@@ -8024,7 +8390,15 @@ const TradesTab = ({ rep, foot }) => {
       render: (t) => /* @__PURE__ */ React.createElement("div", { className: "qe-mc-stack" }, /* @__PURE__ */ React.createElement("span", { className: "qe-mono" }, t.entryPrice != null ? t.entryPrice : "\u2014"), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-muted)" } }, t.exitPrice != null ? t.exitPrice : "\u2014"))
     },
     { key: "contracts", label: "Cts", align: "right", render: (t) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono" }, t.contracts != null ? t.contracts : "\u2014") },
-    { key: "profit", label: "Profit $", align: "right", sortVal: (t) => t.profit, render: (t) => /* @__PURE__ */ React.createElement(MCNum, { v: t.profit, fmt: "usd", bold: true }) },
+    {
+      key: "profit",
+      label: "Profit $",
+      align: "right",
+      sortVal: (t) => t.profit,
+      filter: { label: "RESULT" },
+      filterVal: (t) => (t.profit || 0) > 0 ? "WIN" : (t.profit || 0) < 0 ? "LOSS" : "FLAT",
+      render: (t) => /* @__PURE__ */ React.createElement(MCNum, { v: t.profit, fmt: "usd", bold: true })
+    },
     { key: "profitPct", label: "Profit %", align: "right", sortVal: (t) => t.profitPct, render: (t) => /* @__PURE__ */ React.createElement(MCNum, { v: t.profitPct, fmt: "pct" }) },
     { key: "cum", label: "Cum $", align: "right", sortVal: (t) => t.cum, render: (t) => /* @__PURE__ */ React.createElement(MCNum, { v: t.cum, fmt: "usd" }) },
     { key: "runup", label: "Run-up $", align: "right", sortVal: (t) => t.runup, render: (t) => /* @__PURE__ */ React.createElement(MCNum, { v: t.runup, fmt: "usd" }) },
@@ -8128,10 +8502,26 @@ const ModelOverview = ({ models, onOpen, onNew, foot }) => {
         if (m) onOpen(m);
       },
       columns: [
-        { key: "rank", label: "#", render: (r, i) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-muted)" } }, i + 1) },
-        { key: "name", label: "MODEL", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700, fontSize: "0.6rem" } }, r.name) },
-        { key: "type", label: "TYPE", render: (r) => /* @__PURE__ */ React.createElement(TypeBadge, { type: r.type }) },
-        { key: "net", label: "NET P/L", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: _mdlPl(r.net), fontWeight: 700 } }, _mdlMoney(r.net, 0)) },
+        { key: "rank", label: "#", sort: false, filter: false, search: false, render: (r, i) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-muted)" } }, i + 1) },
+        { key: "name", label: "MODEL", filter: false, render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700, fontSize: "0.6rem" } }, r.name) },
+        {
+          key: "type",
+          label: "TYPE",
+          filter: true,
+          filterVal: (r) => String(r.type || "\u2014").toUpperCase(),
+          render: (r) => /* @__PURE__ */ React.createElement(TypeBadge, { type: r.type })
+        },
+        // MODEL is unique-per-row (one row per model) so it can never be
+        // a useful facet; TYPE often has a single value. Bucket the net P/L
+        // sign — this pane's actual question.
+        {
+          key: "net",
+          label: "NET P/L",
+          align: "right",
+          filter: { label: "RESULT" },
+          filterVal: (r) => r.net > 0 ? "PROFIT" : r.net < 0 ? "LOSS" : "FLAT",
+          render: (r) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: _mdlPl(r.net), fontWeight: 700 } }, _mdlMoney(r.net, 0))
+        },
         { key: "pf", label: "PF", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono" }, r.pf.toFixed(2)) },
         { key: "win", label: "WIN%", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono" }, r.win, "%") }
       ],
@@ -8190,9 +8580,24 @@ const ModelOverviewTab = ({ m, runs, runsFoot, usage, usageFoot, ovFoot, onOpenR
           if (row.status === "completed") onOpenRun(row);
         },
         columns: [
-          { key: "source_app", label: "SOURCE", render: (r2) => /* @__PURE__ */ React.createElement(Badge, { tone: "info" }, r2.source_app || "\u2014") },
-          { key: "file", label: "FILE", search: false, sort: false, render: (r2) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-sub)" } }, r2.summary && r2.summary.source_file || r2.name || "\u2014") },
-          { key: "window", label: "WINDOW", sort: false, render: (r2) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.54rem" } }, _mdlDate(r2.date_from), " \u2192 ", _mdlDate(r2.date_to)) },
+          {
+            key: "source_app",
+            label: "SOURCE",
+            filter: true,
+            filterVal: (r2) => String(r2.source_app || "\u2014").toUpperCase(),
+            render: (r2) => /* @__PURE__ */ React.createElement(Badge, { tone: "info" }, r2.source_app || "\u2014")
+          },
+          // FILE/WINDOW render values that live off the row (summary.source_file,
+          // a date RANGE), which is why they had opted out entirely. The
+          // accessors reach exactly what the cell shows.
+          {
+            key: "file",
+            label: "FILE",
+            sortVal: (r2) => r2.summary && r2.summary.source_file || r2.name || "",
+            searchVal: (r2) => r2.summary && r2.summary.source_file || r2.name || "",
+            render: (r2) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-sub)" } }, r2.summary && r2.summary.source_file || r2.name || "\u2014")
+          },
+          { key: "window", label: "WINDOW", sortVal: (r2) => r2.date_from || "", render: (r2) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.54rem" } }, _mdlDate(r2.date_from), " \u2192 ", _mdlDate(r2.date_to)) },
           { key: "net", label: "NET P/L", align: "right", sortVal: (r2) => mdlRunKpis(r2.summary).net, render: (r2) => {
             const k = mdlRunKpis(r2.summary);
             return /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: _mdlPl(k.net), fontWeight: 700 } }, _mdlMoney(k.net, 0));
@@ -8201,7 +8606,13 @@ const ModelOverviewTab = ({ m, runs, runsFoot, usage, usageFoot, ovFoot, onOpenR
           { key: "win", label: "WIN%", align: "right", sortVal: (r2) => mdlRunKpis(r2.summary).winPct, render: (r2) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono" }, mdlRunKpis(r2.summary).winPct, "%") },
           { key: "dd", label: "MAX DD", align: "right", sortVal: (r2) => mdlRunKpis(r2.summary).maxDDPct, render: (r2) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-red)" } }, mdlRunKpis(r2.summary).maxDDPct, "%") },
           { key: "n", label: "TRADES", align: "right", sortVal: (r2) => mdlRunKpis(r2.summary).nTrades, render: (r2) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono" }, mdlRunKpis(r2.summary).nTrades) },
-          { key: "status", label: "STATUS", render: (r2) => /* @__PURE__ */ React.createElement(Badge, { tone: r2.status === "completed" ? "ok" : r2.status === "failed" ? "err" : "warn" }, (r2.status || "\u2014").toUpperCase()) },
+          {
+            key: "status",
+            label: "STATUS",
+            filter: true,
+            filterVal: (r2) => (r2.status || "\u2014").toUpperCase(),
+            render: (r2) => /* @__PURE__ */ React.createElement(Badge, { tone: r2.status === "completed" ? "ok" : r2.status === "failed" ? "err" : "warn" }, (r2.status || "\u2014").toUpperCase())
+          },
           { key: "created_at", label: "IMPORTED", align: "right", render: (r2) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.54rem", color: "var(--qe-muted)" } }, _mdlDt(r2.created_at)) }
         ],
         rows: runs
@@ -8246,7 +8657,15 @@ const ModelOverviewTab = ({ m, runs, runsFoot, usage, usageFoot, ovFoot, onOpenR
           { key: "calc_id", label: "CALC", render: (u) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-cyan)", fontSize: "0.56rem" } }, u.calc_id || "#" + u.id) },
           { key: "ticker", label: "TICKER" },
           { key: "side", label: "SIDE", render: (u) => /* @__PURE__ */ React.createElement(Badge, { tone: /long|buy/i.test(u.side || "") ? "ok" : /short|sell/i.test(u.side || "") ? "err" : "mute" }, (u.side || "\u2014").toUpperCase()) },
-          { key: "status", label: "STATUS", render: (u) => /* @__PURE__ */ React.createElement(Badge, { tone: "mute" }, (u.status || "\u2014").toUpperCase()) },
+          // forced: COMPLETED_VIA_POSITION exceeds DL_VALUE_MAXLEN(16),
+          // so auto-derivation refuses this column outright.
+          {
+            key: "status",
+            label: "STATUS",
+            filter: true,
+            filterVal: (u) => (u.status || "\u2014").toUpperCase(),
+            render: (u) => /* @__PURE__ */ React.createElement(Badge, { tone: "mute" }, (u.status || "\u2014").toUpperCase())
+          },
           { key: "timestamp", label: "PLANNED", align: "right", render: (u) => /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-muted)", fontSize: "0.54rem" } }, _mdlDt(u.timestamp)) }
         ],
         rows: plans

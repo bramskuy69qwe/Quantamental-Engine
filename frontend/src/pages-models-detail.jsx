@@ -64,15 +64,25 @@ const ModelOverviewTab = ({ m, runs, runsFoot, usage, usageFoot, ovFoot, onOpenR
           {(runs || []).length ? (
             <DataList selKey="id" onClick={(row) => { if (row.status === 'completed') onOpenRun(row); }}
               columns={[
-                { key: 'source_app', label: 'SOURCE', render: (r2) => <Badge tone="info">{r2.source_app || '—'}</Badge> },
-                { key: 'file', label: 'FILE', search: false, sort: false, render: (r2) => <span className="qe-mono" style={{ fontSize: '0.56rem', color: 'var(--qe-sub)' }}>{(r2.summary && r2.summary.source_file) || r2.name || '—'}</span> },
-                { key: 'window', label: 'WINDOW', sort: false, render: (r2) => <span className="qe-mono" style={{ fontSize: '0.54rem' }}>{_mdlDate(r2.date_from)} → {_mdlDate(r2.date_to)}</span> },
+                { key: 'source_app', label: 'SOURCE', filter: true,
+                  filterVal: (r2) => String(r2.source_app || '—').toUpperCase(),
+                  render: (r2) => <Badge tone="info">{r2.source_app || '—'}</Badge> },
+                // FILE/WINDOW render values that live off the row (summary.source_file,
+                // a date RANGE), which is why they had opted out entirely. The
+                // accessors reach exactly what the cell shows.
+                { key: 'file', label: 'FILE',
+                  sortVal:   (r2) => (r2.summary && r2.summary.source_file) || r2.name || '',
+                  searchVal: (r2) => (r2.summary && r2.summary.source_file) || r2.name || '',
+                  render: (r2) => <span className="qe-mono" style={{ fontSize: '0.56rem', color: 'var(--qe-sub)' }}>{(r2.summary && r2.summary.source_file) || r2.name || '—'}</span> },
+                { key: 'window', label: 'WINDOW', sortVal: (r2) => r2.date_from || '', render: (r2) => <span className="qe-mono" style={{ fontSize: '0.54rem' }}>{_mdlDate(r2.date_from)} → {_mdlDate(r2.date_to)}</span> },
                 { key: 'net', label: 'NET P/L', align: 'right', sortVal: (r2) => mdlRunKpis(r2.summary).net, render: (r2) => { const k = mdlRunKpis(r2.summary); return <span className="qe-mono" style={{ color: _mdlPl(k.net), fontWeight: 700 }}>{_mdlMoney(k.net, 0)}</span>; } },
                 { key: 'pf', label: 'PF', align: 'right', sortVal: (r2) => mdlRunKpis(r2.summary).pf, render: (r2) => <span className="qe-mono">{mdlRunKpis(r2.summary).pf.toFixed(2)}</span> },
                 { key: 'win', label: 'WIN%', align: 'right', sortVal: (r2) => mdlRunKpis(r2.summary).winPct, render: (r2) => <span className="qe-mono">{mdlRunKpis(r2.summary).winPct}%</span> },
                 { key: 'dd', label: 'MAX DD', align: 'right', sortVal: (r2) => mdlRunKpis(r2.summary).maxDDPct, render: (r2) => <span className="qe-mono" style={{ color: 'var(--qe-red)' }}>{mdlRunKpis(r2.summary).maxDDPct}%</span> },
                 { key: 'n', label: 'TRADES', align: 'right', sortVal: (r2) => mdlRunKpis(r2.summary).nTrades, render: (r2) => <span className="qe-mono">{mdlRunKpis(r2.summary).nTrades}</span> },
-                { key: 'status', label: 'STATUS', render: (r2) => <Badge tone={r2.status === 'completed' ? 'ok' : r2.status === 'failed' ? 'err' : 'warn'}>{(r2.status || '—').toUpperCase()}</Badge> },
+                { key: 'status', label: 'STATUS', filter: true,
+                  filterVal: (r2) => (r2.status || '—').toUpperCase(),
+                  render: (r2) => <Badge tone={r2.status === 'completed' ? 'ok' : r2.status === 'failed' ? 'err' : 'warn'}>{(r2.status || '—').toUpperCase()}</Badge> },
                 { key: 'created_at', label: 'IMPORTED', align: 'right', render: (r2) => <span className="qe-mono" style={{ fontSize: '0.54rem', color: 'var(--qe-muted)' }}>{_mdlDt(r2.created_at)}</span> },
               ]}
               rows={runs} />
@@ -113,7 +123,11 @@ const ModelOverviewTab = ({ m, runs, runsFoot, usage, usageFoot, ovFoot, onOpenR
                       { key: 'calc_id', label: 'CALC', render: (u) => <span className="qe-mono" style={{ color: 'var(--qe-cyan)', fontSize: '0.56rem' }}>{u.calc_id || ('#' + u.id)}</span> },
                       { key: 'ticker', label: 'TICKER' },
                       { key: 'side', label: 'SIDE', render: (u) => <Badge tone={/long|buy/i.test(u.side || '') ? 'ok' : /short|sell/i.test(u.side || '') ? 'err' : 'mute'}>{(u.side || '—').toUpperCase()}</Badge> },
-                      { key: 'status', label: 'STATUS', render: (u) => <Badge tone="mute">{(u.status || '—').toUpperCase()}</Badge> },
+                      // forced: COMPLETED_VIA_POSITION exceeds DL_VALUE_MAXLEN(16),
+                      // so auto-derivation refuses this column outright.
+                      { key: 'status', label: 'STATUS', filter: true,
+                        filterVal: (u) => (u.status || '—').toUpperCase(),
+                        render: (u) => <Badge tone="mute">{(u.status || '—').toUpperCase()}</Badge> },
                       { key: 'timestamp', label: 'PLANNED', align: 'right', render: (u) => <span className="qe-mono" style={{ color: 'var(--qe-muted)', fontSize: '0.54rem' }}>{_mdlDt(u.timestamp)}</span> },
                     ]}
                     rows={plans} />

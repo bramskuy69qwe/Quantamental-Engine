@@ -118,6 +118,75 @@ tabs (server-paged — a client box would miss other pages); "Detected" shows th
 real `exit_reason`, not the mock's "opposite-side mkt"; models-report keeps
 `tools={false}` (verbatim-capture fidelity).
 
+## ▶ DATALIST TOOLS SWEEP (2026-07-25, operator directive)
+
+**Directive**: every pane whose main component is a DataList must offer all
+three tools — SEARCH, SORT, FILTER. Inventory = 10 agents, one per file:
+**24 call sites, 21 with a gap.** All closed. Bundle `e834aba062`.
+
+**★ The gaps were almost never `tools={false}`.** Three distinct shapes:
+1. **`tools={false}` / `{search:false}`** — the obvious one, and the RAREST.
+2. **A column whose `key` NO ROW CARRIES.** `render()` ignores the key so the
+   cell looks perfect, but `presentKeys` AND `_dlDeriveFacets` both skip the
+   column: the header sorts on `undefined` and it can never facet. Found on
+   `mer` · `impact` · `tpsl` · `dev` · `cd` · `vix` · `hy` · `rvol` ·
+   `funding` · `status` · `plan` · `pct` · `mr` · `heat` · `summary` · `exec` ·
+   `file` · `window`. Fix = `sortVal`/`filterVal`/`searchVal`, the primitive's
+   documented escape hatch.
+3. **`showFilter` TRUE but ZERO facets derived** — `_dlDeriveFacets`
+   independently rejects a column when it is ≥70% numeric, has <2 distinct
+   values, >6 distinct, high cardinality, or any value >16 chars. Fix = a
+   FORCED facet on a genuinely categorical column, bucketing a number through
+   `filterVal` where needed (WIN/LOSS/FLAT, PAY/EARN, UP/DOWN).
+
+**One PRIMITIVE change**: the `distinct < 2` bail sat BEFORE the `forced`
+branch, so a forced facet could never render on a homogeneous table — i.e. the
+filter vanished exactly when the table was small (one open position, one
+regime), which is the normal live shape. Now `distinct.length < 2 && !forced`.
+AUTO still bails; only an explicitly-declared facet survives.
+
+**Also corrected while in there** (display/sort disagreements): funding `pays`
+faceted as EARN on rate-null rows while the cell rendered '—'; Per-Fill `LINK`
+sorted raw `link_status` while rendering a derived 5-bucket label; dashboard
+`PnL`/`AGE` sorted on fields the cells don't use; `exit_reason` sorted the raw
+enum while rendering the LP label.
+
+**Two prior rationales were overridden by the directive, both deliberately:**
+History's `search:false` (paging/search are server-side — the two are now
+COMPLEMENTARY: the box above the tabs spans all pages, the DataList box refines
+the page in view) and models-report `tools={false}` (verbatim-capture fidelity —
+the capture still renders in workbook order by DEFAULT; sort is user-initiated
+and non-destructive).
+
+Pins: `tests/test_datalist_tools_completeness.py` (45) — including a
+brace-balanced column extractor, because a naive `.*?\},\n` regex stops at the
+inner `filter: {...}` object and makes the pin vacuous. Runtime scope verified
+by evaluating the emitted bundle in a stubbed vm (13 cross-module identifiers
+resolve) — the esbuild guard is parse-only.
+
+## ▶ CLOCK DRIFT — the CCXT auto-sync answer (2026-07-25)
+
+Operator saw `CLOCK DRIFT: local clock is -9987ms vs binance (severity=critical)`
+after restart. **The auto-fix IS working and the warning is BY DESIGN.**
+`adjustForTimeDifference: True` (`core/exchange_factory.py:59`) makes CCXT offset
+every signed request, and EVERY signed path routes through that instance —
+including `listenKey` (`fapiPrivatePostListenKey`). `time_sync` deliberately
+still measures + warns (the comment at `:56-58` says so), so the banner reports
+the OS clock, not a data failure. Sign convention: `offset = exchange − local`,
+so −9987 ms = local ~10 s AHEAD, the `-1021` direction.
+
+**Two limits worth keeping (verified against the installed CCXT 4.5.47, not
+assumed):** (1) `nonce()` = `milliseconds() - options['timeDifference']`
+(`binance.py:2869`) and `load_time_difference()` is called from exactly ONE site,
+`fetch_markets()` (`binance.py:3431`) — i.e. during `load_markets()`. The offset
+is measured ONCE at adapter init and cached: it cancels a CONSTANT offset, it does
+NOT track ongoing drift. (2) It only fixes the outgoing request timestamp —
+everything computed from the local clock is still ~10 s wrong (position AGE, the
+linkage match window, BOD boundaries, correlation-log stamps, the new FEED
+`stale_s`). The Pre-Trade countdown is the exception: receipt-anchored,
+skew-immune by construction. **So: fix the OS clock (`w32tm /resync /force`);
+reads are safe, time-derived displays are not.**
+
 **▶ OPERATOR ACTIONS PENDING:**
 1. **Restart the engine** (see the Engine line — lands 4 backend changes).
 2. ~~Optional `--apply`~~ **DONE 2026-07-25** —

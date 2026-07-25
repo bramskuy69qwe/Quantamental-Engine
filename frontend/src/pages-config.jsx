@@ -548,7 +548,15 @@ const CfgConnectionsTab = () => {
                 columns={[
                   { key: 'label',    label: 'PROVIDER', render: (c) => <span style={{ fontWeight: 700 }}>{c.label}</span> },
                   { key: 'provider', label: 'ID', render: (c) => <span style={{ color: 'var(--qe-muted)', fontFamily: 'var(--qe-mono)' }}>{c.provider}</span> },
-                  { key: 'status',   label: 'STATUS', render: (c) => c.has_key ? <StatusDot tone="ok" label="CONNECTED" /> : <StatusDot tone="off" label="NOT SET" /> },
+                  /* 'status' is RENDER-ONLY — the row carries has_key, not a
+                     status field — so facet derivation and presentKeys both
+                     skipped it: no FILTER dropdown and an inert STATUS header.
+                     Project has_key onto the same two strings the cell shows. */
+                  { key: 'status',   label: 'STATUS',
+                    filter: true,
+                    filterVal: (c) => (c.has_key ? 'CONNECTED' : 'NOT SET'),
+                    sortVal:   (c) => (c.has_key ? 'CONNECTED' : 'NOT SET'),
+                    render: (c) => c.has_key ? <StatusDot tone="ok" label="CONNECTED" /> : <StatusDot tone="off" label="NOT SET" /> },
                   { key: 'key',      label: 'KEY', render: (c) =>
                       c.has_key && editing !== c.provider
                         ? <span style={{ color: 'var(--qe-sub)', fontFamily: 'var(--qe-mono)' }}>{c.api_key_hint || '••••••'}</span>

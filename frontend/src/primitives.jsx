@@ -781,7 +781,14 @@ const _dlDeriveFacets = (columns, rows) => {
     if (hasObj || defined === 0) return;
     if (tooLong && !forced) return;
     const distinct = [...counts.keys()];
-    if (distinct.length < 2) return;
+    // A single distinct value carries no information for an AUTO-derived facet,
+    // so auto still bails. A FORCED facet is different: the page author declared
+    // that column the pane's filter axis, and the operator's rule is that every
+    // DataList pane offers search + sort + filter at all times. Homogeneous data
+    // (one open position, one regime) is the normal live shape here, and a
+    // filter that vanishes exactly when the table is small is the complaint this
+    // sweep exists to fix. [operator directive 2026-07-25]
+    if (distinct.length < 2 && !forced) return;
     if (forced) {
       if (distinct.length > DL_FACET_FORCE_MAX) return;
     } else {

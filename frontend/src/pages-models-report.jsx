@@ -88,10 +88,15 @@ const MdlSheetSections = ({ sheet, emptyMsg = 'sheet empty in this export' }) =>
                 renders its header alone — no false "no rows" band (LOW-1) */}
             {/* operator-bug #2: tools stay OFF here by design — this is the
                 render-as-is backtest report (P7). Each section reproduces a
-                MultiCharts workbook VERBATIM; letting the user re-sort/filter a
-                faithful capture would break the reproduction (and most sections
-                are label/value stat blocks, not sortable record lists). */}
-            {rows.length > 0 && <DataList columns={cols} rows={rows} dense={false} selKey="id" tools={false} />}
+                MultiCharts workbook VERBATIM.
+                tools were OFF here on the grounds that re-sorting a faithful
+                capture breaks the reproduction. Lifted 2026-07-25 (operator
+                directive: every DataList carries search + sort + filter): the
+                capture still RENDERS in workbook order by default — sort is
+                user-initiated and non-destructive, and search is the only
+                practical way to find one metric in a long stat block. Facets
+                simply do not derive on label/value sections, which is correct. */}
+            {rows.length > 0 && <DataList columns={cols} rows={rows} dense={false} selKey="id" />}
           </div>
         );
       })}
@@ -181,15 +186,21 @@ const TradesTab = ({ rep, foot }) => {
           <Pane title="List of Trades" count={rows.length} tag="NORMALIZED" style={{ height: '100%' }} bodyStyle={{ padding: 0 }} foot={foot}>
             {rows.length ? (
               <DataList selKey="_i" rows={rows} columns={[
-                { key: '_i', label: '#', render: (t) => <span className="qe-mono" style={{ color: 'var(--qe-muted)' }}>{t._i}</span> },
-                { key: 'side', label: 'Side', render: (t) => <Badge tone={t.side === 'long' ? 'ok' : 'err'}>{(t.side || '').toUpperCase()}</Badge> },
+                { key: '_i', label: '#', filter: false, render: (t) => <span className="qe-mono" style={{ color: 'var(--qe-muted)' }}>{t._i}</span> },
+                { key: 'side', label: 'Side', filter: { label: 'SIDE' },
+                  filterVal: (t) => (t.side || '—').toUpperCase(),
+                  render: (t) => <Badge tone={t.side === 'long' ? 'ok' : 'err'}>{(t.side || '').toUpperCase()}</Badge> },
                 { key: 'entry_dt', label: 'Entry', render: (t) => <span className="qe-mono" style={{ fontSize: '0.56rem' }}>{_mdlDt(t.entry_dt)}</span> },
                 { key: 'exit_dt', label: 'Exit', render: (t) => <span className="qe-mono" style={{ fontSize: '0.56rem' }}>{_mdlDt(t.exit_dt)}</span> },
                 { key: 'entry_price', label: 'Entry Px', align: 'right', render: (t) => <span className="qe-mono">{t.entry_price}</span> },
                 { key: 'exit_price', label: 'Exit Px', align: 'right', render: (t) => <span className="qe-mono">{t.exit_price}</span> },
                 { key: 'contracts', label: 'Cts', align: 'right', render: (t) => <span className="qe-mono">{t.contracts || '—'}</span> },
-                { key: 'pnl_usdt', label: 'P/L $', align: 'right', render: (t) => <MCNum v={t.pnl_usdt} fmt="usd" bold /> },
-                { key: 'exit_reason', label: 'Exit Reason' },
+                { key: 'pnl_usdt', label: 'P/L $', align: 'right',
+                  filter: { label: 'RESULT' },
+                  filterVal: (t) => ((t.pnl_usdt || 0) > 0 ? 'WIN' : (t.pnl_usdt || 0) < 0 ? 'LOSS' : 'FLAT'),
+                  render: (t) => <MCNum v={t.pnl_usdt} fmt="usd" bold /> },
+                { key: 'exit_reason', label: 'Exit Reason', filter: true,
+                  filterVal: (t) => String(t.exit_reason || '—') },
               ]} emptyMsg="no trades on this run" />
             ) : <MdlSheetSections sheet={sheet} emptyMsg="no trades on this run" />}
           </Pane>
@@ -232,7 +243,10 @@ const TradesTab = ({ rep, foot }) => {
         <span className="qe-mono" style={{ color: 'var(--qe-muted)' }}>{t.exitPrice != null ? t.exitPrice : '—'}</span>
       </div>) },
     { key: 'contracts', label: 'Cts', align: 'right', render: (t) => <span className="qe-mono">{t.contracts != null ? t.contracts : '—'}</span> },
-    { key: 'profit', label: 'Profit $', align: 'right', sortVal: (t) => t.profit, render: (t) => <MCNum v={t.profit} fmt="usd" bold /> },
+    { key: 'profit', label: 'Profit $', align: 'right', sortVal: (t) => t.profit,
+      filter: { label: 'RESULT' },
+      filterVal: (t) => ((t.profit || 0) > 0 ? 'WIN' : (t.profit || 0) < 0 ? 'LOSS' : 'FLAT'),
+      render: (t) => <MCNum v={t.profit} fmt="usd" bold /> },
     { key: 'profitPct', label: 'Profit %', align: 'right', sortVal: (t) => t.profitPct, render: (t) => <MCNum v={t.profitPct} fmt="pct" /> },
     { key: 'cum', label: 'Cum $', align: 'right', sortVal: (t) => t.cum, render: (t) => <MCNum v={t.cum} fmt="usd" /> },
     { key: 'runup', label: 'Run-up $', align: 'right', sortVal: (t) => t.runup, render: (t) => <MCNum v={t.runup} fmt="usd" /> },

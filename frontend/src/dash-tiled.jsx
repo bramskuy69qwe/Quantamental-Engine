@@ -383,15 +383,33 @@ const OpenPositionsPane = () => {
         selKey="_k"
         columns={[
           { key: 'sym',   label: 'SYM',   render: (r) => <span style={{ color: 'var(--qe-cyan)', fontWeight: 700 }}>{r.sym}</span> },
-          { key: 'side',  label: 'SIDE',  render: (r) => { const l = (r.side || '').toLowerCase().startsWith('l'); return <Badge tone={l ? 'ok' : 'err'}>{l ? 'LONG' : 'SHORT'}</Badge>; } },
+          { key: 'side',  label: 'SIDE',  filter: { label: 'SIDE' },
+            filterVal: (r) => ((r.side || '').toLowerCase().startsWith('l') ? 'LONG' : 'SHORT'),
+            render: (r) => { const l = (r.side || '').toLowerCase().startsWith('l'); return <Badge tone={l ? 'ok' : 'err'}>{l ? 'LONG' : 'SHORT'}</Badge>; } },
           { key: 'size',  label: 'SIZE',  align: 'right', render: (r) => _loc(r.size, 3) },
           { key: 'entry', label: 'ENTRY', align: 'right', cell: 'dim', render: (r) => _loc(r.entry, 2) },
           { key: 'mark',  label: 'MARK',  align: 'right', render: (r) => <PosMark r={r} /> },
-          { key: 'pnl',   label: 'PnL',   align: 'right', render: (r) => <PosPnl r={r} /> },
+          // PosPnl renders the LIVE upnl; the row's own `pnl` key is not what the
+          // cell shows, so sorting used a different number. Bucketing upnl also
+          // gives this tile its only stable facet (sym/side go homogeneous on a
+          // one-position book, every other column is continuous).
+          { key: 'pnl',   label: 'PnL',   align: 'right',
+            sortVal: (r) => (r.upnl != null ? r.upnl : null),
+            filter: { label: 'PnL' },
+            filterVal: (r) => ((r.upnl || 0) >= 0 ? 'UP' : 'DOWN'),
+            render: (r) => <PosPnl r={r} /> },
           { key: 'pct',   label: '%',     align: 'right', render: (r) => <PosPct r={r} /> },
-          { key: 'tpsl',  label: 'TP / SL', align: 'right', render: (r) => <span style={{ fontSize: '0.6rem' }}><span style={{ color: 'var(--qe-green)' }}>{r.tp == null ? '—' : _loc(r.tp, 2)}</span><span style={{ color: 'var(--qe-muted)' }}> / </span><span style={{ color: 'var(--qe-red)' }}>{r.sl == null ? '—' : _loc(r.sl, 2)}</span></span> },
+          { key: 'tpsl',  label: 'TP / SL', align: 'right', sort: false,
+            filter: { label: 'TP/SL' },
+            filterVal: (r) => (r.tp != null ? 'TP' : '') + (r.tp != null && r.sl != null ? '+' : '') + (r.sl != null ? 'SL' : '') || 'NONE',
+            render: (r) => <span style={{ fontSize: '0.6rem' }}><span style={{ color: 'var(--qe-green)' }}>{r.tp == null ? '—' : _loc(r.tp, 2)}</span><span style={{ color: 'var(--qe-muted)' }}> / </span><span style={{ color: 'var(--qe-red)' }}>{r.sl == null ? '—' : _loc(r.sl, 2)}</span></span> },
           { key: 'mm',    label: 'MFE/MAE', align: 'right', render: (r) => <PosMfeMae r={r} /> },
-          { key: 'age',   label: 'AGE',   align: 'right', sort: false, render: (r) => <PosAge r={r} /> },
+          // AGE had opted out of sort because 'age' is not a row field; PosAge
+          // parses entry_ms (a MISNAMED ISO string) at render. Sort on the parsed
+          // epoch so the header agrees with the cell — ascending = oldest first.
+          { key: 'age',   label: 'AGE',   align: 'right',
+            sortVal: (r) => { const t = Date.parse(r.entry_ms); return isNaN(t) ? null : t; },
+            render: (r) => <PosAge r={r} /> },
         ]}
         rows={rows}
         emptyMsg="No open positions"

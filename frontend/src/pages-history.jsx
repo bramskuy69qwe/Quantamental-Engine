@@ -11,8 +11,9 @@
      · close reason ← PUT /history/close_reason/{id} (LP_MANUAL_REASONS picker)
    Server-side paging + symbol search + date range (presets → date_from/to ISO);
    30s auto-refresh per the Jinja cadence. Named deviations: column-click server
-   sort is NOT wired (each table uses its default sort; DataList tools are off —
-   the server owns search/paging); the summary strip + CSV export cover the
+   sort is NOT wired — DataList's tools are all ON (operator directive
+   2026-07-25) but they act on the LOADED PAGE, while the search box above the
+   tabs is the server-side one that spans every page; the summary strip + CSV export cover the
    LOADED page of rows, not the full dataset; pnl %, M·R and the MFE/MAE heat
    cell are computed client-side from the row's own fields (P8 wave 2 —
    restored per audit L3-F2; the pre-wave header FALSELY claimed M·R was
@@ -244,17 +245,34 @@ const HistoryPage = () => {
       { key: 'symbol', label: 'SYM', render: (r) => <span style={{ color: 'var(--qe-cyan)', fontWeight: 700 }}>{r.symbol}</span> },
       { key: 'direction', label: 'SIDE', render: (r) => <Badge tone={r.direction === 'LONG' ? 'ok' : 'err'}>{r.direction}</Badge> },
       { key: 'model_name', label: 'MODEL', render: (r) => <span style={{ color: 'var(--qe-sub)' }}>{r.model_name || '—'}</span> },
-      { key: 'plan', label: 'PLAN', sort: false, render: (r) => r.calc_id ? <DevBadge pos={{ ...r, amendment_count: r.cumulative_amendment_count }} /> : <span style={{ color: 'var(--qe-muted)' }}>—</span> },
+      { key: 'plan', label: 'PLAN',
+        // ascending = worst-first (off-plan at the top) — this is a triage column.
+        sortVal: (r) => (r.calc_id ? (({ red: 0, yellow: 1, green: 2 })[r.deviation_badge] != null
+          ? ({ red: 0, yellow: 1, green: 2 })[r.deviation_badge] : 3) : 4),
+        filter: { label: 'PLAN' },
+        filterVal: (r) => (r.calc_id ? (((LP_DEV_META || {})[r.deviation_badge] || {}).label || '—') : 'UNPLANNED'),
+        render: (r) => r.calc_id ? <DevBadge pos={{ ...r, amendment_count: r.cumulative_amendment_count }} /> : <span style={{ color: 'var(--qe-muted)' }}>—</span> },
       { key: 'quantity', label: 'QTY', align: 'right', render: (r) => _ptFmtSz(r.quantity) },
       { key: 'entry_price', label: 'ENTRY', align: 'right', render: (r) => <span style={{ color: 'var(--qe-sub)' }}>{lpPx(r.entry_price)}</span> },
       { key: 'exit_price', label: 'EXIT', align: 'right', render: (r) => <span style={{ color: 'var(--qe-sub)' }}>{lpPx(r.exit_price)}</span> },
       { key: 'net_pnl', label: 'NET', align: 'right', render: (r) => <span style={{ color: lpSgn(r.net_pnl), fontWeight: 700 }}>{lpUsd(r.net_pnl)}</span> },
-      { key: 'pct', label: '%', align: 'right', sort: false, render: (r) => {
+      { key: 'pct', label: '%', align: 'right',
+        sortVal: (r) => { const den = (r.entry_price || 0) * (r.quantity || 0); return den ? (r.net_pnl / den) * 100 : null; },
+        render: (r) => {
           const den = (r.entry_price || 0) * (r.quantity || 0);
           const pct = den ? (r.net_pnl / den) * 100 : null;
           return pct == null ? '—' : <span style={{ color: lpSgn(pct) }}>{lpPct(pct)}</span>;
         } },
-      { key: 'mr', label: 'M·R', align: 'right', sort: false, render: (r) => {
+      { key: 'mr', label: 'M·R', align: 'right',
+        // mirrors the render exactly: unknown -> null (sorts last), measured
+        // zero-MAE with positive MFE -> Infinity (the rendered '∞').
+        sortVal: (r) => {
+          if (r.mae == null || r.mfe == null) return null;
+          const mae = Math.abs(+r.mae);
+          if (!mae) return (+r.mfe) > 0 ? Infinity : null;
+          return (+r.mfe || 0) / mae;
+        },
+        render: (r) => {
           // M·R = MFE / |MAE| (the Jinja twin's column, restored L3-F2).
           // NULL mae/mfe = UNKNOWN → '—'; ∞ only on a MEASURED zero MAE
           // with positive MFE (wave-2 audit F2 — the ||0 coercion
@@ -269,7 +287,10 @@ const HistoryPage = () => {
           const mr = (+r.mfe || 0) / mae;
           return <span style={{ color: mr >= 2 ? 'var(--qe-green)' : mr >= 1 ? 'var(--qe-text)' : 'var(--qe-red)' }}>{mr.toFixed(2)}</span>;
         } },
-      { key: 'heat', label: 'MAE◂ ▸MFE', align: 'right', sort: false, render: (r) => <HistHeat mfe={r.mfe} mae={r.mae} /> },
+      // the bar's visual weight is the adverse excursion — sort on that.
+      { key: 'heat', label: 'MAE◂ ▸MFE', align: 'right',
+        sortVal: (r) => (r.mae == null ? null : Math.abs(+r.mae)),
+        render: (r) => <HistHeat mfe={r.mfe} mae={r.mae} /> },
       { key: 'total_fees', label: 'FEE', align: 'right', render: (r) => <span style={{ color: 'var(--qe-sub)' }}>{_ptFmtN(r.total_fees, 4)}</span> },
       { key: 'hold_time_ms', label: 'DUR', render: (r) => <span style={{ color: 'var(--qe-muted)' }}>{_hDur(r.hold_time_ms)}</span> },
       { key: 'exit_reason', label: 'REASON', render: exitCell },
@@ -330,7 +351,10 @@ const HistoryPage = () => {
       { key: 'source', label: 'SRC', render: (r) => <span style={{ color: 'var(--qe-muted)' }}>{r.source || ''}</span> },
       /* the event's SUBSTANCE — restored L3-F3 (the door parses _payload
          per row; the tab consumed only _symbol) */
-      { key: 'summary', label: 'SUMMARY', sort: false, render: (r) => <span style={{ color: 'var(--qe-sub)', fontSize: '0.6rem', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', verticalAlign: 'bottom' }}>{_hEvtSummary(r) || '—'}</span> },
+      { key: 'summary', label: 'SUMMARY',
+        sortVal:   (r) => _hEvtSummary(r) || '',
+        searchVal: (r) => _hEvtSummary(r) || '',
+        render: (r) => <span style={{ color: 'var(--qe-sub)', fontSize: '0.6rem', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', verticalAlign: 'bottom' }}>{_hEvtSummary(r) || '—'}</span> },
     ],
     pretrade: [
       { key: 'timestamp', label: 'TIME', render: (r) => <span style={{ color: 'var(--qe-muted)' }}>{String(r.timestamp || '').slice(0, 16).replace('T', ' ')}</span> },
@@ -386,15 +410,17 @@ const HistoryPage = () => {
               foot={qeFootState({ loading: net.ms == null && !net.err, err: net.err, hasData: rows.length > 0, ms: net.ms, retrying: true })}>
               <div style={{ flex: 1, overflow: 'auto' }}>
                 {loading && !data ? <div style={{ padding: 10 }}><Spinner label="loading" /></div> :
-                 // design #1: this table is SERVER-PAGED (rows = one page). SEARCH
-                 // stays server-owned — the page's symbol input (→ server `search`)
-                 // covers the FULL set across pages; a client search box would
-                 // silently miss a symbol sitting on another page. FILTER (the
-                 // SIDE/REASON facets the operator wanted from the design) + SORT
-                 // are enabled: they act on the loaded page (up to 100 rows), an
-                 // understood in-view refinement. Global server-wired facets/sort
-                 // is a named follow-up.
-                 <DataList dense tools={{ search: false, sort: true, filter: true }}
+                 // design #1: this table is SERVER-PAGED (rows = one page). All
+                 // THREE tools are on (operator directive 2026-07-25) and all
+                 // three act on the LOADED page — an in-view refinement.
+                 // SEARCH was previously suppressed here to avoid implying it
+                 // spanned the dataset; it is now enabled and COMPLEMENTS the
+                 // symbol input above the tabs rather than duplicating it: that
+                 // one is server-side and narrows the result set across every
+                 // page, this one refines the page in view. Keep both — dropping
+                 // the server box would silently miss rows on other pages.
+                 // Global server-wired facets/sort remains a named follow-up.
+                 <DataList dense tools={{ search: true, sort: true, filter: true }}
                    columns={COLS[tab]} rows={rows}
                    selKey="id" selected={tab === 'positions' && sel ? sel.id : null}
                    onClick={tab === 'positions' ? (r) => openDrill(r) : undefined}
@@ -441,14 +467,20 @@ const HistoryPage = () => {
                   <SecLbl rule>Fills</SecLbl>
                   {drill == null ? <Spinner label="loading" /> :
                    !drill.fills.length ? <div className="qe-mono" style={{ fontSize: '0.58rem', color: 'var(--qe-muted)' }}>No fills recorded for this position.</div> : (
-                    // operator-bug #2: drilldown fills — tools off; a handful of
-                    // rows inside a modal, no search/sort need.
-                    <DataList dense tools={false} selKey="id" columns={[
+                    // drilldown fills. tools were off here ("a handful of rows
+                    // inside a modal"); lifted 2026-07-25 per the operator
+                    // directive — a scaled-in position has many legs, and that
+                    // is exactly where finding one fill pays off.
+                    <DataList dense selKey="id" columns={[
                       { key: 'timestamp_ms', label: 'TIME', render: (f) => <span style={{ color: 'var(--qe-muted)' }}>{_hFmtTs(f.timestamp_ms)}</span> },
                       { key: 'is_close', label: 'ACT', render: (f) => <Badge tone={f.is_close ? 'mute' : 'info'}>{f.is_close ? 'C' : 'O'}</Badge> },
                       { key: 'price', label: 'PRICE', align: 'right', render: (f) => lpPx(f.price) },
                       { key: 'quantity', label: 'QTY', align: 'right' },
-                      { key: 'exec', label: 'EXEC LINK', sort: false, render: (f) =>
+                      { key: 'exec', label: 'EXEC LINK',
+                        sortVal:   (f) => String(f.exec_link_status || ''),
+                        filter:    { label: 'EXEC' },
+                        filterVal: (f) => String(f.exec_link_status || '—').toUpperCase(),
+                        render: (f) =>
                           f.is_close || !f.calc_id ? <span style={{ color: 'var(--qe-muted)' }}>—</span>
                           : f.exec_link_status === 'linked' ? <Badge tone="ok">● LINKED</Badge>
                           : f.exec_link_status === 'partial' ? <Badge tone="warn">⚠ {f.exec_match_count}/1</Badge>

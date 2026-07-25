@@ -628,12 +628,21 @@ const RegimeTabOverview = ({ current, curFoot, mults, multsFoot, onGoBackfill })
             selected={selChange}
             columns={[
               { key: 'date', label: 'DATE', cell: 'dim' },
-              { key: 'label', label: 'REGIME', render: (r) => { const info = REGIME_INFO[r.label] || REGIME_INFO.neutral; return <span style={{ color: info.color, fontWeight: 700 }}>{info.label}</span>; } },
-              { key: 'mode', label: 'MODE', cell: 'dim' },
-              { key: 'vix', label: 'VIX', align: 'right', render: (r) => { const v = sigOf(r, 'vix_close'); return <span style={{ color: vixColor(v) }}>{fmtSig(v, 1)}</span>; } },
-              { key: 'hy', label: 'HY SPREAD', align: 'right', render: (r) => fmtSig(sigOf(r, 'hy_spread'), 2, '%') },
-              { key: 'rvol', label: 'RVOL', align: 'right', render: (r) => fmtSig(sigOf(r, 'btc_rvol_ratio'), 2) },
-              { key: 'funding', label: 'FUNDING', align: 'right', render: (r) => { const v = sigOf(r, 'avg_funding'); return v == null ? <span style={{ color: 'var(--qe-muted)' }}>—</span> : <span style={{ color: v >= 0 ? 'var(--qe-green)' : 'var(--qe-red)' }}>{(v * 100).toFixed(3)}%</span>; } },
+              { key: 'label', label: 'REGIME', filter: true,
+                filterVal: (r) => (REGIME_INFO[r.label] || REGIME_INFO.neutral).label,
+                render: (r) => { const info = REGIME_INFO[r.label] || REGIME_INFO.neutral; return <span style={{ color: info.color, fontWeight: 700 }}>{info.label}</span>; } },
+              { key: 'mode', label: 'MODE', cell: 'dim', filter: true },
+              // vix/hy/rvol/funding are NOT row fields — sigOf() reads the row's
+              // signal map at render time, so every one of these headers sorted on
+              // undefined. sortVal exposes the real number.
+              { key: 'vix', label: 'VIX', align: 'right', sortVal: (r) => sigOf(r, 'vix_close'),
+                render: (r) => { const v = sigOf(r, 'vix_close'); return <span style={{ color: vixColor(v) }}>{fmtSig(v, 1)}</span>; } },
+              { key: 'hy', label: 'HY SPREAD', align: 'right', sortVal: (r) => sigOf(r, 'hy_spread'),
+                render: (r) => fmtSig(sigOf(r, 'hy_spread'), 2, '%') },
+              { key: 'rvol', label: 'RVOL', align: 'right', sortVal: (r) => sigOf(r, 'btc_rvol_ratio'),
+                render: (r) => fmtSig(sigOf(r, 'btc_rvol_ratio'), 2) },
+              { key: 'funding', label: 'FUNDING', align: 'right', sortVal: (r) => sigOf(r, 'avg_funding'),
+                render: (r) => { const v = sigOf(r, 'avg_funding'); return v == null ? <span style={{ color: 'var(--qe-muted)' }}>—</span> : <span style={{ color: v >= 0 ? 'var(--qe-green)' : 'var(--qe-red)' }}>{(v * 100).toFixed(3)}%</span>; } },
             ]}
             rows={changes}
             emptyMsg="no regime transitions in window"
@@ -770,7 +779,8 @@ const RegimeTabBackfill = ({ job, onStart }) => {
             <DataList
               selKey="signal_name"              columns={[
                 { key: 'signal_name', label: 'SIGNAL', render: (r) => <span style={{ color: (r.count || 0) > 0 ? 'var(--qe-text)' : 'var(--qe-sub)', fontWeight: 600 }}>{labelOf(r.signal_name)}</span> },
-                { key: 'source', label: 'SOURCE', cell: 'dim' },
+                { key: 'source', label: 'SOURCE', cell: 'dim', filter: true,
+                  filterVal: (r) => String(r.source || '—').toUpperCase() },
                 { key: 'min_date', label: 'FROM', cell: 'dim', render: (r) => r.min_date || <span style={{ color: 'var(--qe-muted)' }}>—</span> },
                 { key: 'max_date', label: 'TO', cell: 'dim', render: (r) => r.max_date || <span style={{ color: 'var(--qe-muted)' }}>—</span> },
                 { key: 'count', label: 'ROWS', align: 'right', render: (r) => (r.count || 0) > 0
@@ -950,7 +960,15 @@ const RegimeTabNews = () => {
               selKey="id" dense              onClick={(n) => { setNewsView('magazine'); setExpanded(n.id); }}
               columns={[
                 { key: 'published_at', label: 'TIME', cell: 'dim', render: (n) => _rgRel(n.published_at, nowMs) },
-                { key: 'source', label: 'SRC', render: (n) => <span style={{ ...srcPill(n.source), padding: '1px 5px', fontSize: '0.5rem', fontWeight: 700, fontFamily: 'var(--qe-mono)', letterSpacing: '0.06em' }}>{(n.source || '?').toUpperCase()}</span> },
+                { key: 'source', label: 'SRC', filter: true,
+                  filterVal: (n) => (n.source || '?').toUpperCase(),
+                  render: (n) => <span style={{ ...srcPill(n.source), padding: '1px 5px', fontSize: '0.5rem', fontWeight: 700, fontFamily: 'var(--qe-mono)', letterSpacing: '0.06em' }}>{(n.source || '?').toUpperCase()}</span> },
+                // The engine's news rows carry CATEGORY (not impact — see the
+                // Magazine cards, which already render it). Surfacing it as a
+                // column gives this pane a second, genuinely categorical facet.
+                { key: 'category', label: 'CAT', cell: 'dim', filter: true,
+                  filterVal: (n) => (n.category || 'news').toUpperCase(),
+                  render: (n) => <span style={{ fontSize: '0.52rem', color: 'var(--qe-sub)', fontFamily: 'var(--qe-mono)', letterSpacing: '0.05em' }}>{(n.category || 'news').toUpperCase()}</span> },
                 { key: 'headline', label: 'HEADLINE', render: (n) => <span style={{ color: 'var(--qe-text)', fontWeight: 600 }}>{n.headline}</span> },
                 { key: 'tickers', label: 'TICKERS', cell: 'dim', render: (n) => <span style={{ fontFamily: 'var(--qe-mono)', fontSize: '0.56rem' }}>{n.tickers || '—'}</span> },
               ]}
