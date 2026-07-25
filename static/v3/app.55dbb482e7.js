@@ -2994,6 +2994,27 @@ const ActiveParamsPane = () => {
     /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, /* @__PURE__ */ React.createElement(FieldList, { rows }), preset ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "qe-divider-h" }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6 } }, /* @__PURE__ */ React.createElement(Badge, { tone: "info" }, "PRESET: ", String(preset).toUpperCase()))) : null)
   );
 };
+const DashNewsTicker = () => {
+  const [news, setNews] = React.useState(null);
+  React.useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const d = await _ptJson("/api/news/feed?limit=40");
+        if (alive) setNews(Array.isArray(d) ? d : d.news || d.items || []);
+      } catch (e) {
+      }
+    };
+    load();
+    const t = setInterval(load, 6e4);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, []);
+  if (!news || !news.length) return null;
+  return /* @__PURE__ */ React.createElement(NewsTickerBar, { news, meta: "NEWS FEED" });
+};
 const EngineLogBody = () => {
   const d = useDash();
   const rows = d.log;
@@ -3082,7 +3103,7 @@ const DashTiled = () => {
     display: "flex",
     flexDirection: "column",
     overflow: "hidden"
-  } }, /* @__PURE__ */ React.createElement(TopNavStd, { page: "Dashboard", variant: "line", dense: true }), /* @__PURE__ */ React.createElement(PageHeader, { title: "Dashboard", subtitle: "live positions \xB7 equity \xB7 risk \xB7 open orders" }, /* @__PURE__ */ React.createElement(DashHeaderDots, null)), /* @__PURE__ */ React.createElement(DashHaltBanner, null), /* @__PURE__ */ React.createElement(WatchlistTape, null), /* @__PURE__ */ React.createElement(TiledGrid, null), /* @__PURE__ */ React.createElement(StatusFooter, null));
+  } }, /* @__PURE__ */ React.createElement(TopNavStd, { page: "Dashboard", variant: "line", dense: true }), /* @__PURE__ */ React.createElement(PageHeader, { title: "Dashboard", subtitle: "live positions \xB7 equity \xB7 risk \xB7 open orders" }, /* @__PURE__ */ React.createElement(DashHeaderDots, null)), /* @__PURE__ */ React.createElement(DashHaltBanner, null), /* @__PURE__ */ React.createElement(WatchlistTape, null), /* @__PURE__ */ React.createElement(TiledGrid, null), /* @__PURE__ */ React.createElement(DashNewsTicker, null), /* @__PURE__ */ React.createElement(StatusFooter, null));
 };
 Object.assign(window, { DashTiled, QE_DASH });
 
@@ -3227,7 +3248,9 @@ const CfgAccountForm = ({ account, detail, onReload }) => {
     weekly_loss_warning_pct: p.weekly_loss_warning_pct != null ? String(p.weekly_loss_warning_pct) : "",
     weekly_loss_limit_pct: p.weekly_loss_limit_pct != null ? String(p.weekly_loss_limit_pct) : "",
     max_dd_warning_pct: p.max_dd_warning_pct != null ? String(p.max_dd_warning_pct) : "",
-    max_dd_limit_pct: p.max_dd_limit_pct != null ? String(p.max_dd_limit_pct) : ""
+    max_dd_limit_pct: p.max_dd_limit_pct != null ? String(p.max_dd_limit_pct) : "",
+    timezone: s.timezone || ""
+    // config-3 (account_settings, not params)
   }));
   const [busy, setBusy] = React.useState(null);
   const [msg, setMsg] = React.useState(null);
@@ -3260,7 +3283,10 @@ const CfgAccountForm = ({ account, detail, onReload }) => {
         max_position_count: form.max_position_count.trim() || null,
         max_correlated_exposure: form.max_correlated_exposure.trim() || null,
         // config-1: warn/hard-stop ratios, sent PAIRWISE — see _cfgPair.
-        ...cfgRatioPairs(form, p)
+        ...cfgRatioPairs(form, p),
+        // config-3: blank keeps the stored value; the endpoint ZoneInfo-validates
+        // and rejects an unknown zone rather than silently storing it.
+        timezone: form.timezone.trim() || null
       });
       const ok = r.ok && /saved/i.test(r.text);
       setMsg({ text: r.text || (r.ok ? "Saved." : "save failed"), tone: ok ? "ok" : "err" });
@@ -3304,7 +3330,16 @@ const CfgAccountForm = ({ account, detail, onReload }) => {
     setBusy(null);
   };
   const envTone = account.environment === "live" ? "err" : account.environment === "testnet" ? "info" : "blue";
-  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.9rem", fontWeight: 700 } }, account.name), account.is_active ? /* @__PURE__ */ React.createElement(Badge, { tone: "ok" }, "Active") : null, /* @__PURE__ */ React.createElement(Badge, { tone: envTone }, (account.environment || "live").toUpperCase()), /* @__PURE__ */ React.createElement("div", { className: "qe-grow" }), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", onClick: doTest, disabled: !!busy }, busy === "test" ? /* @__PURE__ */ React.createElement(Spinner, { size: "0.7rem", label: "testing" }) : "Test Connection")), /* @__PURE__ */ React.createElement(SecLbl, { rule: true }, "Credentials"), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Exchange"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.exchange, onChange: set("exchange"), placeholder: "binance" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Market Type"), /* @__PURE__ */ React.createElement("select", { className: "qe-input qe-select", value: form.market_type, onChange: set("market_type") }, /* @__PURE__ */ React.createElement("option", { value: "future" }, "USD-M Futures"), /* @__PURE__ */ React.createElement("option", { value: "spot" }, "Spot"))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Environment"), /* @__PURE__ */ React.createElement("select", { className: "qe-input qe-select", value: form.environment, onChange: set("environment") }, /* @__PURE__ */ React.createElement("option", { value: "live" }, "Live"), /* @__PURE__ */ React.createElement("option", { value: "paper" }, "Paper"), /* @__PURE__ */ React.createElement("option", { value: "testnet" }, "Testnet"))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "API Key"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", type: "password", value: form.api_key, onChange: set("api_key"), placeholder: "Leave blank to keep current" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "API Secret"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", type: "password", value: form.api_secret, onChange: set("api_secret"), placeholder: "Leave blank to keep current" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Broker Account ID"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.broker_account_id, onChange: set("broker_account_id") }))), /* @__PURE__ */ React.createElement(SecLbl, { rule: true }, "Risk Parameters \xB7 sizing (account_params)"), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Risk / Trade (fraction)"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.individual_risk_per_trade, onChange: set("individual_risk_per_trade"), placeholder: "0.01" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Weekly Loss (fraction)"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_w_loss_percent, onChange: set("max_w_loss_percent"), placeholder: "0.05" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Drawdown (fraction)"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_dd_percent, onChange: set("max_dd_percent"), placeholder: "0.10" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Exposure \xD7"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_exposure, onChange: set("max_exposure"), placeholder: "5.0" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Positions"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_position_count, onChange: set("max_position_count"), placeholder: "10" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Corr. Exposure (fraction)"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_correlated_exposure, onChange: set("max_correlated_exposure"), placeholder: "0.50" }))), /* @__PURE__ */ React.createElement(SecLbl, { rule: true, right: /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)", fontSize: "0.54rem" } }, "fraction of the budget above \xB7 warn < limit") }, "Warn & Hard-stop ratios (account_params)"), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, marginBottom: 4 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "DD Warn \xD7 Max DD"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_dd_warning_pct, onChange: set("max_dd_warning_pct"), placeholder: "0.80" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "DD Hard-stop \xD7 Max DD"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_dd_limit_pct, onChange: set("max_dd_limit_pct"), placeholder: "0.95" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Weekly Warn \xD7 Max W. Loss"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.weekly_loss_warning_pct, onChange: set("weekly_loss_warning_pct"), placeholder: "0.80" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Weekly Hard-stop \xD7 Max W. Loss"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.weekly_loss_limit_pct, onChange: set("weekly_loss_limit_pct"), placeholder: "0.95" }))), /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-muted)", margin: "0 0 10px", lineHeight: 1.5 } }, "Range 0.50\u20130.99 (hard-stop to 1.00); warn must stay below its hard-stop or the save is rejected. Leave a field blank to keep its stored value \u2014 edit either half of a pair and both are sent.", /* @__PURE__ */ React.createElement("br", null), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, "WEEKLY"), " drives the live weekly state machine.", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, " DD"), " is a FALLBACK only \u2014 the rolling-DD path uses the absolute thresholds below, and these two are read solely if that path errors."), /* @__PURE__ */ React.createElement(SecLbl, { rule: true, right: /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)", fontSize: "0.54rem" } }, "READ-ONLY \xB7 set via Presets tab") }, "Enforcement & Recovery \xB7 DD posture (account_settings)"), /* @__PURE__ */ React.createElement(FieldList, { cols: 2, rows: [
+  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.9rem", fontWeight: 700 } }, account.name), account.is_active ? /* @__PURE__ */ React.createElement(Badge, { tone: "ok" }, "Active") : null, /* @__PURE__ */ React.createElement(Badge, { tone: envTone }, (account.environment || "live").toUpperCase()), /* @__PURE__ */ React.createElement("div", { className: "qe-grow" }), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", onClick: doTest, disabled: !!busy }, busy === "test" ? /* @__PURE__ */ React.createElement(Spinner, { size: "0.7rem", label: "testing" }) : "Test Connection")), /* @__PURE__ */ React.createElement(SecLbl, { rule: true }, "Credentials"), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Exchange"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.exchange, onChange: set("exchange"), placeholder: "binance" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Market Type"), /* @__PURE__ */ React.createElement("select", { className: "qe-input qe-select", value: form.market_type, onChange: set("market_type") }, /* @__PURE__ */ React.createElement("option", { value: "future" }, "USD-M Futures"), /* @__PURE__ */ React.createElement("option", { value: "spot" }, "Spot"))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Environment"), /* @__PURE__ */ React.createElement("select", { className: "qe-input qe-select", value: form.environment, onChange: set("environment") }, /* @__PURE__ */ React.createElement("option", { value: "live" }, "Live"), /* @__PURE__ */ React.createElement("option", { value: "paper" }, "Paper"), /* @__PURE__ */ React.createElement("option", { value: "testnet" }, "Testnet"))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "API Key"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", type: "password", value: form.api_key, onChange: set("api_key"), placeholder: "Leave blank to keep current" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "API Secret"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", type: "password", value: form.api_secret, onChange: set("api_secret"), placeholder: "Leave blank to keep current" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Broker Account ID"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.broker_account_id, onChange: set("broker_account_id") })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Timezone (IANA)"), /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      className: "qe-input",
+      value: form.timezone,
+      onChange: set("timezone"),
+      placeholder: "Asia/Bangkok",
+      title: "Every timestamp on the page renders against this. IANA name, e.g. UTC or Asia/Bangkok \u2014 the engine validates it."
+    }
+  ))), /* @__PURE__ */ React.createElement(SecLbl, { rule: true }, "Risk Parameters \xB7 sizing (account_params)"), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Risk / Trade (fraction)"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.individual_risk_per_trade, onChange: set("individual_risk_per_trade"), placeholder: "0.01" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Weekly Loss (fraction)"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_w_loss_percent, onChange: set("max_w_loss_percent"), placeholder: "0.05" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Drawdown (fraction)"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_dd_percent, onChange: set("max_dd_percent"), placeholder: "0.10" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Exposure \xD7"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_exposure, onChange: set("max_exposure"), placeholder: "5.0" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Positions"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_position_count, onChange: set("max_position_count"), placeholder: "10" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Corr. Exposure (fraction)"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_correlated_exposure, onChange: set("max_correlated_exposure"), placeholder: "0.50" }))), /* @__PURE__ */ React.createElement(SecLbl, { rule: true, right: /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)", fontSize: "0.54rem" } }, "fraction of the budget above \xB7 warn < limit") }, "Warn & Hard-stop ratios (account_params)"), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, marginBottom: 4 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "DD Warn \xD7 Max DD"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_dd_warning_pct, onChange: set("max_dd_warning_pct"), placeholder: "0.80" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "DD Hard-stop \xD7 Max DD"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_dd_limit_pct, onChange: set("max_dd_limit_pct"), placeholder: "0.95" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Weekly Warn \xD7 Max W. Loss"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.weekly_loss_warning_pct, onChange: set("weekly_loss_warning_pct"), placeholder: "0.80" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Weekly Hard-stop \xD7 Max W. Loss"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.weekly_loss_limit_pct, onChange: set("weekly_loss_limit_pct"), placeholder: "0.95" }))), /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-muted)", margin: "0 0 10px", lineHeight: 1.5 } }, "Range 0.50\u20130.99 (hard-stop to 1.00); warn must stay below its hard-stop or the save is rejected. Leave a field blank to keep its stored value \u2014 edit either half of a pair and both are sent.", /* @__PURE__ */ React.createElement("br", null), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, "WEEKLY"), " drives the live weekly state machine.", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, " DD"), " is a FALLBACK only \u2014 the rolling-DD path uses the absolute thresholds below, and these two are read solely if that path errors."), /* @__PURE__ */ React.createElement(SecLbl, { rule: true, right: /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)", fontSize: "0.54rem" } }, "READ-ONLY \xB7 set via Presets tab") }, "Enforcement & Recovery \xB7 DD posture (account_settings)"), /* @__PURE__ */ React.createElement(FieldList, { cols: 2, rows: [
     { label: "Strategy preset", value: (s.strategy_preset || "custom").toUpperCase(), color: "cyan" },
     { label: "DD window", value: s.dd_rolling_window_days != null ? s.dd_rolling_window_days + "d" : "\u2014" },
     { label: "DD warn", value: _cfgPct(s.dd_warning_threshold), color: "amber" },
@@ -3662,6 +3697,9 @@ const CfgConnectionsTab = () => {
 const CfgPresetsTab = () => {
   const [cat, setCat] = React.useState(null);
   const [active, setActive] = React.useState(null);
+  const [accts, setAccts] = React.useState([]);
+  const [target, setTarget] = React.useState(null);
+  const tgtRef = React.useRef(null);
   const [current, setCurrent] = React.useState("");
   const [busy, setBusy] = React.useState(null);
   const [msg, setMsg] = React.useState(null);
@@ -3674,9 +3712,14 @@ const CfgPresetsTab = () => {
       setCat(pc.presets || []);
       const act = (accounts || []).find((a) => a.is_active) || null;
       setActive(act);
-      if (act) {
+      setAccts(accounts || []);
+      if (!(tgtRef.current != null && (accounts || []).some((a) => a.id === tgtRef.current))) {
+        tgtRef.current = act ? act.id : null;
+      }
+      setTarget(tgtRef.current);
+      if (tgtRef.current != null) {
         try {
-          const d = await _cfgJson("/api/config/account/" + act.id);
+          const d = await _cfgJson("/api/config/account/" + tgtRef.current);
           setCurrent((d.settings || {}).strategy_preset || "");
         } catch (e) {
           setCurrent("");
@@ -3691,9 +3734,14 @@ const CfgPresetsTab = () => {
     load();
   }, [load]);
   const apply = async (name) => {
-    const target = active ? active.name : "the active account";
+    const tgt = accts.find((a) => a.id === target) || active;
+    if (!tgt) {
+      setMsg({ text: "no account selected", tone: "err" });
+      return;
+    }
+    const label = tgt.name + (tgt.is_active ? " (ACTIVE \u2014 currently trading)" : " (not active)");
     if (!window.confirm(
-      `Apply preset ${name.toUpperCase()} to ${target}?
+      `Apply preset ${name.toUpperCase()} to ${label}?
 
 FULL apply \u2014 writes BOTH risk stores:
 \xB7 DD posture (window / warn / limit / recovery + analytics period)
@@ -3704,9 +3752,9 @@ Enforcement mode is NOT changed.`
     setBusy(name);
     setMsg(null);
     try {
-      const r = await _cfgPostJson("/api/config/apply-preset", { preset: name });
+      const r = await _cfgPostJson("/api/config/apply-preset", { preset: name, account_id: tgt.id });
       if (r.ok && r.data && r.data.status === "ok") {
-        setMsg({ text: `preset ${name.toUpperCase()} applied to ${target}`, tone: "ok" });
+        setMsg({ text: `preset ${name.toUpperCase()} applied to ${tgt.name}` + (r.data.is_active ? "" : " \u2014 NOT the active account"), tone: "ok" });
         await load();
       } else {
         setMsg({ text: r.data && r.data.error || "apply failed", tone: "err" });
@@ -3726,7 +3774,22 @@ Enforcement mode is NOT changed.`
       onRefresh: load,
       foot: qeFootState({ loading: net.ms == null && !net.err, err: net.err, hasData: (cat || []).length > 0, ms: net.ms })
     },
-    /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.6rem", color: "var(--qe-sub)", marginBottom: 8, lineHeight: 1.5 } }, "Apply is FULL: writes the DD posture (account_settings \u2014 the store the DD gate reads) AND the sizing envelope (account_params). Applies to the active account", active ? /* @__PURE__ */ React.createElement("span", null, " \u2014 ", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, active.name)) : null, ". Enforcement mode never changes here."),
+    /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.6rem", color: "var(--qe-sub)", marginBottom: 8, lineHeight: 1.5 } }, "Apply is FULL: writes the DD posture (account_settings \u2014 the store the DD gate reads) AND the sizing envelope (account_params). Enforcement mode never changes here."),
+    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 10 } }, /* @__PURE__ */ React.createElement(Lbl, null, "Apply to"), /* @__PURE__ */ React.createElement(
+      "select",
+      {
+        className: "qe-input qe-select",
+        style: { height: 22, fontSize: "0.62rem", width: 240 },
+        value: target != null ? String(target) : "",
+        onChange: (e) => {
+          const v = Number(e.target.value);
+          tgtRef.current = v;
+          setTarget(v);
+          load();
+        }
+      },
+      accts.map((a) => /* @__PURE__ */ React.createElement("option", { key: a.id, value: String(a.id) }, a.name, a.is_active ? " \u2014 ACTIVE" : ""))
+    ), target != null && active && target !== active.id ? /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-amber)" } }, "writing a NON-active account \u2014 the running account is unaffected") : null),
     cat == null ? /* @__PURE__ */ React.createElement(Spinner, { label: "loading" }) : !cat.length ? /* @__PURE__ */ React.createElement(EmptyState, { tone: "warn", glyph: "\u2205", msg: "No presets", hint: "Engine unreachable?" }) : /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 6 } }, cat.map((p) => {
       const dd = p.dd || {}, sz = p.sizing || {};
       const isCur = current === p.name;
@@ -4603,9 +4666,15 @@ const PreTradePage = () => {
       ...Object.entries(c.correlated_exposure).map(([sector, v]) => ({
         label: sector,
         value: _ptSign(v),
-        color: v > 0 ? "green" : v < 0 ? "red" : void 0
+        color: v > 0 ? "green" : v < 0 ? "red" : void 0,
+        meta: c.correlated_cap ? `${_ptFmtN(c.correlated_cap, 0)} cap` : void 0
       })),
-      { label: `New (${c.ticker})`, value: _ptSign(c.new_sector_exposure) + " USDT", emphasis: true }
+      {
+        label: `New (${c.ticker})`,
+        value: _ptSign(c.new_sector_exposure) + " USDT",
+        emphasis: true,
+        meta: c.correlated_cap ? `${_ptFmtN(c.correlated_cap, 0)} cap` : void 0
+      }
     ] }))
   )), /* @__PURE__ */ React.createElement(GridItem, { x: 17, y: 12, w: 7, h: 6, minW: 5, minH: 4 }, /* @__PURE__ */ React.createElement(
     Pane,

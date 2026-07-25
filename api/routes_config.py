@@ -39,6 +39,12 @@ async def api_config_account(account_id: int):
             "dd_recovery_threshold", "dd_enforcement_mode",
             "weekly_pnl_warning_threshold", "weekly_pnl_limit_threshold",
             "weekly_pnl_enforcement_mode", "strategy_preset",
+            # config-3 (Meridian audit): every timestamp the operator reads is
+            # rendered against this, and it was surfaced NOWHERE in v3 — a wrong
+            # timezone stayed invisible until timestamps looked off. Real
+            # per-account setting, ZoneInfo-validated by the same
+            # POST /accounts/{id}/update the Config form already posts to.
+            "timezone",
         )}
     except Exception:
         settings = {}
@@ -47,10 +53,25 @@ async def api_config_account(account_id: int):
 
 @router.post("/api/config/apply-preset")
 async def api_config_apply_preset(request: Request):
-    """Apply a strategy preset to the ACTIVE account (v3.0 P2 — FULL scope): write
-    BOTH the DD posture (account_settings via strategy_presets.apply_preset) AND
-    the sizing envelope (account_params via the validated param-save path).
-    EXCLUDES the enforcement-mode flip (that keeps its own confirm gate)."""
+    """Apply a strategy preset to an account (v3.0 P2 — FULL scope): write BOTH
+    the DD posture (account_settings via strategy_presets.apply_preset) AND the
+    sizing envelope (account_params via the validated param-save path).
+    EXCLUDES the enforcement-mode flip (that keeps its own confirm gate).
+
+    config-2 (2026-07-25 Meridian audit): the target is now the OPTIONAL body
+    field `account_id`, defaulting to the active account. It used to be
+    hard-wired to `app_state.active_account_id`, which meant an account that had
+    never been activated could not be given a preset at all — while every other
+    read and write on that tab is per-selected-account via
+    /api/config/account/{id}. Configuring a second account before switching to
+    it is a normal workflow.
+
+    The live-state coupling is the sharp edge here and is handled below: the
+    in-memory `app_state.params` mirror and the `risk:params_updated` event
+    describe the ACTIVE account only. Writing another account's row must not
+    touch either, or the running account would start sizing off a preset the
+    operator applied to a different one.
+    """
     from core.strategy_presets import apply_preset, STRATEGY_PRESETS, PRESET_PARAMS
     from core.account_registry import account_registry
     from core.state import validate_params
@@ -65,7 +86,23 @@ async def api_config_apply_preset(request: Request):
         return JSONResponse(
             {"error": f"Unknown preset {preset!r}", "valid": sorted(STRATEGY_PRESETS)},
             status_code=400)
-    aid = app_state.active_account_id
+    active_id = app_state.active_account_id
+    raw_aid = body.get("account_id", None)
+    if raw_aid is None:
+        aid = active_id
+    else:
+        try:
+            aid = int(raw_aid)
+        except (TypeError, ValueError):
+            return JSONResponse({"error": f"account_id must be an integer, got {raw_aid!r}"},
+                                status_code=400)
+        # Never write a row for an account that does not exist — an unknown id
+        # would otherwise silently create/park settings nothing ever reads.
+        known = {a["id"] for a in account_registry.list_accounts()}
+        if aid not in known:
+            return JSONResponse({"error": f"Unknown account_id {aid}",
+                                 "valid": sorted(known)}, status_code=404)
+    is_active = (aid == active_id)
     # 1) DD posture -> account_settings (reuse the tested writer)
     try:
         apply_preset(aid, preset)
@@ -83,14 +120,21 @@ async def api_config_apply_preset(request: Request):
         existing.update(sizing)
         await account_registry.update_account_params(aid, existing)
         applied_params = sizing
-        app_state.params.update(sizing)
-        from core.event_bus import event_bus
-        await event_bus.publish("risk:params_updated", {"ts": "preset_apply"})
+        # config-2: app_state.params is the ACTIVE account's live sizing mirror
+        # and risk:params_updated tells the engine to re-read it. Both are
+        # active-scoped — touching them while writing a DIFFERENT account's row
+        # would make the running account size off the other one's preset.
+        if is_active:
+            app_state.params.update(sizing)
+            from core.event_bus import event_bus
+            await event_bus.publish("risk:params_updated", {"ts": "preset_apply"})
     return JSONResponse({
-        "status":   "ok",
-        "preset":   preset,
-        "settings": STRATEGY_PRESETS.get(preset, {}),
-        "params":   applied_params,
+        "status":     "ok",
+        "preset":     preset,
+        "account_id": aid,          # echoed so the UI can prove what it wrote
+        "is_active":  is_active,
+        "settings":   STRATEGY_PRESETS.get(preset, {}),
+        "params":     applied_params,
     })
 
 

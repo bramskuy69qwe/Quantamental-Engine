@@ -331,3 +331,169 @@ class TestShellChrome:
         fn = fn[:fn.index("\n};")]
         assert "clock_severity" in fn
         assert "halted" in fn and "blocked" in fn
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SLICE 3 — the final five, all of which needed BACKEND work:
+#   config-2 · config-3 · history-2 · pretrade-3 · dashboard-1
+#
+# config-2 touches a WRITE path (preset apply). It is pinned by SOURCE and by a
+# stubbed unit test — never by POSTing through the shared TestClient, which
+# resolves config.DATA_DIR and would mutate the operator's live account
+# (the F5 incident: a draft P2 test wrote the swing preset onto live account 1).
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _api(name: str) -> str:
+    with open(os.path.join(ROOT, "api", name), encoding="utf-8") as fh:
+        return fh.read()
+
+
+class TestConfig2PresetTargeting:
+    def test_endpoint_accepts_an_account_id(self):
+        r = _api("routes_config.py")
+        blk = r[r.index("async def api_config_apply_preset"):r.index("async def api_config_presets")]
+        assert 'body.get("account_id"' in blk
+        assert "aid = active_id" in blk, "omitting account_id must still mean the active account"
+
+    def test_unknown_account_is_rejected(self):
+        """An unknown id would otherwise park settings nothing ever reads."""
+        r = _api("routes_config.py")
+        blk = r[r.index("async def api_config_apply_preset"):r.index("async def api_config_presets")]
+        assert "status_code=404" in blk
+        assert "list_accounts()" in blk
+
+    def test_live_state_is_only_touched_for_the_ACTIVE_account(self):
+        """THE correctness invariant. app_state.params is the ACTIVE account's
+        live sizing mirror and risk:params_updated tells the engine to re-read
+        it. Writing a DIFFERENT account's row must touch neither, or the running
+        account starts sizing off a preset applied to another one."""
+        r = _api("routes_config.py")
+        blk = r[r.index("async def api_config_apply_preset"):r.index("async def api_config_presets")]
+        i = blk.index("if is_active:")
+        tail, head = blk[i:], blk[:i]
+        # assert on the CALLS, not the words — the docstring above the guard
+        # legitimately names both, and matching prose made this pin fail on its
+        # own explanation.
+        assert "app_state.params.update(sizing)" in tail
+        assert 'event_bus.publish("risk:params_updated"' in tail
+        assert "app_state.params.update(" not in head
+        assert "event_bus.publish(" not in head
+
+    def test_response_echoes_what_it_wrote(self):
+        r = _api("routes_config.py")
+        blk = r[r.index("async def api_config_apply_preset"):r.index("async def api_config_presets")]
+        assert '"account_id": aid' in blk and '"is_active"' in blk
+
+    def test_ui_names_the_real_target_and_flags_non_active(self):
+        s = _src("pages-config.jsx")
+        assert "account_id: tgt.id" in s
+        assert "ACTIVE — currently trading" in s
+        assert "not active" in s
+
+    def test_ui_target_survives_a_refresh(self):
+        """A reload mid-edit must not silently retarget the write."""
+        s = _src("pages-config.jsx")
+        assert "tgtRef" in s
+
+
+class TestConfig3Timezone:
+    def test_exposed_by_the_account_endpoint(self):
+        r = _api("routes_config.py")
+        blk = r[r.index("async def api_config_account"):r.index("async def api_config_apply_preset")]
+        assert '"timezone",' in blk
+
+    def test_form_seeds_from_settings_not_params(self):
+        """timezone lives in account_settings — seeding it off `p` would render
+        blank forever."""
+        s = _src("pages-config.jsx")
+        assert "timezone:                  s.timezone" in s
+
+    def test_form_posts_it_and_blank_keeps_stored(self):
+        s = _src("pages-config.jsx")
+        body = s[s.index("const doSave"):s.index("const doTest")]
+        assert "timezone: form.timezone.trim() || null" in body
+
+    def test_write_path_still_validates_the_zone(self):
+        """The endpoint ZoneInfo-validates; the UI must not be the only guard."""
+        r = _api("routes_accounts.py")
+        assert "ZoneInfo(timezone)" in r
+
+
+class TestHistory2Search:
+    def test_search_is_no_longer_symbol_only(self):
+        with open(os.path.join(ROOT, "core", "db_orders.py"), encoding="utf-8") as fh:
+            d = fh.read()
+        assert "_SEARCH_COLS" in d
+        assert 'clauses.append("(symbol LIKE ?)")' not in d
+
+    def test_every_searchable_column_exists_on_its_table(self):
+        """A blind OR would be a hard SQL error — closed_positions has no
+        exchange_order_id. Verified against the REAL schema, read-only."""
+        import sqlite3
+        import sys
+        sys.path.insert(0, ROOT)
+        from core.db_orders import OrdersMixin
+        dbp = os.path.join(ROOT, "data", "risk_engine.db")
+        if not os.path.exists(dbp):
+            pytest.skip("live db not provisioned in this tree")
+        con = sqlite3.connect(f"file:{dbp}?mode=ro", uri=True)
+        try:
+            for table, cols in OrdersMixin._SEARCH_COLS.items():
+                have = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
+                missing = [c for c in cols if c not in have]
+                assert not missing, f"{table} lacks {missing}"
+                # and the generated predicate must actually execute
+                pred = "(" + " OR ".join(f"{c} LIKE ?" for c in cols) + ")"
+                con.execute(f"SELECT COUNT(*) FROM {table} WHERE {pred}",
+                            ["%x%"] * len(cols)).fetchone()
+        finally:
+            con.close()
+
+    def test_term_stays_a_bound_parameter(self):
+        """Columns are a fixed whitelist and are interpolated; the user's TERM
+        must never be."""
+        with open(os.path.join(ROOT, "core", "db_orders.py"), encoding="utf-8") as fh:
+            d = fh.read()
+        i = d.index("cols = self._SEARCH_COLS.get(table")
+        blk = d[i:i + 400]
+        assert 'params.extend([f"%{search}%"] * len(cols))' in blk
+
+
+class TestPretrade3Cap:
+    def test_cap_is_in_the_calc_payload(self):
+        with open(os.path.join(ROOT, "core", "risk_engine.py"), encoding="utf-8") as fh:
+            r = fh.read()
+        assert '"correlated_cap"' in r
+
+    def test_cap_matches_the_gate_formula(self):
+        """The emitted cap must be the SAME expression the gate applies, or the
+        pane would show headroom against a number nothing enforces."""
+        with open(os.path.join(ROOT, "core", "risk_engine.py"), encoding="utf-8") as fh:
+            r = fh.read()
+        assert 'app_state.params["max_correlated_exposure"] * total_equity' in r
+        assert r.count('app_state.params["max_correlated_exposure"] * total_equity') >= 2
+
+    def test_pane_renders_it_as_meta(self):
+        s = _src("pages-pretrade.jsx")
+        assert "c.correlated_cap" in s and "meta:" in s
+
+
+class TestDashboard1NewsTicker:
+    def test_marquee_is_wired_to_the_real_feed(self):
+        s = _src("dash-tiled.jsx")
+        assert "<DashNewsTicker />" in s
+        assert "/api/news/feed" in s
+
+    def test_no_fabricated_impact(self):
+        """Engine rows carry category, not impact. The dot must fall back to
+        neutral rather than have a severity invented for it."""
+        s = _src("dash-tiled.jsx")
+        blk = s[s.index("const DashNewsTicker"):s.index("Tile: Engine log")]
+        assert "impact" not in blk
+        p = _src("primitives.jsx")
+        assert "ENGINE DOES NOT SUPPLY IT" in p
+
+    def test_empty_feed_renders_nothing(self):
+        s = _src("dash-tiled.jsx")
+        blk = s[s.index("const DashNewsTicker"):s.index("Tile: Engine log")]
+        assert "if (!news || !news.length) return null;" in blk

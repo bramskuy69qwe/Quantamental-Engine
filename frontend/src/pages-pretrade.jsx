@@ -1051,11 +1051,19 @@ const PreTradePage = () => {
                   {c.exceeds_corr_limit ? (
                     <div className="qe-mono" style={{ fontSize: '0.6rem', color: 'var(--qe-red)', marginBottom: 4 }}>⛔ correlated-exposure cap exceeded</div>
                   ) : null}
+                  {/* pretrade-3: the cap rides the meta column, so headroom is
+                      readable BEFORE sizing rather than only after the red
+                      breach line appears. ONE account-wide cap applies to every
+                      sector (max_correlated_exposure x equity) — the label says
+                      "cap" per row because that is the figure each row is
+                      measured against, not because the caps differ. */}
                   <FieldList rows={[
                     ...Object.entries(c.correlated_exposure).map(([sector, v]) => ({
                       label: sector, value: _ptSign(v), color: v > 0 ? 'green' : v < 0 ? 'red' : undefined,
+                      meta: c.correlated_cap ? `${_ptFmtN(c.correlated_cap, 0)} cap` : undefined,
                     })),
-                    { label: `New (${c.ticker})`, value: _ptSign(c.new_sector_exposure) + ' USDT', emphasis: true },
+                    { label: `New (${c.ticker})`, value: _ptSign(c.new_sector_exposure) + ' USDT', emphasis: true,
+                      meta: c.correlated_cap ? `${_ptFmtN(c.correlated_cap, 0)} cap` : undefined },
                   ]} />
                 </React.Fragment>
               )}

@@ -185,6 +185,7 @@ const CfgAccountForm = ({ account, detail, onReload }) => {
     weekly_loss_limit_pct:     p.weekly_loss_limit_pct     != null ? String(p.weekly_loss_limit_pct)     : '',
     max_dd_warning_pct:        p.max_dd_warning_pct        != null ? String(p.max_dd_warning_pct)        : '',
     max_dd_limit_pct:          p.max_dd_limit_pct          != null ? String(p.max_dd_limit_pct)          : '',
+    timezone:                  s.timezone || '',   // config-3 (account_settings, not params)
   }));
   const [busy, setBusy] = React.useState(null);   // 'save' | 'test' | 'activate'
   const [msg, setMsg]   = React.useState(null);
@@ -217,6 +218,9 @@ const CfgAccountForm = ({ account, detail, onReload }) => {
         max_correlated_exposure:   form.max_correlated_exposure.trim()   || null,
         // config-1: warn/hard-stop ratios, sent PAIRWISE — see _cfgPair.
         ...cfgRatioPairs(form, p),
+        // config-3: blank keeps the stored value; the endpoint ZoneInfo-validates
+        // and rejects an unknown zone rather than silently storing it.
+        timezone: form.timezone.trim() || null,
       });
       const ok = r.ok && /saved/i.test(r.text);
       setMsg({ text: r.text || (r.ok ? 'Saved.' : 'save failed'), tone: ok ? 'ok' : 'err' });
@@ -288,6 +292,8 @@ const CfgAccountForm = ({ account, detail, onReload }) => {
         <div><Lbl>API Key</Lbl><input className="qe-input" type="password" value={form.api_key} onChange={set('api_key')} placeholder="Leave blank to keep current" /></div>
         <div><Lbl>API Secret</Lbl><input className="qe-input" type="password" value={form.api_secret} onChange={set('api_secret')} placeholder="Leave blank to keep current" /></div>
         <div><Lbl>Broker Account ID</Lbl><input className="qe-input" value={form.broker_account_id} onChange={set('broker_account_id')} /></div>
+        <div><Lbl>Timezone (IANA)</Lbl><input className="qe-input" value={form.timezone} onChange={set('timezone')} placeholder="Asia/Bangkok"
+          title="Every timestamp on the page renders against this. IANA name, e.g. UTC or Asia/Bangkok — the engine validates it." /></div>
       </div>
 
       <SecLbl rule>Risk Parameters · sizing (account_params)</SecLbl>
@@ -629,7 +635,10 @@ const CfgConnectionsTab = () => {
 const CfgPresetsTab = () => {
   const [cat, setCat]       = React.useState(null);   // [{name, dd, sizing}]
   const [active, setActive] = React.useState(null);   // active account meta
-  const [current, setCurrent] = React.useState('');   // active acct strategy_preset
+  const [accts, setAccts]   = React.useState([]);     // config-2: every account
+  const [target, setTarget] = React.useState(null);   // config-2: write target id
+  const tgtRef = React.useRef(null);                  // load() reads it without re-binding
+  const [current, setCurrent] = React.useState('');   // TARGET acct strategy_preset
   const [busy, setBusy]     = React.useState(null);
   const [msg, setMsg]       = React.useState(null);
 
@@ -642,11 +651,20 @@ const CfgPresetsTab = () => {
       setCat(pc.presets || []);
       const act = (accounts || []).find((a) => a.is_active) || null;
       setActive(act);
+      setAccts(accounts || []);
+      // config-2: default the target to the ACTIVE account (the prior
+      // behaviour), but keep an existing choice across refreshes so a reload
+      // mid-edit cannot silently retarget the write.
+      if (!(tgtRef.current != null && (accounts || []).some((a) => a.id === tgtRef.current))) {
+        tgtRef.current = act ? act.id : null;
+      }
+      setTarget(tgtRef.current);
       // scoped: a failing CURRENT-badge lookup must not blank the loaded
       // catalog — degrade to "no badge" [P2 audit LOW]
-      if (act) {
+      // the CURRENT badge describes the TARGET account, not always the active one
+      if (tgtRef.current != null) {
         try {
-          const d = await _cfgJson('/api/config/account/' + act.id);
+          const d = await _cfgJson('/api/config/account/' + tgtRef.current);
           setCurrent((d.settings || {}).strategy_preset || '');
         } catch (e) { setCurrent(''); }
       }
@@ -655,18 +673,24 @@ const CfgPresetsTab = () => {
   React.useEffect(() => { load(); }, [load]);
 
   const apply = async (name) => {
-    const target = active ? active.name : 'the active account';
+    const tgt = accts.find((a) => a.id === target) || active;
+    if (!tgt) { setMsg({ text: 'no account selected', tone: 'err' }); return; }
+    // config-2: name the ACTUAL target and say plainly when it is NOT the
+    // running account — writing another account's risk posture must never be
+    // mistakable for changing the one currently trading.
+    const label = tgt.name + (tgt.is_active ? ' (ACTIVE — currently trading)' : ' (not active)');
     if (!window.confirm(
-      `Apply preset ${name.toUpperCase()} to ${target}?\n\n` +
+      `Apply preset ${name.toUpperCase()} to ${label}?\n\n` +
       'FULL apply — writes BOTH risk stores:\n' +
       '· DD posture (window / warn / limit / recovery + analytics period)\n' +
       '· sizing envelope (risk/trade, weekly loss, max DD, exposure, positions, corr. cap)\n\n' +
       'Enforcement mode is NOT changed.')) return;
     setBusy(name); setMsg(null);
     try {
-      const r = await _cfgPostJson('/api/config/apply-preset', { preset: name });
+      const r = await _cfgPostJson('/api/config/apply-preset', { preset: name, account_id: tgt.id });
       if (r.ok && r.data && r.data.status === 'ok') {
-        setMsg({ text: `preset ${name.toUpperCase()} applied to ${target}`, tone: 'ok' });
+        setMsg({ text: `preset ${name.toUpperCase()} applied to ${tgt.name}`
+          + (r.data.is_active ? '' : ' — NOT the active account'), tone: 'ok' });
         await load();
       } else {
         setMsg({ text: (r.data && r.data.error) || 'apply failed', tone: 'err' });
@@ -689,9 +713,25 @@ const CfgPresetsTab = () => {
           foot={qeFootState({ loading: net.ms == null && !net.err, err: net.err, hasData: (cat || []).length > 0, ms: net.ms })}>
           <div className="qe-mono" style={{ fontSize: '0.6rem', color: 'var(--qe-sub)', marginBottom: 8, lineHeight: 1.5 }}>
             Apply is FULL: writes the DD posture (account_settings — the store the DD gate reads)
-            AND the sizing envelope (account_params). Applies to the active account
-            {active ? <span> — <span style={{ color: 'var(--qe-cyan)', fontWeight: 700 }}>{active.name}</span></span> : null}.
-            Enforcement mode never changes here.
+            AND the sizing envelope (account_params). Enforcement mode never changes here.
+          </div>
+          {/* config-2: WHICH account gets written. Presets used to be hard-wired
+              to the active account server-side, so an account that had never
+              been activated could not be given a preset at all. */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+            <Lbl>Apply to</Lbl>
+            <select className="qe-input qe-select" style={{ height: 22, fontSize: '0.62rem', width: 240 }}
+              value={target != null ? String(target) : ''}
+              onChange={(e) => { const v = Number(e.target.value); tgtRef.current = v; setTarget(v); load(); }}>
+              {accts.map((a) => (
+                <option key={a.id} value={String(a.id)}>{a.name}{a.is_active ? ' — ACTIVE' : ''}</option>
+              ))}
+            </select>
+            {target != null && active && target !== active.id ? (
+              <span className="qe-mono" style={{ fontSize: '0.56rem', color: 'var(--qe-amber)' }}>
+                writing a NON-active account — the running account is unaffected
+              </span>
+            ) : null}
           </div>
           {cat == null ? <Spinner label="loading" /> :
            !cat.length ? <EmptyState tone="warn" glyph="∅" msg="No presets" hint="Engine unreachable?" /> : (

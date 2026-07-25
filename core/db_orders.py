@@ -1039,6 +1039,21 @@ class OrdersMixin:
 
     _ALLOWED_TABLES = {"orders", "fills", "closed_positions"}
 
+    # history-2 (2026-07-25 Meridian audit): free-text search was symbol-only, so
+    # "which order was 504678492?" and "show me calc 4f29a1" were unanswerable
+    # from History — the design filtered on every field. PER-TABLE because these
+    # three tables do not share columns: a blind OR over exchange_order_id would
+    # be a hard SQL error on closed_positions.
+    #
+    # These are a FIXED whitelist, never user input — they are interpolated into
+    # the SQL, while the search TERM stays a bound parameter. Every column below
+    # was verified present on its table (PRAGMA table_info) before being listed.
+    _SEARCH_COLS = {
+        "orders":           ("symbol", "exchange_order_id", "client_order_id", "calc_id"),
+        "fills":            ("symbol", "exchange_fill_id", "exchange_order_id", "calc_id"),
+        "closed_positions": ("symbol", "calc_id", "exit_reason", "model_name"),
+    }
+
     async def _paginated_order_query(
         self,
         table: str,
@@ -1073,8 +1088,10 @@ class OrdersMixin:
             clauses.append(f"{ts_col} <= ?")
             params.append(date_to_ms)
         if search:
-            clauses.append("(symbol LIKE ?)")
-            params.append(f"%{search}%")
+            # history-2: OR across this table's searchable id/text columns.
+            cols = self._SEARCH_COLS.get(table, ("symbol",))
+            clauses.append("(" + " OR ".join(f"{c} LIKE ?" for c in cols) + ")")
+            params.extend([f"%{search}%"] * len(cols))
 
         where = " WHERE " + " AND ".join(clauses)
 

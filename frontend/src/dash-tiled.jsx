@@ -527,6 +527,28 @@ const ActiveParamsPane = () => {
   );
 };
 
+/* dashboard-1 — the footer news marquee, wired to the REAL feed.
+   Its own tiny poller rather than QE_DASH: this is page chrome, not a tile, and
+   useAnaJson lives in a module that loads AFTER this one. 60s because headlines
+   are ambient, not actionable — the Regime News tab is the working surface. */
+const DashNewsTicker = () => {
+  const [news, setNews] = React.useState(null);
+  React.useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const d = await _ptJson('/api/news/feed?limit=40');
+        if (alive) setNews(Array.isArray(d) ? d : (d.news || d.items || []));
+      } catch (e) { /* keep last — an absent feed renders quiet by contract */ }
+    };
+    load();
+    const t = setInterval(load, 60_000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
+  if (!news || !news.length) return null;   // empty renders quiet, never a bar of nothing
+  return <NewsTickerBar news={news} meta="NEWS FEED" />;
+};
+
 /* ── Tile: Engine log (real engine_events tail) ─────────────────────────── */
 const EngineLogBody = () => {
   const d = useDash();
@@ -645,6 +667,7 @@ const DashTiled = () => {
       <DashHaltBanner />
       <WatchlistTape />
       <TiledGrid />
+      <DashNewsTicker />
       <StatusFooter />
     </div>
   );

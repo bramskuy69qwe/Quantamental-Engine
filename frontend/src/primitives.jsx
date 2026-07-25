@@ -1292,7 +1292,11 @@ const LockButton = ({locked, onToggle, compact=false, style={}}) => (
 // headline set actually changes, so the marquee animation runs uninterrupted.
 //
 // Props:
-//   news    — array of {id, source, impact, headline, tickers?, published_at}.
+//   news    — array of {id, source, headline, tickers?, published_at, impact?}.
+//             `impact` is OPTIONAL and the ENGINE DOES NOT SUPPLY IT (db_news
+//             stores category, not impact) — the dot falls back to neutral.
+//             Never synthesise one: a colour-coded severity nothing measured is
+//             the fabrication class P8 wave 1 removed.
 //             No default feed — pass real news rows (empty renders quiet).
 //   label   — left chip text (default "NEWS")
 //   meta    — right-side source tag (default "REGIME FEED · finnhub + bwe")

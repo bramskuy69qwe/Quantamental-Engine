@@ -808,6 +808,15 @@ def run_risk_calculator(
         "correlated_exposure": get_correlated_exposure(),
         "new_sector_exposure": new_sect_exp,
         "exceeds_corr_limit":  exceeds_corr,
+        # pretrade-3 (2026-07-25 Meridian audit): the cap ITSELF, in the same
+        # absolute units as correlated_exposure/new_sector_exposure. Without it
+        # the Pre-Trade sector pane could only surface the cap AFTER it was
+        # breached (the red exceeds_corr_limit line) — a reactive alarm where the
+        # design showed proactive headroom. ONE account-wide cap applied to every
+        # sector (max_correlated_exposure x total_equity), not a per-sector one —
+        # the design printed the same literal on all four rows, which is what
+        # made the finding read as "per-sector".
+        "correlated_cap":      app_state.params["max_correlated_exposure"] * total_equity,
         # Eligibility
         "at_max_positions":    at_max_positions,
         "at_max_exposure":     at_max_exposure,

@@ -395,6 +395,19 @@ independently, fix the investigated one, name any divergence.)
 ```
 
 **Open, no owner yet** (carry forward, don't lose):
+- **INTERMITTENT gate warning — `PytestUnhandledThreadExceptionWarning`,
+  seen 3× (2026-07-25).** `RuntimeError: Event loop is closed` raised inside
+  `aiosqlite/core.py::_connection_worker_thread` → `call_soon_threadsafe`: an
+  orphaned aiosqlite worker posting back to a loop that already closed. The test
+  pytest attributes it to varies and is incidental (once
+  `test_phase1_matcher_t211::test_norm_side_buy_maps_to_long`, a pure-function
+  test that touches no DB) — it is whatever was running when the stray thread
+  fired. Appears in ~half of full runs (31 warnings vs 30); an immediate re-run
+  of an IDENTICAL tree came back clean, and it pre-dates the slice-3 Python
+  changes. Suite stays green, so it is a TEARDOWN artifact, not a failure. Fix
+  shape if picked up: find the async DB test that leaves a connection unclosed
+  and close it in teardown (CLAUDE.md's process-count discipline is the related
+  guardrail). Do NOT chase it from a single sighting — reproduce it first.
 - `no-undef` lint pass over the concatenated bundle — needs an
   eslint/acorn dev-dep (operator call). Until then the guard is the
   targeted identifier grep + the audit-time vm-render sweep; the esbuild
