@@ -4742,6 +4742,13 @@ const _lkHM = (ms) => {
   const d = new Date(ms);
   return isNaN(d) ? "\u2014" : d.toLocaleTimeString([], { hour12: false, hour: "2-digit", minute: "2-digit" });
 };
+const _lkSettleAt = (f) => {
+  if (!f) return "\u2014";
+  const ms = f.next_funding_time_ms != null ? f.next_funding_time_ms : f.countdown_s != null ? Date.now() + f.countdown_s * 1e3 : null;
+  if (!ms) return "\u2014";
+  const d = new Date(ms);
+  return isNaN(d) ? "\u2014" : d.toLocaleTimeString([], { hour12: false, hour: "2-digit", minute: "2-digit" });
+};
 const _lkHMS = (ms) => {
   if (!ms) return "\u2014";
   const d = new Date(ms);
@@ -4957,6 +4964,14 @@ const LinkagePage = () => {
     { key: "average", label: "Entry", align: "right", render: (r) => lpPx(r.average) },
     { key: "tp_price", label: "TP", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { className: "qe-up" }, lpPx(r.tp_price)) },
     { key: "sl_price", label: "SL", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { className: "qe-dn" }, lpPx(r.sl_price)) },
+    // linkage-3: est_r is already on every row (SELECT * on pre_trade_log); the
+    // resolver renders the same value for candidates.
+    {
+      key: "est_r",
+      label: "R",
+      align: "right",
+      render: (r) => r.est_r == null ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014") : /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)" } }, (+r.est_r).toFixed(2))
+    },
     // Same shape as posCols.dev: 'cd' is not a row field, so the column was
     // invisible to sort and facets. It renders a countdown off the REAL numeric
     // expiry_ms, and "which calc expires first" is the ordering this pane exists
@@ -5023,6 +5038,15 @@ const LinkagePage = () => {
     { key: "cum", label: "Cum", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: lpSgn(r.cum) } }, lpUsd(r.cum, 3)) }
   ];
   const closeCols = [
+    // linkage-1: recency and hold were only implied by server sort order; on a
+    // triage board the operator correlates closes against what else happened at
+    // that moment, and neither is derivable from another cell.
+    {
+      key: "exit_time_ms",
+      label: "Time",
+      sortVal: (r) => r.exit_time_ms || 0,
+      render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, _lkHM(r.exit_time_ms))
+    },
     {
       key: "symbol",
       label: "Sym",
@@ -5048,7 +5072,20 @@ const LinkagePage = () => {
       align: "right",
       filter: { label: "RESULT" },
       filterVal: (r) => (r.net_pnl || 0) > 0 ? "WIN" : (r.net_pnl || 0) < 0 ? "LOSS" : "FLAT",
-      render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: lpSgn(r.net_pnl), fontWeight: 700 } }, lpUsd(r.net_pnl))
+      // linkage-1: absolute AND percent — a -0.62 on a 12m scalp reads very
+      // differently from a +1.93 on a 3h hold.
+      render: (r) => {
+        const den = (r.entry_price || 0) * (r.quantity || 0);
+        const pct = den ? r.net_pnl / den * 100 : null;
+        return /* @__PURE__ */ React.createElement("span", { style: { whiteSpace: "nowrap" } }, /* @__PURE__ */ React.createElement("span", { style: { color: lpSgn(r.net_pnl), fontWeight: 700 } }, lpUsd(r.net_pnl)), pct == null ? null : /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)", fontSize: "0.56rem", marginLeft: 4 } }, lpPct(pct)));
+      }
+    },
+    {
+      key: "hold_time_ms",
+      label: "Hold",
+      align: "right",
+      sortVal: (r) => r.hold_time_ms || 0,
+      render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)", fontSize: "0.56rem" } }, _lkDur(r.hold_time_ms))
     },
     // Facet/sort/search all follow the RENDERED badge (pending → "SET REASON",
     // otherwise the LP_EXIT_REASONS label), so the column can no longer sort or
@@ -5066,7 +5103,17 @@ const LinkagePage = () => {
     },
     { key: "funding_fees", label: "Fund", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: lpSgn(r.funding_fees), fontSize: "0.56rem" } }, lpUsd(r.funding_fees, 3)) }
   ];
-  return /* @__PURE__ */ React.createElement("div", { className: "qe-scope", "data-screen-label": "03 Linkage", style: { width: "100%", height: "100%", background: "var(--qe-bg)", display: "flex", flexDirection: "column", position: "relative" } }, /* @__PURE__ */ React.createElement(TopNavStd, { page: "Linkage", variant: "line", dense: true }), /* @__PURE__ */ React.createElement(PageHeader, { title: "Linkage", subtitle: "calc-linkage workspace \xB7 manual link \xB7 close reasons \xB7 positions \xB7 funding" }, /* @__PURE__ */ React.createElement(StatusDot, { tone: inbox.length ? "warn" : "ok", label: "QUEUE", value: `${inbox.length} open` })), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column" } }, /* @__PURE__ */ React.createElement(GridWorkspace, { persistId: "linkage" }, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 9, h: 24, minW: 6, minH: 10 }, /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { className: "qe-scope", "data-screen-label": "03 Linkage", style: { width: "100%", height: "100%", background: "var(--qe-bg)", display: "flex", flexDirection: "column", position: "relative" } }, /* @__PURE__ */ React.createElement(TopNavStd, { page: "Linkage", variant: "line", dense: true }), /* @__PURE__ */ React.createElement(PageHeader, { title: "Linkage", subtitle: "calc-linkage workspace \xB7 manual link \xB7 close reasons \xB7 positions \xB7 funding" }, (() => {
+    const w = (calcs || []).map((c) => c.window_seconds).find((v) => v != null);
+    return /* @__PURE__ */ React.createElement(
+      StatusDot,
+      {
+        tone: "info",
+        label: "LINK",
+        value: w == null ? "\u2014" : w >= 60 ? Math.round(w / 60) + "m window" : w + "s window"
+      }
+    );
+  })(), /* @__PURE__ */ React.createElement(StatusDot, { tone: inbox.length ? "warn" : "ok", label: "QUEUE", value: `${inbox.length} open` })), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column" } }, /* @__PURE__ */ React.createElement(GridWorkspace, { persistId: "linkage" }, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 9, h: 24, minW: 6, minH: 10 }, /* @__PURE__ */ React.createElement(
     Pane,
     {
       title: "MANUAL LINK \u2014 NEEDS REVIEW",
@@ -5127,7 +5174,7 @@ const LinkagePage = () => {
         rows: funding.rows || [],
         selKey: "position_id",
         emptyMsg: "no open positions",
-        summary: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", null, "net next ", funding.countdown_s != null ? lpClock(funding.countdown_s) : "\u2014"), /* @__PURE__ */ React.createElement("span", { style: { color: lpSgn(funding.net_next) } }, lpUsd(funding.net_next, 3)))
+        summary: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", null, "net at ", _lkSettleAt(funding)), /* @__PURE__ */ React.createElement("span", null, "next ", funding.countdown_s != null ? lpClock(funding.countdown_s) : "\u2014"), /* @__PURE__ */ React.createElement("span", { style: { color: lpSgn(funding.net_next) } }, lpUsd(funding.net_next, 3)), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "cum"), /* @__PURE__ */ React.createElement("span", { style: { color: lpSgn(funding.net_cum) } }, lpUsd(funding.net_cum, 3)))
       }
     )
   )), /* @__PURE__ */ React.createElement(GridItem, { x: 9, y: 17, w: 15, h: 7, minW: 6, minH: 5 }, /* @__PURE__ */ React.createElement(
@@ -5233,6 +5280,16 @@ const _hRange = (preset) => {
     from.setMonth(0, 1);
   } else from.setDate(now.getDate() - ({ "7d": 7, "15d": 15, "30d": 30, "90d": 90 }[preset] || 30));
   return { date_from: _hIso(from, false), date_to: _hIso(now, true) };
+};
+const _hNetPct = (r) => {
+  const den = (r.entry_price || 0) * (r.quantity || 0);
+  return den ? r.net_pnl / den * 100 : null;
+};
+const _hEvtTone = (t) => {
+  if (t === "position_closed" || t === "tp_hit" || t === "order_filled") return "ok";
+  if (t === "sl_hit" || t === "liquidation" || t === "order_rejected" || t === "order_cancelled" || t === "close_row_build_failed") return "err";
+  if (t === "position_amended" || t === "tp_modified" || t === "sl_modified") return "warn";
+  return "info";
 };
 const _hEvtSummary = (r) => {
   const p = r._payload || {};
@@ -5343,6 +5400,7 @@ const HistoryPage = () => {
           format: "json",
           page: "1",
           per_page: "1",
+          search: q.trim(),
           date_from,
           date_to
         }).toString());
@@ -5352,9 +5410,10 @@ const HistoryPage = () => {
       }
     }));
     setCounts(out);
-  }, [period]);
+  }, [period, q]);
   React.useEffect(() => {
-    loadCounts();
+    const t = setTimeout(loadCounts, 250);
+    return () => clearTimeout(t);
   }, [loadCounts]);
   const drillSeq = React.useRef(0);
   const openDrill = async (row) => {
@@ -5434,13 +5493,9 @@ const HistoryPage = () => {
         key: "pct",
         label: "%",
         align: "right",
-        sortVal: (r) => {
-          const den = (r.entry_price || 0) * (r.quantity || 0);
-          return den ? r.net_pnl / den * 100 : null;
-        },
+        sortVal: (r) => _hNetPct(r),
         render: (r) => {
-          const den = (r.entry_price || 0) * (r.quantity || 0);
-          const pct = den ? r.net_pnl / den * 100 : null;
+          const pct = _hNetPct(r);
           return pct == null ? "\u2014" : /* @__PURE__ */ React.createElement("span", { style: { color: lpSgn(pct) } }, lpPct(pct));
         }
       },
@@ -5539,7 +5594,11 @@ const HistoryPage = () => {
       /* trade_events rows carry an ISO-string timestamp, not epoch-ms [P4 audit #1] */
       { key: "timestamp", label: "TIME", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, String(r.timestamp || "").slice(0, 16).replace("T", " ") || "\u2014") },
       { key: "_symbol", label: "SYM", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, r._symbol || "\u2014") },
-      { key: "event_type", label: "TYPE", render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: "info" }, r.event_type) },
+      {
+        key: "event_type",
+        label: "TYPE",
+        render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: _hEvtTone(r.event_type) }, r.event_type)
+      },
       { key: "calc_id", label: "CALC", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, r.calc_id ? String(r.calc_id).slice(-8) : "\u2014") },
       { key: "source", label: "SRC", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, r.source || "") },
       /* the event's SUBSTANCE — restored L3-F3 (the door parses _payload
@@ -5570,11 +5629,13 @@ const HistoryPage = () => {
     const net2 = rows.reduce((s, r) => s + (r.net_pnl || 0), 0);
     const wins = rows.filter((r) => (r.net_pnl || 0) >= 0).length;
     const fees = rows.reduce((s, r) => s + (r.total_fees || 0), 0);
+    const gross = rows.reduce((s, r) => s + (r.realized_pnl || 0), 0);
     return [
       { label: "ROWS", value: String(rows.length) },
       { label: "WINS", value: String(wins), color: "var(--qe-green)" },
       { label: "LOSSES", value: String(rows.length - wins), color: "var(--qe-red)" },
       { label: "WINRATE", value: rows.length ? Math.round(wins / rows.length * 100) + "%" : "\u2014" },
+      { label: "GROSS", value: lpUsd(gross), color: lpSgn(gross) },
       { label: "FEES", value: _ptFmtN(fees), color: "var(--qe-sub)" },
       { label: "NET", value: lpUsd(net2), color: lpSgn(net2) }
     ];
@@ -5658,7 +5719,7 @@ const HistoryPage = () => {
     !dp ? /* @__PURE__ */ React.createElement(EmptyState, { fill: true, tone: "neutral", glyph: "\u25CE", msg: "Select a closed position", hint: "Click a row to inspect its fills, exec link and amendments." }) : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, /* @__PURE__ */ React.createElement(SecLbl, { rule: true, right: /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-ghost", onClick: () => {
       setSel(null);
       setDrill(null);
-    } }, "\u2715") }, dp.symbol, " \xB7 CLOSED \xB7 ", dp.direction), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 10px" } }, /* @__PURE__ */ React.createElement(KV, { l: "Net", v: lpUsd(dp.net_pnl), color: lpSgn(dp.net_pnl) }), /* @__PURE__ */ React.createElement(KV, { l: "Duration", v: _hDur(dp.hold_time_ms) }), /* @__PURE__ */ React.createElement(KV, { l: "Entry", v: lpPx(dp.entry_price) }), /* @__PURE__ */ React.createElement(KV, { l: "Exit", v: lpPx(dp.exit_price) }), /* @__PURE__ */ React.createElement(KV, { l: "TP plan", v: lpPx(dp.tp_price), color: "var(--qe-green)" }), /* @__PURE__ */ React.createElement(KV, { l: "SL plan", v: lpPx(dp.sl_price), color: "var(--qe-red)" }), /* @__PURE__ */ React.createElement(KV, { l: "MFE / MAE", v: `${_ptFmtN(dp.mfe)} / ${_ptFmtN(dp.mae)}` }), /* @__PURE__ */ React.createElement(KV, { l: "Funding", v: lpUsd(dp.funding_fees, 3), color: lpSgn(dp.funding_fees) }), /* @__PURE__ */ React.createElement(KV, { l: "Model", v: dp.model_name || "\u2014" }), /* @__PURE__ */ React.createElement(KV, { l: "Calc", v: dp.calc_id ? String(dp.calc_id).slice(-8) : "\u2014", color: "var(--qe-cyan)" })), /* @__PURE__ */ React.createElement("div", { style: { borderTop: "1px solid var(--qe-line)" } }), /* @__PURE__ */ React.createElement(SecLbl, { rule: true }, "Fills"), drill == null ? /* @__PURE__ */ React.createElement(Spinner, { label: "loading" }) : !drill.fills.length ? /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.58rem", color: "var(--qe-muted)" } }, "No fills recorded for this position.") : (
+    } }, "\u2715") }, dp.symbol, " \xB7 CLOSED \xB7 ", dp.direction), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 10px" } }, /* @__PURE__ */ React.createElement(KV, { l: "Net", v: `${lpUsd(dp.net_pnl)}${_hNetPct(dp) == null ? "" : `  (${lpPct(_hNetPct(dp))})`}`, color: lpSgn(dp.net_pnl) }), /* @__PURE__ */ React.createElement(KV, { l: "Duration", v: _hDur(dp.hold_time_ms) }), /* @__PURE__ */ React.createElement(KV, { l: "Entry", v: lpPx(dp.entry_price) }), /* @__PURE__ */ React.createElement(KV, { l: "Exit", v: lpPx(dp.exit_price) }), /* @__PURE__ */ React.createElement(KV, { l: "TP plan", v: lpPx(dp.tp_price), color: "var(--qe-green)" }), /* @__PURE__ */ React.createElement(KV, { l: "SL plan", v: lpPx(dp.sl_price), color: "var(--qe-red)" }), /* @__PURE__ */ React.createElement(KV, { l: "Size", v: dp.quantity == null ? "\u2014" : _ptFmtSz(dp.quantity) }), /* @__PURE__ */ React.createElement(KV, { l: "Fee \xB7 all-in", v: _ptFmtN(dp.total_fees, 4), color: "var(--qe-sub)" }), /* @__PURE__ */ React.createElement(KV, { l: "Funding", v: lpUsd(dp.funding_fees, 3), color: lpSgn(dp.funding_fees) }), /* @__PURE__ */ React.createElement(KV, { l: "Model", v: dp.model_name || "\u2014" }), /* @__PURE__ */ React.createElement(KV, { l: "Calc", v: dp.calc_id ? String(dp.calc_id).slice(-8) : "\u2014", color: "var(--qe-cyan)" })), /* @__PURE__ */ React.createElement(HeatBarLabelled, { mfe: dp.mfe, mae: dp.mae, pnl: dp.net_pnl, pct: _hNetPct(dp) }), /* @__PURE__ */ React.createElement("div", { style: { borderTop: "1px solid var(--qe-line)" } }), /* @__PURE__ */ React.createElement(SecLbl, { rule: true }, "Fills"), drill == null ? /* @__PURE__ */ React.createElement(Spinner, { label: "loading" }) : !drill.fills.length ? /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.58rem", color: "var(--qe-muted)" } }, "No fills recorded for this position.") : (
       // drilldown fills. tools were off here ("a handful of rows
       // inside a modal"); lifted 2026-07-25 per the operator
       // directive — a scaled-in position has many legs, and that
@@ -5668,6 +5729,19 @@ const HistoryPage = () => {
         { key: "is_close", label: "ACT", render: (f) => /* @__PURE__ */ React.createElement(Badge, { tone: f.is_close ? "mute" : "info" }, f.is_close ? "C" : "O") },
         { key: "price", label: "PRICE", align: "right", render: (f) => lpPx(f.price) },
         { key: "quantity", label: "QTY", align: "right" },
+        {
+          key: "fee",
+          label: "FEE",
+          align: "right",
+          render: (f) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, _ptFmtN(f.fee, 4), " ", f.fee_asset || "")
+        },
+        {
+          key: "role",
+          label: "ROLE",
+          filter: { label: "ROLE" },
+          filterVal: (f) => (f.role || "\u2014").toUpperCase(),
+          render: (f) => /* @__PURE__ */ React.createElement(Badge, { tone: "mute" }, (f.role || "\u2014").toUpperCase())
+        },
         {
           key: "exec",
           label: "EXEC LINK",

@@ -56,6 +56,27 @@ const _hRange = (preset) => {
    column"), which undersold the point: the tick's job is to place the close
    INSIDE the range, not to restate the number. */
 
+/* history-6 — event_type → badge tone. The design colour-coded this column by
+   outcome (ok / info / err) off a hand-authored `tone` field on its mock rows;
+   the tone is a DETERMINISTIC function of the real event_type, so it needs no
+   fabricated field. Unknown types stay 'info' — never guess a severity.
+   Kept beside _hEvtSummary deliberately: both switch on the same vocabulary and
+   must be extended together when a new event_type appears. */
+/* net % of notional at entry — the table's '%' column and the detail pane's
+   Net KV / heat-bar footer must agree, so both read this. */
+const _hNetPct = (r) => {
+  const den = (r.entry_price || 0) * (r.quantity || 0);
+  return den ? (r.net_pnl / den) * 100 : null;
+};
+
+const _hEvtTone = (t) => {
+  if (t === 'position_closed' || t === 'tp_hit' || t === 'order_filled') return 'ok';
+  if (t === 'sl_hit' || t === 'liquidation' || t === 'order_rejected'
+      || t === 'order_cancelled' || t === 'close_row_build_failed') return 'err';
+  if (t === 'position_amended' || t === 'tp_modified' || t === 'sl_modified') return 'warn';
+  return 'info';
+};
+
 /* Trade-Events SUMMARY one-liner — the Jinja per-type branches ported
    verbatim (P8 wave 2 L3-F3; the payload expand-grid stays unported). */
 const _hEvtSummary = (r) => {
@@ -160,23 +181,30 @@ const HistoryPage = () => {
   React.useEffect(() => { const t = setInterval(load, 30000); return () => clearInterval(t); }, [load]);
   React.useEffect(() => { setPage(1); setSel(null); setDrill(null); }, [tab, period, q]);
 
-  // design #2: fetch every tab's total (period-scoped) so INACTIVE tabs show
-  // their count too — one light per_page=1 request per tab. Period-scoped (not
-  // search-filtered) so the tab badges are a stable category-size indicator;
-  // the active tab's Pane title still shows the precise search-filtered total.
+  // design #2: fetch every tab's total so INACTIVE tabs show their count too —
+  // one light per_page=1 request per tab.
+  // history-8: the search term is sent HERE TOO. It used to be omitted, which
+  // made the badge row mean two different things at once — the active tab
+  // dropped to its filtered count while the other four kept unfiltered period
+  // totals, in the same row with the same visual treatment. The old rationale
+  // ("a stable category-size indicator") was self-inconsistent, because the
+  // active slot was never stable. Now every badge answers one question, which
+  // is what the design's all-filtered counts did.
   const loadCounts = React.useCallback(async () => {
     const { date_from, date_to } = _hRange(period);
     const out = {};
     await Promise.all(H_TABS.map(async ([k, , ep]) => {
       try {
         const d = await _ptJson(ep + '?' + new URLSearchParams({
-          format: 'json', page: '1', per_page: '1', date_from, date_to }).toString());
+          format: 'json', page: '1', per_page: '1',
+          search: q.trim(), date_from, date_to }).toString());
         out[k] = (d && d.total != null) ? d.total : null;
       } catch (e) { out[k] = null; }
     }));
     setCounts(out);
-  }, [period]);
-  React.useEffect(() => { loadCounts(); }, [loadCounts]);
+  }, [period, q]);
+  // debounced: q changes per keystroke and this fans out one request per tab.
+  React.useEffect(() => { const t = setTimeout(loadCounts, 250); return () => clearTimeout(t); }, [loadCounts]);
 
   /* drilldown for a selected closed position */
   const drillSeq = React.useRef(0);
@@ -245,10 +273,9 @@ const HistoryPage = () => {
       { key: 'exit_price', label: 'EXIT', align: 'right', render: (r) => <span style={{ color: 'var(--qe-sub)' }}>{lpPx(r.exit_price)}</span> },
       { key: 'net_pnl', label: 'NET', align: 'right', render: (r) => <span style={{ color: lpSgn(r.net_pnl), fontWeight: 700 }}>{lpUsd(r.net_pnl)}</span> },
       { key: 'pct', label: '%', align: 'right',
-        sortVal: (r) => { const den = (r.entry_price || 0) * (r.quantity || 0); return den ? (r.net_pnl / den) * 100 : null; },
+        sortVal: (r) => _hNetPct(r),
         render: (r) => {
-          const den = (r.entry_price || 0) * (r.quantity || 0);
-          const pct = den ? (r.net_pnl / den) * 100 : null;
+          const pct = _hNetPct(r);
           return pct == null ? '—' : <span style={{ color: lpSgn(pct) }}>{lpPct(pct)}</span>;
         } },
       { key: 'mr', label: 'M·R', align: 'right',
@@ -338,7 +365,8 @@ const HistoryPage = () => {
       /* trade_events rows carry an ISO-string timestamp, not epoch-ms [P4 audit #1] */
       { key: 'timestamp', label: 'TIME', render: (r) => <span style={{ color: 'var(--qe-muted)' }}>{String(r.timestamp || '').slice(0, 16).replace('T', ' ') || '—'}</span> },
       { key: '_symbol', label: 'SYM', render: (r) => <span style={{ color: 'var(--qe-cyan)', fontWeight: 700 }}>{r._symbol || '—'}</span> },
-      { key: 'event_type', label: 'TYPE', render: (r) => <Badge tone="info">{r.event_type}</Badge> },
+      { key: 'event_type', label: 'TYPE',
+        render: (r) => <Badge tone={_hEvtTone(r.event_type)}>{r.event_type}</Badge> },
       { key: 'calc_id', label: 'CALC', render: (r) => <span style={{ color: 'var(--qe-muted)' }}>{r.calc_id ? String(r.calc_id).slice(-8) : '—'}</span> },
       { key: 'source', label: 'SRC', render: (r) => <span style={{ color: 'var(--qe-muted)' }}>{r.source || ''}</span> },
       /* the event's SUBSTANCE — restored L3-F3 (the door parses _payload
@@ -367,11 +395,14 @@ const HistoryPage = () => {
     const net = rows.reduce((s, r) => s + (r.net_pnl || 0), 0);
     const wins = rows.filter((r) => (r.net_pnl || 0) >= 0).length;
     const fees = rows.reduce((s, r) => s + (r.total_fees || 0), 0);
+    // realized_pnl is the GROSS leg (net_pnl is after fees) — history-5.
+    const gross = rows.reduce((s, r) => s + (r.realized_pnl || 0), 0);
     return [
       { label: 'ROWS', value: String(rows.length) },
       { label: 'WINS', value: String(wins), color: 'var(--qe-green)' },
       { label: 'LOSSES', value: String(rows.length - wins), color: 'var(--qe-red)' },
       { label: 'WINRATE', value: rows.length ? Math.round((wins / rows.length) * 100) + '%' : '—' },
+      { label: 'GROSS', value: lpUsd(gross), color: lpSgn(gross) },
       { label: 'FEES', value: _ptFmtN(fees), color: 'var(--qe-sub)' },
       { label: 'NET', value: lpUsd(net), color: lpSgn(net) },
     ];
@@ -444,17 +475,24 @@ const HistoryPage = () => {
                     {dp.symbol} · CLOSED · {dp.direction}
                   </SecLbl>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 10px' }}>
-                    <KV l="Net" v={lpUsd(dp.net_pnl)} color={lpSgn(dp.net_pnl)} />
+                    {/* history-7: Net carries its % again (same figure the table's
+                        '%' column computes), and Size / Fee · all-in are back. */}
+                    <KV l="Net" v={`${lpUsd(dp.net_pnl)}${_hNetPct(dp) == null ? '' : `  (${lpPct(_hNetPct(dp))})`}`} color={lpSgn(dp.net_pnl)} />
                     <KV l="Duration" v={_hDur(dp.hold_time_ms)} />
                     <KV l="Entry" v={lpPx(dp.entry_price)} />
                     <KV l="Exit" v={lpPx(dp.exit_price)} />
                     <KV l="TP plan" v={lpPx(dp.tp_price)} color="var(--qe-green)" />
                     <KV l="SL plan" v={lpPx(dp.sl_price)} color="var(--qe-red)" />
-                    <KV l="MFE / MAE" v={`${_ptFmtN(dp.mfe)} / ${_ptFmtN(dp.mae)}`} />
+                    <KV l="Size" v={dp.quantity == null ? '—' : _ptFmtSz(dp.quantity)} />
+                    <KV l="Fee · all-in" v={_ptFmtN(dp.total_fees, 4)} color="var(--qe-sub)" />
                     <KV l="Funding" v={lpUsd(dp.funding_fees, 3)} color={lpSgn(dp.funding_fees)} />
                     <KV l="Model" v={dp.model_name || '—'} />
                     <KV l="Calc" v={dp.calc_id ? String(dp.calc_id).slice(-8) : '—'} color="var(--qe-cyan)" />
                   </div>
+                  {/* history-3: the labelled excursion bar. The MFE/MAE KV it
+                      replaces showed the two magnitudes but never where the exit
+                      landed between them — the capture-ratio read. */}
+                  <HeatBarLabelled mfe={dp.mfe} mae={dp.mae} pnl={dp.net_pnl} pct={_hNetPct(dp)} />
                   <div style={{ borderTop: '1px solid var(--qe-line)' }} />
                   <SecLbl rule>Fills</SecLbl>
                   {drill == null ? <Spinner label="loading" /> :
@@ -468,6 +506,11 @@ const HistoryPage = () => {
                       { key: 'is_close', label: 'ACT', render: (f) => <Badge tone={f.is_close ? 'mute' : 'info'}>{f.is_close ? 'C' : 'O'}</Badge> },
                       { key: 'price', label: 'PRICE', align: 'right', render: (f) => lpPx(f.price) },
                       { key: 'quantity', label: 'QTY', align: 'right' },
+                      { key: 'fee', label: 'FEE', align: 'right',
+                        render: (f) => <span style={{ color: 'var(--qe-sub)' }}>{_ptFmtN(f.fee, 4)} {f.fee_asset || ''}</span> },
+                      { key: 'role', label: 'ROLE', filter: { label: 'ROLE' },
+                        filterVal: (f) => (f.role || '—').toUpperCase(),
+                        render: (f) => <Badge tone="mute">{(f.role || '—').toUpperCase()}</Badge> },
                       { key: 'exec', label: 'EXEC LINK',
                         sortVal:   (f) => String(f.exec_link_status || ''),
                         filter:    { label: 'EXEC' },

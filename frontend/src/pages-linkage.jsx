@@ -62,6 +62,18 @@ const _lkHM = (ms) => {
   const d = new Date(ms);
   return isNaN(d) ? '—' : d.toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit' });
 };
+/* linkage-2 — absolute next-settlement wall clock. Prefer the endpoint's
+   next_funding_time_ms; fall back to the countdown so the label degrades to a
+   derived time rather than to nothing. */
+const _lkSettleAt = (f) => {
+  if (!f) return '—';
+  const ms = f.next_funding_time_ms != null ? f.next_funding_time_ms
+    : (f.countdown_s != null ? Date.now() + f.countdown_s * 1000 : null);
+  if (!ms) return '—';
+  const d = new Date(ms);
+  return isNaN(d) ? '—' : d.toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit' });
+};
+
 const _lkHMS = (ms) => {
   if (!ms) return '—';
   const d = new Date(ms);
@@ -295,10 +307,13 @@ const LinkagePage = () => {
   /* P8 doc wave (audit L3-F4) — named trims vs the design reference, each
    individually defensible, collectively recorded here: the inbox strip
    omits the direction badge / timestamp / context third line; the reason
-   resolver omits Hold + Closed-at KVs and the "Later" (defer) button;
-   Recent Closes omits Time / Hold / % columns; the funding settlement
-   countdown renders the polled value (≤30s stale) rather than ticking
-   locally; the PageHeader omits the design's "LINK · 5m window" dot. */
+   resolver omits Hold + Closed-at KVs and the "Later" (defer) button; the
+   funding settlement countdown renders the polled value (≤30s stale) rather
+   than ticking locally.
+   CLOSED 2026-07-25 (Meridian audit LOW tail): Recent Closes has Time / Hold /
+   PnL-% again (linkage-1), Active Calcs has R (linkage-3), the funding summary
+   states cum + the absolute settle time (linkage-2), and the PageHeader carries
+   the LINK · window dot (linkage-4). */
 
 /* live uPnL deltas: SSE position_update refreshes upnl — keyed by
      symbol|side, NEVER symbol alone (P8 audit L3-F1: in HEDGE mode a symbol
@@ -373,6 +388,11 @@ const LinkagePage = () => {
     { key: 'average', label: 'Entry', align: 'right', render: (r) => lpPx(r.average) },
     { key: 'tp_price', label: 'TP', align: 'right', render: (r) => <span className="qe-up">{lpPx(r.tp_price)}</span> },
     { key: 'sl_price', label: 'SL', align: 'right', render: (r) => <span className="qe-dn">{lpPx(r.sl_price)}</span> },
+    // linkage-3: est_r is already on every row (SELECT * on pre_trade_log); the
+    // resolver renders the same value for candidates.
+    { key: 'est_r', label: 'R', align: 'right',
+      render: (r) => r.est_r == null ? <span style={{ color: 'var(--qe-muted)' }}>—</span>
+        : <span style={{ color: 'var(--qe-cyan)' }}>{(+r.est_r).toFixed(2)}</span> },
     // Same shape as posCols.dev: 'cd' is not a row field, so the column was
     // invisible to sort and facets. It renders a countdown off the REAL numeric
     // expiry_ms, and "which calc expires first" is the ordering this pane exists
@@ -413,6 +433,11 @@ const LinkagePage = () => {
     { key: 'cum', label: 'Cum', align: 'right', render: (r) => <span style={{ color: lpSgn(r.cum) }}>{lpUsd(r.cum, 3)}</span> },
   ];
   const closeCols = [
+    // linkage-1: recency and hold were only implied by server sort order; on a
+    // triage board the operator correlates closes against what else happened at
+    // that moment, and neither is derivable from another cell.
+    { key: 'exit_time_ms', label: 'Time', sortVal: (r) => r.exit_time_ms || 0,
+      render: (r) => <span style={{ color: 'var(--qe-muted)' }}>{_lkHM(r.exit_time_ms)}</span> },
     { key: 'symbol', label: 'Sym', filter: true,
       filterVal: (r) => (r.symbol || '').replace('USDT', ''),
       sortVal:   (r) => (r.symbol || '').replace('USDT', ''),
@@ -427,7 +452,18 @@ const LinkagePage = () => {
     { key: 'net_pnl', label: 'PnL', align: 'right',
       filter: { label: 'RESULT' },
       filterVal: (r) => ((r.net_pnl || 0) > 0 ? 'WIN' : (r.net_pnl || 0) < 0 ? 'LOSS' : 'FLAT'),
-      render: (r) => <span style={{ color: lpSgn(r.net_pnl), fontWeight: 700 }}>{lpUsd(r.net_pnl)}</span> },
+      // linkage-1: absolute AND percent — a -0.62 on a 12m scalp reads very
+      // differently from a +1.93 on a 3h hold.
+      render: (r) => {
+        const den = (r.entry_price || 0) * (r.quantity || 0);
+        const pct = den ? (r.net_pnl / den) * 100 : null;
+        return (<span style={{ whiteSpace: 'nowrap' }}>
+          <span style={{ color: lpSgn(r.net_pnl), fontWeight: 700 }}>{lpUsd(r.net_pnl)}</span>
+          {pct == null ? null : <span style={{ color: 'var(--qe-muted)', fontSize: '0.56rem', marginLeft: 4 }}>{lpPct(pct)}</span>}
+        </span>);
+      } },
+    { key: 'hold_time_ms', label: 'Hold', align: 'right', sortVal: (r) => r.hold_time_ms || 0,
+      render: (r) => <span style={{ color: 'var(--qe-muted)', fontSize: '0.56rem' }}>{_lkDur(r.hold_time_ms)}</span> },
     // Facet/sort/search all follow the RENDERED badge (pending → "SET REASON",
     // otherwise the LP_EXIT_REASONS label), so the column can no longer sort or
     // filter on a value the operator never sees. NB the facet stays invisible
@@ -446,6 +482,14 @@ const LinkagePage = () => {
     <div className="qe-scope" data-screen-label="03 Linkage" style={{ width: '100%', height: '100%', background: 'var(--qe-bg)', display: 'flex', flexDirection: 'column', position: 'relative' }}>
       <TopNavStd page="Linkage" variant="line" dense />
       <PageHeader title="Linkage" subtitle="calc-linkage workspace · manual link · close reasons · positions · funding">
+        {/* linkage-4: the configured link window is what explains most of this
+            page's queue — an order that missed it lands in NEEDS REVIEW. Taken
+            off the calc rows already in hand (window_seconds), so no new fetch. */}
+        {(() => {
+          const w = (calcs || []).map((c) => c.window_seconds).find((v) => v != null);
+          return <StatusDot tone="info" label="LINK"
+            value={w == null ? '—' : (w >= 60 ? Math.round(w / 60) + 'm window' : w + 's window')} />;
+        })()}
         <StatusDot tone={inbox.length ? 'warn' : 'ok'} label="QUEUE" value={`${inbox.length} open`} />
       </PageHeader>
 
@@ -536,7 +580,13 @@ const LinkagePage = () => {
               foot={lkFoot('funding', funding != null)}>
               {funding == null ? <div style={{ padding: 10 }}><Spinner label="loading" /></div> :
                <DataList columns={fundCols} rows={funding.rows || []} selKey="position_id"                 emptyMsg="no open positions"
-                 summary={<><span>net next {funding.countdown_s != null ? lpClock(funding.countdown_s) : '—'}</span><span style={{ color: lpSgn(funding.net_next) }}>{lpUsd(funding.net_next, 3)}</span></>} />}
+                 summary={<>
+                   <span>net at {_lkSettleAt(funding)}</span>
+                   <span>next {funding.countdown_s != null ? lpClock(funding.countdown_s) : '—'}</span>
+                   <span style={{ color: lpSgn(funding.net_next) }}>{lpUsd(funding.net_next, 3)}</span>
+                   <span style={{ color: 'var(--qe-muted)' }}>cum</span>
+                   <span style={{ color: lpSgn(funding.net_cum) }}>{lpUsd(funding.net_cum, 3)}</span>
+                 </>} />}
             </Pane>
           </GridItem>
 
