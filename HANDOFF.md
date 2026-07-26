@@ -1,9 +1,95 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-07-25 (**v3.0 OPERATOR BUG-LIST PASS — all 8 reported bugs + 2 follow-up design-parity rounds SHIPPED; the 3 P8 decision points are ANSWERED. NEXT PROGRAM = inconsistency audit of the built `/v3` frontend vs the Meridian standalone benchmark** — now committed in-repo, see § "▶▶ NEXT SESSION".)
-**Branch**: **`v3.0/ui-plan-audit` — LOCAL ONLY (unpushed), working tree CLEAN.** 16 commits this session on top of `361b98b`: `23d04de` #1 equity · `4ce6516` #4 snapshot-reader · `ff368be` phantom-equity tool · `f5b5f93`+`9125d6e` #2 DataList tools · `4b21db6` #5 manual-link · `c39119f` #6 dialog + #7 calendar · `88ce716`+`a1390a1`+`c871c18` clock arc · `7617b73` #8a MFE/MAE re-source · `74e687f` #8b excursion tool · `0988882` REASON resolver · `7fb64fc` linkage inbox · `5251d0d` history #1-3 · this wrap (HEAD). Base = the v2.7 line (`92b753b`, pushed). **Operator merges/pushes v3.0 at their call.**
-**Tests**: **4369 passed / 7 skipped / 3 deselected** (SOLO, `.venv`, FULL gate green — 12 green full runs; +114 pins over the P8 bundle's 4255; the last +41 = excursion-cleanup durability vs the reconciler's pending predicate, then the 5 Meridian MED fixes incl. their fix-review corrections). ALWAYS run SOLO on the **`.venv`** interpreter (user-site Python lacks `pytest-timeout` → drops the 30 s guardrail). The F5 tripwire fires its BENIGN branch only when the engine runs alongside — it was STOPPED for the later runs, so those gates are silent. Fresh worktree/clone: run `scripts/provision_test_env.py` FIRST (CLAUDE.md § "Fresh worktree / clone").
-**Engine**: **STOPPED.** The operator hit a port-8000 conflict at session end; both operator-started uvicorn PIDs (32520/45848, up since 2026-07-24 23:44) were confirmed as the engine and killed — port verified free. **A RESTART IS REQUIRED and lands four backend changes at once**: the CCXT clock auto-fix, `/api/state`'s clock fields (feeds the drift banner), the MFE/MAE re-source, and P8 wave-2's Python routes (Monthly bar + macro sparklines). Bundle on disk **`10983f236b`**; hard-refresh after restart. Unfiled live-log observations (still open): news fetcher upserts 100 items every ~16 s; httpx INFO writes the **Finnhub API token in cleartext** into `data/logs/risk_engine.jsonl` (pre-existing leak — ledger candidate).
+**Date**: 2026-07-26 (**MERIDIAN v3.0 — the Meridian design-consistency audit is FULLY DISPOSED (34/34), three UI standards are written into DESIGN.md, the product is renamed, and the Jinja retirement was built, measured and DEFERRED on operator call. NEXT = live-drive React, then execute the scoped retirement.**)
+**Branch**: **`v3.0/ui-plan-audit` — PUSHED, origin in sync at `a033889`, tree CLEAN.** First push of this branch happened this session (it had been local-only since P0).
+**Tests**: **4502 passed / 7 skipped / 3 deselected** (SOLO, `.venv`, FULL gate green). ALWAYS run SOLO on the **`.venv`** interpreter (user-site Python lacks `pytest-timeout` → drops the 30 s guardrail). Fresh worktree/clone: run `scripts/provision_test_env.py` FIRST (CLAUDE.md § "Fresh worktree / clone").
+**Bundle**: **`865d8e3be2`** — hard-refresh after any restart.
+**Engine**: operator RESTARTED it this session and is live-driving `/v3` (the news marquee was reported from a running instance). Unfiled live-log observations (still open): news fetcher upserts 100 items every ~16 s; httpx INFO writes the **Finnhub API token in cleartext** into `data/logs/risk_engine.jsonl` (pre-existing leak — ledger candidate).
+
+## ▶ SESSION CLOSE 2026-07-26 — audit fully disposed · 3 UI standards · rename · retirement deferred
+
+**12 commits, all pushed.** In order:
+
+| Commit | What |
+|---|---|
+| `5a58331` | excursion cleanup APPLIED (67 rows) — **after fixing a self-undoing defect in the tool** |
+| `e92e8be` | Meridian design-consistency audit ledger — 34 confirmed, 0 CRIT/HIGH |
+| `414aace` | the **5 MED** closed (2 materially corrected by an adversarial fix-review) |
+| `98a93f7` | **DataList tools sweep** — search+sort+filter on every pane (24 sites, 21 fixed) |
+| `a39bc58` | **no-data standard** — dashed frame inset 2× the pane gap, 30 sites |
+| `f99faf9` | **`HeatBar` primitive** — the excursion cell's 3 channels restored; both standards written into DESIGN.md |
+| `83b3d2c` | LOW/NIT slice 1 — History + Linkage (10) |
+| `c9da97a` | LOW/NIT slice 2 — analytics · dashboard · models · pretrade · chrome (14) |
+| `c57cab7` | LOW/NIT slice 3 — the final five (backend-touching). **ALL 29 CLOSED** |
+| `cd4145f` | rename → **MERIDIAN v3.0**; retirement built, measured, REVERTED |
+| `a033889` | un-abbreviate the name; news ticker at a constant, readable speed |
+
+**★ THE AUDIT IS FULLY DISPOSED: 34 confirmed findings — 5 MED + 29 LOW/NIT — all
+closed or explicitly refuted.** The ledger
+(`docs/audits/2026-07-25-v3.0-meridian-design-consistency-audit.md`) carries
+per-finding detail, a Disposition section per slice, and a **Refuted** section
+recording the false-positive classes so they are not re-filed.
+
+**★★ THE LESSON OF THIS SESSION — distrust a comment that explains an omission.**
+FOUR in-source rationales proved FALSE, each one having justified dropping
+something real:
+1. `"no real per-message latency source exists"` (nav-and-data) — `ws_manager`
+   stamps one on every market frame.
+2. `"no engine feed"` for the RegimeBadge tone (pages-pretrade) — `NAV_REGIME_TONE`
+   ships in the build and the workspace strip already renders a live badge from it.
+3. `"exit PnL already has its own NET column"` (the excursion cell) — the tick's
+   job is to place the close INSIDE the range, not restate a number.
+4. `"a stable category-size indicator"` (History tab counts) — the active slot was
+   never stable, so the badge row meant two things at once.
+See [[feedback-verify-the-audits-cited-source]]; the same discipline caught two
+WRONG fixes of my own before commit (below).
+
+**★★★ TWO OF MY OWN FIXES WERE WRONG AND CAUGHT BY REVIEW, NOT BY TESTS.** Both
+passed a green gate because each was faithful to the source it read and wrong
+about WHICH source to read:
+- **`shell-chrome-3`**: wired the feed dot to `ws.connected`, which is the
+  **USER-DATA** socket (`ws_manager` writes it only in `_user_data_loop`; the
+  market loop only logs), and `ws.last_update` is floored by the 30 s REST
+  refresh. The dot would have lied BOTH ways. Now backed by real
+  `WSStatus.market_connected` / `market_last_update` / `market_latency_ms`.
+- **`config-1`**: "blank = keep stored" let one half of a warn/limit pair be
+  cleared, which SKIPS `validate_params`' cross-check (it gates on both keys
+  being present and validates the SUPPLIED subset) → `warn >= limit` behind a
+  200 "Saved.". Now posted pairwise + a client pre-check.
+
+**Verification shape that earned its keep**: rendering the SHIPPED bundle in a
+browser and MEASURING, rather than eyeballing. It proved the no-data inset is
+8/8/8/8 across three body paddings, that `HeatBar` draws all three channels
+across 7 data shapes, and that the ticker holds ~52 px/s at 3/8/40 items. Recipe
+lives in `scratchpad/` (`scope.mjs` vm identifier check + the HTML harnesses).
+
+### The three UI standards (now in `frontend/DESIGN.md` § Data display)
+1. **DataList tools** — every pane offers search + sort + filter. The gaps were
+   almost never `tools={false}`: they were columns whose `key` NO ROW CARRIES
+   (render ignores the key, so the header sorts on `undefined` and the column
+   can never facet — 18 of them), and `showFilter` true with zero derivable
+   facets. Fixes are `sortVal`/`filterVal`/`searchVal` + forced facets.
+   ONE primitive change: the `distinct < 2` bail now runs only when NOT forced,
+   so a declared facet survives a homogeneous table.
+2. **No-data** — dashed frame `inset: calc(var(--qe-pane-gap) * 2)`, surrounding
+   the whole pane body, content centred. ABSOLUTE, not margin (body padding
+   varies per call site); the rule is SCOPED to `.qe-pane-body` so modal/inline
+   uses stay in flow; `fill` is opt-in so a zero-state beside siblings cannot
+   cover them. **Never fill the DataList "no matches" state** — the sticky
+   toolbar above it is the only way to clear the filter.
+3. **Excursion** — `HeatBar` / `HeatBarLabelled`, three load-bearing channels
+   (centre ENTRY rule · MAE/MFE extents · EXIT tick). Truthfulness: both values
+   null → `—`, never a zero bar; `pnl` null → omit the tick.
+
+### Operator decisions taken this session
+- **#7 Calendar-PnL cell ratio → KEEP `3 / 2`** (landscape, as shipped); the
+  "unconfirmed" flag is dropped. Recorded but NOT acted on: the ratio treats a
+  symptom — the cells are flat because our grid carries `alignContent: 'start'`
+  (pages-analytics.jsx) which the design does not.
+- **Desktop notifications → keep plan §7's deferral**, make the control honest
+  (rendered disabled) rather than wiring it.
+- **Retirement → "rename only, hold the promotion."**
+
 
 ## ▶ SESSION CLOSE 2026-07-25 — operator bug-list pass (8 bugs) + 2 design-parity rounds
 
@@ -313,6 +399,40 @@ is what a future attempt needs, so nobody re-derives it:
   engine was stopped this whole session, so nothing since the DataList sweep,
   the no-data standard, HeatBar and the 29 LOW/NIT fixes has been seen running.
   **Restart + live-drive BEFORE retiring the fallback.**
+
+## ▶▶ NEXT SESSION STARTS HERE
+
+**1. The retirement is SCOPED AND READY — but gated on live acceptance.**
+It was fully built this session and reverted on operator call; every fact needed
+to redo it is in § "v3.0 RENAME SHIPPED · RETIREMENT DEFERRED" below. Do NOT
+re-derive: `base.html` CANNOT retire (6 admin/orders templates extend it; and
+`v3.html` only LOOKS like an extender to a naive grep because its header comment
+says it deliberately isn't), `/config` CANNOT retire (React's Add/Delete Account
+are disabled and point at it), all 50 `/fragments/*` + `POST /models` must
+SURVIVE, and the cost is **126 pins across 25 files**. Gate first on the operator
+having driven React live.
+
+**2. Then**: promote `/v3` → `/`, retire the 8 twins + their pins, JS-drift grep.
+
+**3. Standing carry-forward** (unchanged, don't lose): `no-undef` lint dev-dep ·
+`entry_ms` rename + the P1 stub that hid it · Finnhub-token-in-log leak · news
+~16 s cadence · `account_snapshots` migration · the intermittent aiosqlite
+teardown warning (reproduce before chasing).
+
+**4. OS clock drift — advice given, operator to apply.** Engine thresholds are
+WARN 500 ms / CRITICAL 1000 ms on abs(offset); Binance `-1021` fires only when
+local is AHEAD >1000 ms. The operator's `-9987 ms` was ~10× critical. Root cause
+is almost certainly NOT the NTP server but the POLL INTERVAL: standalone Windows
+defaults `SpecialPollInterval` to 604800 s (one week), so the RTC free-runs
+between syncs and sleep/resume makes it worse. Recommended: `time.cloudflare.com`
+(anycast) + a regional pool via `w32tm /config /manualpeerlist` with `,0x8`, and
+`SpecialPollInterval` at 900. Avoid mixing leap-SMEARING sources (Google/Amazon)
+with non-smearing ones — Binance is standard UTC. CCXT's
+`adjustForTimeDifference` only cancels a CONSTANT offset measured once at
+`load_markets()`, so it does not track ongoing drift, and it corrects only the
+request timestamp — every locally-computed time (position AGE, link window, BOD
+boundaries, FEED `stale_s`) stays wrong. **These are system settings — the
+operator runs them, not the assistant.**
 
 **▶ OPERATOR ACTIONS PENDING:**
 1. **Restart the engine** (see the Engine line — lands 4 backend changes).
@@ -659,7 +779,7 @@ session that PRECEDED this execution; it remains as history.)
 
 ## ▶ STATUS 2026-07-22 — v3.0 UI PLAN AUDIT DONE + REV-1 RATIFIED; NEXT SESSION = execute P0 (Foundation)
 
-**▶▶ NEXT SESSION STARTS HERE.** Read, in order: (1) `docs/design/v3.0_ui_rebuild_plan.md`
+**▶▶ (SUPERSEDED — this was the 2026-07-22 start marker; the live one is at the top of this file.)** Read, in order: (1) `docs/design/v3.0_ui_rebuild_plan.md`
 (the plan, REV-1 — §0 decisions, §5 phase sequence, §1-§4 architecture/gaps/mock-strip),
 (2) `docs/audits/2026-07-22-v3.0-ui-plan-audit.md` (the 6-lens ledger + the REV-1
 fidelity section) as needed, (3) the design reference under `docs/design/meridian_v3/`.
