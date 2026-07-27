@@ -1,0 +1,14 @@
+{
+  "name": "meridian-e2e",
+  "private": true,
+  "description": "Playwright E2E debugging harness for the MERIDIAN /v3 frontend. Runs OUT of process against a live (:8000) or sandboxed (:8010) engine - it never starts or stops an engine itself. Deliberately its own package: frontend/ is a BUILD-ONLY workspace and must stay that way. Not collected by pytest (pyproject testpaths=['tests']).",
+  "scripts": {
+    "e2e:selftest": "playwright test --project=selftest",
+    "e2e:smoke": "playwright test --project=live-r specs/phase0-smoke",
+    "e2e:report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.50.0",
+    "@types/node": "^22.10.0"
+  }
+}

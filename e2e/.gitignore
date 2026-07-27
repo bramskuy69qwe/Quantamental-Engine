@@ -1,0 +1,4 @@
+node_modules/
+ledger/raw/
+playwright-report/
+test-results/
