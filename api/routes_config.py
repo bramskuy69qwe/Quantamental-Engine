@@ -98,7 +98,13 @@ async def api_config_apply_preset(request: Request):
                                 status_code=400)
         # Never write a row for an account that does not exist — an unknown id
         # would otherwise silently create/park settings nothing ever reads.
-        known = {a["id"] for a in account_registry.list_accounts()}
+        # list_accounts() is ASYNC (account_registry.py:320) — iterating it
+        # unawaited raised TypeError: 'coroutine' object is not iterable, which
+        # escaped this route's try/except and returned an EMPTY 500. The branch
+        # runs whenever account_id is supplied, and the v3 UI always supplies it
+        # (pages-config.jsx:690), so Apply Preset failed for every preset and
+        # every target. `await` matches the sibling route (routes_accounts.py:158).
+        known = {a["id"] for a in await account_registry.list_accounts()}
         if aid not in known:
             return JSONResponse({"error": f"Unknown account_id {aid}",
                                  "valid": sorted(known)}, status_code=404)

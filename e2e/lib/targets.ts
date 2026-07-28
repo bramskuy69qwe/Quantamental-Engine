@@ -47,9 +47,19 @@ export async function preflight(baseURL: string, mode: Mode): Promise<void> {
   if (html.includes('v3 bundle not built')) {
     throw new Error(`[e2e] ${baseURL}/v3 served the missing-bundle panel — build the frontend first`);
   }
-  // TODO(phase-4): sandbox identity check — assert the active account is the provisioned
-  // test account and hard-fail if the data looks live-shaped (belt-and-braces on top of
-  // provision_test_env.py's own refusals).
+  // Sandbox identity check — the seeded marker account must be present; a live-shaped
+  // engine (the operator's real account names) hard-fails here. Belt-and-braces on top
+  // of provision_test_env.py's own refusals.
+  if (mode === 'W') {
+    const res2 = await fetch(baseURL + '/accounts');
+    const accounts = (await res2.json()) as { name: string }[];
+    const names = accounts.map((a) => a.name);
+    if (!names.includes('Sandbox Second (Binance Futures)')) {
+      throw new Error(
+        `[e2e] ${baseURL} does not look like the seeded sandbox (accounts: ${names.join(', ')}) — REFUSING mutations`,
+      );
+    }
+  }
   fs.mkdirSync(LEDGER_DIR, { recursive: true });
   const info = {
     runId: RUN_ID,
