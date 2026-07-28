@@ -1,25 +1,26 @@
 {
   "_doc": [
-    "Stateful clusters for Phase 3 order-permutation testing. members are regexes over",
-    "control ids. reset: how state is wound back between orderings (reload = page reload",
-    "+ storage reset; remount = tab-switch away and back - the reset the app itself",
-    "performs). Clusters marked remountSensitive run each ordering BOTH ways.",
-    "Seeded from the 2026-07-28 exploration; Phase 3 refines members against controls.json."
+    "Phase-3 order-permutation clusters. members = regexes over control ids, resolved",
+    "against the R-mode manifest (safe controls only), capped at maxMembers with the",
+    "drop LOGGED (no silent caps). Full permutations when <=4 resolved members,",
+    "otherwise all ordered pairs. reset: reload = storage reset + fresh goto;",
+    "remountAlso = the DataList cluster additionally re-runs each ordering with a",
+    "tab-switch remount (the reset the app itself performs). Members are deliberately",
+    "REPRESENTATIVES of each shared-state surface, not exhaustive lists - the",
+    "exhaustive single-action pass is Phase 2's job.",
+    "Excluded by design: quasi controls (ticker - server WS-sub churn belongs to",
+    "Phase 5/6 flows)."
   ],
   "clusters": [
-    { "id": "nav", "page": "*", "reset": "reload", "members": ["^chrome/.*(dashboard|pre-trade|linkage|history|analytics|models|regime|primitives|configuration)"] },
-    { "id": "chrome-lock", "page": "*", "reset": "reload", "members": ["^chrome/.*lock"], "note": "workspace lock affects EVERY page's GridStack" },
-    { "id": "notifications", "page": "*", "reset": "reload", "members": ["^chrome/.*bell", "^chrome/notification drawer/"], "note": "drawer state survives navigation - only reload resets" },
-    { "id": "dash-workspace", "page": "Dashboard", "reset": "reload", "members": ["^chrome/.*(default|risk|execution|macro)", "^chrome/.*(save current layout|load saved layout|new workspace)"], "note": "preset x drag x save/load; preset button never reconciled with drag/Load (pre-spotted)" },
-    { "id": "dash-equity-tf", "page": "Dashboard", "reset": "remount", "members": ["^Dashboard/.*period:"], "remountSensitive": true },
-    { "id": "pretrade-form", "page": "Pre-Trade", "reset": "reload", "members": ["^Pre-Trade/order inputs/", "^Pre-Trade/.*(setup summary|recent setups)/"], "note": "order-type x auto-refresh(sticky pause) x ticker(quasi) x tp/sl mode x ladder x recall" },
-    { "id": "linkage-inbox", "page": "Linkage", "reset": "reload", "members": ["^Linkage/manual link.*/", "^Linkage/.*(inbox|resolver)"], "note": "selection falls back to inbox[0] silently" },
-    { "id": "linkage-calcs", "page": "Linkage", "reset": "reload", "members": ["^Linkage/active calcs/"] },
-    { "id": "history-filters", "page": "History", "reset": "reload", "members": ["^History/.*(tab|period|input|button):", "^History/\\(page-header\\)/"], "note": "period x q x tabs x page/perPage - perPage reset is inline, not in the reset effect (pre-spotted asymmetry)" },
-    { "id": "analytics-tabs", "page": "Analytics", "reset": "remount", "members": ["^Analytics/"], "remountSensitive": true },
-    { "id": "regime-tabs", "page": "Regime", "reset": "reload", "members": ["^Regime/"], "note": "backfill job handle is page-level - leaving the PAGE loses it while the server job runs (pre-spotted)" },
-    { "id": "models-tabs", "page": "Models", "reset": "reload", "members": ["^Models/"], "note": "model tabs are data-dependent (named after live models)" },
-    { "id": "config-tabs", "page": "Config", "reset": "reload", "members": ["^Config/.*/tab:"], "note": "sandbox-only beyond tab switching" },
-    { "id": "datalist-tools", "page": "*", "reset": "remount", "members": ["/\\(dl-tools\\)/", "/sort:"], "remountSensitive": true, "note": "facet->search->sort pipeline; state resets on remount (documented behavior worth asserting)" }
+    { "id": "config-tabs", "page": "Config", "reset": "reload", "maxMembers": 4, "members": ["^Config/.*/tab:"] },
+    { "id": "dash-workspace", "page": "Dashboard", "reset": "reload", "maxMembers": 6, "members": ["^chrome/.*period:(risk|macro)$", "^chrome/.*button:save current layout", "^chrome/.*button:load saved layout", "^chrome/.*button:new workspace from default", "^chrome/.*button:lock workspace layout"] },
+    { "id": "pretrade-form", "page": "Pre-Trade", "reset": "reload", "maxMembers": 6, "members": ["^Pre-Trade/order inputs/button:limit$", "^Pre-Trade/order inputs/button:stop$", "^Pre-Trade/order inputs/period:by %$", "^Pre-Trade/\\(chrome-or-page\\)/period:⏸$", "^Pre-Trade/order inputs/button:\\+ level$", "^Pre-Trade/setup summary/period:contracts$"] },
+    { "id": "analytics-equity", "page": "Analytics", "reset": "reload", "maxMembers": 4, "members": ["^Analytics/equity curve/button:log scale$", "^Analytics/equity curve/button:drawdown %$", "^Analytics/equity curve/period:w$", "^Analytics/equity curve/period:all$"] },
+    { "id": "history-filters", "page": "History", "reset": "reload", "maxMembers": 5, "members": ["^History/\\(page-header\\)/period:d$", "^History/\\(page-header\\)/period:all$", "^History/.*/tab:fills", "^History/closed positions/select:rows · page$", "^History/\\(page-header\\)/input:filter symbol"] },
+    { "id": "datalist-tools", "page": "History", "reset": "reload", "remountAlso": { "away": "fills", "back": "closed" }, "maxMembers": 5, "members": ["^History/closed positions/input:search…$", "^History/closed positions/select:sym$", "^History/closed positions/select:side$", "^History/closed positions/sort:net$", "^History/closed positions/sort:sym$"] },
+    { "id": "linkage-lists", "page": "Linkage", "reset": "reload", "maxMembers": 5, "members": ["^Linkage/open positions/select:side$", "^Linkage/open positions/select:sym$", "^Linkage/open positions/input:search…$", "^Linkage/open positions/sort:sym$", "^Linkage/recent closes/select:result$"] },
+    { "id": "regime-overview", "page": "Regime", "reset": "reload", "maxMembers": 5, "members": ["^Regime/regime timeline.*/button:(bars|heat)$", "^Regime/regime timeline.*/period:", "^Regime/regime distribution.*/period:"] },
+    { "id": "models-lib", "page": "Models", "reset": "reload", "maxMembers": 5, "members": ["^Models/model library/button:(all|micro|macro|both)$", "^Models/model library/select:sort$"] },
+    { "id": "notif-across-nav", "page": "Dashboard", "reset": "reload", "maxMembers": 2, "members": ["^chrome/.*notification", "^chrome/.*button:history$"], "note": "drawer state survives navigation - THE cross-page state pair" }
   ]
 }

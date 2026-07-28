@@ -7,6 +7,8 @@
     "e2e:smoke": "playwright test --project=live-r specs/phase0-smoke",
     "e2e:crawl": "playwright test --project=live-r specs/phase1-inventory",
     "e2e:sweep": "playwright test --project=live-r specs/phase2-sweep",
+    "e2e:perm": "playwright test --project=live-r specs/phase3-perm/pairwise.spec.ts",
+    "e2e:monkey": "playwright test --project=live-r specs/phase3-perm/monkey.spec.ts",
     "e2e:report": "playwright show-report"
   },
   "devDependencies": {
