@@ -8543,7 +8543,7 @@
     },
     {
       "pane": "economic calendar - - utc",
-      "paneRaw": "Economic Calendar 02026-07-28 04:02:25 U",
+      "paneRaw": "Economic Calendar 02026-07-28 04:20:57 U",
       "kind": "button",
       "name": "reload pane",
       "title": "Reload pane",
@@ -8561,14 +8561,14 @@
     },
     {
       "pane": "economic calendar - - utc",
-      "paneRaw": "Economic Calendar 02026-07-28 04:02:25 U",
+      "paneRaw": "Economic Calendar 02026-07-28 04:20:57 U",
       "kind": "period",
       "name": "all",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "all",
-        "scope": "Economic Calendar 02026-07-28 04:02:25 U"
+        "scope": "Economic Calendar 02026-07-28 04:20:57 U"
       },
       "sampleText": "All",
       "page": "Regime",
@@ -8579,14 +8579,14 @@
     },
     {
       "pane": "economic calendar - - utc",
-      "paneRaw": "Economic Calendar 02026-07-28 04:02:25 U",
+      "paneRaw": "Economic Calendar 02026-07-28 04:20:57 U",
       "kind": "period",
       "name": "high",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "high",
-        "scope": "Economic Calendar 02026-07-28 04:02:25 U"
+        "scope": "Economic Calendar 02026-07-28 04:20:57 U"
       },
       "sampleText": "High",
       "page": "Regime",
@@ -8597,14 +8597,14 @@
     },
     {
       "pane": "economic calendar - - utc",
-      "paneRaw": "Economic Calendar 02026-07-28 04:02:25 U",
+      "paneRaw": "Economic Calendar 02026-07-28 04:20:57 U",
       "kind": "period",
       "name": "high+med",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "high+med",
-        "scope": "Economic Calendar 02026-07-28 04:02:25 U"
+        "scope": "Economic Calendar 02026-07-28 04:20:57 U"
       },
       "sampleText": "High+Med",
       "page": "Regime",

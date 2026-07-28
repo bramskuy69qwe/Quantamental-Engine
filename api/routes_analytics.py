@@ -90,8 +90,12 @@ def _analytics_range(month: str = "", all: str = "",
         except Exception:
             week_dow = 1
         start, end = resolve_period(period, tz, now=anchor, week_start_dow=week_dow)
-        from_ms = int(start.timestamp() * 1000)
-        to_ms   = int(end.timestamp() * 1000)
+        # all_time resolves start=datetime.min — a hugely NEGATIVE epoch. Windows'
+        # gmtime() cannot represent it: utcfromtimestamp raised in get_r_multiples
+        # (unguarded → the fragment 500'd) while the gathered stats calls degraded
+        # SILENTLY to {}. Clamp to epoch 0 = the legacy all=1 semantics exactly.
+        from_ms = max(0, int(start.timestamp() * 1000))
+        to_ms   = max(0, int(end.timestamp() * 1000))
         label   = _period_label(period, start, end)
         return from_ms, to_ms, label, period
 
