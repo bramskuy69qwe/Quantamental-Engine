@@ -22,9 +22,38 @@ async function findControl(page: Page, c: Control): Promise<ElementHandle<HTMLEl
   try {
     const h = await page.evaluateHandle(finderSrc(controlKey(c)));
     return h.asElement() as ElementHandle<HTMLElement> | null;
-  } catch {
+  } catch (e) {
+    if (process.env.E2E_DEBUG_FINDER === '1') {
+      console.log(`[finder-ex] ${c.id} :: ${String(e).slice(0, 300)}`);
+    }
     return null;
   }
+}
+
+/**
+ * Panes flap during debounced refetch re-renders (a restored search/select fires
+ * another fetch ~250 ms later, briefly swapping the table out) — a single-instant
+ * lookup misses elements that are back 400 ms later. Raw evaluateHandle bypasses
+ * Playwright's auto-waiting, so the waiting is ours to do: retry the find.
+ * (Run 2-20260728-0446: 126 sort headers "not found" this way — all found fine
+ * on a settled page.)
+ */
+async function findControlRetry(
+  page: Page,
+  c: Control,
+  attempts = 4,
+  delayMs = 400,
+  tag = '?',
+): Promise<ElementHandle<HTMLElement> | null> {
+  for (let i = 0; i < attempts; i++) {
+    const el = await findControl(page, c);
+    if (process.env.E2E_DEBUG_FINDER === '1' && c.kind === 'sort') {
+      console.log(`[find] ${tag}#${i} ${c.id} -> ${el ? 'FOUND' : 'null'}`);
+    }
+    if (el) return el;
+    await page.waitForTimeout(delayMs);
+  }
+  return findControl(page, c);
 }
 
 /**
@@ -39,8 +68,8 @@ async function withRefind<T>(
   c: Control,
   fn: (el: ElementHandle<HTMLElement>) => Promise<T>,
 ): Promise<T> {
-  let el = await findControl(page, c);
-  if (!el) throw new Error('element not found');
+  let el = await findControlRetry(page, c, 4, 400, 'entry');
+  if (!el) throw new Error('element not found @withRefind-entry');
   for (let attempt = 0; ; attempt++) {
     try {
       return await fn(el);
@@ -48,7 +77,7 @@ async function withRefind<T>(
       const msg = String(e);
       if (attempt >= 2 || !/not attached|detached|Element is not/i.test(msg)) throw e;
       await page.waitForTimeout(250);
-      el = await findControl(page, c);
+      el = await findControlRetry(page, c);
       if (!el) throw new Error(`element vanished after re-render: ${msg.slice(0, 120)}`);
     }
   }
@@ -99,7 +128,7 @@ export async function actOnControl(page: Page, c: Control): Promise<SweepOutcome
     return { id: c.id, action: 'skipped-declared-synthetic' };
   }
   if (c.tabPath) await ensureTab(page, c.tabPath);
-  if (!(await findControl(page, c))) return { id: c.id, action: 'absent' };
+  if (!(await findControlRetry(page, c, 3, 400, 'pre'))) return { id: c.id, action: 'absent' };
   try {
     const meta = await withRefind(page, c, (el) =>
       el.evaluate((n) => ({

@@ -87,7 +87,11 @@ export const ENUM_BODY = `
   });
   document.querySelectorAll('input, textarea').forEach((el) =>
     push(el, 'input', el.id || el.getAttribute('placeholder') || el.getAttribute('title') || nearLabel(el) || el.type || 'input'));
-  document.querySelectorAll('th.qe-sort').forEach((el) => push(el, 'sort', txt(el)));
+  // Sort names are CARET-AGNOSTIC: the header's caret glyph is sort STATE
+  // (↕ idle / ▲ asc / ▼ desc) — clicking the header mutates its own textContent,
+  // so a key carrying the caret can never survive its own action (the 126-error
+  // class of run 2-20260728-0501) and would drift the manifest if crawled sorted.
+  document.querySelectorAll('th.qe-sort').forEach((el) => push(el, 'sort', txt(el).replace(/[↕▲▼]/g, '')));
   document.querySelectorAll('a[href]').forEach((el) => push(el, 'link', txt(el) || el.getAttribute('href') || 'link'));
 `;
 

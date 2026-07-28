@@ -424,108 +424,108 @@
       "pane": "beta-weighted exposure vs btc β from d o",
       "paneRaw": "Beta-Weighted Exposure vs BTC 2β from 30",
       "kind": "sort",
-      "name": "dir↕",
+      "name": "dir",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "dir↕",
+        "value": "dir",
         "scope": "Beta-Weighted Exposure vs BTC 2β from 30"
       },
       "sampleText": "DIR↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Beta Exposure",
-      "id": "Analytics/beta-weighted exposure vs btc β from d o/sort:dir↕",
+      "id": "Analytics/beta-weighted exposure vs btc β from d o/sort:dir",
       "risk": "safe"
     },
     {
       "pane": "beta-weighted exposure vs btc β from d o",
       "paneRaw": "Beta-Weighted Exposure vs BTC 2β from 30",
       "kind": "sort",
-      "name": "notional↕",
+      "name": "notional",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "notional↕",
+        "value": "notional",
         "scope": "Beta-Weighted Exposure vs BTC 2β from 30"
       },
       "sampleText": "NOTIONAL↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Beta Exposure",
-      "id": "Analytics/beta-weighted exposure vs btc β from d o/sort:notional↕",
+      "id": "Analytics/beta-weighted exposure vs btc β from d o/sort:notional",
       "risk": "safe"
     },
     {
       "pane": "beta-weighted exposure vs btc β from d o",
       "paneRaw": "Beta-Weighted Exposure vs BTC 2β from 30",
       "kind": "sort",
-      "name": "sector↕",
+      "name": "sector",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "sector↕",
+        "value": "sector",
         "scope": "Beta-Weighted Exposure vs BTC 2β from 30"
       },
       "sampleText": "SECTOR↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Beta Exposure",
-      "id": "Analytics/beta-weighted exposure vs btc β from d o/sort:sector↕",
+      "id": "Analytics/beta-weighted exposure vs btc β from d o/sort:sector",
       "risk": "safe"
     },
     {
       "pane": "beta-weighted exposure vs btc β from d o",
       "paneRaw": "Beta-Weighted Exposure vs BTC 2β from 30",
       "kind": "sort",
-      "name": "symbol↕",
+      "name": "symbol",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "symbol↕",
+        "value": "symbol",
         "scope": "Beta-Weighted Exposure vs BTC 2β from 30"
       },
       "sampleText": "SYMBOL↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Beta Exposure",
-      "id": "Analytics/beta-weighted exposure vs btc β from d o/sort:symbol↕",
+      "id": "Analytics/beta-weighted exposure vs btc β from d o/sort:symbol",
       "risk": "safe"
     },
     {
       "pane": "beta-weighted exposure vs btc β from d o",
       "paneRaw": "Beta-Weighted Exposure vs BTC 2β from 30",
       "kind": "sort",
-      "name": "β vs btc↕",
+      "name": "β vs btc",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "β vs btc↕",
+        "value": "β vs btc",
         "scope": "Beta-Weighted Exposure vs BTC 2β from 30"
       },
       "sampleText": "β vs BTC↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Beta Exposure",
-      "id": "Analytics/beta-weighted exposure vs btc β from d o/sort:β vs btc↕",
+      "id": "Analytics/beta-weighted exposure vs btc β from d o/sort:β vs btc",
       "risk": "safe"
     },
     {
       "pane": "beta-weighted exposure vs btc β from d o",
       "paneRaw": "Beta-Weighted Exposure vs BTC 2β from 30",
       "kind": "sort",
-      "name": "β-adj. exp.↕",
+      "name": "β-adj. exp.",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "β-adj. exp.↕",
+        "value": "β-adj. exp.",
         "scope": "Beta-Weighted Exposure vs BTC 2β from 30"
       },
       "sampleText": "β-ADJ. EXP.↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Beta Exposure",
-      "id": "Analytics/beta-weighted exposure vs btc β from d o/sort:β-adj. exp.↕",
+      "id": "Analytics/beta-weighted exposure vs btc β from d o/sort:β-adj. exp.",
       "risk": "safe"
     },
     {
@@ -956,162 +956,162 @@
       "pane": "funding rate exposure live",
       "paneRaw": "Funding Rate Exposure Live",
       "kind": "sort",
-      "name": "dir↕",
+      "name": "dir",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "dir↕",
+        "value": "dir",
         "scope": "Funding Rate Exposure Live"
       },
       "sampleText": "DIR↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Funding",
-      "id": "Analytics/funding rate exposure live/sort:dir↕",
+      "id": "Analytics/funding rate exposure live/sort:dir",
       "risk": "safe"
     },
     {
       "pane": "funding rate exposure live",
       "paneRaw": "Funding Rate Exposure Live",
       "kind": "sort",
-      "name": "funding rate↕",
+      "name": "funding rate",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "funding rate↕",
+        "value": "funding rate",
         "scope": "Funding Rate Exposure Live"
       },
       "sampleText": "FUNDING RATE↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Funding",
-      "id": "Analytics/funding rate exposure live/sort:funding rate↕",
+      "id": "Analytics/funding rate exposure live/sort:funding rate",
       "risk": "safe"
     },
     {
       "pane": "funding rate exposure live",
       "paneRaw": "Funding Rate Exposure Live",
       "kind": "sort",
-      "name": "impact↕",
+      "name": "impact",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "impact↕",
+        "value": "impact",
         "scope": "Funding Rate Exposure Live"
       },
       "sampleText": "IMPACT↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Funding",
-      "id": "Analytics/funding rate exposure live/sort:impact↕",
+      "id": "Analytics/funding rate exposure live/sort:impact",
       "risk": "safe"
     },
     {
       "pane": "funding rate exposure live",
       "paneRaw": "Funding Rate Exposure Live",
       "kind": "sort",
-      "name": "next funding↕",
+      "name": "next funding",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "next funding↕",
+        "value": "next funding",
         "scope": "Funding Rate Exposure Live"
       },
       "sampleText": "NEXT FUNDING↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Funding",
-      "id": "Analytics/funding rate exposure live/sort:next funding↕",
+      "id": "Analytics/funding rate exposure live/sort:next funding",
       "risk": "safe"
     },
     {
       "pane": "funding rate exposure live",
       "paneRaw": "Funding Rate Exposure Live",
       "kind": "sort",
-      "name": "notional↕",
+      "name": "notional",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "notional↕",
+        "value": "notional",
         "scope": "Funding Rate Exposure Live"
       },
       "sampleText": "NOTIONAL↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Funding",
-      "id": "Analytics/funding rate exposure live/sort:notional↕",
+      "id": "Analytics/funding rate exposure live/sort:notional",
       "risk": "safe"
     },
     {
       "pane": "funding rate exposure live",
       "paneRaw": "Funding Rate Exposure Live",
       "kind": "sort",
-      "name": "per day↕",
+      "name": "per day",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "per day↕",
+        "value": "per day",
         "scope": "Funding Rate Exposure Live"
       },
       "sampleText": "PER DAY↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Funding",
-      "id": "Analytics/funding rate exposure live/sort:per day↕",
+      "id": "Analytics/funding rate exposure live/sort:per day",
       "risk": "safe"
     },
     {
       "pane": "funding rate exposure live",
       "paneRaw": "Funding Rate Exposure Live",
       "kind": "sort",
-      "name": "per h↕",
+      "name": "per h",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "per h↕",
+        "value": "per h",
         "scope": "Funding Rate Exposure Live"
       },
       "sampleText": "PER 8h↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Funding",
-      "id": "Analytics/funding rate exposure live/sort:per h↕",
+      "id": "Analytics/funding rate exposure live/sort:per h",
       "risk": "safe"
     },
     {
       "pane": "funding rate exposure live",
       "paneRaw": "Funding Rate Exposure Live",
       "kind": "sort",
-      "name": "per week↕",
+      "name": "per week",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "per week↕",
+        "value": "per week",
         "scope": "Funding Rate Exposure Live"
       },
       "sampleText": "PER WEEK↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Funding",
-      "id": "Analytics/funding rate exposure live/sort:per week↕",
+      "id": "Analytics/funding rate exposure live/sort:per week",
       "risk": "safe"
     },
     {
       "pane": "funding rate exposure live",
       "paneRaw": "Funding Rate Exposure Live",
       "kind": "sort",
-      "name": "symbol↕",
+      "name": "symbol",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "symbol↕",
+        "value": "symbol",
         "scope": "Funding Rate Exposure Live"
       },
       "sampleText": "SYMBOL↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Funding",
-      "id": "Analytics/funding rate exposure live/sort:symbol↕",
+      "id": "Analytics/funding rate exposure live/sort:symbol",
       "risk": "safe"
     },
     {
@@ -1439,126 +1439,126 @@
       "pane": "per-fill log",
       "paneRaw": "Per-Fill Log 500",
       "kind": "sort",
-      "name": "fill↕",
+      "name": "fill",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "fill↕",
+        "value": "fill",
         "scope": "Per-Fill Log 500"
       },
       "sampleText": "FILL↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Execution Quality",
-      "id": "Analytics/per-fill log/sort:fill↕",
+      "id": "Analytics/per-fill log/sort:fill",
       "risk": "safe"
     },
     {
       "pane": "per-fill log",
       "paneRaw": "Per-Fill Log 500",
       "kind": "sort",
-      "name": "link↕",
+      "name": "link",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "link↕",
+        "value": "link",
         "scope": "Per-Fill Log 500"
       },
       "sampleText": "LINK↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Execution Quality",
-      "id": "Analytics/per-fill log/sort:link↕",
+      "id": "Analytics/per-fill log/sort:link",
       "risk": "safe"
     },
     {
       "pane": "per-fill log",
       "paneRaw": "Per-Fill Log 500",
       "kind": "sort",
-      "name": "role↕",
+      "name": "role",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "role↕",
+        "value": "role",
         "scope": "Per-Fill Log 500"
       },
       "sampleText": "ROLE↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Execution Quality",
-      "id": "Analytics/per-fill log/sort:role↕",
+      "id": "Analytics/per-fill log/sort:role",
       "risk": "safe"
     },
     {
       "pane": "per-fill log",
       "paneRaw": "Per-Fill Log 500",
       "kind": "sort",
-      "name": "sym↕",
+      "name": "sym",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "sym↕",
+        "value": "sym",
         "scope": "Per-Fill Log 500"
       },
       "sampleText": "SYM↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Execution Quality",
-      "id": "Analytics/per-fill log/sort:sym↕",
+      "id": "Analytics/per-fill log/sort:sym",
       "risk": "safe"
     },
     {
       "pane": "per-fill log",
       "paneRaw": "Per-Fill Log 500",
       "kind": "sort",
-      "name": "time↕",
+      "name": "time",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "time↕",
+        "value": "time",
         "scope": "Per-Fill Log 500"
       },
       "sampleText": "TIME↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Execution Quality",
-      "id": "Analytics/per-fill log/sort:time↕",
+      "id": "Analytics/per-fill log/sort:time",
       "risk": "safe"
     },
     {
       "pane": "per-fill log",
       "paneRaw": "Per-Fill Log 500",
       "kind": "sort",
-      "name": "ttf↕",
+      "name": "ttf",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "ttf↕",
+        "value": "ttf",
         "scope": "Per-Fill Log 500"
       },
       "sampleText": "TTF↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Execution Quality",
-      "id": "Analytics/per-fill log/sort:ttf↕",
+      "id": "Analytics/per-fill log/sort:ttf",
       "risk": "safe"
     },
     {
       "pane": "per-fill log",
       "paneRaw": "Per-Fill Log 500",
       "kind": "sort",
-      "name": "type↕",
+      "name": "type",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "type↕",
+        "value": "type",
         "scope": "Per-Fill Log 500"
       },
       "sampleText": "TYPE↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Execution Quality",
-      "id": "Analytics/per-fill log/sort:type↕",
+      "id": "Analytics/per-fill log/sort:type",
       "risk": "safe"
     },
     {
@@ -1660,126 +1660,126 @@
       "pane": "per-trade excursions",
       "paneRaw": "Per-Trade Excursions 94",
       "kind": "sort",
-      "name": "dir↕",
+      "name": "dir",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "dir↕",
+        "value": "dir",
         "scope": "Per-Trade Excursions 94"
       },
       "sampleText": "DIR↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "MFE / MAE",
-      "id": "Analytics/per-trade excursions/sort:dir↕",
+      "id": "Analytics/per-trade excursions/sort:dir",
       "risk": "safe"
     },
     {
       "pane": "per-trade excursions",
       "paneRaw": "Per-Trade Excursions 94",
       "kind": "sort",
-      "name": "hold↕",
+      "name": "hold",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "hold↕",
+        "value": "hold",
         "scope": "Per-Trade Excursions 94"
       },
       "sampleText": "HOLD↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "MFE / MAE",
-      "id": "Analytics/per-trade excursions/sort:hold↕",
+      "id": "Analytics/per-trade excursions/sort:hold",
       "risk": "safe"
     },
     {
       "pane": "per-trade excursions",
       "paneRaw": "Per-Trade Excursions 94",
       "kind": "sort",
-      "name": "mae↕",
+      "name": "mae",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "mae↕",
+        "value": "mae",
         "scope": "Per-Trade Excursions 94"
       },
       "sampleText": "MAE↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "MFE / MAE",
-      "id": "Analytics/per-trade excursions/sort:mae↕",
+      "id": "Analytics/per-trade excursions/sort:mae",
       "risk": "safe"
     },
     {
       "pane": "per-trade excursions",
       "paneRaw": "Per-Trade Excursions 94",
       "kind": "sort",
-      "name": "me-r↕",
+      "name": "me-r",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "me-r↕",
+        "value": "me-r",
         "scope": "Per-Trade Excursions 94"
       },
       "sampleText": "ME-R↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "MFE / MAE",
-      "id": "Analytics/per-trade excursions/sort:me-r↕",
+      "id": "Analytics/per-trade excursions/sort:me-r",
       "risk": "safe"
     },
     {
       "pane": "per-trade excursions",
       "paneRaw": "Per-Trade Excursions 94",
       "kind": "sort",
-      "name": "mfe↕",
+      "name": "mfe",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "mfe↕",
+        "value": "mfe",
         "scope": "Per-Trade Excursions 94"
       },
       "sampleText": "MFE↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "MFE / MAE",
-      "id": "Analytics/per-trade excursions/sort:mfe↕",
+      "id": "Analytics/per-trade excursions/sort:mfe",
       "risk": "safe"
     },
     {
       "pane": "per-trade excursions",
       "paneRaw": "Per-Trade Excursions 94",
       "kind": "sort",
-      "name": "pnl↕",
+      "name": "pnl",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "pnl↕",
+        "value": "pnl",
         "scope": "Per-Trade Excursions 94"
       },
       "sampleText": "PnL↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "MFE / MAE",
-      "id": "Analytics/per-trade excursions/sort:pnl↕",
+      "id": "Analytics/per-trade excursions/sort:pnl",
       "risk": "safe"
     },
     {
       "pane": "per-trade excursions",
       "paneRaw": "Per-Trade Excursions 94",
       "kind": "sort",
-      "name": "symbol↕",
+      "name": "symbol",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "symbol↕",
+        "value": "symbol",
         "scope": "Per-Trade Excursions 94"
       },
       "sampleText": "SYMBOL↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "MFE / MAE",
-      "id": "Analytics/per-trade excursions/sort:symbol↕",
+      "id": "Analytics/per-trade excursions/sort:symbol",
       "risk": "safe"
     },
     {
@@ -2001,216 +2001,216 @@
       "pane": "traded pairs symbols",
       "paneRaw": "Traded Pairs 8 symbols",
       "kind": "sort",
-      "name": "avg loss↕",
+      "name": "avg loss",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "avg loss↕",
+        "value": "avg loss",
         "scope": "Traded Pairs 8 symbols"
       },
       "sampleText": "AVG LOSS↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Traded Pairs",
-      "id": "Analytics/traded pairs symbols/sort:avg loss↕",
+      "id": "Analytics/traded pairs symbols/sort:avg loss",
       "risk": "safe"
     },
     {
       "pane": "traded pairs symbols",
       "paneRaw": "Traded Pairs 8 symbols",
       "kind": "sort",
-      "name": "avg win↕",
+      "name": "avg win",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "avg win↕",
+        "value": "avg win",
         "scope": "Traded Pairs 8 symbols"
       },
       "sampleText": "AVG WIN↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Traded Pairs",
-      "id": "Analytics/traded pairs symbols/sort:avg win↕",
+      "id": "Analytics/traded pairs symbols/sort:avg win",
       "risk": "safe"
     },
     {
       "pane": "traded pairs symbols",
       "paneRaw": "Traded Pairs 8 symbols",
       "kind": "sort",
-      "name": "fees↕",
+      "name": "fees",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "fees↕",
+        "value": "fees",
         "scope": "Traded Pairs 8 symbols"
       },
       "sampleText": "FEES↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Traded Pairs",
-      "id": "Analytics/traded pairs symbols/sort:fees↕",
+      "id": "Analytics/traded pairs symbols/sort:fees",
       "risk": "safe"
     },
     {
       "pane": "traded pairs symbols",
       "paneRaw": "Traded Pairs 8 symbols",
       "kind": "sort",
-      "name": "longs↕",
+      "name": "longs",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "longs↕",
+        "value": "longs",
         "scope": "Traded Pairs 8 symbols"
       },
       "sampleText": "LONGS↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Traded Pairs",
-      "id": "Analytics/traded pairs symbols/sort:longs↕",
+      "id": "Analytics/traded pairs symbols/sort:longs",
       "risk": "safe"
     },
     {
       "pane": "traded pairs symbols",
       "paneRaw": "Traded Pairs 8 symbols",
       "kind": "sort",
-      "name": "pnl (l)↕",
+      "name": "pnl (l)",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "pnl (l)↕",
+        "value": "pnl (l)",
         "scope": "Traded Pairs 8 symbols"
       },
       "sampleText": "PnL (L)↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Traded Pairs",
-      "id": "Analytics/traded pairs symbols/sort:pnl (l)↕",
+      "id": "Analytics/traded pairs symbols/sort:pnl (l)",
       "risk": "safe"
     },
     {
       "pane": "traded pairs symbols",
       "paneRaw": "Traded Pairs 8 symbols",
       "kind": "sort",
-      "name": "pnl (s)↕",
+      "name": "pnl (s)",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "pnl (s)↕",
+        "value": "pnl (s)",
         "scope": "Traded Pairs 8 symbols"
       },
       "sampleText": "PnL (S)↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Traded Pairs",
-      "id": "Analytics/traded pairs symbols/sort:pnl (s)↕",
+      "id": "Analytics/traded pairs symbols/sort:pnl (s)",
       "risk": "safe"
     },
     {
       "pane": "traded pairs symbols",
       "paneRaw": "Traded Pairs 8 symbols",
       "kind": "sort",
-      "name": "pnl total↕",
+      "name": "pnl total",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "pnl total↕",
+        "value": "pnl total",
         "scope": "Traded Pairs 8 symbols"
       },
       "sampleText": "PnL TOTAL↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Traded Pairs",
-      "id": "Analytics/traded pairs symbols/sort:pnl total↕",
+      "id": "Analytics/traded pairs symbols/sort:pnl total",
       "risk": "safe"
     },
     {
       "pane": "traded pairs symbols",
       "paneRaw": "Traded Pairs 8 symbols",
       "kind": "sort",
-      "name": "shorts↕",
+      "name": "shorts",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "shorts↕",
+        "value": "shorts",
         "scope": "Traded Pairs 8 symbols"
       },
       "sampleText": "SHORTS↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Traded Pairs",
-      "id": "Analytics/traded pairs symbols/sort:shorts↕",
+      "id": "Analytics/traded pairs symbols/sort:shorts",
       "risk": "safe"
     },
     {
       "pane": "traded pairs symbols",
       "paneRaw": "Traded Pairs 8 symbols",
       "kind": "sort",
-      "name": "symbol↕",
+      "name": "symbol",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "symbol↕",
+        "value": "symbol",
         "scope": "Traded Pairs 8 symbols"
       },
       "sampleText": "SYMBOL↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Traded Pairs",
-      "id": "Analytics/traded pairs symbols/sort:symbol↕",
+      "id": "Analytics/traded pairs symbols/sort:symbol",
       "risk": "safe"
     },
     {
       "pane": "traded pairs symbols",
       "paneRaw": "Traded Pairs 8 symbols",
       "kind": "sort",
-      "name": "trades↕",
+      "name": "trades",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "trades↕",
+        "value": "trades",
         "scope": "Traded Pairs 8 symbols"
       },
       "sampleText": "TRADES↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Traded Pairs",
-      "id": "Analytics/traded pairs symbols/sort:trades↕",
+      "id": "Analytics/traded pairs symbols/sort:trades",
       "risk": "safe"
     },
     {
       "pane": "traded pairs symbols",
       "paneRaw": "Traded Pairs 8 symbols",
       "kind": "sort",
-      "name": "volume↕",
+      "name": "volume",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "volume↕",
+        "value": "volume",
         "scope": "Traded Pairs 8 symbols"
       },
       "sampleText": "VOLUME↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Traded Pairs",
-      "id": "Analytics/traded pairs symbols/sort:volume↕",
+      "id": "Analytics/traded pairs symbols/sort:volume",
       "risk": "safe"
     },
     {
       "pane": "traded pairs symbols",
       "paneRaw": "Traded Pairs 8 symbols",
       "kind": "sort",
-      "name": "win rate↕",
+      "name": "win rate",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "win rate↕",
+        "value": "win rate",
         "scope": "Traded Pairs 8 symbols"
       },
       "sampleText": "WIN RATE↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Traded Pairs",
-      "id": "Analytics/traded pairs symbols/sort:win rate↕",
+      "id": "Analytics/traded pairs symbols/sort:win rate",
       "risk": "safe"
     },
     {
@@ -3294,18 +3294,18 @@
       "pane": "data & exchange connections",
       "paneRaw": "Data & Exchange Connections 5",
       "kind": "sort",
-      "name": "id↕",
+      "name": "id",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "id↕",
+        "value": "id",
         "scope": "Data & Exchange Connections 5"
       },
       "sampleText": "ID↕",
       "page": "Config",
       "source": "crawled",
       "tabPath": "Connections",
-      "id": "Config/data & exchange connections/sort:id↕",
+      "id": "Config/data & exchange connections/sort:id",
       "risk": "safe",
       "cluster": "config-tabs"
     },
@@ -3313,18 +3313,18 @@
       "pane": "data & exchange connections",
       "paneRaw": "Data & Exchange Connections 5",
       "kind": "sort",
-      "name": "provider↕",
+      "name": "provider",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "provider↕",
+        "value": "provider",
         "scope": "Data & Exchange Connections 5"
       },
       "sampleText": "PROVIDER↕",
       "page": "Config",
       "source": "crawled",
       "tabPath": "Connections",
-      "id": "Config/data & exchange connections/sort:provider↕",
+      "id": "Config/data & exchange connections/sort:provider",
       "risk": "safe",
       "cluster": "config-tabs"
     },
@@ -3332,18 +3332,18 @@
       "pane": "data & exchange connections",
       "paneRaw": "Data & Exchange Connections 5",
       "kind": "sort",
-      "name": "status↕",
+      "name": "status",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "status↕",
+        "value": "status",
         "scope": "Data & Exchange Connections 5"
       },
       "sampleText": "STATUS↕",
       "page": "Config",
       "source": "crawled",
       "tabPath": "Connections",
-      "id": "Config/data & exchange connections/sort:status↕",
+      "id": "Config/data & exchange connections/sort:status",
       "risk": "safe",
       "cluster": "config-tabs"
     },
@@ -3717,136 +3717,136 @@
       "pane": "open positions",
       "paneRaw": "Open Positions 2",
       "kind": "sort",
-      "name": "%↕",
+      "name": "%",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "%↕",
+        "value": "%",
         "scope": "Open Positions 2"
       },
       "sampleText": "%↕",
       "page": "Dashboard",
       "source": "crawled",
-      "id": "Dashboard/open positions/sort:%↕",
+      "id": "Dashboard/open positions/sort:%",
       "risk": "safe"
     },
     {
       "pane": "open positions",
       "paneRaw": "Open Positions 2",
       "kind": "sort",
-      "name": "age↕",
+      "name": "age",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "age↕",
+        "value": "age",
         "scope": "Open Positions 2"
       },
       "sampleText": "AGE↕",
       "page": "Dashboard",
       "source": "crawled",
-      "id": "Dashboard/open positions/sort:age↕",
+      "id": "Dashboard/open positions/sort:age",
       "risk": "safe"
     },
     {
       "pane": "open positions",
       "paneRaw": "Open Positions 2",
       "kind": "sort",
-      "name": "entry↕",
+      "name": "entry",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "entry↕",
+        "value": "entry",
         "scope": "Open Positions 2"
       },
       "sampleText": "ENTRY↕",
       "page": "Dashboard",
       "source": "crawled",
-      "id": "Dashboard/open positions/sort:entry↕",
+      "id": "Dashboard/open positions/sort:entry",
       "risk": "safe"
     },
     {
       "pane": "open positions",
       "paneRaw": "Open Positions 2",
       "kind": "sort",
-      "name": "mark↕",
+      "name": "mark",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "mark↕",
+        "value": "mark",
         "scope": "Open Positions 2"
       },
       "sampleText": "MARK↕",
       "page": "Dashboard",
       "source": "crawled",
-      "id": "Dashboard/open positions/sort:mark↕",
+      "id": "Dashboard/open positions/sort:mark",
       "risk": "safe"
     },
     {
       "pane": "open positions",
       "paneRaw": "Open Positions 2",
       "kind": "sort",
-      "name": "pnl↕",
+      "name": "pnl",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "pnl↕",
+        "value": "pnl",
         "scope": "Open Positions 2"
       },
       "sampleText": "PnL↕",
       "page": "Dashboard",
       "source": "crawled",
-      "id": "Dashboard/open positions/sort:pnl↕",
+      "id": "Dashboard/open positions/sort:pnl",
       "risk": "safe"
     },
     {
       "pane": "open positions",
       "paneRaw": "Open Positions 2",
       "kind": "sort",
-      "name": "side↕",
+      "name": "side",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "side↕",
+        "value": "side",
         "scope": "Open Positions 2"
       },
       "sampleText": "SIDE↕",
       "page": "Dashboard",
       "source": "crawled",
-      "id": "Dashboard/open positions/sort:side↕",
+      "id": "Dashboard/open positions/sort:side",
       "risk": "safe"
     },
     {
       "pane": "open positions",
       "paneRaw": "Open Positions 2",
       "kind": "sort",
-      "name": "size↕",
+      "name": "size",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "size↕",
+        "value": "size",
         "scope": "Open Positions 2"
       },
       "sampleText": "SIZE↕",
       "page": "Dashboard",
       "source": "crawled",
-      "id": "Dashboard/open positions/sort:size↕",
+      "id": "Dashboard/open positions/sort:size",
       "risk": "safe"
     },
     {
       "pane": "open positions",
       "paneRaw": "Open Positions 2",
       "kind": "sort",
-      "name": "sym↕",
+      "name": "sym",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "sym↕",
+        "value": "sym",
         "scope": "Open Positions 2"
       },
       "sampleText": "SYM↕",
       "page": "Dashboard",
       "source": "crawled",
-      "id": "Dashboard/open positions/sort:sym↕",
+      "id": "Dashboard/open positions/sort:sym",
       "risk": "safe"
     },
     {
@@ -4289,255 +4289,255 @@
       "pane": "closed positions",
       "paneRaw": "Closed Positions 145",
       "kind": "sort",
-      "name": "%↕",
+      "name": "%",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "%↕",
+        "value": "%",
         "scope": "Closed Positions 145"
       },
       "sampleText": "%↕",
       "page": "History",
       "source": "crawled",
-      "id": "History/closed positions/sort:%↕",
+      "id": "History/closed positions/sort:%",
       "risk": "safe"
     },
     {
       "pane": "closed positions",
       "paneRaw": "Closed Positions 145",
       "kind": "sort",
-      "name": "closed↕",
+      "name": "closed",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "closed↕",
+        "value": "closed",
         "scope": "Closed Positions 145"
       },
       "sampleText": "CLOSED↕",
       "page": "History",
       "source": "crawled",
-      "id": "History/closed positions/sort:closed↕",
+      "id": "History/closed positions/sort:closed",
       "risk": "safe"
     },
     {
       "pane": "closed positions",
       "paneRaw": "Closed Positions 145",
       "kind": "sort",
-      "name": "dur↕",
+      "name": "dur",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "dur↕",
+        "value": "dur",
         "scope": "Closed Positions 145"
       },
       "sampleText": "DUR↕",
       "page": "History",
       "source": "crawled",
-      "id": "History/closed positions/sort:dur↕",
+      "id": "History/closed positions/sort:dur",
       "risk": "safe"
     },
     {
       "pane": "closed positions",
       "paneRaw": "Closed Positions 145",
       "kind": "sort",
-      "name": "entry↕",
+      "name": "entry",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "entry↕",
+        "value": "entry",
         "scope": "Closed Positions 145"
       },
       "sampleText": "ENTRY↕",
       "page": "History",
       "source": "crawled",
-      "id": "History/closed positions/sort:entry↕",
+      "id": "History/closed positions/sort:entry",
       "risk": "safe"
     },
     {
       "pane": "closed positions",
       "paneRaw": "Closed Positions 145",
       "kind": "sort",
-      "name": "exit↕",
+      "name": "exit",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "exit↕",
+        "value": "exit",
         "scope": "Closed Positions 145"
       },
       "sampleText": "EXIT↕",
       "page": "History",
       "source": "crawled",
-      "id": "History/closed positions/sort:exit↕",
+      "id": "History/closed positions/sort:exit",
       "risk": "safe"
     },
     {
       "pane": "closed positions",
       "paneRaw": "Closed Positions 145",
       "kind": "sort",
-      "name": "fee↕",
+      "name": "fee",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "fee↕",
+        "value": "fee",
         "scope": "Closed Positions 145"
       },
       "sampleText": "FEE↕",
       "page": "History",
       "source": "crawled",
-      "id": "History/closed positions/sort:fee↕",
+      "id": "History/closed positions/sort:fee",
       "risk": "safe"
     },
     {
       "pane": "closed positions",
       "paneRaw": "Closed Positions 145",
       "kind": "sort",
-      "name": "m·r↕",
+      "name": "m·r",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "m·r↕",
+        "value": "m·r",
         "scope": "Closed Positions 145"
       },
       "sampleText": "M·R↕",
       "page": "History",
       "source": "crawled",
-      "id": "History/closed positions/sort:m·r↕",
+      "id": "History/closed positions/sort:m·r",
       "risk": "safe"
     },
     {
       "pane": "closed positions",
       "paneRaw": "Closed Positions 145",
       "kind": "sort",
-      "name": "mae ◂ heat ▸ mfe↕",
+      "name": "mae ◂ heat ▸ mfe",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "mae ◂ heat ▸ mfe↕",
+        "value": "mae ◂ heat ▸ mfe",
         "scope": "Closed Positions 145"
       },
       "sampleText": "MAE ◂ HEAT ▸ MFE↕",
       "page": "History",
       "source": "crawled",
-      "id": "History/closed positions/sort:mae ◂ heat ▸ mfe↕",
+      "id": "History/closed positions/sort:mae ◂ heat ▸ mfe",
       "risk": "safe"
     },
     {
       "pane": "closed positions",
       "paneRaw": "Closed Positions 145",
       "kind": "sort",
-      "name": "model↕",
+      "name": "model",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "model↕",
+        "value": "model",
         "scope": "Closed Positions 145"
       },
       "sampleText": "MODEL↕",
       "page": "History",
       "source": "crawled",
-      "id": "History/closed positions/sort:model↕",
+      "id": "History/closed positions/sort:model",
       "risk": "safe"
     },
     {
       "pane": "closed positions",
       "paneRaw": "Closed Positions 145",
       "kind": "sort",
-      "name": "net↕",
+      "name": "net",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "net↕",
+        "value": "net",
         "scope": "Closed Positions 145"
       },
       "sampleText": "NET↕",
       "page": "History",
       "source": "crawled",
-      "id": "History/closed positions/sort:net↕",
+      "id": "History/closed positions/sort:net",
       "risk": "safe"
     },
     {
       "pane": "closed positions",
       "paneRaw": "Closed Positions 145",
       "kind": "sort",
-      "name": "plan↕",
+      "name": "plan",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "plan↕",
+        "value": "plan",
         "scope": "Closed Positions 145"
       },
       "sampleText": "PLAN↕",
       "page": "History",
       "source": "crawled",
-      "id": "History/closed positions/sort:plan↕",
+      "id": "History/closed positions/sort:plan",
       "risk": "safe"
     },
     {
       "pane": "closed positions",
       "paneRaw": "Closed Positions 145",
       "kind": "sort",
-      "name": "qty↕",
+      "name": "qty",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "qty↕",
+        "value": "qty",
         "scope": "Closed Positions 145"
       },
       "sampleText": "QTY↕",
       "page": "History",
       "source": "crawled",
-      "id": "History/closed positions/sort:qty↕",
+      "id": "History/closed positions/sort:qty",
       "risk": "safe"
     },
     {
       "pane": "closed positions",
       "paneRaw": "Closed Positions 145",
       "kind": "sort",
-      "name": "reason↕",
+      "name": "reason",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "reason↕",
+        "value": "reason",
         "scope": "Closed Positions 145"
       },
       "sampleText": "REASON↕",
       "page": "History",
       "source": "crawled",
-      "id": "History/closed positions/sort:reason↕",
+      "id": "History/closed positions/sort:reason",
       "risk": "safe"
     },
     {
       "pane": "closed positions",
       "paneRaw": "Closed Positions 145",
       "kind": "sort",
-      "name": "side↕",
+      "name": "side",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "side↕",
+        "value": "side",
         "scope": "Closed Positions 145"
       },
       "sampleText": "SIDE↕",
       "page": "History",
       "source": "crawled",
-      "id": "History/closed positions/sort:side↕",
+      "id": "History/closed positions/sort:side",
       "risk": "safe"
     },
     {
       "pane": "closed positions",
       "paneRaw": "Closed Positions 145",
       "kind": "sort",
-      "name": "sym↕",
+      "name": "sym",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "sym↕",
+        "value": "sym",
         "scope": "Closed Positions 145"
       },
       "sampleText": "SYM↕",
       "page": "History",
       "source": "crawled",
-      "id": "History/closed positions/sort:sym↕",
+      "id": "History/closed positions/sort:sym",
       "risk": "safe"
     },
     {
@@ -4700,162 +4700,162 @@
       "pane": "fills",
       "paneRaw": "Fills 2582",
       "kind": "sort",
-      "name": "action↕",
+      "name": "action",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "action↕",
+        "value": "action",
         "scope": "Fills 2582"
       },
       "sampleText": "ACTION↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Fills2582",
-      "id": "History/fills/sort:action↕",
+      "id": "History/fills/sort:action",
       "risk": "safe"
     },
     {
       "pane": "fills",
       "paneRaw": "Fills 2582",
       "kind": "sort",
-      "name": "fee↕",
+      "name": "fee",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "fee↕",
+        "value": "fee",
         "scope": "Fills 2582"
       },
       "sampleText": "FEE↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Fills2582",
-      "id": "History/fills/sort:fee↕",
+      "id": "History/fills/sort:fee",
       "risk": "safe"
     },
     {
       "pane": "fills",
       "paneRaw": "Fills 2582",
       "kind": "sort",
-      "name": "pnl↕",
+      "name": "pnl",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "pnl↕",
+        "value": "pnl",
         "scope": "Fills 2582"
       },
       "sampleText": "PnL↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Fills2582",
-      "id": "History/fills/sort:pnl↕",
+      "id": "History/fills/sort:pnl",
       "risk": "safe"
     },
     {
       "pane": "fills",
       "paneRaw": "Fills 2582",
       "kind": "sort",
-      "name": "price↕",
+      "name": "price",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "price↕",
+        "value": "price",
         "scope": "Fills 2582"
       },
       "sampleText": "PRICE↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Fills2582",
-      "id": "History/fills/sort:price↕",
+      "id": "History/fills/sort:price",
       "risk": "safe"
     },
     {
       "pane": "fills",
       "paneRaw": "Fills 2582",
       "kind": "sort",
-      "name": "qty↕",
+      "name": "qty",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "qty↕",
+        "value": "qty",
         "scope": "Fills 2582"
       },
       "sampleText": "QTY↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Fills2582",
-      "id": "History/fills/sort:qty↕",
+      "id": "History/fills/sort:qty",
       "risk": "safe"
     },
     {
       "pane": "fills",
       "paneRaw": "Fills 2582",
       "kind": "sort",
-      "name": "role↕",
+      "name": "role",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "role↕",
+        "value": "role",
         "scope": "Fills 2582"
       },
       "sampleText": "ROLE↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Fills2582",
-      "id": "History/fills/sort:role↕",
+      "id": "History/fills/sort:role",
       "risk": "safe"
     },
     {
       "pane": "fills",
       "paneRaw": "Fills 2582",
       "kind": "sort",
-      "name": "side↕",
+      "name": "side",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "side↕",
+        "value": "side",
         "scope": "Fills 2582"
       },
       "sampleText": "SIDE↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Fills2582",
-      "id": "History/fills/sort:side↕",
+      "id": "History/fills/sort:side",
       "risk": "safe"
     },
     {
       "pane": "fills",
       "paneRaw": "Fills 2582",
       "kind": "sort",
-      "name": "sym↕",
+      "name": "sym",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "sym↕",
+        "value": "sym",
         "scope": "Fills 2582"
       },
       "sampleText": "SYM↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Fills2582",
-      "id": "History/fills/sort:sym↕",
+      "id": "History/fills/sort:sym",
       "risk": "safe"
     },
     {
       "pane": "fills",
       "paneRaw": "Fills 2582",
       "kind": "sort",
-      "name": "time↕",
+      "name": "time",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "time↕",
+        "value": "time",
         "scope": "Fills 2582"
       },
       "sampleText": "TIME↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Fills2582",
-      "id": "History/fills/sort:time↕",
+      "id": "History/fills/sort:time",
       "risk": "safe"
     },
     {
@@ -5039,180 +5039,180 @@
       "pane": "orders",
       "paneRaw": "Orders 8",
       "kind": "sort",
-      "name": "avg fill↕",
+      "name": "avg fill",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "avg fill↕",
+        "value": "avg fill",
         "scope": "Orders 8"
       },
       "sampleText": "AVG FILL↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Orders8",
-      "id": "History/orders/sort:avg fill↕",
+      "id": "History/orders/sort:avg fill",
       "risk": "safe"
     },
     {
       "pane": "orders",
       "paneRaw": "Orders 8",
       "kind": "sort",
-      "name": "order id↕",
+      "name": "order id",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "order id↕",
+        "value": "order id",
         "scope": "Orders 8"
       },
       "sampleText": "ORDER ID↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Orders8",
-      "id": "History/orders/sort:order id↕",
+      "id": "History/orders/sort:order id",
       "risk": "safe"
     },
     {
       "pane": "orders",
       "paneRaw": "Orders 8",
       "kind": "sort",
-      "name": "price↕",
+      "name": "price",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "price↕",
+        "value": "price",
         "scope": "Orders 8"
       },
       "sampleText": "PRICE↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Orders8",
-      "id": "History/orders/sort:price↕",
+      "id": "History/orders/sort:price",
       "risk": "safe"
     },
     {
       "pane": "orders",
       "paneRaw": "Orders 8",
       "kind": "sort",
-      "name": "qty↕",
+      "name": "qty",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "qty↕",
+        "value": "qty",
         "scope": "Orders 8"
       },
       "sampleText": "QTY↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Orders8",
-      "id": "History/orders/sort:qty↕",
+      "id": "History/orders/sort:qty",
       "risk": "safe"
     },
     {
       "pane": "orders",
       "paneRaw": "Orders 8",
       "kind": "sort",
-      "name": "side↕",
+      "name": "side",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "side↕",
+        "value": "side",
         "scope": "Orders 8"
       },
       "sampleText": "SIDE↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Orders8",
-      "id": "History/orders/sort:side↕",
+      "id": "History/orders/sort:side",
       "risk": "safe"
     },
     {
       "pane": "orders",
       "paneRaw": "Orders 8",
       "kind": "sort",
-      "name": "status↕",
+      "name": "status",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "status↕",
+        "value": "status",
         "scope": "Orders 8"
       },
       "sampleText": "STATUS↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Orders8",
-      "id": "History/orders/sort:status↕",
+      "id": "History/orders/sort:status",
       "risk": "safe"
     },
     {
       "pane": "orders",
       "paneRaw": "Orders 8",
       "kind": "sort",
-      "name": "sym↕",
+      "name": "sym",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "sym↕",
+        "value": "sym",
         "scope": "Orders 8"
       },
       "sampleText": "SYM↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Orders8",
-      "id": "History/orders/sort:sym↕",
+      "id": "History/orders/sort:sym",
       "risk": "safe"
     },
     {
       "pane": "orders",
       "paneRaw": "Orders 8",
       "kind": "sort",
-      "name": "time↕",
+      "name": "time",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "time↕",
+        "value": "time",
         "scope": "Orders 8"
       },
       "sampleText": "TIME↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Orders8",
-      "id": "History/orders/sort:time↕",
+      "id": "History/orders/sort:time",
       "risk": "safe"
     },
     {
       "pane": "orders",
       "paneRaw": "Orders 8",
       "kind": "sort",
-      "name": "trigger↕",
+      "name": "trigger",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "trigger↕",
+        "value": "trigger",
         "scope": "Orders 8"
       },
       "sampleText": "TRIGGER↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Orders8",
-      "id": "History/orders/sort:trigger↕",
+      "id": "History/orders/sort:trigger",
       "risk": "safe"
     },
     {
       "pane": "orders",
       "paneRaw": "Orders 8",
       "kind": "sort",
-      "name": "type↕",
+      "name": "type",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "type↕",
+        "value": "type",
         "scope": "Orders 8"
       },
       "sampleText": "TYPE↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Orders8",
-      "id": "History/orders/sort:type↕",
+      "id": "History/orders/sort:type",
       "risk": "safe"
     },
     {
@@ -5373,180 +5373,180 @@
       "pane": "pre-trade log",
       "paneRaw": "Pre-Trade Log 4",
       "kind": "sort",
-      "name": "calc id↕",
+      "name": "calc id",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "calc id↕",
+        "value": "calc id",
         "scope": "Pre-Trade Log 4"
       },
       "sampleText": "CALC ID↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Pre-Trade Log4",
-      "id": "History/pre-trade log/sort:calc id↕",
+      "id": "History/pre-trade log/sort:calc id",
       "risk": "safe"
     },
     {
       "pane": "pre-trade log",
       "paneRaw": "Pre-Trade Log 4",
       "kind": "sort",
-      "name": "entry↕",
+      "name": "entry",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "entry↕",
+        "value": "entry",
         "scope": "Pre-Trade Log 4"
       },
       "sampleText": "ENTRY↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Pre-Trade Log4",
-      "id": "History/pre-trade log/sort:entry↕",
+      "id": "History/pre-trade log/sort:entry",
       "risk": "safe"
     },
     {
       "pane": "pre-trade log",
       "paneRaw": "Pre-Trade Log 4",
       "kind": "sort",
-      "name": "link↕",
+      "name": "link",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "link↕",
+        "value": "link",
         "scope": "Pre-Trade Log 4"
       },
       "sampleText": "LINK↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Pre-Trade Log4",
-      "id": "History/pre-trade log/sort:link↕",
+      "id": "History/pre-trade log/sort:link",
       "risk": "safe"
     },
     {
       "pane": "pre-trade log",
       "paneRaw": "Pre-Trade Log 4",
       "kind": "sort",
-      "name": "model↕",
+      "name": "model",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "model↕",
+        "value": "model",
         "scope": "Pre-Trade Log 4"
       },
       "sampleText": "MODEL↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Pre-Trade Log4",
-      "id": "History/pre-trade log/sort:model↕",
+      "id": "History/pre-trade log/sort:model",
       "risk": "safe"
     },
     {
       "pane": "pre-trade log",
       "paneRaw": "Pre-Trade Log 4",
       "kind": "sort",
-      "name": "side↕",
+      "name": "side",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "side↕",
+        "value": "side",
         "scope": "Pre-Trade Log 4"
       },
       "sampleText": "SIDE↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Pre-Trade Log4",
-      "id": "History/pre-trade log/sort:side↕",
+      "id": "History/pre-trade log/sort:side",
       "risk": "safe"
     },
     {
       "pane": "pre-trade log",
       "paneRaw": "Pre-Trade Log 4",
       "kind": "sort",
-      "name": "size↕",
+      "name": "size",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "size↕",
+        "value": "size",
         "scope": "Pre-Trade Log 4"
       },
       "sampleText": "SIZE↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Pre-Trade Log4",
-      "id": "History/pre-trade log/sort:size↕",
+      "id": "History/pre-trade log/sort:size",
       "risk": "safe"
     },
     {
       "pane": "pre-trade log",
       "paneRaw": "Pre-Trade Log 4",
       "kind": "sort",
-      "name": "sl↕",
+      "name": "sl",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "sl↕",
+        "value": "sl",
         "scope": "Pre-Trade Log 4"
       },
       "sampleText": "SL↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Pre-Trade Log4",
-      "id": "History/pre-trade log/sort:sl↕",
+      "id": "History/pre-trade log/sort:sl",
       "risk": "safe"
     },
     {
       "pane": "pre-trade log",
       "paneRaw": "Pre-Trade Log 4",
       "kind": "sort",
-      "name": "sym↕",
+      "name": "sym",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "sym↕",
+        "value": "sym",
         "scope": "Pre-Trade Log 4"
       },
       "sampleText": "SYM↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Pre-Trade Log4",
-      "id": "History/pre-trade log/sort:sym↕",
+      "id": "History/pre-trade log/sort:sym",
       "risk": "safe"
     },
     {
       "pane": "pre-trade log",
       "paneRaw": "Pre-Trade Log 4",
       "kind": "sort",
-      "name": "time↕",
+      "name": "time",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "time↕",
+        "value": "time",
         "scope": "Pre-Trade Log 4"
       },
       "sampleText": "TIME↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Pre-Trade Log4",
-      "id": "History/pre-trade log/sort:time↕",
+      "id": "History/pre-trade log/sort:time",
       "risk": "safe"
     },
     {
       "pane": "pre-trade log",
       "paneRaw": "Pre-Trade Log 4",
       "kind": "sort",
-      "name": "tp↕",
+      "name": "tp",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "tp↕",
+        "value": "tp",
         "scope": "Pre-Trade Log 4"
       },
       "sampleText": "TP↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Pre-Trade Log4",
-      "id": "History/pre-trade log/sort:tp↕",
+      "id": "History/pre-trade log/sort:tp",
       "risk": "safe"
     },
     {
@@ -5710,108 +5710,108 @@
       "pane": "trade events",
       "paneRaw": "Trade Events 33",
       "kind": "sort",
-      "name": "calc↕",
+      "name": "calc",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "calc↕",
+        "value": "calc",
         "scope": "Trade Events 33"
       },
       "sampleText": "CALC↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Trade Events33",
-      "id": "History/trade events/sort:calc↕",
+      "id": "History/trade events/sort:calc",
       "risk": "safe"
     },
     {
       "pane": "trade events",
       "paneRaw": "Trade Events 33",
       "kind": "sort",
-      "name": "src↕",
+      "name": "src",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "src↕",
+        "value": "src",
         "scope": "Trade Events 33"
       },
       "sampleText": "SRC↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Trade Events33",
-      "id": "History/trade events/sort:src↕",
+      "id": "History/trade events/sort:src",
       "risk": "safe"
     },
     {
       "pane": "trade events",
       "paneRaw": "Trade Events 33",
       "kind": "sort",
-      "name": "summary↕",
+      "name": "summary",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "summary↕",
+        "value": "summary",
         "scope": "Trade Events 33"
       },
       "sampleText": "SUMMARY↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Trade Events33",
-      "id": "History/trade events/sort:summary↕",
+      "id": "History/trade events/sort:summary",
       "risk": "safe"
     },
     {
       "pane": "trade events",
       "paneRaw": "Trade Events 33",
       "kind": "sort",
-      "name": "sym↕",
+      "name": "sym",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "sym↕",
+        "value": "sym",
         "scope": "Trade Events 33"
       },
       "sampleText": "SYM↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Trade Events33",
-      "id": "History/trade events/sort:sym↕",
+      "id": "History/trade events/sort:sym",
       "risk": "safe"
     },
     {
       "pane": "trade events",
       "paneRaw": "Trade Events 33",
       "kind": "sort",
-      "name": "time↕",
+      "name": "time",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "time↕",
+        "value": "time",
         "scope": "Trade Events 33"
       },
       "sampleText": "TIME↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Trade Events33",
-      "id": "History/trade events/sort:time↕",
+      "id": "History/trade events/sort:time",
       "risk": "safe"
     },
     {
       "pane": "trade events",
       "paneRaw": "Trade Events 33",
       "kind": "sort",
-      "name": "type↕",
+      "name": "type",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "type↕",
+        "value": "type",
         "scope": "Trade Events 33"
       },
       "sampleText": "TYPE↕",
       "page": "History",
       "source": "crawled",
       "tabPath": "Trade Events33",
-      "id": "History/trade events/sort:type↕",
+      "id": "History/trade events/sort:type",
       "risk": "safe"
     },
     {
@@ -5975,102 +5975,102 @@
       "pane": "funding",
       "paneRaw": "Funding",
       "kind": "sort",
-      "name": "cum↕",
+      "name": "cum",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "cum↕",
+        "value": "cum",
         "scope": "Funding"
       },
       "sampleText": "Cum↕",
       "page": "Linkage",
       "source": "crawled",
-      "id": "Linkage/funding/sort:cum↕",
+      "id": "Linkage/funding/sort:cum",
       "risk": "safe"
     },
     {
       "pane": "funding",
       "paneRaw": "Funding",
       "kind": "sort",
-      "name": "est↕",
+      "name": "est",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "est↕",
+        "value": "est",
         "scope": "Funding"
       },
       "sampleText": "Est↕",
       "page": "Linkage",
       "source": "crawled",
-      "id": "Linkage/funding/sort:est↕",
+      "id": "Linkage/funding/sort:est",
       "risk": "safe"
     },
     {
       "pane": "funding",
       "paneRaw": "Funding",
       "kind": "sort",
-      "name": "flow↕",
+      "name": "flow",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "flow↕",
+        "value": "flow",
         "scope": "Funding"
       },
       "sampleText": "Flow↕",
       "page": "Linkage",
       "source": "crawled",
-      "id": "Linkage/funding/sort:flow↕",
+      "id": "Linkage/funding/sort:flow",
       "risk": "safe"
     },
     {
       "pane": "funding",
       "paneRaw": "Funding",
       "kind": "sort",
-      "name": "rate↕",
+      "name": "rate",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "rate↕",
+        "value": "rate",
         "scope": "Funding"
       },
       "sampleText": "Rate↕",
       "page": "Linkage",
       "source": "crawled",
-      "id": "Linkage/funding/sort:rate↕",
+      "id": "Linkage/funding/sort:rate",
       "risk": "safe"
     },
     {
       "pane": "funding",
       "paneRaw": "Funding",
       "kind": "sort",
-      "name": "side↕",
+      "name": "side",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "side↕",
+        "value": "side",
         "scope": "Funding"
       },
       "sampleText": "Side↕",
       "page": "Linkage",
       "source": "crawled",
-      "id": "Linkage/funding/sort:side↕",
+      "id": "Linkage/funding/sort:side",
       "risk": "safe"
     },
     {
       "pane": "funding",
       "paneRaw": "Funding",
       "kind": "sort",
-      "name": "sym↕",
+      "name": "sym",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "sym↕",
+        "value": "sym",
         "scope": "Funding"
       },
       "sampleText": "Sym↕",
       "page": "Linkage",
       "source": "crawled",
-      "id": "Linkage/funding/sort:sym↕",
+      "id": "Linkage/funding/sort:sym",
       "risk": "safe"
     },
     {
@@ -6390,136 +6390,136 @@
       "pane": "open positions",
       "paneRaw": "Open Positions 2",
       "kind": "sort",
-      "name": "entry↕",
+      "name": "entry",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "entry↕",
+        "value": "entry",
         "scope": "Open Positions 2"
       },
       "sampleText": "Entry↕",
       "page": "Linkage",
       "source": "crawled",
-      "id": "Linkage/open positions/sort:entry↕",
+      "id": "Linkage/open positions/sort:entry",
       "risk": "safe"
     },
     {
       "pane": "open positions",
       "paneRaw": "Open Positions 2",
       "kind": "sort",
-      "name": "link↕",
+      "name": "link",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "link↕",
+        "value": "link",
         "scope": "Open Positions 2"
       },
       "sampleText": "Link↕",
       "page": "Linkage",
       "source": "crawled",
-      "id": "Linkage/open positions/sort:link↕",
+      "id": "Linkage/open positions/sort:link",
       "risk": "safe"
     },
     {
       "pane": "open positions",
       "paneRaw": "Open Positions 2",
       "kind": "sort",
-      "name": "mark↕",
+      "name": "mark",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "mark↕",
+        "value": "mark",
         "scope": "Open Positions 2"
       },
       "sampleText": "Mark↕",
       "page": "Linkage",
       "source": "crawled",
-      "id": "Linkage/open positions/sort:mark↕",
+      "id": "Linkage/open positions/sort:mark",
       "risk": "safe"
     },
     {
       "pane": "open positions",
       "paneRaw": "Open Positions 2",
       "kind": "sort",
-      "name": "plan deviation↕",
+      "name": "plan deviation",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "plan deviation↕",
+        "value": "plan deviation",
         "scope": "Open Positions 2"
       },
       "sampleText": "Plan deviation↕",
       "page": "Linkage",
       "source": "crawled",
-      "id": "Linkage/open positions/sort:plan deviation↕",
+      "id": "Linkage/open positions/sort:plan deviation",
       "risk": "safe"
     },
     {
       "pane": "open positions",
       "paneRaw": "Open Positions 2",
       "kind": "sort",
-      "name": "side↕",
+      "name": "side",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "side↕",
+        "value": "side",
         "scope": "Open Positions 2"
       },
       "sampleText": "Side↕",
       "page": "Linkage",
       "source": "crawled",
-      "id": "Linkage/open positions/sort:side↕",
+      "id": "Linkage/open positions/sort:side",
       "risk": "safe"
     },
     {
       "pane": "open positions",
       "paneRaw": "Open Positions 2",
       "kind": "sort",
-      "name": "size↕",
+      "name": "size",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "size↕",
+        "value": "size",
         "scope": "Open Positions 2"
       },
       "sampleText": "Size↕",
       "page": "Linkage",
       "source": "crawled",
-      "id": "Linkage/open positions/sort:size↕",
+      "id": "Linkage/open positions/sort:size",
       "risk": "safe"
     },
     {
       "pane": "open positions",
       "paneRaw": "Open Positions 2",
       "kind": "sort",
-      "name": "sym↕",
+      "name": "sym",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "sym↕",
+        "value": "sym",
         "scope": "Open Positions 2"
       },
       "sampleText": "Sym↕",
       "page": "Linkage",
       "source": "crawled",
-      "id": "Linkage/open positions/sort:sym↕",
+      "id": "Linkage/open positions/sort:sym",
       "risk": "safe"
     },
     {
       "pane": "open positions",
       "paneRaw": "Open Positions 2",
       "kind": "sort",
-      "name": "upnl↕",
+      "name": "upnl",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "upnl↕",
+        "value": "upnl",
         "scope": "Open Positions 2"
       },
       "sampleText": "uPnL↕",
       "page": "Linkage",
       "source": "crawled",
-      "id": "Linkage/open positions/sort:upnl↕",
+      "id": "Linkage/open positions/sort:upnl",
       "risk": "safe"
     },
     {
@@ -6635,153 +6635,153 @@
       "pane": "recent closes",
       "paneRaw": "Recent Closes 15",
       "kind": "sort",
-      "name": "entry↕",
+      "name": "entry",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "entry↕",
+        "value": "entry",
         "scope": "Recent Closes 15"
       },
       "sampleText": "Entry↕",
       "page": "Linkage",
       "source": "crawled",
-      "id": "Linkage/recent closes/sort:entry↕",
+      "id": "Linkage/recent closes/sort:entry",
       "risk": "safe"
     },
     {
       "pane": "recent closes",
       "paneRaw": "Recent Closes 15",
       "kind": "sort",
-      "name": "exit reason↕",
+      "name": "exit",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "exit reason↕",
-        "scope": "Recent Closes 15"
-      },
-      "sampleText": "Exit reason↕",
-      "page": "Linkage",
-      "source": "crawled",
-      "id": "Linkage/recent closes/sort:exit reason↕",
-      "risk": "safe"
-    },
-    {
-      "pane": "recent closes",
-      "paneRaw": "Recent Closes 15",
-      "kind": "sort",
-      "name": "exit↕",
-      "instances": 1,
-      "selector": {
-        "strategy": "text",
-        "value": "exit↕",
+        "value": "exit",
         "scope": "Recent Closes 15"
       },
       "sampleText": "Exit↕",
       "page": "Linkage",
       "source": "crawled",
-      "id": "Linkage/recent closes/sort:exit↕",
+      "id": "Linkage/recent closes/sort:exit",
       "risk": "safe"
     },
     {
       "pane": "recent closes",
       "paneRaw": "Recent Closes 15",
       "kind": "sort",
-      "name": "fund↕",
+      "name": "exit reason",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "fund↕",
+        "value": "exit reason",
+        "scope": "Recent Closes 15"
+      },
+      "sampleText": "Exit reason↕",
+      "page": "Linkage",
+      "source": "crawled",
+      "id": "Linkage/recent closes/sort:exit reason",
+      "risk": "safe"
+    },
+    {
+      "pane": "recent closes",
+      "paneRaw": "Recent Closes 15",
+      "kind": "sort",
+      "name": "fund",
+      "instances": 1,
+      "selector": {
+        "strategy": "text",
+        "value": "fund",
         "scope": "Recent Closes 15"
       },
       "sampleText": "Fund↕",
       "page": "Linkage",
       "source": "crawled",
-      "id": "Linkage/recent closes/sort:fund↕",
+      "id": "Linkage/recent closes/sort:fund",
       "risk": "safe"
     },
     {
       "pane": "recent closes",
       "paneRaw": "Recent Closes 15",
       "kind": "sort",
-      "name": "hold↕",
+      "name": "hold",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "hold↕",
+        "value": "hold",
         "scope": "Recent Closes 15"
       },
       "sampleText": "Hold↕",
       "page": "Linkage",
       "source": "crawled",
-      "id": "Linkage/recent closes/sort:hold↕",
+      "id": "Linkage/recent closes/sort:hold",
       "risk": "safe"
     },
     {
       "pane": "recent closes",
       "paneRaw": "Recent Closes 15",
       "kind": "sort",
-      "name": "pnl↕",
+      "name": "pnl",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "pnl↕",
+        "value": "pnl",
         "scope": "Recent Closes 15"
       },
       "sampleText": "PnL↕",
       "page": "Linkage",
       "source": "crawled",
-      "id": "Linkage/recent closes/sort:pnl↕",
+      "id": "Linkage/recent closes/sort:pnl",
       "risk": "safe"
     },
     {
       "pane": "recent closes",
       "paneRaw": "Recent Closes 15",
       "kind": "sort",
-      "name": "side↕",
+      "name": "side",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "side↕",
+        "value": "side",
         "scope": "Recent Closes 15"
       },
       "sampleText": "Side↕",
       "page": "Linkage",
       "source": "crawled",
-      "id": "Linkage/recent closes/sort:side↕",
+      "id": "Linkage/recent closes/sort:side",
       "risk": "safe"
     },
     {
       "pane": "recent closes",
       "paneRaw": "Recent Closes 15",
       "kind": "sort",
-      "name": "sym↕",
+      "name": "sym",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "sym↕",
+        "value": "sym",
         "scope": "Recent Closes 15"
       },
       "sampleText": "Sym↕",
       "page": "Linkage",
       "source": "crawled",
-      "id": "Linkage/recent closes/sort:sym↕",
+      "id": "Linkage/recent closes/sort:sym",
       "risk": "safe"
     },
     {
       "pane": "recent closes",
       "paneRaw": "Recent Closes 15",
       "kind": "sort",
-      "name": "time↕",
+      "name": "time",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "time↕",
+        "value": "time",
         "scope": "Recent Closes 15"
       },
       "sampleText": "Time↕",
       "page": "Linkage",
       "source": "crawled",
-      "id": "Linkage/recent closes/sort:time↕",
+      "id": "Linkage/recent closes/sort:time",
       "risk": "safe"
     },
     {
@@ -8053,68 +8053,68 @@
       "pane": "(chrome-or-page)",
       "paneRaw": "(chrome-or-page)",
       "kind": "sort",
-      "name": "%↕",
+      "name": "%",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "%↕",
+        "value": "%",
         "scope": "(chrome-or-page)"
       },
       "sampleText": "%↕",
       "page": "Primitives",
       "source": "crawled",
-      "id": "Primitives/(chrome-or-page)/sort:%↕",
+      "id": "Primitives/(chrome-or-page)/sort:%",
       "risk": "safe"
     },
     {
       "pane": "(chrome-or-page)",
       "paneRaw": "(chrome-or-page)",
       "kind": "sort",
-      "name": "pnl↕",
+      "name": "pnl",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "pnl↕",
+        "value": "pnl",
         "scope": "(chrome-or-page)"
       },
       "sampleText": "PnL↕",
       "page": "Primitives",
       "source": "crawled",
-      "id": "Primitives/(chrome-or-page)/sort:pnl↕",
+      "id": "Primitives/(chrome-or-page)/sort:pnl",
       "risk": "safe"
     },
     {
       "pane": "(chrome-or-page)",
       "paneRaw": "(chrome-or-page)",
       "kind": "sort",
-      "name": "side↕",
+      "name": "side",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "side↕",
+        "value": "side",
         "scope": "(chrome-or-page)"
       },
       "sampleText": "SIDE↕",
       "page": "Primitives",
       "source": "crawled",
-      "id": "Primitives/(chrome-or-page)/sort:side↕",
+      "id": "Primitives/(chrome-or-page)/sort:side",
       "risk": "safe"
     },
     {
       "pane": "(chrome-or-page)",
       "paneRaw": "(chrome-or-page)",
       "kind": "sort",
-      "name": "sym↕",
+      "name": "sym",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "sym↕",
+        "value": "sym",
         "scope": "(chrome-or-page)"
       },
       "sampleText": "SYM↕",
       "page": "Primitives",
       "source": "crawled",
-      "id": "Primitives/(chrome-or-page)/sort:sym↕",
+      "id": "Primitives/(chrome-or-page)/sort:sym",
       "risk": "safe"
     },
     {
@@ -8543,7 +8543,7 @@
     },
     {
       "pane": "economic calendar - - utc",
-      "paneRaw": "Economic Calendar 02026-07-28 04:01:03 U",
+      "paneRaw": "Economic Calendar 02026-07-28 05:25:13 U",
       "kind": "button",
       "name": "reload pane",
       "title": "Reload pane",
@@ -8561,14 +8561,14 @@
     },
     {
       "pane": "economic calendar - - utc",
-      "paneRaw": "Economic Calendar 02026-07-28 04:01:03 U",
+      "paneRaw": "Economic Calendar 02026-07-28 05:25:13 U",
       "kind": "period",
       "name": "all",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "all",
-        "scope": "Economic Calendar 02026-07-28 04:01:03 U"
+        "scope": "Economic Calendar 02026-07-28 05:25:13 U"
       },
       "sampleText": "All",
       "page": "Regime",
@@ -8579,14 +8579,14 @@
     },
     {
       "pane": "economic calendar - - utc",
-      "paneRaw": "Economic Calendar 02026-07-28 04:01:03 U",
+      "paneRaw": "Economic Calendar 02026-07-28 05:25:13 U",
       "kind": "period",
       "name": "high",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "high",
-        "scope": "Economic Calendar 02026-07-28 04:01:03 U"
+        "scope": "Economic Calendar 02026-07-28 05:25:13 U"
       },
       "sampleText": "High",
       "page": "Regime",
@@ -8597,14 +8597,14 @@
     },
     {
       "pane": "economic calendar - - utc",
-      "paneRaw": "Economic Calendar 02026-07-28 04:01:03 U",
+      "paneRaw": "Economic Calendar 02026-07-28 05:25:13 U",
       "kind": "period",
       "name": "high+med",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "high+med",
-        "scope": "Economic Calendar 02026-07-28 04:01:03 U"
+        "scope": "Economic Calendar 02026-07-28 05:25:13 U"
       },
       "sampleText": "High+Med",
       "page": "Regime",
@@ -8849,119 +8849,119 @@
       "pane": "recent regime changes",
       "paneRaw": "Recent Regime Changes 25",
       "kind": "sort",
-      "name": "date↕",
+      "name": "date",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "date↕",
+        "value": "date",
         "scope": "Recent Regime Changes 25"
       },
       "sampleText": "DATE↕",
       "page": "Regime",
       "source": "crawled",
-      "id": "Regime/recent regime changes/sort:date↕",
+      "id": "Regime/recent regime changes/sort:date",
       "risk": "safe"
     },
     {
       "pane": "recent regime changes",
       "paneRaw": "Recent Regime Changes 25",
       "kind": "sort",
-      "name": "funding↕",
+      "name": "funding",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "funding↕",
+        "value": "funding",
         "scope": "Recent Regime Changes 25"
       },
       "sampleText": "FUNDING↕",
       "page": "Regime",
       "source": "crawled",
-      "id": "Regime/recent regime changes/sort:funding↕",
+      "id": "Regime/recent regime changes/sort:funding",
       "risk": "safe"
     },
     {
       "pane": "recent regime changes",
       "paneRaw": "Recent Regime Changes 25",
       "kind": "sort",
-      "name": "hy spread↕",
+      "name": "hy spread",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "hy spread↕",
+        "value": "hy spread",
         "scope": "Recent Regime Changes 25"
       },
       "sampleText": "HY SPREAD↕",
       "page": "Regime",
       "source": "crawled",
-      "id": "Regime/recent regime changes/sort:hy spread↕",
+      "id": "Regime/recent regime changes/sort:hy spread",
       "risk": "safe"
     },
     {
       "pane": "recent regime changes",
       "paneRaw": "Recent Regime Changes 25",
       "kind": "sort",
-      "name": "mode↕",
+      "name": "mode",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "mode↕",
+        "value": "mode",
         "scope": "Recent Regime Changes 25"
       },
       "sampleText": "MODE↕",
       "page": "Regime",
       "source": "crawled",
-      "id": "Regime/recent regime changes/sort:mode↕",
+      "id": "Regime/recent regime changes/sort:mode",
       "risk": "safe"
     },
     {
       "pane": "recent regime changes",
       "paneRaw": "Recent Regime Changes 25",
       "kind": "sort",
-      "name": "regime↕",
+      "name": "regime",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "regime↕",
+        "value": "regime",
         "scope": "Recent Regime Changes 25"
       },
       "sampleText": "REGIME↕",
       "page": "Regime",
       "source": "crawled",
-      "id": "Regime/recent regime changes/sort:regime↕",
+      "id": "Regime/recent regime changes/sort:regime",
       "risk": "safe"
     },
     {
       "pane": "recent regime changes",
       "paneRaw": "Recent Regime Changes 25",
       "kind": "sort",
-      "name": "rvol↕",
+      "name": "rvol",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "rvol↕",
+        "value": "rvol",
         "scope": "Recent Regime Changes 25"
       },
       "sampleText": "RVOL↕",
       "page": "Regime",
       "source": "crawled",
-      "id": "Regime/recent regime changes/sort:rvol↕",
+      "id": "Regime/recent regime changes/sort:rvol",
       "risk": "safe"
     },
     {
       "pane": "recent regime changes",
       "paneRaw": "Recent Regime Changes 25",
       "kind": "sort",
-      "name": "vix↕",
+      "name": "vix",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "vix↕",
+        "value": "vix",
         "scope": "Recent Regime Changes 25"
       },
       "sampleText": "VIX↕",
       "page": "Regime",
       "source": "crawled",
-      "id": "Regime/recent regime changes/sort:vix↕",
+      "id": "Regime/recent regime changes/sort:vix",
       "risk": "safe"
     },
     {
@@ -9252,90 +9252,90 @@
       "pane": "signal coverage",
       "paneRaw": "Signal Coverage 6",
       "kind": "sort",
-      "name": "from↕",
+      "name": "from",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "from↕",
+        "value": "from",
         "scope": "Signal Coverage 6"
       },
       "sampleText": "FROM↕",
       "page": "Regime",
       "source": "crawled",
       "tabPath": "Backfill",
-      "id": "Regime/signal coverage/sort:from↕",
+      "id": "Regime/signal coverage/sort:from",
       "risk": "safe"
     },
     {
       "pane": "signal coverage",
       "paneRaw": "Signal Coverage 6",
       "kind": "sort",
-      "name": "rows↕",
+      "name": "rows",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "rows↕",
+        "value": "rows",
         "scope": "Signal Coverage 6"
       },
       "sampleText": "ROWS↕",
       "page": "Regime",
       "source": "crawled",
       "tabPath": "Backfill",
-      "id": "Regime/signal coverage/sort:rows↕",
+      "id": "Regime/signal coverage/sort:rows",
       "risk": "safe"
     },
     {
       "pane": "signal coverage",
       "paneRaw": "Signal Coverage 6",
       "kind": "sort",
-      "name": "signal↕",
+      "name": "signal",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "signal↕",
+        "value": "signal",
         "scope": "Signal Coverage 6"
       },
       "sampleText": "SIGNAL↕",
       "page": "Regime",
       "source": "crawled",
       "tabPath": "Backfill",
-      "id": "Regime/signal coverage/sort:signal↕",
+      "id": "Regime/signal coverage/sort:signal",
       "risk": "safe"
     },
     {
       "pane": "signal coverage",
       "paneRaw": "Signal Coverage 6",
       "kind": "sort",
-      "name": "source↕",
+      "name": "source",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "source↕",
+        "value": "source",
         "scope": "Signal Coverage 6"
       },
       "sampleText": "SOURCE↕",
       "page": "Regime",
       "source": "crawled",
       "tabPath": "Backfill",
-      "id": "Regime/signal coverage/sort:source↕",
+      "id": "Regime/signal coverage/sort:source",
       "risk": "safe"
     },
     {
       "pane": "signal coverage",
       "paneRaw": "Signal Coverage 6",
       "kind": "sort",
-      "name": "to↕",
+      "name": "to",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "to↕",
+        "value": "to",
         "scope": "Signal Coverage 6"
       },
       "sampleText": "TO↕",
       "page": "Regime",
       "source": "crawled",
       "tabPath": "Backfill",
-      "id": "Regime/signal coverage/sort:to↕",
+      "id": "Regime/signal coverage/sort:to",
       "risk": "safe"
     },
     {
