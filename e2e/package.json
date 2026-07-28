@@ -5,6 +5,7 @@
   "scripts": {
     "e2e:selftest": "playwright test --project=selftest",
     "e2e:smoke": "playwright test --project=live-r specs/phase0-smoke",
+    "e2e:crawl": "playwright test --project=live-r specs/phase1-inventory",
     "e2e:report": "playwright show-report"
   },
   "devDependencies": {

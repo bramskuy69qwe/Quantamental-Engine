@@ -1,0 +1,62 @@
+{
+  "_doc": [
+    "Hand-maintained risk classification: rules run IN ORDER, first regex match on the",
+    "control id (page/pane/kind:name) wins. Risk classes: safe (click/read freely),",
+    "quasi (GET with server side effect - needs restore protocol), mutating-live-allowed",
+    "(operator-approved live mutation surface), mutating-excluded (sandbox or",
+    "operator-supervised only). Anything unmatched is UNCLASSIFIED and fails the crawl",
+    "spec - that failure is the review loop. DECLARED entries keep their hand-set risk;",
+    "rules apply to crawled controls only. Page-wide safe catch-alls at the END are",
+    "sound because the drift pin fails on ANY new id - a future mutating control still",
+    "forces manual review at the gate. Names/panes are digit-stripped lowercase."
+  ],
+  "rules": [
+    { "match": "^chrome/.*switch active account", "risk": "mutating-excluded", "cluster": "chrome-account", "note": "POST /accounts/{id}/activate - full WS teardown + accounts.is_active + reload" },
+
+    { "match": "^Pre-Trade/.*input:pt-ticker$", "risk": "quasi", "cluster": "pretrade-form", "restore": "calc-clear", "note": "1Hz GET /api/price/{ticker} calls set_calculator_symbol - rebuilds market-WS subs" },
+    { "match": "^Pre-Trade/.*button:calculate$", "risk": "mutating-live-allowed", "cluster": "pretrade-form", "restore": "calc-cancel-or-clear", "note": "POST /calculator/calculate - manual submit inserts pre_trade_log row" },
+    { "match": "^Pre-Trade/.*button:clear$", "risk": "mutating-live-allowed", "cluster": "pretrade-form", "note": "POST /calculator/clear - drops WS sub + local state; NOT a calc cancel" },
+    { "match": "^Pre-Trade/.*select:.*(match window|window)", "risk": "mutating-live-allowed", "cluster": "pretrade-form", "restore": "window-restore", "note": "POST /calculator/window - writes accounts.config_json; restore session-start value" },
+
+    { "match": "^Regime/.*button:.*reclassify", "risk": "mutating-excluded", "confirm": "native", "note": "POST /api/regime/reclassify - rewrites EVERY regime_labels row" },
+    { "match": "^Regime/.*button:.*start backfill", "risk": "mutating-excluded", "note": "POST /api/regime/backfill - regime_signals + regime_labels writes" },
+    { "match": "^Regime/market news/button:↻", "risk": "mutating-live-allowed", "cluster": "regime-tabs", "note": "POST /api/news/refresh - Finnhub news+calendar upserts, idempotent, operator-approved" },
+    { "match": "^Regime/signal coverage/button:↻", "risk": "safe", "note": "GET coverage refetch" },
+
+    { "match": "^Models/.*button:(new model|\\+ new model)", "risk": "mutating-excluded", "note": "opens create dialog; dialog Create POSTs /api/models" },
+    { "match": "^Models/.*button:(delete|confirm)", "risk": "mutating-excluded", "confirm": "in-dom", "note": "DELETE /api/models/{id} - cascades backtest_sessions, irreversible" },
+    { "match": "^Models/.*button:.*import", "risk": "mutating-excluded", "note": "backtest-upload confirm POSTs; preview is dry_run" },
+
+    { "match": "^Linkage/.*button:link$", "risk": "mutating-excluded", "confirm": "native", "dataDependent": true, "note": "POST /orders/{id}/manual_link - T-supervised only" },
+    { "match": "^Linkage/.*button:unplanned", "risk": "mutating-excluded", "confirm": "native", "dataDependent": true, "note": "POST /orders/{id}/mark_unplanned" },
+    { "match": "^Linkage/.*button:save$", "risk": "mutating-excluded", "dataDependent": true, "note": "PUT /history/close_reason/{id}" },
+    { "match": "^Linkage/.*button:later$", "risk": "safe", "dataDependent": true, "note": "client-only deferral" },
+    { "match": "^Linkage/.*button:(intervention|discipline break|new opportunity|other)", "risk": "safe", "dataDependent": true, "note": "reason PICK is client-side state; the mutation is Save" },
+    { "match": "^Linkage/.*input:optional note", "risk": "safe", "dataDependent": true },
+    { "match": "^Linkage/.*(cancel this calc)", "risk": "safe", "dataDependent": true, "cluster": "linkage-calcs", "note": "opens the cancel ModelDialog; the mutation is the dialog's Cancel-calc button (declared)" },
+
+    { "match": "^Config/.*/(tab|sort|period):", "risk": "safe", "cluster": "config-tabs" },
+    { "match": "^Config/.*reload pane", "risk": "safe" },
+    { "match": "^Config/", "risk": "mutating-excluded", "note": "conservative page-wide default: saves/tests/activate/connections/presets + credential fields - sandbox only" },
+
+    { "match": "/(tab):", "risk": "safe" },
+    { "match": "/(period):", "risk": "safe" },
+    { "match": "/(sort):", "risk": "safe" },
+    { "match": "/\\(dl-tools\\)/", "risk": "safe", "note": "DataList search/facet/clear toolbar" },
+    { "match": "/input:search", "risk": "safe" },
+    { "match": "reload pane", "risk": "safe", "note": "Pane refresh - GET refetch / remount" },
+
+    { "match": "^chrome/.*button:(dashboard|pre-trade|linkage|history|analytics|models|regime|primitives)", "risk": "safe", "cluster": "nav" },
+    { "match": "^chrome/.*configuration", "risk": "safe", "cluster": "nav", "note": "the gear - routes to Config" },
+    { "match": "^chrome/", "risk": "safe", "cluster": "chrome", "note": "lock, presets, save/load layout, bell, clock - client-side only" },
+
+    { "match": "^Dashboard/", "risk": "safe", "note": "zero non-GET on the page (verified endpoint map); facets/tf/nav-shortcut buttons" },
+    { "match": "^Analytics/", "risk": "safe", "cluster": "analytics-tabs", "note": "zero non-GET on the page; period nav, toggles, facets" },
+    { "match": "^History/", "risk": "safe", "cluster": "history-filters", "note": "pagination, facets, symbol filter, CSV export (client Blob); the reason modal is declared separately" },
+    { "match": "^Linkage/", "risk": "safe", "cluster": "linkage-inbox", "note": "facet selects, inbox strips; mutations ruled above / declared" },
+    { "match": "^Pre-Trade/", "risk": "safe", "cluster": "pretrade-form", "note": "form-local inputs/segments/steppers/ladder; server touch-points ruled above" },
+    { "match": "^Regime/", "risk": "safe", "cluster": "regime-tabs", "note": "range/style selectors, backfill form fields (Start is ruled above)" },
+    { "match": "^Models/", "risk": "safe", "cluster": "models-tabs", "note": "library filters/sort/search; CRUD ruled above / declared" },
+    { "match": "^Primitives/", "risk": "safe", "note": "DEV component showcase - demo controls, client-side only" }
+  ]
+}

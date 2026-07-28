@@ -1,0 +1,25 @@
+{
+  "_doc": [
+    "Stateful clusters for Phase 3 order-permutation testing. members are regexes over",
+    "control ids. reset: how state is wound back between orderings (reload = page reload",
+    "+ storage reset; remount = tab-switch away and back - the reset the app itself",
+    "performs). Clusters marked remountSensitive run each ordering BOTH ways.",
+    "Seeded from the 2026-07-28 exploration; Phase 3 refines members against controls.json."
+  ],
+  "clusters": [
+    { "id": "nav", "page": "*", "reset": "reload", "members": ["^chrome/.*(dashboard|pre-trade|linkage|history|analytics|models|regime|primitives|configuration)"] },
+    { "id": "chrome-lock", "page": "*", "reset": "reload", "members": ["^chrome/.*lock"], "note": "workspace lock affects EVERY page's GridStack" },
+    { "id": "notifications", "page": "*", "reset": "reload", "members": ["^chrome/.*bell", "^chrome/notification drawer/"], "note": "drawer state survives navigation - only reload resets" },
+    { "id": "dash-workspace", "page": "Dashboard", "reset": "reload", "members": ["^chrome/.*(default|risk|execution|macro)", "^chrome/.*(save current layout|load saved layout|new workspace)"], "note": "preset x drag x save/load; preset button never reconciled with drag/Load (pre-spotted)" },
+    { "id": "dash-equity-tf", "page": "Dashboard", "reset": "remount", "members": ["^Dashboard/.*period:"], "remountSensitive": true },
+    { "id": "pretrade-form", "page": "Pre-Trade", "reset": "reload", "members": ["^Pre-Trade/order inputs/", "^Pre-Trade/.*(setup summary|recent setups)/"], "note": "order-type x auto-refresh(sticky pause) x ticker(quasi) x tp/sl mode x ladder x recall" },
+    { "id": "linkage-inbox", "page": "Linkage", "reset": "reload", "members": ["^Linkage/manual link.*/", "^Linkage/.*(inbox|resolver)"], "note": "selection falls back to inbox[0] silently" },
+    { "id": "linkage-calcs", "page": "Linkage", "reset": "reload", "members": ["^Linkage/active calcs/"] },
+    { "id": "history-filters", "page": "History", "reset": "reload", "members": ["^History/.*(tab|period|input|button):", "^History/\\(page-header\\)/"], "note": "period x q x tabs x page/perPage - perPage reset is inline, not in the reset effect (pre-spotted asymmetry)" },
+    { "id": "analytics-tabs", "page": "Analytics", "reset": "remount", "members": ["^Analytics/"], "remountSensitive": true },
+    { "id": "regime-tabs", "page": "Regime", "reset": "reload", "members": ["^Regime/"], "note": "backfill job handle is page-level - leaving the PAGE loses it while the server job runs (pre-spotted)" },
+    { "id": "models-tabs", "page": "Models", "reset": "reload", "members": ["^Models/"], "note": "model tabs are data-dependent (named after live models)" },
+    { "id": "config-tabs", "page": "Config", "reset": "reload", "members": ["^Config/.*/tab:"], "note": "sandbox-only beyond tab switching" },
+    { "id": "datalist-tools", "page": "*", "reset": "remount", "members": ["/\\(dl-tools\\)/", "/sort:"], "remountSensitive": true, "note": "facet->search->sort pipeline; state resets on remount (documented behavior worth asserting)" }
+  ]
+}
