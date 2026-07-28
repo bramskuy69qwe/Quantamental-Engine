@@ -572,6 +572,13 @@ async def _startup_fetch():
     except Exception as e:
         log.error(f"WS startup failed: {e}")
         app_state.ws_status.add_log(f"WS STARTUP ERROR: {e}")
+        # E2E-P5-001: a transient boot failure here (2026-07-28: the sticky
+        # background priority + an exhausted weight budget refused the listen
+        # key) used to kill the user-data stream PERMANENTLY until the next
+        # manual restart — while REST reconcile kept inserting lifecycle-less
+        # fills (no tpid, no closed_positions, History frozen for two days).
+        # Never accept a dead fill pipeline silently: retry until it binds.
+        _spawn(_ws_startup_retry_loop(), name="ws-startup-retry")
 
     # Compute initial regime from whatever is already in the DB so that the
     # first calculator run is never stuck with a 1.0 fallback multiplier.
@@ -586,6 +593,36 @@ async def _startup_fetch():
     app_state.is_initializing = False
     app_state.ws_status.add_log(f"{config.PROJECT_NAME} fully initialized.")
     log.info(f"Background startup complete — {config.PROJECT_NAME} fully ready.")
+
+
+async def _ws_startup_retry_loop():
+    """Bind the user-data stream after a failed boot attempt (E2E-P5-001).
+
+    Backoff 15s → 30s → 60s → then every 120s, forever: retry noise is strictly
+    better than a silently dead fill pipeline. Each attempt stops+restarts the
+    ws_manager so a partial prior start can never double-spawn its loops. Exits
+    as soon as the user-data socket reports connected (its own reconnect loop
+    owns the stream from there).
+    """
+    delays = (15, 30, 60, 120)
+    attempt = 0
+    while True:
+        correlation_log.tick("sch-ws_startup_retry")  # corr-tap: entry scope (CL.T1a)
+        await asyncio.sleep(delays[min(attempt, len(delays) - 1)])
+        attempt += 1
+        if app_state.ws_status.connected:
+            log.info("WS startup retry: stream already up (attempt %d) — done", attempt)
+            return
+        try:
+            listen_key = await create_listen_key()
+            await ws_manager.stop()
+            await ws_manager.start(listen_key)
+            log.info("WS startup retry succeeded (attempt %d)", attempt)
+            app_state.ws_status.add_log(f"WS started after {attempt} boot retr{'y' if attempt == 1 else 'ies'}.")
+            return
+        except Exception as e:
+            log.warning("WS startup retry %d failed: %s", attempt, e)
+            app_state.ws_status.add_log(f"WS RETRY {attempt} FAILED: {e}")
 
 
 # ── Regime refresh loop ──────────────────────────────────────────────────────

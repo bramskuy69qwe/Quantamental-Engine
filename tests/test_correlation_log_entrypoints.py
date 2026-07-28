@@ -247,6 +247,8 @@ class TestLoopTickScopes:
             "operator_session_reaper": sched._operator_session_reaper_loop,
             # spawned inside _startup_fetch:
             "reconciler_closed_positions_periodic": sched._reconcile_closed_positions_periodic,
+            # E2E-P5-001: rebinds the user-data stream after a failed boot start
+            "ws-startup-retry": sched._ws_startup_retry_loop,
         }
         # CL.T2b: the webhook worker upgraded from a per-job tick to the
         # carried-corr RE-BIND (spec §3.3 hand-off #2) — assert the rebind

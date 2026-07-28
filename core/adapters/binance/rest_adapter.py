@@ -677,13 +677,20 @@ class BinanceUSDMAdapter(BaseExchangeAdapter):
             resp = self._ex.fapiPrivatePostListenKey()
             return resp.get("listenKey", "")
 
-        return await self._run(_create)
+        # priority is EXPLICIT, never inherited: set_priority() is sticky, and the
+        # boot backfills leave the adapter at "background" — on 2026-07-28 the
+        # weight tracker refused this call at 114% ("priority=background"), which
+        # killed the user-data stream (the engine's sole fill source) for two
+        # days. The listen key is the gateway to that stream: last to shed.
+        return await self._run(_create, priority="urgent")
 
     async def keepalive_listen_key(self, key: str) -> None:
         def _keepalive():
             self._ex.fapiPrivatePutListenKey({"listenKey": key})
 
-        await self._run(_keepalive)
+        # Same rationale as create_listen_key: a shed keepalive expires the key
+        # and kills the stream just as dead.
+        await self._run(_keepalive, priority="urgent")
 
     # ── Current funding rates (live) ─────────────────────────────────────────
 

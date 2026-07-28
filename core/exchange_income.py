@@ -118,32 +118,38 @@ async def fetch_income_for_backfill(start_ms: int, end_ms: int) -> List[Dict]:
     or the exchange returns fewer than 1000 records.
     """
     adapter = _get_adapter()
+    # set_priority is STICKY — restore it or every LATER call on this adapter
+    # inherits "background" (E2E-P5-001: the boot listen-key call inherited it
+    # and was shed by the weight tracker at 114% → user-data stream dead).
     adapter.set_priority("background")  # backfill is low-priority
-    all_events: List[Dict] = []
-    cursor = start_ms
+    try:
+        all_events: List[Dict] = []
+        cursor = start_ms
 
-    while cursor < end_ms:
-        normalized = await adapter.fetch_income(
-            start_ms=cursor, end_ms=end_ms, limit=1000,
-        )
-        if not normalized:
-            break
-        batch = [
-            {
-                "symbol": ni.symbol,
-                "incomeType": ni.income_type.upper(),
-                "income": ni.amount,
-                "time": ni.timestamp_ms,
-                "tradeId": ni.trade_id,
-            }
-            for ni in normalized
-        ]
-        all_events.extend(batch)
-        if len(batch) < 1000:
-            break
-        cursor = int(batch[-1]["time"]) + 1
+        while cursor < end_ms:
+            normalized = await adapter.fetch_income(
+                start_ms=cursor, end_ms=end_ms, limit=1000,
+            )
+            if not normalized:
+                break
+            batch = [
+                {
+                    "symbol": ni.symbol,
+                    "incomeType": ni.income_type.upper(),
+                    "income": ni.amount,
+                    "time": ni.timestamp_ms,
+                    "tradeId": ni.trade_id,
+                }
+                for ni in normalized
+            ]
+            all_events.extend(batch)
+            if len(batch) < 1000:
+                break
+            cursor = int(batch[-1]["time"]) + 1
 
-    return all_events
+        return all_events
+    finally:
+        adapter.set_priority("normal")
 
 
 async def build_equity_backfill(
@@ -532,6 +538,21 @@ async def fetch_all_user_trades(
         adapter.set_priority("background")
     except Exception:
         pass
+    # set_priority is STICKY — restore on EVERY exit (incl. exceptions) or later
+    # calls inherit "background" (E2E-P5-001: the boot listen-key call did, and
+    # the weight tracker shed it at 114% → user-data stream dead for two days).
+    try:
+        return await _fetch_all_user_trades_paged(
+            adapter, symbol, start_ms, end_ms, page_limit, max_pages,
+        )
+    finally:
+        try:
+            adapter.set_priority("normal")
+        except Exception:
+            pass
+
+
+async def _fetch_all_user_trades_paged(adapter, symbol, start_ms, end_ms, page_limit, max_pages):
     # fromId pagination from the account's earliest trade on this symbol,
     # walking forward (id ascending) page by page. NB Binance caps a
     # startTime/endTime userTrades range at 7 DAYS, so a >7d-old startTime

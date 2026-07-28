@@ -75,6 +75,23 @@ class OHLCVFetcher:
         progress_cb: optional async callable(pct: float, msg: str) for progress updates.
         """
         adapter = self._get_adapter()
+        adapter.set_priority("background")  # OHLCV fetch is background priority
+        # set_priority is STICKY (E2E-P5-001): without this restore, an OHLCV
+        # fetch leaves the shared adapter at "background" and a later
+        # listen-key / account call gets shed by the weight tracker.
+        try:
+            return await self._fetch_and_store_inner(
+                adapter, symbol, timeframe, since_days, until_ms, progress_cb,
+            )
+        finally:
+            try:
+                adapter.set_priority("normal")
+            except Exception:
+                pass
+
+    async def _fetch_and_store_inner(
+        self, adapter, symbol, timeframe, since_days, until_ms, progress_cb,
+    ) -> int:
         now_ms = until_ms or int(time.time() * 1000)
         target_since_ms = now_ms - int(since_days * 86_400_000)
 
@@ -98,8 +115,6 @@ class OHLCVFetcher:
             datetime.utcfromtimestamp(fetch_since_ms / 1000).strftime("%Y-%m-%d"),
             stored_count,
         )
-
-        adapter.set_priority("background")  # OHLCV fetch is background priority
 
         # Fast-fail connectivity check
         try:
