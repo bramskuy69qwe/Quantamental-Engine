@@ -4,7 +4,7 @@
 **Branch**: **`v3.0/e2e-debug`** — pushed through the P7 wrap (`5739dfd`); the 7 carry-forward commits push at session close (see the 07-30 block).
 **Tests**: **4608 passed / 7 skipped / 3 deselected** (post-carry-forward gate, 2026-07-30; first run flaked ONCE on `test_periodic_loop_survives_reconcile_exception` — a 50 ms-budget timing test under live-engine machine load, passed solo AND on the identical full re-run — recorded, not chased). ALWAYS run SOLO on the **`.venv`** interpreter (user-site Python lacks `pytest-timeout` → drops the 30 s guardrail). NEVER run the gate concurrently with live-engine driving (conftest tripwire + weight budget).
 **Bundle**: **`30e626377e`** (was `929f95bffc`; the FILLS chrome dot ships in it) — hard-refresh after restart.
-**Engine**: RUNNING; boot `22:11:14 07-29`. **The running engine PREDATES every 07-30 fix** (`30cf1ad` + the 7 carry-forward commits) — **RESTART at the operator's convenience** to land: the P7-001 settings upsert, the P5-R1 close-row backstop, the truthful user-WS flag + FILLS dot + user_ws door, the monitoring binding + new checks, the boot-priority tiering, the PID guard (writes `data/engine.pid` on first post-fix boot), and the httpx token-log silence. **w32time is STILL STOPPED** (operator, elevated: `sc config w32time start= auto && net start w32time && w32tm /resync /force`). Restart discipline: **one restart, then wait**.
+**Engine**: RUNNING; boot `22:11:14 07-29`. **The running engine PREDATES every 07-30 fix** (`30cf1ad` + the 7 carry-forward commits) — **RESTART at the operator's convenience** to land: the P7-001 settings upsert, the P5-R1 close-row backstop, the truthful user-WS flag + FILLS dot + user_ws door, the monitoring binding + new checks, the boot-priority tiering, the PID guard (writes `data/engine.pid` on first post-fix boot), and the httpx token-log silence. **w32time FIXED 2026-07-30 (OBS-002 CLOSED)**: operator set `StartType=Automatic` (service Running, source cloudflare, corrections ≤1 ms while running — root cause was Manual start + workgroup trigger never firing, so every manual sync was a one-shot against a ~+2.5 s/day free-running crystal; full diagnosis in the 07-30 close block). Restart discipline: **one restart, then wait**.
 
 ## ▶ SESSION CLOSE 2026-07-30 (second block) — CARRY-FORWARDS ALL FIXED
 
@@ -28,10 +28,15 @@ before every fix (3 of 5 filings needed mechanism correction):
 phase-6 ledger (A1/X1 row), acceptance report (carry-forward list closed,
 2 NEW watch items filed: REST-fill gap masking + weight_tracker reconcile
 window/lock). **Remaining open = operator-side only**: OBS-001 (watch;
-the PID guard removes the double-launch class), OBS-002 (w32time), the
-SOL `MANUAL_INTERVENTION` question, Finnhub key rotation, and a
-cold-restart time-to-first-price measurement (P5-R5 verification — the
-e2e specs poll past the starvation window by design).
+the PID guard removes the double-launch class), the SOL
+`MANUAL_INTERVENTION` question, Finnhub key rotation, and a cold-restart
+time-to-first-price measurement (P5-R5 verification — the e2e specs poll
+past the starvation window by design). ~~OBS-002~~ **CLOSED 2026-07-30**:
+root-caused (Manual start type + domain-join-only trigger on a workgroup
+machine = one-shot syncs against a ~+30 ppm crystal; corrections while
+running were always ≤1 ms; the "Sync now button is clickable again" was a
+UI misread, verified by live measurement +122 ms post-sync) and FIXED by
+the operator (`StartType=Automatic`, verified Running).
 
 **NEXT PROGRAM = JINJA RETIREMENT** — unchanged, operator-gated; recipe +
 constraints in the 07-25 block (§ "v3.0 RENAME SHIPPED · RETIREMENT
