@@ -126,8 +126,8 @@ class PositionRecord(TypedDict, total=False):
     model_name: str
     source: str
     calc_id: str
-    mfe: float
-    mae: float
+    mfe: float                  # 0.0 placeholder until the reconciler runs —
+    mae: float                  # backfill_completed is the "measured?" bit (P5-R4)
     backfill_completed: int
 
 
@@ -402,6 +402,11 @@ def _build_row(
         "calc_id":              calc_id,
         # MFE/MAE left to reconciler (T175 floor applies there).
         # backfill_completed=0 so the reconciler picks up rebuilt rows.
+        # P5-R4: 0.0 here is a SCHEMA-CONSTRAINED placeholder (the columns
+        # are NOT NULL DEFAULT 0) — "measured or not" travels on
+        # backfill_completed, and the JSON emitters null the pair out for
+        # unmeasured rows so the display renders an em-dash, never a
+        # fabricated zero-width bar.
         "mfe":                  0.0,
         "mae":                  0.0,
         "backfill_completed":   0,

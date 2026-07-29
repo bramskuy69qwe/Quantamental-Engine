@@ -568,6 +568,9 @@ class TestBackfillDefersMfeMaeToReconciler:
         closed = await _all_closed(test_db)
         assert len(closed) == 1
         c = closed[0]
+        # P5-R4: STORAGE keeps the 0.0 placeholder (the columns are NOT NULL
+        # DEFAULT 0); "measured?" travels on backfill_completed, and
+        # query_closed_positions masks the pair to None for consumers.
         assert c["mfe"] == 0.0
         assert c["mae"] == 0.0
         assert c["backfill_completed"] == 0, (

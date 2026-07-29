@@ -1164,12 +1164,28 @@ class OrdersMixin:
         sort_by: str = "exit_time_ms", sort_dir: str = "DESC", search: str = "",
         date_from_ms: Optional[int] = None, date_to_ms: Optional[int] = None,
     ) -> Tuple[List[Dict], int]:
-        """Position History tab."""
-        return await self._paginated_order_query(
+        """Position History tab.
+
+        P5-R4: mfe/mae are masked to None on rows the reconciler hasn't
+        processed (``backfill_completed=0``). The COLUMNS are NOT NULL
+        DEFAULT 0 (schema), so storage carries a 0.0 placeholder — but a
+        0.0 emitted to a consumer renders as a MEASURED zero-width
+        excursion (the v3 truthfulness rule is "both null → em-dash,
+        never a zero bar", and the Jinja twin's ``_mfe_mae_known`` guard
+        keys on the same falsy triple). The flag is the "measured?" bit;
+        every consumer of this getter (History, cockpit recent-closes)
+        gets the truthful shape from one site.
+        """
+        rows, total = await self._paginated_order_query(
             "closed_positions", "exit_time_ms", self._CLOSED_POS_SORT_COLS,
             account_id, page, per_page, sort_by, sort_dir, search,
             date_from_ms, date_to_ms,
         )
+        for r in rows:
+            if not r.get("backfill_completed"):
+                r["mfe"] = None
+                r["mae"] = None
+        return rows, total
 
     # ── Utility methods ─────────────────────────────────────────────────────
 

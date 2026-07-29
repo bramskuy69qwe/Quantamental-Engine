@@ -917,3 +917,59 @@ class TestCrossPositionRebuild:
         assert a["terminal_position_id"] != b["terminal_position_id"]
         assert a["terminal_position_id"].startswith("rebuilt:")
         assert b["terminal_position_id"].startswith("rebuilt:")
+
+
+# -- P5-R4: rebuilt rows carry NULL excursions until the reconciler runs --
+
+
+class TestP5R4NullExcursions:
+    @pytest.mark.asyncio
+    async def test_pending_row_emits_null_mfe_mae_measured_row_does_not(self, db_path):
+        """P5-R4 (phase-5 ledger): the mfe/mae COLUMNS are NOT NULL DEFAULT 0,
+        so storage carries a 0.0 placeholder until the reconciler runs — but a
+        0.0 emitted to a consumer renders as a MEASURED zero-width excursion
+        (v3 truthfulness rule: both null -> em-dash, never a zero bar; the 26
+        recovered SNXX/SNDK rows showed 0.0/0.0 for hours while the
+        rate-limited reconciler drained). query_closed_positions — the door
+        History and the cockpit recent-closes read — must mask the pair to
+        None while backfill_completed=0 and pass real values through once the
+        reconciler has stamped the row."""
+        await _seed_fill(
+            db_path, exchange_fill_id="p5r4-open",
+            symbol="SOLUSDT", side="BUY", direction="LONG",
+            quantity=1.0, price=70.0, is_close=False,
+            timestamp_ms=BASE_MS,
+        )
+        await _seed_fill(
+            db_path, exchange_fill_id="p5r4-close",
+            symbol="SOLUSDT", side="SELL", direction="LONG",
+            quantity=1.0, price=71.0, is_close=True,
+            timestamp_ms=BASE_MS + 60_000, realized_pnl=1.0,
+        )
+        await run_rebuild(db_path=db_path, apply=True, verbose=False)
+
+        # Storage: the schema-constrained placeholder + the work-queue flag.
+        raw = await _all_closed(db_path)
+        assert len(raw) == 1
+        assert raw[0]["mfe"] == 0.0
+        assert raw[0]["mae"] == 0.0
+        assert raw[0]["backfill_completed"] == 0
+
+        from core.database import DatabaseManager
+        db = DatabaseManager(path=db_path)
+        await db.initialize()
+        try:
+            # Emission while PENDING: masked to None (renders as em-dash).
+            rows, total = await db.query_closed_positions(account_id=1)
+            assert total == 1
+            assert rows[0]["mfe"] is None
+            assert rows[0]["mae"] is None
+
+            # Reconciler stamps the row -> real values pass through.
+            await db.update_closed_position_mfe_mae(raw[0]["id"], 2.5, -1.25)
+            rows, _ = await db.query_closed_positions(account_id=1)
+            assert rows[0]["mfe"] == 2.5
+            assert rows[0]["mae"] == -1.25
+            assert rows[0]["backfill_completed"] == 1
+        finally:
+            await db.close()
