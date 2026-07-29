@@ -134,6 +134,31 @@ class TestLooksLive:
         _make_db(data / "engine.db", "fills", rows=0)
         assert looks_live(str(data)) == []
 
+    def test_e2e_seed_rows_exempt_real_rows_still_flag(self, tmp_path):
+        # Phase-7 exemption: seed-sandbox.py marks every closed_positions
+        # row it inserts with terminal_position_id 'e2e:...' — those must
+        # not trip the gate (every sandbox re-provision refused over its
+        # own seeds), while ONE unmarked row still hard-refuses.
+        data = tmp_path / "data"
+        data.mkdir()
+        conn = sqlite3.connect(str(data / "engine.db"))
+        conn.execute(
+            "CREATE TABLE closed_positions (terminal_position_id TEXT)")
+        conn.executemany(
+            "INSERT INTO closed_positions VALUES (?)",
+            [("e2e:BTCUSDT:LONG:1",), ("e2e:ETHUSDT:SHORT:1",)],
+        )
+        conn.commit()
+        conn.close()
+        assert looks_live(str(data)) == []
+
+        conn = sqlite3.connect(str(data / "engine.db"))
+        conn.execute("INSERT INTO closed_positions VALUES ('real-tpid')")
+        conn.commit()
+        conn.close()
+        evidence = looks_live(str(data))
+        assert len(evidence) == 1 and evidence[0].endswith("closed_positions:1")
+
     def test_non_trading_tables_ignored(self, tmp_path):
         data = tmp_path / "data"
         data.mkdir()

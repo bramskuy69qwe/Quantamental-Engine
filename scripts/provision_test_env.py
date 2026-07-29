@@ -199,7 +199,16 @@ def guard_refusals(root: str, allow_primary: bool = False) -> List[str]:
 
 def looks_live(data_dir: str) -> List[str]:
     """Evidence that *data_dir* holds live-shaped data (rows in real-trading
-    tables). Non-empty result = HARD refusal for any destructive step."""
+    tables). Non-empty result = HARD refusal for any destructive step.
+
+    Phase-7 exemption: ``closed_positions`` rows whose
+    ``terminal_position_id`` starts with ``e2e:`` are the sandbox seed
+    fixtures (``e2e/scripts/seed-sandbox.py`` marks every row it inserts),
+    not live data — counting them made EVERY sandbox re-provision refuse
+    over its own seeds (hit twice in the Phase-7 re-run; the operator-side
+    workaround was verify-then-delete-data/ by hand). A REAL live DB never
+    carries the marker, so the exemption cannot weaken the gate for live
+    trees; every other table still counts every row."""
     evidence = []
     for path in _db_files(data_dir):
         try:
@@ -213,7 +222,13 @@ def looks_live(data_dir: str) -> List[str]:
                     (table,),
                 ).fetchone():
                     continue
-                n = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                if table == "closed_positions":
+                    n = conn.execute(
+                        "SELECT COUNT(*) FROM closed_positions "
+                        "WHERE COALESCE(terminal_position_id, '') NOT LIKE 'e2e:%'"
+                    ).fetchone()[0]
+                else:
+                    n = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
                 if n:
                     evidence.append(f"{path}:{table}:{n}")
         except sqlite3.DatabaseError:

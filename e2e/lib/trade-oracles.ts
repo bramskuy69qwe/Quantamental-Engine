@@ -17,6 +17,10 @@ export interface OracleCtx {
 
 const sym = (t: string): string => t.replace('USDT', '');
 
+/** Per-ticker recent-closed-row counts seen by prior closed-row-present
+ * assertions in THIS worker process (the X1 delta baseline). */
+const _closedRowBaseline = new Map<string, number>();
+
 export async function runOracle(
   page: Page,
   oracle: string,
@@ -134,6 +138,15 @@ export async function runOracle(
       return `plan badge: ${seen}`;
     }
     case 'closed-row-present': {
+      // P7 harness debt (phase-6 ledger, X1): a bare count>0 reported
+      // "3 recent rows" both BEFORE and AFTER the second close — it could
+      // not prove its own claim (one-row-PER-closing-order); the DB had to.
+      // Now a DELTA: each invocation for the same ticker within a spec run
+      // must EXCEED the count its previous invocation saw. The baseline map
+      // is module-level and per-worker; scenarios re-enter with a fresh
+      // process per playwright run, so baselines never leak across runs.
+      const key = sym(ctx.ticker);
+      const base = _closedRowBaseline.get(key) ?? 0;
       let n = 0;
       await expect
         .poll(
@@ -147,10 +160,16 @@ export async function runOracle(
             ).length;
             return n;
           },
-          { timeout: budgetMs, intervals: [3_000], message: 'no recent closed row appeared' },
+          {
+            timeout: budgetMs, intervals: [3_000],
+            message: base
+              ? `closed-row count never rose above the previous assertion's ${base}`
+              : 'no recent closed row appeared',
+          },
         )
-        .toBeGreaterThan(0);
-      return `History: ${n} recent closed row(s)`;
+        .toBeGreaterThan(base);
+      _closedRowBaseline.set(key, n);
+      return `History: ${n} recent closed row(s) (baseline ${base})`;
     }
     case 'closed-row-reason': {
       let got = '';

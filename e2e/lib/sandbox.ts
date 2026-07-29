@@ -43,6 +43,15 @@ export async function sandboxLaunch(timeoutMs = 120_000): Promise<void> {
     stdio: 'ignore',
   });
   child.unref();
+  // P7 harness debt: sandbox-down.ps1 reads .sandbox.pid — without this
+  // rewrite it reported "not running" while the relaunched engine still
+  // held :8010 (swept manually twice in Phase 7). Best-effort.
+  try {
+    const fs = await import('fs');
+    if (child.pid) {
+      fs.writeFileSync(path.join(SANDBOX_DIR, '.sandbox.pid'), String(child.pid), 'ascii');
+    }
+  } catch { /* pid-file bookkeeping must never fail a relaunch */ }
   const t0 = Date.now();
   while (Date.now() - t0 < timeoutMs) {
     await new Promise((r) => setTimeout(r, 2500));
