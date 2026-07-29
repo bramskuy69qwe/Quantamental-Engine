@@ -227,6 +227,15 @@ async def _account_refresh_loop():
                 )
             except Exception as e:
                 log.debug("REST order sync skipped: %s", e)
+            # P5-R5 companion: the urgent set above covered ONLY the order
+            # snapshot; the per-position fill sync below inherited it via the
+            # sticky adapter priority until the outer finally — a recurring
+            # N×fetch_user_trades every 30 s spending the listen key's
+            # reserved 95-101% band. Restore normal before the fill sync.
+            try:
+                adapter.set_priority("normal")
+            except Exception:
+                pass
             await asyncio.sleep(0.5)  # RL-1: per-second burst pacing
             # Also sync fills for open position symbols
             try:
@@ -661,11 +670,26 @@ async def _startup_fetch():
     except Exception as e:
         log.warning(f"Startup offline-recovery failed: {e}")
 
-    for pos in app_state.positions:
+    # P5-R5: background tier for the boot OHLCV sweep — cache fill only,
+    # deferrable, and previously ran at normal (the module-level fetch_ohlcv
+    # wrapper sets no tier). Wrapped HERE, not in exchange_market, so the
+    # INTERACTIVE fetch_ohlcv at routes_calculator stays normal-tier.
+    try:
+        from core.exchange import _get_adapter as _ga
+        _ga().set_priority("background")
+    except Exception:
+        pass
+    try:
+        for pos in app_state.positions:
+            try:
+                await fetch_ohlcv(pos.ticker)
+            except Exception as e:
+                log.warning(f"OHLCV fetch failed for {pos.ticker}: {e}")
+    finally:
         try:
-            await fetch_ohlcv(pos.ticker)
-        except Exception as e:
-            log.warning(f"OHLCV fetch failed for {pos.ticker}: {e}")
+            _ga().set_priority("normal")
+        except Exception:
+            pass
 
     # SR-3/F4: route through DataCache (sole recalculation path)
     if app_state._data_cache is not None:

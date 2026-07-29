@@ -1147,16 +1147,31 @@ class DataCache:
         app_state.orderbook_cache[symbol] = {"bids": bids, "asks": asks}
 
     def evict_symbol_caches(self, active_tickers: set) -> None:
-        """Remove cache entries for symbols no longer in any active position."""
+        """Remove cache entries for symbols no longer in any active position.
+
+        P5-R5: the CALCULATOR symbol is exempt. This runs from
+        fetch_positions on every accepted REST snapshot (~30 s), and a
+        Pre-Trade calc ticker is by definition not yet a position — so its
+        ohlcv/orderbook/mark caches were wiped on a 30 s cycle, forcing both
+        interactive doors (/api/price, /api/calculator/orderbook) down the
+        REST path exactly when the boot burst is shedding normal-tier
+        calls. Zero weight cost; the stale entry is bounded to ONE symbol
+        and is dropped by set_calculator_symbol / calculator clear anyway.
+        """
         from core.state import app_state
+        try:
+            from core.ws_manager import _calculator_symbol
+            keep = active_tickers | ({_calculator_symbol} if _calculator_symbol else set())
+        except Exception:
+            keep = active_tickers
         for sym in list(app_state.ohlcv_cache.keys()):
-            if sym not in active_tickers:
+            if sym not in keep:
                 del app_state.ohlcv_cache[sym]
         for sym in list(app_state.orderbook_cache.keys()):
-            if sym not in active_tickers:
+            if sym not in keep:
                 del app_state.orderbook_cache[sym]
         for sym in list(app_state.mark_price_cache.keys()):
-            if sym not in active_tickers:
+            if sym not in keep:
                 del app_state.mark_price_cache[sym]
                 app_state.mark_price_timestamps.pop(sym, None)
 

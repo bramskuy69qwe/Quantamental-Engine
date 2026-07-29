@@ -87,21 +87,31 @@ async def fetch_bod_sow_equity() -> None:
     sow_eq = None
     sow_ts = None
 
+    # P5-R5: background tier — self-sheds at 70% instead of contending with
+    # interactive normal-tier calls (Pre-Trade price/orderbook) during the
+    # boot burst. Deferrable by construction: the 300 s history refresh loop
+    # re-runs this, and it is a pure derivation from income history. Same
+    # sticky-priority finally-restore contract as fetch_income_for_backfill.
+    adapter = _get_adapter()
+    adapter.set_priority("background")
     try:
-        today_income = await fetch_income_history(start_ms=today_ms, limit=1000)
-        today_pnl = sum(float(i.get("income", 0)) for i in today_income)
-        bod_eq = round(current_equity - today_pnl, 4)
-        bod_ts = today_midnight.isoformat()
-    except Exception as e:
-        app_state.ws_status.add_log(f"BOD equity fetch error: {e}")
+        try:
+            today_income = await fetch_income_history(start_ms=today_ms, limit=1000)
+            today_pnl = sum(float(i.get("income", 0)) for i in today_income)
+            bod_eq = round(current_equity - today_pnl, 4)
+            bod_ts = today_midnight.isoformat()
+        except Exception as e:
+            app_state.ws_status.add_log(f"BOD equity fetch error: {e}")
 
-    try:
-        week_income = await fetch_income_history(start_ms=monday_ms, limit=1000)
-        week_pnl = sum(float(i.get("income", 0)) for i in week_income)
-        sow_eq = round(current_equity - week_pnl, 4)
-        sow_ts = monday_midnight.isoformat()
-    except Exception as e:
-        app_state.ws_status.add_log(f"SOW equity fetch error: {e}")
+        try:
+            week_income = await fetch_income_history(start_ms=monday_ms, limit=1000)
+            week_pnl = sum(float(i.get("income", 0)) for i in week_income)
+            sow_eq = round(current_equity - week_pnl, 4)
+            sow_ts = monday_midnight.isoformat()
+        except Exception as e:
+            app_state.ws_status.add_log(f"SOW equity fetch error: {e}")
+    finally:
+        adapter.set_priority("normal")
 
     # Apply through DataCache — locked, auto-recalculates portfolio
     if bod_eq is not None or sow_eq is not None:
@@ -345,6 +355,14 @@ async def fetch_exchange_trade_history(limit: int = 200, since_ms: Optional[int]
     ledger + analytics reflect it). Upsert dedups on trade_key, so re-ingesting
     is safe.
     """
+    # P5-R5: background tier — the heaviest UNTIERED boot consumer (3
+    # windowed income sweeps at up to 200 pages each + per-symbol
+    # userTrades). Self-sheds at 70% instead of blocking interactive
+    # normal-tier calls at 95%. Safe: the anchor is DB-derived
+    # (get_last_income_time) and the 300 s history refresh loop re-runs
+    # this, so a shed run resumes forward. Sticky-priority finally-restore.
+    _prio_adapter = _get_adapter()
+    _prio_adapter.set_priority("background")
     try:
         # Window-aware anchor (2026-07-10): cover any offline gap since the last
         # captured income row, not just Binance's default ~7-day window. On a
@@ -503,6 +521,8 @@ async def fetch_exchange_trade_history(limit: int = 200, since_ms: Optional[int]
             app_state.ws_status.add_log(f"exchange_history DB upsert error: {e}")
     except Exception as e:
         app_state.ws_status.add_log(f"Exchange trade history error: {e}")
+    finally:
+        _prio_adapter.set_priority("normal")
 
 
 async def fetch_all_user_trades(
