@@ -314,6 +314,9 @@ class DataCache:
                     closed_positions.append({
                         "ticker":          ticker,
                         "direction":       old_pos.direction,
+                        # P5-R1: identity for the final-close safety net
+                        # (verbatim incl. "" — the stranded-tpid shape).
+                        "position_id":     old_pos.position_id or "",
                         "approx_close_ms": int(datetime.now(timezone.utc).timestamp() * 1000),
                     })
 
@@ -541,6 +544,8 @@ class DataCache:
                             closed_positions.append({
                                 "ticker":          sym,
                                 "direction":       np.side,
+                                # P5-R1: identity for the final-close safety net.
+                                "position_id":     existing[key].position_id or "",
                                 "approx_close_ms": ts_ms,
                             })
                             # Remove from list

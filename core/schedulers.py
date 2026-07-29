@@ -387,6 +387,89 @@ async def _check_startup_equity_delta() -> None:
         log.warning("Startup equity delta check failed", exc_info=True)
 
 
+# ── P5-R1: final-close safety net, wired to the close signal ────────────────
+
+async def _trade_closed_final_row_work(payload: dict) -> None:
+    """Body of the P5-R1 backstop (scheduled 2 s after the close signal).
+
+    Two steps, both source-agnostic:
+
+    1. Fetch the closed symbol's recent user trades via REST and upsert
+       them. The refresh loop's fill sync iterates OPEN positions only
+       (`_account_refresh_loop`), so once a position leaves the snapshot
+       its final closing fills are never fetched again — with the
+       user-data WS dead they would otherwise never land at all (the
+       two-day E2E-P5-001 outage shape). Bounded: one limit=50 call per
+       close signal; dedup is upsert_fill's ON CONFLICT(exchange_fill_id).
+    2. Run OrderManager.build_final_close_row — the purpose-built,
+       force_final-aware close-row backstop that existed since T2.11 but
+       had NO production caller (P5-R1's real mechanism: closed_positions
+       rows were built exclusively by the user-data WS fill path). It
+       gates itself on get_unrecorded_closing_fills, so the WS-healthy
+       case (row already built by the fill path) is a no-op and
+       at-least-once event delivery is safe.
+    """
+    symbol    = payload.get("ticker") or ""
+    direction = payload.get("direction") or ""
+    tpid      = payload.get("position_id") or ""
+    if not symbol or not direction:
+        return
+    account_id = app_state.active_account_id
+    if not app_state.ws_status.is_rate_limited:
+        try:
+            from core.database import db as _db
+            from core.exchange import _get_adapter
+            recent = await _get_adapter().fetch_user_trades(symbol, limit=50)
+            for t in recent:
+                await _db.upsert_fill({
+                    "account_id":           account_id,
+                    "exchange_fill_id":     t.exchange_fill_id,
+                    "terminal_fill_id":     t.terminal_fill_id,
+                    "exchange_order_id":    t.exchange_order_id,
+                    "symbol":               t.symbol,
+                    "side":                 t.side,
+                    "direction":            t.direction,
+                    "price":                t.price,
+                    "quantity":             t.quantity,
+                    "fee":                  t.fee,
+                    "fee_asset":            t.fee_asset,
+                    "exchange_position_id": "",
+                    "terminal_position_id": t.terminal_position_id,
+                    "is_close":             int(t.is_close),
+                    "realized_pnl":         t.realized_pnl,
+                    "role":                 t.role,
+                    "source":               f"{config.EXCHANGE_NAME.lower()}_rest",
+                    "timestamp_ms":         t.timestamp_ms,
+                })
+        except Exception as e:
+            # Loud, not debug — a swallowed failure here is the P5-R1
+            # silent-hole shape; the builder below still runs over
+            # whatever fills already exist.
+            log.warning("P5-R1 backstop: fill fetch for closed %s failed: %s",
+                        symbol, e)
+    try:
+        from core import order_manager_singleton
+        from core.state import PositionInfo
+        await order_manager_singleton.order_manager.build_final_close_row(
+            PositionInfo(position_id=tpid, ticker=symbol, direction=direction),
+        )
+    except Exception:
+        log.warning("P5-R1 backstop: final close-row build failed for %s %s",
+                    symbol, direction, exc_info=True)
+
+
+async def _on_trade_closed_final_row(payload) -> None:
+    """CH_TRADE_CLOSED subscriber (P5-R1). Schedules the work after the
+    2 s in-flight-fill grace that build_final_close_row's contract
+    documents, off the bus dispatch so other subscribers never wait."""
+    loop = asyncio.get_running_loop()
+    loop.call_later(
+        2.0,
+        lambda p=dict(payload or {}): asyncio.ensure_future(
+            _trade_closed_final_row_work(p)),
+    )
+
+
 # ── Background startup fetch ────────────────────────────────────────────────
 
 async def _startup_fetch():
@@ -405,6 +488,8 @@ async def _startup_fetch():
 
         _reconciler = ReconcilerWorker()
         event_bus.subscribe(CH_TRADE_CLOSED, _reconciler.on_trade_closed)
+        # P5-R1: the final-close safety net rides the same close signal.
+        event_bus.subscribe(CH_TRADE_CLOSED, _on_trade_closed_final_row)
         event_bus.subscribe("risk:position_closed", _reconciler.on_position_closed)
         _spawn(_reconciler.backfill_all(), name="reconciler_backfill")
         _spawn(
