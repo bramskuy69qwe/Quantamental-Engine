@@ -35,6 +35,14 @@
     { "match": "^Linkage/.*input:optional note", "risk": "safe", "dataDependent": true },
     { "match": "^Linkage/.*(cancel this calc)", "risk": "safe", "dataDependent": true, "cluster": "linkage-calcs", "note": "opens the cancel ModelDialog; the mutation is the dialog's Cancel-calc button (declared)" },
 
+    { "match": "^Analytics/per-fill log/sort:(calc id|est impact)$", "risk": "safe", "dataDependent": true, "note": "sortable only when live rows carry the key (calc-linked / WS-stamped fills) - data cardinality, not UI surface (P7 crawl review)" },
+    { "match": "^Analytics/per-fill log/select:sym$", "risk": "safe", "cluster": "analytics-tabs", "dataDependent": true, "note": "AUTO facet - bails past DL_FACET_AUTO_MAX (6) distinct symbols; flaps with live trading breadth" },
+    { "match": "^Analytics/per-trade excursions/select:symbol$", "risk": "safe", "cluster": "analytics-tabs", "dataDependent": true, "note": "AUTO facet - bails past 6 distinct symbols; flaps with live trading breadth" },
+    { "match": "^Analytics/r-multiple (distribution|stats)/button:reload pane$", "risk": "safe", "dataDependent": true, "note": "Pane refresh - GET refetch / remount; the R-Multiples tab renders AnaEmpty (no Panes at all) when the window has no plan-linked closes" },
+    { "match": "^History/orders/sort:link$", "risk": "safe", "dataDependent": true, "note": "sortable only when order rows carry link_status - appeared with the first linked orders (Phase 6)" },
+    { "match": "^History/pre-trade log/select:(side|link)$", "risk": "safe", "cluster": "history-filters", "dataDependent": true, "note": "AUTO facets - side needs >=2 distinct sides (first shorts: P6 X2 hedge); link bails past 6 distinct outcomes" },
+    { "match": "^History/trade events/select:(sym|type)$", "risk": "safe", "cluster": "history-filters", "dataDependent": true, "note": "AUTO facets - bail past 6 distinct symbols / event types" },
+
     { "match": "^Config/.*/(tab|sort|period):", "risk": "safe", "cluster": "config-tabs" },
     { "match": "^Config/.*reload pane", "risk": "safe" },
     { "match": "^Config/", "risk": "mutating-excluded", "note": "conservative page-wide default: saves/tests/activate/connections/presets + credential fields - sandbox only" },

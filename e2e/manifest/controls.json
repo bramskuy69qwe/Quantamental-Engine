@@ -1433,7 +1433,46 @@
       "id": "Analytics/per-fill log/select:sym",
       "risk": "safe",
       "cluster": "analytics-tabs",
-      "note": "zero non-GET on the page; period nav, toggles, facets"
+      "note": "zero non-GET on the page; period nav, toggles, facets",
+      "dataDependent": true
+    },
+    {
+      "pane": "per-fill log",
+      "paneRaw": "Per-Fill Log 500",
+      "kind": "sort",
+      "name": "calc id",
+      "instances": 1,
+      "selector": {
+        "strategy": "text",
+        "value": "calc id",
+        "scope": "Per-Fill Log 500"
+      },
+      "sampleText": "CALC ID↕",
+      "page": "Analytics",
+      "source": "crawled",
+      "tabPath": "Execution Quality",
+      "id": "Analytics/per-fill log/sort:calc id",
+      "risk": "safe",
+      "dataDependent": true
+    },
+    {
+      "pane": "per-fill log",
+      "paneRaw": "Per-Fill Log 500",
+      "kind": "sort",
+      "name": "est impact",
+      "instances": 1,
+      "selector": {
+        "strategy": "text",
+        "value": "est impact",
+        "scope": "Per-Fill Log 500"
+      },
+      "sampleText": "EST IMPACT↕",
+      "page": "Analytics",
+      "source": "crawled",
+      "tabPath": "Execution Quality",
+      "id": "Analytics/per-fill log/sort:est impact",
+      "risk": "safe",
+      "dataDependent": true
     },
     {
       "pane": "per-fill log",
@@ -1654,7 +1693,8 @@
       "id": "Analytics/per-trade excursions/select:symbol",
       "risk": "safe",
       "cluster": "analytics-tabs",
-      "note": "zero non-GET on the page; period nav, toggles, facets"
+      "note": "zero non-GET on the page; period nav, toggles, facets",
+      "dataDependent": true
     },
     {
       "pane": "per-trade excursions",
@@ -1818,6 +1858,25 @@
       "note": "Pane refresh - GET refetch / remount"
     },
     {
+      "pane": "r-multiple distribution",
+      "paneRaw": "R-Multiple Distribution",
+      "kind": "button",
+      "name": "reload pane",
+      "title": "Reload pane",
+      "instances": 1,
+      "selector": {
+        "strategy": "title",
+        "value": "Reload pane"
+      },
+      "page": "Analytics",
+      "source": "crawled",
+      "tabPath": "R-Multiples",
+      "id": "Analytics/r-multiple distribution/button:reload pane",
+      "risk": "safe",
+      "note": "Pane refresh - GET refetch / remount",
+      "dataDependent": true
+    },
+    {
       "pane": "r-multiple distributionn= positional r f",
       "paneRaw": "R-Multiple Distributionn=0 positional R ",
       "kind": "button",
@@ -1834,6 +1893,25 @@
       "id": "Analytics/r-multiple distributionn= positional r f/button:reload pane",
       "risk": "safe",
       "note": "Pane refresh - GET refetch / remount"
+    },
+    {
+      "pane": "r-multiple stats",
+      "paneRaw": "R-Multiple Stats",
+      "kind": "button",
+      "name": "reload pane",
+      "title": "Reload pane",
+      "instances": 1,
+      "selector": {
+        "strategy": "title",
+        "value": "Reload pane"
+      },
+      "page": "Analytics",
+      "source": "crawled",
+      "tabPath": "R-Multiples",
+      "id": "Analytics/r-multiple stats/button:reload pane",
+      "risk": "safe",
+      "note": "Pane refresh - GET refetch / remount",
+      "dataDependent": true
     },
     {
       "pane": "sector preset betas fallback",
@@ -5055,6 +5133,25 @@
     },
     {
       "pane": "orders",
+      "paneRaw": "Orders 68",
+      "kind": "sort",
+      "name": "link",
+      "instances": 1,
+      "selector": {
+        "strategy": "text",
+        "value": "link",
+        "scope": "Orders 68"
+      },
+      "sampleText": "LINK↕",
+      "page": "History",
+      "source": "crawled",
+      "tabPath": "Orders68",
+      "id": "History/orders/sort:link",
+      "risk": "safe",
+      "dataDependent": true
+    },
+    {
+      "pane": "orders",
       "paneRaw": "Orders 8",
       "kind": "sort",
       "name": "order id",
@@ -5327,7 +5424,8 @@
       "id": "History/pre-trade log/select:link",
       "risk": "safe",
       "cluster": "history-filters",
-      "note": "pagination, facets, symbol filter, CSV export (client Blob); the reason modal is declared separately"
+      "note": "pagination, facets, symbol filter, CSV export (client Blob); the reason modal is declared separately",
+      "dataDependent": true
     },
     {
       "pane": "pre-trade log",
@@ -5348,6 +5446,27 @@
       "risk": "safe",
       "cluster": "history-filters",
       "note": "pagination, facets, symbol filter, CSV export (client Blob); the reason modal is declared separately"
+    },
+    {
+      "pane": "pre-trade log",
+      "paneRaw": "Pre-Trade Log 28",
+      "kind": "select",
+      "name": "side",
+      "instances": 1,
+      "selector": {
+        "strategy": "text",
+        "value": "side",
+        "scope": "Pre-Trade Log 28"
+      },
+      "sampleText": "ALLlongshort",
+      "page": "History",
+      "source": "crawled",
+      "tabPath": "Pre-Trade Log28",
+      "id": "History/pre-trade log/select:side",
+      "risk": "safe",
+      "cluster": "history-filters",
+      "note": "pagination, facets, symbol filter, CSV export (client Blob); the reason modal is declared separately",
+      "dataDependent": true
     },
     {
       "pane": "pre-trade log",
@@ -5684,7 +5803,8 @@
       "id": "History/trade events/select:sym",
       "risk": "safe",
       "cluster": "history-filters",
-      "note": "pagination, facets, symbol filter, CSV export (client Blob); the reason modal is declared separately"
+      "note": "pagination, facets, symbol filter, CSV export (client Blob); the reason modal is declared separately",
+      "dataDependent": true
     },
     {
       "pane": "trade events",
@@ -5704,7 +5824,8 @@
       "id": "History/trade events/select:type",
       "risk": "safe",
       "cluster": "history-filters",
-      "note": "pagination, facets, symbol filter, CSV export (client Blob); the reason modal is declared separately"
+      "note": "pagination, facets, symbol filter, CSV export (client Blob); the reason modal is declared separately",
+      "dataDependent": true
     },
     {
       "pane": "trade events",

@@ -1,10 +1,68 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-07-29 (**MERIDIAN v3.0 — the Playwright E2E debugging program is COMPLETE through Phase 6: all 8 operator-in-the-loop trade scenarios executed on the live Binance account, 8 engine defects found+fixed+live-verified (2 CRIT · 3 HIGH · 3 MED). NEXT = Phase 7 clean re-run = the live-acceptance evidence that OPENS the Jinja retirement gate.**)
-**Branch**: **`v3.0/e2e-debug` — PUSHED 2026-07-29, origin in sync (19 commits over `v3.0/ui-plan-audit`), tree CLEAN.**
-**Tests**: **4556 passed / 7 skipped / 3 deselected** (SOLO, `.venv`, FULL gate green). ALWAYS run SOLO on the **`.venv`** interpreter (user-site Python lacks `pytest-timeout` → drops the 30 s guardrail). NEVER run the gate concurrently with live-engine driving (conftest tripwire + weight budget).
+**Date**: 2026-07-30 (**MERIDIAN v3.0 — the E2E program is COMPLETE, Phases 0–7. Phase 7's clean re-run PASSED on the final bundle: zero new CRIT/HIGH, plus ONE more defect found+fixed (E2E-P7-001, a phase-4-era red that had ridden undispositioned). The acceptance report is committed → THE JINJA RETIREMENT IS UNBLOCKED, operator-gated.**)
+**Branch**: **`v3.0/e2e-debug` — 2 commits LOCAL over origin (`30cf1ad` P7-001 fix · the P7 wrap); push at operator's call.**
+**Tests**: **4565 passed / 7 skipped / 3 deselected** (SOLO, `.venv`, FULL gate green 2026-07-30; F5 tripwire fired with the live-engine-running signature — expected). ALWAYS run SOLO on the **`.venv`** interpreter (user-site Python lacks `pytest-timeout` → drops the 30 s guardrail). NEVER run the gate concurrently with live-engine driving (conftest tripwire + weight budget).
 **Bundle**: **`929f95bffc`** — hard-refresh after any restart (ModelDialog confirm + market-entry-price fixes live in it).
-**Engine**: RUNNING; last boot `22:11:14` was the P6-004 live verification — **0 WS failures, 0 retries, listen key bound 9 s in**. **w32time is STILL STOPPED** (drift −2580 ms recurred mid-session; the CLOCK banner will keep returning until the operator runs, elevated: `sc config w32time start= auto && net start w32time && w32tm /resync /force`). Restart discipline: **one restart, then wait** — four boots in eight minutes drove the weight budget to 117 % and shed listen keys.
+**Engine**: RUNNING; boot `22:11:14 07-29` (the P6-004 verification boot — 0 WS failures, listen key bound 9 s in). **The running engine PREDATES `30cf1ad`** — E2E-P7-001 is dormant on live (single account), the fix lands at the next natural restart, no urgency. **w32time is STILL STOPPED** (operator, elevated: `sc config w32time start= auto && net start w32time && w32tm /resync /force`). Restart discipline: **one restart, then wait**.
+
+## ▶ SESSION CLOSE 2026-07-30 — PHASE 7 COMPLETE · gate PASSED · retirement unblocked
+
+**The acceptance report is the deliverable**:
+`docs/audits/2026-07-29-v3.0-e2e-phase7-acceptance.md` — counts by phase,
+bundle hash, monkey seed (`20260729`), mutation ledger, the (now 9-) defect
+table, the false-positive ledger, and the manifest-drift review. Read IT
+first; this block is the session index.
+
+| Re-run | Result |
+|---|---|
+| selftest · smoke | 4/4 · 10/10 |
+| crawl (drift pin) | 10/10 after a REVIEWED manifest merge — 522→**528** controls, 11 flagged `dataDependent` (all 6 added + 5 vanished were live-data-cardinality, mechanisms verified at source; NO UI regression) |
+| sweep | 102/102, 406/466 acted, findings = 21 INFO (Primitives demo toasts) |
+| perm + monkey | 10/10 · 9/9 (1,080 steps, seed 20260729, breadcrumbed) |
+| sandbox | first run 9/11 → **E2E-P7-001 found**; after fix **11/11 — first fully-green sandbox suite in program history** |
+| pytest | 4565/7/3 green |
+
+**★ E2E-P7-001 (HIGH, fixed `30cf1ad`, 9 pins)**: settings writes fail for
+EVERY account added after the first — `add_account` never creates an
+`account_settings` row (migration 001 seeds `LIMIT 1`), the writer was
+UPDATE-only, and post-split `_resolve_db_path` had no legacy fallback for
+accounts added after the split (nothing mints a per-account DB until the
+deferred R1b). Loud half: apply-preset 500s (the exact config-2 workflow).
+Silent half: `routes_accounts`' settings writes are except-pass → no-op.
+Fix: writer upserts the row (table defaults == dataclass defaults, pinned)
+iff the account exists + resolver falls back to legacy iff the account
+exists there. Dormant on live today (single account).
+
+**★★ Process finding — phase 4 closed with 2 undispositioned reds** (run
+`4-20260728-1800` was 9/2; the preset red was P7-001, the close-reason red a
+spec locator wrong since inception — `/^Intervention$/` vs the compound
+title+description button text). Both fixed in `30cf1ad`; the phase-4 ledger
+carries a Phase-7 correction section. **Rule going forward: a phase ledger
+states the closing run's counts and dispositions every red.**
+
+**Harness debt (filed in the report, not fixed)**: `provision_test_env.py`
+refuses sandbox re-provision over `e2e:`-marked seed rows (safe-but-noisy;
+candidate: exempt the marker) · m2's engine relaunch doesn't rewrite
+`.sandbox.pid` so `sandbox-down` misses it (swept manually twice — check
+:8010 listeners) · A1 linked-position budget + X1 row-count-delta oracle
+(carried from phase 6).
+
+**Sandbox state**: torn down, :8010 free; worktree `E:\tmp\qe-sandbox` at
+`30cf1ad`, data freshly provisioned+seeded (reusable; re-seed before any m1
+re-run — the suite consumes seeds).
+
+### ▶ NEXT = JINJA RETIREMENT (operator-gated — do not start unprompted)
+The gate condition is met. Everything needed is in the 07-25 block below
+(§ "v3.0 RENAME SHIPPED · RETIREMENT DEFERRED"): `base.html` + `/config`
+CANNOT retire, all 50 `/fragments/*` + `POST /models` SURVIVE, cost ≈ 126
+pins across 25 files, JS-drift grep after, Release-hygiene version bump at
+program close. Standing carry-forwards unchanged: Finnhub-token log leak ·
+news ~16 s cadence · `account_snapshots` migration (now joined by the R1b
+per-account-DB mint for new accounts — P7-001's resolver fallback is the
+interim shape) · `entry_ms` rename · `no-undef` lint. Operator actions
+pending: **push the 2 local commits** · w32time fix · restart engine at
+convenience (lands `30cf1ad`).
 
 ## ▶ SESSION CLOSE 2026-07-29 — E2E program Phases 0–6 COMPLETE · 8 defects fixed · Phase 7 next
 

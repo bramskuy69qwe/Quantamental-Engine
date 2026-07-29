@@ -1386,7 +1386,7 @@
         "value": "link",
         "scope": "Per-Fill Log 500"
       },
-      "sampleText": "ALLn/a (close/manual)",
+      "sampleText": "ALLAuto-linkedn/a (close/manual)",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Execution Quality",
@@ -1418,22 +1418,42 @@
     {
       "pane": "per-fill log",
       "paneRaw": "Per-Fill Log 500",
-      "kind": "select",
-      "name": "sym",
+      "kind": "sort",
+      "name": "calc id",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "sym",
+        "value": "calc id",
         "scope": "Per-Fill Log 500"
       },
-      "sampleText": "ALL4USDTDEXEUSDTINUSDTNFPUSDTOPGUSDTXAUT",
+      "sampleText": "CALC ID↕",
       "page": "Analytics",
       "source": "crawled",
       "tabPath": "Execution Quality",
-      "id": "Analytics/per-fill log/select:sym",
+      "id": "Analytics/per-fill log/sort:calc id",
       "risk": "safe",
-      "cluster": "analytics-tabs",
-      "note": "zero non-GET on the page; period nav, toggles, facets"
+      "dataDependent": true,
+      "note": "sortable only when live rows carry the key (calc-linked / WS-stamped fills) - data cardinality, not UI surface (P7 crawl review)"
+    },
+    {
+      "pane": "per-fill log",
+      "paneRaw": "Per-Fill Log 500",
+      "kind": "sort",
+      "name": "est impact",
+      "instances": 1,
+      "selector": {
+        "strategy": "text",
+        "value": "est impact",
+        "scope": "Per-Fill Log 500"
+      },
+      "sampleText": "EST IMPACT↕",
+      "page": "Analytics",
+      "source": "crawled",
+      "tabPath": "Execution Quality",
+      "id": "Analytics/per-fill log/sort:est impact",
+      "risk": "safe",
+      "dataDependent": true,
+      "note": "sortable only when live rows carry the key (calc-linked / WS-stamped fills) - data cardinality, not UI surface (P7 crawl review)"
     },
     {
       "pane": "per-fill log",
@@ -1563,7 +1583,7 @@
     },
     {
       "pane": "per-trade excursions",
-      "paneRaw": "Per-Trade Excursions 94",
+      "paneRaw": "Per-Trade Excursions 146",
       "kind": "button",
       "name": "reload pane",
       "title": "Reload pane",
@@ -1581,14 +1601,14 @@
     },
     {
       "pane": "per-trade excursions",
-      "paneRaw": "Per-Trade Excursions 94",
+      "paneRaw": "Per-Trade Excursions 146",
       "kind": "input",
       "name": "search…",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "search…",
-        "scope": "Per-Trade Excursions 94"
+        "scope": "Per-Trade Excursions 146"
       },
       "page": "Analytics",
       "source": "crawled",
@@ -1598,14 +1618,14 @@
     },
     {
       "pane": "per-trade excursions",
-      "paneRaw": "Per-Trade Excursions 94",
+      "paneRaw": "Per-Trade Excursions 146",
       "kind": "select",
       "name": "dir",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "dir",
-        "scope": "Per-Trade Excursions 94"
+        "scope": "Per-Trade Excursions 146"
       },
       "sampleText": "ALLLONGSHORT",
       "page": "Analytics",
@@ -1618,14 +1638,14 @@
     },
     {
       "pane": "per-trade excursions",
-      "paneRaw": "Per-Trade Excursions 94",
+      "paneRaw": "Per-Trade Excursions 146",
       "kind": "select",
       "name": "result",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "result",
-        "scope": "Per-Trade Excursions 94"
+        "scope": "Per-Trade Excursions 146"
       },
       "sampleText": "ALLLOSSWIN",
       "page": "Analytics",
@@ -1638,34 +1658,14 @@
     },
     {
       "pane": "per-trade excursions",
-      "paneRaw": "Per-Trade Excursions 94",
-      "kind": "select",
-      "name": "symbol",
-      "instances": 1,
-      "selector": {
-        "strategy": "text",
-        "value": "symbol",
-        "scope": "Per-Trade Excursions 94"
-      },
-      "sampleText": "ALLDEXEUSDTINUSDTNFPUSDTOPGUSDTXAUTUSDT",
-      "page": "Analytics",
-      "source": "crawled",
-      "tabPath": "MFE / MAE",
-      "id": "Analytics/per-trade excursions/select:symbol",
-      "risk": "safe",
-      "cluster": "analytics-tabs",
-      "note": "zero non-GET on the page; period nav, toggles, facets"
-    },
-    {
-      "pane": "per-trade excursions",
-      "paneRaw": "Per-Trade Excursions 94",
+      "paneRaw": "Per-Trade Excursions 146",
       "kind": "sort",
       "name": "dir",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "dir",
-        "scope": "Per-Trade Excursions 94"
+        "scope": "Per-Trade Excursions 146"
       },
       "sampleText": "DIR↕",
       "page": "Analytics",
@@ -1676,14 +1676,14 @@
     },
     {
       "pane": "per-trade excursions",
-      "paneRaw": "Per-Trade Excursions 94",
+      "paneRaw": "Per-Trade Excursions 146",
       "kind": "sort",
       "name": "hold",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "hold",
-        "scope": "Per-Trade Excursions 94"
+        "scope": "Per-Trade Excursions 146"
       },
       "sampleText": "HOLD↕",
       "page": "Analytics",
@@ -1694,14 +1694,14 @@
     },
     {
       "pane": "per-trade excursions",
-      "paneRaw": "Per-Trade Excursions 94",
+      "paneRaw": "Per-Trade Excursions 146",
       "kind": "sort",
       "name": "mae",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "mae",
-        "scope": "Per-Trade Excursions 94"
+        "scope": "Per-Trade Excursions 146"
       },
       "sampleText": "MAE↕",
       "page": "Analytics",
@@ -1712,14 +1712,14 @@
     },
     {
       "pane": "per-trade excursions",
-      "paneRaw": "Per-Trade Excursions 94",
+      "paneRaw": "Per-Trade Excursions 146",
       "kind": "sort",
       "name": "me-r",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "me-r",
-        "scope": "Per-Trade Excursions 94"
+        "scope": "Per-Trade Excursions 146"
       },
       "sampleText": "ME-R↕",
       "page": "Analytics",
@@ -1730,14 +1730,14 @@
     },
     {
       "pane": "per-trade excursions",
-      "paneRaw": "Per-Trade Excursions 94",
+      "paneRaw": "Per-Trade Excursions 146",
       "kind": "sort",
       "name": "mfe",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "mfe",
-        "scope": "Per-Trade Excursions 94"
+        "scope": "Per-Trade Excursions 146"
       },
       "sampleText": "MFE↕",
       "page": "Analytics",
@@ -1748,14 +1748,14 @@
     },
     {
       "pane": "per-trade excursions",
-      "paneRaw": "Per-Trade Excursions 94",
+      "paneRaw": "Per-Trade Excursions 146",
       "kind": "sort",
       "name": "pnl",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "pnl",
-        "scope": "Per-Trade Excursions 94"
+        "scope": "Per-Trade Excursions 146"
       },
       "sampleText": "PnL↕",
       "page": "Analytics",
@@ -1766,14 +1766,14 @@
     },
     {
       "pane": "per-trade excursions",
-      "paneRaw": "Per-Trade Excursions 94",
+      "paneRaw": "Per-Trade Excursions 146",
       "kind": "sort",
       "name": "symbol",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "symbol",
-        "scope": "Per-Trade Excursions 94"
+        "scope": "Per-Trade Excursions 146"
       },
       "sampleText": "SYMBOL↕",
       "page": "Analytics",
@@ -1818,8 +1818,27 @@
       "note": "Pane refresh - GET refetch / remount"
     },
     {
+      "pane": "r-multiple distribution",
+      "paneRaw": "R-Multiple Distribution",
+      "kind": "button",
+      "name": "reload pane",
+      "title": "Reload pane",
+      "instances": 1,
+      "selector": {
+        "strategy": "title",
+        "value": "Reload pane"
+      },
+      "page": "Analytics",
+      "source": "crawled",
+      "tabPath": "R-Multiples",
+      "id": "Analytics/r-multiple distribution/button:reload pane",
+      "risk": "safe",
+      "dataDependent": true,
+      "note": "Pane refresh - GET refetch / remount; the R-Multiples tab renders AnaEmpty (no Panes at all) when the window has no plan-linked closes"
+    },
+    {
       "pane": "r-multiple distributionn= positional r f",
-      "paneRaw": "R-Multiple Distributionn=0 positional R ",
+      "paneRaw": "R-Multiple Distributionn=6 positional R ",
       "kind": "button",
       "name": "reload pane",
       "title": "Reload pane",
@@ -1834,6 +1853,25 @@
       "id": "Analytics/r-multiple distributionn= positional r f/button:reload pane",
       "risk": "safe",
       "note": "Pane refresh - GET refetch / remount"
+    },
+    {
+      "pane": "r-multiple stats",
+      "paneRaw": "R-Multiple Stats",
+      "kind": "button",
+      "name": "reload pane",
+      "title": "Reload pane",
+      "instances": 1,
+      "selector": {
+        "strategy": "title",
+        "value": "Reload pane"
+      },
+      "page": "Analytics",
+      "source": "crawled",
+      "tabPath": "R-Multiples",
+      "id": "Analytics/r-multiple stats/button:reload pane",
+      "risk": "safe",
+      "dataDependent": true,
+      "note": "Pane refresh - GET refetch / remount; the R-Multiples tab renders AnaEmpty (no Panes at all) when the window has no plan-linked closes"
     },
     {
       "pane": "sector preset betas fallback",
@@ -1944,7 +1982,7 @@
     },
     {
       "pane": "traded pairs symbols",
-      "paneRaw": "Traded Pairs 8 symbols",
+      "paneRaw": "Traded Pairs 12 symbols",
       "kind": "button",
       "name": "reload pane",
       "title": "Reload pane",
@@ -1962,14 +2000,14 @@
     },
     {
       "pane": "traded pairs symbols",
-      "paneRaw": "Traded Pairs 8 symbols",
+      "paneRaw": "Traded Pairs 12 symbols",
       "kind": "input",
       "name": "search…",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "search…",
-        "scope": "Traded Pairs 8 symbols"
+        "scope": "Traded Pairs 12 symbols"
       },
       "page": "Analytics",
       "source": "crawled",
@@ -1979,14 +2017,14 @@
     },
     {
       "pane": "traded pairs symbols",
-      "paneRaw": "Traded Pairs 8 symbols",
+      "paneRaw": "Traded Pairs 12 symbols",
       "kind": "select",
       "name": "result",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "result",
-        "scope": "Traded Pairs 8 symbols"
+        "scope": "Traded Pairs 12 symbols"
       },
       "sampleText": "ALLLOSSWIN",
       "page": "Analytics",
@@ -1999,14 +2037,14 @@
     },
     {
       "pane": "traded pairs symbols",
-      "paneRaw": "Traded Pairs 8 symbols",
+      "paneRaw": "Traded Pairs 12 symbols",
       "kind": "sort",
       "name": "avg loss",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "avg loss",
-        "scope": "Traded Pairs 8 symbols"
+        "scope": "Traded Pairs 12 symbols"
       },
       "sampleText": "AVG LOSS↕",
       "page": "Analytics",
@@ -2017,14 +2055,14 @@
     },
     {
       "pane": "traded pairs symbols",
-      "paneRaw": "Traded Pairs 8 symbols",
+      "paneRaw": "Traded Pairs 12 symbols",
       "kind": "sort",
       "name": "avg win",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "avg win",
-        "scope": "Traded Pairs 8 symbols"
+        "scope": "Traded Pairs 12 symbols"
       },
       "sampleText": "AVG WIN↕",
       "page": "Analytics",
@@ -2035,14 +2073,14 @@
     },
     {
       "pane": "traded pairs symbols",
-      "paneRaw": "Traded Pairs 8 symbols",
+      "paneRaw": "Traded Pairs 12 symbols",
       "kind": "sort",
       "name": "fees",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "fees",
-        "scope": "Traded Pairs 8 symbols"
+        "scope": "Traded Pairs 12 symbols"
       },
       "sampleText": "FEES↕",
       "page": "Analytics",
@@ -2053,14 +2091,14 @@
     },
     {
       "pane": "traded pairs symbols",
-      "paneRaw": "Traded Pairs 8 symbols",
+      "paneRaw": "Traded Pairs 12 symbols",
       "kind": "sort",
       "name": "longs",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "longs",
-        "scope": "Traded Pairs 8 symbols"
+        "scope": "Traded Pairs 12 symbols"
       },
       "sampleText": "LONGS↕",
       "page": "Analytics",
@@ -2071,14 +2109,14 @@
     },
     {
       "pane": "traded pairs symbols",
-      "paneRaw": "Traded Pairs 8 symbols",
+      "paneRaw": "Traded Pairs 12 symbols",
       "kind": "sort",
       "name": "pnl (l)",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "pnl (l)",
-        "scope": "Traded Pairs 8 symbols"
+        "scope": "Traded Pairs 12 symbols"
       },
       "sampleText": "PnL (L)↕",
       "page": "Analytics",
@@ -2089,14 +2127,14 @@
     },
     {
       "pane": "traded pairs symbols",
-      "paneRaw": "Traded Pairs 8 symbols",
+      "paneRaw": "Traded Pairs 12 symbols",
       "kind": "sort",
       "name": "pnl (s)",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "pnl (s)",
-        "scope": "Traded Pairs 8 symbols"
+        "scope": "Traded Pairs 12 symbols"
       },
       "sampleText": "PnL (S)↕",
       "page": "Analytics",
@@ -2107,14 +2145,14 @@
     },
     {
       "pane": "traded pairs symbols",
-      "paneRaw": "Traded Pairs 8 symbols",
+      "paneRaw": "Traded Pairs 12 symbols",
       "kind": "sort",
       "name": "pnl total",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "pnl total",
-        "scope": "Traded Pairs 8 symbols"
+        "scope": "Traded Pairs 12 symbols"
       },
       "sampleText": "PnL TOTAL↕",
       "page": "Analytics",
@@ -2125,14 +2163,14 @@
     },
     {
       "pane": "traded pairs symbols",
-      "paneRaw": "Traded Pairs 8 symbols",
+      "paneRaw": "Traded Pairs 12 symbols",
       "kind": "sort",
       "name": "shorts",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "shorts",
-        "scope": "Traded Pairs 8 symbols"
+        "scope": "Traded Pairs 12 symbols"
       },
       "sampleText": "SHORTS↕",
       "page": "Analytics",
@@ -2143,14 +2181,14 @@
     },
     {
       "pane": "traded pairs symbols",
-      "paneRaw": "Traded Pairs 8 symbols",
+      "paneRaw": "Traded Pairs 12 symbols",
       "kind": "sort",
       "name": "symbol",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "symbol",
-        "scope": "Traded Pairs 8 symbols"
+        "scope": "Traded Pairs 12 symbols"
       },
       "sampleText": "SYMBOL↕",
       "page": "Analytics",
@@ -2161,14 +2199,14 @@
     },
     {
       "pane": "traded pairs symbols",
-      "paneRaw": "Traded Pairs 8 symbols",
+      "paneRaw": "Traded Pairs 12 symbols",
       "kind": "sort",
       "name": "trades",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "trades",
-        "scope": "Traded Pairs 8 symbols"
+        "scope": "Traded Pairs 12 symbols"
       },
       "sampleText": "TRADES↕",
       "page": "Analytics",
@@ -2179,14 +2217,14 @@
     },
     {
       "pane": "traded pairs symbols",
-      "paneRaw": "Traded Pairs 8 symbols",
+      "paneRaw": "Traded Pairs 12 symbols",
       "kind": "sort",
       "name": "volume",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "volume",
-        "scope": "Traded Pairs 8 symbols"
+        "scope": "Traded Pairs 12 symbols"
       },
       "sampleText": "VOLUME↕",
       "page": "Analytics",
@@ -2197,14 +2235,14 @@
     },
     {
       "pane": "traded pairs symbols",
-      "paneRaw": "Traded Pairs 8 symbols",
+      "paneRaw": "Traded Pairs 12 symbols",
       "kind": "sort",
       "name": "win rate",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "win rate",
-        "scope": "Traded Pairs 8 symbols"
+        "scope": "Traded Pairs 12 symbols"
       },
       "sampleText": "WIN RATE↕",
       "page": "Analytics",
@@ -3877,7 +3915,7 @@
         "value": "closed positions",
         "scope": "(chrome-or-page)"
       },
-      "sampleText": "Closed Positions145",
+      "sampleText": "Closed Positions196",
       "page": "History",
       "source": "crawled",
       "id": "History/(chrome-or-page)/tab:closed positions",
@@ -3894,7 +3932,7 @@
         "value": "fills",
         "scope": "(chrome-or-page)"
       },
-      "sampleText": "Fills2582",
+      "sampleText": "Fills3028",
       "page": "History",
       "source": "crawled",
       "id": "History/(chrome-or-page)/tab:fills",
@@ -3911,7 +3949,7 @@
         "value": "orders",
         "scope": "(chrome-or-page)"
       },
-      "sampleText": "Orders8",
+      "sampleText": "Orders68",
       "page": "History",
       "source": "crawled",
       "id": "History/(chrome-or-page)/tab:orders",
@@ -3928,7 +3966,7 @@
         "value": "pre-trade log",
         "scope": "(chrome-or-page)"
       },
-      "sampleText": "Pre-Trade Log4",
+      "sampleText": "Pre-Trade Log28",
       "page": "History",
       "source": "crawled",
       "id": "History/(chrome-or-page)/tab:pre-trade log",
@@ -3945,7 +3983,7 @@
         "value": "trade events",
         "scope": "(chrome-or-page)"
       },
-      "sampleText": "Trade Events33",
+      "sampleText": "Trade Events146",
       "page": "History",
       "source": "crawled",
       "id": "History/(chrome-or-page)/tab:trade events",
@@ -4122,7 +4160,7 @@
     },
     {
       "pane": "closed positions",
-      "paneRaw": "Closed Positions 145",
+      "paneRaw": "Closed Positions 196",
       "kind": "button",
       "name": "‹",
       "disabled": true,
@@ -4130,7 +4168,7 @@
       "selector": {
         "strategy": "text",
         "value": "‹",
-        "scope": "Closed Positions 145"
+        "scope": "Closed Positions 196"
       },
       "sampleText": "‹",
       "page": "History",
@@ -4142,14 +4180,14 @@
     },
     {
       "pane": "closed positions",
-      "paneRaw": "Closed Positions 145",
+      "paneRaw": "Closed Positions 196",
       "kind": "button",
       "name": "›",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "›",
-        "scope": "Closed Positions 145"
+        "scope": "Closed Positions 196"
       },
       "sampleText": "›",
       "page": "History",
@@ -4161,7 +4199,7 @@
     },
     {
       "pane": "closed positions",
-      "paneRaw": "Closed Positions 145",
+      "paneRaw": "Closed Positions 196",
       "kind": "button",
       "name": "reload pane",
       "title": "Reload pane",
@@ -4195,14 +4233,14 @@
     },
     {
       "pane": "closed positions",
-      "paneRaw": "Closed Positions 145",
+      "paneRaw": "Closed Positions 196",
       "kind": "input",
       "name": "search…",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "search…",
-        "scope": "Closed Positions 145"
+        "scope": "Closed Positions 196"
       },
       "page": "History",
       "source": "crawled",
@@ -4211,16 +4249,16 @@
     },
     {
       "pane": "closed positions",
-      "paneRaw": "Closed Positions 145",
+      "paneRaw": "Closed Positions 196",
       "kind": "select",
       "name": "plan",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "plan",
-        "scope": "Closed Positions 145"
+        "scope": "Closed Positions 196"
       },
-      "sampleText": "ALLUNPLANNED",
+      "sampleText": "ALLAMENDEDOFF-PLANUNPLANNED",
       "page": "History",
       "source": "crawled",
       "id": "History/closed positions/select:plan",
@@ -4230,14 +4268,14 @@
     },
     {
       "pane": "closed positions",
-      "paneRaw": "Closed Positions 145",
+      "paneRaw": "Closed Positions 196",
       "kind": "select",
       "name": "rows · page",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "rows · page",
-        "scope": "Closed Positions 145"
+        "scope": "Closed Positions 196"
       },
       "sampleText": "255075100",
       "page": "History",
@@ -4249,14 +4287,14 @@
     },
     {
       "pane": "closed positions",
-      "paneRaw": "Closed Positions 145",
+      "paneRaw": "Closed Positions 196",
       "kind": "select",
       "name": "side",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "side",
-        "scope": "Closed Positions 145"
+        "scope": "Closed Positions 196"
       },
       "sampleText": "ALLLONGSHORT",
       "page": "History",
@@ -4268,16 +4306,16 @@
     },
     {
       "pane": "closed positions",
-      "paneRaw": "Closed Positions 145",
+      "paneRaw": "Closed Positions 196",
       "kind": "select",
       "name": "sym",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "sym",
-        "scope": "Closed Positions 145"
+        "scope": "Closed Positions 196"
       },
-      "sampleText": "ALLDEXEUSDTINUSDTNFPUSDTOPGUSDTXAUTUSDT",
+      "sampleText": "ALLBANKUSDTETHUSDTSNDKUSDTSNXXUSDTSOLUSD",
       "page": "History",
       "source": "crawled",
       "id": "History/closed positions/select:sym",
@@ -4287,14 +4325,14 @@
     },
     {
       "pane": "closed positions",
-      "paneRaw": "Closed Positions 145",
+      "paneRaw": "Closed Positions 196",
       "kind": "sort",
       "name": "%",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "%",
-        "scope": "Closed Positions 145"
+        "scope": "Closed Positions 196"
       },
       "sampleText": "%↕",
       "page": "History",
@@ -4304,14 +4342,14 @@
     },
     {
       "pane": "closed positions",
-      "paneRaw": "Closed Positions 145",
+      "paneRaw": "Closed Positions 196",
       "kind": "sort",
       "name": "closed",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "closed",
-        "scope": "Closed Positions 145"
+        "scope": "Closed Positions 196"
       },
       "sampleText": "CLOSED↕",
       "page": "History",
@@ -4321,14 +4359,14 @@
     },
     {
       "pane": "closed positions",
-      "paneRaw": "Closed Positions 145",
+      "paneRaw": "Closed Positions 196",
       "kind": "sort",
       "name": "dur",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "dur",
-        "scope": "Closed Positions 145"
+        "scope": "Closed Positions 196"
       },
       "sampleText": "DUR↕",
       "page": "History",
@@ -4338,14 +4376,14 @@
     },
     {
       "pane": "closed positions",
-      "paneRaw": "Closed Positions 145",
+      "paneRaw": "Closed Positions 196",
       "kind": "sort",
       "name": "entry",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "entry",
-        "scope": "Closed Positions 145"
+        "scope": "Closed Positions 196"
       },
       "sampleText": "ENTRY↕",
       "page": "History",
@@ -4355,14 +4393,14 @@
     },
     {
       "pane": "closed positions",
-      "paneRaw": "Closed Positions 145",
+      "paneRaw": "Closed Positions 196",
       "kind": "sort",
       "name": "exit",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "exit",
-        "scope": "Closed Positions 145"
+        "scope": "Closed Positions 196"
       },
       "sampleText": "EXIT↕",
       "page": "History",
@@ -4372,14 +4410,14 @@
     },
     {
       "pane": "closed positions",
-      "paneRaw": "Closed Positions 145",
+      "paneRaw": "Closed Positions 196",
       "kind": "sort",
       "name": "fee",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "fee",
-        "scope": "Closed Positions 145"
+        "scope": "Closed Positions 196"
       },
       "sampleText": "FEE↕",
       "page": "History",
@@ -4389,14 +4427,14 @@
     },
     {
       "pane": "closed positions",
-      "paneRaw": "Closed Positions 145",
+      "paneRaw": "Closed Positions 196",
       "kind": "sort",
       "name": "m·r",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "m·r",
-        "scope": "Closed Positions 145"
+        "scope": "Closed Positions 196"
       },
       "sampleText": "M·R↕",
       "page": "History",
@@ -4406,14 +4444,14 @@
     },
     {
       "pane": "closed positions",
-      "paneRaw": "Closed Positions 145",
+      "paneRaw": "Closed Positions 196",
       "kind": "sort",
       "name": "mae ◂ heat ▸ mfe",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "mae ◂ heat ▸ mfe",
-        "scope": "Closed Positions 145"
+        "scope": "Closed Positions 196"
       },
       "sampleText": "MAE ◂ HEAT ▸ MFE↕",
       "page": "History",
@@ -4423,14 +4461,14 @@
     },
     {
       "pane": "closed positions",
-      "paneRaw": "Closed Positions 145",
+      "paneRaw": "Closed Positions 196",
       "kind": "sort",
       "name": "model",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "model",
-        "scope": "Closed Positions 145"
+        "scope": "Closed Positions 196"
       },
       "sampleText": "MODEL↕",
       "page": "History",
@@ -4440,14 +4478,14 @@
     },
     {
       "pane": "closed positions",
-      "paneRaw": "Closed Positions 145",
+      "paneRaw": "Closed Positions 196",
       "kind": "sort",
       "name": "net",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "net",
-        "scope": "Closed Positions 145"
+        "scope": "Closed Positions 196"
       },
       "sampleText": "NET↕",
       "page": "History",
@@ -4457,14 +4495,14 @@
     },
     {
       "pane": "closed positions",
-      "paneRaw": "Closed Positions 145",
+      "paneRaw": "Closed Positions 196",
       "kind": "sort",
       "name": "plan",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "plan",
-        "scope": "Closed Positions 145"
+        "scope": "Closed Positions 196"
       },
       "sampleText": "PLAN↕",
       "page": "History",
@@ -4474,14 +4512,14 @@
     },
     {
       "pane": "closed positions",
-      "paneRaw": "Closed Positions 145",
+      "paneRaw": "Closed Positions 196",
       "kind": "sort",
       "name": "qty",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "qty",
-        "scope": "Closed Positions 145"
+        "scope": "Closed Positions 196"
       },
       "sampleText": "QTY↕",
       "page": "History",
@@ -4491,14 +4529,14 @@
     },
     {
       "pane": "closed positions",
-      "paneRaw": "Closed Positions 145",
+      "paneRaw": "Closed Positions 196",
       "kind": "sort",
       "name": "reason",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "reason",
-        "scope": "Closed Positions 145"
+        "scope": "Closed Positions 196"
       },
       "sampleText": "REASON↕",
       "page": "History",
@@ -4508,14 +4546,14 @@
     },
     {
       "pane": "closed positions",
-      "paneRaw": "Closed Positions 145",
+      "paneRaw": "Closed Positions 196",
       "kind": "sort",
       "name": "side",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "side",
-        "scope": "Closed Positions 145"
+        "scope": "Closed Positions 196"
       },
       "sampleText": "SIDE↕",
       "page": "History",
@@ -4525,14 +4563,14 @@
     },
     {
       "pane": "closed positions",
-      "paneRaw": "Closed Positions 145",
+      "paneRaw": "Closed Positions 196",
       "kind": "sort",
       "name": "sym",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "sym",
-        "scope": "Closed Positions 145"
+        "scope": "Closed Positions 196"
       },
       "sampleText": "SYM↕",
       "page": "History",
@@ -4542,7 +4580,7 @@
     },
     {
       "pane": "fills",
-      "paneRaw": "Fills 2582",
+      "paneRaw": "Fills 3028",
       "kind": "button",
       "name": "‹",
       "disabled": true,
@@ -4550,12 +4588,12 @@
       "selector": {
         "strategy": "text",
         "value": "‹",
-        "scope": "Fills 2582"
+        "scope": "Fills 3028"
       },
       "sampleText": "‹",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Fills2582",
+      "tabPath": "Fills3028",
       "id": "History/fills/button:‹",
       "risk": "safe",
       "cluster": "history-filters",
@@ -4563,19 +4601,19 @@
     },
     {
       "pane": "fills",
-      "paneRaw": "Fills 2582",
+      "paneRaw": "Fills 3028",
       "kind": "button",
       "name": "›",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "›",
-        "scope": "Fills 2582"
+        "scope": "Fills 3028"
       },
       "sampleText": "›",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Fills2582",
+      "tabPath": "Fills3028",
       "id": "History/fills/button:›",
       "risk": "safe",
       "cluster": "history-filters",
@@ -4583,7 +4621,7 @@
     },
     {
       "pane": "fills",
-      "paneRaw": "Fills 2582",
+      "paneRaw": "Fills 3028",
       "kind": "button",
       "name": "reload pane",
       "title": "Reload pane",
@@ -4594,43 +4632,43 @@
       },
       "page": "History",
       "source": "crawled",
-      "tabPath": "Fills2582",
+      "tabPath": "Fills3028",
       "id": "History/fills/button:reload pane",
       "risk": "safe",
       "note": "Pane refresh - GET refetch / remount"
     },
     {
       "pane": "fills",
-      "paneRaw": "Fills 2582",
+      "paneRaw": "Fills 3028",
       "kind": "input",
       "name": "search…",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "search…",
-        "scope": "Fills 2582"
+        "scope": "Fills 3028"
       },
       "page": "History",
       "source": "crawled",
-      "tabPath": "Fills2582",
+      "tabPath": "Fills3028",
       "id": "History/fills/input:search…",
       "risk": "safe"
     },
     {
       "pane": "fills",
-      "paneRaw": "Fills 2582",
+      "paneRaw": "Fills 3028",
       "kind": "select",
       "name": "role",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "role",
-        "scope": "Fills 2582"
+        "scope": "Fills 3028"
       },
       "sampleText": "ALLmakertaker",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Fills2582",
+      "tabPath": "Fills3028",
       "id": "History/fills/select:role",
       "risk": "safe",
       "cluster": "history-filters",
@@ -4638,19 +4676,19 @@
     },
     {
       "pane": "fills",
-      "paneRaw": "Fills 2582",
+      "paneRaw": "Fills 3028",
       "kind": "select",
       "name": "rows · page",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "rows · page",
-        "scope": "Fills 2582"
+        "scope": "Fills 3028"
       },
       "sampleText": "255075100",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Fills2582",
+      "tabPath": "Fills3028",
       "id": "History/fills/select:rows · page",
       "risk": "safe",
       "cluster": "history-filters",
@@ -4658,19 +4696,19 @@
     },
     {
       "pane": "fills",
-      "paneRaw": "Fills 2582",
+      "paneRaw": "Fills 3028",
       "kind": "select",
       "name": "side",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "side",
-        "scope": "Fills 2582"
+        "scope": "Fills 3028"
       },
       "sampleText": "ALLLONGSHORT",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Fills2582",
+      "tabPath": "Fills3028",
       "id": "History/fills/select:side",
       "risk": "safe",
       "cluster": "history-filters",
@@ -4678,19 +4716,19 @@
     },
     {
       "pane": "fills",
-      "paneRaw": "Fills 2582",
+      "paneRaw": "Fills 3028",
       "kind": "select",
       "name": "sym",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "sym",
-        "scope": "Fills 2582"
+        "scope": "Fills 3028"
       },
-      "sampleText": "ALL4USDTDEXEUSDTXAUTUSDT",
+      "sampleText": "ALLETHUSDTSNXXUSDTSOLUSDT",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Fills2582",
+      "tabPath": "Fills3028",
       "id": "History/fills/select:sym",
       "risk": "safe",
       "cluster": "history-filters",
@@ -4698,169 +4736,169 @@
     },
     {
       "pane": "fills",
-      "paneRaw": "Fills 2582",
+      "paneRaw": "Fills 3028",
       "kind": "sort",
       "name": "action",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "action",
-        "scope": "Fills 2582"
+        "scope": "Fills 3028"
       },
       "sampleText": "ACTION↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Fills2582",
+      "tabPath": "Fills3028",
       "id": "History/fills/sort:action",
       "risk": "safe"
     },
     {
       "pane": "fills",
-      "paneRaw": "Fills 2582",
+      "paneRaw": "Fills 3028",
       "kind": "sort",
       "name": "fee",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "fee",
-        "scope": "Fills 2582"
+        "scope": "Fills 3028"
       },
       "sampleText": "FEE↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Fills2582",
+      "tabPath": "Fills3028",
       "id": "History/fills/sort:fee",
       "risk": "safe"
     },
     {
       "pane": "fills",
-      "paneRaw": "Fills 2582",
+      "paneRaw": "Fills 3028",
       "kind": "sort",
       "name": "pnl",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "pnl",
-        "scope": "Fills 2582"
+        "scope": "Fills 3028"
       },
       "sampleText": "PnL↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Fills2582",
+      "tabPath": "Fills3028",
       "id": "History/fills/sort:pnl",
       "risk": "safe"
     },
     {
       "pane": "fills",
-      "paneRaw": "Fills 2582",
+      "paneRaw": "Fills 3028",
       "kind": "sort",
       "name": "price",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "price",
-        "scope": "Fills 2582"
+        "scope": "Fills 3028"
       },
       "sampleText": "PRICE↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Fills2582",
+      "tabPath": "Fills3028",
       "id": "History/fills/sort:price",
       "risk": "safe"
     },
     {
       "pane": "fills",
-      "paneRaw": "Fills 2582",
+      "paneRaw": "Fills 3028",
       "kind": "sort",
       "name": "qty",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "qty",
-        "scope": "Fills 2582"
+        "scope": "Fills 3028"
       },
       "sampleText": "QTY↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Fills2582",
+      "tabPath": "Fills3028",
       "id": "History/fills/sort:qty",
       "risk": "safe"
     },
     {
       "pane": "fills",
-      "paneRaw": "Fills 2582",
+      "paneRaw": "Fills 3028",
       "kind": "sort",
       "name": "role",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "role",
-        "scope": "Fills 2582"
+        "scope": "Fills 3028"
       },
       "sampleText": "ROLE↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Fills2582",
+      "tabPath": "Fills3028",
       "id": "History/fills/sort:role",
       "risk": "safe"
     },
     {
       "pane": "fills",
-      "paneRaw": "Fills 2582",
+      "paneRaw": "Fills 3028",
       "kind": "sort",
       "name": "side",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "side",
-        "scope": "Fills 2582"
+        "scope": "Fills 3028"
       },
       "sampleText": "SIDE↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Fills2582",
+      "tabPath": "Fills3028",
       "id": "History/fills/sort:side",
       "risk": "safe"
     },
     {
       "pane": "fills",
-      "paneRaw": "Fills 2582",
+      "paneRaw": "Fills 3028",
       "kind": "sort",
       "name": "sym",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "sym",
-        "scope": "Fills 2582"
+        "scope": "Fills 3028"
       },
       "sampleText": "SYM↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Fills2582",
+      "tabPath": "Fills3028",
       "id": "History/fills/sort:sym",
       "risk": "safe"
     },
     {
       "pane": "fills",
-      "paneRaw": "Fills 2582",
+      "paneRaw": "Fills 3028",
       "kind": "sort",
       "name": "time",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "time",
-        "scope": "Fills 2582"
+        "scope": "Fills 3028"
       },
       "sampleText": "TIME↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Fills2582",
+      "tabPath": "Fills3028",
       "id": "History/fills/sort:time",
       "risk": "safe"
     },
     {
       "pane": "orders",
-      "paneRaw": "Orders 8",
+      "paneRaw": "Orders 68",
       "kind": "button",
       "name": "‹",
       "disabled": true,
@@ -4868,12 +4906,12 @@
       "selector": {
         "strategy": "text",
         "value": "‹",
-        "scope": "Orders 8"
+        "scope": "Orders 68"
       },
       "sampleText": "‹",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Orders8",
+      "tabPath": "Orders68",
       "id": "History/orders/button:‹",
       "risk": "safe",
       "cluster": "history-filters",
@@ -4881,20 +4919,19 @@
     },
     {
       "pane": "orders",
-      "paneRaw": "Orders 8",
+      "paneRaw": "Orders 68",
       "kind": "button",
       "name": "›",
-      "disabled": true,
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "›",
-        "scope": "Orders 8"
+        "scope": "Orders 68"
       },
       "sampleText": "›",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Orders8",
+      "tabPath": "Orders68",
       "id": "History/orders/button:›",
       "risk": "safe",
       "cluster": "history-filters",
@@ -4902,7 +4939,7 @@
     },
     {
       "pane": "orders",
-      "paneRaw": "Orders 8",
+      "paneRaw": "Orders 68",
       "kind": "button",
       "name": "reload pane",
       "title": "Reload pane",
@@ -4913,43 +4950,43 @@
       },
       "page": "History",
       "source": "crawled",
-      "tabPath": "Orders8",
+      "tabPath": "Orders68",
       "id": "History/orders/button:reload pane",
       "risk": "safe",
       "note": "Pane refresh - GET refetch / remount"
     },
     {
       "pane": "orders",
-      "paneRaw": "Orders 8",
+      "paneRaw": "Orders 68",
       "kind": "input",
       "name": "search…",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "search…",
-        "scope": "Orders 8"
+        "scope": "Orders 68"
       },
       "page": "History",
       "source": "crawled",
-      "tabPath": "Orders8",
+      "tabPath": "Orders68",
       "id": "History/orders/input:search…",
       "risk": "safe"
     },
     {
       "pane": "orders",
-      "paneRaw": "Orders 8",
+      "paneRaw": "Orders 68",
       "kind": "select",
       "name": "rows · page",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "rows · page",
-        "scope": "Orders 8"
+        "scope": "Orders 68"
       },
       "sampleText": "255075100",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Orders8",
+      "tabPath": "Orders68",
       "id": "History/orders/select:rows · page",
       "risk": "safe",
       "cluster": "history-filters",
@@ -4957,19 +4994,19 @@
     },
     {
       "pane": "orders",
-      "paneRaw": "Orders 8",
+      "paneRaw": "Orders 68",
       "kind": "select",
       "name": "side",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "side",
-        "scope": "Orders 8"
+        "scope": "Orders 68"
       },
       "sampleText": "ALLBUYSELL",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Orders8",
+      "tabPath": "Orders68",
       "id": "History/orders/select:side",
       "risk": "safe",
       "cluster": "history-filters",
@@ -4977,19 +5014,19 @@
     },
     {
       "pane": "orders",
-      "paneRaw": "Orders 8",
+      "paneRaw": "Orders 68",
       "kind": "select",
       "name": "status",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "status",
-        "scope": "Orders 8"
+        "scope": "Orders 68"
       },
-      "sampleText": "ALLcanceledfillednew",
+      "sampleText": "ALLcanceledexpiredfilled",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Orders8",
+      "tabPath": "Orders68",
       "id": "History/orders/select:status",
       "risk": "safe",
       "cluster": "history-filters",
@@ -4997,19 +5034,19 @@
     },
     {
       "pane": "orders",
-      "paneRaw": "Orders 8",
+      "paneRaw": "Orders 68",
       "kind": "select",
       "name": "sym",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "sym",
-        "scope": "Orders 8"
+        "scope": "Orders 68"
       },
-      "sampleText": "ALL4USDTDEXEUSDTENAUSDTXAUTUSDT",
+      "sampleText": "ALLETHUSDTSOLUSDT",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Orders8",
+      "tabPath": "Orders68",
       "id": "History/orders/select:sym",
       "risk": "safe",
       "cluster": "history-filters",
@@ -5017,19 +5054,19 @@
     },
     {
       "pane": "orders",
-      "paneRaw": "Orders 8",
+      "paneRaw": "Orders 68",
       "kind": "select",
       "name": "type",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "type",
-        "scope": "Orders 8"
+        "scope": "Orders 68"
       },
-      "sampleText": "ALLlimitmarketstop_losstake_profit",
+      "sampleText": "ALLmarketstop_losstake_profit",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Orders8",
+      "tabPath": "Orders68",
       "id": "History/orders/select:type",
       "risk": "safe",
       "cluster": "history-filters",
@@ -5037,181 +5074,201 @@
     },
     {
       "pane": "orders",
-      "paneRaw": "Orders 8",
+      "paneRaw": "Orders 68",
       "kind": "sort",
       "name": "avg fill",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "avg fill",
-        "scope": "Orders 8"
+        "scope": "Orders 68"
       },
       "sampleText": "AVG FILL↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Orders8",
+      "tabPath": "Orders68",
       "id": "History/orders/sort:avg fill",
       "risk": "safe"
     },
     {
       "pane": "orders",
-      "paneRaw": "Orders 8",
+      "paneRaw": "Orders 68",
+      "kind": "sort",
+      "name": "link",
+      "instances": 1,
+      "selector": {
+        "strategy": "text",
+        "value": "link",
+        "scope": "Orders 68"
+      },
+      "sampleText": "LINK↕",
+      "page": "History",
+      "source": "crawled",
+      "tabPath": "Orders68",
+      "id": "History/orders/sort:link",
+      "risk": "safe",
+      "dataDependent": true,
+      "note": "sortable only when order rows carry link_status - appeared with the first linked orders (Phase 6)"
+    },
+    {
+      "pane": "orders",
+      "paneRaw": "Orders 68",
       "kind": "sort",
       "name": "order id",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "order id",
-        "scope": "Orders 8"
+        "scope": "Orders 68"
       },
       "sampleText": "ORDER ID↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Orders8",
+      "tabPath": "Orders68",
       "id": "History/orders/sort:order id",
       "risk": "safe"
     },
     {
       "pane": "orders",
-      "paneRaw": "Orders 8",
+      "paneRaw": "Orders 68",
       "kind": "sort",
       "name": "price",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "price",
-        "scope": "Orders 8"
+        "scope": "Orders 68"
       },
       "sampleText": "PRICE↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Orders8",
+      "tabPath": "Orders68",
       "id": "History/orders/sort:price",
       "risk": "safe"
     },
     {
       "pane": "orders",
-      "paneRaw": "Orders 8",
+      "paneRaw": "Orders 68",
       "kind": "sort",
       "name": "qty",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "qty",
-        "scope": "Orders 8"
+        "scope": "Orders 68"
       },
       "sampleText": "QTY↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Orders8",
+      "tabPath": "Orders68",
       "id": "History/orders/sort:qty",
       "risk": "safe"
     },
     {
       "pane": "orders",
-      "paneRaw": "Orders 8",
+      "paneRaw": "Orders 68",
       "kind": "sort",
       "name": "side",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "side",
-        "scope": "Orders 8"
+        "scope": "Orders 68"
       },
       "sampleText": "SIDE↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Orders8",
+      "tabPath": "Orders68",
       "id": "History/orders/sort:side",
       "risk": "safe"
     },
     {
       "pane": "orders",
-      "paneRaw": "Orders 8",
+      "paneRaw": "Orders 68",
       "kind": "sort",
       "name": "status",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "status",
-        "scope": "Orders 8"
+        "scope": "Orders 68"
       },
       "sampleText": "STATUS↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Orders8",
+      "tabPath": "Orders68",
       "id": "History/orders/sort:status",
       "risk": "safe"
     },
     {
       "pane": "orders",
-      "paneRaw": "Orders 8",
+      "paneRaw": "Orders 68",
       "kind": "sort",
       "name": "sym",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "sym",
-        "scope": "Orders 8"
+        "scope": "Orders 68"
       },
       "sampleText": "SYM↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Orders8",
+      "tabPath": "Orders68",
       "id": "History/orders/sort:sym",
       "risk": "safe"
     },
     {
       "pane": "orders",
-      "paneRaw": "Orders 8",
+      "paneRaw": "Orders 68",
       "kind": "sort",
       "name": "time",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "time",
-        "scope": "Orders 8"
+        "scope": "Orders 68"
       },
       "sampleText": "TIME↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Orders8",
+      "tabPath": "Orders68",
       "id": "History/orders/sort:time",
       "risk": "safe"
     },
     {
       "pane": "orders",
-      "paneRaw": "Orders 8",
+      "paneRaw": "Orders 68",
       "kind": "sort",
       "name": "trigger",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "trigger",
-        "scope": "Orders 8"
+        "scope": "Orders 68"
       },
       "sampleText": "TRIGGER↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Orders8",
+      "tabPath": "Orders68",
       "id": "History/orders/sort:trigger",
       "risk": "safe"
     },
     {
       "pane": "orders",
-      "paneRaw": "Orders 8",
+      "paneRaw": "Orders 68",
       "kind": "sort",
       "name": "type",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "type",
-        "scope": "Orders 8"
+        "scope": "Orders 68"
       },
       "sampleText": "TYPE↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Orders8",
+      "tabPath": "Orders68",
       "id": "History/orders/sort:type",
       "risk": "safe"
     },
@@ -5234,7 +5291,7 @@
     },
     {
       "pane": "pre-trade log",
-      "paneRaw": "Pre-Trade Log 4",
+      "paneRaw": "Pre-Trade Log 28",
       "kind": "button",
       "name": "‹",
       "disabled": true,
@@ -5242,12 +5299,12 @@
       "selector": {
         "strategy": "text",
         "value": "‹",
-        "scope": "Pre-Trade Log 4"
+        "scope": "Pre-Trade Log 28"
       },
       "sampleText": "‹",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Pre-Trade Log4",
+      "tabPath": "Pre-Trade Log28",
       "id": "History/pre-trade log/button:‹",
       "risk": "safe",
       "cluster": "history-filters",
@@ -5255,7 +5312,7 @@
     },
     {
       "pane": "pre-trade log",
-      "paneRaw": "Pre-Trade Log 4",
+      "paneRaw": "Pre-Trade Log 28",
       "kind": "button",
       "name": "›",
       "disabled": true,
@@ -5263,12 +5320,12 @@
       "selector": {
         "strategy": "text",
         "value": "›",
-        "scope": "Pre-Trade Log 4"
+        "scope": "Pre-Trade Log 28"
       },
       "sampleText": "›",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Pre-Trade Log4",
+      "tabPath": "Pre-Trade Log28",
       "id": "History/pre-trade log/button:›",
       "risk": "safe",
       "cluster": "history-filters",
@@ -5276,7 +5333,7 @@
     },
     {
       "pane": "pre-trade log",
-      "paneRaw": "Pre-Trade Log 4",
+      "paneRaw": "Pre-Trade Log 28",
       "kind": "button",
       "name": "reload pane",
       "title": "Reload pane",
@@ -5287,63 +5344,43 @@
       },
       "page": "History",
       "source": "crawled",
-      "tabPath": "Pre-Trade Log4",
+      "tabPath": "Pre-Trade Log28",
       "id": "History/pre-trade log/button:reload pane",
       "risk": "safe",
       "note": "Pane refresh - GET refetch / remount"
     },
     {
       "pane": "pre-trade log",
-      "paneRaw": "Pre-Trade Log 4",
+      "paneRaw": "Pre-Trade Log 28",
       "kind": "input",
       "name": "search…",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "search…",
-        "scope": "Pre-Trade Log 4"
+        "scope": "Pre-Trade Log 28"
       },
       "page": "History",
       "source": "crawled",
-      "tabPath": "Pre-Trade Log4",
+      "tabPath": "Pre-Trade Log28",
       "id": "History/pre-trade log/input:search…",
       "risk": "safe"
     },
     {
       "pane": "pre-trade log",
-      "paneRaw": "Pre-Trade Log 4",
-      "kind": "select",
-      "name": "link",
-      "instances": 1,
-      "selector": {
-        "strategy": "text",
-        "value": "link",
-        "scope": "Pre-Trade Log 4"
-      },
-      "sampleText": "ALLexpiredsuperseded",
-      "page": "History",
-      "source": "crawled",
-      "tabPath": "Pre-Trade Log4",
-      "id": "History/pre-trade log/select:link",
-      "risk": "safe",
-      "cluster": "history-filters",
-      "note": "pagination, facets, symbol filter, CSV export (client Blob); the reason modal is declared separately"
-    },
-    {
-      "pane": "pre-trade log",
-      "paneRaw": "Pre-Trade Log 4",
+      "paneRaw": "Pre-Trade Log 28",
       "kind": "select",
       "name": "rows · page",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "rows · page",
-        "scope": "Pre-Trade Log 4"
+        "scope": "Pre-Trade Log 28"
       },
       "sampleText": "255075100",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Pre-Trade Log4",
+      "tabPath": "Pre-Trade Log28",
       "id": "History/pre-trade log/select:rows · page",
       "risk": "safe",
       "cluster": "history-filters",
@@ -5351,19 +5388,40 @@
     },
     {
       "pane": "pre-trade log",
-      "paneRaw": "Pre-Trade Log 4",
+      "paneRaw": "Pre-Trade Log 28",
+      "kind": "select",
+      "name": "side",
+      "instances": 1,
+      "selector": {
+        "strategy": "text",
+        "value": "side",
+        "scope": "Pre-Trade Log 28"
+      },
+      "sampleText": "ALLlongshort",
+      "page": "History",
+      "source": "crawled",
+      "tabPath": "Pre-Trade Log28",
+      "id": "History/pre-trade log/select:side",
+      "risk": "safe",
+      "cluster": "history-filters",
+      "dataDependent": true,
+      "note": "AUTO facets - side needs >=2 distinct sides (first shorts: P6 X2 hedge); link bails past 6 distinct outcomes"
+    },
+    {
+      "pane": "pre-trade log",
+      "paneRaw": "Pre-Trade Log 28",
       "kind": "select",
       "name": "sym",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "sym",
-        "scope": "Pre-Trade Log 4"
+        "scope": "Pre-Trade Log 28"
       },
-      "sampleText": "ALLBTCUSDTETHUSDT",
+      "sampleText": "ALLBANKUSDTBTCUSDTETHUSDTSOLUSDT",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Pre-Trade Log4",
+      "tabPath": "Pre-Trade Log28",
       "id": "History/pre-trade log/select:sym",
       "risk": "safe",
       "cluster": "history-filters",
@@ -5371,187 +5429,187 @@
     },
     {
       "pane": "pre-trade log",
-      "paneRaw": "Pre-Trade Log 4",
+      "paneRaw": "Pre-Trade Log 28",
       "kind": "sort",
       "name": "calc id",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "calc id",
-        "scope": "Pre-Trade Log 4"
+        "scope": "Pre-Trade Log 28"
       },
       "sampleText": "CALC ID↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Pre-Trade Log4",
+      "tabPath": "Pre-Trade Log28",
       "id": "History/pre-trade log/sort:calc id",
       "risk": "safe"
     },
     {
       "pane": "pre-trade log",
-      "paneRaw": "Pre-Trade Log 4",
+      "paneRaw": "Pre-Trade Log 28",
       "kind": "sort",
       "name": "entry",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "entry",
-        "scope": "Pre-Trade Log 4"
+        "scope": "Pre-Trade Log 28"
       },
       "sampleText": "ENTRY↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Pre-Trade Log4",
+      "tabPath": "Pre-Trade Log28",
       "id": "History/pre-trade log/sort:entry",
       "risk": "safe"
     },
     {
       "pane": "pre-trade log",
-      "paneRaw": "Pre-Trade Log 4",
+      "paneRaw": "Pre-Trade Log 28",
       "kind": "sort",
       "name": "link",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "link",
-        "scope": "Pre-Trade Log 4"
+        "scope": "Pre-Trade Log 28"
       },
       "sampleText": "LINK↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Pre-Trade Log4",
+      "tabPath": "Pre-Trade Log28",
       "id": "History/pre-trade log/sort:link",
       "risk": "safe"
     },
     {
       "pane": "pre-trade log",
-      "paneRaw": "Pre-Trade Log 4",
+      "paneRaw": "Pre-Trade Log 28",
       "kind": "sort",
       "name": "model",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "model",
-        "scope": "Pre-Trade Log 4"
+        "scope": "Pre-Trade Log 28"
       },
       "sampleText": "MODEL↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Pre-Trade Log4",
+      "tabPath": "Pre-Trade Log28",
       "id": "History/pre-trade log/sort:model",
       "risk": "safe"
     },
     {
       "pane": "pre-trade log",
-      "paneRaw": "Pre-Trade Log 4",
+      "paneRaw": "Pre-Trade Log 28",
       "kind": "sort",
       "name": "side",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "side",
-        "scope": "Pre-Trade Log 4"
+        "scope": "Pre-Trade Log 28"
       },
       "sampleText": "SIDE↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Pre-Trade Log4",
+      "tabPath": "Pre-Trade Log28",
       "id": "History/pre-trade log/sort:side",
       "risk": "safe"
     },
     {
       "pane": "pre-trade log",
-      "paneRaw": "Pre-Trade Log 4",
+      "paneRaw": "Pre-Trade Log 28",
       "kind": "sort",
       "name": "size",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "size",
-        "scope": "Pre-Trade Log 4"
+        "scope": "Pre-Trade Log 28"
       },
       "sampleText": "SIZE↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Pre-Trade Log4",
+      "tabPath": "Pre-Trade Log28",
       "id": "History/pre-trade log/sort:size",
       "risk": "safe"
     },
     {
       "pane": "pre-trade log",
-      "paneRaw": "Pre-Trade Log 4",
+      "paneRaw": "Pre-Trade Log 28",
       "kind": "sort",
       "name": "sl",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "sl",
-        "scope": "Pre-Trade Log 4"
+        "scope": "Pre-Trade Log 28"
       },
       "sampleText": "SL↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Pre-Trade Log4",
+      "tabPath": "Pre-Trade Log28",
       "id": "History/pre-trade log/sort:sl",
       "risk": "safe"
     },
     {
       "pane": "pre-trade log",
-      "paneRaw": "Pre-Trade Log 4",
+      "paneRaw": "Pre-Trade Log 28",
       "kind": "sort",
       "name": "sym",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "sym",
-        "scope": "Pre-Trade Log 4"
+        "scope": "Pre-Trade Log 28"
       },
       "sampleText": "SYM↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Pre-Trade Log4",
+      "tabPath": "Pre-Trade Log28",
       "id": "History/pre-trade log/sort:sym",
       "risk": "safe"
     },
     {
       "pane": "pre-trade log",
-      "paneRaw": "Pre-Trade Log 4",
+      "paneRaw": "Pre-Trade Log 28",
       "kind": "sort",
       "name": "time",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "time",
-        "scope": "Pre-Trade Log 4"
+        "scope": "Pre-Trade Log 28"
       },
       "sampleText": "TIME↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Pre-Trade Log4",
+      "tabPath": "Pre-Trade Log28",
       "id": "History/pre-trade log/sort:time",
       "risk": "safe"
     },
     {
       "pane": "pre-trade log",
-      "paneRaw": "Pre-Trade Log 4",
+      "paneRaw": "Pre-Trade Log 28",
       "kind": "sort",
       "name": "tp",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "tp",
-        "scope": "Pre-Trade Log 4"
+        "scope": "Pre-Trade Log 28"
       },
       "sampleText": "TP↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Pre-Trade Log4",
+      "tabPath": "Pre-Trade Log28",
       "id": "History/pre-trade log/sort:tp",
       "risk": "safe"
     },
     {
       "pane": "trade events",
-      "paneRaw": "Trade Events 33",
+      "paneRaw": "Trade Events 146",
       "kind": "button",
       "name": "‹",
       "disabled": true,
@@ -5559,12 +5617,12 @@
       "selector": {
         "strategy": "text",
         "value": "‹",
-        "scope": "Trade Events 33"
+        "scope": "Trade Events 146"
       },
       "sampleText": "‹",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Trade Events33",
+      "tabPath": "Trade Events146",
       "id": "History/trade events/button:‹",
       "risk": "safe",
       "cluster": "history-filters",
@@ -5572,20 +5630,19 @@
     },
     {
       "pane": "trade events",
-      "paneRaw": "Trade Events 33",
+      "paneRaw": "Trade Events 146",
       "kind": "button",
       "name": "›",
-      "disabled": true,
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "›",
-        "scope": "Trade Events 33"
+        "scope": "Trade Events 146"
       },
       "sampleText": "›",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Trade Events33",
+      "tabPath": "Trade Events146",
       "id": "History/trade events/button:›",
       "risk": "safe",
       "cluster": "history-filters",
@@ -5593,7 +5650,7 @@
     },
     {
       "pane": "trade events",
-      "paneRaw": "Trade Events 33",
+      "paneRaw": "Trade Events 146",
       "kind": "button",
       "name": "reload pane",
       "title": "Reload pane",
@@ -5604,43 +5661,43 @@
       },
       "page": "History",
       "source": "crawled",
-      "tabPath": "Trade Events33",
+      "tabPath": "Trade Events146",
       "id": "History/trade events/button:reload pane",
       "risk": "safe",
       "note": "Pane refresh - GET refetch / remount"
     },
     {
       "pane": "trade events",
-      "paneRaw": "Trade Events 33",
+      "paneRaw": "Trade Events 146",
       "kind": "input",
       "name": "search…",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "search…",
-        "scope": "Trade Events 33"
+        "scope": "Trade Events 146"
       },
       "page": "History",
       "source": "crawled",
-      "tabPath": "Trade Events33",
+      "tabPath": "Trade Events146",
       "id": "History/trade events/input:search…",
       "risk": "safe"
     },
     {
       "pane": "trade events",
-      "paneRaw": "Trade Events 33",
+      "paneRaw": "Trade Events 146",
       "kind": "select",
       "name": "rows · page",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "rows · page",
-        "scope": "Trade Events 33"
+        "scope": "Trade Events 146"
       },
       "sampleText": "255075100",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Trade Events33",
+      "tabPath": "Trade Events146",
       "id": "History/trade events/select:rows · page",
       "risk": "safe",
       "cluster": "history-filters",
@@ -5648,19 +5705,19 @@
     },
     {
       "pane": "trade events",
-      "paneRaw": "Trade Events 33",
+      "paneRaw": "Trade Events 146",
       "kind": "select",
       "name": "src",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "src",
-        "scope": "Trade Events 33"
+        "scope": "Trade Events 146"
       },
-      "sampleText": "ALLorder_managerrisk_engine",
+      "sampleText": "ALLmanual_linkorder_managerrisk_engine",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Trade Events33",
+      "tabPath": "Trade Events146",
       "id": "History/trade events/select:src",
       "risk": "safe",
       "cluster": "history-filters",
@@ -5668,149 +5725,109 @@
     },
     {
       "pane": "trade events",
-      "paneRaw": "Trade Events 33",
-      "kind": "select",
-      "name": "sym",
-      "instances": 1,
-      "selector": {
-        "strategy": "text",
-        "value": "sym",
-        "scope": "Trade Events 33"
-      },
-      "sampleText": "ALLBTCUSDTDEXEUSDTETHUSDTXAUTUSDT",
-      "page": "History",
-      "source": "crawled",
-      "tabPath": "Trade Events33",
-      "id": "History/trade events/select:sym",
-      "risk": "safe",
-      "cluster": "history-filters",
-      "note": "pagination, facets, symbol filter, CSV export (client Blob); the reason modal is declared separately"
-    },
-    {
-      "pane": "trade events",
-      "paneRaw": "Trade Events 33",
-      "kind": "select",
-      "name": "type",
-      "instances": 1,
-      "selector": {
-        "strategy": "text",
-        "value": "type",
-        "scope": "Trade Events 33"
-      },
-      "sampleText": "ALLcalc_createdorder_filledorder_placedp",
-      "page": "History",
-      "source": "crawled",
-      "tabPath": "Trade Events33",
-      "id": "History/trade events/select:type",
-      "risk": "safe",
-      "cluster": "history-filters",
-      "note": "pagination, facets, symbol filter, CSV export (client Blob); the reason modal is declared separately"
-    },
-    {
-      "pane": "trade events",
-      "paneRaw": "Trade Events 33",
+      "paneRaw": "Trade Events 146",
       "kind": "sort",
       "name": "calc",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "calc",
-        "scope": "Trade Events 33"
+        "scope": "Trade Events 146"
       },
       "sampleText": "CALC↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Trade Events33",
+      "tabPath": "Trade Events146",
       "id": "History/trade events/sort:calc",
       "risk": "safe"
     },
     {
       "pane": "trade events",
-      "paneRaw": "Trade Events 33",
+      "paneRaw": "Trade Events 146",
       "kind": "sort",
       "name": "src",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "src",
-        "scope": "Trade Events 33"
+        "scope": "Trade Events 146"
       },
       "sampleText": "SRC↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Trade Events33",
+      "tabPath": "Trade Events146",
       "id": "History/trade events/sort:src",
       "risk": "safe"
     },
     {
       "pane": "trade events",
-      "paneRaw": "Trade Events 33",
+      "paneRaw": "Trade Events 146",
       "kind": "sort",
       "name": "summary",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "summary",
-        "scope": "Trade Events 33"
+        "scope": "Trade Events 146"
       },
       "sampleText": "SUMMARY↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Trade Events33",
+      "tabPath": "Trade Events146",
       "id": "History/trade events/sort:summary",
       "risk": "safe"
     },
     {
       "pane": "trade events",
-      "paneRaw": "Trade Events 33",
+      "paneRaw": "Trade Events 146",
       "kind": "sort",
       "name": "sym",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "sym",
-        "scope": "Trade Events 33"
+        "scope": "Trade Events 146"
       },
       "sampleText": "SYM↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Trade Events33",
+      "tabPath": "Trade Events146",
       "id": "History/trade events/sort:sym",
       "risk": "safe"
     },
     {
       "pane": "trade events",
-      "paneRaw": "Trade Events 33",
+      "paneRaw": "Trade Events 146",
       "kind": "sort",
       "name": "time",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "time",
-        "scope": "Trade Events 33"
+        "scope": "Trade Events 146"
       },
       "sampleText": "TIME↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Trade Events33",
+      "tabPath": "Trade Events146",
       "id": "History/trade events/sort:time",
       "risk": "safe"
     },
     {
       "pane": "trade events",
-      "paneRaw": "Trade Events 33",
+      "paneRaw": "Trade Events 146",
       "kind": "sort",
       "name": "type",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "type",
-        "scope": "Trade Events 33"
+        "scope": "Trade Events 146"
       },
       "sampleText": "TYPE↕",
       "page": "History",
       "source": "crawled",
-      "tabPath": "Trade Events33",
+      "tabPath": "Trade Events146",
       "id": "History/trade events/sort:type",
       "risk": "safe"
     },
@@ -6074,63 +6091,6 @@
       "risk": "safe"
     },
     {
-      "pane": "manual link — needs review",
-      "paneRaw": "MANUAL LINK — NEEDS REVIEW",
-      "kind": "button",
-      "name": "discipline breakfear / impatience — brok",
-      "instances": 1,
-      "selector": {
-        "strategy": "text",
-        "value": "discipline breakfear / impatience — brok",
-        "scope": "MANUAL LINK — NEEDS REVIEW"
-      },
-      "sampleText": "Discipline breakFear / impatience — brok",
-      "page": "Linkage",
-      "source": "crawled",
-      "id": "Linkage/manual link — needs review/button:discipline breakfear / impatience — brok",
-      "risk": "safe",
-      "dataDependent": true,
-      "note": "reason PICK is client-side state; the mutation is Save"
-    },
-    {
-      "pane": "manual link — needs review",
-      "paneRaw": "MANUAL LINK — NEEDS REVIEW",
-      "kind": "button",
-      "name": "interventionjudgement call — exited agai",
-      "instances": 1,
-      "selector": {
-        "strategy": "text",
-        "value": "interventionjudgement call — exited agai",
-        "scope": "MANUAL LINK — NEEDS REVIEW"
-      },
-      "sampleText": "InterventionJudgement call — exited agai",
-      "page": "Linkage",
-      "source": "crawled",
-      "id": "Linkage/manual link — needs review/button:interventionjudgement call — exited agai",
-      "risk": "safe",
-      "dataDependent": true,
-      "note": "reason PICK is client-side state; the mutation is Save"
-    },
-    {
-      "pane": "manual link — needs review",
-      "paneRaw": "MANUAL LINK — NEEDS REVIEW",
-      "kind": "button",
-      "name": "later",
-      "instances": 1,
-      "selector": {
-        "strategy": "text",
-        "value": "later",
-        "scope": "MANUAL LINK — NEEDS REVIEW"
-      },
-      "sampleText": "Later",
-      "page": "Linkage",
-      "source": "crawled",
-      "id": "Linkage/manual link — needs review/button:later",
-      "risk": "safe",
-      "dataDependent": true,
-      "note": "client-only deferral"
-    },
-    {
       "id": "Linkage/manual link — needs review/button:link",
       "page": "Linkage",
       "pane": "manual link — needs review",
@@ -6147,44 +6107,6 @@
       "confirm": "native",
       "dataDependent": true,
       "note": "POST /orders/{id}/manual_link - rendered only when a LINK item is selected (inbox had a REASON item on crawl day)"
-    },
-    {
-      "pane": "manual link — needs review",
-      "paneRaw": "MANUAL LINK — NEEDS REVIEW",
-      "kind": "button",
-      "name": "new opportunityfreed capital for a bette",
-      "instances": 1,
-      "selector": {
-        "strategy": "text",
-        "value": "new opportunityfreed capital for a bette",
-        "scope": "MANUAL LINK — NEEDS REVIEW"
-      },
-      "sampleText": "New opportunityFreed capital for a bette",
-      "page": "Linkage",
-      "source": "crawled",
-      "id": "Linkage/manual link — needs review/button:new opportunityfreed capital for a bette",
-      "risk": "safe",
-      "dataDependent": true,
-      "note": "reason PICK is client-side state; the mutation is Save"
-    },
-    {
-      "pane": "manual link — needs review",
-      "paneRaw": "MANUAL LINK — NEEDS REVIEW",
-      "kind": "button",
-      "name": "otherfree-text rationale below",
-      "instances": 1,
-      "selector": {
-        "strategy": "text",
-        "value": "otherfree-text rationale below",
-        "scope": "MANUAL LINK — NEEDS REVIEW"
-      },
-      "sampleText": "OtherFree-text rationale below",
-      "page": "Linkage",
-      "source": "crawled",
-      "id": "Linkage/manual link — needs review/button:otherfree-text rationale below",
-      "risk": "safe",
-      "dataDependent": true,
-      "note": "reason PICK is client-side state; the mutation is Save"
     },
     {
       "pane": "manual link — needs review",
@@ -6207,21 +6129,21 @@
       "pane": "manual link — needs review",
       "paneRaw": "MANUAL LINK — NEEDS REVIEW",
       "kind": "button",
-      "name": "save",
-      "disabled": true,
+      "name": "unplanned",
       "instances": 1,
       "selector": {
         "strategy": "text",
-        "value": "save",
+        "value": "unplanned",
         "scope": "MANUAL LINK — NEEDS REVIEW"
       },
-      "sampleText": "Save",
+      "sampleText": "UNPLANNED",
       "page": "Linkage",
       "source": "crawled",
-      "id": "Linkage/manual link — needs review/button:save",
+      "id": "Linkage/manual link — needs review/button:unplanned",
       "risk": "mutating-excluded",
+      "confirm": "native",
       "dataDependent": true,
-      "note": "PUT /history/close_reason/{id}"
+      "note": "POST /orders/{id}/mark_unplanned"
     },
     {
       "id": "Linkage/manual link — needs review/button:unplanned",
@@ -6240,23 +6162,6 @@
       "confirm": "native",
       "dataDependent": true,
       "note": "POST /orders/{id}/mark_unplanned - same visibility caveat as Link"
-    },
-    {
-      "pane": "manual link — needs review",
-      "paneRaw": "MANUAL LINK — NEEDS REVIEW",
-      "kind": "input",
-      "name": "optional note…",
-      "instances": 1,
-      "selector": {
-        "strategy": "text",
-        "value": "optional note…",
-        "scope": "MANUAL LINK — NEEDS REVIEW"
-      },
-      "page": "Linkage",
-      "source": "crawled",
-      "id": "Linkage/manual link — needs review/input:optional note…",
-      "risk": "safe",
-      "dataDependent": true
     },
     {
       "pane": "open positions",
@@ -6566,7 +6471,7 @@
         "value": "reason",
         "scope": "Recent Closes 15"
       },
-      "sampleText": "ALLSET REASON",
+      "sampleText": "ALLInterventionSET REASON",
       "page": "Linkage",
       "source": "crawled",
       "id": "Linkage/recent closes/select:reason",
@@ -6623,7 +6528,7 @@
         "value": "sym",
         "scope": "Recent Closes 15"
       },
-      "sampleText": "ALLDEXENFPOPGXAUT",
+      "sampleText": "ALLETHSNXXSOL",
       "page": "Linkage",
       "source": "crawled",
       "id": "Linkage/recent closes/select:sym",
@@ -8543,7 +8448,7 @@
     },
     {
       "pane": "economic calendar - - utc",
-      "paneRaw": "Economic Calendar 02026-07-28 05:25:13 U",
+      "paneRaw": "Economic Calendar 02026-07-29 15:47:02 U",
       "kind": "button",
       "name": "reload pane",
       "title": "Reload pane",
@@ -8561,14 +8466,14 @@
     },
     {
       "pane": "economic calendar - - utc",
-      "paneRaw": "Economic Calendar 02026-07-28 05:25:13 U",
+      "paneRaw": "Economic Calendar 02026-07-29 15:47:02 U",
       "kind": "period",
       "name": "all",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "all",
-        "scope": "Economic Calendar 02026-07-28 05:25:13 U"
+        "scope": "Economic Calendar 02026-07-29 15:47:02 U"
       },
       "sampleText": "All",
       "page": "Regime",
@@ -8579,14 +8484,14 @@
     },
     {
       "pane": "economic calendar - - utc",
-      "paneRaw": "Economic Calendar 02026-07-28 05:25:13 U",
+      "paneRaw": "Economic Calendar 02026-07-29 15:47:02 U",
       "kind": "period",
       "name": "high",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "high",
-        "scope": "Economic Calendar 02026-07-28 05:25:13 U"
+        "scope": "Economic Calendar 02026-07-29 15:47:02 U"
       },
       "sampleText": "High",
       "page": "Regime",
@@ -8597,14 +8502,14 @@
     },
     {
       "pane": "economic calendar - - utc",
-      "paneRaw": "Economic Calendar 02026-07-28 05:25:13 U",
+      "paneRaw": "Economic Calendar 02026-07-29 15:47:02 U",
       "kind": "period",
       "name": "high+med",
       "instances": 1,
       "selector": {
         "strategy": "text",
         "value": "high+med",
-        "scope": "Economic Calendar 02026-07-28 05:25:13 U"
+        "scope": "Economic Calendar 02026-07-29 15:47:02 U"
       },
       "sampleText": "High+Med",
       "page": "Regime",
@@ -8966,7 +8871,7 @@
     },
     {
       "pane": "regime distribution days observed",
-      "paneRaw": "Regime Distribution318 days observed",
+      "paneRaw": "Regime Distribution317 days observed",
       "kind": "button",
       "name": "reload pane",
       "title": "Reload pane",
