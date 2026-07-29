@@ -80,11 +80,97 @@ _json_handler.setFormatter(JsonFormatter())
 if not _TESTING:
     logging.getLogger().addHandler(_json_handler)
 
+# Credential hygiene (phase-3/5 ledger observation, fixed 2026-07-30):
+# httpx logs every request URL at INFO — including Finnhub's token QUERY
+# PARAM — and the root JSON handler shipped those lines to
+# data/logs/risk_engine.jsonl in cleartext. WARNING silences the per-request
+# echo (the standard httpx production setting); real transport errors still
+# surface. httpcore's DEBUG chatter is capped for the same reason. NB log
+# files written BEFORE this change still carry tokens until rotation ages
+# them out — rotating the key is the operator-side complement.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
 # F5: set True by the lifespan when the pytest gates actually fire —
 # tests/test_routes.py pins this (a deleted gate turns the pin red).
 TEST_LIFESPAN_GATED = False
 
 log = logging.getLogger("main")
+
+
+# ── Startup singleton guard (E2E-program carry-forward, 2026-07-30) ──────────
+# Nothing used to stop a second engine instance sharing this data dir: two
+# instances mean doubled schedulers with real API keys, SQLite write
+# contention, and a split fill pipeline (OBS-001's "dual instance" theory was
+# disproven, but only because the second boot happened to fail). The file
+# lives under config.DATA_DIR, so a sandbox worktree (own data dir) never
+# collides with the live engine. Liveness is os.kill(pid, 0) — PID reuse can
+# in principle false-positive, so the refusal message names the file and the
+# override (delete it); a stale file from a crash clears itself.
+
+_PID_FILE = os.path.join(config.DATA_DIR, "engine.pid")
+
+
+def _pid_alive(pid: int) -> bool:
+    """Liveness probe. NEVER os.kill(pid, 0) on Windows — any signal other
+    than the two CTRL events routes to TerminateProcess, i.e. the 'probe'
+    would KILL the other engine instead of detecting it."""
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        h = ctypes.windll.kernel32.OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not h:
+            return False
+        try:
+            code = wintypes.DWORD()
+            ok = ctypes.windll.kernel32.GetExitCodeProcess(
+                h, ctypes.byref(code))
+            return bool(ok) and code.value == STILL_ACTIVE
+        finally:
+            ctypes.windll.kernel32.CloseHandle(h)
+    try:
+        os.kill(pid, 0)
+    except PermissionError:
+        return True     # exists, owned by someone else
+    except OSError:
+        return False
+    return True
+
+
+def _acquire_pid_lock() -> None:
+    """Refuse to start when another live engine holds this data dir."""
+    try:
+        with open(_PID_FILE, encoding="ascii") as fh:
+            other = int(fh.read().strip() or 0)
+    except (OSError, ValueError):
+        other = 0
+    if other and other != os.getpid() and _pid_alive(other):
+        raise RuntimeError(
+            f"another engine instance (pid {other}) already holds "
+            f"{config.DATA_DIR} — refusing to double-run schedulers against "
+            f"the live account. If that pid is not an engine (stale reuse), "
+            f"delete {_PID_FILE} and start again."
+        )
+    with open(_PID_FILE, "w", encoding="ascii") as fh:
+        fh.write(str(os.getpid()))
+
+
+def _release_pid_lock() -> None:
+    """Remove the PID file iff it still names this process.
+
+    Read first, CLOSE, then remove — on Windows os.remove fails with
+    WinError 32 while the read handle is still open (and the defensive
+    except would have swallowed exactly that, leaving the file behind)."""
+    try:
+        with open(_PID_FILE, encoding="ascii") as fh:
+            holder = int(fh.read().strip() or 0)
+        if holder == os.getpid():
+            os.remove(_PID_FILE)
+    except (OSError, ValueError):
+        pass
 
 
 # ── Application lifespan ─────────────────────────────────────────────────────
@@ -95,6 +181,11 @@ async def lifespan(app: FastAPI):
     os.makedirs(config.DATA_DIR, exist_ok=True)
     os.makedirs(config.SNAPSHOTS_DIR, exist_ok=True)
     os.makedirs(config.LOGS_DIR, exist_ok=True)
+
+    # Singleton guard — gated OFF under pytest like every other lifespan
+    # step that touches the live data dir (F5).
+    if not _TESTING:
+        _acquire_pid_lock()
 
     # ── Correlation-log sink (CL.T0b, spec §6.5) ─────────────────────────────
     # Started FIRST: zero dependencies on DB/REST/bus, and the module-level
@@ -164,6 +255,8 @@ async def lifespan(app: FastAPI):
     log.info(f"Shutting down {config.PROJECT_NAME}...")
     await event_bus.close()
     await db.close()
+    if not _TESTING:
+        _release_pid_lock()
     # Last: flush + stop the correlation-log writer (the explicit call is
     # the only reliable flush trigger — teardown cancels no bg tasks).
     correlation_log.close()
