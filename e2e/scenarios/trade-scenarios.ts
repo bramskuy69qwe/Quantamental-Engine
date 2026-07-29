@@ -168,7 +168,7 @@ export const SCENARIOS: Scenario[] = [
       },
       { kind: 'auto', action: 'goto-linkage', manual: 'Script opens Linkage.' },
       { kind: 'assert', oracle: 'inbox-review-row', budgetMs: 20_000, manual: 'Inbox shows the order as [REVIEW]; resolver shows N/6 below threshold with the failing legs red.' },
-      { kind: 'operator', manual: 'In the UI: select the inbox item, pick the candidate calc, click Link and ACCEPT the confirm. Press DONE.' },
+      { kind: 'operator', manual: 'In the UI: select the inbox item, pick the candidate calc, click Link, then confirm with "Link calc" in the dialog. Press DONE.' },
       { kind: 'assert', oracle: 'position-linked-onplan', budgetMs: 20_000, manual: 'Position flips to LINKED (junction replay attaches it post-fill).' },
       { kind: 'operator', manual: 'On BINANCE: close the position and cancel leftover legs. Press DONE when flat.' },
     ],

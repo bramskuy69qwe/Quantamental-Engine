@@ -9,6 +9,12 @@ const lpPx = (v) => {
   const d = a >= 1000 ? 2 : a >= 1 ? 4 : 6;
   return (+v).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
 };
+/* E2E-P6-002 (display half): a Binance MARKET order carries price = 0 — its
+   executed entry is avg_fill_price. Rendering `price` alone showed
+   "MARKET @ 0.000000", a 0 notional, and an empty ORDER column in MatchDiff's
+   Entry row for every market entry. Price-first (a limit order's own price
+   wins), fill as the fallback — mirrors the backend finder's resolution. */
+const _lkEntryPx = (o) => (o && (o.price || o.avg_fill_price)) || null;
 const lpUsd = (v, d = 2) => (v == null || isNaN(v)) ? '—' : (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(d);
 const lpPct = (v, d = 2) => (v == null || isNaN(v)) ? '—' : (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(d) + '%';
 const lpSgn = (v) => v > 0 ? 'var(--qe-green)' : v < 0 ? 'var(--qe-red)' : 'var(--qe-sub)';
@@ -125,7 +131,7 @@ const lpCritRows = (order, cand) => ([
   { k: 'Ticker',      calc: cand.ticker, order: order.symbol, ok: true },
   { k: 'Direction',   calc: (cand.side || '').toUpperCase(), order: (order.side || '').toUpperCase(), ok: true },
   { k: 'In-window',   calc: cand.age_hours != null ? `${(+cand.age_hours).toFixed(1)}h ago` : '—', order: 'loose 168h', ok: true },
-  { k: 'Entry',       calc: lpPx(cand.effective_entry), order: lpPx(order.price),
+  { k: 'Entry',       calc: lpPx(cand.effective_entry), order: lpPx(_lkEntryPx(order)),
     ok: !!cand.entry_match, diff: cand.entry_drift_pct != null ? lpPct(cand.entry_drift_pct * 100) : '' },
   { k: 'Take-profit', calc: lpPx(cand.tp_price), order: lpPx(order.tp_trigger_price),
     ok: !!cand.tp_match, diff: cand.tp_drift_pct != null ? lpPct(cand.tp_drift_pct * 100) : '' },

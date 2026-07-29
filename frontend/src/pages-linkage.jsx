@@ -87,10 +87,16 @@ const LkLinkResolver = ({ item, onDone }) => {
   const [msg, setMsg] = React.useState(null);
   const cand = cands.find((c) => c.calc_id === selCand) || cands[0];
 
-  const act = async (kind) => {
-    const label = kind === 'link' ? `Link order #${item.id} to ${cand.calc_id}?`
-      : `Mark order #${item.id} UNPLANNED?`;
-    if (!window.confirm(label)) return;
+  // E2E-P6-003 (operator, 2026-07-29): link / unplanned used a NATIVE
+  // window.confirm while the sibling calc-cancel flow uses the ModelDialog
+  // primitive — inconsistent with the shipped dialog standard, unstyleable,
+  // and un-drivable (a browser-automated page intercepts native dialogs, so the
+  // confirm vanished before the operator could accept it). Same primitive,
+  // same "basic pane with a close button" pattern as the cancel-calc dialog.
+  const [confirmKind, setConfirmKind] = React.useState(null); // 'link' | 'unplanned'
+
+  const runAct = async (kind) => {
+    setConfirmKind(null);
     setBusy(true); setMsg(null);
     try {
       const r = kind === 'link'
@@ -101,6 +107,8 @@ const LkLinkResolver = ({ item, onDone }) => {
     } catch (e) { setMsg({ text: 'action failed — engine unreachable?', ok: false }); }
     setBusy(false);
   };
+
+  const act = (kind) => setConfirmKind(kind);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
@@ -120,9 +128,13 @@ const LkLinkResolver = ({ item, onDone }) => {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '5px 10px', padding: '6px 8px', border: '1px solid var(--qe-line)', marginBottom: 8 }}>
         <KV l="Order" v={'#' + (item.exchange_order_id || item.id)} />
         <KV l="Type" v={(item.order_type || '').toUpperCase()} />
-        <KV l="Price" v={lpPx(item.price)} color="var(--qe-cyan)" />
+        {/* E2E-P6-002 (display half): a MARKET order's `price` is 0 — the real
+            executed entry is avg_fill_price, which the review-queue payload now
+            carries. Rendering price alone showed "MARKET @ 0.000000" and a 0
+            notional for every market entry. */}
+        <KV l="Price" v={lpPx(_lkEntryPx(item))} color="var(--qe-cyan)" />
         <KV l="Size" v={item.quantity != null ? (+item.quantity).toLocaleString(undefined, { maximumFractionDigits: 4 }) : '—'} />
-        <KV l="Notional" v={(item.price != null && item.quantity != null) ? `${(item.price * item.quantity).toLocaleString(undefined, { maximumFractionDigits: 2 })} U` : '—'} />
+        <KV l="Notional" v={(_lkEntryPx(item) && item.quantity != null) ? `${(_lkEntryPx(item) * item.quantity).toLocaleString(undefined, { maximumFractionDigits: 2 })} U` : '—'} />
         <KV l="Operator" v={item.operator_id || '—'} />
         <KV l="Client order id" v={item.client_order_id || '—'} span />
       </div>
@@ -185,6 +197,49 @@ const LkLinkResolver = ({ item, onDone }) => {
         </React.Fragment>
       )}
       {msg ? <div className="qe-mono" style={{ fontSize: '0.58rem', marginTop: 6, color: msg.ok ? 'var(--qe-green)' : 'var(--qe-red)' }}>{msg.text}</div> : null}
+
+      {/* E2E-P6-003: the link / unplanned confirm, on the SAME ModelDialog
+          primitive as the calc-cancel dialog (scrim-click + ✕ + the ghost
+          button all dismiss). Replaces window.confirm — which was off-standard,
+          unstyleable, and disappeared instantly under browser automation. */}
+      {confirmKind && (
+        <ModelDialog
+          title={confirmKind === 'link'
+            ? `Link order · #${item.exchange_order_id || item.id}`
+            : `Mark unplanned · #${item.exchange_order_id || item.id}`}
+          width={420}
+          onClose={() => { if (!busy) setConfirmKind(null); }}
+          footer={<React.Fragment>
+            <button className="qe-btn qe-btn-sm qe-btn-ghost" disabled={busy}
+              onClick={() => setConfirmKind(null)}>Keep as is</button>
+            <button
+              className={`qe-btn qe-btn-sm ${confirmKind === 'link' ? 'qe-btn-success' : 'qe-btn-danger'}`}
+              disabled={busy} onClick={() => runAct(confirmKind)}>
+              {busy ? <Spinner size="0.62rem" />
+                : (confirmKind === 'link' ? 'Link calc' : 'Mark UNPLANNED')}
+            </button>
+          </React.Fragment>}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+              <span className="qe-mono" style={{ color: 'var(--qe-cyan)', fontWeight: 700, fontSize: '0.72rem' }}>{item.symbol}</span>
+              <Badge tone={(item.side || '').toUpperCase() === 'BUY' || (item.side || '').toUpperCase() === 'LONG' ? 'ok' : 'err'}>{(item.side || '').toUpperCase()}</Badge>
+              <span className="qe-mono" style={{ fontSize: '0.56rem', color: 'var(--qe-muted)' }}>{(item.order_type || '').toUpperCase()} @ {lpPx(_lkEntryPx(item))}</span>
+            </div>
+            {confirmKind === 'link' && cand ? (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '5px 10px', padding: '6px 8px', border: '1px solid var(--qe-line)' }}>
+                <KV l="Calc" v={String(cand.calc_id).slice(-8)} color="var(--qe-cyan)" />
+                <KV l="Score" v={`${lpScore(cand)} / 6`} />
+                <KV l="Entry" v={lpPx(cand.effective_entry != null ? cand.effective_entry : cand.average)} />
+              </div>
+            ) : null}
+            <div className="qe-mono" style={{ fontSize: '0.56rem', color: 'var(--qe-muted)', lineHeight: 1.4 }}>
+              {confirmKind === 'link'
+                ? 'Links this order to the selected calc and stamps its fills. The calc moves to MATCHED and leaves Active Calcs.'
+                : 'Marks this order as an unplanned entry. It leaves the review queue and will not be linked to any calc.'}
+            </div>
+          </div>
+        </ModelDialog>
+      )}
     </div>
   );
 };
@@ -517,7 +572,9 @@ const LinkagePage = () => {
                       const sideRaw = (item.kind === 'link' ? item.side : item.direction) || '';
                       const isLong = sideRaw.toUpperCase() === 'BUY' || sideRaw.toUpperCase() === 'LONG';
                       const ts = item.kind === 'link' ? item.created_at_ms : item.exit_time_ms;
-                      const notional = (item.price && item.quantity) ? (item.price * item.quantity).toFixed(2) : null;
+                      // E2E-P6-002: market orders carry price 0 — use the fill.
+                      const _px = _lkEntryPx(item);
+                      const notional = (_px && item.quantity) ? (_px * item.quantity).toFixed(2) : null;
                       return (
                         <div key={item.key} onClick={() => setSel(item.key)} style={{
                           display: 'flex', flexDirection: 'column', gap: 3, padding: '7px 8px', cursor: 'pointer',
@@ -542,7 +599,7 @@ const LinkagePage = () => {
                           </div>
                           <div className="qe-mono" style={{ fontSize: '0.5rem', color: 'var(--qe-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             {item.kind === 'link'
-                              ? `${(item.order_type || '').toUpperCase()} @ ${lpPx(item.price)}${notional ? ` · ${notional}U` : ''}`
+                              ? `${(item.order_type || '').toUpperCase()} @ ${lpPx(_px)}${notional ? ` · ${notional}U` : ''}`
                               : `${_lkDur(item.hold_time_ms)} · ${lpPx(item.entry_price)}→${lpPx(item.exit_price)}`}
                           </div>
                         </div>

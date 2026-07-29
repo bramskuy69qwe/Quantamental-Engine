@@ -97,7 +97,7 @@
 | 4 | **YOU** | On BINANCE: open the position, but set TP and SL a few ticks AWAY from the calc levels.<br>Press DONE when the entry has filled. | — |
 | 5 | script | Script opens Linkage. | — |
 | 6 | assert | _check_ `inbox-review-row` | Inbox shows the order as [REVIEW]; resolver shows N/6 below threshold with the failing legs red. _(allow 20s)_ |
-| 7 | **YOU** | In the UI: select the inbox item, pick the candidate calc, click Link and ACCEPT the confirm. Press DONE. | — |
+| 7 | **YOU** | In the UI: select the inbox item, pick the candidate calc, click Link, then confirm with "Link calc" in the dialog. Press DONE. | — |
 | 8 | assert | _check_ `position-linked-onplan` | Position flips to LINKED (junction replay attaches it post-fill). _(allow 20s)_ |
 | 9 | **YOU** | On BINANCE: close the position and cancel leftover legs. Press DONE when flat. | — |
 

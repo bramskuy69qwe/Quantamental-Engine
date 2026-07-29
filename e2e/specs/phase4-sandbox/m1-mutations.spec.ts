@@ -116,8 +116,10 @@ test.describe('phase 4 — sandbox mutations', () => {
     await adaStrip.click();
     await page.waitForTimeout(800);
     collector.setControl('linkage/manual-link');
-    collector.expectDialog(/link/i, 'accept');
+    // E2E-P6-003: the confirm is now the ModelDialog primitive, not a native
+    // window.confirm — click through the dialog's own action button.
     await page.locator('button', { hasText: /^Link$/ }).first().click();
+    await page.locator('button', { hasText: /^Link calc$/ }).first().click();
     await page.waitForTimeout(2_500);
     await expect(inboxPane.locator('text=/\\bLINK\\b.*ADA|ADA.*\\[REVIEW\\]/').first()).not.toBeVisible({
       timeout: 10_000,
@@ -134,8 +136,9 @@ test.describe('phase 4 — sandbox mutations', () => {
     await xlmStrip.click();
     await page.waitForTimeout(800);
     collector.setControl('linkage/mark-unplanned');
-    collector.expectDialog(/unplanned/i, 'accept');
+    // E2E-P6-003: ModelDialog confirm (was a native window.confirm).
     await page.locator('button', { hasText: /^UNPLANNED$/ }).first().click();
+    await page.locator('button', { hasText: /^Mark UNPLANNED$/ }).first().click();
     await page.waitForTimeout(2_500);
     await expect(inboxPane.locator('text=XLM')).toHaveCount(0, { timeout: 10_000 });
   });
