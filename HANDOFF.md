@@ -1,10 +1,41 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-07-30 (**MERIDIAN v3.0 — the E2E program is COMPLETE, Phases 0–7. Phase 7's clean re-run PASSED on the final bundle: zero new CRIT/HIGH, plus ONE more defect found+fixed (E2E-P7-001, a phase-4-era red that had ridden undispositioned). The acceptance report is committed → THE JINJA RETIREMENT IS UNBLOCKED, operator-gated.**)
-**Branch**: **`v3.0/e2e-debug` — 2 commits LOCAL over origin (`30cf1ad` P7-001 fix · the P7 wrap); push at operator's call.**
-**Tests**: **4565 passed / 7 skipped / 3 deselected** (SOLO, `.venv`, FULL gate green 2026-07-30; F5 tripwire fired with the live-engine-running signature — expected). ALWAYS run SOLO on the **`.venv`** interpreter (user-site Python lacks `pytest-timeout` → drops the 30 s guardrail). NEVER run the gate concurrently with live-engine driving (conftest tripwire + weight budget).
-**Bundle**: **`929f95bffc`** — hard-refresh after any restart (ModelDialog confirm + market-entry-price fixes live in it).
-**Engine**: RUNNING; boot `22:11:14 07-29` (the P6-004 verification boot — 0 WS failures, listen key bound 9 s in). **The running engine PREDATES `30cf1ad`** — E2E-P7-001 is dormant on live (single account), the fix lands at the next natural restart, no urgency. **w32time is STILL STOPPED** (operator, elevated: `sc config w32time start= auto && net start w32time && w32tm /resync /force`). Restart discipline: **one restart, then wait**.
+**Date**: 2026-07-30 (**MERIDIAN v3.0 — E2E program COMPLETE Phases 0–7 AND the carry-forward pass is DONE: all five P5-R residuals + LOW-001 + the Finnhub log leak fixed, the PID guard built, the harness debt cleared — 7 commits on top of the acceptance wrap. NEXT PROGRAM = THE JINJA RETIREMENT (operator-gated).**)
+**Branch**: **`v3.0/e2e-debug`** — pushed through the P7 wrap (`5739dfd`); the 7 carry-forward commits push at session close (see the 07-30 block).
+**Tests**: **4608 passed / 7 skipped / 3 deselected** (post-carry-forward gate, 2026-07-30; first run flaked ONCE on `test_periodic_loop_survives_reconcile_exception` — a 50 ms-budget timing test under live-engine machine load, passed solo AND on the identical full re-run — recorded, not chased). ALWAYS run SOLO on the **`.venv`** interpreter (user-site Python lacks `pytest-timeout` → drops the 30 s guardrail). NEVER run the gate concurrently with live-engine driving (conftest tripwire + weight budget).
+**Bundle**: **`30e626377e`** (was `929f95bffc`; the FILLS chrome dot ships in it) — hard-refresh after restart.
+**Engine**: RUNNING; boot `22:11:14 07-29`. **The running engine PREDATES every 07-30 fix** (`30cf1ad` + the 7 carry-forward commits) — **RESTART at the operator's convenience** to land: the P7-001 settings upsert, the P5-R1 close-row backstop, the truthful user-WS flag + FILLS dot + user_ws door, the monitoring binding + new checks, the boot-priority tiering, the PID guard (writes `data/engine.pid` on first post-fix boot), and the httpx token-log silence. **w32time is STILL STOPPED** (operator, elevated: `sc config w32time start= auto && net start w32time && w32tm /resync /force`). Restart discipline: **one restart, then wait**.
+
+## ▶ SESSION CLOSE 2026-07-30 (second block) — CARRY-FORWARDS ALL FIXED
+
+Operator directive: "push then fix the still open bugs (carry forwards out
+of this program)". Pushed `30cf1ad`+`5739dfd`, then fixed the whole fixable
+list — one investigated commit per finding, three parallel read-only
+investigation agents up front, mechanisms verified at the cited lines
+before every fix (3 of 5 filings needed mechanism correction):
+
+| Commit | Fix |
+|---|---|
+| `c9b1640` | **P5-R4** — unmeasured excursions emit NULL at the JSON boundary (the filed "write NULL to storage" hits the NOT NULL schema; only the React lane lied) |
+| `19aa8b0` | **P5-R1 (HIGH)** — `build_final_close_row` was DEAD CODE (closed_positions had exactly one producer: the WS fill path); now wired to `CH_TRADE_CLOSED` (+`position_id` in the payload) with a bounded REST fill fetch first (the refresh loop only fetches fills for OPEN positions) |
+| `3f6a220` | **P5-R2+R3** — `/api/state.user_ws` door + FILLS dot (bundle `30e626377e`) + THREE unfiled defects: clean-close fall-through (`connected` stuck True on code-1000 — the lying flag), 15-attempt permanent surrender (now hands off to the persistent retry loop), anonymous MonitoringService (events door returned [] forever); ws_stale is an emit/resolve event + new critical `user_ws_down` check |
+| `0f0cd25` | **P5-R5** — calc-symbol exempt from the 30 s cache eviction (the unnamed compounding cause) + 3 boot backfills tiered background + the fill-sync urgent leak plugged. Priority table untouched — 95-101% stays listen-key-only |
+| `2c6de73` | **LOW-001** — linkage resolvers default to the legacy store |
+| `ea0db81` | **PID guard** (refuses double-launch; Windows trap: `os.kill(pid,0)` = TerminateProcess — the probe would have KILLED the engine; OpenProcess instead) + **Finnhub token** (httpx/httpcore → WARNING; old logs carry tokens until rotation — rotating the key is the operator complement) |
+| `a8b5939` | **Harness debt** — sandbox pid rewrite · X1 delta oracle (unverified until next T run) · provision `e2e:` seed exemption; A1 budget was ALREADY raised in `918c6f4` (stale OPEN entry corrected) |
+
+**Dispositions written**: phase-5 ledger (Phase-7 disposition section),
+phase-6 ledger (A1/X1 row), acceptance report (carry-forward list closed,
+2 NEW watch items filed: REST-fill gap masking + weight_tracker reconcile
+window/lock). **Remaining open = operator-side only**: OBS-001 (watch;
+the PID guard removes the double-launch class), OBS-002 (w32time), the
+SOL `MANUAL_INTERVENTION` question, Finnhub key rotation, and a
+cold-restart time-to-first-price measurement (P5-R5 verification — the
+e2e specs poll past the starvation window by design).
+
+**NEXT PROGRAM = JINJA RETIREMENT** — unchanged, operator-gated; recipe +
+constraints in the 07-25 block (§ "v3.0 RENAME SHIPPED · RETIREMENT
+DEFERRED"). Release-hygiene version bump at program close.
 
 ## ▶ SESSION CLOSE 2026-07-30 — PHASE 7 COMPLETE · gate PASSED · retirement unblocked
 
