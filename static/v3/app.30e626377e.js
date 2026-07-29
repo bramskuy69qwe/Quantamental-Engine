@@ -1685,6 +1685,34 @@ const _navFeed = (ch) => {
     title: "Exchange market-data websocket live" + (w.latency_ms == null ? " \xB7 latency not measured yet" : ` \xB7 ${Math.round(w.latency_ms)}ms per-frame latency`)
   };
 };
+const _navUserWs = (ch) => {
+  if (ch && ch.stateErr) return {
+    tone: "off",
+    value: "\u2014",
+    title: "Fill pipeline: reading unavailable \u2014 /api/state is not responding"
+  };
+  const u = ch && ch.state && ch.state.user_ws || null;
+  if (!u) return {
+    tone: "off",
+    value: "\u2014",
+    title: "Fill pipeline (user-data websocket): no reading yet (/api/state)"
+  };
+  if (!u.connected && u.retrying) return {
+    tone: "err",
+    value: "retry",
+    title: "User-data websocket DOWN \u2014 fills are NOT arriving; the persistent retry loop is rebinding it"
+  };
+  if (!u.connected) return {
+    tone: "err",
+    value: "down",
+    title: "User-data websocket DOWN \u2014 fills are NOT arriving; History, linkage and close rows will silently stall" + (u.reconnect_attempts ? ` (reconnect attempt ${u.reconnect_attempts})` : "")
+  };
+  return {
+    tone: "ok",
+    value: "live",
+    title: "User-data websocket live \u2014 fills flowing" + (u.last_frame_s == null ? " \xB7 no frame this session (normal when idle)" : ` \xB7 last frame ${Math.round(u.last_frame_s)}s ago`)
+  };
+};
 const _navCap = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1) : "\u2014";
 const _navPct = (v) => v == null ? "\u2014" : (v > 0 ? "+" : "") + v.toFixed(2) + "%";
 const _navPctCol = (v) => v == null ? "var(--qe-muted)" : v > 0 ? "var(--qe-green)" : v < 0 ? "var(--qe-red)" : "var(--qe-sub)";
@@ -1859,6 +1887,7 @@ const TopNavStd = ({ page = "Dashboard", onChange, variant = "line", dense = fal
   };
   const sseTone = NAV_SSE_TONE[ch.sse] || "off";
   const feed = _navFeed(ch);
+  const fills = _navUserWs(ch);
   return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "qe-hscroll", style: {
     display: "flex",
     alignItems: "center",
@@ -1929,7 +1958,7 @@ const TopNavStd = ({ page = "Dashboard", onChange, variant = "line", dense = fal
       title: "Switch active account (reloads)"
     },
     accounts.map((a) => /* @__PURE__ */ React.createElement("option", { key: a.id, value: String(a.id) }, a.name, " (", _navCap(a.exchange), ")", a.is_active ? "" : " \u2014 inactive"))
-  ) : /* @__PURE__ */ React.createElement("select", { className: "qe-input qe-select", style: { height: 22, fontSize: "0.62rem", width: 175 }, disabled: true, value: "" }, /* @__PURE__ */ React.createElement("option", { value: "" }, "\u2014 no accounts \u2014")), switchErr && /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.54rem", color: "var(--qe-red)" } }, "switch failed")), /* @__PURE__ */ React.createElement(StatusDot, { tone: sseTone, label: "SSE", value: ch.sse === "open" ? "live" : ch.sse }), /* @__PURE__ */ React.createElement("span", { title: feed.title, style: { display: "inline-flex" } }, /* @__PURE__ */ React.createElement(StatusDot, { tone: feed.tone, label: "FEED", value: feed.value })), /* @__PURE__ */ React.createElement("span", { style: {
+  ) : /* @__PURE__ */ React.createElement("select", { className: "qe-input qe-select", style: { height: 22, fontSize: "0.62rem", width: 175 }, disabled: true, value: "" }, /* @__PURE__ */ React.createElement("option", { value: "" }, "\u2014 no accounts \u2014")), switchErr && /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.54rem", color: "var(--qe-red)" } }, "switch failed")), /* @__PURE__ */ React.createElement(StatusDot, { tone: sseTone, label: "SSE", value: ch.sse === "open" ? "live" : ch.sse }), /* @__PURE__ */ React.createElement("span", { title: feed.title, style: { display: "inline-flex" } }, /* @__PURE__ */ React.createElement(StatusDot, { tone: feed.tone, label: "FEED", value: feed.value })), /* @__PURE__ */ React.createElement("span", { title: fills.title, style: { display: "inline-flex" } }, /* @__PURE__ */ React.createElement(StatusDot, { tone: fills.tone, label: "FILLS", value: fills.value })), /* @__PURE__ */ React.createElement("span", { style: {
     fontFamily: "var(--qe-mono)",
     fontSize: "0.56rem",
     color: "var(--qe-muted)",
@@ -1971,6 +2000,7 @@ const StatusFooter = () => {
   const engineTone = ch.stateErr ? "var(--qe-red)" : ch.state ? "var(--qe-green)" : "var(--qe-muted)";
   const sseTone = ch.sse === "open" ? "var(--qe-green)" : ch.sse === "connecting" ? "var(--qe-amber)" : ch.sse === "error" ? "var(--qe-red)" : "var(--qe-muted)";
   const feed = _navFeed(ch);
+  const fills = _navUserWs(ch);
   return /* @__PURE__ */ React.createElement("div", { style: {
     display: "flex",
     alignItems: "center",
@@ -1985,7 +2015,9 @@ const StatusFooter = () => {
     color: "var(--qe-muted)"
   } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, (window.QE_BOOTSTRAP && window.QE_BOOTSTRAP.projectShortName || "QRE") + " " + (window.QE_BOOTSTRAP && window.QE_BOOTSTRAP.projectVersion || "v3")), /* @__PURE__ */ React.createElement("span", null, "\xB7"), /* @__PURE__ */ React.createElement("span", null, "uptime ", /* @__PURE__ */ React.createElement(LiveValue, { id: "sb.uptime", value: ch.sys ? ch.sys.uptime_s : "\u2014", format: () => _navUptime(ch.sys ? ch.sys.uptime_s : null) })), /* @__PURE__ */ React.createElement("div", { className: "qe-grow" }), /* @__PURE__ */ React.createElement("span", { style: { color: engineTone } }, "\u25CF engine"), /* @__PURE__ */ React.createElement("span", { style: { color: sseTone } }, "\u25CF sse"), /* @__PURE__ */ React.createElement("span", { title: feed.title, style: {
     color: feed.tone === "ok" ? "var(--qe-green)" : feed.tone === "warn" ? "var(--qe-amber)" : feed.tone === "err" ? "var(--qe-red)" : "var(--qe-muted)"
-  } }, "\u25CF feed"), /* @__PURE__ */ React.createElement(LiveClock, { id: "sb.clock", format: qeClockFmt, style: { color: "var(--qe-muted)" } }));
+  } }, "\u25CF feed"), /* @__PURE__ */ React.createElement("span", { title: fills.title, style: {
+    color: fills.tone === "ok" ? "var(--qe-green)" : fills.tone === "err" ? "var(--qe-red)" : "var(--qe-muted)"
+  } }, "\u25CF fills"), /* @__PURE__ */ React.createElement(LiveClock, { id: "sb.clock", format: qeClockFmt, style: { color: "var(--qe-muted)" } }));
 };
 Object.assign(window, {
   NAV_ITEMS,

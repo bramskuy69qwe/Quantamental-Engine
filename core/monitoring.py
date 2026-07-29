@@ -157,6 +157,7 @@ class MonitoringService:
         self.events: List[MonitoringEvent] = []
         self._rate_limit_timestamps: List[tuple] = []  # [(epoch_s, was_ban), ...]
         self._cycle_count: int = 0
+        self._user_ws_down_cycles: int = 0  # P5-R2/R3 grace counter
 
     # ── Event emission / resolution ─────────────────────────────────────────
 
@@ -197,7 +198,7 @@ class MonitoringService:
 
     async def run(self) -> None:
         from core import correlation_log
-        log.info("MonitoringService started (8 checks)")
+        log.info("MonitoringService started (9 checks)")
         while True:
             correlation_log.tick("sch-monitoring")  # corr-tap: entry scope (CL.T1a)
             await asyncio.sleep(_CHECK_INTERVAL)
@@ -209,6 +210,8 @@ class MonitoringService:
             # Checks 4 + 8 (every cycle — fast, in-memory reads)
             self._check_regime_freshness_sync()
             self._check_rate_limit_frequency_sync()
+            # Check 9 (P5-R2/R3): user-data socket health (every cycle)
+            self._check_user_ws_down_sync()
             # Check 5: news feed (every cycle, lightweight DB query)
             await self._check_news_feed_health()
             # Check 6: reconciler health (every 5th cycle = 5 min)
@@ -265,17 +268,56 @@ class MonitoringService:
         stale_secs = ws.seconds_since_update
 
         # Only warn if staleness exceeds our monitoring threshold AND
-        # the existing fallback mechanism hasn't already kicked in
+        # the existing fallback mechanism hasn't already kicked in.
+        # P5-R3: this used to be a bare log.warning — no MonitoringEvent, no
+        # dedup, no resolution, nothing an operator surface could read; it
+        # repeated every 60 s forever. Now it emits/resolves like every
+        # other check. NB it reads the SHARED clock (market loop + REST
+        # refresh also stamp it), so it detects "nothing at all is alive",
+        # not a dead user socket — that is _check_user_ws_down's job.
         if stale_secs > _WS_STALE_THRESHOLD and not ws.using_fallback:
-            log.warning(
-                f"ALERT: WS stale for {stale_secs:.0f}s (fallback not yet active)",
-                extra={
-                    "event":            "ws_stale",
-                    "seconds_stale":    round(stale_secs, 1),
-                    "using_fallback":   ws.using_fallback,
-                    "ws_connected":     ws.connected,
-                },
+            if not any(e.kind == "ws_stale" and not e.resolved for e in self.events):
+                self.emit("ws_stale", "warning",
+                          f"WS stale for {stale_secs:.0f}s (fallback not yet active)",
+                          {"seconds_stale": round(stale_secs, 1),
+                           "using_fallback": ws.using_fallback,
+                           "ws_connected": ws.connected})
+            app_state.ws_status.add_log(
+                f"ALERT: WS stale for {stale_secs:.0f}s")
+        else:
+            self.resolve("ws_stale")
+
+    # ── Check 9: user-data socket down (P5-R2/R3) ────────────────────────────
+
+    def _check_user_ws_down_sync(self) -> None:
+        """The fill pipeline's OWN health check. The staleness check above is
+        structurally blind to a dead user socket (a healthy market socket
+        keeps the shared clock at ~0), which is how a two-day outage stayed
+        invisible (E2E-P5-001). Keys on `connected` — truthful since the
+        clean-close fall-through fix — with a 2-cycle grace so boot/retry
+        windows and account switches don't false-fire."""
+        ws = app_state.ws_status
+        if ws.connected:
+            self._user_ws_down_cycles = 0
+            self.resolve("user_ws_down")
+            return
+        if getattr(app_state, "is_initializing", False):
+            return
+        self._user_ws_down_cycles = getattr(self, "_user_ws_down_cycles", 0) + 1
+        if self._user_ws_down_cycles < 2:
+            return
+        if not any(e.kind == "user_ws_down" and not e.resolved for e in self.events):
+            self.emit(
+                "user_ws_down", "critical",
+                "user-data socket DOWN — fills are not arriving; History, "
+                "linkage and close rows will silently stall"
+                + (" (persistent retry loop active)" if ws.user_retry_active
+                   else " (NO retry running)"),
+                {"reconnect_attempts": ws.reconnect_attempts,
+                 "retry_active": ws.user_retry_active},
             )
+            app_state.ws_status.add_log(
+                "ALERT: user-data socket DOWN — fill pipeline stalled")
 
     # ── Check 3: Position count mismatch ─────────────────────────────────────
 

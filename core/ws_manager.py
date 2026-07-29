@@ -529,6 +529,7 @@ async def _user_data_loop(listen_key: str, attempt: int = 0) -> None:
             ws.connected = True
             ws.reconnect_attempts = 0
             ws.using_fallback = False
+            ws.user_connected_at = datetime.now(timezone.utc)  # P5-R2 door
             ws.add_log("User-data WS connected.")
             _connected_at = time.monotonic()
             # corr-tap: ws_connected
@@ -616,6 +617,24 @@ async def _user_data_loop(listen_key: str, attempt: int = 0) -> None:
                 except Exception as exc:
                     log.warning("User-data WS message error: %s", exc)
                 ws.last_update = datetime.now(timezone.utc)
+                ws.user_last_update = ws.last_update  # P5-R2: user-owned clock
+
+        # P5-R2: a NORMAL close (code 1000 — e.g. Binance cycling the stream
+        # or an expired/deleted listen key) makes `async for` fall through and
+        # this function RETURN: the except below never fires, `connected`
+        # stays True forever and no reconnect runs — the socket is dead while
+        # every flag in the process says it is alive. Treat a clean
+        # server-side close exactly like the error path. (The auth-failure
+        # `return` above deliberately bypasses this — a bad credential must
+        # not reconnect-hammer.)
+        ws.connected = False
+        ws.add_log("User-data WS closed by server (clean close).")
+        correlation_log.emit(
+            "ws_manager", "binance", "internal", correlation_log.CAT_WS_DISCONNECT,
+            {"stream": "user", "reason": "clean_close",
+             "uptime_s": round(time.monotonic() - _connected_at, 1) if _connected_at else None},
+        )
+        await _reconnect_user(attempt)
 
     except Exception as exc:
         ws.connected = False
@@ -637,7 +656,20 @@ async def _reconnect_user(attempt: int) -> None:
     ws = app_state.ws_status
     ws.reconnect_attempts = attempt + 1
     if attempt >= config.WS_RECONNECT_ATTEMPTS:
-        ws.add_log("Max reconnect attempts reached — staying on REST fallback.")
+        # P5-R3: this used to be a PERMANENT surrender (~9 min of backoff,
+        # then nothing until a manual restart) — and "staying on REST
+        # fallback" was false for fills: _fallback_loop polls account/
+        # positions/orderbook only, never trades, and gates on the SHARED
+        # staleness clock which a healthy market socket keeps at ~0. Hand
+        # off to the persistent retry loop instead (15/30/60/120 s forever,
+        # stop+start per attempt, exits on connected) — the same loop that
+        # already owns the failed-boot case (E2E-P5-001).
+        ws.add_log("Max fast reconnects reached — handing off to the persistent retry loop.")
+        try:
+            from core.schedulers import spawn_user_ws_retry
+            spawn_user_ws_retry()
+        except Exception:
+            log.error("user-WS retry hand-off failed", exc_info=True)
         return
 
     delay = min(config.WS_RECONNECT_BASE * (2 ** attempt), config.WS_RECONNECT_MAX)

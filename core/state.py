@@ -319,6 +319,19 @@ class WSStatus:
     market_connected:   bool  = False
     market_last_update: Optional[datetime] = None
     market_latency_ms:  float = 0.0
+    # ── USER-DATA socket private fields (P5-R2, 2026-07-30) ──────────────────
+    # The fill pipeline's own clock. `last_update`/`latency_ms` above are
+    # SHARED write targets (market loop + REST refresh also stamp them), so
+    # nothing could answer "when did the fill pipeline last deliver a frame?"
+    # — which is how a two-day user-socket outage stayed invisible
+    # (E2E-P5-001). Written ONLY by _user_data_loop. NB the user stream is
+    # event-driven: an idle flat account legitimately produces zero frames
+    # for hours, so frame AGE is informational, never a fault signal.
+    user_last_update:   Optional[datetime] = None
+    user_connected_at:  Optional[datetime] = None
+    # True while the persistent retry loop (schedulers.spawn_user_ws_retry)
+    # is working to rebind a dead user socket.
+    user_retry_active:  bool = False
 
     def add_log(self, msg: str):
         try:
@@ -344,6 +357,15 @@ class WSStatus:
         if self.market_last_update is None:
             return 9999.0
         return (datetime.now(timezone.utc) - self.market_last_update).total_seconds()
+
+    @property
+    def user_seconds_since_update(self) -> Optional[float]:
+        """Age of the last USER-DATA frame, or None if none ever arrived.
+        None (not a 9999 sentinel) because zero frames is a NORMAL state for
+        an idle account — consumers must render it as unknown, not stale."""
+        if self.user_last_update is None:
+            return None
+        return (datetime.now(timezone.utc) - self.user_last_update).total_seconds()
 
     @property
     def is_stale(self) -> bool:

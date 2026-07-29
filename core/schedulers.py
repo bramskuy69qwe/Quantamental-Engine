@@ -11,7 +11,7 @@ import logging
 import os
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Set
+from typing import Optional, Set
 
 import config
 from core.adapters.errors import RateLimitError, AuthenticationError
@@ -704,12 +704,13 @@ async def _start_user_data_stream() -> bool:
     except Exception as e:
         log.error(f"WS startup failed: {e}")
         app_state.ws_status.add_log(f"WS STARTUP ERROR: {e}")
-        _spawn(_ws_startup_retry_loop(), name="ws-startup-retry")
+        spawn_user_ws_retry()
         return False
 
 
 async def _ws_startup_retry_loop():
-    """Bind the user-data stream after a failed boot attempt (E2E-P5-001).
+    """Bind the user-data stream after a failed boot attempt (E2E-P5-001) —
+    and, since P5-R3, after the fast-reconnect cap surrenders mid-session.
 
     Backoff 15s → 30s → 60s → then every 120s, forever: retry noise is strictly
     better than a silently dead fill pipeline. Each attempt stops+restarts the
@@ -719,23 +720,53 @@ async def _ws_startup_retry_loop():
     """
     delays = (15, 30, 60, 120)
     attempt = 0
-    while True:
-        correlation_log.tick("sch-ws_startup_retry")  # corr-tap: entry scope (CL.T1a)
-        await asyncio.sleep(delays[min(attempt, len(delays) - 1)])
-        attempt += 1
-        if app_state.ws_status.connected:
-            log.info("WS startup retry: stream already up (attempt %d) — done", attempt)
-            return
-        try:
-            listen_key = await create_listen_key()
-            await ws_manager.stop()
-            await ws_manager.start(listen_key)
-            log.info("WS startup retry succeeded (attempt %d)", attempt)
-            app_state.ws_status.add_log(f"WS started after {attempt} boot retr{'y' if attempt == 1 else 'ies'}.")
-            return
-        except Exception as e:
-            log.warning("WS startup retry %d failed: %s", attempt, e)
-            app_state.ws_status.add_log(f"WS RETRY {attempt} FAILED: {e}")
+    app_state.ws_status.user_retry_active = True   # P5-R2 door reads this
+    try:
+        while True:
+            correlation_log.tick("sch-ws_startup_retry")  # corr-tap: entry scope (CL.T1a)
+            await asyncio.sleep(delays[min(attempt, len(delays) - 1)])
+            attempt += 1
+            if app_state.ws_status.connected:
+                log.info("WS startup retry: stream already up (attempt %d) — done", attempt)
+                return
+            # RL-1 + HIGH-008: don't spend budget while limited, don't hammer
+            # with known-bad credentials (matches _account_refresh_loop).
+            if app_state.ws_status.is_rate_limited:
+                continue
+            if app_state.active_account_id in app_state.auth_failed_accounts:
+                log.info("WS retry: account auth-failed — stopping retries")
+                return
+            try:
+                listen_key = await create_listen_key()
+                await ws_manager.stop()
+                await ws_manager.start(listen_key)
+                log.info("WS startup retry succeeded (attempt %d)", attempt)
+                app_state.ws_status.add_log(f"WS started after {attempt} boot retr{'y' if attempt == 1 else 'ies'}.")
+                return
+            except Exception as e:
+                log.warning("WS startup retry %d failed: %s", attempt, e)
+                app_state.ws_status.add_log(f"WS RETRY {attempt} FAILED: {e}")
+    finally:
+        app_state.ws_status.user_retry_active = False
+
+
+_user_ws_retry_task: Optional[asyncio.Task] = None
+
+
+def spawn_user_ws_retry() -> None:
+    """Idempotently spawn the persistent user-WS retry loop (P5-R3).
+
+    Called from TWO sites — _start_user_data_stream's boot-failure branch and
+    ws_manager._reconnect_user's fast-reconnect cap — which can in principle
+    race (a boot-retry still backing off when a partial connect dies at the
+    cap). Two concurrent loops would double-spend create_listen_key and
+    interleave stop()/start(); the task-liveness guard makes the second
+    spawn a no-op.
+    """
+    global _user_ws_retry_task
+    if _user_ws_retry_task is not None and not _user_ws_retry_task.done():
+        return
+    _user_ws_retry_task = _spawn(_ws_startup_retry_loop(), name="ws-startup-retry")
 
 
 # ── Regime refresh loop ──────────────────────────────────────────────────────
@@ -1074,7 +1105,14 @@ def start_background_tasks() -> None:
     _spawn(_regime_refresh_loop(),   name="regime_refresh")
     _spawn(_news_refresh_loop(),     name="news_refresh")
     _spawn(_bwe_ws_consumer(),       name="bwe_ws")
-    _spawn(MonitoringService().run(), name="monitoring")
+    # P5-R3 prerequisite (unfiled defect found while wiring the alert): the
+    # service instance was ANONYMOUS — /api/monitoring/events reads
+    # getattr(app_state, "_monitoring_service", None) and nothing ever
+    # assigned it, so the endpoint returned [] forever and
+    # exchange.record_rate_limit_event was a permanent no-op. Bind it.
+    _monitoring = MonitoringService()
+    app_state._monitoring_service = _monitoring
+    _spawn(_monitoring.run(), name="monitoring")
     _spawn(_order_staleness_loop(),  name="order_staleness")
     _spawn(_algo_order_sync_loop(),  name="algo_order_sync")
     _spawn(_calc_expiry_loop(),      name="calc_expiry")

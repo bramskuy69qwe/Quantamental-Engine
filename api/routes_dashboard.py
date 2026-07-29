@@ -668,6 +668,23 @@ async def api_state():
             "stale_s":        round(ws.market_seconds_since_update, 1),
             "using_fallback": ws.using_fallback,
         },
+        # P5-R2 (2026-07-30): USER-DATA socket — the fill pipeline. Its death
+        # had NO door at all (this block is the fix): the engine traded for
+        # two days with the sole fill source dead and nothing outside the
+        # process could tell (E2E-P5-001). Reads the user-owned fields added
+        # alongside (state.py) — NOT the shared last_update clock the REST
+        # refresh floors. last_frame_s is informational, never a fault
+        # signal: an idle account legitimately produces zero frames for
+        # hours (the user stream is event-driven). None = no frame yet.
+        "user_ws": {
+            "connected":          ws.connected,
+            "reconnect_attempts": ws.reconnect_attempts,
+            "retrying":           ws.user_retry_active,
+            "last_frame_s":       round(ws.user_seconds_since_update, 1)
+                                  if ws.user_seconds_since_update is not None else None,
+            "connected_since":    ws.user_connected_at.isoformat()
+                                  if (ws.connected and ws.user_connected_at) else None,
+        },
     }
 
 

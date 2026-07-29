@@ -71,6 +71,30 @@ const _navFeed = (ch) => {
   };
 };
 
+/* P5-R2: USER-DATA (fill-pipeline) health — the SECOND independent pipe.
+ * The FEED dot above is the MARKET socket; the two fail independently, and a
+ * dead user socket froze fills for two days with zero UI signal
+ * (E2E-P5-001). Tone keys on CONNECTIVITY only — the user stream is
+ * event-driven, so frame age is never a fault (an idle account is
+ * legitimately silent for hours); the age rides the title text. Same
+ * stateErr-first rule as _navFeed: never green on a dead source. */
+const _navUserWs = (ch) => {
+  if (ch && ch.stateErr) return { tone: 'off', value: '—',
+    title: 'Fill pipeline: reading unavailable — /api/state is not responding' };
+  const u = (ch && ch.state && ch.state.user_ws) || null;
+  if (!u) return { tone: 'off', value: '—',
+    title: 'Fill pipeline (user-data websocket): no reading yet (/api/state)' };
+  if (!u.connected && u.retrying) return { tone: 'err', value: 'retry',
+    title: 'User-data websocket DOWN — fills are NOT arriving; the persistent retry loop is rebinding it' };
+  if (!u.connected) return { tone: 'err', value: 'down',
+    title: 'User-data websocket DOWN — fills are NOT arriving; History, linkage and close rows will silently stall'
+      + (u.reconnect_attempts ? ` (reconnect attempt ${u.reconnect_attempts})` : '') };
+  return { tone: 'ok', value: 'live',
+    title: 'User-data websocket live — fills flowing'
+      + (u.last_frame_s == null ? ' · no frame this session (normal when idle)'
+        : ` · last frame ${Math.round(u.last_frame_s)}s ago`) };
+};
+
 const _navCap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : '—');
 const _navPct = (v) => (v == null ? '—' : (v > 0 ? '+' : '') + v.toFixed(2) + '%');
 const _navPctCol = (v) => (v == null ? 'var(--qe-muted)'
@@ -302,6 +326,7 @@ const TopNavStd = ({page='Dashboard', onChange, variant='line', dense=false}) =>
   };
   const sseTone = NAV_SSE_TONE[ch.sse] || 'off';
   const feed = _navFeed(ch);
+  const fills = _navUserWs(ch);
   return (
   <React.Fragment>
   <div className="qe-hscroll" style={{
@@ -380,6 +405,10 @@ const TopNavStd = ({page='Dashboard', onChange, variant='line', dense=false}) =>
       <span title={feed.title} style={{display:'inline-flex'}}>
         <StatusDot tone={feed.tone} label="FEED" value={feed.value}/>
       </span>
+      {/* P5-R2: fill-pipeline (user-data socket) health — see _navUserWs. */}
+      <span title={fills.title} style={{display:'inline-flex'}}>
+        <StatusDot tone={fills.tone} label="FILLS" value={fills.value}/>
+      </span>
       <span style={{
         fontFamily:'var(--qe-mono)', fontSize:'0.56rem', color:'var(--qe-muted)',
         letterSpacing:'0.04em',
@@ -419,6 +448,7 @@ const StatusFooter = () => {
     : ch.sse === 'connecting' ? 'var(--qe-amber)'
     : ch.sse === 'error' ? 'var(--qe-red)' : 'var(--qe-muted)';
   const feed = _navFeed(ch);
+  const fills = _navUserWs(ch);
   return (
     <div style={{
       display:'flex', alignItems:'center', gap:10,
@@ -438,6 +468,11 @@ const StatusFooter = () => {
         : feed.tone === 'warn' ? 'var(--qe-amber)'
         : feed.tone === 'err' ? 'var(--qe-red)' : 'var(--qe-muted)'
       }}>● feed</span>
+      {/* P5-R2: fill-pipeline (user-data socket) — see _navUserWs. */}
+      <span title={fills.title} style={{color:
+        fills.tone === 'ok' ? 'var(--qe-green)'
+        : fills.tone === 'err' ? 'var(--qe-red)' : 'var(--qe-muted)'
+      }}>● fills</span>
       <LiveClock id="sb.clock" format={qeClockFmt} style={{color:'var(--qe-muted)'}}/>
     </div>
   );
