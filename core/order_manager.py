@@ -176,8 +176,89 @@ class OrderManager:
         # reads them together regardless of which handler ingested each leg.
         await self._propagate_bracket_calc_id_for_orders(account_id, orders)
 
+        # 2c. E2E-P6-001: re-enrich entries whose protective legs were
+        # discovered HERE. process_order_update calls
+        # _re_enrich_parent_on_child_arrival for exactly this reason ("market
+        # orders that fill before children arrive never get correlated"), but
+        # TP/SL placed in the Binance ORDER FORM are conditional orders that the
+        # engine only learns about through this 15 s REST sweep — after the
+        # entry's last WS update. A filled market order gets no further WS
+        # events, so its tp/sl_trigger_price stayed NULL forever, _try_correlate
+        # hard-returned, and auto-link could NEVER happen on the operator's
+        # normal bracket workflow (live-verified 2026-07-29: ETHUSDT entry
+        # 8389766244548287091 vs algo children 1970/1860 — both stored, never
+        # joined).
+        await self._reenrich_entries_missing_triggers(account_id, orders)
+
         # 3. Rebuild cache + enrich
         await self.refresh_cache(account_id)
+
+    async def _reenrich_entries_missing_triggers(
+        self, account_id: int, orders: List[Dict[str, Any]]
+    ) -> None:
+        """Populate tp/sl triggers on entries whose bracket arrived via REST.
+
+        SELF-LIMITING by design: only entries that still LACK a trigger are
+        re-enriched, and only for (symbol, position_side) pairs that actually
+        carry an active protective leg in this snapshot. Once the triggers are
+        populated (the same enrich pass then runs the matcher) the query stops
+        matching, so the 15 s sweep does not become a matcher loop, and a naked
+        position is never touched.
+        """
+        pairs = {
+            (o.get("symbol") or "", str(o.get("position_side") or ""))
+            for o in orders
+            if o.get("reduce_only")
+            and (o.get("order_type") or "").lower() in self._TPSL_TYPES
+        }
+        pairs.discard(("", ""))
+        if not pairs:
+            return
+
+        import sqlite3
+        import config
+
+        for sym, pside in pairs:
+            parent = None
+            try:
+                conn = sqlite3.connect(config.DB_PATH)
+                conn.row_factory = sqlite3.Row
+                try:
+                    parent = conn.execute(
+                        "SELECT * FROM orders WHERE account_id = ? AND symbol = ? "
+                        "AND position_side = ? AND reduce_only = 0 "
+                        "AND (tp_trigger_price IS NULL OR sl_trigger_price IS NULL) "
+                        "ORDER BY id DESC LIMIT 1",
+                        (account_id, sym, pside),
+                    ).fetchone()
+                finally:
+                    conn.close()
+            except Exception:
+                log.debug("algo re-enrich lookup failed for %s/%s", sym, pside, exc_info=True)
+                continue
+
+            # corr-tap: same category as the WS twin, distinguished by `via`
+            # (spec §5.6 — the child→parent decision).
+            correlation_log.emit(
+                "order_manager", "internal", "internal",
+                correlation_log.CAT_ATTR_REENRICH_TRIGGER,
+                {
+                    "outcome": "TRIGGERED" if parent else "SKIPPED",
+                    "via": "algo_snapshot",
+                    "parent_lookup": "symbol_position_side",
+                    "parent_found": bool(parent),
+                    "parent_exchange_order_id":
+                        str(parent["exchange_order_id"] or "") if parent else "",
+                    "calc_id": (parent["calc_id"] or "") if parent else "",
+                    "terminal_position_id":
+                        (parent["terminal_position_id"] or "") if parent else "",
+                    "lifecycle_id": "",
+                    **({} if parent else {"reason": "no_entry_missing_triggers"}),
+                },
+                account_id=account_id, symbol=sym or None,
+            )
+            if parent:
+                await self._enrich_order_best_effort(dict(parent))
 
     # ── Single-Order Update (WS path) ────────────────────────────────────────
 
