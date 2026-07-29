@@ -1,7 +1,7 @@
 # Handoff — next Claude Code session
 
 **Date**: 2026-07-29 (**MERIDIAN v3.0 — the Playwright E2E debugging program is COMPLETE through Phase 6: all 8 operator-in-the-loop trade scenarios executed on the live Binance account, 8 engine defects found+fixed+live-verified (2 CRIT · 3 HIGH · 3 MED). NEXT = Phase 7 clean re-run = the live-acceptance evidence that OPENS the Jinja retirement gate.**)
-**Branch**: **`v3.0/e2e-debug` — LOCAL ONLY (18 commits over `v3.0/ui-plan-audit`, no upstream), tree CLEAN at `831b745`.** Operator push pending.
+**Branch**: **`v3.0/e2e-debug` — PUSHED 2026-07-29, origin in sync (19 commits over `v3.0/ui-plan-audit`), tree CLEAN.**
 **Tests**: **4556 passed / 7 skipped / 3 deselected** (SOLO, `.venv`, FULL gate green). ALWAYS run SOLO on the **`.venv`** interpreter (user-site Python lacks `pytest-timeout` → drops the 30 s guardrail). NEVER run the gate concurrently with live-engine driving (conftest tripwire + weight budget).
 **Bundle**: **`929f95bffc`** — hard-refresh after any restart (ModelDialog confirm + market-entry-price fixes live in it).
 **Engine**: RUNNING; last boot `22:11:14` was the P6-004 live verification — **0 WS failures, 0 retries, listen key bound 9 s in**. **w32time is STILL STOPPED** (drift −2580 ms recurred mid-session; the CLOCK banner will keep returning until the operator runs, elevated: `sc config w32time start= auto && net start w32time && w32tm /resync /force`). Restart discipline: **one restart, then wait** — four boots in eight minutes drove the weight budget to 117 % and shed listen keys.
