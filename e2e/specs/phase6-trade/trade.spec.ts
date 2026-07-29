@@ -48,8 +48,56 @@ async function submitCalc(page: import('@playwright/test').Page, ticker: string)
   await page.waitForTimeout(400);
   await page.locator('#pt-tp').fill('2');
   await page.locator('#pt-sl').fill('1');
-  await page.locator('button', { hasText: /^Calculate$/ }).first().click();
-  await expect(page.locator(`text=${CHIP.linkable}`).first()).toBeVisible({ timeout: 20_000 });
+
+  // Submit is RETRIED, not one-shot. In MARKET mode the form refuses to size
+  // until ITS OWN live-price mirror has populated (pages-pretrade.jsx:424,
+  // "No live price yet — wait a beat or switch to LIMIT"), which arrives on the
+  // page's 1 Hz poll — the SERVER price door can already answer while the form
+  // has not caught up. Right after a fresh boot that gap is seconds wide and it
+  // silently ate the click (run 6-20260729-1512: chip stayed "no active calc").
+  const chip = page.locator(`text=${CHIP.linkable}`).first();
+  const storedCalcId = async (): Promise<string> =>
+    page.evaluate(() => {
+      try {
+        return JSON.parse(sessionStorage.getItem('qe.v3.calc_result') || '{}').calc_id || '';
+      } catch {
+        return '';
+      }
+    });
+
+  let lastErr = '';
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    // NEVER re-click blind: a manual submit INSERTS a pre_trade_log row and
+    // SUPERSEDES the previous calc for the same (ticker, side). Run
+    // 6-20260729-1515 clicked twice 16 s apart and left three chained calcs on
+    // the operator's LIVE account (08b2d1a3 → a97f9cd6 → 0e1038be), with the
+    // journal recording a stale id. If a calc already exists, the submit
+    // WORKED and only the chip is slow — wait, don't create another.
+    if (attempt > 1 && (await storedCalcId())) {
+      console.log('[e2e] calc already created — waiting for the chip instead of re-submitting');
+      await expect(chip).toBeVisible({ timeout: 30_000 });
+      break;
+    }
+    await page.locator('button', { hasText: /^Calculate$/ }).first().click();
+    try {
+      await expect(chip).toBeVisible({ timeout: 12_000 });
+      break;
+    } catch {
+      lastErr = (await page
+        .locator('.qe-mono')
+        .filter({ hasText: /required|no live price|must be|blocked|failed/i })
+        .first()
+        .textContent()
+        .catch(() => '')) || '';
+      console.log(`[e2e] calc attempt ${attempt} did not arm the chip${lastErr ? ` — form says: ${lastErr}` : ''}`);
+      if (attempt === 4) {
+        throw new Error(
+          `calc never armed after 4 attempts${lastErr ? ` — last form error: ${lastErr}` : ''}`,
+        );
+      }
+      await page.waitForTimeout(4_000); // let the form's price mirror catch up
+    }
+  }
   return page.evaluate(() => {
     try {
       return JSON.parse(sessionStorage.getItem('qe.v3.calc_result') || '{}').calc_id || '';
