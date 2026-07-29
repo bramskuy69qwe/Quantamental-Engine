@@ -87,7 +87,30 @@ test.describe('phase 5 — approved live mutations', () => {
     // MARKET + BY-% (side default): ticker, SL% required; TP% for a full plan.
     collector.setControl('livemut/calc-form');
     await page.locator('#pt-ticker').fill(ticker!);
-    await page.waitForTimeout(2_500); // live price poll must land (market mode needs it)
+
+    // MARKET mode needs a live price before Calculate will submit. A fixed sleep
+    // is not enough right after an engine restart: the boot burst saturates the
+    // REST weight budget and the price poll returns "Data fetch error: Weight
+    // budget exceeded" for minutes (observed, run 5-20260729-0725). Poll the
+    // engine's own price door until it yields a positive price.
+    await expect
+      .poll(
+        async () => {
+          const r = await page.request.get(`http://127.0.0.1:8000/api/price/${ticker}`);
+          if (!r.ok()) return 0;
+          const j = (await r.json()) as { price?: number };
+          return Number(j?.price ?? 0);
+        },
+        {
+          timeout: 120_000,
+          intervals: [2_000],
+          message:
+            'no live price for the calc ticker — engine REST weight budget likely still ' +
+            'saturated from the boot burst; wait and re-run',
+        },
+      )
+      .toBeGreaterThan(0);
+
     await page.locator('.qe-period > button', { hasText: /^BY %$|^BY-%$|%/ }).first().click();
     await page.waitForTimeout(400);
     await page.locator('#pt-tp').fill('2');
