@@ -75,6 +75,23 @@ def _resolve_db_path(account_id: int, data_dir: Optional[str] = None) -> str:
             finally:
                 conn.close()
 
+    # E2E-P7-001: accounts ADDED after the split have no per-account DB —
+    # add_account writes the legacy store only and nothing mints a per-account
+    # file until the deferred R1b lookup lands. Their settings must resolve to
+    # the legacy DB (same store their registry row lives in; read and write
+    # stay symmetric). Only fires when NO per-account DB carries the account,
+    # so account 1's per-account resolution is unchanged.
+    legacy = os.path.join(ddir, "risk_engine.db")
+    if os.path.exists(legacy):
+        conn = sqlite3.connect(legacy)
+        try:
+            if conn.execute(
+                "SELECT 1 FROM accounts WHERE id = ?", (account_id,)
+            ).fetchone():
+                return legacy
+        finally:
+            conn.close()
+
     raise KeyError(f"No per-account DB found for account_id={account_id}")
 
 
@@ -113,7 +130,11 @@ def update_account_settings(
     Returns the refreshed ``AccountSettings`` after the write.
     No-op (no SQL) when *updates* is empty.
     Raises ``ValueError`` for unknown / non-updatable fields.
-    Raises ``KeyError`` if the account row doesn't exist.
+    Raises ``KeyError`` if the ACCOUNT doesn't exist. A missing settings ROW
+    for an existing account is created with the table's column defaults first
+    (E2E-P7-001: ``add_account`` never creates one and migration 001 seeded
+    only the first account, so every later-added account 500'd its first
+    preset apply and silently no-opped its settings saves).
     """
     bad = set(updates) - _UPDATABLE
     if bad:
@@ -131,6 +152,18 @@ def update_account_settings(
 
     conn = sqlite3.connect(db_path)
     try:
+        # Keep the KeyError contract for nonexistent accounts across every
+        # resolver branch (pre-split resolution never checks existence).
+        if not conn.execute(
+            "SELECT 1 FROM accounts WHERE id = ?", (account_id,)
+        ).fetchone():
+            raise KeyError(f"No accounts row for account_id={account_id}")
+        # The bare (account_id) insert takes every column default, which
+        # mirrors the AccountSettings dataclass defaults exactly.
+        conn.execute(
+            "INSERT OR IGNORE INTO account_settings (account_id) VALUES (?)",
+            (account_id,),
+        )
         cur = conn.execute(
             "UPDATE account_settings SET " + set_clause + " WHERE account_id = ?",
             values,

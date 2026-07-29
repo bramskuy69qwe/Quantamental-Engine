@@ -156,7 +156,13 @@ test.describe('phase 4 — sandbox mutations', () => {
     await expect(reasonSpan).toBeVisible({ timeout: 15_000 });
     await reasonSpan.click();
     await page.waitForTimeout(800);
-    await page.locator('button', { hasText: /^Intervention$/ }).first().click();
+    // The reason buttons carry a title + description sub-line ("Intervention
+    // Judgement call — exited against the plan deliberately"), so an exact
+    // /^Intervention$/ can never match — textContent concatenates the two
+    // children without whitespace, which also rules out a \b after the title.
+    // Prefix-match the title. (This locator was wrong since inception: the
+    // step was red in every phase-4 run, undispositioned at phase close.)
+    await page.locator('button', { hasText: /^Intervention/ }).first().click();
     await page.locator('input[type="text"]').last().fill('e2e sandbox note').catch(() => undefined);
     await page.locator('button', { hasText: /^Save$/ }).first().click();
     await page.waitForTimeout(2_000);
