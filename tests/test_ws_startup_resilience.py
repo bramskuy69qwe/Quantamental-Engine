@@ -106,11 +106,16 @@ class TestStickyPriorityRestored:
 class TestWsStartupRetry:
     def test_retry_loop_exists_and_is_spawned_on_failure(self):
         assert hasattr(sch, "_ws_startup_retry_loop"), "the retry loop must exist"
-        # _startup_fetch owns the boot WS start (not start_background_tasks).
-        src = inspect.getsource(sch._startup_fetch)
-        assert "_ws_startup_retry_loop" in src, (
+        # E2E-P6-004 moved the boot WS start out of _startup_fetch into
+        # _start_user_data_stream (so it could be called EARLY, before the
+        # backfills). The contract is unchanged: a boot failure spawns the retry.
+        helper = inspect.getsource(sch._start_user_data_stream)
+        assert "_ws_startup_retry_loop" in helper, (
             "a failed boot WS start must spawn the retry loop — logging and moving "
             "on left the engine with no fill source until a manual restart"
+        )
+        assert "_start_user_data_stream()" in inspect.getsource(sch._startup_fetch), (
+            "boot must actually call the helper"
         )
 
     def test_retry_loop_restarts_manager_and_exits_when_connected(self):

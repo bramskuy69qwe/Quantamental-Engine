@@ -520,6 +520,26 @@ async def _startup_fetch():
     if app_state.account_state.total_equity > 0:
         log.info(f"Connected — equity: {app_state.account_state.total_equity:.2f} USDT")
 
+    # ── User-data stream: bind HERE, before the historical backfills ─────────
+    # E2E-P6-004 (2026-07-29): this used to run LAST — after BOD/SOW equity, the
+    # full exchange trade history, a 90-DAY offline recovery, and one OHLCV fetch
+    # PER OPEN POSITION. The engine therefore spent its own weight budget and
+    # then asked for the single most important call it makes: the listen key,
+    # gateway to its ONLY fill source. Live evidence (four boots in eight
+    # minutes): "WS startup failed: Weight budget exceeded (106% → 117%,
+    # priority=urgent)" — three retries over ~2 min before it bound. Raising the
+    # priority (E2E-P5-001) decides who wins a CONTENDED budget; it cannot help
+    # when the budget is already over 100%.
+    #
+    # Ordering constraints, both satisfied here:
+    #  * AFTER fetch_positions — _create_fill_from_ws resolves terminal_position_id
+    #    from app_state.positions, so the position map must be loaded or early
+    #    fills would land with an empty tpid;
+    #  * BEFORE the historical work — that work is deferrable and idempotent
+    #    (offline recovery is gap-scoped and dedups on exchange_fill_id), so it
+    #    can absorb the throttling instead of the fill pipeline.
+    await _start_user_data_stream()
+
     try:
         await fetch_bod_sow_equity()
     except Exception as e:
@@ -566,20 +586,6 @@ async def _startup_fetch():
     if app_state._data_cache is not None:
         app_state._data_cache._recalculate_portfolio()
 
-    try:
-        listen_key = await create_listen_key()
-        await ws_manager.start(listen_key)
-    except Exception as e:
-        log.error(f"WS startup failed: {e}")
-        app_state.ws_status.add_log(f"WS STARTUP ERROR: {e}")
-        # E2E-P5-001: a transient boot failure here (2026-07-28: the sticky
-        # background priority + an exhausted weight budget refused the listen
-        # key) used to kill the user-data stream PERMANENTLY until the next
-        # manual restart — while REST reconcile kept inserting lifecycle-less
-        # fills (no tpid, no closed_positions, History frozen for two days).
-        # Never accept a dead fill pipeline silently: retry until it binds.
-        _spawn(_ws_startup_retry_loop(), name="ws-startup-retry")
-
     # Compute initial regime from whatever is already in the DB so that the
     # first calculator run is never stuck with a 1.0 fallback multiplier.
     try:
@@ -593,6 +599,28 @@ async def _startup_fetch():
     app_state.is_initializing = False
     app_state.ws_status.add_log(f"{config.PROJECT_NAME} fully initialized.")
     log.info(f"Background startup complete — {config.PROJECT_NAME} fully ready.")
+
+
+async def _start_user_data_stream() -> bool:
+    """Acquire the listen key and start the WS manager; retry in the background.
+
+    Extracted so the boot sequence can bind the fill pipeline EARLY (see the
+    call site in _startup_fetch) and so the failure contract lives in one place:
+    a boot failure is never terminal — _ws_startup_retry_loop keeps trying with
+    backoff. Before E2E-P5-001 a single transient rejection killed the user-data
+    stream until the next manual restart, while REST reconcile silently kept
+    inserting lifecycle-less fills (no tpid, no closed_positions — History
+    frozen for two days).
+    """
+    try:
+        listen_key = await create_listen_key()
+        await ws_manager.start(listen_key)
+        return True
+    except Exception as e:
+        log.error(f"WS startup failed: {e}")
+        app_state.ws_status.add_log(f"WS STARTUP ERROR: {e}")
+        _spawn(_ws_startup_retry_loop(), name="ws-startup-retry")
+        return False
 
 
 async def _ws_startup_retry_loop():
