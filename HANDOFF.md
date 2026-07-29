@@ -38,6 +38,19 @@ running were always ≤1 ms; the "Sync now button is clickable again" was a
 UI misread, verified by live measurement +122 ms post-sync) and FIXED by
 the operator (`StartType=Automatic`, verified Running).
 
+**Post-restart addendum (`93ad0b5`)**: the operator's first boot on the
+new build surfaced TWO more defects, both fixed same-session: (1) FALSE
+CLOCK criticals — the offset math midpointed across the weight-tracker's
+in-path throttle sleep (3465 ms throttle → −1747 ms "drift" on a clock
+reading −27 ms; samples >1500 ms elapsed are now DISCARDED); the running
+engine predates the fix, so a throttle-window banner can still flash until
+the NEXT restart — it self-clears on the next clean sample and is NOT the
+OS clock. (2) The SECOND Finnhub token leak path — httpx exception
+messages embed the full URL; news_fetcher's four error sites now scrub
+`token=***`. The Finnhub calendar 403 is most likely a premium-endpoint
+plan restriction, not a dead key — but the token has now been pasted in a
+terminal too: **rotation is due**.
+
 **NEXT PROGRAM = JINJA RETIREMENT** — unchanged, operator-gated; recipe +
 constraints in the 07-25 block (§ "v3.0 RENAME SHIPPED · RETIREMENT
 DEFERRED"). Release-hygiene version bump at program close.
