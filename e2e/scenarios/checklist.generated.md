@@ -44,6 +44,26 @@
 - [ ] Position flat; leftover TP/SL cancelled on Binance.
 - [ ] No active calc remains (it completed via the position).
 
+## H1b-close-tail — Close an EXISTING linked position → closed row + REASON + calc completes
+
+**Group**: `happy`  •  **Why**: The tail of H1 without re-opening: verifies the close path on a position that is ALREADY linked. Covers the +2 s close-row build, the History row, MANUAL_OTHER classification, and the calc reaching completed_via_position.
+
+**Preconditions**
+- An OPEN position you are willing to close (H1 leaves one LINKED / ON-PLAN).
+- Set E2E_TRADE_TICKER to that position's symbol.
+
+| # | Who | Step | Expected |
+|---|---|---|---|
+| 1 | script | Script opens Linkage. | — |
+| 2 | assert | _check_ `position-linked-onplan` | Confirm the position is present and linked before closing. _(allow 20s)_ |
+| 3 | **YOU** | On BINANCE: CLOSE the position at market and cancel any leftover TP/SL legs.<br>Press DONE when flat — or SKIP to keep the position and end the scenario. | — |
+| 4 | assert | _check_ `closed-row-present` | History shows the closed row (2 s build + 30 s poll). _(allow 45s)_ |
+| 5 | assert | _check_ `closed-row-reason` | REASON reads Manual — a market close is MANUAL_OTHER. _(allow 45s)_ |
+
+**Cleanup**
+- [ ] Position flat; leftover protective legs cancelled.
+- [ ] History row present with a Manual reason.
+
 ## L1-no-calc-unplanned — Open WITHOUT a calc → position reads UNPLANNED
 
 **Group**: `linkage`  •  **Why**: Proves the engine does not invent a link — and that a naked entry never reaches the inbox.
@@ -89,16 +109,22 @@
 **Group**: `amendment`  •  **Why**: Drift-compare is the ONLY amendment detector on Binance (a TP edit is a venue cancel+create, so the order_amendments ledger stays EMPTY — never assert the drilldown here).
 
 **Preconditions**
-- Requires a LINKED position (run H1 first, or link one).
+- Self-contained: opens its own LINKED position first (A2 then continues from it).
+- Both legs at the calc levels, single TP — same rules as H1.
 
 | # | Who | Step | Expected |
 |---|---|---|---|
-| 1 | **YOU** | On BINANCE: move the TP more than 0.1% away from the planned level. Press DONE. | — |
-| 2 | script | Script opens Linkage. | — |
-| 3 | assert | _check_ `plan-badge-amended` | Plan deviation shows AMENDED (amber) with a tp drift %. Budget covers the 15s algo REST sync + 5s poll. _(allow 25s)_ |
+| 1 | script | Open Pre-Trade. | — |
+| 2 | script | Script submits the calc. | — |
+| 3 | assert | _check_ `chip-linkable` | Chip shows ✓ LINKABLE — the 5-minute window starts NOW. _(allow 20s)_ |
+| 4 | **YOU** | On BINANCE: open a SMALL position at ~the calc entry with TP and SL at the calc levels<br>(order-form TP/SL is fine — that path is fixed). Press DONE when the entry has filled. | — |
+| 5 | script | Script opens Linkage. | — |
+| 6 | assert | _check_ `position-linked-onplan` | Position is LINKED + ON-PLAN before we amend anything. _(allow 45s)_ |
+| 7 | **YOU** | On BINANCE: now MOVE the TP more than 0.1% away from the planned level. Press DONE. | — |
+| 8 | assert | _check_ `plan-badge-amended` | Plan deviation shows AMENDED (amber) with a tp drift %. Budget covers the 15s algo sync + 5s poll. _(allow 30s)_ |
 
 **Cleanup**
-- [ ] Leave the position for A2, or close it.
+- [ ] LEAVE the position open — A2 continues from it.
 
 ## A2-sl-removed — Cancel the SL entirely → OFF-PLAN (red), and it STAYS red in History
 
@@ -124,14 +150,15 @@
 **Group**: `exit-structure`  •  **Why**: The engine writes one closed_positions row per closing ORDER; only the FINAL row gets the ladder-aware reason, funding sum and calc completion.
 
 **Preconditions**
-- An open position (linked or not).
+- Self-contained: opens its own position (no calc needed — this tests close structure).
 
 | # | Who | Step | Expected |
 |---|---|---|---|
-| 1 | **YOU** | On BINANCE: close roughly HALF the position. Press DONE. | — |
-| 2 | assert | _check_ `closed-row-present` | History shows a PARTIAL row with the partial qty. _(allow 40s)_ |
-| 3 | **YOU** | On BINANCE: close the REMAINDER. Press DONE when flat. | — |
-| 4 | assert | _check_ `closed-row-present` | A SECOND row appears (one per closing order — not a single merged row). _(allow 40s)_ |
+| 1 | **YOU** | On BINANCE: open a SMALL position (size divisible in two — e.g. 0.04, so halves are 0.02).<br>No calc needed for this scenario. Press DONE when filled. | — |
+| 2 | **YOU** | On BINANCE: close roughly HALF the position. Press DONE. | — |
+| 3 | assert | _check_ `closed-row-present` | History shows a PARTIAL row with the partial qty. _(allow 40s)_ |
+| 4 | **YOU** | On BINANCE: close the REMAINDER. Press DONE when flat. | — |
+| 5 | assert | _check_ `closed-row-present` | A SECOND row appears (one per closing order — not a single merged row). _(allow 40s)_ |
 
 **Cleanup**
 - [ ] Position flat.

@@ -95,7 +95,17 @@ for (const scenario of SCENARIOS) {
         if (step.action === 'goto-linkage') {
           await gotoPage(page, 'Linkage');
           await expect(screenRoot(page, '03 Linkage')).toBeVisible({ timeout: 20_000 });
-          await page.waitForTimeout(5_000); // inbox/positions mount on the 5 s lane
+          // First paint after a fresh load costs more than one poll interval:
+          // the page mounts, THEN the 5 s lane fetches, THEN rows render. Two
+          // late-passes in a row (chip-linked, position-linked) traced to this —
+          // the harness was manufacturing misses the operator had to adjudicate.
+          // Wait for a table to actually carry rows before asserting on them.
+          await page
+            .locator('table.qe-table tbody tr')
+            .first()
+            .waitFor({ state: 'visible', timeout: 20_000 })
+            .catch(() => undefined); // genuinely-empty panes are a valid state
+          await page.waitForTimeout(2_000);
         } else if (step.action === 'goto-history') {
           await gotoPage(page, 'History');
           await expect(screenRoot(page, '04 History')).toBeVisible({ timeout: 20_000 });

@@ -642,7 +642,16 @@ def find_candidate_calcs(
     Includes candidates where at least ONE leg matches within max_drift_pct.
     Sorted by: count-of-matching-legs DESC, drift sum ASC, timestamp DESC.
     """
-    entry_price = order.get("price", 0)
+    # E2E-P6-002: a MARKET order carries price = 0 — its executed entry is
+    # avg_fill_price. The STRICT matcher already knows this (order_enrichment
+    # passes both and correlate_order_to_calc compares the fill for market
+    # orders), but this LOOSE finder read `price` only and bailed on the
+    # `not entry_price` guard, so it returned [] for every market entry. Effect:
+    # the manual-link resolver showed "No candidate calcs in window" for an
+    # order the strict matcher had just scored 4/6 — the operator could only
+    # mark UNPLANNED, and the manual-link RECOVERY PATH was unusable for the
+    # most common entry type (live-verified 2026-07-29, order 229947939067).
+    entry_price = order.get("price", 0) or order.get("avg_fill_price", 0) or 0
     tp_price = order.get("tp_trigger_price", 0)
     sl_price = order.get("sl_trigger_price", 0)
     ticker = order.get("symbol", "")

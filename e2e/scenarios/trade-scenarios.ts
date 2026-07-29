@@ -103,6 +103,35 @@ export const SCENARIOS: Scenario[] = [
     ],
   },
   {
+    id: 'H1b-close-tail',
+    group: 'happy',
+    title: 'Close an EXISTING linked position → closed row + REASON + calc completes',
+    why:
+      'The tail of H1 without re-opening: verifies the close path on a position that is ' +
+      'ALREADY linked. Covers the +2 s close-row build, the History row, MANUAL_OTHER ' +
+      'classification, and the calc reaching completed_via_position.',
+    preconditions: [
+      'An OPEN position you are willing to close (H1 leaves one LINKED / ON-PLAN).',
+      'Set E2E_TRADE_TICKER to that position\'s symbol.',
+    ],
+    steps: [
+      { kind: 'auto', action: 'goto-linkage', manual: 'Script opens Linkage.' },
+      { kind: 'assert', oracle: 'position-linked-onplan', budgetMs: 20_000, manual: 'Confirm the position is present and linked before closing.' },
+      {
+        kind: 'operator',
+        manual:
+          'On BINANCE: CLOSE the position at market and cancel any leftover TP/SL legs.\n' +
+          'Press DONE when flat — or SKIP to keep the position and end the scenario.',
+      },
+      { kind: 'assert', oracle: 'closed-row-present', budgetMs: 45_000, manual: 'History shows the closed row (2 s build + 30 s poll).' },
+      { kind: 'assert', oracle: 'closed-row-reason', budgetMs: 45_000, manual: 'REASON reads Manual — a market close is MANUAL_OTHER.' },
+    ],
+    cleanup: [
+      'Position flat; leftover protective legs cancelled.',
+      'History row present with a Manual reason.',
+    ],
+  },
+  {
     id: 'L1-no-calc-unplanned',
     group: 'linkage',
     title: 'Open WITHOUT a calc → position reads UNPLANNED',
@@ -150,13 +179,26 @@ export const SCENARIOS: Scenario[] = [
     group: 'amendment',
     title: 'Move the TP >0.1% → plan badge goes AMENDED (amber)',
     why: 'Drift-compare is the ONLY amendment detector on Binance (a TP edit is a venue cancel+create, so the order_amendments ledger stays EMPTY — never assert the drilldown here).',
-    preconditions: ['Requires a LINKED position (run H1 first, or link one).'],
-    steps: [
-      { kind: 'operator', manual: 'On BINANCE: move the TP more than 0.1% away from the planned level. Press DONE.' },
-      { kind: 'auto', action: 'goto-linkage', manual: 'Script opens Linkage.' },
-      { kind: 'assert', oracle: 'plan-badge-amended', budgetMs: 25_000, manual: 'Plan deviation shows AMENDED (amber) with a tp drift %. Budget covers the 15s algo REST sync + 5s poll.' },
+    preconditions: [
+      'Self-contained: opens its own LINKED position first (A2 then continues from it).',
+      'Both legs at the calc levels, single TP — same rules as H1.',
     ],
-    cleanup: ['Leave the position for A2, or close it.'],
+    steps: [
+      { kind: 'auto', action: 'goto-pretrade', manual: 'Open Pre-Trade.' },
+      { kind: 'auto', action: 'submit-calc', manual: 'Script submits the calc.' },
+      { kind: 'assert', oracle: 'chip-linkable', budgetMs: 20_000, manual: 'Chip shows ✓ LINKABLE — the 5-minute window starts NOW.' },
+      {
+        kind: 'operator',
+        manual:
+          'On BINANCE: open a SMALL position at ~the calc entry with TP and SL at the calc levels\n' +
+          '(order-form TP/SL is fine — that path is fixed). Press DONE when the entry has filled.',
+      },
+      { kind: 'auto', action: 'goto-linkage', manual: 'Script opens Linkage.' },
+      { kind: 'assert', oracle: 'position-linked-onplan', budgetMs: 45_000, manual: 'Position is LINKED + ON-PLAN before we amend anything.' },
+      { kind: 'operator', manual: 'On BINANCE: now MOVE the TP more than 0.1% away from the planned level. Press DONE.' },
+      { kind: 'assert', oracle: 'plan-badge-amended', budgetMs: 30_000, manual: 'Plan deviation shows AMENDED (amber) with a tp drift %. Budget covers the 15s algo sync + 5s poll.' },
+    ],
+    cleanup: ['LEAVE the position open — A2 continues from it.'],
   },
   {
     id: 'A2-sl-removed',
@@ -179,8 +221,14 @@ export const SCENARIOS: Scenario[] = [
     group: 'exit-structure',
     title: 'Partial close → one History row PER closing order',
     why: 'The engine writes one closed_positions row per closing ORDER; only the FINAL row gets the ladder-aware reason, funding sum and calc completion.',
-    preconditions: ['An open position (linked or not).'],
+    preconditions: ['Self-contained: opens its own position (no calc needed — this tests close structure).'],
     steps: [
+      {
+        kind: 'operator',
+        manual:
+          'On BINANCE: open a SMALL position (size divisible in two — e.g. 0.04, so halves are 0.02).\n' +
+          'No calc needed for this scenario. Press DONE when filled.',
+      },
       { kind: 'operator', manual: 'On BINANCE: close roughly HALF the position. Press DONE.' },
       { kind: 'assert', oracle: 'closed-row-present', budgetMs: 40_000, manual: 'History shows a PARTIAL row with the partial qty.' },
       { kind: 'operator', manual: 'On BINANCE: close the REMAINDER. Press DONE when flat.' },

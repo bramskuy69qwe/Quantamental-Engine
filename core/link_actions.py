@@ -433,7 +433,12 @@ async def list_needs_review(account_id: int, limit: int = 100) -> List[Dict[str,
     # already exist on `orders` but were never selected here. quantity drives
     # both Size and the computed Notional (price × quantity).
     async with db._conn.execute(
+        # E2E-P6-002: avg_fill_price is REQUIRED here — a market order's `price`
+        # is 0, so without it find_candidate_calcs bails and the resolver can
+        # never offer a candidate (see its entry_price comment). It is also the
+        # only honest number to DISPLAY for a market entry.
         "SELECT id, exchange_order_id, symbol, side, order_type, price, "
+        "       avg_fill_price, "
         "       quantity, client_order_id, operator_id, "
         "       tp_trigger_price, sl_trigger_price, created_at_ms, link_status "
         "FROM orders "
