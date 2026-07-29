@@ -91,6 +91,19 @@ def _get_adapter() -> ExchangeAdapter:
 
 # ── Exchange info ────────────────────────────────────────────────────────────
 
+# Max wall-to-wall elapsed for a TRUSTWORTHY clock-offset sample. The offset
+# math assumes the server stamped its time near the midpoint of
+# [wall_before, wall_after] — but fetch_server_time runs through the
+# adapter's _run(), where the weight tracker can SLEEP seconds before the
+# HTTP call during a boot burst. That sleep shifts the real exchange away
+# from the midpoint by half its length: a 3.5 s throttle turned a true
+# −27 ms offset into a reported −1747 ms CRITICAL (observed 2026-07-30
+# 02:11, minutes after the OS clock was verified in sync). A slow sample —
+# throttled OR network-stalled — cannot locate the midpoint honestly, so it
+# is DISCARDED (last good offset stands; time_sync logs on transitions only).
+_OFFSET_SAMPLE_MAX_ELAPSED_MS = 1500.0
+
+
 async def fetch_exchange_info() -> None:
     """Update exchange_info on app_state (latency, server time, name, fees)."""
     from core import time_sync
@@ -105,7 +118,14 @@ async def fetch_exchange_info() -> None:
     # Compute clock offset: exchange_time - local_midpoint
     local_mid = (wall_before + wall_after) / 2
     try:
-        time_sync.update(adapter.exchange_id, server_time - local_mid)
+        if (wall_after - wall_before) <= _OFFSET_SAMPLE_MAX_ELAPSED_MS:
+            time_sync.update(adapter.exchange_id, server_time - local_mid)
+        else:
+            log.debug(
+                "time_sync: offset sample discarded — %.0fms elapsed "
+                "(throttled/stalled; midpoint untrustworthy)",
+                wall_after - wall_before,
+            )
     except Exception:
         time_sync.mark_failed(adapter.exchange_id)
 

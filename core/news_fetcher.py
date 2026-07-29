@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -26,6 +27,19 @@ from core import correlation_log
 from core.database import db
 
 log = logging.getLogger("news_fetcher")
+
+# Credential hygiene (2026-07-30, the SECOND Finnhub leak path): capping the
+# httpx logger at WARNING silenced its per-request INFO echo, but
+# httpx.HTTPStatusError embeds the FULL request URL — token query param
+# included — in its message, and the error handlers below logged that
+# message verbatim into the root JSON log. Scrub the token before any
+# exception text reaches a log line.
+_TOKEN_RE = re.compile(r"(token=)[A-Za-z0-9_\-]+")
+
+
+def _redact(e: object) -> str:
+    """Exception text with the Finnhub token query param scrubbed."""
+    return _TOKEN_RE.sub(r"\1***", str(e))
 
 
 # ── Finnhub (news + economic calendar) ──────────────────────────────────────
@@ -72,7 +86,7 @@ class FinnhubFetcher:
                                   "status": e.response.status_code,
                                   "error_type": type(e).__name__,
                                   "duration_ms": round((time.perf_counter() - _t0) * 1000, 2)})
-            log.error("Finnhub news HTTP %s: %s", e.response.status_code, e)
+            log.error("Finnhub news HTTP %s: %s", e.response.status_code, _redact(e))
             return 0
         except Exception as e:
             correlation_log.emit("news_fetcher", "finnhub", "in",
@@ -80,7 +94,7 @@ class FinnhubFetcher:
                                  {"endpoint": "news", "ok": False,
                                   "error_type": type(e).__name__,
                                   "duration_ms": round((time.perf_counter() - _t0) * 1000, 2)})
-            log.error("Finnhub news fetch failed: %s", e)
+            log.error("Finnhub news fetch failed: %s", _redact(e))
             return 0
         correlation_log.emit("news_fetcher", "finnhub", "in",
                              correlation_log.CAT_HTTP_OUT_RETURN,
@@ -138,7 +152,7 @@ class FinnhubFetcher:
                                   "status": e.response.status_code,
                                   "error_type": type(e).__name__,
                                   "duration_ms": round((time.perf_counter() - _t0) * 1000, 2)})
-            log.error("Finnhub calendar HTTP %s: %s", e.response.status_code, e)
+            log.error("Finnhub calendar HTTP %s: %s", e.response.status_code, _redact(e))
             return 0
         except Exception as e:
             correlation_log.emit("news_fetcher", "finnhub", "in",
@@ -146,7 +160,7 @@ class FinnhubFetcher:
                                  {"endpoint": "calendar", "ok": False,
                                   "error_type": type(e).__name__,
                                   "duration_ms": round((time.perf_counter() - _t0) * 1000, 2)})
-            log.error("Finnhub calendar fetch failed: %s", e)
+            log.error("Finnhub calendar fetch failed: %s", _redact(e))
             return 0
         correlation_log.emit("news_fetcher", "finnhub", "in",
                              correlation_log.CAT_HTTP_OUT_RETURN,
