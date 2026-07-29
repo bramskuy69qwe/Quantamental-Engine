@@ -83,10 +83,16 @@ export const SCENARIOS: Scenario[] = [
           'at ~the calc levels shown in Setup Summary. Confirm the entry FILLED, then press DONE.',
       },
       { kind: 'assert', oracle: 'ws-sourced-fill', budgetMs: 30_000, manual: 'Engine recorded the fill via the user-data WS (source=binance_ws) — the P5-001 proof.' },
-      { kind: 'assert', oracle: 'chip-linked', budgetMs: 15_000, manual: 'Pre-Trade chip flips to ✓ LINKED (poller stops).' },
+      // ORDER-FORM budget: TP/SL set in Binance's form are conditional orders
+      // INVISIBLE to the WS — the engine only sees them on the 15 s algo sweep,
+      // which then re-enriches the entry (E2E-P6-001) before the matcher can
+      // run, and the chip polls at 5 s. So the honest bound is ~30 s, not the
+      // lifecycle map's 10 s (which assumed WS-visible legs). Measured: a
+      // 15 s budget produced a LATE PASS in run 6-20260729-1120.
+      { kind: 'assert', oracle: 'chip-linked', budgetMs: 40_000, manual: 'Pre-Trade chip flips to ✓ LINKED (poller stops). Order-form TP/SL adds the 15 s algo-sweep hop.' },
       { kind: 'auto', action: 'goto-linkage', manual: 'Script opens Linkage.' },
-      { kind: 'assert', oracle: 'position-linked-onplan', budgetMs: 15_000, manual: 'Open Positions row shows LINKED + ON-PLAN.' },
-      { kind: 'assert', oracle: 'calc-row-absent', budgetMs: 15_000, manual: 'The calc leaves Active Calcs (status → matched).' },
+      { kind: 'assert', oracle: 'position-linked-onplan', budgetMs: 20_000, manual: 'Open Positions row shows LINKED + ON-PLAN.' },
+      { kind: 'assert', oracle: 'calc-row-absent', budgetMs: 20_000, manual: 'THIS calc (by calc_id) leaves Active Calcs (status → matched).' },
       { kind: 'operator', manual: 'On BINANCE: CLOSE the position at market (cancel leftover TP/SL). Press DONE when flat.' },
       { kind: 'assert', oracle: 'closed-row-present', budgetMs: 40_000, manual: 'History shows the closed row (2s build + 30s poll; pane ↻ to hurry).' },
       { kind: 'assert', oracle: 'closed-row-reason', params: { reason: 'Manual' }, budgetMs: 40_000, manual: 'REASON reads Manual (a market close is MANUAL_OTHER).' },

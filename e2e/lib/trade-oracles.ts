@@ -57,16 +57,32 @@ export async function runOracle(
     }
     case 'calc-row-present':
     case 'calc-row-absent': {
-      const row = page
-        .locator('tr')
-        .filter({ hasText: sym(ctx.ticker) })
-        .filter({ has: page.getByTitle('Cancel this calc') });
-      if (oracle === 'calc-row-present') {
-        await expect(row.first()).toBeVisible({ timeout: budgetMs });
-        return 'Active Calcs: row present';
-      }
-      await expect(row).toHaveCount(0, { timeout: budgetMs });
-      return 'Active Calcs: row gone (calc matched/terminal)';
+      // CALC-SCOPED, not ticker-scoped. A ticker filter cannot tell OUR calc
+      // from any other live calc on the same symbol: in run 6-20260729-1120 a
+      // second SOLUSDT calc appeared 27 s later, so the ticker-scoped oracle
+      // reported "row still present" while our calc had correctly gone to
+      // `matched` — a FALSE finding the operator was asked to rule on.
+      // The active-calcs door carries calc_id, so assert on identity.
+      if (!ctx.calcId) throw new Error('calc oracle needs ctx.calcId');
+      let ids: string[] = [];
+      const present = async (): Promise<boolean> => {
+        const r = await page.request.get(`${ENGINE}/api/linkage/calcs`);
+        if (!r.ok()) return false;
+        const j = (await r.json()) as { calcs?: { calc_id?: string }[] };
+        ids = (j.calcs || []).map((x) => String(x.calc_id || ''));
+        return ids.includes(ctx.calcId!);
+      };
+      const want = oracle === 'calc-row-present';
+      await expect
+        .poll(present, {
+          timeout: budgetMs,
+          intervals: [2_000],
+          message: `calc ${ctx.calcId} ${want ? 'never appeared in' : 'never left'} Active Calcs`,
+        })
+        .toBe(want);
+      return want
+        ? `Active Calcs contains ${ctx.calcId!.slice(0, 8)}…`
+        : `Active Calcs no longer lists ${ctx.calcId!.slice(0, 8)}… (others live: ${ids.length})`;
     }
     case 'position-linked-onplan': {
       const row = positionRow(page, ctx);

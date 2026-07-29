@@ -32,10 +32,10 @@
 | 3 | assert | _check_ `chip-linkable` | Chip shows ✓ LINKABLE with time remaining. _(allow 15s)_ |
 | 4 | **YOU** | On BINANCE: open the position at ~the calc entry (MARKET), then immediately place a TP and an SL<br>at ~the calc levels shown in Setup Summary. Confirm the entry FILLED, then press DONE. | — |
 | 5 | assert | _check_ `ws-sourced-fill` | Engine recorded the fill via the user-data WS (source=binance_ws) — the P5-001 proof. _(allow 30s)_ |
-| 6 | assert | _check_ `chip-linked` | Pre-Trade chip flips to ✓ LINKED (poller stops). _(allow 15s)_ |
+| 6 | assert | _check_ `chip-linked` | Pre-Trade chip flips to ✓ LINKED (poller stops). Order-form TP/SL adds the 15 s algo-sweep hop. _(allow 40s)_ |
 | 7 | script | Script opens Linkage. | — |
-| 8 | assert | _check_ `position-linked-onplan` | Open Positions row shows LINKED + ON-PLAN. _(allow 15s)_ |
-| 9 | assert | _check_ `calc-row-absent` | The calc leaves Active Calcs (status → matched). _(allow 15s)_ |
+| 8 | assert | _check_ `position-linked-onplan` | Open Positions row shows LINKED + ON-PLAN. _(allow 20s)_ |
+| 9 | assert | _check_ `calc-row-absent` | THIS calc (by calc_id) leaves Active Calcs (status → matched). _(allow 20s)_ |
 | 10 | **YOU** | On BINANCE: CLOSE the position at market (cancel leftover TP/SL). Press DONE when flat. | — |
 | 11 | assert | _check_ `closed-row-present` | History shows the closed row (2s build + 30s poll; pane ↻ to hurry). _(allow 40s)_ |
 | 12 | assert | _check_ `closed-row-reason` | REASON reads Manual (a market close is MANUAL_OTHER). _(allow 40s)_ |
