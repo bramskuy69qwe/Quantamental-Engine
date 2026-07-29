@@ -1,10 +1,99 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-07-26 (**MERIDIAN v3.0 — the Meridian design-consistency audit is FULLY DISPOSED (34/34), three UI standards are written into DESIGN.md, the product is renamed, and the Jinja retirement was built, measured and DEFERRED on operator call. NEXT = live-drive React, then execute the scoped retirement.**)
-**Branch**: **`v3.0/ui-plan-audit` — PUSHED, origin in sync at `a033889`, tree CLEAN.** First push of this branch happened this session (it had been local-only since P0).
-**Tests**: **4502 passed / 7 skipped / 3 deselected** (SOLO, `.venv`, FULL gate green). ALWAYS run SOLO on the **`.venv`** interpreter (user-site Python lacks `pytest-timeout` → drops the 30 s guardrail). Fresh worktree/clone: run `scripts/provision_test_env.py` FIRST (CLAUDE.md § "Fresh worktree / clone").
-**Bundle**: **`865d8e3be2`** — hard-refresh after any restart.
-**Engine**: operator RESTARTED it this session and is live-driving `/v3` (the news marquee was reported from a running instance). Unfiled live-log observations (still open): news fetcher upserts 100 items every ~16 s; httpx INFO writes the **Finnhub API token in cleartext** into `data/logs/risk_engine.jsonl` (pre-existing leak — ledger candidate).
+**Date**: 2026-07-29 (**MERIDIAN v3.0 — the Playwright E2E debugging program is COMPLETE through Phase 6: all 8 operator-in-the-loop trade scenarios executed on the live Binance account, 8 engine defects found+fixed+live-verified (2 CRIT · 3 HIGH · 3 MED). NEXT = Phase 7 clean re-run = the live-acceptance evidence that OPENS the Jinja retirement gate.**)
+**Branch**: **`v3.0/e2e-debug` — LOCAL ONLY (18 commits over `v3.0/ui-plan-audit`, no upstream), tree CLEAN at `831b745`.** Operator push pending.
+**Tests**: **4556 passed / 7 skipped / 3 deselected** (SOLO, `.venv`, FULL gate green). ALWAYS run SOLO on the **`.venv`** interpreter (user-site Python lacks `pytest-timeout` → drops the 30 s guardrail). NEVER run the gate concurrently with live-engine driving (conftest tripwire + weight budget).
+**Bundle**: **`929f95bffc`** — hard-refresh after any restart (ModelDialog confirm + market-entry-price fixes live in it).
+**Engine**: RUNNING; last boot `22:11:14` was the P6-004 live verification — **0 WS failures, 0 retries, listen key bound 9 s in**. **w32time is STILL STOPPED** (drift −2580 ms recurred mid-session; the CLOCK banner will keep returning until the operator runs, elevated: `sc config w32time start= auto && net start w32time && w32tm /resync /force`). Restart discipline: **one restart, then wait** — four boots in eight minutes drove the weight budget to 117 % and shed listen keys.
+
+## ▶ SESSION CLOSE 2026-07-29 — E2E program Phases 0–6 COMPLETE · 8 defects fixed · Phase 7 next
+
+One continuous program (2026-07-28 → 07-29), operator-gated per phase. Harness
+lives in **top-level `e2e/`** (own package.json — `frontend/` stays BUILD-ONLY);
+4 Playwright projects (`live-r` read-only :8000 · `sandbox-w` :8010 · `live-m`
+approved mutations · `trade-t` headed+traced, operator overlay). Run from `e2e/`:
+`$env:E2E_CONFIRM_LIVE='1'; npx playwright test --project=<proj> [-g "<id>"]`.
+
+| Phase | Commit | Result |
+|---|---|---|
+| 0 skeleton | `79280b8` | collector/guard/oracles, selftests 4/4 |
+| 1 manifest | `7cf4e5c` | 522 controls classified, drift-pinned (UI-surface regression pin) |
+| 2 sweep | `0895898`+`abc6d34` | CLEAN GATE 100/100 panes, 409/460 acted, 0 errors |
+| 3 perm+monkey | `d69ad31` | 240 orderings + 1080 seeded monkey steps, 0 app findings |
+| 4 sandbox | `5587c6f` | full excluded-mutation list + degraded tiers on :8010 |
+| 5 live-mut | `b2b9436`..`bd522c0` | 3/3, 0 findings, all cleanups verified |
+| 6 trade | `90365fb`..`831b745` | **all 8 scenarios complete** (H1 · H1b · L1 · L2 · A1 · A2 · X1 · X2) |
+
+**★ THE 8 ENGINE DEFECTS (all fixed, pinned, live-verified, ledgered):**
+
+| ID | Sev | Commit | One-liner |
+|---|---|---|---|
+| E2E-P2-001 | CRIT | `0895898` | `all_time` → 500 on every analytics door (negative epoch clamp) + silent stats |
+| E2E-P4-001 | HIGH | `5587c6f` | Apply Preset NEVER worked in v3 — unawaited `list_accounts()` coroutine |
+| E2E-P5-001 | CRIT | `7e6cf62` | user-data WS died at boot, never retried → fill pipeline dead 2 days (operator's SNXX report); + per-symbol backfill SNXX 16 / SNDK 10 rows, 0 deleted |
+| E2E-P5-002 | MED | `b2b9436` | countdown chip reported LINKABLE for cancelled/terminal calcs |
+| E2E-P6-001 | HIGH | `e48ce0b` | order-form (conditional) TP/SL NEVER linked — algo snapshot path skipped parent re-enrich; live-proven 6/6 after fix |
+| E2E-P6-002 | HIGH | `918c6f4` | manual-link candidates EMPTY for every MARKET order (loose finder read `price`=0, never `avg_fill_price`; strict matcher knew better) — the recovery path was unusable for the most common entry type |
+| E2E-P6-003 | MED | `8eaa196` | link/unplanned confirm was a native `window.confirm` (off-standard vs ModelDialog, and any automation layer eats it — operator: "dialog glitches ver fast"); + display half of P6-002 (`MARKET @ 0.000000` at 3 sites → `_lkEntryPx`) |
+| E2E-P6-004 | MED | `7c0926f` | boot bound the fill stream LAST — after trade history, 90-day recovery, per-position OHLCV — so the listen key lost to the engine's own boot burst (live: 106→117 %, `urgent` shed). Now binds right after positions load; verified boot: 0 failures |
+
+**★★ Phase 6 proved the linkage machinery at the DATA layer**, not just the UI:
+auto-link 6/6 (repeatedly, incl. both hedge legs to their own side's calc);
+**manual link proven MANUAL** — L2's `calc_match_audit` reads 4/6 with
+`winning=0` on every row (tp 75.40 vs 75.42, sl 71.80 vs 71.82), so the strict
+matcher REFUSED it and `link_status=LINKED` could only come from the operator's
+click; near-miss → `NEEDS_MANUAL_REVIEW`; no-calc → `UNPLANNED`; SL-removal →
+sticky `tpsl_amended=2` into History; partial close → ONE closed row PER closing
+order; hedge amendment isolated to its own leg; close tail →
+`completed_via_position` + closing fill `source=binance_ws`.
+
+**★★★ FALSE-POSITIVE / SELF-CORRECTION LEDGER (recorded in the phase-6 ledger —
+do not re-file):**
+- **"Zombie engine" diagnosis WRONG**: two `uvicorn main:app` processes are the
+  SUPERVISOR + its worker (one app process per launch — check `ParentProcessId`
+  before calling anything a duplicate). The real weight-saturation cause was
+  restart storms.
+- **Monitor false "WS BOUND"**: grep matched a stale success line from an
+  earlier boot. Time-scope every log assertion (scratch `boot_verify.py` shape:
+  isolate the LATEST boot via last "EventBus: in-process mode active").
+- **Calc-scoped oracle**: P6's first "confirmed finding" was my ticker-scoped
+  `calc-row-absent` oracle misreading an ordinary same-ticker re-calc; oracles
+  now key on `calc_id`.
+- **Harness manufactured 3 operator-adjudicated misses** (budgets too tight for
+  the 15 s algo-sweep hop / first-paint): budgets raised, row-wait added.
+- **Blind calc re-click MUTATES**: a manual submit INSERTS `pre_trade_log` and
+  SUPERSEDES the prior calc — the retry left 3 chained calcs on the LIVE
+  account before the guard (`storedCalcId` check) was added.
+- Open harness debt (marked OPEN in the ledger): raise A1's linked-position
+  budget; make X1's `closed-row-present` assert a row-count DELTA.
+
+**Filed, still open**: P5-R1 (REST fill path builds no close rows) · P5-R2 (no
+door exposes user-data WS state) · P5-R3 (WS-stale alert unactioned) · P5-R4
+(rebuild writes 0.0 not NULL excursions) · P5-R5 (post-restart weight
+saturation starves Pre-Trade sizing — largely mitigated by P6-004) · LOW-001
+(stale per-account default in `find_candidate_calcs`) · OBS-001 (two silent
+engine stops, still unexplained — the "dual instance" theory is DISPROVEN) ·
+OBS-002 (w32time stopped, fix is operator-elevated) · Finnhub token cleartext
+in `risk_engine.jsonl` (pre-existing) · **not implemented, recommended**:
+startup singleton/PID guard (nothing stops a second engine instance today).
+Open question for the operator: SOL close on 07-29 recorded
+`MANUAL_INTERVENTION` — did you set that via the modal, or is it a defect?
+Operator's 4USDT + ENAUSDT positions are DELIBERATE swing tests — not residue.
+
+### ▶ NEXT SESSION = PHASE 7 (the acceptance gate)
+1. Engine running, single instance, bundle `929f95bffc` (hard-refresh).
+2. Clean re-run vs live: `--project=live-r` smoke + sweep + perm (+ monkey,
+   seed recorded). Then sandbox re-run per runbook (worktree OUTSIDE the repo,
+   shadow `.env`, `provision_test_env.py`, `seed-sandbox.py`, :8010, never
+   `--reload`).
+3. Gate: **zero new CRIT/HIGH**. Consolidated acceptance report →
+   `docs/audits/` (counts by phase, bundle hash, monkey seed, mutation ledger,
+   the 8-defect table, the false-positive ledger).
+4. That report is the **live-acceptance evidence → Jinja retirement opens**
+   (retirement → promotion `/v3`→`/` → carry-forwards, per the deferred plan in
+   the 07-26 block below). Standing carry-forwards untouched: Finnhub-token log
+   leak, news cadence, account_snapshots migration, entry_ms rename, no-undef
+   lint.
 
 ## ▶ SESSION CLOSE 2026-07-26 — audit fully disposed · 3 UI standards · rename · retirement deferred
 
