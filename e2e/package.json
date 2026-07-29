@@ -10,6 +10,7 @@
     "e2e:perm": "playwright test --project=live-r specs/phase3-perm/pairwise.spec.ts",
     "e2e:monkey": "playwright test --project=live-r specs/phase3-perm/monkey.spec.ts",
     "e2e:sandbox": "playwright test --project=sandbox-w",
+    "e2e:livemut": "playwright test --project=live-m",
     "e2e:report": "playwright show-report"
   },
   "devDependencies": {

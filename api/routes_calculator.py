@@ -435,9 +435,28 @@ async def calculator_link_window_status(
     # keep showing ("Linkable for:" → EXPIRED) until the window elapses, so the
     # operator never sees the link land. (LINKED_CONFIRMED above is a DIFFERENT
     # signal: an exec-link-confirmed fill, not the matcher's auto-link.)
-    if (await _db.get_calc_status(calc_id=calc_id, account_id=aid)) in ("matched", "linked"):
+    calc_status = await _db.get_calc_status(calc_id=calc_id, account_id=aid)
+    if calc_status in ("matched", "linked"):
         return _out({
             "status": "LINKED",
+            "effective_window_s": account_window,
+            "remaining_s": 0,
+            "expires_at_ms": None,
+        })
+
+    # E2E-P5-002: every OTHER terminal status used to fall through to the bare
+    # time-window countdown, so a CANCELLED (or superseded / expired /
+    # completed) calc kept reporting LINKABLE with time remaining — while the
+    # matcher only ever considers active|released (calc_correlation.py:389).
+    # The chip therefore asserted "✓ LINKABLE" for a plan that can never link,
+    # directly contradicting the cancel dialog's own warning that a later fill
+    # "lands UNPLANNED unless a fresh calc is run". EXPIRED is the correct
+    # terminal bucket: it stops the poller and its copy is exactly the right
+    # instruction ("recalculate to link new fills").
+    if calc_status in ("cancelled_by_operator", "superseded", "expired",
+                       "completed_via_position"):
+        return _out({
+            "status": "EXPIRED",
             "effective_window_s": account_window,
             "remaining_s": 0,
             "expires_at_ms": None,
