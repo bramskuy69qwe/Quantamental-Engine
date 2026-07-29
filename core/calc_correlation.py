@@ -23,6 +23,8 @@ from __future__ import annotations
 import logging
 import sqlite3
 import time
+
+import config
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -168,9 +170,12 @@ def correlate_order_to_calc(
             comparison. Spec §3.3 default 10.
         now_ts_ms: matcher's reference time in ms (testability hook).
             Defaults to ``time.time() * 1000``.
-        db_path: explicit per-account DB path. If omitted, resolved via
-            ``core.db_account_settings._resolve_db_path``.
-        data_dir: data root used by the DB-path resolver fallback.
+        db_path: explicit DB path. If omitted, defaults to the LEGACY
+            store (``config.DB_PATH``) — where the running engine's
+            trading tables live (LOW-001; the per-account resolver is
+            split residue for these tables).
+        data_dir: data root override — ``<data_dir>/risk_engine.db``
+            when *db_path* is omitted (testability hook).
 
     Returns:
         :class:`MatchResult` carrying calc_id (if a single full match was
@@ -339,15 +344,21 @@ def _correlate_order_to_calc_impl(
         _trace["skip"] = "no_entry_source"
         return MatchResult(None, LINK_STATUS_UNPLANNED)
 
-    # Resolve DB path
+    # Resolve DB path.
+    # LOW-001 (phase-4 ledger): the default used to route through
+    # db_account_settings._resolve_db_path → the PER-ACCOUNT store, which
+    # for trading tables is split residue frozen at the split date (the
+    # engine's DatabaseManager reads pre_trade_log/orders from the LEGACY
+    # DB — live bug #4's writer→legacy shape). Every production caller
+    # overrode it with config.DB_PATH explicitly, so nothing was broken —
+    # but the default was a landmine for the next caller (the Phase-4
+    # near-miss: a seed defect was one step from being filed as a HIGH
+    # because the default LOOKED like the bug). Default to the store the
+    # engine actually writes; data_dir keeps the testability hook.
     if db_path is None:
-        try:
-            from core.db_account_settings import _resolve_db_path
-            account_id = order.get("account_id", 1)
-            db_path = _resolve_db_path(account_id, data_dir)
-        except Exception:
-            _trace["skip"] = "db_path_unresolved"
-            return MatchResult(None, LINK_STATUS_UNPLANNED)
+        import os as _os
+        db_path = (_os.path.join(data_dir, "risk_engine.db")
+                   if data_dir else config.DB_PATH)
 
     account_id = order.get("account_id", 1)
 
@@ -662,11 +673,10 @@ def find_candidate_calcs(
         return []
 
     if db_path is None:
-        try:
-            from core.db_account_settings import _resolve_db_path
-            db_path = _resolve_db_path(account_id, data_dir)
-        except Exception:
-            return []
+        # LOW-001: legacy-store default — see correlate_order_to_calc.
+        import os as _os
+        db_path = (_os.path.join(data_dir, "risk_engine.db")
+                   if data_dir else config.DB_PATH)
 
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=within_hours)).isoformat()
     now = datetime.now(timezone.utc)
