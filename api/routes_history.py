@@ -3,11 +3,10 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Request, Form
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import JSONResponse
 
 from core.state import app_state
 from core.database import db
-from core.data_logger import log_execution, log_trade_close
 from core.sql_safety import validate_sort_params
 
 log = logging.getLogger("routes.history")
@@ -17,69 +16,17 @@ router = APIRouter()
 # (Jinja retirement 2026-07-30: GET /history + history.html retired — the
 # React History page is the twin. The /fragments/history/* doors + the
 # notes/close_reason writers below SURVIVE.)
-
-
-@router.post("/history/log_execution", response_class=HTMLResponse)
-async def post_execution(
-    request:            Request,
-    ticker:             str   = Form(...),
-    side:               str   = Form(...),
-    entry_price_actual: float = Form(...),
-    size_filled:        float = Form(...),
-    slippage:           float = Form(0.0),
-    order_type:         str   = Form("limit"),
-    latency_snapshot:   float = Form(0.0),
-):
-    row = {
-        "account_id": app_state.active_account_id,
-        "ticker": ticker.upper(), "side": side,
-        "entry_price_actual": entry_price_actual, "size_filled": size_filled,
-        "slippage": slippage, "order_type": order_type,
-        "maker_fee": app_state.exchange_info.maker_fee,
-        "taker_fee": app_state.exchange_info.taker_fee,
-        "latency_snapshot": latency_snapshot, "orderbook_depth_snapshot": "",
-        "source_terminal": "manual",
-    }
-    try:
-        await db.insert_execution_log(row)
-    except Exception as exc:
-        log.error("insert_execution_log failed: %r", exc)
-        return HTMLResponse('<div class="alert alert-error">Failed to log execution — database error.</div>')
-    log_execution(row)
-    return HTMLResponse('<div class="alert alert-success">Execution logged.</div>')
-
-
-@router.post("/history/log_close", response_class=HTMLResponse)
-async def post_trade_close(
-    request:               Request,
-    ticker:                str   = Form(...),
-    direction:             str   = Form(...),
-    entry_price:           float = Form(...),
-    exit_price:            float = Form(...),
-    individual_realized:   float = Form(0.0),
-    individual_realized_r: float = Form(0.0),
-    total_funding_fees:    float = Form(0.0),
-    total_fees:            float = Form(0.0),
-    slippage_exit:         float = Form(0.0),
-    holding_time:          str   = Form(""),
-    notes:                 str   = Form(""),
-):
-    row = {
-        "account_id": app_state.active_account_id,
-        "ticker": ticker.upper(), "direction": direction,
-        "entry_price": entry_price, "exit_price": exit_price,
-        "individual_realized": individual_realized,
-        "individual_realized_r": individual_realized_r,
-        "total_funding_fees": total_funding_fees, "total_fees": total_fees,
-        "slippage_exit": slippage_exit, "holding_time": holding_time, "notes": notes,
-    }
-    try:
-        await db.insert_trade_history(row)
-    except Exception as exc:
-        log.error("insert_trade_history failed: %r", exc)
-        return HTMLResponse('<div class="alert alert-error">Failed to log trade close — database error.</div>')
-    log_trade_close(row)
-    return HTMLResponse('<div class="alert alert-success">Trade close logged.</div>')
+#
+# Retired 2026-07-30 (operator call): `POST /history/log_execution` and
+# `POST /history/log_close`, the two manual-entry form writers. Both had been
+# UI-orphaned since the retirement deleted their forms, and the tables they
+# wrote (`execution_log`, `trade_history`) have no reader left either —
+# `db.query_execution_log` and `db.query_trade_history` are caller-less, so the
+# rows could be created but never displayed. `docs/archive/v2.4.md` had kept
+# them "for off-engine manual logging"; that decision is superseded here.
+# Their CSV side-loggers (`core.data_logger.log_execution` /
+# `log_trade_close`) went with them. The INSERT helpers and both TABLES are
+# KEPT — retiring an API is not a data migration.
 
 
 @router.get("/fragments/history/pre_trade", response_class=JSONResponse)

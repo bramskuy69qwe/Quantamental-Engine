@@ -491,6 +491,23 @@ async def update_account_detail(
     if new_params:
         # Validate bounds
         errors = validate_params(new_params)
+        # MED-036, rehomed 2026-07-30: the runtime open-position check used to
+        # live in POST /params/update, which was retired that day — dropping a
+        # risk guard as a side effect of a UI cleanup is not a retirement. It
+        # applies ONLY to the active account, because app_state.positions is
+        # active-account state; for any other account the cap is inert until
+        # that account is activated.
+        new_cap = new_params.get("max_position_count")
+        if new_cap is not None and account_id == app_state.active_account_id:
+            open_count = len(app_state.positions)
+            if new_cap < open_count:
+                errors.append(
+                    f"max_position_count ({int(new_cap)}) is below current open "
+                    f"position count ({open_count}); close positions first or "
+                    f"raise the limit. Reducing the cap below the active count "
+                    f"would cause the risk engine to mark all positions as "
+                    f"over-limit until they close."
+                )
         if errors:
             return HTMLResponse(
                 f'<span style="color:var(--red);font-size:.65rem;">Validation error: {"; ".join(errors)}</span>'

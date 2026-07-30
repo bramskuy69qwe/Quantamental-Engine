@@ -388,54 +388,6 @@ class TestLBT2iSnapshotCancelSibling:
 # ── LB-T2j: /history/log_close route-handler drive ─────────────────────
 
 
-class TestLBT2jLogCloseRoute:
-    @pytest.mark.asyncio
-    async def test_route_writes_journal_only(self, real, monkeypatch):
-        """Drives the REAL post_trade_close coroutine
-        (api/routes_history.py:59-89) — the route-level upgrade of
-        LB-E3's DB-layer journal-separation assert (plan §2 note). The
-        handler builds the row off app_state.active_account_id, calls
-        db.insert_trade_history, then the CSV side-log (stubbed). No
-        Request method is read (params arrive as function kwargs), so a
-        bare object() stands in."""
-        om, db = real
-        import api.routes_history as rh
-        from core.state import app_state
-        assert app_state.active_account_id == ACCOUNT_ID, (
-            "precondition drift: an earlier test left a non-default "
-            "active account; LB-T2j assumes account 1")
-        monkeypatch.setattr(rh, "db", db)
-        logged = []
-        monkeypatch.setattr(rh, "log_trade_close",
-                            lambda row: logged.append(row))
-
-        before_closed = len(await closed_rows(db))
-        resp = await rh.post_trade_close(
-            object(),
-            ticker="btcusdt", direction="LONG",
-            entry_price=50000.0, exit_price=51000.0,
-            individual_realized=1000.0, individual_realized_r=2.0,
-            total_funding_fees=-1.5, total_fees=3.0,
-            slippage_exit=0.5, holding_time="1h", notes="battery T2j",
-        )
-        assert resp.status_code == 200
-        assert b"alert-success" in resp.body
-
-        rows = await q(db, "SELECT * FROM trade_history")
-        assert len(rows) == 1
-        assert rows[0]["ticker"] == "BTCUSDT"          # upper()'d by route
-        assert rows[0]["account_id"] == ACCOUNT_ID
-        assert rows[0]["individual_realized"] == pytest.approx(1000.0)
-        assert len(logged) == 1                        # CSV side-log fired
-        # Journal separation, now pinned at ROUTE level: closed_positions
-        # untouched and the journal schema carries no linkage identifiers.
-        assert len(await closed_rows(db)) == before_closed
-        cols = {r["name"] for r in await q(
-            db, "PRAGMA table_info(trade_history)")}
-        assert not ({"calc_id", "lifecycle_id", "terminal_position_id"}
-                    & cols)
-
-
 # ── LB-T2k: funding assign (open / closed-window) + orphan ─────────────
 
 

@@ -2,6 +2,46 @@
 
 **Date**: 2026-07-30 (**MERIDIAN v3.1 — DD-OVERRIDE + PRE-TRADE NOTES PORTED TO REACT (seventh block). Same day: fragments slim-down · primitives sweep + folder-boundary answer · Jinja retirement `1afc9f8` · archive/launcher sweep · E2E carry-forwards.**)
 
+## ▶ SESSION CLOSE 2026-07-30 (ninth block) — THE UI-ORPHANED LIST IS CLOSED
+
+Operator call: retire `POST /params/update`, `POST /history/log_execution`,
+`POST /history/log_close` — the last three on the filed list.
+
+**All three DELETED**, plus the CSV side-loggers that existed only for them
+(`core.data_logger.log_execution` / `log_trade_close`). Verified
+caller-by-caller first; zero executable references survive.
+
+**★ ONE GUARD WAS REHOMED, NOT DROPPED.** `/params/update` carried a unique
+behaviour the bounds validator does not: **MED-036**'s runtime check refusing
+a `max_position_count` below the live open-position count (reducing the cap
+under the active count makes the risk engine mark every position over-limit
+until it closes). The surviving per-account writer,
+`POST /accounts/{id}/update`, ran `validate_params` but had **no** such check
+— I verified that at the line rather than assuming it. So the guard moved
+there, scoped to the ACTIVE account (`app_state.positions` is active-account
+state; applying it to another account would reject a legitimate edit). Pinned
+by `TestMed036RehomedToAccountUpdate`, including the inactive-account lane.
+Retiring an endpoint must not silently delete a risk guard.
+
+**Two things I surfaced rather than buried**:
+- `docs/archive/v2.4.md` recorded a DELIBERATE prior decision to keep
+  log_execution/log_close "for off-engine manual logging". That rationale was
+  already hollow: `db.query_execution_log` and `db.query_trade_history` are
+  caller-less, so those rows could be written but never displayed. The
+  operator's call supersedes it; noting the reversal so it is not rediscovered
+  as an accident.
+- Retiring `post_trade_close` also retired **LB-T2j**, a lane in the COMPLETED
+  attribution battery that drove that handler to prove it writes
+  `trade_history` only (never `closed_positions`). The property it protected
+  dies with its subject; `test_linkage_battery_e2e` still covers the DB layer.
+
+**KEPT deliberately** (filed orphan cluster, same reasoning as
+`query_trade_history` last block): `db.insert_execution_log`,
+`db.insert_trade_history`, `db.query_execution_log`, `db.query_trade_history`
+— table-level API for tables that still hold real data, and
+`insert_trade_history` is still a test seeding path. **DATA UNTOUCHED**: no
+`DROP`/`DELETE`; `/params` keeps its 302 → /config and `/export` still works.
+
 ## ▶ SESSION CLOSE 2026-07-30 (eighth block) — ADD ACCOUNT WIRED IN REACT
 
 **Operator report**: "add account in config not working."
@@ -303,9 +343,11 @@ frontend/src + e2e)**:
   /history/notes/{pre_trade,trade_history,position} (note editing),
   POST /params/update, POST /history/log_execution + /history/log_close
   (manual-entry forms).
-  **▶ DISPOSED in the seventh block (same day): dd_override + notes/pre_trade
-  PORTED to React; notes/trade_history + notes/position RETIRED. Still
-  awaiting a call: POST /params/update, log_execution, log_close.**
+  **▶ FULLY DISPOSED the same day: dd_override + notes/pre_trade PORTED to
+  React (seventh block); notes/trade_history + notes/position RETIRED
+  (seventh); params/update + log_execution + log_close RETIRED (ninth, with
+  MED-036's runtime guard rehomed into /accounts/{id}/update). This list is
+  CLOSED.**
 
 **Gate: 4099 passed / 6 skipped / 3 deselected** (was 4480/6/3 — the
 delta is exactly the retired pins; the intermittent aiosqlite teardown

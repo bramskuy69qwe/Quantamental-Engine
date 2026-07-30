@@ -10,6 +10,7 @@ Run: pytest tests/test_task97_route_validation.py -v
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -127,8 +128,10 @@ class TestMaxPositionCountRuntimeCheck:
     positions as over-limit until they close."""
 
     def test_validate_params_alone_does_not_catch_runtime_state(self):
-        """Confirms validate_params (pure) does NOT see runtime state.
-        The runtime check has to live in the route handler."""
+        """Confirms validate_params (pure) does NOT see runtime state — which
+        is why the check has to live in the route handler. Its home moved on
+        2026-07-30: POST /params/update was retired and the guard was REHOMED
+        into POST /accounts/{id}/update (pinned below)."""
         from core.state import validate_params
         # max_position_count=2 is within PARAM_BOUNDS — would pass pure validation
         errors = validate_params({"max_position_count": 2})
@@ -140,82 +143,75 @@ class TestMaxPositionCountRuntimeCheck:
             "(those live in the route handler so we can mock app_state cleanly)"
         )
 
-    @pytest.mark.asyncio
-    async def test_update_params_rejects_max_below_open_count(self):
-        """Route handler must reject updates that reduce max_position_count
-        below the count of currently-open positions."""
-        from fastapi import Request
-        import api.routes_params as rp
 
-        # Build a minimal mock Request (HTMLResponse rendering doesn't need much)
-        class _FakeRequest:
-            pass
+def _upd_kwargs(**over):
+    """Every optional parameter explicitly None.
 
-        # Mock 3 active positions
-        fake_positions = [object(), object(), object()]
+    A DIRECT handler call bypasses FastAPI's dependency resolution, so an
+    omitted argument arrives as the raw `Form(None)` object — which is not
+    None, and then gets compared/cast. Pass them all.
+    """
+    import inspect
+    import api.routes_accounts as ra
+    sig = inspect.signature(ra.update_account_detail)
+    kwargs = {name: None for name, p in sig.parameters.items()
+              if name not in ("account_id", "request")}
+    kwargs["request"] = None
+    kwargs.update(over)
+    return kwargs
 
-        with patch.object(rp.app_state, "params", {}), \
-             patch.object(rp.app_state, "_positions_legacy", fake_positions, create=True):
-            # data_cache layer may shadow positions; force the property to return our list
-            with patch("core.state.AppState.positions", new_callable=lambda: property(lambda self: fake_positions)):
-                resp = await rp.update_params(
-                    request=_FakeRequest(),
-                    individual_risk_per_trade=0.01,
-                    max_w_loss_percent=0.05,
-                    max_dd_percent=0.10,
-                    max_exposure=1.0,
-                    max_position_count=2,  # < 3 open positions → must reject
-                    max_correlated_exposure=0.5,
-                    auto_export_hours=24,
-                    weekly_loss_warning_pct=0.80,
-                    weekly_loss_limit_pct=0.95,
-                    max_dd_warning_pct=0.80,
-                    max_dd_limit_pct=0.95,
-                )
 
-        body = resp.body.decode("utf-8")
-        assert "alert-error" in body, f"Expected validation error response; got: {body}"
-        assert "current open position count" in body or "below current" in body, (
-            f"Expected runtime-state rejection message; got: {body}"
-        )
+class TestMed036RehomedToAccountUpdate:
+    """MED-036 survived the retirement of POST /params/update by moving into
+    the surviving per-account params writer. Dropping a risk guard as a side
+    effect of a UI cleanup would have been a silent capability loss."""
 
     @pytest.mark.asyncio
-    async def test_update_params_accepts_max_above_open_count(self):
-        """Sanity: when new max >= open count, the update is allowed."""
-        from fastapi import Request
-        import api.routes_params as rp
-
-        class _FakeRequest:
-            pass
-
-        # Mock 2 active positions; new max=5 is fine
-        fake_positions = [object(), object()]
-
-        async def _fake_save():
-            return None
-
-        async def _fake_publish(*a, **k):
-            return None
-
-        with patch.object(rp.app_state, "params", {}, create=True), \
-             patch.object(rp.app_state, "save_params_async", _fake_save), \
-             patch.object(rp, "event_bus") as mock_bus, \
-             patch("core.state.AppState.positions", new_callable=lambda: property(lambda self: fake_positions)):
-            mock_bus.publish = _fake_publish
-            resp = await rp.update_params(
-                request=_FakeRequest(),
-                individual_risk_per_trade=0.01,
-                max_w_loss_percent=0.05,
-                max_dd_percent=0.10,
-                max_exposure=1.0,
-                max_position_count=5,  # >= 2 open positions → OK
-                max_correlated_exposure=0.5,
-                auto_export_hours=24,
-                weekly_loss_warning_pct=0.80,
-                weekly_loss_limit_pct=0.95,
-                max_dd_warning_pct=0.80,
-                max_dd_limit_pct=0.95,
-            )
-
+    async def test_rejects_cap_below_open_count_on_the_active_account(self):
+        import api.routes_accounts as ra
+        state = SimpleNamespace(active_account_id=1,
+                                positions=[object(), object(), object()])
+        with patch.object(ra, "app_state", state):
+            resp = await ra.update_account_detail(
+                1, **_upd_kwargs(max_position_count=2))
         body = resp.body.decode("utf-8")
-        assert "alert-success" in body, f"Expected success response; got: {body}"
+        assert "below current open" in body, body
+
+    @pytest.mark.asyncio
+    async def test_allows_cap_at_or_above_open_count(self, monkeypatch):
+        import api.routes_accounts as ra
+        # the accept lane reaches the live-state write, so `params` must exist
+        state = SimpleNamespace(active_account_id=1, positions=[object(), object()],
+                                params={})
+        seen = {}
+        monkeypatch.setattr(ra.account_registry, "get_account_params", lambda aid: {})
+
+        async def _upd(aid, params):
+            seen["params"] = params
+        monkeypatch.setattr(ra.account_registry, "update_account_params", _upd)
+        with patch.object(ra, "app_state", state):
+            resp = await ra.update_account_detail(
+                1, **_upd_kwargs(max_position_count=2))
+        assert "below current open" not in resp.body.decode("utf-8")
+        assert seen["params"]["max_position_count"] == 2
+
+    @pytest.mark.asyncio
+    async def test_inactive_account_is_not_gated_by_live_positions(self, monkeypatch):
+        """app_state.positions is ACTIVE-account state — applying it to another
+        account's cap would reject a legitimate edit."""
+        import api.routes_accounts as ra
+        state = SimpleNamespace(active_account_id=1,
+                                positions=[object(), object(), object()])
+        called = {}
+        monkeypatch.setattr(ra.account_registry, "get_account_params", lambda aid: {})
+
+        async def _upd(aid, params):
+            called["aid"] = aid
+        monkeypatch.setattr(ra.account_registry, "update_account_params", _upd)
+        with patch.object(ra, "app_state", state):
+            resp = await ra.update_account_detail(
+                9, **_upd_kwargs(max_position_count=2))
+        assert "below current open" not in resp.body.decode("utf-8")
+        assert called.get("aid") == 9
+
+

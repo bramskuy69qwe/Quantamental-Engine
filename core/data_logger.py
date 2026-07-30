@@ -76,11 +76,6 @@ EXEC_FIELDS = [
 ]
 
 
-def log_execution(row: Dict) -> None:
-    row.setdefault("entry_timestamp", now_in_account_tz(app_state.active_account_id).isoformat())
-    _append_csv(config.EXECUTION_LOG, row, EXEC_FIELDS)
-
-
 # ── Trade history ─────────────────────────────────────────────────────────────
 
 HISTORY_FIELDS = [
@@ -90,11 +85,6 @@ HISTORY_FIELDS = [
     "total_funding_fees", "total_fees",
     "slippage_exit", "holding_time", "notes",
 ]
-
-
-def log_trade_close(row: Dict) -> None:
-    row.setdefault("exit_timestamp", now_in_account_tz(app_state.active_account_id).isoformat())
-    _append_csv(config.TRADE_HISTORY, row, HISTORY_FIELDS)
 
 
 # ── Dashboard snapshot ────────────────────────────────────────────────────────
