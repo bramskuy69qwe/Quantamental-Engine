@@ -1,6 +1,129 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-07-30 (**MERIDIAN v3.1 — DD-OVERRIDE + PRE-TRADE NOTES PORTED TO REACT (seventh block). Same day: fragments slim-down · primitives sweep + folder-boundary answer · Jinja retirement `1afc9f8` · archive/launcher sweep · E2E carry-forwards.**)
+**Date**: 2026-07-30 (**MERIDIAN v3.1 — WIRING INVENTORY FILED = NEXT SESSION'S FIX LIST (tenth block, top). Same day: UI-orphaned list closed · Add Account wired · DD-override + pre-trade notes ported · fragments slim-down · primitives sweep + folder-boundary answer · Jinja retirement `1afc9f8` · archive/launcher sweep · E2E carry-forwards.**)
+
+## ▶ SESSION CLOSE 2026-07-30 (tenth block) — WIRING INVENTORY — **NEXT SESSION'S FIX LIST**
+
+Operator asked for an inventory of functions that are **not wired, or not well
+wired** — list only, **fixes deferred to next session**. Three parallel agents
+swept UI / backend / contracts (141 raw line-items). Folded below to **34
+distinct roots**, deduplicated across agents, severity-ranked.
+
+**I verified every Tier-0/1 item at the line before listing it. That
+demoted three of the agents' own HIGHs** — see NOT-DEFECTS at the end. Treat
+the rest of the list the same way: re-verify before fixing (house rule — an
+audit's cited mechanism is a hypothesis).
+
+### TIER 0 — CRIT (1)
+
+- **C1 · The service worker serves stale API JSON as a fresh 200.**
+  `static/service-worker.js:66-74` routes `/api/*` + `/fragments/*` through
+  `networkFirst`, which caches every 200 (`:102-105`) and on network failure
+  returns `caches.match(request)` (`:108-109`). A dead engine therefore paints
+  a **fully populated dashboard with `✓ connected` pane feet** off cache.
+  On a risk console that is the worst possible failure mode: stale equity, DD
+  state and positions, presented as live. **Scope nuance I confirmed**: the SW
+  is registered by `templates/base.html` only — the React shell registers
+  none. But its scope is `/`, so once the operator has loaded *any* Jinja page
+  (`/config`, `/orders/needs_link`, `/admin/*`) in that browser profile, it
+  controls the React app too, permanently. Fix = exclude `/api/` + `/fragments/`
+  from the cache-put and the fallback, or drop the SW entirely.
+
+### TIER 1 — HIGH (7)
+
+- **H1 · SSE is pinned to the page-load account.** `frontend/src/sse-adapter.js:30`
+  resolves the account from `QE_BOOTSTRAP.activeAccountId`, baked at page load,
+  and `connect()` early-returns while a `source` exists (`:38`) so it never
+  re-targets. **Same root as the dd_override bug fixed this session**: the nav
+  switcher reloads, but Config's Activate refetches *without* reloading — so
+  after activating from Config, live equity/position/DD events stream from the
+  **previous** account. (My globs missed this file for a while: it is `.js`,
+  not `.jsx`.)
+- **H2 · Pre-Trade risk % has the identical root.** `pages-pretrade.jsx:275`.
+  Same fix family as H1 — a shared "current account" accessor reading
+  `/api/state.account_id` (already added this session for the override).
+- **H3 · `confirm_fill_exec_link` has zero callers.** `core/db_orders.py:1447`
+  is the only occurrence in the whole prod tree, so `fills.exec_link_confirmed`
+  is **permanently 0** — while **four** live readers present it as meaningful:
+  `routes_analytics.py:554,595`, `routes_calculator.py:373,466`,
+  `db_analytics.py:277`. Every "link confirmed" indicator is a hardcoded no.
+- **H4 · A settings-save failure reports "Saved."**
+  `api/routes_accounts.py:544-547` — `try: update_account_settings(...) except
+  Exception: pass`, then `:551` unconditionally returns the green `Saved.`
+  span the React Config page matches on. Silent data loss with positive
+  confirmation.
+- **H5 · Delete Account is permanently `disabled` in React.**
+  `pages-config.jsx:369` (`title="Not wired in P2"`) — but
+  `DELETE /accounts/{account_id}` exists and works (`routes_accounts.py:159`).
+  UI-only gap; same shape as the Add Account bug fixed this session, so the
+  `CfgAddAccountDialog` pattern ports directly.
+- **H6 · Operator attribution is structurally dead in React.** Session
+  registration only ever existed on Jinja pages, which no longer serve the app
+  → the `operator_id` columns added in P9.T3 record nothing for any action
+  taken through the React UI.
+- **H7 · Calculator auto-refresh swallows every failure.** Errors are caught
+  and dropped with no surface, so a stale calc reads as a current one.
+
+### TIER 2 — MED (13)
+
+- **M1** `config_json` knob set is editable **only** from a Jinja page nothing
+  links to — post-retirement these are effectively read-only in production.
+- **M2** `weekly_pnl_*` thresholds, enforcement-mode and `EXCHANGE_REFRESH_HZ`
+  render as live settings but **no consumer reads them**.
+- **M3** `week_start_dow` is read with **no writer** (permanent default).
+- **M4** `position_changes` is written on every refresh and **read by nothing**.
+- **M5** `check_dd_gate_for_order` — dead risk-gate code path.
+- **M6** The Override control is **unreachable in the fail-closed halt lane**
+  that the Pre-Trade banner points the operator at. (Backend agent reached the
+  same root independently.)
+- **M7** Models "Source app" selects are ignored — `app_id` hardcoded
+  `'multicharts'`.
+- **M8** `analytics_default_period` is written, never read.
+- **M9** Client-side DataList filter/sort tools sit on a **server-paged**
+  table → they filter the current page only, silently.
+- **M10** Cancel-calc paints a green ✓ for engine **refusals** (`res.ok`
+  discarded) — same false-success class as H4.
+- **M11** `POST /api/orders/backfill`, the signed-audit-export subsystem and
+  the backtest runner have **no UI at all**.
+- **M12** WorkspaceBar is inert off the Dashboard.
+- **M13** The Primitives page badge reads `DEV · NOT IN PRODUCTION NAV` **while
+  it is in production nav** — the badge text is the defect, not the page
+  (see NOT-DEFECTS).
+
+### TIER 3 — LOW / INFO (13)
+
+Stubs presented as controls: `⊞ Pane`, `⤢ Pop`, desktop notifications.
+Dead code: `NotifBanner`, the demo panel, `_PagePlaceholder`, the `data-live-id`
+registry, deferred enforcement-mode flip. Cosmetic only — batch or drop whole.
+
+### ★ NOT DEFECTS — verified, do NOT "fix"
+
+Three items the agents filed as HIGH that the code refutes:
+
+1. **`TRANSITION_EVENT_MAP` empty** (`core/link_state.py:123`) — filed as
+   "every link-status event silently vanishes". It is a **documented
+   reservation**: *"Intentionally empty until Phase 6 catalogues link-status
+   events. The transition() helper still publishes for any future entry."*
+   Deliberate, not drift.
+2. **RedisBus per-channel listeners never fire** — filed as HIGH. Already
+   documented **in the adapter's own comment**, `sse-adapter.js:47-50`, and it
+   only applies under `PUBSUB_BACKEND=redis`; `config.py:130` defaults to
+   `inprocess` and this is a localhost single-tenant deployment. Known
+   non-default-path limitation.
+3. **"Remove Primitives from `NAV_ITEMS`"** — contradicts a **recorded
+   operator decision** to keep the Primitives DEV chip. Only M13 (the false
+   badge text) is real here.
+
+### Suggested sequencing next session
+
+C1 alone, first — it is the only item that can make a dead engine look
+healthy. Then H1+H2 together (one shared account accessor closes both, and the
+fix already exists from the override work). Then H4+M10 together (one
+false-success class). H3 is a decision, not a patch: either wire the confirm
+call or stop rendering four indicators that can only ever say no.
+
+**Process note carried forward**: `frontend/src/sse-adapter.js` is `.js` — any
+`frontend/src/*.jsx` grep silently misses it. Sweep `.js` too.
 
 ## ▶ SESSION CLOSE 2026-07-30 (ninth block) — THE UI-ORPHANED LIST IS CLOSED
 
