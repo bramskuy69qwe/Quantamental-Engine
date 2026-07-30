@@ -6,7 +6,7 @@
  * Strategy:
  *   /api/*, /fragments/*, /ws/* → Network-first (live data must be fresh)
  *   /static/*                   → Cache-first  (assets change rarely)
- *   HTML pages (/, /calculator) → Network-first with offline fallback
+ *   HTML pages (/ = the React shell) → Network-first with offline fallback
  */
 
 // qre-v2 (Jinja retirement 2026-07-30): the React shell now owns `/`. The

@@ -68,13 +68,8 @@ import pytest
 # ── Source-pin tests on the JS handler ─────────────────────────────────────
 
 
-class TestConfigRequestHandlerShape:
-    """The fix is a JS-event-listener migration + parameters mutation.
-    Source pins lock both the event name AND the parameter mutation."""
-
-    def _read(self) -> str:
-        return Path("templates/calculator.html").read_text(encoding="utf-8")
-
+# (Jinja retirement 2026-07-30: the calculator.html configRequest-handler
+# pins are gone with the template; the Python-mirror tests below survive.)
 
 
 

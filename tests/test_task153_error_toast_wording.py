@@ -181,28 +181,9 @@ class TestHtmxHandlersFriendlyfied:
         )
 
 
-# ── Per-page catch blocks routed through showErrorToast ─────────────────────
-
-
-class TestRegimeCatchBlocksUseShowErrorToast:
-    """regime.html backfill / reclassify / news-refresh catch blocks
-    must no longer pass `err.message` directly to showToast."""
-
-    def _read(self) -> str:
-        return Path("templates/regime.html").read_text(encoding="utf-8")
-
-
-
-
-
-class TestBacktestDataFetchFailureUsesShowErrorToast:
-    """backtest.html data-fetch poll's failure branch — `d.detail` may
-    carry raw exception strings."""
-
-    def _read(self) -> str:
-        return Path("templates/backtest.html").read_text(encoding="utf-8")
-
-
+# (Jinja retirement 2026-07-30: the regime.html/backtest.html catch-block
+# pins are gone with the templates; the base.html showErrorToast pins above
+# are the survivors.)
 
 
 # ── Python mirror of friendlyError to verify pattern coverage ──────────────

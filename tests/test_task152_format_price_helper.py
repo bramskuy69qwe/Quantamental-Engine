@@ -173,15 +173,8 @@ class TestCalcResultTemplateUsesFmtSize:
         assert "FE-LOW-022" in src and "Task 152" in src
 
 
-class TestCalculatorHtmlJsHelpers:
-    """FE-LOW-022 + FE-LOW-024 fix surfaces — JS helpers in calculator.html."""
-
-    def _read(self) -> str:
-        return Path("templates/calculator.html").read_text(encoding="utf-8")
-
-
-
-
+# (Jinja retirement 2026-07-30: the calculator.html JS-helper pins are gone
+# with the template; format_price's PYTHON pins above are the survivors.)
 
 
 # ── Jinja-global exposure pin ───────────────────────────────────────────────

@@ -23,7 +23,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from core.state import app_state
 from core.database import db
-from api.helpers import templates, _ctx, _table_ctx
+from api.helpers import templates, _table_ctx
 # v3.0 P4: the shared non-finite JSON guard (F2 both-doors discipline).
 from api.routes_calculator import _json_safe
 

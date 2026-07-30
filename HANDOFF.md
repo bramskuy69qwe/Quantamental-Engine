@@ -1,5 +1,61 @@
 # Handoff — next Claude Code session
 
+**Date**: 2026-07-30 (**MERIDIAN v3.1 — THE JINJA RETIREMENT IS SHIPPED (`1afc9f8`): the React app owns `/`, the 8 Jinja page twins are DELETED (−4,914 lines), 129 pins retired, version bumped v3.0→v3.1. Program close per the Release-hygiene rule. Earlier same day: E2E Phases 0–7 complete + ALL carry-forwards fixed.**)
+
+## ▶ SESSION CLOSE 2026-07-30 (third block) — JINJA RETIREMENT SHIPPED · v3.1
+
+Operator-directed ("lets start the jinja retirement"); the gate was the
+Phase-7 acceptance report. Executed from the 07-25 constraint map — nothing
+re-derived, every recorded trap confirmed live (the v3.html "extends"
+false-positive grep hit, the orphaned-handler risk, the 6 base.html
+extenders, /config's account-CRUD dependency).
+
+**ONE atomic commit `1afc9f8`** (a half-retired tree is never green):
+- `/` = React shell (routes_v3); `/v3` → 307 `/` (fragment survives).
+- 8 page GETs + templates deleted; full-body handler removals;
+  post-delete template-name grep CLEAN.
+- Survivors intact: /config · /params · ALL /fragments/* · POST /models ·
+  POST /calculator/* · base.html + admin/* + orders/needs_link (nav
+  trimmed to App + Needs Link, hx-boost dropped; page_meta trimmed).
+- fragments/model_detail.html's calculator link → `/#Pre-Trade`.
+- **129 pins retired across 28 files** (AST-scripted deletion off the
+  gate's failure list + whole-class collapse; 1 file emptied → git rm;
+  truncated-name collisions in the terminal failure list required a
+  second per-file pass with full names — the failure list is a SAMPLE,
+  sweep until green). NEW pins: `/` serves the v3 shell, `/v3` 307s,
+  retired GETs stay 404 (resurrection = drift).
+- e2e harness re-pointed to `/` (preflight would have died on the 307).
+- service-worker CACHE_NAME → qre-v2 (purges every browser's Jinja-era
+  cache; the deferred plan-§1.4/1.5 coexistence item).
+- **v3.1**: config.py bump + README Status rewrite + v3.html title now
+  derives from project_version_ (was hardcoded "v3").
+
+**Gate: 4480 passed / 6 skipped / 3 deselected** (was 4608/7 — exactly
+the retired pins + 1 skip inside a retired file); version-shape pins
+green; e2e selftest 4/4.
+
+**Independent-agent audit (house cycle): contract holds, NO functional
+defects.** Sampled deleted pins all targeted retired surfaces (no
+capability-coverage loss); route table, survivors, nav, SW, version pins
+all CLEAN. Three hygiene findings (empty test shells with template-reading
+helper booby traps · orphan helper classes · commit-orphaned imports)
+fixed in the follow-up hygiene commit, which also corrects the retirement
+message's extender count (7, incl. config.html — not 6). Doc-rot INFO
+residue accepted (inert comments naming retired files).
+
+**OPERATOR: restart the engine to land the promotion** (hard-refresh;
+the SW bump then self-purges old caches). First post-restart check:
+`/` shows the React app, `/v3` bounces to `/`, `/config` still renders.
+
+**Standing carry-forwards (unchanged, don't lose)**: `no-undef` lint
+dev-dep · `entry_ms` rename + P1 stub · news ~16 s cadence ·
+`account_snapshots` migration + R1b per-account mint · the intermittent
+aiosqlite teardown warning · REST-fill gap masking + weight_tracker
+reconcile window/lock (filed 07-30) · Finnhub key rotation · SOL
+`MANUAL_INTERVENTION` question · cold-restart time-to-first-price
+measurement.
+
+**(superseded, kept for context) — the pre-retirement close below:**
 **Date**: 2026-07-30 (**MERIDIAN v3.0 — E2E program COMPLETE Phases 0–7 AND the carry-forward pass is DONE: all five P5-R residuals + LOW-001 + the Finnhub log leak fixed, the PID guard built, the harness debt cleared — 7 commits on top of the acceptance wrap. NEXT PROGRAM = THE JINJA RETIREMENT (operator-gated).**)
 **Branch**: **`v3.0/e2e-debug`** — pushed through the P7 wrap (`5739dfd`); the 7 carry-forward commits push at session close (see the 07-30 block).
 **Tests**: **4608 passed / 7 skipped / 3 deselected** (post-carry-forward gate, 2026-07-30; first run flaked ONCE on `test_periodic_loop_survives_reconcile_exception` — a 50 ms-budget timing test under live-engine machine load, passed solo AND on the identical full re-run — recorded, not chased). ALWAYS run SOLO on the **`.venv`** interpreter (user-site Python lacks `pytest-timeout` → drops the 30 s guardrail). NEVER run the gate concurrently with live-engine driving (conftest tripwire + weight budget).

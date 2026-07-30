@@ -6,14 +6,13 @@ from datetime import datetime
 from typing import Any, Dict
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import JSONResponse
 
 import config
 from core.state import app_state
 from core.database import db
 from core.regime_fetcher import RegimeFetcher
 from core.regime_classifier import classify_range
-from api.helpers import templates, _ctx
 
 log = logging.getLogger("routes.regime")
 router = APIRouter()
