@@ -5,7 +5,43 @@
 ## ▶ SESSION CLOSE 2026-07-30 (seventh block) — dd_override + notes PORTED TO REACT
 
 **Operator ask**: "port the dd_override and notes endpoints to react" (from
-the UI-orphaned list filed in the fifth block).
+the UI-orphaned list filed in the fifth block), then — on the finding that
+two of them had nowhere to go — **"retire the trade_history and position
+notes endpoints"**.
+
+### ▶ RETIREMENT (the operator's follow-up call)
+
+`PUT /history/notes/trade_history/{id}` and `PUT /history/notes/position`
+are **GONE**, together with the DB helpers that existed only for them:
+`update_trade_history_notes`, `upsert_position_note`, and the
+already-caller-less `get_position_notes`. Verified caller-by-caller before
+cutting; the only surviving mentions are tombstone comments, this file, and
+the pins that name them on purpose.
+
+**DATA DELIBERATELY PRESERVED** — retiring an API is not a data migration.
+The `position_history_notes` TABLE and the `trade_history.notes` COLUMN
+stay in the schema; the diff contains no `DROP`/`DELETE` of any kind.
+Re-exposing them later is a matter of adding a READER, not recovering data.
+Pinned by `test_retiring_the_api_did_not_drop_the_data`.
+**Two precisions the audit made me state properly** (my first wording
+overclaimed): (1) the split migration's copy of `position_history_notes` is
+best-effort — only rows whose `trade_key` appears in that account's
+`exchange_history` reach a per-account DB; anything else survives only in
+the `.pre-split-backup` legacy file (rename-not-delete, pre-existing
+behaviour). (2) `position_history_notes` now has neither reader nor writer,
+whereas `trade_history.notes` lost only its EDIT path — `POST
+/history/log_close` still writes that column on insert, so new orphan notes
+can still be created there until that endpoint's own call is made.
+
+**NOT retired, deliberately**: `db.query_trade_history` is also
+caller-less, but it is the trade_history TABLE's reader — not a notes
+symbol — and `POST /history/log_close` still writes that table. Retiring it
+would prejudge that endpoint's own port-or-retire call, which is still on
+the filed list.
+
+**Gate after the retirement: 4095 passed / 6 skipped / 3 deselected**
+(`test_react_port_dd_notes` 42 → 44: the two retired-route lanes swapped for
+three guards — routes gone, helpers gone, DATA KEPT).
 
 **★ INVESTIGATION FIRST — only 2 of the 4 endpoints had a destination.**
 Traced each one's read surface before writing any UI:
@@ -17,13 +53,13 @@ Traced each one's read surface before writing any UI:
   JSON rows (`_paginated_query` is `SELECT *`), and the React History page
   has the Pre-Trade Log tab. No backend read change needed.
 - `notes/trade_history` + `notes/position` → **NO destination**. The tables
-  they annotate lost their last reader in the slim-down:
-  `db.query_trade_history` and `db.get_position_notes` are now
-  caller-less (their consumers were `/fragments/history/trade_history` and
-  `/fragments/history/exchange`). Porting them means first resurrecting
-  those tables in React. **JSON-ified but NOT ported — operator call:
-  retire, or port their tables** (trade_history is the legacy manual
-  close log, superseded by closed_positions).
+  they annotate had lost their last reader in the slim-down:
+  `db.query_trade_history` and `db.get_position_notes` were caller-less
+  (their consumers were `/fragments/history/trade_history` and
+  `/fragments/history/exchange`). Porting them would have meant first
+  resurrecting those tables in React. → **operator chose RETIRE; both
+  routes and `get_position_notes` are now DELETED** (see the retirement
+  section above; `query_trade_history` is deliberately kept).
 
 **Shipped**:
 - Backend: all four routes JSON-in/JSON-out with real status codes.
@@ -220,6 +256,9 @@ frontend/src + e2e)**:
   /history/notes/{pre_trade,trade_history,position} (note editing),
   POST /params/update, POST /history/log_execution + /history/log_close
   (manual-entry forms).
+  **▶ DISPOSED in the seventh block (same day): dd_override + notes/pre_trade
+  PORTED to React; notes/trade_history + notes/position RETIRED. Still
+  awaiting a call: POST /params/update, log_execution, log_close.**
 
 **Gate: 4099 passed / 6 skipped / 3 deselected** (was 4480/6/3 — the
 delta is exactly the retired pins; the intermittent aiosqlite teardown

@@ -177,17 +177,20 @@ async def frag_history_trade_events(
 # All three used to answer with an HTML `<span onclick="editNote(...)">` cell
 # for the Jinja tables' inline editor. That editor (base.html `editNote`) was
 # deleted in the fragments slim-down, so the markup referenced a function that
-# no longer exists. They now answer JSON; the caller re-renders from its own
-# rows.
+# no longer exists. The one that survives now answers JSON; the caller
+# re-renders from its own rows.
 #
-# SURFACE STATUS — only `pre_trade` has a React consumer (the History page's
-# Pre-Trade Log tab, whose JSON door already carries `notes` via `SELECT *`).
-# `trade_history` and `position` annotate tables with NO reader left anywhere:
-# `db.query_trade_history` and `db.get_position_notes` lost their only callers
-# when `/fragments/history/trade_history` and `/fragments/history/exchange`
-# were deleted. They are kept JSON-correct here, but writing to them is
-# currently write-only — retire them or port their tables (operator call, filed
-# in HANDOFF).
+# SURFACE STATUS — `pre_trade` is the ONLY row-note surface. The sibling
+# `trade_history` and `position` note writers were RETIRED 2026-07-30 (operator
+# call): the tables they annotated lost their last reader in the fragments
+# slim-down, so the notes could be written but never displayed anywhere. Their
+# DB helpers went with them (`update_trade_history_notes`, `upsert_position_note`
+# and the already-caller-less `get_position_notes`).
+#
+# DATA IS PRESERVED, deliberately: the `position_history_notes` table and
+# `trade_history.notes` column stay in the schema (and in the split migration),
+# so any note the operator wrote survives. Re-exposing them is a matter of
+# adding a reader, not recovering data.
 
 @router.put("/history/notes/pre_trade/{row_id}", response_class=JSONResponse)
 async def update_pre_trade_note(row_id: int, notes: str = Form("")):
@@ -199,18 +202,6 @@ async def update_pre_trade_note(row_id: int, notes: str = Form("")):
         # report success — the cell would close on a write that never landed.
         return JSONResponse({"error": "pre-trade row not found"}, status_code=404)
     return JSONResponse({"status": "ok", "row_id": row_id, "notes": notes})
-
-
-@router.put("/history/notes/trade_history/{row_id}", response_class=JSONResponse)
-async def update_trade_history_note(row_id: int, notes: str = Form("")):
-    await db.update_trade_history_notes(row_id, notes)
-    return JSONResponse({"status": "ok", "row_id": row_id, "notes": notes})
-
-
-@router.put("/history/notes/position", response_class=JSONResponse)
-async def update_position_note(trade_key: str = Form(""), notes: str = Form("")):
-    await db.upsert_position_note(trade_key, notes)
-    return JSONResponse({"status": "ok", "trade_key": trade_key, "notes": notes})
 
 
 # P8.T6 (spec §10.5): manual-close reason. The pre-submission modal is

@@ -18,10 +18,11 @@ Route logic is exercised by DIRECT handler calls with the module `db` /
 write through the shared client (F5 live-data discipline: `log_event`
 resolves config.DATA_DIR, so it is stubbed here).
 
-SURFACE NOTE pinned below: `notes/trade_history` and `notes/position` have
-NO React consumer because the tables they annotate lost their last reader
-in the slim-down (`db.query_trade_history` / `db.get_position_notes` are
-caller-less). They are pinned JSON-correct, not ported.
+SURFACE NOTE: `notes/trade_history` and `notes/position` had no React
+consumer — the tables they annotate lost their last reader in the slim-down
+— and were RETIRED on 2026-07-30 by operator call, together with their DB
+helpers. Their DATA is preserved (table + column kept). Pinned below:
+the routes stay gone, the helpers stay gone, the data stays.
 
 Run: pytest tests/test_react_port_dd_notes.py -v
 """
@@ -371,20 +372,50 @@ class TestNotesJsonContract:
         assert rows and "id" in rows[0] and "notes" in rows[0]
         assert rows[0]["notes"] == "hello"
 
-    @pytest.mark.asyncio
-    async def test_position_and_trade_history_notes_answer_json(self, ndb):
-        """Kept JSON-correct even though no React table reads them back."""
-        import api.routes_history as rh
-        r1 = await rh.update_position_note(trade_key="BTCUSDT|1", notes="scaled in")
-        assert _body(r1) == {"status": "ok", "trade_key": "BTCUSDT|1",
-                             "notes": "scaled in"}
-        r2 = await rh.update_trade_history_note(7, notes="legacy row")
-        assert _body(r2) == {"status": "ok", "row_id": 7, "notes": "legacy row"}
+    def test_retired_note_routes_are_not_registered(self):
+        """RETIRED 2026-07-30 (operator call): `notes/trade_history` and
+        `notes/position` annotated tables that lost their last reader in the
+        fragments slim-down, so the notes could be written but never displayed.
+        Resurrecting a route without a reader is drift.
+
+        Asserted on `main.app` (the repo's retirement-pin precedent, see
+        test_v27_phase6_retirement) rather than the module router — that also
+        catches a re-registration on a DIFFERENT router or a compat shim."""
+        import main
+        paths = {getattr(r, "path", None) for r in main.app.routes}
+        assert "/history/notes/pre_trade/{row_id}" in paths, "the survivor"
+        assert "/history/notes/trade_history/{row_id}" not in paths
+        assert "/history/notes/position" not in paths
+
+    def test_retired_note_helpers_are_gone(self):
+        """Their DB helpers went with them — a symbol is removed WITH its last
+        consumer, not left behind for a future caller to rediscover."""
+        from core.database import db as _db
+        for name in ("update_trade_history_notes", "upsert_position_note",
+                     "get_position_notes"):
+            assert not hasattr(_db, name), f"{name} should have been retired"
+        assert hasattr(_db, "update_pre_trade_notes"), "the survivor"
 
     @pytest.mark.asyncio
-    async def test_no_editnote_markup_in_any_notes_response(self, ndb):
-        """THE port's load-bearing anti-regression: these responses used to
-        emit onclick="editNote(...)" — a call into a function the fragments
+    async def test_retiring_the_api_did_not_drop_the_data(self, ndb):
+        """Retiring an API is NOT a data migration: any note the operator wrote
+        must survive. The table + column stay.
+
+        Precisely: `position_history_notes` now has neither reader nor writer,
+        while `trade_history.notes` lost only its EDIT path — `POST
+        /history/log_close` still writes that column on insert."""
+        async with ndb._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name='position_history_notes'") as c:
+            assert await c.fetchone(), "position_history_notes was dropped"
+        async with ndb._conn.execute("PRAGMA table_info(trade_history)") as c:
+            cols = {r["name"] for r in await c.fetchall()}
+        assert "notes" in cols, "trade_history.notes was dropped"
+
+    @pytest.mark.asyncio
+    async def test_no_editnote_markup_in_the_notes_response(self, ndb):
+        """THE port's load-bearing anti-regression: this response used to emit
+        onclick="editNote(...)" — a call into a function the fragments
         slim-down deleted from base.html."""
         import api.routes_history as rh
         cur = await ndb._conn.execute(
@@ -393,8 +424,7 @@ class TestNotesJsonContract:
         await ndb._conn.commit()
         for resp in (
             await rh.update_pre_trade_note(cur.lastrowid, notes="a"),
-            await rh.update_trade_history_note(1, notes="b"),
-            await rh.update_position_note(trade_key="k", notes="c"),
+            await rh.update_pre_trade_note(999999, notes="b"),   # the 404 lane
         ):
             raw = resp.body.decode("utf-8")
             assert "editNote" not in raw

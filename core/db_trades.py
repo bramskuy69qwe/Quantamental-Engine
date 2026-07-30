@@ -12,7 +12,11 @@ log = logging.getLogger("database")
 
 
 class TradesMixin:
-    """pre_trade_log, execution_log, trade_history, position_notes domain methods."""
+    """pre_trade_log, execution_log and trade_history domain methods.
+
+    (The position_notes helpers were retired 2026-07-30 — see the tombstone
+    below; their table is kept but has no reader or writer left.)
+    """
 
     _PRE_TRADE_SORT_COLS = {
         "timestamp", "ticker", "side", "average", "sl_price", "tp_price",
@@ -481,29 +485,10 @@ class TradesMixin:
         await self._conn.commit()
         return cur.rowcount > 0
 
-    async def update_trade_history_notes(self, row_id: int, notes: str) -> None:
-        await self._conn.execute(
-            "UPDATE trade_history SET notes = ? WHERE id = ?", (notes, row_id)
-        )
-        await self._conn.commit()
-
-    async def get_position_notes(self, trade_keys: List[str]) -> Dict[str, str]:
-        """Return {trade_key: notes} for the given keys (only rows that exist)."""
-        if not trade_keys:
-            return {}
-        placeholders = ",".join("?" * len(trade_keys))
-        async with self._conn.execute(
-            f"SELECT trade_key, notes FROM position_history_notes WHERE trade_key IN ({placeholders})",
-            trade_keys,
-        ) as cur:
-            rows = await cur.fetchall()
-        return {r["trade_key"]: r["notes"] for r in rows}
-
-    async def upsert_position_note(self, trade_key: str, notes: str) -> None:
-        """Insert or replace the note for a trade_key in position_history_notes."""
-        await self._conn.execute(
-            "INSERT INTO position_history_notes (trade_key, notes) VALUES (?, ?)"
-            " ON CONFLICT(trade_key) DO UPDATE SET notes = excluded.notes",
-            (trade_key, notes),
-        )
-        await self._conn.commit()
+    # (Retired 2026-07-30 with their routes: `update_trade_history_notes`,
+    # `upsert_position_note` and `get_position_notes`. The trade_history and
+    # exchange-history tables they annotated lost their last reader in the
+    # fragments slim-down, so those notes were write-only. The
+    # `position_history_notes` TABLE and `trade_history.notes` COLUMN are
+    # deliberately KEPT — retiring an API is not a data migration, and the
+    # split migration still copies the table per account.)
