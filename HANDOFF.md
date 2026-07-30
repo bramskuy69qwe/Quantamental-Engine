@@ -2,6 +2,48 @@
 
 **Date**: 2026-07-30 (**MERIDIAN v3.1 — THE JINJA RETIREMENT IS SHIPPED (`1afc9f8`): the React app owns `/`, the 8 Jinja page twins are DELETED (−4,914 lines), 129 pins retired, version bumped v3.0→v3.1. Program close per the Release-hygiene rule. Earlier same day: E2E Phases 0–7 complete + ALL carry-forwards fixed.**)
 
+## ▶▶ NEXT SESSION = FRAGMENTS SLIM-DOWN (queued 2026-07-30, operator-directed)
+
+**Charge**: of the 67 `templates/fragments/*` files, a real subset's HTML
+branch became unreachable at the retirement — those fragments were only
+ever rendered inside the 8 deleted pages, while React reads ONLY their
+`?format=json` door. Audit each fragment route's consumers, convert the
+React-only ones to JSON-only responses, delete their HTML twins.
+
+**Method (audit-sized, not a sweep)**: for each of the ~50 fragment
+routes, trace HTML consumers through the SURVIVING Jinja surfaces only
+(base.html, config.html, admin/*, orders/needs_link.html, and other
+fragments' `{% include %}`/htmx chains — `hx-get` grep is the entry
+point). No surviving consumer + React reads `?format=json` → convert the
+route to JSON-only (or leave the route and 404 the HTML branch loudly)
+and delete the template. KNOWN KEEPERS (surviving-page htmx):
+`ws_status`, `needs_link_count`, `account_detail`, the admin tables,
+anything needs_link renders. KNOWN CANDIDATES: `fragments/cockpit/*`,
+the analytics/history/dashboard table fragments' HTML halves.
+**Traps**: a template can be included BY another fragment (trace
+transitively); `primitives/` macros are imported by fragments (keep);
+the e2e phase-2 manifest pins fragment-door BEHAVIOR not HTML (safe);
+some pins in tests/ compile-render fragment templates (retire with their
+templates, same discipline as `1afc9f8`). Also decide `/params` (302 →
+/config) and whether the two legacy-CSV files in docs/archive matter.
+
+## ▶ SESSION CLOSE 2026-07-30 (fourth block) — archive sweep + launcher
+
+Operator-directed. Root 30 → **13 files**. `9c1ae53`: 9 tracked
+historicals git-mv'd to `docs/archive/` (v2.4/v2.5-era plans+specs, the
+1.1.5 PDF, the Quantower-era .sln, test_multi_tp_scenario.txt,
+extract_purposes.sh; README links + 2 code-comment citations
+re-pointed); 7 untracked June debug artifacts (5 png + 2 multi-MB logs)
+moved on disk to `docs/archive/debug-2026-06/` (gitignored — NOT in
+history). KEPT deliberately: `pyproject.toml` (pytest-timeout guardrail —
+the operator listed it, refused with reason). `23824e0`+`786b610`:
+**launch.bat ARCHIVED** (its `--reload` double-ran live schedulers) —
+`launch-v3.bat` is THE launcher, URLs promoted to `/`, title/banner
+de-versioned; launcher pins re-pointed with hard reads + a NEW
+never-reload pin (executable-lines-only after a first version tripped on
+its own warning comment and briefly pushed red — fixed forward, gate now
+conditional before push).
+
 ## ▶ SESSION CLOSE 2026-07-30 (third block) — JINJA RETIREMENT SHIPPED · v3.1
 
 Operator-directed ("lets start the jinja retirement"); the gate was the
