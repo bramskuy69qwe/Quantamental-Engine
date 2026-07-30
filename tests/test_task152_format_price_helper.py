@@ -22,7 +22,6 @@ Run: pytest tests/test_task152_format_price_helper.py -v
 from __future__ import annotations
 
 import math
-from pathlib import Path
 
 import pytest
 
@@ -117,62 +116,6 @@ class TestFormatSizeFixedPrecision:
 # ── Source-pins on the migrated call sites ──────────────────────────────────
 
 
-class TestExcursionsTemplateUsesFmtPrice:
-    """FE-MED-021 fix surface — ENTRY column in MFE/MAE detail table."""
-
-    def _read(self) -> str:
-        return Path(
-            "templates/fragments/analytics/excursions.html"
-        ).read_text(encoding="utf-8")
-
-    def test_entry_column_uses_fmt_price_not_fmt_4(self):
-        """ENTRY column must route through fmt_price; uniform fmt(...,4)
-        was the bug. Anchor comment ties the call site to FE-MED-021.
-        Scope: ignore Jinja `{# ... #}` and `{## ... #}` comment regions
-        so the anchor 'Was: fmt(t.entry_price, 4)' doesn't trip us."""
-        src = self._read()
-        assert "fmt_price(t.entry_price)" in src, (
-            "FE-MED-021 regression: ENTRY column is not using fmt_price."
-        )
-        import re
-        executing = re.sub(r"\{#.*?#\}", "", src, flags=re.DOTALL)
-        assert "fmt(t.entry_price, 4)" not in executing, (
-            "FE-MED-021 regression: uniform-4-decimal call reintroduced "
-            "in executing (non-comment) template code."
-        )
-
-    def test_anchor_comment_references_fe_med_021(self):
-        src = self._read()
-        assert "FE-MED-021" in src and "Task 152" in src, (
-            "Anchor comment missing — future maintainer might revert."
-        )
-
-
-class TestCalcResultTemplateUsesFmtSize:
-    """FE-LOW-022 fix surface — CALCULATED POSITION SIZE in calc_result."""
-
-    def _read(self) -> str:
-        return Path(
-            "templates/fragments/calc_result.html"
-        ).read_text(encoding="utf-8")
-
-    def test_size_uses_fmt_size_not_fmt_4(self):
-        src = self._read()
-        # Three size references in this fragment: main, size_raw, and the
-        # regime-adjusted variant. All three must route through fmt_size.
-        assert "fmt_size(c.size)" in src
-        assert "fmt_size(c.size_raw)" in src
-        assert "fmt_size(c.size_raw * c.regime_multiplier)" in src
-        # Pre-fix call must be gone
-        assert "fmt(c.size, 4)" not in src, (
-            "FE-LOW-022 regression: hardcoded fmt(c.size, 4) reintroduced."
-        )
-
-    def test_anchor_comment_references_fe_low_022(self):
-        src = self._read()
-        assert "FE-LOW-022" in src and "Task 152" in src
-
-
 # (Jinja retirement 2026-07-30: the calculator.html JS-helper pins are gone
 # with the template; format_price's PYTHON pins above are the survivors.)
 
@@ -198,58 +141,6 @@ class TestJinjaGlobalsExposed:
 
 
 # ── FBF: render the excursions fragment with a high-priced row ──────────────
-
-
-class TestExcursionsCompileAndRender:
-    """Compile-and-render pin (MED-047 discipline): synthesize a trades
-    list with a high-priced symbol; the rendered HTML must contain the
-    2-decimal form (not 4-decimal) for the ENTRY cell."""
-
-    def test_rendered_entry_cell_adaptive(self):
-        from jinja2 import Environment, FileSystemLoader
-        from core.formatters import format_price, format_size
-
-        env = Environment(loader=FileSystemLoader("templates"))
-        env.globals["fmt"] = lambda v, d=2: f"{float(v):,.{d}f}" if v is not None else "—"
-        env.globals["fmt_price"] = format_price
-        env.globals["fmt_size"] = format_size
-        env.globals["fmt_duration"] = lambda ms: "—"
-
-        tmpl = env.get_template("fragments/analytics/excursions.html")
-        ctx = {
-            "period_label": "30D",
-            "filter_dir": "all",
-            "trades": [
-                {
-                    "symbol": "BTCUSDT", "direction": "LONG",
-                    "entry_price": 80816.30,
-                    "mfe": 100.0, "mae": -50.0,
-                    "income": 25.0, "hold_ms": 60000,
-                },
-                {
-                    "symbol": "AIAUSDT", "direction": "SHORT",
-                    "entry_price": 0.0749,
-                    "mfe": 5.0, "mae": -2.0,
-                    "income": 1.5, "hold_ms": 60000,
-                },
-            ],
-            "avg_mfe": 52.5, "avg_mae_abs": 26.0,
-            "avg_mer": 2.0, "pct_favorable": 50,
-            "scatter_data": [],
-        }
-        html = tmpl.render(**ctx)
-        # BTC ENTRY rendered with magnitude-adaptive precision (2 decimals)
-        assert "80,816.30" in html, (
-            "FE-MED-021 fix surface: BTC entry not rendered at 2 decimals. "
-            f"Rendered HTML excerpt: {html[:2000]}"
-        )
-        # Pre-fix 4-decimal form must NOT appear
-        assert "80,816.3000" not in html, (
-            "FE-MED-021 regression: 4-decimal form reintroduced."
-        )
-        # Sub-$1 keeps higher precision (audit endorses both 4 and 6 here;
-        # we ship 6 to match JS fmtP — pin the actual behaviour)
-        assert "0.074900" in html
 
 
 # ── FE-LOW-024 JS clamp logic verification ──────────────────────────────────

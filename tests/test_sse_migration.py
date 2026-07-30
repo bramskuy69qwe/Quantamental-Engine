@@ -1,5 +1,4 @@
 """Tests for SSE migration: publishers + multiplexed endpoint + fragment triggers."""
-import pytest
 
 from core.pubsub.channels import (
     channel_pattern, extract_event_type,
@@ -69,15 +68,5 @@ class TestSSEExtension:
     def test_sse_script_in_base(self):
         content = open("templates/base.html", encoding="utf-8").read()
         assert "ext/sse.js" in content
-
-
-
-class TestFragmentTriggers:
-    def test_positions_triggers_on_sse(self):
-        # SSE triggers moved from dashboard.html to individual tbodies in the shell
-        content = open("templates/fragments/dashboard_positions.html", encoding="utf-8").read()
-        assert "sse:position_update" in content
-
-
 
 

@@ -241,9 +241,6 @@ async def test_untagged_calc_keeps_freetext_ladder(pdb):
 # ── 5.1: calculator template wiring ─────────────────────────────────────────
 
 
-
-
-
 def test_model_sort_key_allowlisted_and_validates():
     """Holistic-audit F3: the Model header's sort key must be in the
     shared allowlist — validate_sort_params 400s on miss, so a missing
@@ -257,42 +254,3 @@ def test_model_sort_key_allowlisted_and_validates():
     ) == ("model_name", "ASC")
 
 
-def _sort_table_pairs():
-    """Every sort_th-emitting history table paired with its allowlist
-    (audit fold: the F3 class pin generalized to ALL seven tables — the
-    siblings are clean today but were unpinned against the same drift)."""
-    from core.database import DatabaseManager as D
-    return [
-        ("closed_positions_table.html", D._CLOSED_POS_SORT_COLS),
-        ("fills_table.html", D._FILLS_SORT_COLS),
-        ("order_history_table.html", D._ORDERS_SORT_COLS),
-        ("open_orders_table.html", D._ORDERS_SORT_COLS),
-        ("exchange_table.html", D._EXCHANGE_HISTORY_SORT_COLS),
-        ("pre_trade_table.html", D._PRE_TRADE_SORT_COLS),
-        ("trade_history_table.html", D._TRADE_HISTORY_SORT_COLS),
-    ]
-
-
-def test_every_sort_header_key_is_allowlisted():
-    """The CLASS pin for F3: every sort_th key a history table emits
-    must be in its route/DB allowlist — a new column added to a template
-    without the allowlist entry fails here, not in the operator's face
-    (route-side validate_sort_params 400s on every header click)."""
-    import re
-    for template, allowed in _sort_table_pairs():
-        src = (TEMPLATES / "fragments" / "history" / template
-               ).read_text(encoding="utf-8")
-        keys = re.findall(r'sort_th\("[^"]+",\s*"([A-Za-z0-9_]+)"', src)
-        assert keys, f"no sort_th calls found in {template} — moved?"
-        missing = [k for k in keys if k not in allowed]
-        assert not missing, f"{template}: sort keys not allowlisted: {missing}"
-
-
-def test_closed_positions_table_renders_model_column():
-    """5.3 render surface: the closed-positions table carries the Model
-    column (header + cell reading model_name with an em-dash fallback)."""
-    src = (TEMPLATES / "fragments" / "history"
-           / "closed_positions_table.html").read_text(encoding="utf-8")
-    assert '"Model",      "model_name"' in src
-    assert "r.model_name or '—'" in src
-    templates.env.get_template("fragments/history/closed_positions_table.html")

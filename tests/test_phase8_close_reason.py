@@ -11,8 +11,9 @@ Intent (Rule 8):
   - the operator's refined reason + note SURVIVE a close-row REPLACE rebuild
     (the T176-class preserve in insert_closed_position) — the load-bearing
     anti-silent-drift guarantee;
-  - the endpoint validates the reason ∈ MANUAL_* and re-renders the badge;
-  - the clickable manual badge + modal are wired.
+  - the endpoint validates the reason ∈ MANUAL_* and (fragments slim-down
+    2026-07-30) returns a JSON ok — the htmx badge re-render retired with
+    close_reason_cell.html; the React modal only checks response.ok.
 
 Run: pytest tests/test_phase8_close_reason.py -v
 """
@@ -22,7 +23,6 @@ import os
 import sys
 import tempfile
 
-import jinja2
 import pytest
 import pytest_asyncio
 
@@ -146,7 +146,8 @@ class TestReplacePreserve:
 
 class TestEndpoint:
     @pytest.mark.asyncio
-    async def test_valid_updates_and_returns_badge(self, db, monkeypatch):
+    async def test_valid_updates_and_returns_json_ok(self, db, monkeypatch):
+        import json
         import api.routes_history as rh
         from types import SimpleNamespace
         monkeypatch.setattr(rh, "db", db)
@@ -154,7 +155,9 @@ class TestEndpoint:
         await _insert_close(db)
         resp = await rh.update_close_reason(await _id(db), exit_reason="MANUAL_INTERVENTION", close_note="note")
         assert resp.status_code == 200
-        assert b"Intervention" in resp.body      # the badge label
+        body = json.loads(resp.body.decode("utf-8"))
+        assert body["status"] == "ok"
+        assert body["exit_reason"] == "MANUAL_INTERVENTION"
         assert await _read(db) == ("MANUAL_INTERVENTION", "note")
 
     @pytest.mark.asyncio
@@ -178,54 +181,14 @@ class TestEndpoint:
         assert resp.status_code == 404
 
 
-# ── badge macro render + wiring ───────────────────────────────────────────────
-
-
-def _env():
-    env = jinja2.Environment(
-        loader=jinja2.FileSystemLoader("templates"),
-        autoescape=jinja2.select_autoescape(["html"]),
-    )
-    return env
-
-
-def _badge(exit_reason, close_note, row_id=5):
-    return _env().get_template("fragments/history/close_reason_cell.html").render(
-        exit_reason=exit_reason, close_note=close_note, row_id=row_id)
-
-
-class TestBadgeMacro:
-    def test_labels_and_wiring(self):
-        html = _badge("MANUAL_INTERVENTION", "", 5)
-        assert "Intervention" in html
-        assert 'onclick="openCloseReasonModal(this)"' in html
-        assert 'data-cr-id="5"' in html
-        assert 'data-cr-reason="MANUAL_INTERVENTION"' in html
-
-    def test_note_marker_and_tooltip(self):
-        html = _badge("MANUAL_OTHER", "bailed early", 5)
-        assert "✎" in html                       # note marker
-        assert "bailed early" in html            # tooltip + data-cr-note
-
-    def test_xss_escaped_in_note(self):
-        html = _badge("MANUAL_OTHER", "<script>alert(1)</script>", 5)
-        assert "<script>alert(1)</script>" not in html
-        assert "&lt;script&gt;" in html
-
-    def test_legacy_value_defaults_label(self):
-        # legacy 'manual'/'limit_close' aren't MANUAL_* → label falls back
-        assert "Manual" in _badge("manual", "", 5)
+# ── wiring ────────────────────────────────────────────────────────────────────
+# (The badge-macro render + closes-table wiring classes retired with
+# close_reason_badge.html / close_reason_cell.html / closed_positions_table.html
+# in the fragments slim-down, 2026-07-30 — the React History/Linkage pages
+# render the badge from the JSON rows.)
 
 
 class TestWiring:
-    def test_closes_table_uses_macro(self):
-        with open("templates/fragments/history/closed_positions_table.html", encoding="utf-8") as fh:
-            src = fh.read()
-        assert "import manual_close_badge" in src
-        assert 'id="cr-cell-{{ r.id }}"' in src
-        assert "manual_close_badge(er, r.close_note, r.id)" in src
-
-
     def test_endpoint_registered(self):
         import api.routes_history as rh
         assert any(

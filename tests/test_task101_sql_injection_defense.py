@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -347,26 +347,29 @@ class TestRouteWiring:
         assert "from core.sql_safety import validate_sort_params" in src
 
     def test_routes_orders_calls_validator_in_each_handler(self):
-        """4 sortable handlers in routes_orders.py — all must call validator."""
+        """3 sortable handlers in routes_orders.py — all must call validator.
+        (Fragments slim-down 2026-07-30: frag_open_orders retired with its
+        template — 4 → 3.)"""
         from api import routes_orders
         src = inspect.getsource(routes_orders)
         # The exact call shape we expect
         call_count = src.count("validate_sort_params(sort_by, sort_dir,")
-        assert call_count == 4, (
-            f"MED-003 wiring regression: expected 4 validate_sort_params calls "
-            f"in routes_orders.py (frag_open_orders, frag_order_history, "
+        assert call_count == 3, (
+            f"MED-003 wiring regression: expected 3 validate_sort_params calls "
+            f"in routes_orders.py (frag_order_history, "
             f"frag_fills, frag_closed_positions); found {call_count}."
         )
 
     def test_routes_history_calls_validator_in_each_handler(self):
-        """3 sortable handlers in routes_history.py — all must call validator."""
+        """1 sortable handler left in routes_history.py — must call validator.
+        (Fragments slim-down 2026-07-30: frag_history_exchange +
+        frag_history_trade_history retired with their templates — 3 → 1.)"""
         from api import routes_history
         src = inspect.getsource(routes_history)
         call_count = src.count("validate_sort_params(sort_by, sort_dir,")
-        assert call_count == 3, (
-            f"MED-003 wiring regression: expected 3 validate_sort_params calls "
-            f"in routes_history.py (frag_history_exchange, frag_history_pre_trade, "
-            f"frag_history_trade_history); found {call_count}."
+        assert call_count == 1, (
+            f"MED-003 wiring regression: expected 1 validate_sort_params call "
+            f"in routes_history.py (frag_history_pre_trade); found {call_count}."
         )
 
 

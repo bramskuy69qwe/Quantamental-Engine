@@ -1,31 +1,74 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-07-30 (**MERIDIAN v3.1 — THE JINJA RETIREMENT IS SHIPPED (`1afc9f8`): the React app owns `/`, the 8 Jinja page twins are DELETED (−4,914 lines), 129 pins retired, version bumped v3.0→v3.1. Program close per the Release-hygiene rule. Earlier same day: E2E Phases 0–7 complete + ALL carry-forwards fixed.**)
+**Date**: 2026-07-30 (**MERIDIAN v3.1 — FRAGMENTS SLIM-DOWN SHIPPED (fifth block): 62 of 67 fragment templates deleted, 35 dead routes removed, 18 doors converted JSON-only, base.html de-dashboarded (echarts stack dropped). Same day, earlier: Jinja retirement `1afc9f8` · archive/launcher sweep · E2E carry-forwards.**)
 
-## ▶▶ NEXT SESSION = FRAGMENTS SLIM-DOWN (queued 2026-07-30, operator-directed)
+## ▶ SESSION CLOSE 2026-07-30 (fifth block) — FRAGMENTS SLIM-DOWN + Dashboard-first landing
 
-**Charge**: of the 67 `templates/fragments/*` files, a real subset's HTML
-branch became unreachable at the retirement — those fragments were only
-ever rendered inside the 8 deleted pages, while React reads ONLY their
-`?format=json` door. Audit each fragment route's consumers, convert the
-React-only ones to JSON-only responses, delete their HTML twins.
+**Landing fix first (operator ask, `0c0f126`)**: the shell restored the
+last-visited page from localStorage (`qe.page`) — a fresh load of `/` now
+ALWAYS lands on Dashboard. Explicit `#hash` deep-links still win; refresh
+keeps the current pane via the hash. `qe.page` write removed + e2e storage
+inventory updated. **Bundle `30e626377e` → `fc0125476b`** (hard-refresh
+after the pending engine restart).
 
-**Method (audit-sized, not a sweep)**: for each of the ~50 fragment
-routes, trace HTML consumers through the SURVIVING Jinja surfaces only
-(base.html, config.html, admin/*, orders/needs_link.html, and other
-fragments' `{% include %}`/htmx chains — `hx-get` grep is the entry
-point). No surviving consumer + React reads `?format=json` → convert the
-route to JSON-only (or leave the route and 404 the HTML branch loudly)
-and delete the template. KNOWN KEEPERS (surviving-page htmx):
-`ws_status`, `needs_link_count`, `account_detail`, the admin tables,
-anything needs_link renders. KNOWN CANDIDATES: `fragments/cockpit/*`,
-the analytics/history/dashboard table fragments' HTML halves.
-**Traps**: a template can be included BY another fragment (trace
-transitively); `primitives/` macros are imported by fragments (keep);
-the e2e phase-2 manifest pins fragment-door BEHAVIOR not HTML (safe);
-some pins in tests/ compile-render fragment templates (retire with their
-templates, same discipline as `1afc9f8`). Also decide `/params` (302 →
-/config) and whether the two legacy-CSV files in docs/archive matter.
+**THE SLIM-DOWN (audit per HANDOFF charge; consumer map built from
+hx-*/include/htmx.ajax grep over surviving Jinja + /fragments/ grep over
+frontend/src + e2e)**:
+- **KEEPERS — exactly 5 of 67 templates** (the charge's list confirmed):
+  `ws_status` (base 1s poll) · `needs_link_queue` (orders/needs_link) ·
+  `account_list`/`account_detail`/`account_config` (config.html) — plus
+  `needs_link_count` + `connections` (inline-HTML routes) and all
+  `primitives/*`.
+- **62 templates DELETED**; **35 routes DELETED** (9 dashboard, 4 cockpit,
+  5+3 models fragments + htmx form-lane CRUD [POST /models,
+  POST /models/{id}/update, DELETE /models/{id} — React uses /api/models],
+  2 backtest, 7 history [exchange, open_positions, trade_history,
+  open_orders, position_events, exec_link GET + POST confirm], analytics
+  equity_curve, ws_log, GET /fragments/accounts + activate-frag,
+  GET /calculator/refresh). Dead helpers went WITH last consumers
+  (_get_cached_recent_orders, _has_tpsl_modification, _render_fragment/
+  _oob_list/_parse_model_form family).
+- **18 doors JSON-ONLY** (`format` param stays accepted-and-inert):
+  8 analytics, closed_positions/order_history/fills/position_fills,
+  pre_trade/trade_events, POST /calculator/calculate +
+  link-window-status, backtest-upload (dry_run now honored on every
+  lane — the P7 LOW-1 400-guard existed only for the htmx lane),
+  PUT /history/close_reason (JSON ok; React checks resp.ok). DELETE
+  /accounts/{id} returns JSON (its render was discarded via
+  hx-swap="none" anyway). Decorators switched to
+  response_class=JSONResponse.
+- **base.html de-dashboarded** (post-migration JS-drift sweep): ghost
+  CSS, dashboard/history tab switchers + row-counter, [data-entry-ts]
+  ticker, editNote + note-textarea, echarts CDN + theme + dispose hook
+  all removed (every DOM target lived in deleted fragments);
+  `static/echarts-theme-qe.js` deleted (base.html was its only ref).
+- **Tests**: ~440 pins retired/adapted across ~45 files (AST-scripted node
+  deletion + orphan-helper sweeps; 8 whole files rm'd incl.
+  test_fragment_routes/test_ghost_interface/test_flicker_and_layout/
+  test_task112/test_task113). LIVE semantics RE-PINNED on JSON, not
+  dropped: the t0/PENDING/ERROR chain (task146), close-reason endpoint,
+  closed-positions badge STAMPING (linkage_history_plan drives the JSON
+  door), upload error lanes with real status codes, validator/wiring
+  count pins updated with reasons. One comment-trap caught in-session:
+  a retired-ticker pin stayed green off my own residue COMMENT
+  (the 786b610 class) — class deleted.
+- **Decisions**: `/params` KEEPS its 302 → /config (bookmarks, 2 lines).
+  The two docs/archive legacy CSVs (Quantower-era exchange-history/fills
+  snapshots, 37 KB) KEPT — recovery-program provenance.
+- **Filed, not deleted — UI-ORPHANED action endpoints** (template-
+  independent; their only triggers lived in deleted fragments; operator
+  call whether to port to React or retire): POST /account/{id}/dd_override
+  (DD manual override has NO UI since the retirement), PUT
+  /history/notes/{pre_trade,trade_history,position} (note editing),
+  POST /params/update, POST /history/log_execution + /history/log_close
+  (manual-entry forms).
+
+**Gate: 4099 passed / 6 skipped / 3 deselected** (was 4480/6/3 — the
+delta is exactly the retired pins; the intermittent aiosqlite teardown
+warning fired once, standing carry-forward). Surviving-template
+compile-render CLEAN; post-delete template-name + route-path greps CLEAN
+(inert comments only); e2e untouched (trade-oracles use the two surviving
+JSON doors' `?format=json`, unchanged behavior).
 
 ## ▶ SESSION CLOSE 2026-07-30 (fourth block) — archive sweep + launcher
 

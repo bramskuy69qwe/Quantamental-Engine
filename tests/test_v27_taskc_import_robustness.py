@@ -40,7 +40,6 @@ from core.backtest_adapters import BacktestAdapterError, get_backtest_adapter
 from core.database import DatabaseManager
 
 FIXTURES = Path(__file__).parent / "fixtures" / "multicharts"
-TEMPLATES = Path(__file__).parent.parent / "templates"
 
 
 def _parse(data: bytes, filename: str = "r.xlsx"):
@@ -175,20 +174,6 @@ async def test_boot_sweep_marks_interrupted_imported_runs_failed(tmp_path):
         await mgr2._conn.close()
 
 
-def test_run_list_renders_failed_badge():
-    from api.helpers import templates
-    run = {"id": 1, "name": "r", "source_app": "multicharts",
-           "status": "failed", "date_from": "", "date_to": "",
-           "summary": {}}
-    html = templates.env.get_template(
-        "fragments/model_backtest_list.html").render(runs=[run], error="")
-    assert "FAILED" in html
-    ok = dict(run, status="completed")
-    html = templates.env.get_template(
-        "fragments/model_backtest_list.html").render(runs=[ok], error="")
-    assert "FAILED" not in html and "COMPLETED" not in html
-
-
 # ── F8 + F14: route + template pins ─────────────────────────────────────────
 
 def test_parse_runs_off_the_event_loop():
@@ -197,26 +182,6 @@ def test_parse_runs_off_the_event_loop():
     src = (Path(__file__).parent.parent / "api" / "routes_models.py"
            ).read_text(encoding="utf-8")
     assert "asyncio.to_thread(adapter.parse" in src
-
-
-def test_double_submit_guards_and_accept_filter():
-    upload = (TEMPLATES / "fragments" / "model_backtest_upload.html"
-              ).read_text(encoding="utf-8")
-    assert 'hx-disabled-elt="find button"' in upload
-    assert "data-ext=" in upload and "o.dataset.ext" in upload
-    form = (TEMPLATES / "fragments" / "model_form.html"
-            ).read_text(encoding="utf-8")
-    # Full attribute string (audit fold: the bare token was satisfied by
-    # the fragment's own comment line).
-    assert 'hx-disabled-elt="find button[type=\'submit\']"' in form
-    # Rendered output carries the per-adapter extension data (a broken
-    # join rendering empty would pass the source grep).
-    from api.helpers import templates as _tpl
-    html = _tpl.env.get_template("fragments/model_backtest_upload.html").render(
-        model={"id": 1},
-        adapters=[{"app_id": "multicharts", "display_name": "MultiCharts",
-                   "accepted_extensions": [".xlsx", ".xml"]}])
-    assert 'data-ext=".xlsx,.xml"' in html
 
 
 @pytest_asyncio.fixture
@@ -262,7 +227,9 @@ async def test_size_precheck_rejects_before_read(mdb):
                      size=rm.MAX_UPLOAD_BYTES + 1)
     resp = await rm.upload_model_backtest(_req(), mid, file=big,
                                           app_id="multicharts")
-    assert resp.status_code == 200
+    # Fragments slim-down (2026-07-30): the route is JSON-only — errors
+    # carry real status codes instead of the 200-banner htmx contract.
+    assert resp.status_code == 400
     assert "File too large" in resp.body.decode()
     assert await mdb.list_model_backtests(mid) == []
 

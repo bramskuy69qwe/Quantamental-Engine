@@ -2,8 +2,6 @@
 import inspect
 import os
 
-import pytest
-
 
 class TestExchangeRefreshHz:
     def test_config_exists(self):
@@ -44,28 +42,6 @@ class TestEquityRecalcPublish:
         assert '"unrealized_pnl"' in src
 
 
-class TestStableRowIDs:
-    def test_position_rows_have_ids(self):
-        # Rows now in dedicated row template (included by shell)
-        content = open("templates/fragments/dashboard_positions_rows.html", encoding="utf-8").read()
-        assert 'id="pos-row-' in content
-
-    def test_order_rows_have_ids(self):
-        content = open("templates/fragments/dashboard_orders_rows.html", encoding="utf-8").read()
-        assert 'id="ord-row-' in content
-
-
-class TestClientSideTick:
-    def test_data_entry_ts_attribute(self):
-        # data-entry-ts in position rows template (included by shell)
-        content = open("templates/fragments/dashboard_positions_rows.html", encoding="utf-8").read()
-        assert "data-entry-ts" in content
-
-    def test_setinterval_in_base(self):
-        content = open("templates/base.html", encoding="utf-8").read()
-        assert "setInterval" in content
-        assert "data-entry-ts" in content
-
-    def test_time_formatter_in_base(self):
-        content = open("templates/base.html", encoding="utf-8").read()
-        assert "_fmt" in content  # the time formatting function
+# (Fragments slim-down 2026-07-30: TestClientSideTick retired — the
+# [data-entry-ts] hold-time ticker left base.html with the dashboard
+# fragment DOM it serviced.)

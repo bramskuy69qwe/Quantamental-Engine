@@ -26,7 +26,6 @@ import os
 import sys
 import tempfile
 
-import jinja2
 import pytest
 import pytest_asyncio
 
@@ -173,64 +172,7 @@ class TestPersistTpLevels:
 # ── calc_result.html ladder display (full fragment render) ────────────────────
 
 
-def _env():
-    env = jinja2.Environment(
-        loader=jinja2.FileSystemLoader("templates"),
-        autoescape=jinja2.select_autoescape(["html"]),
-    )
-    env.globals["fmt"] = lambda v, n=2: f"{float(v):.{n}f}" if isinstance(v, (int, float)) else str(v)
-    env.globals["fmt_size"] = lambda v: f"{float(v):.4f}" if isinstance(v, (int, float)) else str(v)
-    env.globals["fmt_price"] = lambda v, *a: str(v)
-    return env
-
-
-def _full_calc(**over):
-    c = {
-        "calc_id": "C1", "eligible": True, "ticker": "BTCUSDT", "side": "long",
-        "order_type": "market", "average": 50000.0,
-        "weekly_pnl_state": "ok", "dd_state": "ok", "equity_stale": False,
-        "total_equity": 1000.0, "at_max_positions": False,
-        "at_max_exposure": False, "exceeds_corr_limit": False, "ineligible_reason": "",
-        "regime_stale": False, "regime_label": "neutral",
-        "regime_multiplier": 1.0, "apply_regime_multiplier": True,
-        "atr_c": 0.5, "atr_category": "normal", "atr100": 100.0, "atr14": 50.0,
-        "risk_usdt": 10.0, "base_size": 500.0, "est_fill_price": 50000.0,
-        "one_percent_depth": 1000.0, "best_bid": 49990.0, "best_ask": 50010.0,
-        "size": 10.0, "size_raw": 10.0, "notional": 500000.0,
-        "tp_usdt": 50.0, "sl_usdt": 20.0,
-        "size_overridden": False, "planned_size": 10.0,
-        "est_slippage": 0.001, "est_slippage_usdt": 0.5, "est_profit": 45.0,
-        "est_loss": 25.0, "est_r": 1.8, "est_exposure": 0.5, "fee_rate": 0.0004,
-        "correlated_exposure": {}, "new_sector_exposure": 100.0,
-        "tp_price": 55000.0, "sl_price": 48000.0,
-        "would_be_notional": 500000.0, "would_be_size": 10.0,
-        "tp_levels": None,
-    }
-    c.update(over)
-    return c
-
-
 _PARAMS = {"max_position_count": 10, "max_exposure": 3.0, "max_correlated_exposure": 0.5}
-
-
-def _render(calc):
-    return _env().get_template("fragments/calc_result.html").render(calc=calc, params=_PARAMS)
-
-
-class TestCalcResultLadderDisplay:
-    def test_ladder_rendered_when_present(self):
-        html = _render(_full_calc(tp_levels=[
-            {"price": 55000.0, "size_pct": 50.0},
-            {"price": 60000.0, "size_pct": 50.0},
-        ]))
-        assert "TP Ladder (2)" in html
-        assert "TP1 @ 55000.0000" in html
-        assert "TP2 @ 60000.0000" in html
-        assert "(50%)" in html
-
-    def test_no_ladder_section_when_none(self):
-        html = _render(_full_calc(tp_levels=None))
-        assert "TP Ladder" not in html
 
 
 # ── widget + endpoint wiring (source pins) ────────────────────────────────────

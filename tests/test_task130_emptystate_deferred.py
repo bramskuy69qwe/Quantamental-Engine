@@ -18,7 +18,6 @@ Run: pytest tests/test_task130_emptystate_deferred.py -v
 """
 from __future__ import annotations
 
-from pathlib import Path
 
 import jinja2
 import pytest
@@ -38,79 +37,8 @@ def _make_env() -> jinja2.Environment:
 
 # ── equity_ohlc.html migration (padding="loose") ────────────────────────────
 
-class TestEquityOhlcMigration:
-
-    def _read(self) -> str:
-        return Path("templates/fragments/equity_ohlc.html").read_text(encoding="utf-8")
-
-    def test_imports_empty_state(self):
-        assert 'from "primitives/empty_state.html" import empty_state' in self._read()
-
-    def test_uses_loose_padding(self):
-        """Full-page empty state — uses padding="loose" (32px) preset."""
-        src = self._read()
-        assert 'empty_state(message="No snapshot data available yet.", padding="loose")' in src
-
-    def test_old_inline_empty_div_gone(self):
-        """Anti-revert: the prior `<div style="...padding:32px 0;
-        text-align:center;">No snapshot...</div>` pattern is gone."""
-        src = self._read()
-        old = '<div style="color:var(--muted);font-size:.78rem;padding:32px 0;text-align:center;">No snapshot data available yet.</div>'
-        assert old not in src
-
-    def test_renders_es_loose_when_no_candles(self):
-        """End-to-end: candles=None empty branch renders the .es-loose class."""
-        env = _make_env()
-        src = '{% include "fragments/equity_ohlc.html" %}'
-        out = env.from_string(src).render(candles=None, active_tf="1m")
-        assert "es-loose" in out
-        assert "No snapshot data available yet." in out
-        # Old inline empty div gone
-        assert 'padding:32px 0;text-align:center;">No snapshot' not in out
-
 
 # ── exchange_table.html migration (default padding + alignment shift) ───────
-
-class TestExchangeTableMigration:
-
-    def _read(self) -> str:
-        return Path("templates/fragments/history/exchange_table.html").read_text(encoding="utf-8")
-
-    def test_imports_empty_state(self):
-        assert 'from "primitives/empty_state.html" import empty_state' in self._read()
-
-    def test_uses_default_padding(self):
-        """Default padding (20px) — accepts 4px shift from prior 16px
-        rather than adding a single-consumer 'medium' preset."""
-        src = self._read()
-        # Default padding means no padding= param passed (or padding="default")
-        assert 'empty_state(message="No position history found for this period.")' in src
-        # Should NOT be using tight or loose for this site
-        assert 'padding="tight"' not in src
-        assert 'padding="loose"' not in src
-
-    def test_old_inline_empty_div_gone(self):
-        """Anti-revert: the prior 16px-padding left-aligned `<div>`
-        pattern is gone."""
-        src = self._read()
-        old = '<div style="color:var(--muted);font-size:.78rem;padding:16px 0;">No position history found for this period.</div>'
-        assert old not in src
-
-    def test_renders_default_es_when_no_rows(self):
-        """End-to-end: rows=[] empty branch renders default EmptyState
-        (no es-tight, no es-loose modifier)."""
-        env = _make_env()
-        tpl = env.get_template("fragments/history/exchange_table.html")
-        out = tpl.render(
-            rows=[], total=0, page=1, per_page=20, total_pages=1,
-            search="", sort_by="exit_time_ms", sort_dir="DESC",
-            date_from="2026-01-01", date_to="2026-12-31",
-        )
-        assert "No position history found for this period." in out
-        assert 'class="es es-info"' in out
-        # No padding modifier — converges to centered, 20px primitive convention
-        assert "es-tight" not in out
-        assert "es-loose" not in out
 
 
 # ── Anti-regression: EmptyState API extension intact ────────────────────────
@@ -150,14 +78,3 @@ class TestEmptyStateApiIntact:
 
 # ── Compile pins (MED-047) ──────────────────────────────────────────────────
 
-class TestTemplateCompiles:
-
-    @pytest.mark.parametrize("path", [
-        "fragments/equity_ohlc.html",
-        "fragments/history/exchange_table.html",
-        "primitives/empty_state.html",
-    ])
-    def test_compiles(self, path):
-        env = _make_env()
-        tpl = env.get_template(path)
-        assert tpl is not None

@@ -81,52 +81,6 @@ class TestLinkStatusBadgeMacro:
 # ── 3.7b: the order tables carry the Link column ───────────────────────
 
 
-def _order_row(link_status="NEEDS_MANUAL_REVIEW"):
-    return {
-        "updated_at_ms": 1700000000000, "created_at_ms": 1700000000000,
-        "symbol": "BTCUSDT", "side": "BUY", "order_type": "limit",
-        "quantity": 1.0, "filled_qty": 0.0, "price": 50000.0, "stop_price": 0,
-        "time_in_force": "GTC", "status": "new", "link_status": link_status,
-        "exchange_order_id": "OabcdefghijklMNOP", "avg_fill_price": 0,
-        "client_order_id": "c1",
-    }
-
-
-def _render_table(name, rows):
-    env = _make_env()
-    tpl = env.get_template("fragments/history/" + name)
-    return tpl.render(
-        rows=rows, total=len(rows), page=1, per_page=20, total_pages=1,
-        sort_by="updated_at_ms", sort_dir="DESC", search="",
-        date_from="", date_to="",
-    )
-
-
-class TestOrderTablesLinkColumn:
-    def test_order_history_has_link_column_and_badge(self):
-        html = _render_table("order_history_table.html",
-                             [_order_row("NEEDS_MANUAL_REVIEW")])
-        assert "<th>Link</th>" in html
-        assert "badge-yellow" in html and "NEEDS REVIEW" in html
-        # position: Link sits after Status, before Order ID. (Status/Order ID
-        # header labels are unique; sort_th wraps them in <th class=...> so we
-        # anchor on the label text, NOT a literal <th>Status</th>.)
-        assert html.index("Status") < html.index("<th>Link</th>") < html.index("Order ID")
-
-    def test_open_orders_has_link_column_and_badge(self):
-        html = _render_table("open_orders_table.html",
-                             [_order_row("LINKED")])
-        assert "<th>Link</th>" in html
-        assert "badge-green" in html and "LINKED" in html
-        # position: Link sits after Type, before Qty.
-        assert html.index("Type") < html.index("<th>Link</th>") < html.index("Qty")
-
-    def test_history_compiles(self):
-        # get_template catches a Jinja syntax error / bad macro import.
-        _make_env().get_template("fragments/history/order_history_table.html")
-        _make_env().get_template("fragments/history/open_orders_table.html")
-
-
 # ── badge CSS family is defined app-wide (the Option-A decision) ───────
 
 

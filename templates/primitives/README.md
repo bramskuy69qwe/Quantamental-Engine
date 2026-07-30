@@ -9,7 +9,7 @@ holds the convention; future Bundle A tasks add primitives to it.
 | Directory                | Purpose                                                                                                                                       |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | `templates/primitives/`  | Reusable stateless component macros. Called from any template via `{% from "primitives/X.html" import X %}`. No HTTP route serves these.      |
-| `templates/fragments/`   | HTMX response targets — full template files returned by route handlers (e.g. `templates/fragments/history/trade_events_table.html`). Stateful, route-bound. |
+| `templates/fragments/`   | HTMX response targets — full template files returned by route handlers (e.g. `templates/fragments/needs_link_queue.html`). Stateful, route-bound. (Fragments slim-down 2026-07-30: only the 5 HTML-consumed fragments remain — the React pages read JSON doors.) |
 | `templates/base.html`    | Page chrome + global styles + the singleton-style shell that other pages inherit.                                                             |
 
 The split is **responsibility, not size**. A 200-line component lives

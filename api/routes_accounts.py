@@ -127,7 +127,7 @@ async def update_account(
     return JSONResponse({"status": "ok"})
 
 
-@router.delete("/accounts/{account_id}", response_class=HTMLResponse)
+@router.delete("/accounts/{account_id}", response_class=JSONResponse)
 async def delete_account(account_id: int, request: Request):
     if account_id == app_state.active_account_id:
         return HTMLResponse(
@@ -136,11 +136,10 @@ async def delete_account(account_id: int, request: Request):
         )
     await account_registry.delete_account(account_id)
     exchange_factory.invalidate(account_id)
-    accounts = await account_registry.list_accounts()
-    return templates.TemplateResponse(
-        request, "fragments/accounts.html",
-        _ctx(request, accounts=accounts),
-    )
+    # Fragments slim-down (2026-07-30): the accounts.html re-render is
+    # retired (its only live caller, config's account_detail Delete, uses
+    # hx-swap="none" and discards the body anyway).
+    return JSONResponse({"status": "ok"})
 
 
 @router.post("/accounts/{account_id}/test", response_class=JSONResponse)
@@ -238,16 +237,6 @@ async def activate_selected_account(request: Request, account_id: int = Form(...
     return HTMLResponse(f'<span class="text-red" style="font-size:.65rem;">{data.get("error","Error")}</span>')
 
 
-@router.post("/accounts/{account_id}/activate-frag", response_class=HTMLResponse)
-async def activate_account_frag(account_id: int, request: Request):
-    await activate_account(account_id, request)
-    accounts = await account_registry.list_accounts()
-    return templates.TemplateResponse(
-        request, "fragments/accounts.html",
-        _ctx(request, accounts=accounts),
-    )
-
-
 @router.post("/accounts/add-and-reload", response_class=HTMLResponse)
 async def add_account_modal(
     request: Request,
@@ -321,15 +310,6 @@ async def test_account_preview(
         return HTMLResponse(f'<span class="text-green" style="font-size:.65rem;">Connection OK — {latency}ms</span>')
     except Exception as exc:
         return HTMLResponse(f'<span class="text-red" style="font-size:.65rem;">Failed: {exc}</span>')
-
-
-@router.get("/fragments/accounts", response_class=HTMLResponse)
-async def frag_accounts(request: Request):
-    accounts = await account_registry.list_accounts()
-    return templates.TemplateResponse(
-        request, "fragments/accounts.html",
-        _ctx(request, accounts=accounts),
-    )
 
 
 # ── Config page fragments ────────────────────────────────────────────────────

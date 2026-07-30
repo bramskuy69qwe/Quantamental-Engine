@@ -1,8 +1,6 @@
 """Tests for expanded calendar summary panel (MTD + QTD + YTD)."""
 import inspect
 
-import pytest
-
 
 class TestRouteComputesAllPeriods:
     """v3.0 P1: the MTD/QTD/YTD computation moved from the fragment handler into
@@ -41,25 +39,10 @@ class TestRouteComputesAllPeriods:
         assert "y_boundaries" in src
 
     def test_route_delegates_to_shared_builder(self):
-        """The fragment handler renders the shared builder's context."""
-        from api.routes_dashboard import frag_dashboard_journal_stats
-        src = inspect.getsource(frag_dashboard_journal_stats)
+        """The surviving consumer — /api/dashboard/snapshot — renders the
+        shared builder's context. (Fragments slim-down 2026-07-30: the
+        journal_stats fragment + template retired; the builder now feeds
+        the React Dashboard through the snapshot alone.)"""
+        from api.routes_dashboard import api_dashboard_snapshot
+        src = inspect.getsource(api_dashboard_snapshot)
         assert "_journal_stats_context" in src
-
-
-class TestTemplateShowsAllPeriods:
-    def test_template_has_mtd_qtd_ytd(self):
-        content = open("templates/fragments/dashboard_journal_stats.html", encoding="utf-8").read()
-        assert "MTD" in content
-        assert "quarterly_pnl" in content
-        assert "yearly_pnl" in content
-        assert "quarter_label" in content
-        assert "year_label" in content
-
-    def test_template_three_summary_blocks(self):
-        """Template renders three period blocks (MTD, QTD, YTD) in a loop."""
-        content = open("templates/fragments/dashboard_journal_stats.html", encoding="utf-8").read()
-        # The for loop iterates over 3 items
-        assert "monthly_pnl" in content
-        assert "quarterly_pnl" in content
-        assert "yearly_pnl" in content

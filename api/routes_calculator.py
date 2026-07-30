@@ -13,7 +13,6 @@ from core.event_bus import event_bus
 from core.exchange import fetch_orderbook, fetch_ohlcv
 from core import ws_manager
 from core.database import db
-from api.helpers import templates, _ctx
 
 log = logging.getLogger("routes.calculator")
 router = APIRouter()
@@ -99,8 +98,11 @@ def _parse_tp_levels(raw):
 
 
 # (Jinja retirement 2026-07-30: GET /calculator + calculator.html retired —
-# the React Pre-Trade page is the twin. POST /calculator/* + the fragment
-# doors below SURVIVE.)
+# the React Pre-Trade page is the twin. Fragments slim-down 2026-07-30:
+# /calculator/calculate + /calculator/link-window-status are JSON-ONLY
+# (calc_result.html + link_window_countdown.html deleted); the HTML
+# orderbook refresh route is deleted (React reads
+# /api/calculator/orderbook/{ticker}).)
 
 
 @router.post("/calculator/window", response_class=HTMLResponse)
@@ -148,7 +150,7 @@ async def calculator_clear():
     return HTMLResponse("")
 
 
-@router.post("/calculator/calculate", response_class=HTMLResponse)
+@router.post("/calculator/calculate", response_class=JSONResponse)
 async def calculate_risk(
     request:                 Request,
     ticker:                  str   = Form(...),
@@ -295,16 +297,13 @@ async def calculate_risk(
     if auto_refresh != "1":
         await event_bus.publish("risk:risk_calculated", calc)
 
-    if format == "json":
-        return JSONResponse(_json_safe(calc))
-
-    return templates.TemplateResponse(
-        request, "fragments/calc_result.html",
-        _ctx(request, calc=calc),
-    )
+    # Fragments slim-down (2026-07-30): JSON-only — the HTML twin
+    # (calc_result.html) is retired with the Jinja calculator page;
+    # `format` stays accepted-and-inert (React POSTs ?format=json).
+    return JSONResponse(_json_safe(calc))
 
 
-@router.get("/calculator/link-window-status/{calc_id}", response_class=HTMLResponse)
+@router.get("/calculator/link-window-status/{calc_id}", response_class=JSONResponse)
 async def calculator_link_window_status(
     request: Request, calc_id: str, t0: int = 0, format: str = "",
 ):
@@ -344,22 +343,18 @@ async def calculator_link_window_status(
 
     aid = app_state.active_account_id
 
-    # v3.0 P3 output shim: one state machine, two renderings. ?format=json
-    # (the React Pre-Trade page) gets the lw dict verbatim + calc_id (+ t0
-    # for the PENDING chain); default renders the htmx fragment. Every
-    # state exit below routes through this closure — the state logic and
-    # its pinned literals stay in THIS function body (test_task146 pins
+    # v3.0 P3 output shim, now single-rendering: the lw dict verbatim +
+    # calc_id (+ t0 for the PENDING chain) as JSON. Fragments slim-down
+    # (2026-07-30): the htmx fragment lane (link_window_countdown.html) is
+    # retired; `format` stays accepted-and-inert (React sends ?format=json).
+    # Every state exit below routes through this closure — the state logic
+    # and its pinned literals stay in THIS function body (test_task146 pins
     # scan it).
     def _out(lw: dict, t0_echo: "int | None" = None):
-        if format == "json":
-            body = {**lw, "calc_id": calc_id}
-            if t0_echo is not None:
-                body["t0"] = t0_echo
-            return JSONResponse(body)
-        ctx = (_ctx(request, calc_id=calc_id, lw=lw) if t0_echo is None
-               else _ctx(request, calc_id=calc_id, t0=t0_echo, lw=lw))
-        return templates.TemplateResponse(
-            request, "fragments/link_window_countdown.html", ctx)
+        body = {**lw, "calc_id": calc_id}
+        if t0_echo is not None:
+            body["t0"] = t0_echo
+        return JSONResponse(body)
 
     # HIGH-002 (Task 144) — refactored to db.get_pretrade_timestamp_for_link_window.
     pretrade = await _db.get_pretrade_timestamp_for_link_window(
@@ -521,23 +516,6 @@ async def cancel_calc(request: Request, calc_id: str, reason: str = Form("")):
         )
     return HTMLResponse(
         '<div class="alert alert-error">Cancel failed — see engine logs.</div>'
-    )
-
-
-@router.get("/calculator/refresh/{ticker}", response_class=HTMLResponse)
-async def calculator_refresh(request: Request, ticker: str):
-    ticker = ticker.upper()
-    try:
-        await fetch_orderbook(ticker)
-    except Exception:
-        pass
-
-    ob   = app_state.orderbook_cache.get(ticker, {})
-    bids = ob.get("bids", [])[:5]
-    asks = ob.get("asks", [])[:5]
-    return templates.TemplateResponse(
-        request, "fragments/orderbook.html",
-        {"ticker": ticker, "bids": bids, "asks": asks},
     )
 
 

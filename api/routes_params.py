@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime
 
 from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, FileResponse
@@ -13,7 +12,6 @@ from core.state import app_state, validate_params
 from core.tz import now_in_account_tz
 from core.event_bus import event_bus
 from core.data_logger import export_all_to_excel
-from api.helpers import templates, _ctx
 
 log = logging.getLogger("routes.params")
 router = APIRouter()
@@ -22,14 +20,6 @@ router = APIRouter()
 @router.get("/params")
 async def params_page(request: Request):
     return RedirectResponse(url="/config", status_code=302)
-
-
-@router.get("/fragments/ws_log", response_class=HTMLResponse)
-async def frag_ws_log(request: Request):
-    return templates.TemplateResponse(
-        request, "fragments/ws_log.html",
-        _ctx(request, ws_log=list(app_state.ws_status.logs)),
-    )
 
 
 @router.post("/params/update", response_class=HTMLResponse)

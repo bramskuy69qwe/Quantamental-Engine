@@ -18,12 +18,11 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 
 from core.state import app_state
 from core.database import db
-from api.helpers import templates, _table_ctx
 # v3.0 P4: the shared non-finite JSON guard (F2 both-doors discipline).
 from api.routes_calculator import _json_safe
 
@@ -58,80 +57,9 @@ def _calc_expiry_ms(timestamp_iso, window_seconds):
 
 
 # (Jinja retirement 2026-07-30: GET /cockpit + cockpit.html retired — the
-# React Linkage page is the twin. The /fragments/cockpit/* doors SURVIVE.)
-
-
-@router.get("/fragments/cockpit/positions", response_class=HTMLResponse)
-async def frag_cockpit_positions(request: Request):
-    """Open-positions pane: live PositionInfo list with the P4.T3 deviation
-    badge. Reads app_state (the single source of truth for live positions)."""
-    return templates.TemplateResponse(
-        request, "fragments/cockpit/positions.html",
-        _table_ctx(request, positions=app_state.positions),
-    )
-
-
-@router.get("/fragments/cockpit/calcs", response_class=HTMLResponse)
-async def frag_cockpit_calcs(request: Request):
-    """Active-calcs pane: live (active|released) calcs for the account."""
-    try:
-        calcs = await db.get_active_calcs(app_state.active_account_id, limit=_CALCS_LIMIT)
-    except Exception:
-        log.exception("cockpit active-calcs read failed")
-        calcs = []
-    # P8.T3: derive the frozen-window expiry per calc for the client-side
-    # countdown (the JS tick reads data-calc-expiry; see cockpit.html).
-    for c in calcs:
-        c["expiry_ms"] = _calc_expiry_ms(c.get("timestamp"), c.get("window_seconds"))
-    return templates.TemplateResponse(
-        request, "fragments/cockpit/calcs.html",
-        _table_ctx(request, calcs=calcs),
-    )
-
-
-@router.get("/fragments/cockpit/needs_link", response_class=HTMLResponse)
-async def frag_cockpit_needs_link(request: Request):
-    """Needs-link pane: compact preview of the manual-link queue
-    (NEEDS_MANUAL_REVIEW + UNLINKED), reusing core.link_actions."""
-    from core.link_actions import list_needs_review
-    try:
-        orders = await list_needs_review(app_state.active_account_id)
-    except Exception:
-        log.exception("cockpit needs-link read failed")
-        orders = []
-    total = len(orders)
-    return templates.TemplateResponse(
-        request, "fragments/cockpit/needs_link.html",
-        _table_ctx(request, orders=orders[:_NEEDS_LINK_PREVIEW], total=total),
-    )
-
-
-@router.get("/fragments/cockpit/closes", response_class=HTMLResponse)
-async def frag_cockpit_closes(request: Request):
-    """Recent-closes pane: latest closed positions (newest exit first)."""
-    try:
-        rows, _ = await db.query_closed_positions(
-            app_state.active_account_id, page=1, per_page=_CLOSES_LIMIT,
-            sort_by="exit_time_ms", sort_dir="DESC",
-        )
-    except Exception:
-        log.exception("cockpit recent-closes read failed")
-        rows = []
-    # #2 (debug 2026-06-08): same calc-linkage "Plan" badge as Position History,
-    # so the cockpit's open-positions and recent-closes panes read consistently.
-    # Linked-only (no-calc rows stay "—"); thresholds read ONCE.
-    try:
-        from core.state import stamp_close_deviation_badges
-        from core.account_config import read_account_config_async
-        _cfg = await read_account_config_async(db, app_state.active_account_id)
-        stamp_close_deviation_badges(
-            rows, yellow_pct=_cfg.yellow_deviation_pct, red_pct=_cfg.red_deviation_pct)
-    except Exception:
-        log.debug("cockpit recent-closes badge stamping failed", exc_info=True)
-    return templates.TemplateResponse(
-        request, "fragments/cockpit/closes.html",
-        _table_ctx(request, rows=rows),
-    )
+# React Linkage page is the twin. Fragments slim-down 2026-07-30: the four
+# /fragments/cockpit/* doors are DELETED — nothing consumed them; the React
+# Linkage page reads the /api/linkage/* JSON mirrors below.)
 
 
 # ── v3.0 P4: JSON mirrors for the React Linkage page ─────────────────────

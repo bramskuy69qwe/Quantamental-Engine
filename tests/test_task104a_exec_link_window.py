@@ -22,8 +22,6 @@ from __future__ import annotations
 import asyncio
 import inspect
 import sqlite3
-import tempfile
-from pathlib import Path
 
 import pytest
 
@@ -334,16 +332,18 @@ class TestCallerWiring:
     get_exec_link_status with the new timestamp + window kwargs."""
 
     def test_routes_orders_passes_window_kwargs(self):
+        # (Fragments slim-down 2026-07-30: the exec_link comparison panel
+        # retired with its template, so compute_exec_match no longer has a
+        # routes_orders call site — get_exec_link_status in the
+        # position_fills drawer is the surviving one.)
         from api import routes_orders
         src = inspect.getsource(routes_orders)
-        # Both call sites should pass fill_ts_ms / pretrade_ts_ms /
-        # account_link_window_seconds.
-        assert src.count("fill_ts_ms=") >= 2, (
+        assert src.count("fill_ts_ms=") >= 1, (
             "HIGH-027 wiring regression: expected fill_ts_ms kwarg passed "
-            "at both compute_exec_match and get_exec_link_status call sites."
+            "at the get_exec_link_status call site."
         )
-        assert src.count("pretrade_ts_ms=") >= 2
-        assert src.count("account_link_window_seconds=") >= 2
+        assert src.count("pretrade_ts_ms=") >= 1
+        assert src.count("account_link_window_seconds=") >= 1
 
     def test_routes_orders_defines_account_link_window_helper(self):
         from api import routes_orders

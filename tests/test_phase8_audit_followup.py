@@ -21,7 +21,6 @@ Run: pytest tests/test_phase8_audit_followup.py -v
 """
 from __future__ import annotations
 
-import json
 import os
 import sqlite3
 import sys
@@ -229,12 +228,6 @@ class TestRefinedManualSubtypes:
         resp = await rh.update_close_reason(await _id(db), exit_reason="HACK", close_note="")
         assert resp.status_code == 400
 
-    def test_badge_labels(self):
-        from api.helpers import templates
-        m = templates.env.get_template("fragments/history/close_reason_badge.html").module
-        assert "Discipline" in str(m.manual_close_badge("MANUAL_DISCIPLINE_BREAK", "", 1))
-        assert "New Opp" in str(m.manual_close_badge("MANUAL_NEW_OPPORTUNITY", "", 1))
-
 
 # ── coverage: position_size_drift notification ────────────────────────────────
 
@@ -254,37 +247,3 @@ class TestSizeDriftNotification:
 # ── coverage: position_events detail-summary branches ─────────────────────────
 
 
-def _evt(event_type, payload):
-    return {"id": 0, "timestamp": "2026-06-01T10:00:00", "event_type": event_type,
-            "source": "ws", "calc_id": "C", "payload_json": json.dumps(payload),
-            "_payload": payload}
-
-
-class TestPositionEventsDetailBranches:
-    def _render(self, events):
-        from api.helpers import templates
-        return templates.env.get_template(
-            "fragments/history/position_events.html"
-        ).render(events=events, has_calc=True, truncated=False, events_cap=500)
-
-    def test_all_summary_branches_render(self):
-        html = self._render([
-            _evt("position_amended", {"field": "tp_price", "old": 110.0, "new": 115.0}),
-            _evt("tp_modified", {"from_price": 110.0, "to_price": 115.0}),
-            _evt("sl_modified", {"from_price": 95.0, "to_price": 97.0}),
-            _evt("order_placed", {"side": "BUY", "order_type": "LIMIT"}),
-            _evt("order_canceled", {"symbol": "BTCUSDT"}),          # symbol-fallback
-            _evt("calc_created", {}),                                # raw json fallback
-        ])
-        assert "tp_price:" in html                                  # position_amended
-        assert "BUY" in html and "LIMIT" in html                    # order_placed
-        assert "BTCUSDT" in html                                    # symbol-fallback
-        # each event renders its chip
-        for et in ("position_amended", "tp_modified", "sl_modified",
-                   "order_placed", "order_canceled", "calc_created"):
-            assert et in html
-
-    def test_amended_missing_old_does_not_crash(self):
-        # position_amended whose 'old' is absent must fall through, not raise
-        html = self._render([_evt("position_amended", {"field": "tp_price"})])
-        assert "position_amended" in html

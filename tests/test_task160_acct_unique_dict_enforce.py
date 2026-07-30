@@ -548,37 +548,11 @@ class TestDictEnforcementSourcePins:
         assert '"would_be_size":' in src
         assert '"would_be_notional":' in src
 
-    def test_template_drops_redundant_per_attr_ternaries(self):
-        src = Path("templates/fragments/calc_result.html").read_text(
-            encoding="utf-8"
-        )
-        # Pre-T160 ternaries:
-        #   data-notional="{{ (c.notional|round(2)) if c.eligible else 0 }}"
-        #   data-contracts="{{ (c.size|round(4)) if c.eligible else 0 }}"
-        # Post-T160 simplified — dict is the source of truth.
-        assert "(c.notional|round(2)) if c.eligible else 0" not in src
-        assert "(c.size|round(4)) if c.eligible else 0" not in src
-        # New direct reads
-        assert 'data-notional="{{ c.notional|round(2) }}"' in src
-        assert 'data-contracts="{{ c.size|round(4) }}"' in src
-
-    def test_template_exposes_would_be_attrs(self):
-        src = Path("templates/fragments/calc_result.html").read_text(
-            encoding="utf-8"
-        )
-        assert "data-would-be-notional" in src
-        assert "data-would-be-contracts" in src
-
 
 class TestT159AntiRegression:
     """T159's data-eligible attr + ineligible_reason population must
     still hold post-T160."""
 
-    def test_data_eligible_attr_still_present(self):
-        src = Path("templates/fragments/calc_result.html").read_text(
-            encoding="utf-8"
-        )
-        assert "data-eligible=" in src
 
     def test_t159_ineligible_reason_population_intact(self):
         """portfolio_reason + final_reason from T159 still wired.

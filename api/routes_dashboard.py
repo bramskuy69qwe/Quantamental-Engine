@@ -10,11 +10,10 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 import config
 from core.state import app_state
-from core.tz import get_account_tz, now_in_account_tz
+from core.tz import get_account_tz
 from core import ws_manager
 from core.database import db
-from core import order_manager_singleton
-from api.helpers import templates, _ctx
+from api.helpers import templates
 from api.cache import _ensure_funding_rates, get_funding_lines, _maybe_backfill_equity, _inject_live_equity
 
 log = logging.getLogger("routes.dashboard")
@@ -25,202 +24,13 @@ _PROCESS_START_MONO = _time.monotonic()
 _PROCESS_START_WALL = _time.time()
 
 # ── Cached recent orders (avoid DB query every 1s dashboard poll) ─────────
-_recent_orders_cache: list = []
-_recent_orders_ts: float = 0.0
-_RECENT_ORDERS_TTL = 5.0  # seconds
-
-
-async def _get_cached_recent_orders(aid: int) -> list:
-    global _recent_orders_cache, _recent_orders_ts
-    now = _time.monotonic()
-    if now - _recent_orders_ts >= _RECENT_ORDERS_TTL:
-        try:
-            _recent_orders_cache, _ = await db.query_order_history(
-                account_id=aid, page=1, per_page=20,
-                sort_by="updated_at_ms", sort_dir="DESC",
-            )
-        except Exception:
-            pass
-        _recent_orders_ts = now
-    return _recent_orders_cache
 
 
 # (Jinja retirement 2026-07-30: GET / moved to routes_v3 — the React shell
-# owns the root; dashboard.html is retired. Every /fragments/dashboard/*
-# door below SURVIVES — the React pages read them.)
-
-
-@router.get("/fragments/dashboard", response_class=HTMLResponse)
-async def frag_dashboard(request: Request):
-    await _ensure_funding_rates()
-    acc = app_state.account_state
-    pf  = app_state.portfolio
-    prm = app_state.params
-
-    # Funding lines from cached rates + live positions (refreshes every render)
-    funding_lines = get_funding_lines()
-
-    # Sector exposure lines from open positions
-    sector_totals: dict = {}
-    for p in app_state.positions:
-        if p.sector:
-            sector_totals[p.sector] = sector_totals.get(p.sector, 0.0) + abs(p.position_value_usdt)
-    sector_lines = [f"{s}: ${v:,.0f}" for s, v in sorted(sector_totals.items(), key=lambda x: -x[1])]
-
-    # Working orders (in-memory cache) + recent order history (5s TTL cache)
-    working_orders = order_manager_singleton.order_manager.open_orders
-    aid = app_state.active_account_id
-    recent_orders = await _get_cached_recent_orders(aid)
-
-    return templates.TemplateResponse(
-        request, "fragments/dashboard_body.html",
-        _ctx(request,
-             exposure_pct=pf.total_exposure * 100,
-             max_exposure_pct=prm["max_exposure"] * 100,
-             dd_state=pf.dd_state,
-             drawdown_pct=pf.drawdown * 100,
-             drawdown_state=pf.dd_state,
-             max_dd_pct=prm["max_dd_percent"] * 100,
-             weekly_pnl_state=pf.weekly_pnl_state,
-             open_positions=app_state.positions,
-             max_open_positions=prm["max_position_count"],
-             funding_lines=funding_lines,
-             sector_lines=sector_lines,
-             working_orders=working_orders,
-             recent_orders=recent_orders),
-    )
-
-
-@router.get("/fragments/dashboard/risk", response_class=HTMLResponse)
-async def frag_dashboard_risk(request: Request):
-    """Risk panel fragment (DD gauge, exposure, weekly PnL, funding, sectors)."""
-    await _ensure_funding_rates()
-    pf  = app_state.portfolio
-    prm = app_state.params
-
-    funding_lines = get_funding_lines()
-    sector_totals: dict = {}
-    for p in app_state.positions:
-        if p.sector:
-            sector_totals[p.sector] = sector_totals.get(p.sector, 0.0) + abs(p.position_value_usdt)
-    sector_lines = [f"{s}: ${v:,.0f}" for s, v in sorted(sector_totals.items(), key=lambda x: -x[1])]
-
-    return templates.TemplateResponse(
-        request, "fragments/dashboard_risk.html",
-        _ctx(request,
-             exposure_pct=pf.total_exposure * 100,
-             max_exposure_pct=prm["max_exposure"] * 100,
-             dd_state=pf.dd_state,
-             drawdown_pct=pf.drawdown * 100,
-             drawdown_state=pf.dd_state,
-             max_dd_pct=prm["max_dd_percent"] * 100,
-             weekly_pnl_state=pf.weekly_pnl_state,
-             funding_lines=funding_lines,
-             sector_lines=sector_lines),
-    )
-
-
-@router.get("/fragments/dashboard/positions", response_class=HTMLResponse)
-async def frag_dashboard_positions(request: Request):
-    """Positions + orders tabbed panel fragment."""
-    prm = app_state.params
-    working_orders = order_manager_singleton.order_manager.open_orders
-    aid = app_state.active_account_id
-    recent_orders = await _get_cached_recent_orders(aid)
-
-    return templates.TemplateResponse(
-        request, "fragments/dashboard_positions.html",
-        _ctx(request,
-             open_positions=app_state.positions,
-             max_open_positions=prm["max_position_count"],
-             working_orders=working_orders,
-             recent_orders=recent_orders),
-    )
-
-
-@router.get("/fragments/dashboard/positions/rows", response_class=HTMLResponse)
-async def frag_dashboard_positions_rows(request: Request, tab: str = "positions"):
-    """Row-only fragment for positions/orders/history tbodies (SSE-driven)."""
-    if tab == "orders":
-        working_orders = order_manager_singleton.order_manager.open_orders
-        return templates.TemplateResponse(
-            request, "fragments/dashboard_orders_rows.html",
-            _ctx(request, working_orders=working_orders),
-        )
-    if tab == "history":
-        aid = app_state.active_account_id
-        recent_orders = await _get_cached_recent_orders(aid)
-        return templates.TemplateResponse(
-            request, "fragments/dashboard_history_rows.html",
-            _ctx(request, recent_orders=recent_orders),
-        )
-    # Default: positions
-    prm = app_state.params
-    return templates.TemplateResponse(
-        request, "fragments/dashboard_positions_rows.html",
-        _ctx(request,
-             open_positions=app_state.positions,
-             max_open_positions=prm["max_position_count"]),
-    )
-
-
-@router.get("/fragments/dashboard/top", response_class=HTMLResponse)
-async def frag_dashboard_top(request: Request):
-    acc = app_state.account_state
-    pf  = app_state.portfolio
-    return templates.TemplateResponse(
-        request, "fragments/dashboard_top.html",
-        _ctx(request,
-             total_equity=acc.total_equity,
-             daily_pnl=acc.daily_pnl,
-             daily_pnl_pct=acc.daily_pnl_percent * 100,
-             weekly_pnl=pf.total_weekly_pnl,
-             weekly_pnl_pct=pf.total_weekly_pnl_percent * 100,
-             available_margin=acc.available_margin,
-             margin_used=acc.total_margin_used,
-             unrealized_pnl=acc.total_unrealized,
-             bod_equity=acc.bod_equity),
-    )
-
-
-@router.get("/fragments/dashboard/exchange_info", response_class=HTMLResponse)
-async def frag_dashboard_exchange_info(request: Request):
-    ex = app_state.exchange_info
-    ws = app_state.ws_status
-    # Prefer WS latency (updates at sub-second rate) over REST ping (10s)
-    live_ms = ws.latency_ms if ws.connected else ex.latency_ms
-    return templates.TemplateResponse(
-        request, "fragments/dashboard_exchange_info.html",
-        _ctx(request,
-             exchange_name=ex.name,
-             server_time=ex.server_time or "—",
-             latency_str=f"{live_ms:.0f}ms" if live_ms else "—",
-             maker_fee_str=f"{ex.maker_fee*100:.4f}%" if ex.maker_fee else "—",
-             taker_fee_str=f"{ex.taker_fee*100:.4f}%" if ex.taker_fee else "—"),
-    )
-
-
-@router.get("/fragments/dashboard/equity_ohlc", response_class=HTMLResponse)
-async def frag_dashboard_equity_ohlc(request: Request, tf: str = "1h"):
-    tf_map = {"1h": 60, "4h": 240, "1d": 1440, "1w": 10080}
-    tf_minutes = tf_map.get(tf, 60)
-    now_ms = int(_time.time() * 1000)
-    needed_start_ms = now_ms - (100 * tf_minutes * 60 * 1000)
-    aid = app_state.active_account_id
-    await _maybe_backfill_equity(needed_start_ms, account_id=aid)
-    candles = await db.get_equity_ohlc(tf_minutes=tf_minutes, limit=100, account_id=aid)
-    _inject_live_equity(candles)
-    return templates.TemplateResponse(
-        request,
-        "fragments/equity_ohlc.html",
-        _ctx(request, candles=candles, active_tf=tf,
-             eq_id="ohlc",
-             eq_title="Equity Curve (OHLC)",
-             eq_subtitle="Last 100 candles \u00b7 from account snapshots",
-             eq_timeframes=[("1h","1H"),("4h","4H"),("1d","1D"),("1w","1W")],
-             eq_fragment_url="/fragments/dashboard/equity_ohlc",
-             eq_api_url="/api/dashboard/equity_ohlc"),
-    )
+# owns the root; dashboard.html is retired. Fragments slim-down 2026-07-30:
+# every /fragments/dashboard/* door is DELETED — the React Dashboard reads
+# /api/dashboard/snapshot + /api/dashboard/equity_ohlc + SSE, never the
+# fragment doors. Only /fragments/ws_status survives (base.html 1s poll).)
 
 
 @router.get("/api/dashboard/equity_ohlc")
@@ -360,24 +170,6 @@ async def _journal_stats_context(aid: int, tz) -> dict:
             for r in daily_series if r.get("daily_pnl") is not None
         ],
     }
-
-
-@router.get("/fragments/dashboard/journal_stats", response_class=HTMLResponse)
-async def frag_dashboard_journal_stats(request: Request):
-    aid = app_state.active_account_id
-    tz = get_account_tz(aid)
-    ctx = await _journal_stats_context(aid, tz)
-    return templates.TemplateResponse(
-        request, "fragments/dashboard_journal_stats.html", _ctx(request, **ctx),
-    )
-
-
-@router.get("/fragments/dashboard/secondary", response_class=HTMLResponse)
-async def frag_dashboard_secondary(request: Request):
-    return templates.TemplateResponse(
-        request, "fragments/dashboard_secondary.html",
-        _ctx(request, acc=app_state.account_state),
-    )
 
 
 # ── Consolidated JSON snapshot for the v3.0 React Dashboard (v3.0 P1) ─────

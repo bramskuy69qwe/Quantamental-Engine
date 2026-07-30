@@ -144,87 +144,9 @@ class TestEmptyStateCssInBase:
 
 # ── Migration pins: history tables + dashboard + analytics ──────────────────
 
-class TestHistoryTableMigrations:
-
-    @pytest.mark.parametrize("path", [
-        "templates/fragments/history/closed_positions_table.html",
-        "templates/fragments/history/order_history_table.html",
-        "templates/fragments/history/fills_table.html",
-        "templates/fragments/history/pre_trade_table.html",
-        "templates/fragments/history/trade_events_table.html",
-    ])
-    def test_imports_empty_state(self, path):
-        src = Path(path).read_text(encoding="utf-8")
-        assert 'from "primitives/empty_state.html" import empty_state' in src, (
-            f"FE-MED-006 regression: {path} no longer imports EmptyState."
-        )
-
-    @pytest.mark.parametrize("path,old_msg", [
-        ("templates/fragments/history/closed_positions_table.html",
-         "No closed positions found for this period."),
-        ("templates/fragments/history/order_history_table.html",
-         "No order history found for this period."),
-        ("templates/fragments/history/fills_table.html",
-         "No trade history found for this period."),
-        ("templates/fragments/history/pre_trade_table.html",
-         "No pre-trade entries found for this period."),
-        ("templates/fragments/history/trade_events_table.html",
-         "No trade events found for this period."),
-    ])
-    def test_old_inline_empty_div_gone(self, path, old_msg):
-        """Anti-revert: the old `<div style="color:var(--muted);padding:
-        20px 0;...">No X found...</div>` pattern is gone."""
-        src = Path(path).read_text(encoding="utf-8")
-        old_inline = (
-            f'<div style="color:var(--muted);padding:20px 0;'
-            f'text-align:center;font-size:.78rem;">{old_msg}</div>'
-        )
-        assert old_inline not in src, (
-            f"FE-MED-006 regression: old inline empty <div> pattern back "
-            f"in {path}"
-        )
-
-    def test_closed_positions_renders_empty_state_when_no_rows(self):
-        env = _make_env()
-        tpl = env.get_template(
-            "fragments/history/closed_positions_table.html"
-        )
-        out = tpl.render(
-            rows=[], total=0, page=1, per_page=20, total_pages=1,
-            search="", sort_by="exit_time_ms", sort_dir="DESC",
-            date_from="2026-01-01", date_to="2026-12-31",
-        )
-        assert 'class="es es-info"' in out
-        assert "No closed positions found for this period." in out
-
-
-class TestDashboardMigration:
-
-    def test_dashboard_body_renders_empty_state_when_no_positions(self):
-        src = Path("templates/fragments/dashboard_body.html").read_text(encoding="utf-8")
-        assert "empty_state(message=\"No open positions.\")" in src
-
-    def test_old_dashboard_inline_empty_gone(self):
-        src = Path("templates/fragments/dashboard_body.html").read_text(encoding="utf-8")
-        old = '<div style="text-align:center;padding:24px 0;color:var(--muted);font-size:.78rem;">No open positions.</div>'
-        assert old not in src
-
-
-class TestAnalyticsMigrations:
-
-    @pytest.mark.parametrize("path", [
-        "templates/fragments/analytics/pairs_table.html",
-        "templates/fragments/analytics/beta_exposure.html",
-        "templates/fragments/analytics/funding_tracker.html",
-    ])
-    def test_imports_empty_state(self, path):
-        src = Path(path).read_text(encoding="utf-8")
-        assert 'from "primitives/empty_state.html" import empty_state' in src
-
 
 # (Jinja retirement 2026-07-30: the regime.html JS-migration pins are gone
 # with the template — the React Regime page has its own pins.)
-
 
 
 # ── README + decision-tree update ───────────────────────────────────────────
@@ -265,17 +187,10 @@ class TestReadmeDocumentsEmptyState:
 
 class TestTemplateCompiles:
 
+    # (Fragments slim-down 2026-07-30: the migrated fragment twins are
+    # deleted — only the primitive itself keeps a compile pin here.)
     @pytest.mark.parametrize("path", [
         "primitives/empty_state.html",
-        "fragments/history/closed_positions_table.html",
-        "fragments/history/order_history_table.html",
-        "fragments/history/fills_table.html",
-        "fragments/history/pre_trade_table.html",
-        "fragments/history/trade_events_table.html",
-        "fragments/dashboard_body.html",
-        "fragments/analytics/pairs_table.html",
-        "fragments/analytics/beta_exposure.html",
-        "fragments/analytics/funding_tracker.html",
     ])
     def test_compiles(self, path):
         env = _make_env()

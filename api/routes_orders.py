@@ -1,9 +1,11 @@
 """
-Order Center API — HTMX fragment endpoints for order / fill / closed-position history.
+Order Center API — order / fill / closed-position history doors.
 
-All 4 endpoints follow the same pattern as routes_history.py:
-paginated, sortable, searchable, date-filterable.  They read from the
-3 new v2.2.2 tables via DatabaseManager (OrdersMixin).
+The paginated, sortable, searchable, date-filterable table endpoints read
+from the 3 v2.2.2 tables via DatabaseManager (OrdersMixin). Fragments
+slim-down (2026-07-30): the table doors are JSON-only (the htmx table
+templates are deleted); the needs_link fragment pair stays HTML — the
+surviving orders/needs_link.html page + base.html nav badge consume it.
 """
 from __future__ import annotations
 
@@ -37,28 +39,6 @@ def _iso_to_ms(iso: str) -> int | None:
 
 # ── Open Orders ──────────────────────────────────────────────────────────────
 
-@router.get("/fragments/history/open_orders", response_class=HTMLResponse)
-async def frag_open_orders(
-    request: Request,
-    page: int = 1, per_page: int = 20,
-    sort_by: str = "created_at_ms", sort_dir: str = "DESC",
-    search: str = "",
-):
-    # MED-003 (Task 101): route-level defense-in-depth for sort_by/sort_dir.
-    sort_by, sort_dir = validate_sort_params(sort_by, sort_dir, db._ORDERS_SORT_COLS)
-    rows, total = await db.query_open_orders(
-        account_id=app_state.active_account_id,
-        page=page, per_page=per_page,
-        sort_by=sort_by, sort_dir=sort_dir, search=search,
-    )
-    total_pages = max(1, (total + per_page - 1) // per_page)
-    return templates.TemplateResponse(
-        request, "fragments/history/open_orders_table.html",
-        _table_ctx(request, rows=rows, total=total, page=page,
-                   per_page=per_page, total_pages=total_pages,
-                   sort_by=sort_by, sort_dir=sort_dir, search=search),
-    )
-
 
 # ── Order History ────────────────────────────────────────────────────────────
 
@@ -74,7 +54,7 @@ def _rows_json(rows, total, page, per_page):
     }))
 
 
-@router.get("/fragments/history/order_history", response_class=HTMLResponse)
+@router.get("/fragments/history/order_history", response_class=JSONResponse)
 async def frag_order_history(
     request: Request,
     page: int = 1, per_page: int = 20,
@@ -91,21 +71,14 @@ async def frag_order_history(
         sort_by=sort_by, sort_dir=sort_dir, search=search,
         date_from_ms=_iso_to_ms(date_from), date_to_ms=_iso_to_ms(date_to),
     )
-    if format == "json":
-        return _rows_json(rows, total, page, per_page)
-    total_pages = max(1, (total + per_page - 1) // per_page)
-    return templates.TemplateResponse(
-        request, "fragments/history/order_history_table.html",
-        _table_ctx(request, rows=rows, total=total, page=page,
-                   per_page=per_page, total_pages=total_pages,
-                   sort_by=sort_by, sort_dir=sort_dir, search=search,
-                   date_from=date_from, date_to=date_to),
-    )
+    # Fragments slim-down (2026-07-30): JSON-only — the HTML twin
+    # (order_history_table.html) is retired; `format` stays accepted-and-inert.
+    return _rows_json(rows, total, page, per_page)
 
 
 # ── Trade History (fills) ────────────────────────────────────────────────────
 
-@router.get("/fragments/history/fills", response_class=HTMLResponse)
+@router.get("/fragments/history/fills", response_class=JSONResponse)
 async def frag_fills(
     request: Request,
     page: int = 1, per_page: int = 20,
@@ -122,21 +95,14 @@ async def frag_fills(
         sort_by=sort_by, sort_dir=sort_dir, search=search,
         date_from_ms=_iso_to_ms(date_from), date_to_ms=_iso_to_ms(date_to),
     )
-    if format == "json":
-        return _rows_json(rows, total, page, per_page)
-    total_pages = max(1, (total + per_page - 1) // per_page)
-    return templates.TemplateResponse(
-        request, "fragments/history/fills_table.html",
-        _table_ctx(request, rows=rows, total=total, page=page,
-                   per_page=per_page, total_pages=total_pages,
-                   sort_by=sort_by, sort_dir=sort_dir, search=search,
-                   date_from=date_from, date_to=date_to),
-    )
+    # Fragments slim-down (2026-07-30): JSON-only — the HTML twin
+    # (fills_table.html) is retired; `format` stays accepted-and-inert.
+    return _rows_json(rows, total, page, per_page)
 
 
 # ── Position History (closed positions) ──────────────────────────────────────
 
-@router.get("/fragments/history/closed_positions", response_class=HTMLResponse)
+@router.get("/fragments/history/closed_positions", response_class=JSONResponse)
 async def frag_closed_positions(
     request: Request,
     page: int = 1, per_page: int = 20,
@@ -162,18 +128,11 @@ async def frag_closed_positions(
     _cfg = await read_account_config_async(db, app_state.active_account_id)
     stamp_close_deviation_badges(
         rows, yellow_pct=_cfg.yellow_deviation_pct, red_pct=_cfg.red_deviation_pct)
-    if format == "json":
-        # the stamped deviation_badge rides the row; pnl %, M·R and the
-        # exit-reason badge family are client-side shaping
-        return _rows_json(rows, total, page, per_page)
-    total_pages = max(1, (total + per_page - 1) // per_page)
-    return templates.TemplateResponse(
-        request, "fragments/history/closed_positions_table.html",
-        _table_ctx(request, rows=rows, total=total, page=page,
-                   per_page=per_page, total_pages=total_pages,
-                   sort_by=sort_by, sort_dir=sort_dir, search=search,
-                   date_from=date_from, date_to=date_to),
-    )
+    # Fragments slim-down (2026-07-30): JSON-only — the HTML twin
+    # (closed_positions_table.html) is retired; `format` stays
+    # accepted-and-inert. The stamped deviation_badge rides the row; pnl %,
+    # M·R and the exit-reason badge family are client-side shaping.
+    return _rows_json(rows, total, page, per_page)
 
 
 # ── Fill Drawer (Position History row expand) ────────────────────────────────
@@ -213,7 +172,7 @@ def _pretrade_ts_to_ms(pretrade: dict) -> int | None:
         return None
 
 
-@router.get("/fragments/history/position_fills", response_class=HTMLResponse)
+@router.get("/fragments/history/position_fills", response_class=JSONResponse)
 async def frag_position_fills(request: Request, position_id: int = 0,
                               format: str = ""):
     """Return fills for a single closed position (lazy-loaded drawer)."""
@@ -273,233 +232,19 @@ async def frag_position_fills(request: Request, position_id: int = 0,
                 f["exec_link_status"] = status
                 f["exec_match_count"] = count
 
-    if format == "json":
-        # v3.0 P4 JSON door — fills carry the stamped exec_link_status /
-        # exec_match_count (the drawer's per-fill badges); the events/amend
-        # timeline side of the drawer rides GET /context/position/{id}.
-        from api.routes_calculator import _json_safe
-        return JSONResponse(_json_safe({"fills": fills}))
-    return templates.TemplateResponse(
-        request, "fragments/history/position_fills.html",
-        _ctx(request, fills=fills),
-    )
+    # Fragments slim-down (2026-07-30): JSON-only — the HTML twin
+    # (position_fills.html) is retired; `format` stays accepted-and-inert.
+    # Fills carry the stamped exec_link_status / exec_match_count (the
+    # drawer's per-fill badges); the events/amend timeline side of the
+    # drawer rides GET /context/position/{id}.
+    from api.routes_calculator import _json_safe
+    return JSONResponse(_json_safe({"fills": fills}))
 
 
 # P8.T9: per-calc cap on the position-events drilldown. Generous for a single
 # position's lifecycle; the endpoint flags + logs when a calc exceeds it rather
 # than silently truncating (CLAUDE.md "No silent caps").
 _POSITION_EVENTS_CAP = 500
-
-
-@router.get("/fragments/history/position_events", response_class=HTMLResponse)
-async def frag_position_events(request: Request, position_id: int = 0):
-    """P8.T9 (plan §8.10): per-position trade-events timeline for the Position
-    History drawer — lazy-loaded as a second section beside the fills sub-table.
-
-    Reuses ``core.trade_event_log.query_trade_events`` (sync → ``to_thread``),
-    scoped to the position's OWN calc_id(s), which are resolved from the
-    ``positions_calcs`` junction by ``terminal_position_id``. A position can
-    scale in from several calcs, so we union the events across all its calc_ids
-    and merge them chronologically. Because each query filters ``calc_id`` to one
-    of THIS position's calcs, a sibling position's events can never leak in.
-
-    Positions with no calc_id — legacy rows + Phase-0.0.6/0.0.7 rebuilt rows
-    that pre-date the calculator workflow (empty ``terminal_position_id`` or no
-    junction rows) — render an EMPTY-STATE explaining the gap, NOT an error.
-    """
-    from api.helpers import _ctx
-    from core.trade_event_log import query_trade_events
-    import asyncio
-    import json as _json
-
-    events: list = []
-    calc_ids: list = []
-    truncated = False
-    if position_id:
-        from datetime import datetime, timezone
-        aid = app_state.active_account_id
-        row = await db.get_closed_position_by_id(position_id)
-        tpid     = (row or {}).get("terminal_position_id") or ""
-        symbol   = (row or {}).get("symbol") or ""
-        entry_ms = int((row or {}).get("entry_time_ms") or 0)
-        exit_ms  = int((row or {}).get("exit_time_ms") or 0)
-        # Distinct calc_ids in first-fill order (a scale-in position has several
-        # junction rows; one calc may also appear on >1 order).
-        if tpid:
-            seen = set()
-            for link in await db.get_position_calc_links(tpid):
-                cid = link.get("calc_id")
-                if cid and cid not in seen:
-                    seen.add(cid)
-                    calc_ids.append(cid)
-        # Attribute events by TWO keys, deduped by event id:
-        #   (a) calc_id(s) — calc_created (keys off "ticker", so ONLY this finds
-        #       it), position_opened, position_closed.
-        #   (b) #3 (debug 2026-06-09) symbol + THIS position's lifetime window —
-        #       order_placed / order_filled / order_canceled (incl. the TP/SL
-        #       amends, which on observe-only Binance are a cancel+create of
-        #       bracket orders that carry NO calc_id or tpid) / partial_close.
-        #       Market orders link POST-fill so their fill events are emitted with
-        #       an empty calc_id, and bracket orders are never attributed at all —
-        #       calc_id scoping alone misses the operator's real order lifecycle.
-        #       Bounded to [entry-2m, exit+30s]: order_placed precedes the first
-        #       fill; close-time cancels trail the exit. Tight enough that
-        #       sequential same-symbol trades don't overlap (documented edge: a
-        #       genuinely overlapping same-symbol position could bleed in).
-        by_id: dict = {}
-
-        def _ingest(rows, total):
-            nonlocal truncated
-            if total > len(rows):
-                # No silent caps (CLAUDE.md): query_trade_events returns the
-                # NEWEST _POSITION_EVENTS_CAP rows; on overflow the OLDEST drop.
-                truncated = True
-                log.warning(
-                    "position_events: %d trade_events exceed cap %d (oldest "
-                    "omitted)", total, _POSITION_EVENTS_CAP,
-                )
-            for e in rows:
-                eid = e.get("id")
-                if eid is not None:
-                    by_id[eid] = e
-
-        for cid in calc_ids:
-            rows, total = await asyncio.to_thread(
-                query_trade_events,
-                account_id=aid, calc_id=cid, limit=_POSITION_EVENTS_CAP,
-            )
-            _ingest(rows, total)
-        if symbol and exit_ms:
-            since = (
-                datetime.fromtimestamp(
-                    max(0, entry_ms - 120_000) / 1000, tz=timezone.utc,
-                ).isoformat()
-                if entry_ms else None
-            )
-            until = datetime.fromtimestamp(
-                (exit_ms + 30_000) / 1000, tz=timezone.utc,
-            ).isoformat()
-            rows, total = await asyncio.to_thread(
-                query_trade_events,
-                account_id=aid, symbol=symbol, since=since, until=until,
-                limit=_POSITION_EVENTS_CAP,
-            )
-            _ingest(rows, total)
-        # Merge oldest-first (ISO-8601 timestamps sort lexically == chrono).
-        events = sorted(by_id.values(), key=lambda e: e.get("timestamp") or "")
-        for e in events:                          # pre-parse for the summary
-            try:
-                e["_payload"] = _json.loads(e.get("payload_json") or "{}")
-            except (ValueError, TypeError):
-                e["_payload"] = {}
-
-    return templates.TemplateResponse(
-        request, "fragments/history/position_events.html",
-        # position_id is the closed_positions PK — the same key the P7.T4/T5
-        # export endpoint takes. Threaded through so the drawer can render the
-        # Export-Audit buttons (Phase-8 deferred #2).
-        _ctx(request, events=events, has_calc=bool(calc_ids),
-             calc_ids=calc_ids,
-             truncated=truncated, events_cap=_POSITION_EVENTS_CAP,
-             position_id=position_id),
-    )
-
-
-def _has_tpsl_modification(events: list) -> bool:
-    """True if any trade-event row marks a TP/SL price modification.
-
-    Forward signal: P4.T4 ``position_amended`` rows whose ``field`` is
-    ``tp_price``/``sl_price`` — the live source since the dead
-    ``_detect_modification_events`` (which emitted ``tp_modified``/
-    ``sl_modified``) was removed. Historical: legacy ``tp_modified``/
-    ``sl_modified`` rows, now producerless but still present in older
-    per-account DBs. Rows come from ``query_trade_events`` (raw dicts with
-    ``event_type`` + unparsed ``payload_json``).
-    """
-    import json
-    for e in events:
-        et = e.get("event_type")
-        if et in ("tp_modified", "sl_modified"):
-            return True
-        if et == "position_amended":
-            try:
-                fld = json.loads(e.get("payload_json") or "{}").get("field")
-            except Exception:
-                fld = None
-            if fld in ("tp_price", "sl_price"):
-                return True
-    return False
-
-
-@router.get("/fragments/history/exec_link", response_class=HTMLResponse)
-async def frag_exec_link(request: Request, fill_id: int = 0):
-    """Exec link comparison panel for a single fill."""
-    from api.helpers import _ctx
-    from core.exec_link import compute_exec_match
-
-    fill = ptl = match = None
-    order_type = ""
-    has_modifications = False
-
-    if fill_id:
-        aid = app_state.active_account_id
-        # HIGH-002 (Task 142): db._conn direct access replaced by helpers.
-        # L271's order_type lookup reuses the existing
-        # `get_order_by_exchange_id` (returns full row; we pull
-        # `order_type` field) instead of a new field-specific helper.
-        fill = await db.get_fill_by_id(fill_id, aid)
-
-        if fill and fill.get("calc_id"):
-            ptl = await db.get_pretrade_log_by_calc_id(fill["calc_id"])
-
-            if fill.get("exchange_order_id"):
-                orow = await db.get_order_by_exchange_id(aid, fill["exchange_order_id"])
-                if orow:
-                    order_type = orow.get("order_type") or ""
-
-            # Check for TP/SL modifications on this calc_id
-            try:
-                from core.trade_event_log import query_trade_events
-                import asyncio
-                evts, _ = await asyncio.to_thread(
-                    query_trade_events,
-                    account_id=aid,
-                    calc_id=fill["calc_id"],
-                    event_type=None,
-                    limit=100,
-                )
-                has_modifications = _has_tpsl_modification(evts)
-            except Exception:
-                pass
-
-            if ptl:
-                # HIGH-027 (Task 104a): pass timestamps + account window so
-                # the comparison panel reflects window-rejection (a past-
-                # window match shows as None here, which the template will
-                # render as 'unlinked' or 'expired' once Task 104b lands).
-                account_link_window = await _account_link_window_seconds(aid)
-                pretrade_ts_ms = _pretrade_ts_to_ms(ptl)
-                match = compute_exec_match(
-                    fill, ptl, order_type,
-                    fill_ts_ms=fill.get("timestamp_ms"),
-                    pretrade_ts_ms=pretrade_ts_ms,
-                    account_link_window_seconds=account_link_window,
-                )
-
-    return templates.TemplateResponse(
-        request, "fragments/history/exec_link_panel.html",
-        _ctx(request, fill=fill, ptl=ptl, match=match,
-             has_modifications=has_modifications),
-    )
-
-
-@router.post("/history/exec_link/confirm", response_class=HTMLResponse)
-async def confirm_exec_link(request: Request, fill_id: int = Form(0)):
-    """Persist user-confirmed exec link on a fill."""
-    # HIGH-002 (Task 142): db._conn UPDATE+commit replaced by helper.
-    # No-op on fill_id=0 lives in the helper itself.
-    await db.confirm_fill_exec_link(fill_id)
-    return await frag_exec_link(request, fill_id=fill_id)
 
 
 # ── Manual-link operator actions (P3.T2 / spec §6, §10.3) ────────────────────

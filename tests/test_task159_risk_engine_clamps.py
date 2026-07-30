@@ -47,7 +47,6 @@ Run: pytest tests/test_task159_risk_engine_clamps.py -v
 """
 from __future__ import annotations
 
-import importlib
 import os
 import sys
 from pathlib import Path
@@ -226,98 +225,6 @@ class TestMed019AtMaxPositionsHasReasonAndZeroedCopy:
             "reverted to bare sizing.get()"
         )
 
-    def test_calc_result_template_zeros_copy_attrs_on_ineligible(self):
-        """T149's click-to-copy reads data-contracts / data-notional from
-        the hidden #calc-data div. When eligible=False, those attrs must
-        render as 0 so paste returns non-actionable values.
-
-        Task 160 superseded T159's per-attr Jinja ternary with dict-level
-        enforcement — risk_engine now zeros size+notional in the calc
-        dict directly, so the template reads them as-is. The contract
-        (ineligible → data-contracts=0) holds; the implementation moved
-        from template to source."""
-        src = Path("templates/fragments/calc_result.html").read_text(
-            encoding="utf-8"
-        )
-        # Post-T160: template reads dict directly. The zero-on-ineligible
-        # guarantee is enforced by risk_engine.run_risk_calculator's
-        # `if not final_eligible: size = 0.0; est_size = 0.0` block.
-        # Verify the dict-level enforcement is wired:
-        risk_src = Path("core/risk_engine.py").read_text(encoding="utf-8")
-        assert "if not final_eligible:" in risk_src
-        assert "size = 0.0" in risk_src
-        assert "est_size = 0.0" in risk_src
-        # Template reads the (now-zeroed-when-ineligible) dict values:
-        assert 'data-notional="{{ c.notional|round(2) }}"' in src
-        assert 'data-contracts="{{ c.size|round(4) }}"' in src
-
-    def test_calc_result_template_compile_renders(self):
-        """MED-047 discipline — compile + render with a synthetic
-        ineligible calc to confirm the zero-copy branch actually fires."""
-        from jinja2 import Environment, FileSystemLoader
-
-        env = Environment(loader=FileSystemLoader("templates"))
-        env.globals["fmt"] = lambda v, n=2: f"{v:.{n}f}" if isinstance(v, (int, float)) else str(v)
-        env.globals["fmt_size"] = lambda v: f"{v:.4f}" if isinstance(v, (int, float)) else "—"
-        env.globals["fmt_price"] = lambda v: f"{v:.4f}" if isinstance(v, (int, float)) else "—"
-
-        tpl = env.get_template("fragments/calc_result.html")
-
-        # Task 160: ineligible calc has size=0 + notional=0 in the dict
-        # (enforcement moved from template to source). would_be_size /
-        # would_be_notional surface the would-have-been values for
-        # forensic display.
-        ineligible_calc = {
-            "ticker": "BTCUSDT", "side": "long",
-            "average": 80000.0, "tp_price": 82000.0, "sl_price": 79000.0,
-            "size": 0.0, "notional": 0.0,                 # T160: zeroed
-            "would_be_size": 0.1234, "would_be_notional": 9872.0,
-            "weekly_pnl_state": "ok", "dd_state": "ok",
-            "equity_stale": False, "total_equity": 1000,
-            "eligible": False,           # ← the load-bearing input
-            "at_max_positions": True,
-            "at_max_exposure": False,
-            "exceeds_corr_limit": False,
-            "ineligible_reason": "Max position count reached (10).",
-            "regime_label": "neutral", "regime_multiplier": 1.0,
-            "regime_stale": False, "apply_regime_multiplier": True,
-            "regime_mode": "macro_only",
-            "atr_c": 0.5, "atr_category": "normal",
-            "atr14": 100.0, "atr100": 150.0,
-            "individual_risk_pct": 0.01, "risk_usdt": 10.0,
-            "base_size": 100.0, "est_fill_price": 80000.0,
-            "est_slippage": 0.0001, "est_slippage_usdt": 0.01,
-            "effective_entry": 0.9999, "tp_amount_pct": 100,
-            "sl_amount_pct": 100, "tp_usdt": 25.0, "sl_usdt": 12.5,
-            "est_profit": 24.5, "est_loss": 13.0, "est_r": 1.88,
-            "est_exposure": 0.5, "correlated_exposure": {},
-            "new_sector_exposure": 0.0, "fee_rate": 0.0005,
-            "order_type": "market", "calc_id": "test", "size_raw": 0.1,
-            "best_bid": 79999.5, "best_ask": 80000.5,
-            "one_percent_depth": 100000,
-        }
-        html = tpl.render(
-            calc=ineligible_calc, c=ineligible_calc,
-            params={"max_position_count": 10, "max_exposure": 5.0,
-                    "max_correlated_exposure": 0.30,
-                    "individual_risk_per_trade": 0.01},
-        )
-        # T160: data-contracts and data-notional render as the dict
-        # values (post-zero). Jinja2 stringifies float 0.0 as "0.0"
-        # (not "0"); accept either form.
-        assert ('data-contracts="0"' in html
-                or 'data-contracts="0.0"' in html), (
-            f"MED-019 regression: data-contracts not zeroed when "
-            f"eligible=False. Rendered HTML excerpt: {html[2000:3500]}"
-        )
-        assert ('data-notional="0"' in html
-                or 'data-notional="0.0"' in html)
-        # T160: would-be attrs surface the original computed values
-        assert 'data-would-be-contracts="0.1234"' in html
-        assert 'data-would-be-notional="9872.0"' in html
-        # data-eligible flag exposed for JS gating
-        assert 'data-eligible="0"' in html
-
 
 # ── MED-002: R:R ratio clamp ───────────────────────────────────────────────
 
@@ -452,8 +359,3 @@ class TestTask159Anchors:
         src = Path("config.py").read_text(encoding="utf-8")
         assert "Task 159 (MED-021)" in src
 
-    def test_calc_result_template_anchor(self):
-        src = Path("templates/fragments/calc_result.html").read_text(
-            encoding="utf-8"
-        )
-        assert "Task 159 (MED-019)" in src

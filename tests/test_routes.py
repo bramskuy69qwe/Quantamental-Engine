@@ -137,16 +137,12 @@ def test_api_returns_200(client, path):
 
 # ── Fragment endpoints (HTMX partials) ──────────────────────────────────────
 
+# Fragments slim-down (2026-07-30): only the HTML-consumed fragments remain
+# (base.html + config.html + orders/needs_link.html htmx). The dashboard /
+# models fragment doors are deleted — React reads /api/* + the JSON-only
+# history/analytics doors instead.
 FRAGMENT_ROUTES = [
     "/fragments/ws_status",
-    "/fragments/dashboard/exchange_info",
-    # v2.7 P3: model-library fragments (id-less GETs only — the
-    # id-parameterized ones are handler-tested in test_v27_phase3_*)
-    "/fragments/models/list",
-    "/fragments/models/form",
-    # v3.0 P1: journal_stats now renders via the shared _journal_stats_context
-    # builder (also feeding /api/dashboard/snapshot) — parity smoke.
-    "/fragments/dashboard/journal_stats",
 ]
 
 

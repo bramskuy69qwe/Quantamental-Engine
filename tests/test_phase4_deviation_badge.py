@@ -19,7 +19,6 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
-from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
@@ -277,22 +276,3 @@ class TestBadgeTemplates:
         out = t.render()
         assert "1 amendment" in out and "1 amendments" not in out
 
-    def test_positions_row_renders_badge(self):
-        env = self._env()
-        env.globals["fmt"] = lambda v, n=2: f"{float(v):.{n}f}"
-        env.globals["hold_time"] = lambda ts: "1h"
-        tmpl = env.get_template("fragments/dashboard_positions_rows.html")
-        pos = SimpleNamespace(
-            ticker="BTCUSDT", direction="LONG", entry_timestamp="x",
-            average=50000, fair_price=51000, contract_amount=1.0,
-            position_value_usdt=50000, individual_unrealized=100,
-            individual_fees=1.0, individual_funding_fees=-0.5,
-            session_mfe=10, session_mae=-5,
-            individual_tp_price=55000, individual_sl_price=48000,
-            deviation_badge="yellow", size_delta_pct=-7.5, amendment_count=2)
-        out = tmpl.render(open_positions=[pos])
-        assert "badge-yellow" in out and "amended" in out
-        assert "BTCUSDT" in out
-        # P5.T7: funding cell rendered + folded into net (100 - 1.0 + -0.5 = 98.5)
-        assert "-0.5000" in out
-        assert "98.50" in out

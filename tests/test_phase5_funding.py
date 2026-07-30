@@ -568,7 +568,6 @@ class TestFundingAtClose:
 # ── 6. P5.T7: live unrealized-funding view ───────────────────────────────────
 
 import jinja2  # noqa: E402
-from types import SimpleNamespace  # noqa: E402
 
 _REPO = os.path.dirname(os.path.dirname(__file__))
 
@@ -676,29 +675,6 @@ class TestFundingUiSurfacing:
         env.globals["fmt"] = lambda v, n=2: f"{float(v):.{n}f}"
         env.globals["hold_time"] = lambda ts: "1h"
         return env
-
-    def test_rows_fragment_renders_funding_and_net(self):
-        env = self._env()
-        tmpl = env.get_template("fragments/dashboard_positions_rows.html")
-        pos = SimpleNamespace(
-            ticker="BTCUSDT", direction="LONG", entry_timestamp="x",
-            average=50000, fair_price=51000, contract_amount=1.0,
-            position_value_usdt=50000, individual_unrealized=100.0,
-            individual_fees=1.0, individual_funding_fees=-0.5,
-            session_mfe=10, session_mae=-5,
-            individual_tp_price=55000, individual_sl_price=48000,
-            deviation_badge="green", size_delta_pct=0.0, amendment_count=0)
-        out = tmpl.render(open_positions=[pos])
-        assert "-0.5000" in out                 # funding cell
-        assert "98.50" in out                    # net = 100 - 1.0 + (-0.5)
-
-    def test_other_open_position_templates_compile(self):
-        # Compile (parse) the other two open-position templates touched by P5.T7
-        # so a Jinja-syntax error in the added Funding column/cell is caught
-        # (CLAUDE.md: source-grep is insufficient; compile-render catches it).
-        env = self._env()
-        env.get_template("fragments/dashboard_body.html")
-        env.get_template("fragments/history/open_positions.html")
 
 
 # ── 7. P6 deferred-funding reconcile (was a filed P5 gap) ─────────────────────

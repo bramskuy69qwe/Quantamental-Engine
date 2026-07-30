@@ -1,8 +1,6 @@
 """Tests for latency display refresh — WS latency tracking + display wiring."""
 import inspect
 
-import pytest
-
 
 class TestWSStatusPollingRate:
     def test_ws_status_bar_1hz(self):
@@ -13,11 +11,6 @@ class TestWSStatusPollingRate:
         assert idx != -1, "ws-status-bar element not found"
         block = content[idx:idx+300]
         assert "every 1s" in block
-
-    def test_exchange_info_self_refresh_1hz(self):
-        """Exchange info card self-refreshes at 1s."""
-        content = open("templates/fragments/dashboard_exchange_info.html", encoding="utf-8").read()
-        assert "every 1s" in content
 
 
 class TestMarketWSLatencyTracking:
@@ -40,12 +33,3 @@ class TestRESTDoesNotOverwriteWSLatency:
             "REST ping must not overwrite ws_status.latency_ms when WS is active"
 
 
-class TestExchangeInfoPrefersWSLatency:
-    def test_route_uses_ws_latency_when_connected(self):
-        """Exchange info route prefers ws.latency_ms over ex.latency_ms."""
-        from api import routes_dashboard
-        src = inspect.getsource(routes_dashboard.frag_dashboard_exchange_info)
-        assert "ws_status" in src or "ws.latency_ms" in src, \
-            "Route must check WS latency, not just REST latency"
-        assert "connected" in src, \
-            "Route must check WS connection state for latency source"

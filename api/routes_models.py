@@ -44,13 +44,12 @@ import json as _pyjson
 import logging
 import math
 from dataclasses import asdict
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import JSONResponse
 
-from api.helpers import templates, _ctx
-from core.backtest_adapters import get_backtest_adapter, list_backtest_adapters
+from core.backtest_adapters import get_backtest_adapter
 from core.database import db
 
 log = logging.getLogger("routes.models")
@@ -268,256 +267,13 @@ async def api_model_usage(model_id: int):
     return _json_safe_resp(usage)
 
 
-# ── Page (v2.7 Phase 4 — moved here from 3.2 once the template existed) ─────
-
 # (Jinja retirement 2026-07-30: GET /models + model_library.html retired —
-# the React Models page is the twin. POST /models SURVIVES: a live fragment
-# form still posts to it, pinned by test_v27_phase3_model_routes.py.)
-
-
-# ── Fragments (GET — TemplateResponse + _ctx house idiom) ────────────────────
-
-@router.get("/fragments/models/list", response_class=HTMLResponse)
-async def frag_model_list(request: Request):
-    models = await db.list_potential_models()
-    return templates.TemplateResponse(
-        request, "fragments/model_list.html", _ctx(request, models=models)
-    )
-
-
-@router.get("/fragments/models/detail/{model_id}", response_class=HTMLResponse)
-async def frag_model_detail(request: Request, model_id: int):
-    model = await db.get_potential_model(model_id)
-    if not model:
-        return HTMLResponse("<p class='text-red'>Model not found.</p>")
-    runs = await db.list_model_backtests(model_id)
-    return templates.TemplateResponse(
-        request, "fragments/model_detail.html",
-        _ctx(request, model=model, runs=runs,
-             adapters=list_backtest_adapters()),
-    )
-
-
-@router.get("/fragments/models/form", response_class=HTMLResponse)
-async def frag_model_form_blank(request: Request):
-    return templates.TemplateResponse(
-        request, "fragments/model_form.html", _ctx(request, model=None)
-    )
-
-
-@router.get("/fragments/models/form/{model_id}", response_class=HTMLResponse)
-async def frag_model_form_edit(request: Request, model_id: int):
-    model = await db.get_potential_model(model_id)
-    if not model:
-        return HTMLResponse("<p class='text-red'>Model not found.</p>")
-    return templates.TemplateResponse(
-        request, "fragments/model_form.html", _ctx(request, model=model)
-    )
-
-
-@router.get("/fragments/models/backtests/{model_id}", response_class=HTMLResponse)
-async def frag_model_backtests(request: Request, model_id: int):
-    """Standalone refresh hook for the detail pane's run list (Phase-4
-    lazy-load target). The upload POST re-renders the same fragment
-    directly; this GET exists so the list is independently refreshable."""
-    runs = await db.list_model_backtests(model_id)
-    return templates.TemplateResponse(
-        request, "fragments/model_backtest_list.html",
-        _ctx(request, runs=runs, error=""),
-    )
-
-
-# ── Form mutations (200 status span + hx-swap-oob refresh) ──────────────────
-
-def _render_fragment(name: str, **ctx) -> str:
-    """Render a fragment WITHOUT a request (for oob composition in POST
-    responses). The model fragments are request-independent by design —
-    they read only the vars passed here."""
-    return templates.env.get_template(name).render(**ctx)
-
-
-async def _oob_list() -> str:
-    models = await db.list_potential_models()
-    inner = _render_fragment("fragments/model_list.html", models=models)
-    return f'<div id="model-list" hx-swap-oob="innerHTML">{inner}</div>'
-
-
-def _err_span(msg: str) -> HTMLResponse:
-    return HTMLResponse(f'<span class="text-red">{msg}</span>')
-
-
-def _parse_model_form(
-    name: str, model_type: str, description: str,
-    risk_pct: str, sizing_rule: str, window_seconds: str,
-    tp_methodology: str, sl_methodology: str,
-    apply_regime_multiplier: str, size_override_default: str,
-    entry_logic: str, exit_logic: str, target_universe: str,
-    regime_config: str, notes: str,
-) -> Tuple[Optional[str], Dict[str, Any], Dict[str, Any], Dict[str, str]]:
-    """Validate + shape the model form. Returns (error, base, preset, strategy).
-
-    Numeric preset fields are stored only when set; the regime toggle is a
-    checkbox (absent -> "" -> False, the config-form full-snapshot idiom).
-    The form is a FULL-SNAPSHOT editor of the known preset/strategy keys —
-    extra keys set via the JSON API are dropped on a UI edit save (the
-    JSON API stays the power path for arbitrary keys).
-    """
-    if not name.strip():
-        return "Name is required", {}, {}, {}
-    if model_type not in VALID_TYPES:
-        return "Type must be macro, micro, or both", {}, {}, {}
-    preset: Dict[str, Any] = {
-        "apply_regime_multiplier": bool(apply_regime_multiplier),
-    }
-    try:
-        if risk_pct.strip():
-            val = float(risk_pct)
-            if not 0 < val <= 100:
-                return "Risk % must be in (0, 100]", {}, {}, {}
-            preset["risk_pct"] = val
-        if window_seconds.strip():
-            wval = int(window_seconds)
-            if wval <= 0:
-                return "Window seconds must be > 0", {}, {}, {}
-            preset["window_seconds"] = wval
-        if size_override_default.strip():
-            sval = float(size_override_default)
-            # v2.7 holistic-audit F2: nan/inf pass `<= 0` (NaN comparisons
-            # are False; inf > 0) — the exact trap routes_calculator guards
-            # with math.isfinite. A stored non-finite poisons every JSON
-            # endpoint reading this model (F2 blast radius).
-            if not math.isfinite(sval) or sval <= 0:
-                return "Size override must be a finite number > 0", {}, {}, {}
-            preset["size_override_default"] = sval
-    except ValueError:
-        return "Risk %, window seconds and size override must be numeric", {}, {}, {}
-    for key, raw in (("sizing_rule", sizing_rule),
-                     ("tp_methodology", tp_methodology),
-                     ("sl_methodology", sl_methodology)):
-        if raw.strip():
-            preset[key] = raw.strip()
-    strategy = {
-        "entry_logic": entry_logic.strip(),
-        "exit_logic": exit_logic.strip(),
-        "target_universe": target_universe.strip(),
-        "regime_config": regime_config.strip(),
-        "notes": notes.strip(),
-    }
-    base = {"name": name.strip(), "type": model_type,
-            "description": description.strip()}
-    return None, base, preset, strategy
-
-
-def _form_fields() -> Dict[str, Any]:
-    """Fresh Form() FieldInfo instances per route signature — FastAPI can
-    mutate FieldInfo during param analysis, so sharing one set across two
-    routes is fragile (P3 audit NIT-5)."""
-    return dict(
-        name=Form(""), model_type=Form("both", alias="type"),
-        description=Form(""),
-        risk_pct=Form(""), sizing_rule=Form(""), window_seconds=Form(""),
-        tp_methodology=Form(""), sl_methodology=Form(""),
-        apply_regime_multiplier=Form(""), size_override_default=Form(""),
-        entry_logic=Form(""), exit_logic=Form(""), target_universe=Form(""),
-        regime_config=Form(""), notes=Form(""),
-    )
-
-
-_CREATE_FIELDS = _form_fields()
-_UPDATE_FIELDS = _form_fields()
-
-
-@router.post("/models", response_class=HTMLResponse)
-async def create_model_form(
-    request: Request,
-    name: str = _CREATE_FIELDS["name"],
-    model_type: str = _CREATE_FIELDS["model_type"],
-    description: str = _CREATE_FIELDS["description"],
-    risk_pct: str = _CREATE_FIELDS["risk_pct"],
-    sizing_rule: str = _CREATE_FIELDS["sizing_rule"],
-    window_seconds: str = _CREATE_FIELDS["window_seconds"],
-    tp_methodology: str = _CREATE_FIELDS["tp_methodology"],
-    sl_methodology: str = _CREATE_FIELDS["sl_methodology"],
-    apply_regime_multiplier: str = _CREATE_FIELDS["apply_regime_multiplier"],
-    size_override_default: str = _CREATE_FIELDS["size_override_default"],
-    entry_logic: str = _CREATE_FIELDS["entry_logic"],
-    exit_logic: str = _CREATE_FIELDS["exit_logic"],
-    target_universe: str = _CREATE_FIELDS["target_universe"],
-    regime_config: str = _CREATE_FIELDS["regime_config"],
-    notes: str = _CREATE_FIELDS["notes"],
-):
-    err, base, preset, strategy = _parse_model_form(
-        name, model_type, description, risk_pct, sizing_rule, window_seconds,
-        tp_methodology, sl_methodology, apply_regime_multiplier,
-        size_override_default, entry_logic, exit_logic, target_universe,
-        regime_config, notes,
-    )
-    if err:
-        return _err_span(err)
-    model_id = await db.create_potential_model(
-        base["name"], base["type"], base["description"], {},
-        risk_preset=preset, strategy=strategy,
-    )
-    oob = await _oob_list()
-    return HTMLResponse(
-        f'<span class="text-green">saved ✓ (#{model_id})</span>{oob}'
-    )
-
-
-@router.post("/models/{model_id}/update", response_class=HTMLResponse)
-async def update_model_form(
-    request: Request,
-    model_id: int,
-    name: str = _UPDATE_FIELDS["name"],
-    model_type: str = _UPDATE_FIELDS["model_type"],
-    description: str = _UPDATE_FIELDS["description"],
-    risk_pct: str = _UPDATE_FIELDS["risk_pct"],
-    sizing_rule: str = _UPDATE_FIELDS["sizing_rule"],
-    window_seconds: str = _UPDATE_FIELDS["window_seconds"],
-    tp_methodology: str = _UPDATE_FIELDS["tp_methodology"],
-    sl_methodology: str = _UPDATE_FIELDS["sl_methodology"],
-    apply_regime_multiplier: str = _UPDATE_FIELDS["apply_regime_multiplier"],
-    size_override_default: str = _UPDATE_FIELDS["size_override_default"],
-    entry_logic: str = _UPDATE_FIELDS["entry_logic"],
-    exit_logic: str = _UPDATE_FIELDS["exit_logic"],
-    target_universe: str = _UPDATE_FIELDS["target_universe"],
-    regime_config: str = _UPDATE_FIELDS["regime_config"],
-    notes: str = _UPDATE_FIELDS["notes"],
-):
-    existing = await db.get_potential_model(model_id)
-    if not existing:
-        return _err_span("Model not found")
-    err, base, preset, strategy = _parse_model_form(
-        name, model_type, description, risk_pct, sizing_rule, window_seconds,
-        tp_methodology, sl_methodology, apply_regime_multiplier,
-        size_override_default, entry_logic, exit_logic, target_universe,
-        regime_config, notes,
-    )
-    if err:
-        return _err_span(err)
-    # The new form has no config editor — pass the STORED config through
-    # (P3 audit MED-1): legacy models built in backtest.html's old panel
-    # carry config.signals/risk/regime that its JS still reads during the
-    # two-editors coexistence window (until Phase 6 retires it); an
-    # unconditional {} here silently destroyed it.
-    await db.update_potential_model(
-        model_id, base["name"], base["type"], base["description"],
-        existing["config"],
-        risk_preset=preset, strategy=strategy,
-    )
-    oob = await _oob_list()
-    return HTMLResponse(f'<span class="text-green">updated ✓</span>{oob}')
-
-
-@router.delete("/models/{model_id}", response_class=HTMLResponse)
-async def delete_model_form(model_id: int):
-    """Deletes the model + its imported runs; the detail pane is replaced
-    (this response is the hx-target) and the list refreshes out-of-band."""
-    await db.delete_potential_model(model_id)
-    oob = await _oob_list()
-    return HTMLResponse(
-        f'<p style="color:var(--muted);font-size:.72rem;">Model deleted.</p>{oob}'
-    )
+# the React Models page is the twin. Fragments slim-down 2026-07-30: the
+# /fragments/models/* doors AND the htmx form lane (POST /models,
+# POST /models/{id}/update, DELETE /models/{id}) are DELETED with their
+# templates — the model_form fragment was their last consumer; React does
+# CRUD via /api/models. POST /models/{id}/backtest-upload survives
+# JSON-only below.)
 
 
 # ── Backtest-report upload (the codebase's first multipart route) ───────────
@@ -632,42 +388,34 @@ async def upload_model_backtest(
     dry_run: str = "",
 ):
     """Parse an external report and attach it to the model as an imported
-    run. Default (htmx) lane: every response is 200 + the backtest-list
-    fragment (with an error banner on failure) so the list container
-    swaps cleanly either way. `?format=json` (v3.0 P7): JSON responses
-    with real status codes; `&dry_run=1` = parse-preview, NO writes."""
-    is_json = format == "json"
+    run. JSON responses with real status codes; `&dry_run=1` =
+    parse-preview, NO writes.
+
+    Fragments slim-down (2026-07-30): JSON-only — the htmx lane (200 +
+    model_backtest_list.html re-render) is retired with the models
+    fragment cluster; `format` stays accepted-and-inert (React sends
+    ?format=json). dry_run is now honored on every lane, matching the
+    sibling /api/models/import (the P7 LOW-1 guard existed only because
+    the htmx lane had no preview UI)."""
     want_dry = dry_run in ("1", "true", "yes")
 
-    async def _list_response(error: str = "", status: int = 400):
-        if is_json:
-            return JSONResponse({"error": error}, status_code=status)
-        runs = await db.list_model_backtests(model_id)
-        return HTMLResponse(_render_fragment(
-            "fragments/model_backtest_list.html", runs=runs, error=error,
-        ))
-
-    # P7 audit LOW-1 fold: the htmx lane has no preview UI, so a dry_run
-    # request outside the JSON lane must FAIL LOUD, never silently commit
-    # a real import (the sibling /api/models/import honors bare dry_run).
-    if want_dry and not is_json:
-        return JSONResponse(
-            {"error": "dry_run requires format=json"}, status_code=400)
+    async def _err_json(error: str = "", status: int = 400):
+        return JSONResponse({"error": error}, status_code=status)
     if not await db.get_potential_model(model_id):
-        return await _list_response("Model not found.", status=404)
+        return await _err_json("Model not found.", status=404)
     err = _upload_size_error(file, None)
     if err:
-        return await _list_response(err)
+        return await _err_json(err)
     raw = await file.read()
     err = _upload_size_error(file, raw)
     if err:
-        return await _list_response(err)
+        return await _err_json(err)
     filename = file.filename or ""
     try:
         adapter, result, capture, warnings = await _parse_and_capture(
             app_id, raw, filename)
     except ValueError as exc:  # includes BacktestAdapterError
-        return await _list_response(str(exc))
+        return await _err_json(str(exc))
 
     if want_dry:
         return _json_safe_resp(
@@ -687,20 +435,18 @@ async def upload_model_backtest(
         # create_model_backtest is atomic (deletes its session on failure),
         # so nothing was saved.
         log.exception("backtest import failed post-parse (model %s)", model_id)
-        return await _list_response(
+        return await _err_json(
             "Import failed after parse — nothing saved.", status=500)
     seeded = await db.seed_model_source_if_empty(
         model_id, _source_from_settings(result.settings, adapter))
-    if is_json:
-        return _json_safe_resp({
-            "run_id": session_id,
-            "model_id": model_id,
-            "file": filename,
-            "summary": payload["summary"],
-            "warnings": warnings,
-            "source_seeded": seeded,
-        })
-    return await _list_response()
+    return _json_safe_resp({
+        "run_id": session_id,
+        "model_id": model_id,
+        "file": filename,
+        "summary": payload["summary"],
+        "warnings": warnings,
+        "source_seeded": seeded,
+    })
 
 
 @router.post("/api/models/import", response_class=JSONResponse)

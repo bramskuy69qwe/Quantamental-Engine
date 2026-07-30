@@ -43,96 +43,10 @@ Run: pytest tests/test_task139_countdown_race.py -v
 """
 from __future__ import annotations
 
-import re
 from pathlib import Path
-
-import jinja2
-
-
-def _read_template(rel_path: str) -> str:
-    return Path(rel_path).read_text(encoding="utf-8")
-
-
-def _make_env() -> jinja2.Environment:
-    return jinja2.Environment(
-        loader=jinja2.FileSystemLoader("templates"),
-        autoescape=jinja2.select_autoescape(["html"]),
-    )
 
 
 # ── PENDING branch exists in the countdown fragment ─────────────────────────
-
-class TestCountdownTemplateHasPendingBranch:
-    """The new PENDING state must be a distinct branch in the
-    countdown fragment, separate from EXPIRED (which is terminal)."""
-
-    def test_pending_branch_present(self):
-        src = _read_template("templates/fragments/link_window_countdown.html")
-        assert "PENDING" in src, (
-            "FE-HIGH-009 regression: link_window_countdown.html is "
-            "missing the PENDING state branch. Without it, the route "
-            "handler's 'calc not in DB' case falls through to the "
-            "old EXPIRED branch (terminal — polling stops)."
-        )
-
-    def test_pending_branch_keeps_polling(self):
-        """The PENDING branch must include `hx-trigger=` so the widget
-        keeps polling — this is the entire point of the new state.
-        EXPIRED is terminal (no hx-trigger); PENDING is transient
-        (must have hx-trigger)."""
-        src = _read_template("templates/fragments/link_window_countdown.html")
-        m = re.search(
-            r"(?:elif|if)\s+s\s*==\s*[\"']PENDING[\"'].*?\{%\s*(?:elif|else|endif)",
-            src,
-            re.DOTALL,
-        )
-        assert m, "PENDING branch structure not found in template"
-        body = m.group(0)
-        assert "hx-trigger" in body, (
-            "FE-HIGH-009: PENDING branch must include hx-trigger so "
-            "the widget keeps polling until the calc appears in DB."
-        )
-        assert "hx-get" in body, (
-            "FE-HIGH-009: PENDING branch must include hx-get with "
-            "the calc_id so polling targets the right endpoint."
-        )
-
-    def test_pending_polls_faster_than_linkable(self):
-        """PENDING uses fast-retry cadence (1s) vs LINKABLE's 5s — the
-        race window is typically sub-second, so fast retry minimizes
-        the user-visible 'Confirming...' duration."""
-        src = _read_template("templates/fragments/link_window_countdown.html")
-        m = re.search(
-            r"(?:elif|if)\s+s\s*==\s*[\"']PENDING[\"'].*?\{%\s*(?:elif|else|endif)",
-            src,
-            re.DOTALL,
-        )
-        assert m
-        body = m.group(0)
-        assert "every 1s" in body, (
-            "PENDING should poll at 1s for fast race-window recovery. "
-            "5s would mean the user sees 'Confirming...' for up to 5s "
-            "on every calc submit — too long."
-        )
-
-    def test_expired_branch_still_terminal(self):
-        """Anti-regression: don't accidentally add hx-trigger to the
-        EXPIRED branch. EXPIRED is genuinely terminal — once a calc's
-        window has actually elapsed, polling forever wastes cycles."""
-        src = _read_template("templates/fragments/link_window_countdown.html")
-        m = re.search(
-            r"elif\s+s\s*==\s*[\"']EXPIRED[\"'].*?\{%\s*(?:elif|else|endif)",
-            src,
-            re.DOTALL,
-        )
-        assert m, "EXPIRED branch not found"
-        body = m.group(0)
-        assert "hx-trigger" not in body, (
-            "Anti-regression: EXPIRED is terminal — must NOT poll."
-        )
-        assert "hx-get" not in body, (
-            "Anti-regression: EXPIRED must NOT have hx-get either."
-        )
 
 
 # ── Route handler returns PENDING when pretrade row is missing ──────────────
@@ -183,68 +97,6 @@ class TestRouteHandlerReturnsPendingForMissingPretrade:
 
 
 # ── Compile-render: countdown fragment renders the PENDING state cleanly ────
-
-class TestCountdownFragmentRendersPendingState:
-    """MED-047 discipline: compile-render the fragment with a PENDING
-    context. Without this, a Jinja2 syntax error in the new branch
-    would slip past source-string greps."""
-
-    def test_pending_renders_with_polling(self):
-        env = _make_env()
-        tpl = env.get_template("fragments/link_window_countdown.html")
-        ctx = {
-            "calc_id": "test_calc_abc123",
-            "lw": {
-                "status": "PENDING",
-                "remaining_s": 0,
-                "effective_window_s": 21600,
-            },
-        }
-        html = tpl.render(**ctx)
-        assert "test_calc_abc123" in html, "calc_id not interpolated"
-        assert "hx-get=" in html, "PENDING render missing hx-get"
-        assert "hx-trigger=" in html, "PENDING render missing hx-trigger"
-        assert "every 1s" in html, "PENDING render missing 1s cadence"
-        assert "expired" not in html.lower(), (
-            "PENDING render must not show 'expired' text — that's "
-            "the bug the fix exists to prevent."
-        )
-
-    def test_expired_still_renders_terminal_state(self):
-        """Anti-regression: rendering with status='EXPIRED' still
-        produces the terminal (no-polling) fragment."""
-        env = _make_env()
-        tpl = env.get_template("fragments/link_window_countdown.html")
-        ctx = {
-            "calc_id": "test_calc_abc123",
-            "lw": {
-                "status": "EXPIRED",
-                "remaining_s": 0,
-                "effective_window_s": 21600,
-            },
-        }
-        html = tpl.render(**ctx)
-        assert "PLAN EXPIRED" in html
-        assert "hx-get=" not in html, (
-            "Anti-regression: EXPIRED render must NOT include hx-get."
-        )
-        assert "hx-trigger=" not in html
-
-    def test_linkable_still_polls_at_5s(self):
-        """Anti-regression: LINKABLE polling cadence unchanged."""
-        env = _make_env()
-        tpl = env.get_template("fragments/link_window_countdown.html")
-        ctx = {
-            "calc_id": "test_calc_abc123",
-            "lw": {
-                "status": "LINKABLE",
-                "remaining_s": 21000,
-                "effective_window_s": 21600,
-            },
-        }
-        html = tpl.render(**ctx)
-        assert "Linkable for:" in html
-        assert "every 5s" in html
 
 
 # ── Route handler builds PENDING status dict directly ────────────────────────

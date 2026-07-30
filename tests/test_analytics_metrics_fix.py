@@ -18,8 +18,6 @@ import tempfile
 
 import pytest
 import pytest_asyncio
-import jinja2
-from pathlib import Path
 
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -124,30 +122,3 @@ class TestRMultiplesFromClosedPositions:
 _OVERVIEW_TPL = "templates/fragments/analytics/overview_stats.html"
 
 
-class TestOverviewTemplateWiring:
-    def test_template_compiles(self):
-        # get_template compiles/parses the template -> raises TemplateSyntaxError
-        # on a malformed edit (the 2026-06-24 cumulative-% set + the Sortino-MAE
-        # inline render). The full-render path needs the entire live stats
-        # context (brittle); a compile + source-wiring assertions match the
-        # codebase's template-test pattern (test_task135) and catch the syntax
-        # class this discipline targets.
-        env = jinja2.Environment(
-            loader=jinja2.FileSystemLoader("templates"),
-            autoescape=jinja2.select_autoescape(["html"]),
-        )
-        env.get_template("fragments/analytics/overview_stats.html")  # compiles or raises
-
-    def test_cumulative_percent_uses_backend_field(self):
-        src = Path(_OVERVIEW_TPL).read_text(encoding="utf-8")
-        assert "cumulative.total_pnl_percent" in src           # wired to backend %
-        # the old div-by-zero base (deposits − withdrawals) must be gone
-        assert "cumulative.total_deposits - cumulative.total_withdrawals" not in src
-
-    def test_sortino_mae_not_positive_biased_card(self):
-        src = Path(_OVERVIEW_TPL).read_text(encoding="utf-8")
-        # Sortino (MAE) no longer routes through the positive-biased ratio_card
-        # (which rendered every val<=0 as "—"); it's rendered inline so the
-        # inherently-negative value shows.
-        assert 'ratio_card("Sortino (MAE)"' not in src
-        assert "ratios.sortino_mae" in src

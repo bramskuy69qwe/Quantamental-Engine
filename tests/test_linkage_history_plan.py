@@ -3,18 +3,19 @@ Follow-up #2 (debug 2026-06-08): surface calc linkage in Position History.
 
 The open-positions cockpit already shows a "Plan" deviation badge (#1); the
 closed-positions Position History had no linkage indicator at all. This adds:
-  - the closed-positions table route stamps a "Plan" deviation-badge LEVEL on
-    rows that carry a calc_id, and "" on unlinked / legacy rows;
-  - the table renders a Plan column (badge for linked, "—" for unlinked);
-  - the per-position drilldown drawer surfaces WHICH calc(s) the position
-    linked to (the operator asked the drilldown to "show the linked calc").
+  - the closed-positions route stamps a "Plan" deviation-badge LEVEL on
+    rows that carry a calc_id, and "" on unlinked / legacy rows.
 
-Intent (Rule 8) — these fail if the linkage display regresses:
-  - a calc-linked close shows an on-plan/amended/off-plan badge (level reused
-    from the SAME deviation_badge_level as the live path → surfaces consistent);
-  - an UNLINKED (legacy) close shows "—", NOT a misleading red "off-plan"
-    (≈150 historical rows must not all light up red);
-  - the drilldown drawer lists the linked calc id(s) with a context link.
+(Fragments slim-down 2026-07-30: the table/drawer RENDER classes retired with
+their templates — the React History page renders the badge from the JSON rows;
+the badge-STAMPING semantics below are the load-bearing survivors, pinned via
+the route's JSON payload.)
+
+Intent (Rule 8) — these fail if the linkage stamping regresses:
+  - a calc-linked close carries an on-plan/amended/off-plan badge level
+    (reused from the SAME deviation_badge_level as the live path);
+  - an UNLINKED (legacy) close carries "", NOT a misleading red "off-plan"
+    (≈150 historical rows must not all light up red).
 
 Run: pytest tests/test_linkage_history_plan.py -v
 """
@@ -31,17 +32,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
-
-
-class _CapTemplates:
-    def __init__(self):
-        self.ctx = None
-        self.name = None
-
-    def TemplateResponse(self, request, name, ctx):
-        from fastapi.responses import HTMLResponse
-        self.name, self.ctx = name, ctx
-        return HTMLResponse("ok")
 
 
 @pytest_asyncio.fixture
@@ -76,15 +66,15 @@ async def _add_closed(db, *, calc_id=None, size_delta_pct=0.0, amend=0,
 
 
 async def _call_table(monkeypatch, db):
+    """Drive the (now JSON-only) closed-positions door and index its rows."""
+    import json
     import api.routes_orders as ro
     from types import SimpleNamespace
-    cap = _CapTemplates()
-    monkeypatch.setattr(ro, "_table_ctx", lambda request, **extra: dict(extra))
-    monkeypatch.setattr(ro, "templates", cap)
     monkeypatch.setattr(ro, "db", db)
     monkeypatch.setattr(ro, "app_state", SimpleNamespace(active_account_id=1))
-    await ro.frag_closed_positions(request=None)
-    return {r["id"]: r for r in cap.ctx["rows"]}
+    resp = await ro.frag_closed_positions(request=None)
+    rows = json.loads(resp.body.decode("utf-8"))["rows"]
+    return {r["id"]: r for r in rows}
 
 
 # ── route: deviation-badge level computation (linked vs unlinked) ──────────────
@@ -152,144 +142,9 @@ class TestRouteBadge:
 # ── table render: Plan column shows badge for linked, "—" for unlinked ─────────
 
 
-def _render_table(rows):
-    from api.helpers import templates
-    return templates.env.get_template(
-        "fragments/history/closed_positions_table.html"
-    ).render(
-        rows=rows, total=len(rows), page=1, per_page=20, total_pages=1,
-        sort_by="exit_time_ms", sort_dir="DESC", search="",
-        date_from="", date_to="",
-    )
-
-
-def _row(**kw):
-    r = {
-        "id": 1, "entry_time_ms": 1000, "exit_time_ms": 2000, "symbol": "BTCUSDT",
-        "direction": "LONG", "quantity": 1.0, "entry_price": 100.0,
-        "exit_price": 101.0, "net_pnl": 1.0, "realized_pnl": 1.0, "total_fees": 0.0,
-        "hold_time_ms": 1000, "exit_reason": "TP_PLANNED", "tp_price": 0.0,
-        "sl_price": 0.0, "mfe": 0.0, "mae": 0.0, "backfill_completed": 0,
-        "close_note": "", "calc_id": None, "deviation_badge": "",
-        "size_delta_pct": 0.0, "cumulative_amendment_count": 0,
-        "tpsl_amended": None,
-    }
-    r.update(kw)
-    return r
-
-
-class TestTableRender:
-    def test_compiles(self):
-        _render_table([_row()])   # raises on Jinja/syntax error
-
-    def test_linked_row_shows_badge(self):
-        html = _render_table([_row(calc_id="CALC-1", deviation_badge="green")])
-        assert "on-plan" in html          # deviation_badge macro green label
-
-    def test_unlinked_row_shows_dash_not_badge(self):
-        html = _render_table([_row(calc_id=None, deviation_badge="")])
-        assert "on-plan" not in html and "off-plan" not in html
-        assert "—" in html                # the explicit no-plan marker
-
-    def test_plan_header_present(self):
-        html = _render_table([_row()])
-        assert ">Plan<" in html
-
-    def test_amended_label_when_tpsl_amended(self):
-        # 2026-06-24 frontend fix: the closed-row table must forward
-        # tpsl_amended to the badge macro so a venue TP/SL amendment (yellow,
-        # on-size, 0 ledger amendments) reads "amended" — NOT "off-size". This
-        # is the operator's "history should say amended"; before the fix the
-        # macro defaulted tpsl_amended=false and labelled it "off-size".
-        html = _render_table([_row(calc_id="CALC-1", deviation_badge="yellow",
-                                   size_delta_pct=-1.0, cumulative_amendment_count=0,
-                                   tpsl_amended=1)])
-        assert ">amended<" in html
-        assert "TP/SL amended" in html        # tooltip detail
-        assert ">off-size<" not in html
-
-    def test_off_size_label_when_size_only(self):
-        # contrast: yellow purely from a size delta (no amendment) stays
-        # "off-size" — the tpsl_amended wiring must not over-label.
-        html = _render_table([_row(calc_id="CALC-1", deviation_badge="yellow",
-                                   size_delta_pct=7.0, cumulative_amendment_count=0,
-                                   tpsl_amended=None)])
-        assert ">off-size<" in html
-        assert "TP/SL amended" not in html
-
-
 # ── drawer render: surfaces the linked calc id(s) ─────────────────────────────
-
-
-def _render_drawer(calc_ids):
-    from api.helpers import templates
-    return templates.env.get_template(
-        "fragments/history/position_events.html"
-    ).render(events=[], has_calc=bool(calc_ids), calc_ids=calc_ids,
-             truncated=False, events_cap=500, position_id=7)
-
-
-class TestDrawerCalcSurface:
-    def test_lists_linked_calc_with_context_link(self):
-        html = _render_drawer(["03e664ebb4fd4131bec021557513dc18"])
-        assert "linked calc" in html
-        assert "/context/calc/03e664ebb4fd4131bec021557513dc18" in html
-        assert "03e664eb" in html         # short id shown
-
-    def test_plural_for_scale_in(self):
-        html = _render_drawer(["aaaaaaaa1111", "bbbbbbbb2222"])
-        assert "linked calcs" in html     # plural
-
-    def test_no_calc_no_link(self):
-        # (the template's HTML comment legitimately contains "no linked calc";
-        # assert on the functional markers instead — the rendered label + link.)
-        html = _render_drawer([])
-        assert "linked calc:" not in html and "linked calcs:" not in html
-        assert "/context/calc/" not in html
 
 
 # ── cockpit Recent-Closes pane: same Plan badge as Position History ────────────
 
 
-async def _call_cockpit_closes(monkeypatch, db):
-    import api.routes_cockpit as rc
-    from types import SimpleNamespace
-    cap = _CapTemplates()
-    monkeypatch.setattr(rc, "_table_ctx", lambda request, **extra: dict(extra))
-    monkeypatch.setattr(rc, "templates", cap)
-    monkeypatch.setattr(rc, "db", db)
-    monkeypatch.setattr(rc, "app_state", SimpleNamespace(active_account_id=1))
-    await rc.frag_cockpit_closes(request=None)
-    return {r["id"]: r for r in cap.ctx["rows"]}
-
-
-def _render_cockpit_closes(rows):
-    from api.helpers import templates
-    return templates.env.get_template(
-        "fragments/cockpit/closes.html"
-    ).render(rows=rows)
-
-
-class TestCockpitRecentCloses:
-    @pytest.mark.asyncio
-    async def test_route_stamps_badge_linked_only(self, db, monkeypatch):
-        linked = await _add_closed(db, calc_id="CALC-1", exit_ms=2000)
-        legacy = await _add_closed(db, calc_id=None, exit_ms=1000)
-        rows = await _call_cockpit_closes(monkeypatch, db)
-        assert rows[linked]["deviation_badge"] == "green"
-        assert rows[legacy]["deviation_badge"] == ""
-
-    def test_render_linked_shows_badge(self):
-        html = _render_cockpit_closes([_row(calc_id="CALC-1", deviation_badge="green")])
-        assert "on-plan" in html and ">Plan<" in html
-
-    def test_render_unlinked_shows_dash(self):
-        html = _render_cockpit_closes([_row(calc_id=None, deviation_badge="")])
-        assert "on-plan" not in html and "—" in html
-
-    def test_render_amended_label(self):
-        # cockpit Recent-Closes shares the badge macro; it must also forward
-        # tpsl_amended so a venue TP/SL amendment reads "amended" (2026-06-24).
-        html = _render_cockpit_closes([_row(calc_id="CALC-1", deviation_badge="yellow",
-                                            size_delta_pct=-1.0, tpsl_amended=1)])
-        assert ">amended<" in html and "TP/SL amended" in html

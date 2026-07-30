@@ -34,40 +34,6 @@ def _make_env() -> jinja2.Environment:
 
 # ── FE-MED-010: Dashboard capacity indicator tooltip ────────────────────────
 
-class TestFeMed010CapacityIndicatorTooltip:
-
-    def test_dashboard_body_has_title_tooltip(self):
-        src = Path("templates/fragments/dashboard_body.html").read_text(encoding="utf-8")
-        # The capacity indicator span carries the tooltip
-        assert 'title="Open positions / max positions"' in src
-        # Anchor for traceability
-        assert "FE-MED-010" in src
-
-    def test_dashboard_positions_has_title_tooltip(self):
-        src = Path("templates/fragments/dashboard_positions.html").read_text(encoding="utf-8")
-        assert 'title="Open positions / max positions"' in src
-        # The data-max attr is still present (anchors the original span)
-        assert 'data-max=' in src
-
-    def test_capacity_indicator_tooltip_attr_paired_with_count(self):
-        """Source-pin: the tooltip attribute lives on the same <span>
-        as the `{{ open_positions | length }}/{{ max_open_positions }}`
-        content. (Full render-pin would require the entire dashboard
-        context which is heavy; the source-pin above already proves
-        the wiring.)"""
-        for path in (
-            "templates/fragments/dashboard_body.html",
-            "templates/fragments/dashboard_positions.html",
-        ):
-            src = Path(path).read_text(encoding="utf-8")
-            # The capacity-indicator block contains both the tooltip
-            # attr and the count expression. Find the tooltip line
-            # and check the count is within ~200 chars after it.
-            ti = src.find('title="Open positions / max positions"')
-            assert ti > 0, f"tooltip missing in {path}"
-            window = src[ti:ti + 300]
-            assert "open_positions | length" in window
-
 
 # ── FE-LOW-002: Account card name truncation ────────────────────────────────
 
@@ -152,35 +118,6 @@ class TestFeLow005ProviderHints:
 
 # ── FE-LOW-009: CF / Adj Chg expanded to full labels ────────────────────────
 
-class TestFeLow009LabelExpansion:
-
-    def _read(self) -> str:
-        return Path("templates/fragments/equity_ohlc.html").read_text(encoding="utf-8")
-
-    def test_stats_line_uses_cash_flow_full_label(self):
-        src = self._read()
-        # Stats line (renderStats) expanded
-        assert '">Cash Flow<' in src
-        # Old abbreviation gone from the stats line (only "CF" left as a token)
-        # — we look for the specific HTML fragment to be conservative
-        assert '">CF</span>' not in src
-
-    def test_stats_line_uses_adjusted_change_full_label(self):
-        src = self._read()
-        assert '">Adjusted Change<' in src
-        assert '">Adj Chg</span>' not in src
-
-    def test_tooltip_uses_consistent_full_labels(self):
-        """The tooltip row() calls also use the full labels for
-        consistency across stats line + tooltip."""
-        src = self._read()
-        # Old "Cashflow" → "Cash Flow"
-        assert "row('Cashflow'" not in src
-        assert "row('Cash Flow'" in src
-        # Old "Adj Chg" → "Adjusted Change"
-        assert "row('Adj Chg'" not in src
-        assert "row('Adjusted Change'" in src
-
 
 # ── FE-LOW-004: status normalization ────────────────────────────────────────
 
@@ -206,11 +143,10 @@ class TestFeLow004StatusNormalized:
 
 class TestTemplateCompiles:
 
+    # (Fragments slim-down 2026-07-30: the dashboard/equity twins are
+    # deleted — account_list is the surviving task-131 surface.)
     @pytest.mark.parametrize("path", [
-        "fragments/dashboard_body.html",
-        "fragments/dashboard_positions.html",
         "fragments/account_list.html",
-        "fragments/equity_ohlc.html",
     ])
     def test_compiles(self, path):
         env = _make_env()

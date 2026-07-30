@@ -33,9 +33,12 @@ import pytest
 
 # Production modules that dereference the singleton. Late-import consumers
 # (ws_manager / exchange / routes_history) re-resolve per call and are safe by
-# construction; the two below hold module-level imports and are the ones the
-# Phase-1 extraction put at risk.
-_MODULE_IMPORT_CONSUMERS = ["core.schedulers", "api.routes_dashboard"]
+# construction; the module below holds a module-level import and is the one the
+# Phase-1 extraction put at risk. (Fragments slim-down 2026-07-30:
+# api.routes_dashboard dropped off this list — its only singleton consumers
+# were the deleted dashboard fragment handlers; the tree-wide anti-revert pin
+# below still catches any re-introduction.)
+_MODULE_IMPORT_CONSUMERS = ["core.schedulers"]
 
 # Column-0 anchored: an INDENTED (function-level) from-import re-resolves on
 # every call and is seam-safe, so only the module-scope form is rejected. The
@@ -134,38 +137,7 @@ class TestPatchSeamIntercepts:
         with patch("core.order_manager_singleton.order_manager", sentinel):
             assert mod.order_manager_singleton.order_manager is sentinel
 
-    @pytest.mark.asyncio
-    async def test_dashboard_orders_fragment_uses_the_patched_singleton(self):
-        """End-to-end through a REAL consumer function: patch the singleton via
-        the documented target, drive
-        `frag_dashboard_positions_rows(tab="orders")`, and assert the
-        `working_orders` it renders came from the FAKE.
-
-        This is the pin that would have failed before the fix — pre-fix,
-        routes_dashboard held its own early-bound reference and would have
-        handed the REAL singleton's open_orders to the template.
-
-        (schedulers' consumers all live inside `while True` loops or
-        `_startup_fetch`, whose live-REST preamble makes it unfit for a unit
-        drive — the parametrized mechanism pin above covers it. This route fn
-        is the one consumer that drives cleanly, and it exercises the identical
-        module-attribute resolution path.)"""
-        from api import routes_dashboard
-
-        fake_om = MagicMock(name="fake_order_manager")
-        fake_om.open_orders = [{"exchange_order_id": "SEAM-1"}]
-
-        with patch("core.order_manager_singleton.order_manager", fake_om), \
-             patch.object(routes_dashboard, "templates") as mock_templates, \
-             patch.object(routes_dashboard, "_ctx") as mock_ctx:
-            await routes_dashboard.frag_dashboard_positions_rows(
-                MagicMock(), tab="orders",
-            )
-
-        mock_templates.TemplateResponse.assert_called_once()
-        assert mock_ctx.call_args.kwargs["working_orders"] is fake_om.open_orders, (
-            "v2.6 audit finding 2 regression: patching "
-            "core.order_manager_singleton.order_manager did NOT reach "
-            "routes_dashboard — it rendered a different object's open_orders. "
-            "The module early-bound the instance at import time."
-        )
+    # (test_dashboard_orders_fragment_uses_the_patched_singleton retired with
+    # frag_dashboard_positions_rows in the fragments slim-down, 2026-07-30 —
+    # the parametrized mechanism pin above exercises the identical
+    # module-attribute resolution path for the surviving consumer.)

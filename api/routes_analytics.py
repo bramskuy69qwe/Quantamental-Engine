@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone as _tz
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import JSONResponse
 
 from core.state import app_state
 from core.tz import get_account_tz, now_in_account_tz
@@ -18,7 +18,6 @@ from core.analytics import (
     compute_funding_exposure, compute_beta, daily_returns,
 )
 from core.exchange import fetch_funding_rates
-from api.helpers import templates, _ctx
 from api.cache import _maybe_backfill_equity, _inject_live_equity
 
 log = logging.getLogger("routes.analytics")
@@ -128,11 +127,13 @@ def _analytics_range(month: str = "", all: str = "",
 
 
 # (Jinja retirement 2026-07-30: GET /analytics + analytics.html retired —
-# the React Analytics page is the twin. Every /fragments/analytics/* door
-# below SURVIVES.)
+# the React Analytics page is the twin. Fragments slim-down 2026-07-30:
+# every /fragments/analytics/* door below is JSON-ONLY — the HTML twins are
+# deleted; /fragments/analytics/equity_curve was removed outright (React
+# reads /api/analytics/equity_ohlc instead).)
 
 
-@router.get("/fragments/analytics/overview", response_class=HTMLResponse)
+@router.get("/fragments/analytics/overview", response_class=JSONResponse)
 async def frag_analytics_overview(request: Request, month: str = "", all: str = "",
                                    period: str = "", offset: int = 0,
                                    format: str = ""):
@@ -170,71 +171,25 @@ async def frag_analytics_overview(request: Request, month: str = "", all: str = 
         "expectancy":    round(r_stats.get("expectancy", 0.0), 3),
     }
 
-    if format == "json":
-        # v3.0 P5 JSON door — the same context the fragment renders, plus the
-        # route-computed daily_equity series (already fetched above) so the
-        # React overview mini-curve needs no second request.
-        return _analytics_json({
-            "stats": stats, "boundaries": boundaries, "top_pairs": top_pairs,
-            "cumulative": cumulative, "ratios": ratios,
-            # r_count lets the client tell "PF genuinely 0" from "no
-            # R-linked closes at all" (audit L1 — 0.00-red vs em-dash).
-            "r_count": len(r_vals),
-            "trading_days": trading_days, "period_label": period_label,
-            "month": month_s,
-            "daily_equity": [
-                {"day": r.get("day"), "total_equity": r.get("total_equity"),
-                 "daily_pnl": r.get("daily_pnl")}
-                for r in equity_series
-            ],
-        })
-    return templates.TemplateResponse(
-        request,
-        "fragments/analytics/overview_stats.html",
-        _ctx(request,
-             stats=stats, boundaries=boundaries, top_pairs=top_pairs,
-             cumulative=cumulative, ratios=ratios, trading_days=trading_days,
-             period_label=period_label, month=month_s),
-    )
-
-
-@router.get("/fragments/analytics/equity_curve", response_class=HTMLResponse)
-async def frag_analytics_equity(request: Request, tf: str = "1M", log: str = "", dd: str = ""):
-    now = now_in_account_tz(app_state.active_account_id)
-    tf_ohlc_map = {
-        "1W":  (1440,   7,   7),
-        "2W":  (1440,  14,  14),
-        "1M":  (1440,  30,  30),
-        "3M":  (1440,  91,  91),
-        "6M":  (1440, 182, 182),
-        "1Y":  (10080, 52, 365),
-        "all": (10080, 260, 730),
-    }
-    tf_minutes, limit, backfill_days = tf_ohlc_map.get(tf, (1440, 30, 30))
-    period_label = "All Time" if tf == "all" else f"Last {tf}"
-
-    aid = app_state.active_account_id
-    from_ms = int((now - timedelta(days=backfill_days)).timestamp() * 1000)
-    await _maybe_backfill_equity(from_ms, account_id=aid)
-    candles = await db.get_equity_ohlc(tf_minutes=tf_minutes, limit=limit, account_id=aid)
-    _inject_live_equity(candles)
-
-    return templates.TemplateResponse(
-        request,
-        "fragments/equity_ohlc.html",
-        _ctx(request, candles=candles, active_tf=tf,
-             eq_id="equity",
-             eq_title=f"Equity Curve \u2014 {period_label}",
-             eq_height="360px",
-             eq_timeframes=[("1W","1W"),("2W","2W"),("1M","1M"),("3M","3M"),("6M","6M"),("1Y","1Y"),("all","All")],
-             eq_show_controls=True,
-             eq_show_dd=bool(dd),
-             eq_log_scale=bool(log),
-             eq_fragment_url="/fragments/analytics/equity_curve",
-             eq_api_url="/api/analytics/equity_ohlc",
-             eq_reload_target="#analytics-content",
-             eq_reload_swap="innerHTML"),
-    )
+    # Fragments slim-down (2026-07-30): JSON-only — the HTML twin
+    # (overview_stats.html) is retired; `format` stays accepted-and-inert.
+    # Payload = the fragment context plus the route-computed daily_equity
+    # series (already fetched above) so the React overview mini-curve needs
+    # no second request.
+    return _analytics_json({
+        "stats": stats, "boundaries": boundaries, "top_pairs": top_pairs,
+        "cumulative": cumulative, "ratios": ratios,
+        # r_count lets the client tell "PF genuinely 0" from "no
+        # R-linked closes at all" (audit L1 — 0.00-red vs em-dash).
+        "r_count": len(r_vals),
+        "trading_days": trading_days, "period_label": period_label,
+        "month": month_s,
+        "daily_equity": [
+            {"day": r.get("day"), "total_equity": r.get("total_equity"),
+             "daily_pnl": r.get("daily_pnl")}
+            for r in equity_series
+        ],
+    })
 
 
 @router.get("/api/analytics/equity_ohlc")
@@ -260,7 +215,7 @@ async def api_analytics_equity_ohlc(tf: str = "1M"):
     return _analytics_json({"candles": candles, "tf": tf})
 
 
-@router.get("/fragments/analytics/calendar", response_class=HTMLResponse)
+@router.get("/fragments/analytics/calendar", response_class=JSONResponse)
 async def frag_analytics_calendar(request: Request, month: str = "", all: str = "",
                                   format: str = ""):
     aid = app_state.active_account_id
@@ -298,34 +253,25 @@ async def frag_analytics_calendar(request: Request, month: str = "", all: str = 
     worst_day    = min(pnl_vals) if pnl_vals else 0.0
     max_abs_pnl  = max(abs(v) for v in pnl_vals) if pnl_vals else 1.0
 
-    if format == "json":
-        # v3.0 P5 JSON door — grid cells carry day/date-string/pnl/trades/
-        # win_rate; the React calendar renders heat client-side off max_abs_pnl.
-        return _analytics_json({
-            "calendar_grid": calendar_grid,
-            "month_label": start.strftime("%B %Y"),
-            # month/current_month are ACCOUNT-tz truths so the client's
-            # Next-clamp can't drift across a tz month boundary (audit L7).
-            "month": f"{y:04d}-{m:02d}",
-            "current_month": f"{now.year:04d}-{now.month:02d}",
-            "prev_month": prev_month, "next_month": next_month,
-            "trading_days": trading_days, "avg_daily": avg_daily,
-            "best_day": best_day, "worst_day": worst_day,
-            "max_abs_pnl": max_abs_pnl if max_abs_pnl > 0 else 1.0,
-        })
-    return templates.TemplateResponse(
-        request,
-        "fragments/analytics/calendar_pnl.html",
-        _ctx(request,
-             calendar_grid=calendar_grid, month_label=start.strftime("%B %Y"),
-             prev_month=prev_month, next_month=next_month,
-             daily_pnl=daily_pnl, trading_days=trading_days,
-             avg_daily=avg_daily, best_day=best_day, worst_day=worst_day,
-             max_abs_pnl=max_abs_pnl if max_abs_pnl > 0 else 1.0),
-    )
+    # Fragments slim-down (2026-07-30): JSON-only — the HTML twin
+    # (calendar_pnl.html) is retired; `format` stays accepted-and-inert.
+    # Grid cells carry day/date-string/pnl/trades/win_rate; the React
+    # calendar renders heat client-side off max_abs_pnl.
+    return _analytics_json({
+        "calendar_grid": calendar_grid,
+        "month_label": start.strftime("%B %Y"),
+        # month/current_month are ACCOUNT-tz truths so the client's
+        # Next-clamp can't drift across a tz month boundary (audit L7).
+        "month": f"{y:04d}-{m:02d}",
+        "current_month": f"{now.year:04d}-{now.month:02d}",
+        "prev_month": prev_month, "next_month": next_month,
+        "trading_days": trading_days, "avg_daily": avg_daily,
+        "best_day": best_day, "worst_day": worst_day,
+        "max_abs_pnl": max_abs_pnl if max_abs_pnl > 0 else 1.0,
+    })
 
 
-@router.get("/fragments/analytics/pairs", response_class=HTMLResponse)
+@router.get("/fragments/analytics/pairs", response_class=JSONResponse)
 async def frag_analytics_pairs(
     request: Request,
     month: str = "", all: str = "",
@@ -342,20 +288,14 @@ async def frag_analytics_pairs(
     rev = sort_dir.upper() != "ASC"
     rows.sort(key=lambda r: (r.get(col) or 0), reverse=rev)
 
-    if format == "json":
-        # v3.0 P5 JSON door.
-        return _analytics_json({"rows": rows, "period_label": period_label,
-                                "month": month_s, "sort_by": col,
-                                "sort_dir": sort_dir.upper()})
-    return templates.TemplateResponse(
-        request,
-        "fragments/analytics/pairs_table.html",
-        _ctx(request, rows=rows, period_label=period_label,
-             month=month_s, sort_by=col, sort_dir=sort_dir.upper()),
-    )
+    # Fragments slim-down (2026-07-30): JSON-only — the HTML twin
+    # (pairs_table.html) is retired; `format` stays accepted-and-inert.
+    return _analytics_json({"rows": rows, "period_label": period_label,
+                            "month": month_s, "sort_by": col,
+                            "sort_dir": sort_dir.upper()})
 
 
-@router.get("/fragments/analytics/excursions", response_class=HTMLResponse)
+@router.get("/fragments/analytics/excursions", response_class=JSONResponse)
 async def frag_analytics_excursions(
     request: Request,
     month: str = "", all: str = "", dir: str = "all",
@@ -382,27 +322,19 @@ async def frag_analytics_excursions(
         for t in trades
     ]
 
-    if format == "json":
-        # v3.0 P5 JSON door — dir filter applied server-side so the summary
-        # stats and the row set stay consistent (the design filtered client-side).
-        return _analytics_json({
-            "trades": trades[:200], "scatter_data": scatter_data,
-            "avg_mfe": round(avg_mfe, 2), "avg_mae_abs": round(avg_mae_abs, 2),
-            "avg_mer": round(avg_mer, 2), "pct_favorable": pct_fav,
-            "period_label": period_label, "filter_dir": dir, "month": month_s,
-        })
-    return templates.TemplateResponse(
-        request,
-        "fragments/analytics/excursions.html",
-        _ctx(request,
-             trades=trades[:200], scatter_data=scatter_data,
-             avg_mfe=round(avg_mfe, 2), avg_mae_abs=round(avg_mae_abs, 2),
-             avg_mer=round(avg_mer, 2), pct_favorable=pct_fav,
-             period_label=period_label, filter_dir=dir, month=month_s),
-    )
+    # Fragments slim-down (2026-07-30): JSON-only — the HTML twin
+    # (excursions.html) is retired; `format` stays accepted-and-inert.
+    # dir filter applied server-side so the summary stats and the row set
+    # stay consistent (the design filtered client-side).
+    return _analytics_json({
+        "trades": trades[:200], "scatter_data": scatter_data,
+        "avg_mfe": round(avg_mfe, 2), "avg_mae_abs": round(avg_mae_abs, 2),
+        "avg_mer": round(avg_mer, 2), "pct_favorable": pct_fav,
+        "period_label": period_label, "filter_dir": dir, "month": month_s,
+    })
 
 
-@router.get("/fragments/analytics/r_multiples", response_class=HTMLResponse)
+@router.get("/fragments/analytics/r_multiples", response_class=JSONResponse)
 async def frag_analytics_r_multiples(request: Request, month: str = "", all: str = "",
                                       period: str = "", offset: int = 0,
                                       format: str = ""):
@@ -411,20 +343,14 @@ async def frag_analytics_r_multiples(request: Request, month: str = "", all: str
     r_stats   = r_multiple_stats(r_values)
     histogram = r_multiple_histogram(r_values)
 
-    if format == "json":
-        # v3.0 P5 JSON door.
-        return _analytics_json({"r_values": r_values, "r_stats": r_stats,
-                                "histogram": histogram,
-                                "period_label": period_label, "month": month_s})
-    return templates.TemplateResponse(
-        request,
-        "fragments/analytics/r_multiples.html",
-        _ctx(request, r_values=r_values, r_stats=r_stats,
-             histogram=histogram, period_label=period_label, month=month_s),
-    )
+    # Fragments slim-down (2026-07-30): JSON-only — the HTML twin
+    # (r_multiples.html) is retired; `format` stays accepted-and-inert.
+    return _analytics_json({"r_values": r_values, "r_stats": r_stats,
+                            "histogram": histogram,
+                            "period_label": period_label, "month": month_s})
 
 
-@router.get("/fragments/analytics/var", response_class=HTMLResponse)
+@router.get("/fragments/analytics/var", response_class=JSONResponse)
 async def frag_analytics_var(request: Request, month: str = "", all: str = "",
                               period: str = "", offset: int = 0,
                               format: str = ""):
@@ -452,25 +378,18 @@ async def frag_analytics_var(request: Request, month: str = "", all: str = "",
     else:
         hist_data = []
 
-    if format == "json":
-        # v3.0 P5 JSON door — has_data mirrors the ≥20-returns VaR guard.
-        return _analytics_json({
-            "var95": var95, "var99": var99, "cvar95": cvar95, "pvar95": pvar95,
-            "cur_equity": cur_equity, "returns": returns, "hist_data": hist_data,
-            "period_label": period_label, "month": month_s,
-            "has_data": len(returns) >= 20,
-        })
-    return templates.TemplateResponse(
-        request,
-        "fragments/analytics/var_display.html",
-        _ctx(request,
-             var95=var95, var99=var99, cvar95=cvar95, pvar95=pvar95,
-             cur_equity=cur_equity, returns=returns, hist_data=hist_data,
-             period_label=period_label, month=month_s, has_data=len(returns) >= 20),
-    )
+    # Fragments slim-down (2026-07-30): JSON-only — the HTML twin
+    # (var_display.html) is retired; `format` stays accepted-and-inert.
+    # has_data mirrors the ≥20-returns VaR guard.
+    return _analytics_json({
+        "var95": var95, "var99": var99, "cvar95": cvar95, "pvar95": pvar95,
+        "cur_equity": cur_equity, "returns": returns, "hist_data": hist_data,
+        "period_label": period_label, "month": month_s,
+        "has_data": len(returns) >= 20,
+    })
 
 
-@router.get("/fragments/analytics/funding", response_class=HTMLResponse)
+@router.get("/fragments/analytics/funding", response_class=JSONResponse)
 async def frag_analytics_funding(request: Request, format: str = ""):
     positions = app_state.positions
     rows: List[Dict[str, Any]] = []
@@ -503,21 +422,17 @@ async def frag_analytics_funding(request: Request, format: str = ""):
     total_8h  = sum(r["per_8h"]  for r in rows)
     total_day = sum(r["per_day"] for r in rows)
 
-    if format == "json":
-        # v3.0 P5 JSON door — per_8h/per_day/per_week are UNSIGNED magnitudes
-        # (compute_funding_exposure); the sign for display derives from the
-        # `adverse` flag client-side. total_8h/total_day are magnitude sums
-        # (Jinja parity — /api/linkage/funding's net_next is the SIGNED twin).
-        return _analytics_json({"rows": rows, "total_8h": total_8h,
-                                "total_day": total_day})
-    return templates.TemplateResponse(
-        request,
-        "fragments/analytics/funding_tracker.html",
-        _ctx(request, rows=rows, total_8h=total_8h, total_day=total_day),
-    )
+    # Fragments slim-down (2026-07-30): JSON-only — the HTML twin
+    # (funding_tracker.html) is retired; `format` stays accepted-and-inert.
+    # per_8h/per_day/per_week are UNSIGNED magnitudes
+    # (compute_funding_exposure); the sign for display derives from the
+    # `adverse` flag client-side. total_8h/total_day are magnitude sums
+    # (/api/linkage/funding's net_next is the SIGNED twin).
+    return _analytics_json({"rows": rows, "total_8h": total_8h,
+                            "total_day": total_day})
 
 
-@router.get("/fragments/analytics/beta", response_class=HTMLResponse)
+@router.get("/fragments/analytics/beta", response_class=JSONResponse)
 async def frag_analytics_beta(request: Request, format: str = ""):
     positions  = app_state.positions
     btc_ohlcv  = app_state.ohlcv_cache.get("BTCUSDT", [])
@@ -554,21 +469,14 @@ async def frag_analytics_beta(request: Request, format: str = ""):
         s = r["sector"] or "unknown"
         sector_totals[s] = sector_totals.get(s, 0.0) + r["beta_adj_exp"]
 
-    if format == "json":
-        # v3.0 P5 JSON door — beta_adj_exp is UNSIGNED (abs notional × beta,
-        # no SHORT sign flip; engine/Jinja parity — the design mock's signed
-        # short exposure has no engine source).
-        return _analytics_json({"rows": rows, "total_notional": total_notional,
-                                "total_beta_exp": total_beta_exp,
-                                "port_beta": port_beta,
-                                "sector_totals": sector_totals})
-    return templates.TemplateResponse(
-        request,
-        "fragments/analytics/beta_exposure.html",
-        _ctx(request, rows=rows, total_notional=total_notional,
-             total_beta_exp=total_beta_exp, port_beta=port_beta,
-             sector_totals=sector_totals),
-    )
+    # Fragments slim-down (2026-07-30): JSON-only — the HTML twin
+    # (beta_exposure.html) is retired; `format` stays accepted-and-inert.
+    # beta_adj_exp is UNSIGNED (abs notional × beta, no SHORT sign flip —
+    # the design mock's signed short exposure has no engine source).
+    return _analytics_json({"rows": rows, "total_notional": total_notional,
+                            "total_beta_exp": total_beta_exp,
+                            "port_beta": port_beta,
+                            "sector_totals": sector_totals})
 
 
 # ─── v3.0 P5 (G-O4): Execution-Quality + Distributions JSON backends ────────

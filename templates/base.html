@@ -18,8 +18,9 @@
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
   <script src="https://unpkg.com/htmx.org@1.9.12/dist/ext/sse.js"></script>
   <script src="https://unpkg.com/idiomorph@0.3.0/dist/idiomorph-ext.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
-  <script src="/static/echarts-theme-qe.js?v=3"></script>
+  {# Fragments slim-down 2026-07-30: echarts + the qe theme dropped — the
+     last charting fragment (equity_ohlc) is retired; React charts load the
+     vendored echarts via v3.html. #}
 
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -225,8 +226,6 @@
 
     /* ── Notes ── */
     .notes-cell { min-width:140px; max-width:260px; }
-    .note-textarea { width:100%; background:var(--panel); border:1px solid var(--blue); color:var(--text); border-radius:4px; padding:4px 6px; font-family:var(--font-mono); font-size:.78rem; resize:vertical; }
-    .note-textarea:focus { outline:none; }
 
     /* ── Startup animation ── */
     @keyframes _sba { 0%{left:-55%;width:55%} 100%{left:100%;width:55%} }
@@ -262,26 +261,8 @@
     .hidden { display:none !important; }
     .overflow-x-auto { overflow-x:auto; }
 
-    /* ── Ghost interface (skeleton loading states) ── */
-    .ghost {
-      background: var(--panel);
-      border-radius: 4px;
-      animation: ghost-pulse 1.5s ease-in-out infinite;
-    }
-    .ghost-row    { height: 12px; margin-bottom: 8px; }
-    .ghost-box    { height: 32px; }
-    .ghost-chart  { height: 100%; min-height: 140px; }
-    .ghost-text-s { height: 10px; width: 60px; }
-    .ghost-text-l { height: 10px; width: 120px; }
-    .ghost-gauge  { height: 8px; border-radius: 4px; }
-    .ghost-number { height: 28px; width: 140px; }
-    @keyframes ghost-pulse {
-      0%, 100% { opacity: 0.4; }
-      50%      { opacity: 0.7; }
-    }
-    @media (prefers-reduced-motion: reduce) {
-      .ghost { animation: none; opacity: 0.5; }
-    }
+    /* (Fragments slim-down 2026-07-30: the ghost skeleton CSS retired with
+       the fragments/ghosts/* templates — its only consumers.) */
 
     /* ── Primitives (Bundle A — Task 121) ── */
     /* StatusIndicator: ●  Label: value  — one labeled status component.
@@ -766,45 +747,9 @@ function showErrorToast(raw, opts) {
   showToast(friendlyError(raw, opts), 'error');
 }
 
-// ── Shared note editing ───────────────────────────────────────────────────
-function editNote(el, id, table){
-  var td = el.parentElement;
-  var ta = document.createElement('textarea');
-  ta.className='note-textarea'; ta.rows=2; ta.value=el.textContent==='+ Add note'?'':el.textContent;
-  td.innerHTML=''; td.appendChild(ta); ta.focus();
-  ta.addEventListener('blur',function(){
-    var fd = new FormData();
-    fd.append('notes', ta.value);
-    var url;
-    if (table === 'position') {
-      url = '/history/notes/position';
-      fd.append('trade_key', id);
-    } else {
-      url = '/history/notes/' + table + '/' + id;
-    }
-    fetch(url, {method:'PUT', body:fd}).then(function(resp){ return resp.text(); }).then(function(html){
-      td.innerHTML = html;
-    });
-  });
-}
-</script>
-
-<script>
-// ── ECharts HTMX lifecycle: auto-dispose before fragment swap ────────────
-// #3c: register once — this document listener would otherwise stack one copy
-// per hx-boost nav (the document node persists across the body innerHTML swap).
-if (!window._echartsDisposeBound) {
-  window._echartsDisposeBound = true;
-  document.addEventListener('htmx:beforeSwap', function(evt) {
-    var target = evt.detail.target;
-    if (!target) return;
-    var containers = target.querySelectorAll('[data-echarts]');
-    containers.forEach(function(el) { QE.disposeChart(el); });
-    if (target.hasAttribute && target.hasAttribute('data-echarts')) {
-      QE.disposeChart(target);
-    }
-  });
-}
+// (Fragments slim-down 2026-07-30: editNote + the ECharts dispose hook
+// retired — their DOM sources (history-table note cells, data-echarts
+// chart fragments) were deleted with the fragment templates.)
 </script>
 
 <style>
@@ -1059,106 +1004,10 @@ if ('serviceWorker' in navigator) {
 })();
 </script>
 
-<!-- Dashboard tab switcher + row-count updater (runs once, survives morph cycles) -->
-<script>
-(function(){
-  window._dashTab = window._dashTab || 'positions';
-  function _applyTab(t) {
-    ['positions','orders','history'].forEach(function(k) {
-      var p = document.getElementById('dp-'+k);
-      var b = document.getElementById('dt-'+k);
-      if (!p || !b) return;
-      p.style.display = k===t ? '' : 'none';
-      b.style.color = k===t ? 'var(--blue)' : 'var(--muted)';
-      b.style.borderBottomColor = k===t ? 'var(--blue)' : 'transparent';
-      b.style.fontWeight = k===t ? '600' : '';
-    });
-  }
-  function _updateCounts() {
-    var posC = document.getElementById('dt-positions-count');
-    var maxS = document.getElementById('dt-pos-max');
-    if (posC) {
-      var n = document.querySelectorAll('#positions-tbody tr:not(#pos-empty-row)').length;
-      posC.textContent = n;
-      if (maxS) maxS.textContent = n + '/' + (maxS.dataset.max || '?');
-    }
-    var ordC = document.getElementById('dt-orders-count');
-    if (ordC) {
-      ordC.textContent = document.querySelectorAll('#orders-tbody tr:not(#ord-empty-row)').length;
-    }
-  }
-  window.dtab = function(t) { window._dashTab = t; _applyTab(t); };
-  // Re-apply tabs + update counts after any row tbody or shell settles.
-  // #3c: register the document.body listener once (hx-boost re-runs this IIFE).
-  if (!window._dashTabBound) {
-    window._dashTabBound = true;
-    document.body.addEventListener('htmx:afterSettle', function(evt) {
-      if (document.getElementById('dp-positions')) {
-        _applyTab(window._dashTab);
-        _updateCounts();
-      }
-    });
-  }
-})();
-</script>
-
-<!-- History page tab switcher (positions/open orders — survives innerHTML cycles) -->
-<script>
-(function(){
-  window._hpTab = window._hpTab || 'pos';
-  function _applyHpTab(t) {
-    ['pos','oo'].forEach(function(k) {
-      var p = document.getElementById('hp-panel-'+k);
-      var b = document.getElementById('hp-tab-'+k);
-      if (!p || !b) return;
-      p.style.display = k===t ? '' : 'none';
-      b.style.color = k===t ? 'var(--blue)' : 'var(--muted)';
-      b.style.borderBottomColor = k===t ? 'var(--blue)' : 'transparent';
-    });
-  }
-  window.hpTab = function(t) { window._hpTab = t; _applyHpTab(t); };
-  // #3c: register the document.body listener once (hx-boost re-runs this IIFE).
-  if (!window._hpTabBound) {
-    window._hpTabBound = true;
-    document.body.addEventListener('htmx:afterSettle', function(evt) {
-      if (document.getElementById('hp-panel-pos')) _applyHpTab(window._hpTab);
-    });
-  }
-})();
-</script>
-
-<!-- Client-side time tick: update hold-time and "ago" labels without backend fetch -->
-<script>
-(function(){
-  // hx-boost re-runs this on every boosted nav; the 1s ticker is window-scoped
-  // and would STACK. One ticker survives all navs and re-queries [data-entry-ts]
-  // each tick, so it picks up freshly-swapped rows. Mirrors the P8.T7 notif IIFE
-  // guard. (Phase-8 deferred #3a.)
-  if(window._holdTick) return;
-  window._holdTick = true;
-  function _fmt(s){
-    var d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60),ss=s%60;
-    var p=[];
-    if(d)p.push(d+'d');
-    if(d||h)p.push(('0'+h).slice(-2)+'h');
-    p.push(('0'+m).slice(-2)+'m');
-    p.push(('0'+ss).slice(-2)+'s');
-    return p.join(' ');
-  }
-  setInterval(function(){
-    document.querySelectorAll('[data-entry-ts]').forEach(function(el){
-      var ts=el.getAttribute('data-entry-ts');
-      if(!ts)return;
-      try{
-        var dt=new Date(ts);
-        var now=new Date();
-        var delta=Math.max(0,Math.floor((now-dt)/1000));
-        el.textContent=_fmt(delta);
-      }catch(e){}
-    });
-  },1000);
-})();
-</script>
+<!-- (Fragments slim-down 2026-07-30: the dashboard tab switcher + row-count
+     updater, the history-page tab switcher, and the [data-entry-ts] time
+     ticker retired — every DOM node they targeted lived in the deleted
+     dashboard/history fragment templates.) -->
 
 <!-- ── P8.T7: in-app notifications (global toast + bell badge) ─────────────── -->
 <script>

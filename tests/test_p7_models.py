@@ -17,11 +17,9 @@ endpoint through the shared TestClient (F5 discipline).
 from __future__ import annotations
 
 import json
-import math
 import os
 import sys
 import tempfile
-from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 
@@ -368,15 +366,18 @@ class TestDryRunAndCombinedImport:
         assert (await mdb.get_potential_model(mid))["source"] == {}  # no seed
 
     @pytest.mark.asyncio
-    async def test_upload_dry_run_without_json_fails_loud(self, mdb):
-        """P7 audit LOW-1 fold: the htmx lane has no preview UI — a bare
-        ?dry_run=1 must 400, never silently commit a real import."""
+    async def test_upload_dry_run_without_json_is_preview(self, mdb):
+        """Fragments slim-down (2026-07-30): the route is JSON-only, so a
+        bare ?dry_run=1 is honored as a parse-preview on every lane —
+        matching /api/models/import (the P7 LOW-1 400-guard existed only
+        because the retired htmx lane had no preview UI). The invariant
+        that matters survives: dry_run NEVER commits an import."""
         mid = await mdb.create_potential_model("D", "micro", "", {})
         resp = await rm.upload_model_backtest(
             _req(method="POST"), mid, file=_upload(FIXTURE_XLSX),
             app_id="multicharts", dry_run="1")
-        assert resp.status_code == 400
-        assert "dry_run requires format=json" in _jbody(resp)["error"]
+        assert resp.status_code == 200
+        assert _jbody(resp)["preview"] is True
         assert await mdb.list_model_backtests(mid) == []
 
     @pytest.mark.asyncio
@@ -392,17 +393,18 @@ class TestDryRunAndCombinedImport:
         assert resp.status_code == 400 and "error" in _jbody(resp)
 
     @pytest.mark.asyncio
-    async def test_html_lane_unchanged_and_still_captures(self, mdb):
-        """The Jinja lane keeps its 200+fragment contract AND now stores
-        the verbatim capture (shared path)."""
+    async def test_bare_lane_is_json_and_still_captures(self, mdb):
+        """Fragments slim-down (2026-07-30): the former htmx lane now
+        returns the same JSON success body as ?format=json AND still
+        stores the verbatim capture (shared path)."""
         mid = await mdb.create_potential_model("H", "micro", "", {})
         resp = await rm.upload_model_backtest(
             _req(method="POST"), mid, file=_upload(FIXTURE_XLSX),
             app_id="multicharts")
         assert resp.status_code == 200
-        assert "text-red" not in resp.body.decode()
         runs = await mdb.list_model_backtests(mid)
         assert len(runs) == 1
+        assert _jbody(resp)["run_id"] == runs[0]["id"]
         data = await mdb.get_model_backtest_report(mid, runs[0]["id"])
         assert data["report"]["format"] == "workbook.v1"
 

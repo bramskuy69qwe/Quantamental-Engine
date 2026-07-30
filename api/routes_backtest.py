@@ -6,14 +6,13 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import JSONResponse
 
 from core.state import app_state
 from core.tz import now_in_account_tz
 from core.database import db
 from core.backtest_runner import BacktestRunner
 from core.ohlcv_fetcher import OHLCVFetcher
-from api.helpers import templates, _ctx
 
 log = logging.getLogger("routes.backtest")
 router = APIRouter()
@@ -63,29 +62,9 @@ def _validate_date_range(date_from: str, date_to: str) -> Optional[str]:
 
 
 # (Jinja retirement 2026-07-30: GET /backtest + backtest.html retired — the
-# React Models workbench carries backtests. The API routes below SURVIVE.)
-
-
-@router.get("/fragments/backtest/sessions", response_class=HTMLResponse)
-async def frag_backtest_sessions(request: Request):
-    sessions = await db.list_backtest_sessions(limit=30)
-    return templates.TemplateResponse(
-        request, "fragments/backtest/sessions_list.html",
-        _ctx(request, sessions=sessions),
-    )
-
-
-@router.get("/fragments/backtest/results/{session_id}", response_class=HTMLResponse)
-async def frag_backtest_results(request: Request, session_id: int):
-    session = await db.get_backtest_session(session_id)
-    if not session:
-        return HTMLResponse("<p class='text-red'>Session not found.</p>", status_code=404)
-    trades = await db.get_backtest_trades(session_id)
-    equity = await db.get_backtest_equity(session_id)
-    return templates.TemplateResponse(
-        request, "fragments/backtest/results.html",
-        _ctx(request, session=session, trades=trades, equity=equity),
-    )
+# React Models workbench carries backtests. Fragments slim-down 2026-07-30:
+# the two /fragments/backtest/* doors are DELETED — nothing consumed them.
+# The /api/backtest/* JSON routes below SURVIVE.)
 
 
 @router.post("/api/backtest/fetch-ohlcv", response_class=JSONResponse)

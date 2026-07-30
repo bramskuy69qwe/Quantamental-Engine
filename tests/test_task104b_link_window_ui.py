@@ -242,15 +242,6 @@ class TestCalculatorOverrideWiring:
 # ── Template wiring pins ────────────────────────────────────────────────────
 
 class TestTemplateWiring:
-    def test_calc_result_template_includes_countdown_polling(self):
-        """HIGH-027 wiring pin (Task 104b): calc_result.html includes the
-        countdown element with HTMX polling. Catches a regression where the
-        countdown gets accidentally removed during template refactor."""
-        path = Path("templates") / "fragments" / "calc_result.html"
-        src = path.read_text(encoding="utf-8")
-        assert 'id="link-window-countdown"' in src
-        assert "/calculator/link-window-status/" in src
-        assert 'hx-trigger="load, every 5s"' in src
 
     def test_account_detail_template_has_link_window_section(self):
         """Account settings editor must render the link-window section
@@ -263,22 +254,3 @@ class TestTemplateWiring:
         # Must reference the current value in the UI
         assert "lw_current" in src
 
-    def test_countdown_fragment_renders_all_four_states(self):
-        """All four state branches must exist in the countdown fragment;
-        otherwise a state transition would render a blank element."""
-        path = Path("templates") / "fragments" / "link_window_countdown.html"
-        src = path.read_text(encoding="utf-8")
-        for state in ("LINKABLE", "EXPIRING_SOON", "EXPIRED", "LINKED_CONFIRMED"):
-            assert state in src, (
-                f"HIGH-027 frontend regression: countdown fragment is missing "
-                f"the {state!r} branch."
-            )
-        # Active polling on the still-running states
-        assert 'hx-trigger="every 5s"' in src
-        # Visual differentiation: each state must have its own border color
-        # (red for EXPIRED, green for LINKABLE / LINKED_CONFIRMED, amber for
-        # EXPIRING_SOON). Approximated via the var(--*) css custom-property
-        # references.
-        assert "var(--red)" in src
-        assert "var(--green)" in src
-        assert "var(--amber)" in src

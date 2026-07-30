@@ -249,16 +249,3 @@ class TestHistoryDoors:
             request=None, page=1, per_page=20, format="json"))
         assert _body(resp)["rows"][0]["model_display"] == "momentum_v3"
 
-    def test_open_positions_door_shape(self, monkeypatch):
-        from core.order_manager_singleton import order_manager
-        monkeypatch.setattr(order_manager, "_open_orders",
-                            [{"symbol": "BTCUSDT", "side": "BUY"}])
-        params_snap = app_state.params.get("max_position_count")
-        with _Snap() as s:
-            s.set([_pos()])
-            resp = asyncio.run(rh.frag_history_open_positions(
-                request=None, format="json"))
-        data = _body(resp)
-        assert data["positions"][0]["symbol"] == "BTCUSDT"
-        assert data["working_orders"] == [{"symbol": "BTCUSDT", "side": "BUY"}]
-        assert data["max_positions"] == params_snap

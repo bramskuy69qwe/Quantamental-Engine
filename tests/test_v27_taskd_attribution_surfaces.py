@@ -158,17 +158,6 @@ async def test_pre_trade_fragment_dangling_fk_renders_deleted(tdb):
     assert "(deleted model)" in html
 
 
-@pytest.mark.asyncio
-async def test_pre_trade_fragment_untagged_renders_dash(tdb):
-    """Rows with neither free text nor FK keep the em-dash (audit fold:
-    atr_c is set so the Model cell is the ONLY td-sub dash — the bare
-    '— in html' form was near-tautological)."""
-    await tdb.insert_pre_trade_log(_ptl_row(atr_c=1.5))
-    html = _html(await rh.frag_history_pre_trade(_req()))
-    assert html.count('<td class="td-sub">—</td>') == 1
-    assert "(deleted model)" not in html
-
-
 # ── F12: Settings render in the run list ─────────────────────────────────────
 
 _RUN_BASE = {
@@ -177,38 +166,6 @@ _RUN_BASE = {
     "summary": {"net_profit": 250.0, "win_rate": 0.5, "profit_factor": 2.0,
                 "total_trades": 10},
 }
-
-
-def _run_ctx(settings=None):
-    run = {**_RUN_BASE, "summary": dict(_RUN_BASE["summary"])}
-    if settings is not None:
-        run["summary"]["settings"] = settings
-    return run
-
-
-def test_backtest_list_renders_settings_details():
-    html = templates.env.get_template(
-        "fragments/model_backtest_list.html"
-    ).render(runs=[_run_ctx({"Point Value": "$50", "Symbol Name": "@ES"})],
-             error="")
-    assert "Settings (2)" in html
-    assert "Point Value" in html and "$50" in html
-    assert "<details" in html
-
-
-def test_backtest_list_no_settings_no_details_row():
-    html = templates.env.get_template(
-        "fragments/model_backtest_list.html"
-    ).render(runs=[_run_ctx()], error="")
-    assert "<details" not in html
-    assert "Settings (" not in html
-
-
-def test_backtest_list_empty_settings_no_details_row():
-    html = templates.env.get_template(
-        "fragments/model_backtest_list.html"
-    ).render(runs=[_run_ctx({})], error="")
-    assert "<details" not in html
 
 
 # ── F16 residual: non-dict / malformed JSON bodies → 400 ─────────────────────

@@ -38,139 +38,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 # ── Jinja env (real globals the cockpit fragments reference) ──────────────────
 
 
-def _make_env() -> jinja2.Environment:
-    env = jinja2.Environment(
-        loader=jinja2.FileSystemLoader("templates"),
-        autoescape=jinja2.select_autoescape(["html"]),
-    )
-    env.globals["fmt"] = lambda v, n=2: (
-        f"{v:.{n}f}" if isinstance(v, (int, float)) else str(v)
-    )
-    env.globals["ms_to_local"] = lambda ms: "2026-06-05 12:00:00" if ms else "—"
-    env.globals["project_name"] = "TestEngine"
-    return env
-
-
-def _render(template: str, **ctx) -> str:
-    return _make_env().get_template(template).render(**ctx)
-
-
 # ── Pane: open positions ──────────────────────────────────────────────────────
 
 
-def _pos(ticker="BTCUSDT", direction="LONG", upnl=12.5, badge="yellow",
-         size_delta=8.0, amend=1, mfe=30.0, mae=-8.0):
-    return {
-        "ticker": ticker, "direction": direction,
-        "individual_unrealized": upnl, "deviation_badge": badge,
-        "size_delta_pct": size_delta, "amendment_count": amend,
-        "session_mfe": mfe, "session_mae": mae,
-    }
-
-
-class TestPositionsPane:
-    def test_renders_position_with_deviation_badge(self):
-        html = _render("fragments/cockpit/positions.html", positions=[_pos()])
-        assert "BTCUSDT" in html
-        assert "pos-long" in html
-        assert "12.50" in html
-        # P4.T3 deviation badge: yellow level -> "amended" label + badge-yellow
-        assert "badge-yellow" in html
-        assert "amended" in html
-
-    def test_negative_upnl_is_red(self):
-        html = _render("fragments/cockpit/positions.html",
-                       positions=[_pos(upnl=-5.0)])
-        assert "text-red" in html
-
-    def test_renders_mfe_and_mae(self):
-        # P8.T2: session MFE/MAE columns. MFE green, MAE red (fixed colors,
-        # mirroring the dashboard table).
-        html = _render("fragments/cockpit/positions.html",
-                       positions=[_pos(mfe=30.0, mae=-8.0)])
-        assert ">MFE<" in html and ">MAE<" in html      # column headers
-        assert "30.00" in html                          # MFE value
-        assert "8.00" in html                           # MAE value (magnitude)
-        # MFE cell is green, MAE cell is red
-        assert 'class="text-green" style="text-align:right;">30.00' in html
-        assert 'class="text-red" style="text-align:right;">-8.00' in html
-
-    def test_mfe_mae_null_safe(self):
-        html = _render("fragments/cockpit/positions.html",
-                       positions=[_pos(mfe=None, mae=None)])
-        assert "BTCUSDT" in html       # renders without crashing
-
-    def test_no_badge_when_level_empty(self):
-        # binance one-way / no junction -> deviation_badge "" -> no badge span
-        html = _render("fragments/cockpit/positions.html",
-                       positions=[_pos(badge="")])
-        assert "badge-yellow" not in html and "badge-green" not in html
-
-    def test_null_upnl_does_not_crash(self):
-        # parity with the closes pane: guard a None/missing uPnL so the pane
-        # renders the EmptyState arithmetic safely rather than 500-ing.
-        html = _render("fragments/cockpit/positions.html",
-                       positions=[_pos(upnl=None)])
-        assert "BTCUSDT" in html
-        assert "0.00" in html
-
-    def test_empty_renders_empty_state_not_error(self):
-        html = _render("fragments/cockpit/positions.html", positions=[])
-        assert "No open positions" in html
-        assert 'class="es' in html  # EmptyState wrapper
-
-
 # ── Pane: active calcs ────────────────────────────────────────────────────────
-
-
-def _calc(ticker="ETHUSDT", side="long", average=3000.0, status="active",
-          calc_id="abc123def456", expiry_ms=1893456000000):
-    return {"ticker": ticker, "side": side, "average": average,
-            "status": status, "calc_id": calc_id, "expiry_ms": expiry_ms}
-
-
-class TestCalcsPane:
-    def test_renders_active_calc(self):
-        html = _render("fragments/cockpit/calcs.html", calcs=[_calc()])
-        assert "ETHUSDT" in html
-        assert "LONG" in html            # side uppercased
-        assert "pos-long" in html
-        assert "3000.00" in html
-        assert "badge-blue" in html      # active -> blue badge
-        assert ">active<" in html        # status text in the badge (not the empty-state msg)
-
-    def test_released_calc_is_gray(self):
-        html = _render("fragments/cockpit/calcs.html",
-                       calcs=[_calc(status="released")])
-        assert "badge-gray" in html
-        assert "released" in html
-
-    def test_missing_entry_renders_dash(self):
-        html = _render("fragments/cockpit/calcs.html",
-                       calcs=[_calc(average=0.0)])
-        assert "—" in html
-
-    def test_countdown_attr_and_cancel_button(self):
-        # P8.T3: client-side countdown anchor + per-calc cancel button
-        html = _render("fragments/cockpit/calcs.html",
-                       calcs=[_calc(calc_id="CALC42", expiry_ms=1893456000000)])
-        assert 'data-calc-expiry="1893456000000"' in html
-        # cancel -> P1.T4 endpoint, browser confirm, result into shared alert
-        # (needs_link_queue pattern); the row drops out on the 5s poll.
-        assert 'hx-post="/calculator/cancel/CALC42"' in html
-        assert "hx-confirm" in html
-        assert 'hx-target="#ck-calc-alert"' in html
-        assert 'id="ck-calc-alert"' in html
-
-    def test_no_window_renders_empty_expiry(self):
-        # NULL window_seconds -> expiry_ms None -> empty attr (JS renders "—")
-        html = _render("fragments/cockpit/calcs.html",
-                       calcs=[_calc(expiry_ms=None)])
-        assert 'data-calc-expiry=""' in html
-
-    def test_empty_renders_empty_state(self):
-        html = _render("fragments/cockpit/calcs.html", calcs=[])
-        assert "No active calcs" in html
 
 
 class TestCalcExpiryHelper:
@@ -200,83 +71,13 @@ class TestCalcExpiryHelper:
 # ── Pane: needs link ──────────────────────────────────────────────────────────
 
 
-def _nl_order(symbol="BTCUSDT", side="BUY",
-              link_status="NEEDS_MANUAL_REVIEW", n_cand=2):
-    return {
-        "id": 1, "symbol": symbol, "side": side,
-        "link_status": link_status,
-        "candidates": [{"calc_id": "C%d" % i} for i in range(n_cand)],
-    }
-
-
-class TestNeedsLinkPane:
-    def test_renders_count_and_badge_and_candidates(self):
-        html = _render("fragments/cockpit/needs_link.html",
-                       orders=[_nl_order()], total=1)
-        assert "1 order(s) awaiting manual link" in html
-        assert "BTCUSDT" in html
-        # P3.T4 link_status_badge primitive
-        assert "NEEDS REVIEW" in html and "badge-yellow" in html
-        assert ">2<" in html             # candidate count
-
-    def test_preview_truncation_note(self):
-        # total exceeds shown -> "showing N" note
-        html = _render("fragments/cockpit/needs_link.html",
-                       orders=[_nl_order()], total=5)
-        assert "showing 1" in html
-
-    def test_empty_renders_empty_state(self):
-        html = _render("fragments/cockpit/needs_link.html", orders=[], total=0)
-        assert "Nothing needs manual review" in html
-        assert "manual_link" not in html  # no action wiring in the compact pane
-
-
 # ── Pane: recent closes ───────────────────────────────────────────────────────
-
-
-def _close(symbol="BTCUSDT", direction="LONG", net_pnl=42.0,
-           exit_reason="TP_PLANNED", exit_time_ms=1700000000000):
-    return {
-        "symbol": symbol, "direction": direction, "net_pnl": net_pnl,
-        "exit_reason": exit_reason, "exit_time_ms": exit_time_ms,
-    }
-
-
-class TestClosesPane:
-    def test_renders_close_row(self):
-        html = _render("fragments/cockpit/closes.html", rows=[_close()])
-        assert "BTCUSDT" in html
-        assert "pos-long" in html
-        assert "42.00" in html
-        assert "text-green" in html      # positive net
-        assert "TP_PLANNED" in html
-
-    def test_negative_net_is_red(self):
-        html = _render("fragments/cockpit/closes.html",
-                       rows=[_close(net_pnl=-7.0)])
-        assert "text-red" in html
-
-    def test_null_net_pnl_does_not_crash(self):
-        # closed_positions.net_pnl is nullable; the pane must guard (r.net_pnl or 0)
-        html = _render("fragments/cockpit/closes.html",
-                       rows=[_close(net_pnl=None, exit_reason=None)])
-        assert "BTCUSDT" in html
-        assert "0.00" in html
-        assert "—" in html               # null exit_reason -> dash
-
-    def test_empty_renders_empty_state(self):
-        html = _render("fragments/cockpit/closes.html", rows=[])
-        assert "No closed positions yet" in html
 
 
 # ── Page template compiles + lazy-loads all four panes ────────────────────────
 
 
-
-
 # ── Routes + nav registration (no TestClient — gotcha #9) ─────────────────────
-
-
 
 
 # ── DB helper: get_active_calcs ───────────────────────────────────────────────

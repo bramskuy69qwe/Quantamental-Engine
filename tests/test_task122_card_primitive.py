@@ -14,7 +14,6 @@ Run: pytest tests/test_task122_card_primitive.py -v
 """
 from __future__ import annotations
 
-import inspect
 from pathlib import Path
 
 import jinja2
@@ -127,95 +126,6 @@ class TestCardRendering:
 
 # ── FE-MED-001 migration: Analytics overview uses Card ──────────────────────
 
-class TestAnalyticsOverviewMigration:
-    """Source-pin + render-pin: Analytics overview no longer uses the
-    bare `<div class="card">` markup; instead {% call card(...) %}
-    drives the rhythm."""
-
-    def _overview_src(self) -> str:
-        return Path(
-            "templates/fragments/analytics/overview_stats.html"
-        ).read_text(encoding="utf-8")
-
-    def test_overview_imports_card_primitive(self):
-        src = self._overview_src()
-        assert 'from "primitives/card.html" import card' in src, (
-            "FE-MED-001 regression: Analytics overview no longer "
-            "imports the Card primitive — bare `<div class=\"card\">` "
-            "may be back."
-        )
-
-    def test_overview_uses_call_card_for_all_five_sections(self):
-        """5 sections in the overview (Volume, Equity, Trade Stats,
-        Cash, Performance Ratios). Each should be a {% call card(...) %}."""
-        src = self._overview_src()
-        assert src.count("{% call card(") == 5, (
-            "FE-MED-001 regression: expected 5 {% call card %} blocks "
-            "in Analytics overview, found %d." % src.count("{% call card(")
-        )
-
-    def test_overview_does_not_use_bare_card_div(self):
-        """Anti-revert: the loose-padding bare `<div class="card">`
-        markup must not be reintroduced. (Note: `class="card-p8"` is
-        fine — that's History's tight rhythm, used by the primitive.)"""
-        src = self._overview_src()
-        # The bare loose card was `<div class="card">` (no `card-p8`).
-        # Match exactly that opener.
-        assert '<div class="card">' not in src, (
-            "FE-MED-001 regression: bare `<div class=\"card\">` (loose "
-            "padding) is back in Analytics overview."
-        )
-
-    def test_overview_renders_with_tight_rhythm(self):
-        """End-to-end: rendered output uses card-p8 (tight) on all 5
-        section cards — matches History's rhythm."""
-        env = _make_env()
-        tpl = env.get_template(
-            "fragments/analytics/overview_stats.html"
-        )
-        out = tpl.render(
-            period_label="October 2025",
-            stats={
-                "trading_volume": 100000.0, "total_fees": 50.0,
-                "num_longs": 10, "num_shorts": 5,
-                "total_trades": 15, "winning_trades": 10,
-                "losing_trades": 5, "avg_profit": 100.0,
-                "avg_loss": -50.0, "biggest_profit": 200.0,
-                "biggest_loss": -100.0, "deposits": 1000.0,
-                "withdrawals": 500.0,
-            },
-            top_pairs=["BTCUSDT", "ETHUSDT"],
-            boundaries={
-                "initial_equity": 1000.0,
-                "final_equity": 1200.0,
-                "max_drawdown": 0.05,
-            },
-            trading_days=20,
-            cumulative={
-                "total_pnl": 500.0,
-                "total_deposits": 1000.0,
-                "total_withdrawals": 0.0,
-            },
-            ratios={
-                "sharpe": 1.5, "sharpe_mfe": 1.2,
-                "sortino": 2.0, "sortino_mae": 1.8,
-                "profit_factor": 1.6, "expectancy": 0.3,
-            },
-        )
-        # Five cards, each with tight rhythm + structured body
-        assert out.count('class="card card-p8"') == 5, (
-            "FE-MED-001 regression: expected 5 tight-rhythm card "
-            "wrappers, found %d." % out.count('class="card card-p8"')
-        )
-        assert out.count("card-body") == 5
-        # Section titles render via .sec-lbl (Card primitive's title)
-        assert "Volume &amp; Activity" in out
-        assert "October 2025" in out  # subtitle param
-        assert "Equity &amp; PnL" in out
-        assert "Trade Statistics" in out
-        assert "Cash &amp; Cumulative" in out
-        assert "Performance Ratios" in out
-
 
 # ── Card primitives CSS shipped in base.html ─────────────────────────────────
 
@@ -265,10 +175,6 @@ class TestTemplateCompiles:
         tpl = env.get_template("primitives/card.html")
         assert tpl is not None
 
-    def test_analytics_overview_compiles_post_migration(self):
-        env = _make_env()
-        tpl = env.get_template("fragments/analytics/overview_stats.html")
-        assert tpl is not None
 
     def test_status_indicator_macro_still_compiles(self):
         """Anti-regression for Task 121 — the sister primitive's

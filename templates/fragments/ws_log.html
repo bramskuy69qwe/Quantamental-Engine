@@ -1,6 +1,0 @@
-<!-- fragment: ws_log -->
-{% for line in ws_log | default([]) %}
-<div>{{ line }}</div>
-{% else %}
-<div style="color:var(--muted);">No log entries.</div>
-{% endfor %}
