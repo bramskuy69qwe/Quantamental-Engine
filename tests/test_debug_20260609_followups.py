@@ -33,7 +33,6 @@ import pytest
 import pytest_asyncio
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-_REPO = os.path.dirname(os.path.dirname(__file__))
 
 ACCOUNT_ID = 1
 
@@ -84,43 +83,6 @@ class TestTpslAmendedLevel:
 
     def test_red_still_beats_tpsl_amended(self):
         assert self._lvl(size_delta_pct=20.0, tpsl_amended=True) == "red"
-
-
-class TestBadgeMacroLabel:
-    """The macro must DISTINGUISH a real amendment from a size-only deviation —
-    the operator's bug was a market-fill size rounding reading as 'amended'."""
-
-    def _render(self, level, size_delta_pct=0.0, amendment_count=0,
-                tpsl_amended=False):
-        from jinja2 import Environment, FileSystemLoader
-        env = Environment(loader=FileSystemLoader(os.path.join(_REPO, "templates")))
-        tmpl = env.from_string(
-            "{% from 'primitives/deviation_badge.html' import deviation_badge %}"
-            "{{ deviation_badge(level, sd, ac, tp) }}"
-        )
-        return tmpl.render(level=level, sd=size_delta_pct, ac=amendment_count,
-                           tp=tpsl_amended)
-
-    def test_size_only_yellow_reads_off_size(self):
-        out = self._render("yellow", size_delta_pct=-8.18,
-                           amendment_count=0, tpsl_amended=False)
-        assert "off-size" in out
-        assert "amended" not in out
-
-    def test_ledger_amendment_reads_amended(self):
-        out = self._render("yellow", amendment_count=2, tpsl_amended=False)
-        assert "amended" in out
-        assert "off-size" not in out
-
-    def test_tpsl_drift_reads_amended(self):
-        out = self._render("yellow", amendment_count=0, tpsl_amended=True)
-        assert "amended" in out
-        assert "off-size" not in out
-        assert "TP/SL amended" in out  # title detail
-
-    def test_green_and_red_unaffected(self):
-        assert "on-plan" in self._render("green")
-        assert "off-plan" in self._render("red", size_delta_pct=20.0)
 
 
 # ── #1 — live TP/SL-drift detection in _enrich_positions_calc_id ────────────

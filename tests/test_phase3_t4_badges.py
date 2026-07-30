@@ -19,7 +19,6 @@ import os
 import sys
 import tempfile
 
-import jinja2
 import pytest
 import pytest_asyncio
 
@@ -28,54 +27,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 ACCOUNT_ID = 1
 
 
-def _make_env() -> jinja2.Environment:
-    env = jinja2.Environment(
-        loader=jinja2.FileSystemLoader("templates"),
-        autoescape=jinja2.select_autoescape(["html"]),
-    )
-    env.globals["fmt"] = lambda v, n=2: (
-        f"{v:.{n}f}" if isinstance(v, (int, float)) else str(v)
-    )
-    env.globals["ms_to_local"] = lambda ms: "2026-01-01 00:00:00"
-    env.globals["project_name"] = "TestEngine"
-    return env
-
-
 # ── 3.7a: link_status_badge macro (the single source of truth) ─────────
-
-
-def _render_badge(status):
-    env = _make_env()
-    tpl = env.from_string(
-        '{% from "primitives/link_status_badge.html" import link_status_badge %}'
-        '{{ link_status_badge(s) }}'
-    )
-    return tpl.render(s=status)
-
-
-class TestLinkStatusBadgeMacro:
-    @pytest.mark.parametrize("status, css, label", [
-        ("LINKED", "badge-green", "LINKED"),
-        ("NEEDS_MANUAL_REVIEW", "badge-yellow", "NEEDS REVIEW"),
-        ("UNLINKED", "badge-gray", "UNLINKED"),
-        ("UNPLANNED", "badge-blue", "UNPLANNED"),
-    ])
-    def test_each_status_maps_to_color(self, status, css, label):
-        html = _render_badge(status)
-        assert css in html
-        assert label in html
-
-    def test_null_renders_dash_not_badge(self):
-        html = _render_badge(None)
-        assert "—" in html
-        assert "badge-green" not in html and "badge-yellow" not in html
-
-    def test_unknown_value_falls_back_to_plain_badge(self):
-        html = _render_badge("WEIRD")
-        assert "badge" in html
-        # not one of the colored variants
-        for c in ("badge-green", "badge-yellow", "badge-gray", "badge-blue"):
-            assert c not in html
 
 
 # ── 3.7b: the order tables carry the Link column ───────────────────────

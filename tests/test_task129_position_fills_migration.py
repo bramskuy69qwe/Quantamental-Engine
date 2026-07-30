@@ -106,8 +106,3 @@ class TestTemplateCompiles:
         tpl = env.get_template("primitives/empty_state.html")
         assert tpl is not None
 
-    def test_table_row_macro_still_compiles(self):
-        """Bundle A.3 anti-regression."""
-        env = _make_env()
-        tpl = env.get_template("primitives/table_row.html")
-        assert tpl is not None

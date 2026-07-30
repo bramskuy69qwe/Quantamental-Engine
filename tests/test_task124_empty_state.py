@@ -200,9 +200,10 @@ class TestTemplateCompiles:
     def test_bundle_a_siblings_still_compile(self):
         """Bundle A.1/A.2/A.3 anti-regression."""
         env = _make_env()
+        # (Primitives sweep 2026-07-30: table_row retired with its last
+        # consumer — the 3 live macros are pinned here.)
         for path in (
             "primitives/status_indicator.html",
             "primitives/card.html",
-            "primitives/table_row.html",
         ):
             assert env.get_template(path) is not None

@@ -1,6 +1,63 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-07-30 (**MERIDIAN v3.1 — FRAGMENTS SLIM-DOWN SHIPPED (fifth block): 62 of 67 fragment templates deleted, 35 dead routes removed, 18 doors converted JSON-only, base.html de-dashboarded (echarts stack dropped). Same day, earlier: Jinja retirement `1afc9f8` · archive/launcher sweep · E2E carry-forwards.**)
+**Date**: 2026-07-30 (**MERIDIAN v3.1 — FRAGMENTS SLIM-DOWN + PRIMITIVES SWEEP SHIPPED, ALL PUSHED. templates/ is 23 → 18 files; the frontend/-vs-templates/ boundary is now documented in a README in each. Same day: Jinja retirement `1afc9f8` · archive/launcher sweep · E2E carry-forwards.**)
+
+## ▶ SESSION CLOSE 2026-07-30 (sixth block) — PRIMITIVES SWEEP + the folder-boundary answer
+
+**Operator ask**: "simplify the frontend folder by using either frontend or
+templates folder only can we?" — **investigated and answered: no, not by
+moving files.** The two folders are split by LIFECYCLE, not duplication:
+`frontend/` is build-time source (its own header says it never runs at
+runtime) that emits `static/v3/`; `templates/` is runtime Jinja read per
+request. The React app needs exactly ONE runtime-rendered file —
+`templates/v3.html` — because it injects `active_account_id` (changes on
+account switch) and the config.py identity constants (Release-hygiene: a
+version bump must show WITHOUT a rebuild). Verified `Jinja2Templates`
+accepts a directory LIST (starlette 1.0.0), so moving the shell into
+`frontend/` is *technically* trivial — **advised against and not done**: it
+would put a runtime-served file inside a folder whose stated invariant is
+"build-time only", trading a clean lifecycle split for a cosmetic one.
+
+**Operator chose the sweep-and-document option** (offered 3: sweep /
+port-program / shell-move). Shipped:
+- **4 consumer-less primitives DELETED** — `deviation_badge`,
+  `link_status_badge`, `period_selector`, `table_row`. Independently
+  re-verified: ZERO surviving-template importers (their consumers were all
+  fragments deleted in the slim-down); every other reference was a test or
+  prose. templates/ **23 → 18 files**, primitives 7 → **3 live**
+  (`status_indicator`, `card`, `empty_state` — all imported by
+  `fragments/needs_link_queue.html`).
+- **Dead CSS removed from base.html with its macros**: the `.tr-p*` block,
+  the `.ps*` block, and `.preset-btn` (period_selector was its only
+  consumer; every date-range surface it styled is React now).
+- **Pins**: 2 whole files retired (`test_task123_table_row`,
+  `test_task125_period_selector` — 100% macro-render), plus AST-scripted
+  class/test removal in 4 files (`TestBadgeTemplates`,
+  `TestLinkStatusBadgeMacro` + `_render_badge`, `TestBadgeMacroLabel`,
+  `test_table_row_macro_still_compiles`) and 2 compile-list trims. **The
+  Python-side badge logic was KEPT** — `TestDeviationBadgeLevel` /
+  `CountAmendments` / `EnrichBadge` pin the levels that feed the JSON doors
+  React reads; only the Jinja-macro RENDER pins died. Orphan sweep after:
+  `_REPO` ×2, `_make_env`, a `jinja2` import.
+- **README slim**: primitives README 444 → ~300 lines (7 macro sections →
+  3). The "open/close pair" how-to SURVIVES (it's teaching material) but
+  was rewritten generically with a `git show 70f5f10^:...` pointer to the
+  retired reference impl; the **Decision tree stays** — `test_task124`
+  pins it and needs `EmptyState` within 1500 chars of it.
+- **`frontend/README.md` + `templates/README.md` WRITTEN** — the
+  build-time-vs-runtime boundary, a per-file "why it's still here" table
+  for all 18 templates, and the recorded path to one folder (port
+  `/config` account CRUD + the 5 admin pages to React) so this question
+  doesn't get re-derived. **Deferred by operator decision, not forgotten.**
+
+**Gate: 4051 passed / 6 skipped / 3 deselected** (was 4100 — the 49-test
+delta is the 2 retired macro-test files + the 4 retired classes/tests).
+All 18 surviving templates compile-render. Checked and deliberately NOT touched:
+`frontend/DESIGN.md`'s `PeriodSelector` is the **React** primitive (same
+name, unrelated), and CLAUDE.md's `TableRow`/`.preset-btn` mentions are
+inside a historical "Background:" narrative whose lesson is still valid.
+
+**(fifth block, same day — the slim-down itself:)**
 
 ## ▶ SESSION CLOSE 2026-07-30 (fifth block) — FRAGMENTS SLIM-DOWN + Dashboard-first landing
 

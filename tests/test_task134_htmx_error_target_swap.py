@@ -237,10 +237,10 @@ class TestTemplateCompiles:
         """Tasks 121-125 primitive anti-regression — extending
         EmptyState with a tone shouldn't ripple."""
         env = _make_env()
+        # (Primitives sweep 2026-07-30: table_row + period_selector retired
+        # with their last consumers — 3 live macros remain.)
         for path in (
             "primitives/status_indicator.html",
             "primitives/card.html",
-            "primitives/table_row.html",
-            "primitives/period_selector.html",
         ):
             assert env.get_template(path) is not None

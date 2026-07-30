@@ -1,8 +1,18 @@
-# `templates/primitives/` — Bundle A primitive library
+# `templates/primitives/` — Jinja primitive library
 
 Reusable UI components extracted from the engine's chrome. Established
 during Phase 5 Bundle A (Task 121, FE-HIGH-001 fix). This directory
-holds the convention; future Bundle A tasks add primitives to it.
+holds the convention; new primitives are added to it.
+
+**Scope note (primitives sweep, 2026-07-30):** three macros are live —
+**StatusIndicator**, **Card**, **EmptyState** — all consumed by
+`fragments/needs_link_queue.html`. `TableRow` and `PeriodSelector`
+retired with their last consumers (the history/dashboard table fragments
+and the Regime range selector, both React now); `deviation_badge` and
+`link_status_badge` went the same way. The React app has its own design
+system in `frontend/` — see `frontend/DESIGN.md`. This library serves
+the **surviving Jinja surfaces only** (`config.html`, `admin/*`,
+`orders/needs_link.html`, the 5 keeper fragments).
 
 ## What lives here vs `templates/fragments/`
 
@@ -57,9 +67,7 @@ requests, no template-loader configuration changes.
 | --------------- | --------- | ----------------------------------------- |
 | StatusIndicator | `si`      | `.si`, `.si-dot`, `.si-label`, `.si-value`, `.si-success` |
 | Card            | `card`    | `.card-header`, `.card-body`, `.card-footer`, `.card-title`, `.card-subtitle` (builds on existing `.card` + `.card-p8` utility classes) |
-| TableRow        | `tr-p`    | `.tr-p`, `.tr-p-clickable`, `.tr-p-selected` (composes on existing cell typography classes `.td-*` / `.mono`) |
 | EmptyState      | `es`      | `.es`, `.es-msg`, `.es-action`, `.es-info`, `.es-action` (tone)  |
-| PeriodSelector  | `ps`      | `.ps`, `.ps-label` (composes on existing `.preset-btn` for the button look + `.active`) |
 
 When the inline-style block in base.html crosses ~500 lines of
 primitive CSS, **extract to `static/css/primitives.css`** loaded via
@@ -123,26 +131,31 @@ callers would have to wrap their siblings in a single block, losing
 per-sibling structure. The convention is an **open/close pair**:
 
 ```jinja2
-{% from "primitives/table_row.html" import tr_open, tr_close %}
+{% from "primitives/<name>.html" import x_open, x_close %}
 
-{{ tr_open(state="clickable", on_click="togglePosRow(7)") }}
+{{ x_open(state="clickable", on_click="selectRow(7)") }}
   <td>cell 1</td>
   <td>cell 2</td>
   <td>cell 3</td>
-{{ tr_close() }}
+{{ x_close() }}
 ```
 
-TableRow is the convention example. Reasons:
-- `<tr>` body is naturally a sibling list of `<td>` cells.
+Why open/close rather than `{% call %}` for this shape:
+- A `<tr>` body is naturally a sibling list of `<td>` cells.
 - Existing markup is `<tr><td>...</td>...</tr>` — open/close lets
   callers migrate incrementally without restructuring cells.
-- Adds structural hooks (hover/selection state classes) without
+- It adds structural hooks (hover/selection state classes) without
   reinventing cell typography.
+
+The convention example was `TableRow` (Task 123), retired 2026-07-30 with
+its last consumer. The pattern stays documented here for the next
+sibling-list primitive; read `git show 70f5f10^:templates/primitives/table_row.html`
+for the reference implementation.
 
 **Decision tree:**
 - Body is **one contiguous block** (Card's title-and-grid) → `{% call %}` + `caller()`.
-- Body is a **list of sibling elements** (TableRow's `<td>` cells) → open/close pair.
-- Body is **stateless parameter-driven** (StatusIndicator's label+value, EmptyState's message+action, PeriodSelector's options+current) → plain macro.
+- Body is a **list of sibling elements** (a row's `<td>` cells) → open/close pair.
+- Body is **stateless parameter-driven** (StatusIndicator's label+value, EmptyState's message+action) → plain macro.
 
 ## Jinja2 gotchas (learned-the-hard-way)
 
@@ -243,50 +256,6 @@ alternatives: (a) extends/blocks is for page layouts, heavyweight;
 (c) the open/close pair is more verbose for a primitive whose 95% case
 is title + body. When a primitive needs more than one slot, revisit.
 
-### TableRow (Task 123)
-
-`templates/primitives/table_row.html` — sibling-list-slot primitive
-via open/close pair. Used at all three history tables (Position
-History, Order History, Trade History — fills) to lock consistent
-hover / selection / clickable state behaviour without reinventing
-cell typography. Resolves FE-MED-002.
-
-```jinja2
-{% from "primitives/table_row.html" import tr_open, tr_close %}
-
-{# Default (non-clickable) — Order History pattern #}
-{{ tr_open() }}
-  <td class="td-ts">{{ ms_to_local(r.updated_at_ms) }}</td>
-  <td class="td-symbol">{{ r.symbol }}</td>
-  ...
-{{ tr_close() }}
-
-{# Clickable + on_click — Position History click-to-expand pattern.
-   on_click implies state="clickable" automatically. #}
-{{ tr_open(on_click="togglePosRow(" ~ r.id ~ ")") }}
-  ...
-{{ tr_close() }}
-
-{# Explicit state + id for JS targeting #}
-{{ tr_open(state="clickable", on_click="select(7)", id="row-7") }}
-  ...
-{{ tr_close() }}
-
-{# Selected state is dynamic — JS toggles .tr-p-selected at runtime
-   via classList. Macro params don't model selection (since the
-   initial-state render is rarely "already selected"). #}
-```
-
-States exposed via class:
-- `.tr-p` (always) — base, faint hover background.
-- `.tr-p-clickable` — cursor:pointer + stronger hover. Set by
-  `state="clickable"` or implied by `on_click=...`.
-- `.tr-p-selected` — selection background. JS-driven, not macro-param.
-
-Cell typography classes (`.td-symbol`, `.td-ts`, `.td-sub`,
-`.td-dim`, `.mono`, badges, etc.) keep working unchanged — TableRow
-only owns the row-level state structure.
-
 ### EmptyState (Task 124)
 
 `templates/primitives/empty_state.html` — parameter-driven "No X
@@ -361,84 +330,3 @@ Out of EmptyState's scope:
 - **Page-layout empty states** like "right half of Backtest is
   empty" — that's a layout decision (collapse to one column when
   right empty), not an empty-message component.
-
-### PeriodSelector (Task 125)
-
-`templates/primitives/period_selector.html` — segmented control for
-selecting a period / range / time-window from a list of options.
-Third plain-macro primitive in Bundle A (StatusIndicator + EmptyState
-were the first two). Stateless from the primitive's POV — server
-renders buttons with the current selection marked `.active`; JS or
-HTMX handles transitions. Resolves FE-MED-007 visual normalization
-across 3 distinct option-set shapes.
-
-```jinja2
-{% from "primitives/period_selector.html" import period_selector %}
-
-{# History presets — string values, single-quoted in JS handler #}
-{{ period_selector(
-    options=[
-      {"value":"90d", "label":"Last 90 days"},
-      {"value":"30d", "label":"Last 30 days"},
-    ],
-    current="30d",
-    on_change_template="setPreset('{value}')",
-) }}
-
-{# Regime global — integer values, with inline label prefix #}
-{{ period_selector(
-    options=[
-      {"value":30,   "label":"30d"},
-      {"value":365,  "label":"1y"},
-      {"value":1825, "label":"5y"},
-      {"value":0,    "label":"All"},
-    ],
-    current=365,
-    on_change_template="setAllCardRanges({value},this)",
-    label_prefix="All:",
-    extra_class="global-range-group",
-) }}
-
-{# HTMX-driven (server fragment swap) #}
-{{ period_selector(
-    options=[...],
-    current="30d",
-    hx_get_template="/fragments/period?p={value}",
-    extra_btn_attrs='hx-target="#out" hx-swap="innerHTML"',
-) }}
-```
-
-Parameters (load-bearing):
-- `options` (required) — list of `{value, label}` dicts. Caller
-  controls the option set; primitive doesn't pick.
-- `current` (required) — selected value. Compared via string-cast,
-  so int values match int options and string values match string
-  options consistently. Unknown current → no `.active` anywhere
-  (defensive, no crash).
-- `on_change_template` — JS expression template; `{value}` is
-  interpolated raw. Caller controls quoting + arg shape.
-- `hx_get_template` — HTMX URL template; `{value}` interpolated.
-  Pair with `extra_btn_attrs` for `hx-target` / `hx-swap`.
-- `extra_btn_attrs` — raw attrs on every button (via `| safe`;
-  caller escapes).
-- `label_prefix` — inline text prefix (e.g. `"All:"`) before the
-  buttons. Renders as `<span class="ps-label">`. Empty omits.
-- `id`, `extra_class` — optional wrapper customization.
-
-Mutual exclusivity: if both `on_change_template` and `hx_get_template`
-are set, both attributes are emitted (HTMX wins at runtime). Caller
-should pick one.
-
-`data-value="{value}"` is emitted on every button. JS callers
-target by value via `b.dataset.value` (History migration renamed the
-existing `dataset.preset` reading to `dataset.value` to match).
-
-**Placement constraint**: `.ps` wrapper is `display:inline-flex` with
-gap. Works inside flex / grid / block parents. Same `<tbody>` warning
-as EmptyState — don't place inside table-row contexts.
-
-**For JS-rendered selectors** (e.g. Regime per-card chart selectors
-built in `buildSignalCards`'s template literal): JS emits the same
-`.ps` + `.preset-btn` class structure as the primitive. Primitive
-becomes a shared visual language across server- and client-rendered
-selectors — same pattern as Task 124's EmptyState Regime migration.

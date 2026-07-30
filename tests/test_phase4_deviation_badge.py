@@ -24,7 +24,6 @@ import pytest
 import pytest_asyncio
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-_REPO = os.path.dirname(os.path.dirname(__file__))
 
 ACCOUNT_ID = 1
 
@@ -244,35 +243,4 @@ class TestEnrichBadge:
 
 # ── 4. compile-render (Jinja discipline) ────────────────────────────────
 
-
-class TestBadgeTemplates:
-    def _env(self):
-        import jinja2
-        return jinja2.Environment(
-            loader=jinja2.FileSystemLoader(os.path.join(_REPO, "templates")))
-
-    def test_macro_renders_each_level(self):
-        env = self._env()
-        t = env.from_string(
-            '{% from "primitives/deviation_badge.html" import deviation_badge %}'
-            '{{ deviation_badge(level, sd, n) }}')
-        green = t.render(level="green", sd=2.0, n=0)
-        assert "badge-green" in green and "on-plan" in green
-        yellow = t.render(level="yellow", sd=-7.5, n=2)
-        assert "badge-yellow" in yellow and "amended" in yellow
-        assert "2 amendments" in yellow
-        red = t.render(level="red", sd=20.0, n=0)
-        assert "badge-red" in red and "off-plan" in red
-        # empty level → no badge markup
-        assert env.from_string(
-            '{% from "primitives/deviation_badge.html" import deviation_badge %}'
-            '{{ deviation_badge("") }}').render().strip() == ""
-
-    def test_singular_amendment_label(self):
-        env = self._env()
-        t = env.from_string(
-            '{% from "primitives/deviation_badge.html" import deviation_badge %}'
-            '{{ deviation_badge("yellow", 0.0, 1) }}')
-        out = t.render()
-        assert "1 amendment" in out and "1 amendments" not in out
 
