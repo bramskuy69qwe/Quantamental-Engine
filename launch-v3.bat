@@ -1,18 +1,18 @@
 @echo off
 
-REM v3.0 launcher — same engine process as launch.bat, but opens the React
-REM /v3 surface instead of the Jinja root. Differences from launch.bat are
-REM deliberate (HANDOFF recipe): prefer the .venv interpreter (user-site
-REM Python lacks pytest-timeout and is not the supported runtime) and NO
-REM --reload (reload workers double-run the schedulers).
+REM THE launcher (Jinja retirement 2026-07-30: the React app owns /, and the
+REM legacy launch.bat is archived — its --reload spawned workers that
+REM DOUBLE-RAN the live schedulers). Deliberate properties: prefer the .venv
+REM interpreter (user-site Python is not the supported runtime), NO --reload,
+REM best-effort clock resync before boot.
 
 REM Read project name from config.py — single source of truth
 for /f "delims=" %%i in ('python -c "import config; print(config.PROJECT_NAME)"') do set QE_NAME=%%i
 
-title %QE_NAME% - v3
+title %QE_NAME%
 echo.
 echo  ===================================================
-echo   %QE_NAME%  --  Binance USD-M  --  /v3 (React)
+echo   %QE_NAME%  --  Binance USD-M
 echo  ===================================================
 echo.
 
@@ -38,12 +38,12 @@ REM Install deps on first run
     "%PY%" -m pip install -r requirements.txt
 )
 
-echo Starting server on http://localhost:8000 (UI: http://localhost:8000/v3)
+echo Starting server on http://localhost:8000
 echo Press Ctrl+C to stop.
 echo.
 
-REM Start server, then open the /v3 React surface as a standalone window
-start "" /b cmd /c "timeout /t 3 /nobreak >nul && start "" "C:\Program Files\Google\Chrome\Application\chrome.exe" --app=http://localhost:8000/v3"
+REM Start server, then open the app as a standalone window
+start "" /b cmd /c "timeout /t 3 /nobreak >nul && start "" "C:\Program Files\Google\Chrome\Application\chrome.exe" --app=http://localhost:8000"
 "%PY%" -m uvicorn main:app --host 0.0.0.0 --port 8000
 
 pause

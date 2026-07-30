@@ -115,23 +115,29 @@ class TestStartupOverlayUsesConfig:
 
 
 class TestLauncherReadsConfig:
-    """launch.bat reads project name from config.py at runtime."""
+    """launch-v3.bat (THE launcher — legacy launch.bat archived 2026-07-30;
+    its --reload double-ran the live schedulers) reads project identity from
+    config.py at runtime. Hard reads, no exists-skip: if the canonical
+    launcher vanishes, this pin should say so."""
 
-    def test_launch_bat_uses_python_config(self):
-        if not os.path.exists("launch.bat"):
-            pytest.skip("launch.bat not found")
-        content = open("launch.bat", encoding="utf-8").read()
+    def test_launcher_uses_python_config(self):
+        content = open("launch-v3.bat", encoding="utf-8").read()
         assert "config.PROJECT_NAME" in content, \
-            "launch.bat should read project name from config.py"
+            "launch-v3.bat should read project name from config.py"
 
-    def test_launch_bat_no_hardcoded_version(self):
-        if not os.path.exists("launch.bat"):
-            pytest.skip("launch.bat not found")
-        content = open("launch.bat", encoding="utf-8").read()
+    def test_launcher_no_hardcoded_version(self):
+        content = open("launch-v3.bat", encoding="utf-8").read()
         import re
         matches = re.findall(r'v\d+\.\d+', content)
         assert len(matches) == 0, \
-            f"launch.bat has hardcoded version: {matches}"
+            f"launch-v3.bat has hardcoded version: {matches}"
+
+    def test_launcher_never_reloads(self):
+        # The archived launcher's --reload spawned workers that DOUBLE-RAN
+        # all live schedulers with real API keys. Never again.
+        content = open("launch-v3.bat", encoding="utf-8").read()
+        assert "--reload" not in content.replace(
+            "NO --reload", ""), "the launcher must never pass --reload"
 
 
 class TestManifestServedDynamically:
