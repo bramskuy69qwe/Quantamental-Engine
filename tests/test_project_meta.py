@@ -134,10 +134,15 @@ class TestLauncherReadsConfig:
 
     def test_launcher_never_reloads(self):
         # The archived launcher's --reload spawned workers that DOUBLE-RAN
-        # all live schedulers with real API keys. Never again.
+        # all live schedulers with real API keys. Never again. Comments (REM)
+        # may NAME the flag while warning about it — only executable lines
+        # are gated.
         content = open("launch-v3.bat", encoding="utf-8").read()
-        assert "--reload" not in content.replace(
-            "NO --reload", ""), "the launcher must never pass --reload"
+        executable = [ln for ln in content.splitlines()
+                      if not ln.strip().upper().startswith("REM")]
+        offenders = [ln for ln in executable if "--reload" in ln]
+        assert not offenders, \
+            f"the launcher must never pass --reload: {offenders}"
 
 
 class TestManifestServedDynamically:
