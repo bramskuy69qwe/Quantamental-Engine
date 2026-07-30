@@ -29,81 +29,8 @@ def _read(rel_path: str) -> str:
 
 # ── FE-MED-005: relative timestamp in Calculator Recent card ─────────────────
 
-class TestRecentCardTimestampRelative:
-    """Source-pin tests on the JS in calculator.html. The Recent card is
-    JS-rendered (localStorage-backed), so the relevant code lives inline
-    in the template's <script> section, not in a Jinja2 expression."""
 
-    def test_ts_stored_as_epoch_ms_not_hhmm_string(self):
-        """The `rec.ts = ...` assignment stores epoch ms, not "HH:MM"."""
-        src = _read("templates/calculator.html")
-        # The pre-fix pattern: now.getHours().toString().padStart(2,'0')+':'...
-        # Post-fix: now.getTime()
-        assert "now.getTime()" in src, (
-            "FE-MED-005 regression: ts no longer stored as epoch ms. "
-            "Relative-time render won't work."
-        )
-        # Anti-revert: the pre-fix HH:MM construction must NOT be on the
-        # ts-assignment line (it could legitimately appear elsewhere, e.g.
-        # the relative-format helper itself uses similar logic for the
-        # absolute-fallback branch — so we look for the specific signature
-        # of the old assignment).
-        assert "var ts=now.getHours()" not in src, (
-            "FE-MED-005 regression: ts is being constructed as HH:MM "
-            "string again."
-        )
 
-    def test_format_helper_present_with_all_three_buckets(self):
-        """formatCalcTs handles: just-now, minutes/hours ago, yesterday,
-        absolute date. All four format paths must exist in the helper body."""
-        src = _read("templates/calculator.html")
-        assert "function formatCalcTs(" in src, (
-            "FE-MED-005 regression: formatCalcTs helper missing."
-        )
-        # Anchor at the function and look at its body
-        idx = src.find("function formatCalcTs(")
-        end = src.find("\nfunction ", idx + 1)
-        if end == -1:
-            end = idx + 2000
-        body = src[idx:end]
-        assert "'Just now'" in body
-        assert "'m ago'" in body
-        assert "'h ago'" in body
-        assert "'Yesterday '" in body
-        # Absolute fallback (YYYY-MM-DD) signature
-        assert "getFullYear()" in body and "getMonth()" in body
-
-    def test_format_helper_backward_compat_with_legacy_string_ts(self):
-        """Legacy localStorage entries stored ts as 'HH:MM' string. Helper
-        must not crash on a string input — should pass through as-is."""
-        src = _read("templates/calculator.html")
-        idx = src.find("function formatCalcTs(")
-        end = src.find("\nfunction ", idx + 1)
-        body = src[idx:end if end != -1 else idx + 2000]
-        # Backward-compat branch: `if (typeof ts === 'string') return ts;`
-        assert "typeof ts==='string'" in body or "typeof ts === 'string'" in body, (
-            "FE-MED-005 regression: backward-compat for legacy HH:MM "
-            "string ts is missing. Old localStorage entries would render "
-            "as 'undefined' or 'NaN'."
-        )
-
-    def test_render_path_invokes_helper(self):
-        """The history-list render must call formatCalcTs(h.ts), not
-        embed h.ts directly."""
-        src = _read("templates/calculator.html")
-        # The display site in renderCalcHistory
-        assert "formatCalcTs(h.ts)" in src, (
-            "FE-MED-005 regression: render still uses raw h.ts; the relative-"
-            "format helper is unwired."
-        )
-        # Anti-revert: the prior pattern was '+h.ts+' — make sure that's gone
-        # at the display site. (The legacy-string branch inside the helper
-        # still references h.ts, but only inside the helper body — not as
-        # a direct concat in renderCalcHistory.)
-        assert "'+h.ts+'" not in src, (
-            "FE-MED-005 regression: raw h.ts concat reintroduced at the "
-            "display site."
-        )
 
 
 # ── FE-MED-011: title-case labels in calc_result.html ────────────────────────
@@ -243,10 +170,3 @@ class TestTemplateStillCompiles:
         tpl = env.get_template("fragments/calc_result.html")
         assert tpl is not None
 
-    def test_calculator_template_compiles(self):
-        env = jinja2.Environment(
-            loader=jinja2.FileSystemLoader("templates"),
-            autoescape=jinja2.select_autoescape(["html"]),
-        )
-        tpl = env.get_template("calculator.html")
-        assert tpl is not None

@@ -204,11 +204,6 @@ class TestCalcResultOverrideDisplay:
 
 
 class TestSizeOverrideWiring:
-    def test_calculator_form_has_size_override(self):
-        with open("templates/calculator.html", encoding="utf-8") as fh:
-            src = fh.read()
-        assert 'name="size_override"' in src
-        assert 'id="size-override-input"' in src
 
     def test_run_risk_calculator_wires_override(self):
         with open("core/risk_engine.py", encoding="utf-8") as fh:

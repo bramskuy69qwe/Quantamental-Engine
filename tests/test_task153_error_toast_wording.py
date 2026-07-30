@@ -191,40 +191,8 @@ class TestRegimeCatchBlocksUseShowErrorToast:
     def _read(self) -> str:
         return Path("templates/regime.html").read_text(encoding="utf-8")
 
-    def test_backfill_catch_uses_show_error_toast(self):
-        src = self._read()
-        assert "showErrorToast(err && err.message" in src or (
-            "showErrorToast(err.message" in src
-        ), (
-            "FE-MED-031 regression: backfill catch block not routing "
-            "through showErrorToast — the audit's Session-B example "
-            "('RegimeFetcher' object has no attribute 'close') will "
-            "be visible verbatim in the toast again."
-        )
 
-    def test_backfill_failed_status_uses_show_error_toast(self):
-        """data.status === 'failed' branch — `data.detail` may carry raw
-        exception strings from server-side. Must route through helper."""
-        src = self._read()
-        assert "showErrorToast(data.detail" in src, (
-            "FE-MED-031 regression: backfill-failed status branch not "
-            "routing through showErrorToast."
-        )
 
-    def test_raw_err_message_concat_removed_from_backfill_paths(self):
-        """The pre-fix shape `'Backfill failed: '+err.message` must be
-        gone from executing code (Jinja comments can mention it for
-        anchor — strip them before checking)."""
-        src = self._read()
-        # Strip Jinja comments to scope to executing template code
-        executing = re.sub(r"\{#.*?#\}", "", src, flags=re.DOTALL)
-        # Strip JS line comments to drop FE-MED-031 anchor reminders
-        executing = re.sub(r"^\s*//.*$", "", executing, flags=re.MULTILINE)
-        assert "'Backfill failed: '+err.message" not in executing, (
-            "FE-MED-031 regression: raw err.message concat in toast "
-            "still present in executing regime.html code."
-        )
-        assert "'Backfill failed: '+data.detail" not in executing
 
 
 class TestBacktestDataFetchFailureUsesShowErrorToast:
@@ -234,21 +202,7 @@ class TestBacktestDataFetchFailureUsesShowErrorToast:
     def _read(self) -> str:
         return Path("templates/backtest.html").read_text(encoding="utf-8")
 
-    def test_data_fetch_failure_uses_show_error_toast(self):
-        src = self._read()
-        assert "showErrorToast(d.detail" in src, (
-            "FE-MED-031 regression: backtest data-fetch failure branch "
-            "not routing through showErrorToast."
-        )
 
-    def test_pre_fix_raw_concat_removed(self):
-        src = self._read()
-        executing = re.sub(r"\{#.*?#\}", "", src, flags=re.DOTALL)
-        executing = re.sub(r"^\s*//.*$", "", executing, flags=re.MULTILINE)
-        assert "'Data fetch failed: '+d.detail" not in executing, (
-            "FE-MED-031 regression: raw d.detail concat in toast still "
-            "present in executing backtest.html code."
-        )
 
 
 # ── Python mirror of friendlyError to verify pattern coverage ──────────────

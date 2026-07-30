@@ -216,102 +216,12 @@ class TestPeriodSelectorCssInBase:
         assert "FE-MED-007" in src  # anchor
 
 
-# ── Migration: History presets ──────────────────────────────────────────────
-
-class TestHistoryMigration:
-
-    def _read(self) -> str:
-        return Path("templates/history.html").read_text(encoding="utf-8")
-
-    def test_history_imports_period_selector(self):
-        assert 'from "primitives/period_selector.html" import period_selector' in self._read()
-
-    def test_history_uses_call_period_selector(self):
-        """The 6 hand-rolled <button class="preset-btn" data-preset=...>
-        is replaced with a single period_selector call."""
-        src = self._read()
-        assert "period_selector(" in src
-
-    def test_history_old_hand_rolled_buttons_gone(self):
-        """Anti-revert: the explicit `data-preset="..."` attr (used by
-        the old hand-rolled buttons) is gone."""
-        src = self._read()
-        assert "data-preset=" not in src, (
-            "FE-MED-007 regression: data-preset attr back — old hand-"
-            "rolled History presets reintroduced."
-        )
-
-    def test_history_js_reads_dataset_value(self):
-        """highlightPreset JS updated to read dataset.value (primitive
-        emits data-value)."""
-        src = self._read()
-        assert "b.dataset.value===active" in src, (
-            "FE-MED-007 regression: highlightPreset still reads "
-            "dataset.preset — won't match primitive's data-value attr."
-        )
-
-    def test_history_renders_six_presets_with_30d_active(self):
-        env = _make_env()
-        tpl = env.get_template("history.html")
-        out = tpl.render(
-            active_page="history",
-            active_account_id=1,
-            available_exchanges=[],
-            project_name="x", tz_display="UTC", now="2026-05-19",
-            accounts=[],
-        )
-        # Six preset values present
-        for v in ("90d", "30d", "15d", "7d", "yesterday", "today"):
-            assert f'data-value="{v}"' in out
-        # 30d is initial active (default selection)
-        assert 'class="preset-btn active" data-value="30d"' in out
-
-
-# ── Migration: Regime global selector ───────────────────────────────────────
-
-class TestRegimeGlobalMigration:
-
-    def _read(self) -> str:
-        return Path("templates/regime.html").read_text(encoding="utf-8")
-
-    def test_regime_imports_period_selector(self):
-        assert 'from "primitives/period_selector.html" import period_selector' in self._read()
-
-    def test_regime_global_old_hand_rolled_gone(self):
-        """Anti-revert: the old hand-rolled `setAllCardRanges` button
-        chain with manual {% for %} is gone."""
-        src = self._read()
-        # The pre-fix had `class="global-range-btn preset-btn` inline
-        assert "global-range-btn preset-btn" not in src, (
-            "FE-MED-007 regression: hand-rolled Regime global selector "
-            "is back."
-        )
-
-    def test_regime_global_uses_label_prefix(self):
-        src = self._read()
-        # The new migration uses label_prefix="All:" inside the macro call
-        assert 'label_prefix="All:"' in src
+# (Jinja retirement 2026-07-30: the history.html/regime.html migration pins
+# are gone with the templates — the React pages carry their own.)
 
 
 # ── Migration: Regime per-card JS uses same primitive classes ───────────────
 
-class TestRegimePerCardJsMigration:
-    """Regime per-card signal selectors are JS-rendered (in
-    buildSignalCards's template literal). Can't call the macro from JS,
-    so JS emits the same .ps wrapper + .preset-btn buttons that the
-    primitive emits. Shared visual language across server/client."""
-
-    def test_regime_per_card_uses_ps_wrapper(self):
-        src = Path("templates/regime.html").read_text(encoding="utf-8")
-        # The buildSignalCards inline JS emits `<div class="ps" ...>` around
-        # the per-card range buttons
-        assert 'class="ps" style="margin-left:auto;"' in src
-
-    def test_regime_per_card_emits_data_value_attr(self):
-        """Per-card buttons emit data-value too — matches primitive
-        convention. (Old hand-roll didn't have data-value.)"""
-        src = Path("templates/regime.html").read_text(encoding="utf-8")
-        assert 'data-value="${d}"' in src
 
 
 # ── README documentation pins ───────────────────────────────────────────────
@@ -343,8 +253,6 @@ class TestTemplateCompiles:
 
     @pytest.mark.parametrize("path", [
         "primitives/period_selector.html",
-        "regime.html",
-        "history.html",
         "base.html",
     ])
     def test_compiles(self, path):

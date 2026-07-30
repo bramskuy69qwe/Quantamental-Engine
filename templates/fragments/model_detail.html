@@ -16,7 +16,11 @@
     {# P4: navigates to the calculator carrying the model id; Phase 5's
        picker consumes ?model_id= via /calculator/prefill/{id}. Until
        then it opens the calculator unprefixed — harmless forward-wiring. #}
-    <a class="btn btn-ghost btn-sm" href="/calculator?model_id={{ model.id }}"
+    {# Jinja retirement 2026-07-30: /calculator is retired — the React
+       Pre-Trade page is the twin (its Models page carries the real
+       load-into-pre-trade prefill; this legacy fragment link can only
+       route, not prefill). #}
+    <a class="btn btn-ghost btn-sm" href="/#Pre-Trade"
        title="Opens the Calculator carrying ?model_id — prefill lands in Phase 5">
       Load into Calculator</a>
     <button class="btn btn-ghost btn-sm"

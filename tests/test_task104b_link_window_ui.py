@@ -225,12 +225,6 @@ class TestCalculatorOverrideWiring:
         # the dict-value was added but the SQL still misses it).
         assert ":link_window_seconds_override" in src
 
-    def test_calculator_template_has_override_input(self):
-        """Template-source pin: calculator.html must include the override
-        select named link_window_seconds_override."""
-        path = Path("templates") / "calculator.html"
-        src = path.read_text(encoding="utf-8")
-        assert 'name="link_window_seconds_override"' in src
 
     def test_countdown_endpoint_registered(self):
         """The polling endpoint must exist on the router. We assert by

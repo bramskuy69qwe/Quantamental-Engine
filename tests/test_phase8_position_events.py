@@ -321,8 +321,3 @@ class TestWiring:
             src = fh.read()
         assert "events-row-{{ r.id }}" in src
 
-    def test_toggle_lazy_loads_events(self):
-        with open("templates/history.html", encoding="utf-8") as fh:
-            src = fh.read()
-        assert "/fragments/history/position_events?position_id=" in src
-        assert "events-row-" in src

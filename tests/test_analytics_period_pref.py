@@ -59,17 +59,8 @@ class TestGetRoutePassesSettings:
         assert "settings=" in src
 
 
-class TestAnalyticsUsesPreference:
-    def test_analytics_route_reads_default_period(self):
-        from api.routes_analytics import analytics_page
-        src = inspect.getsource(analytics_page)
-        assert "analytics_default_period" in src
-        assert "default_period" in src
-
-    def test_analytics_template_uses_default_period(self):
-        content = open("templates/analytics.html", encoding="utf-8").read()
-        assert "default_period" in content
-        assert "_period" in content
+# (Jinja retirement 2026-07-30: the analytics_page route is gone — the
+# preference itself survives via account_settings and the config door.)
 
 
 class TestAnalyticsRangeAcceptsPeriod:
@@ -97,21 +88,6 @@ class TestAnalyticsRangeAcceptsPeriod:
             assert "offset" in src, f"{name} missing offset param"
 
 
-class TestAnalyticsNavigation:
-    def test_template_has_period_presets(self):
-        """analytics.html has preset buttons for all 7 periods."""
-        from core.period_resolver import VALID_PERIODS
-        content = open("templates/analytics.html", encoding="utf-8").read()
-        assert 'id="pp-{{ val }}"' in content  # Jinja loop pattern
-        for period in VALID_PERIODS:
-            assert f"'{period}'" in content, f"Missing period in presets: {period}"
-
-    def test_nav_disabled_for_rolling(self):
-        """Rolling/all_time periods disable nav buttons."""
-        content = open("templates/analytics.html", encoding="utf-8").read()
-        assert "_noNav" in content
-        assert "rolling_30d" in content
-        assert "all_time" in content
 
 
 class TestDeadConstantRemoved:

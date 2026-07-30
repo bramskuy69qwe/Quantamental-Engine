@@ -225,13 +225,6 @@ class TestWiring:
         assert 'id="cr-cell-{{ r.id }}"' in src
         assert "manual_close_badge(er, r.close_note, r.id)" in src
 
-    def test_history_modal_and_js(self):
-        with open("templates/history.html", encoding="utf-8") as fh:
-            src = fh.read()
-        assert 'id="close-reason-modal"' in src
-        assert "function openCloseReasonModal" in src.replace("window.openCloseReasonModal=function", "function openCloseReasonModal")
-        assert "/history/close_reason/" in src
-        assert "method:'PUT'" in src
 
     def test_endpoint_registered(self):
         import api.routes_history as rh

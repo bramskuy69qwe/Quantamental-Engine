@@ -237,18 +237,6 @@ class TestCalcResultLadderDisplay:
 
 
 class TestLadderWiring:
-    def test_calculator_widget_and_submit_serialize(self):
-        with open("templates/calculator.html", encoding="utf-8") as fh:
-            src = fh.read()
-        assert 'id="tp-ladder-rows"' in src
-        assert "function addTpLevel(" in src
-        assert "function serializeTpLevels(" in src
-        # submit handler sends the serialized ladder as the tp_levels param
-        assert "evt.detail.parameters.tp_levels=JSON.stringify(_tpLevels)" in src
-        # TP1 feeds the matcher when the single TP is blank
-        assert "tpP=_tpLevels[0].price" in src
-        # cleared on Clear
-        assert "tp-ladder-rows" in src and "_tplr.innerHTML=''" in src
 
     def test_endpoint_wires_tp_levels(self):
         with open("api/routes_calculator.py", encoding="utf-8") as fh:

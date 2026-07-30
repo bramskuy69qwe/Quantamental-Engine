@@ -38,14 +38,15 @@ export async function preflight(baseURL: string, mode: Mode): Promise<void> {
   assertLiveConfirmed(mode);
   let res: Response;
   try {
-    res = await fetch(baseURL + '/v3', { redirect: 'manual' });
+    // Jinja retirement 2026-07-30: the React shell owns `/` (was /v3).
+    res = await fetch(baseURL + '/', { redirect: 'manual' });
   } catch (e) {
     throw new Error(`[e2e] engine unreachable at ${baseURL} (mode ${mode}) — start it first. ${e}`);
   }
-  if (res.status !== 200) throw new Error(`[e2e] ${baseURL}/v3 returned HTTP ${res.status}`);
+  if (res.status !== 200) throw new Error(`[e2e] ${baseURL}/ returned HTTP ${res.status}`);
   const html = await res.text();
   if (html.includes('v3 bundle not built')) {
-    throw new Error(`[e2e] ${baseURL}/v3 served the missing-bundle panel — build the frontend first`);
+    throw new Error(`[e2e] ${baseURL}/ served the missing-bundle panel — build the frontend first`);
   }
   // Sandbox identity check — the seeded marker account must be present; a live-shaped
   // engine (the operator's real account names) hard-fails here. Belt-and-braces on top

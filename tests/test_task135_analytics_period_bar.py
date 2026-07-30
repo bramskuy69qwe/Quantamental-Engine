@@ -46,133 +46,18 @@ def _read_analytics() -> str:
 
 # ── Period bar wrapper id ───────────────────────────────────────────────────
 
-class TestPeriodBarWrapper:
-    """The period selector's container needs a stable id so JS can
-    toggle disabled-state on it as a unit (vs touching each button
-    individually)."""
-
-    def test_period_bar_has_id(self):
-        src = _read_analytics()
-        assert 'id="analytics-period-bar"' in src, (
-            "FE-MED-018 regression: page-level period bar wrapper has "
-            "no stable id — JS dim/disable logic can't target it."
-        )
-
-    def test_period_bar_anchor_present(self):
-        src = _read_analytics()
-        assert "FE-MED-018" in src
 
 
 # ── _periodTabs registry ────────────────────────────────────────────────────
 
-class TestPeriodTabsRegistry:
-    """JS-side registry of sub-tabs that consume the page-level
-    `period` query param. Empirically verified against
-    api/routes_analytics.py handlers."""
-
-    def test_period_tabs_registry_present(self):
-        src = _read_analytics()
-        assert "_periodTabs" in src
-        # Spot-check the entries — sub-tabs whose route handlers take
-        # period= as a param.
-        m = re.search(r"_periodTabs\s*=\s*\{[^}]+\}", src)
-        assert m, "_periodTabs assignment not found"
-        block = m.group(0)
-        # These 5 consume period server-side
-        for tid in ("overview", "pairs", "excursions", "rmultiples", "risk"):
-            assert f"{tid}:" in block, (
-                f"_periodTabs missing {tid!r} — that handler consumes "
-                f"period and the bar should be ENABLED when active."
-            )
-
-    def test_dead_control_tabs_not_in_registry(self):
-        """The 4 sub-tabs whose handlers ignore `period` must NOT be
-        in _periodTabs. Otherwise the bar would be enabled on a tab
-        where it has no effect."""
-        src = _read_analytics()
-        m = re.search(r"_periodTabs\s*=\s*\{[^}]+\}", src)
-        assert m
-        block = m.group(0)
-        # These 4 do NOT consume period — must be absent from _periodTabs
-        for tid in ("equity", "calendar", "live", "beta"):
-            # `tid:` would only match if the tab were in the registry.
-            # Use word-boundary so we don't catch 'equity_curve' etc.
-            assert (
-                re.search(r"\b" + re.escape(tid) + r":", block) is None
-            ), (
-                f"_periodTabs includes {tid!r} — that tab's handler "
-                f"ignores period; the bar should be DISABLED when active."
-            )
 
 
 # ── Disable helper logic ────────────────────────────────────────────────────
 
-class TestDisableHelper:
-    """`_setPeriodBarEnabled(boolean)` flips opacity + pointer-events
-    + each button's `disabled` attr."""
-
-    def test_helper_defined(self):
-        src = _read_analytics()
-        assert "function _setPeriodBarEnabled(enabled)" in src
-
-    def test_helper_toggles_opacity(self):
-        src = _read_analytics()
-        idx = src.find("function _setPeriodBarEnabled(enabled)")
-        body = src[idx:idx + 1000]
-        # Opacity goes to '.4' on disable (visible-but-dimmed)
-        assert "opacity = enabled ? '1' : '.4'" in body
-
-    def test_helper_toggles_pointer_events(self):
-        src = _read_analytics()
-        idx = src.find("function _setPeriodBarEnabled(enabled)")
-        body = src[idx:idx + 1000]
-        # pointerEvents = 'none' on disable (clicks pass through)
-        assert "pointerEvents" in body
-        assert "'none'" in body
-
-    def test_helper_mirrors_disabled_attr(self):
-        """Visual dim isn't enough — keyboard focus + screen readers
-        also need to see the disabled state. Each button gets its
-        `disabled` property toggled."""
-        src = _read_analytics()
-        idx = src.find("function _setPeriodBarEnabled(enabled)")
-        body = src[idx:idx + 1000]
-        assert "btns[i].disabled = !enabled" in body
-
-    def test_helper_sets_title_attribute_explanation(self):
-        """Hovering the disabled bar shows a tooltip explaining WHY
-        it's inactive — operator learns the model without needing
-        external docs."""
-        src = _read_analytics()
-        idx = src.find("function _setPeriodBarEnabled(enabled)")
-        body = src[idx:idx + 1000]
-        # The title attribute is set with an explanation
-        assert "bar.title" in body
-        assert "doesn" in body.lower() or "doesn&#x27;t" in body or "doesn\\'t" in body
 
 
 # ── switchTab + init hooks ──────────────────────────────────────────────────
 
-class TestSwitchTabHook:
-    """switchTab() and the init IIFE both call _setPeriodBarEnabled
-    so the bar's state stays in sync with the active tab."""
-
-    def test_switch_tab_calls_helper(self):
-        src = _read_analytics()
-        idx = src.find("function switchTab(tid)")
-        body = src[idx:idx + 800]
-        assert "_setPeriodBarEnabled(!!_periodTabs[tid])" in body
-
-    def test_init_calls_helper(self):
-        """Page load: the initial tab is 'overview' (which IS in the
-        registry → bar enabled). The init IIFE explicitly calls
-        _setPeriodBarEnabled to set the starting state."""
-        src = _read_analytics()
-        # Locate the init IIFE (after // Init comment)
-        idx = src.find("// Init")
-        assert idx > 0
-        body = src[idx:idx + 600]
-        assert "_setPeriodBarEnabled" in body
 
 
 # ── Routes-handler invariant: registry matches actual params ────────────────
@@ -208,53 +93,11 @@ class TestRegistryMatchesHandlerSignatures:
             out[tid] = "period:" in sig.replace(" ", "")
         return out
 
-    def test_registry_matches_handler_params(self):
-        sigs = self._handler_sigs()
-        src = _read_analytics()
-        m = re.search(r"_periodTabs\s*=\s*\{[^}]+\}", src)
-        assert m
-        registry_block = m.group(0)
-
-        for tid, takes_period in sigs.items():
-            in_registry = re.search(
-                r"\b" + re.escape(tid) + r":", registry_block
-            ) is not None
-            assert in_registry == takes_period, (
-                f"Drift: handler frag_analytics_*{tid}* "
-                f"{'takes' if takes_period else 'does NOT take'} period, "
-                f"but _periodTabs registry has it "
-                f"{'present' if in_registry else 'absent'}."
-            )
 
 
 # ── Anti-regression ─────────────────────────────────────────────────────────
 
-class TestAntiRegression:
-    """The visual change shouldn't break unrelated Analytics chrome."""
-
-    def test_setperiod_function_unchanged(self):
-        """setPeriod() still mutates _period + reloads the active tab."""
-        src = _read_analytics()
-        idx = src.find("function setPeriod(p)")
-        body = src[idx:idx + 400]
-        assert "_period = p" in body
-        assert "loadTab(_activeTab)" in body
-
-    def test_load_tab_passes_period_query(self):
-        """loadTab() still appends period= + offset= to the endpoint
-        URL. (Even on dead-control tabs — the handler will simply
-        ignore the param. Cheap defensive default.)"""
-        src = _read_analytics()
-        idx = src.find("function loadTab(tid)")
-        body = src[idx:idx + 600]
-        assert "period=" in body
-        assert "offset=" in body
 
 
 # ── Compile pins (MED-047) ──────────────────────────────────────────────────
 
-class TestTemplateCompiles:
-    def test_analytics_compiles(self):
-        env = _make_env()
-        tpl = env.get_template("analytics.html")
-        assert tpl is not None

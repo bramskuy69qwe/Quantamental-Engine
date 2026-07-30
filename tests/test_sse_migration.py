@@ -70,10 +70,6 @@ class TestSSEExtension:
         content = open("templates/base.html", encoding="utf-8").read()
         assert "ext/sse.js" in content
 
-    def test_sse_connect_in_dashboard(self):
-        content = open("templates/dashboard.html", encoding="utf-8").read()
-        assert "sse-connect" in content
-        assert "/stream/account/" in content
 
 
 class TestFragmentTriggers:
@@ -82,24 +78,6 @@ class TestFragmentTriggers:
         content = open("templates/fragments/dashboard_positions.html", encoding="utf-8").read()
         assert "sse:position_update" in content
 
-    def test_risk_triggers_on_sse(self):
-        content = open("templates/dashboard.html", encoding="utf-8").read()
-        assert "sse:dd_state" in content
 
-    def test_equity_triggers_on_sse(self):
-        content = open("templates/dashboard.html", encoding="utf-8").read()
-        assert "sse:equity_update" in content
 
-    def test_fallback_polling_present(self):
-        content = open("templates/dashboard.html", encoding="utf-8").read()
-        assert "every 30s" in content
 
-    def test_journal_stats_no_sse(self):
-        """Low-frequency data stays on pure polling."""
-        content = open("templates/dashboard.html", encoding="utf-8").read()
-        lines = content.split("\n")
-        for line in lines:
-            if "journal_stats" in line:
-                # Should NOT have sse: trigger
-                if "hx-trigger" in line:
-                    assert "sse:" not in line

@@ -229,40 +229,6 @@ class TestHtmxErrorHandler:
 
 # ── FE-HIGH-005: regime "As of undefined" ───────────────────────────────────
 
-class TestRegimeAsOfRendering:
-    """The JS in regime.html used to read data.date (undefined). Fix reads
-    data.computed_at — the actual key returned by /api/regime/current —
-    and falls back to '—' when null."""
-
-    def test_regime_template_reads_computed_at_not_date(self):
-        """Source pin: regime.html no longer uses 'data.date' for the
-        as-of timestamp; it uses 'data.computed_at'."""
-        path = Path("templates") / "regime.html"
-        src = path.read_text(encoding="utf-8")
-        # The new key must be present
-        assert "data.computed_at" in src, (
-            "FE-HIGH-005 regression: regime.html no longer references "
-            "data.computed_at — the as-of timestamp will break again."
-        )
-
-    def test_regime_template_has_null_fallback(self):
-        """The replacement code must handle null/undefined gracefully —
-        no literal 'undefined' reaching the user."""
-        path = Path("templates") / "regime.html"
-        src = path.read_text(encoding="utf-8")
-        # Either a ternary using computed_at or an explicit fallback
-        # ("—" or "no data"). We accept either pattern.
-        loadCurrent_anchor = "function loadCurrentRegime"
-        idx = src.find(loadCurrent_anchor)
-        assert idx != -1
-        # Look at the next ~600 chars of the function body
-        body = src[idx:idx + 1200]
-        assert "computed_at" in body
-        # Fallback indicator — em-dash or "no data" or explicit ternary
-        assert "?" in body and ":" in body or "—" in body, (
-            "FE-HIGH-005 regression: no null/undefined fallback for "
-            "computed_at — literal 'undefined' could reach the user again."
-        )
 
 
 # ── FE-MED-014: auto-load wiring already in place (no template change) ──────

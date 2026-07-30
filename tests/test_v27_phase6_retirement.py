@@ -47,25 +47,8 @@ def test_routes_backtest_source_carries_no_importer():
     assert "_validate_date_range" in src
 
 
-def test_backtest_template_surfaces_retired():
-    src = _src("backtest.html")
-    for token in ("bt-tab-" + "qt", "panel-" + "qt", "submitQt" + "Import",
-                  "bt-tab-models", "panel-models", "models-container",
-                  "submitModel", "editModel", "deleteModel",
-                  "clearModelForm", "renderModelsList"):
-        assert token not in src, f"retired surface still present: {token}"
 
 
-def test_backtest_template_kept_survivors():
-    """The Run panel's model-config selector is a RUN feature, not a
-    management surface — it survives the retirement (named deviation)."""
-    src = _src("backtest.html")
-    assert 'id="model-selector"' in src
-    assert "loadModelConfig" in src
-    assert "populateModelSelector" in src
-    assert "loadModels" in src          # the slimmed fetch feeding the selector
-    assert "'run','fetch'" in src       # panel list down to the survivors
-    templates.env.get_template("backtest.html")  # still compiles
 
 
 def test_results_fragment_keeps_microstructure_branch():
@@ -107,7 +90,3 @@ def test_results_fragment_renders_historical_microstructure_session():
     assert "1.75" in html  # avg slippage renders from the historical summary
 
 
-def test_page_meta_subtitle_updated():
-    src = _src("base.html")
-    assert "QT import" not in src
-    assert "'backtest':   ('Backtest'" in src  # entry itself survives

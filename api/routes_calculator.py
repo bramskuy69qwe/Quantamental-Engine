@@ -98,17 +98,9 @@ def _parse_tp_levels(raw):
     return out
 
 
-@router.get("/calculator", response_class=HTMLResponse)
-async def calculator_page(request: Request):
-    # P8.T4a: surface the account-level match window so the dropdown shows the
-    # current value selected. read_*_async returns the spec §3.3 default (300)
-    # on any error, so the page never fails to render over this.
-    from core.account_config import read_account_config_async
-    cfg = await read_account_config_async(db, app_state.active_account_id)
-    return templates.TemplateResponse(
-        request, "calculator.html",
-        _ctx(request, calc=None, window_seconds=cfg.window_seconds),
-    )
+# (Jinja retirement 2026-07-30: GET /calculator + calculator.html retired —
+# the React Pre-Trade page is the twin. POST /calculator/* + the fragment
+# doors below SURVIVE.)
 
 
 @router.post("/calculator/window", response_class=HTMLResponse)

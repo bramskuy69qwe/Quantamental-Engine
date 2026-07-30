@@ -9,7 +9,11 @@
  *   HTML pages (/, /calculator) → Network-first with offline fallback
  */
 
-const CACHE_NAME = 'qre-v1';
+// qre-v2 (Jinja retirement 2026-07-30): the React shell now owns `/`. The
+// name bump makes `activate` purge every browser's Jinja-era cache (months
+// of cached page HTML + unhashed /static/vendor/* the old cache-first rule
+// could stale-serve — the deferred coexistence item from plan §1.4/§1.5).
+const CACHE_NAME = 'qre-v2';
 
 // Static assets to pre-cache on install.
 // NB the manifest is served by a ROUTE (/manifest.json — main.py), not from

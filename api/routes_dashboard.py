@@ -45,9 +45,9 @@ async def _get_cached_recent_orders(aid: int) -> list:
     return _recent_orders_cache
 
 
-@router.get("/", response_class=HTMLResponse)
-async def index(request: Request):
-    return templates.TemplateResponse(request, "dashboard.html", _ctx(request))
+# (Jinja retirement 2026-07-30: GET / moved to routes_v3 — the React shell
+# owns the root; dashboard.html is retired. Every /fragments/dashboard/*
+# door below SURVIVES — the React pages read them.)
 
 
 @router.get("/fragments/dashboard", response_class=HTMLResponse)

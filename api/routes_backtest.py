@@ -62,11 +62,8 @@ def _validate_date_range(date_from: str, date_to: str) -> Optional[str]:
     return None
 
 
-@router.get("/backtest", response_class=HTMLResponse)
-async def backtest_page(request: Request):
-    return templates.TemplateResponse(
-        request, "backtest.html", _ctx(request, active_page="backtest")
-    )
+# (Jinja retirement 2026-07-30: GET /backtest + backtest.html retired — the
+# React Models workbench carries backtests. The API routes below SURVIVE.)
 
 
 @router.get("/fragments/backtest/sessions", response_class=HTMLResponse)

@@ -177,37 +177,3 @@ class TestSetAccountWindowEndpoint:
 # ── template + route wiring (no TestClient — gotcha #9) ───────────────────────
 
 
-class TestCalculatorWindowWiring:
-    def test_template_compiles(self):
-        env = jinja2.Environment(
-            loader=jinja2.FileSystemLoader("templates"),
-            autoescape=jinja2.select_autoescape(["html"]),
-        )
-        env.globals["fmt"] = lambda v, n=2: str(v)
-        env.globals["project_name"] = "T"
-        env.get_template("calculator.html")  # catches Jinja syntax
-
-    def test_dropdown_present_and_wired(self):
-        with open("templates/calculator.html", encoding="utf-8") as fh:
-            src = fh.read()
-        assert 'hx-post="/calculator/window"' in src
-        assert 'id="account-window-select"' in src
-        # the 1/5/15-min presets
-        assert 'value="60"' in src and 'value="300"' in src and 'value="900"' in src
-        assert ">1 min<" in src and ">5 min<" in src and ">15 min<" in src
-        # current value selected (the conditional that reflects window_seconds)
-        assert "window_seconds == 300" in src
-        # non-preset current value gets its own option (never misrepresents)
-        assert "window_seconds not in _wpresets" in src
-
-    def test_routes_registered(self):
-        import api.routes_calculator as rc
-
-        def _has(path, method):
-            return any(
-                getattr(r, "path", None) == path and method in getattr(r, "methods", set())
-                for r in rc.router.routes
-            )
-
-        assert _has("/calculator", "GET")
-        assert _has("/calculator/window", "POST")

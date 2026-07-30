@@ -19,7 +19,7 @@ import json
 import os
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 import config
 from api.helpers import templates, _ctx
@@ -43,8 +43,19 @@ def _load_manifest() -> dict:
         return {}
 
 
-@router.get("/v3", response_class=HTMLResponse)
+@router.get("/", response_class=HTMLResponse)
 async def v3_shell(request: Request):
+    """THE app (Jinja retirement, 2026-07-30): the React shell owns ``/``.
+
+    The 8 Jinja page twins (dashboard/cockpit/calculator/backtest/analytics/
+    model_library/history/regime) and their page GETs are retired — live-
+    acceptance evidence is the Phase-7 report
+    (docs/audits/2026-07-29-v3.0-e2e-phase7-acceptance.md). Survivors:
+    every ``/fragments/*`` route (the ``?format=json`` doors this app reads),
+    ``POST /models`` (a live fragment form), ``/config`` (Add/Delete Account
+    still lives there), ``base.html`` + the 5 ``admin/*`` pages +
+    ``orders/needs_link``.
+    """
     return templates.TemplateResponse(
         request,
         "v3.html",
@@ -54,3 +65,10 @@ async def v3_shell(request: Request):
             project_short_name=config.PROJECT_SHORT_NAME,
         ),
     )
+
+
+@router.get("/v3")
+async def v3_redirect():
+    """Permanent-ish forward for bookmarks/muscle memory. 307 keeps the
+    browser fragment (``/v3#History`` lands on ``/#History``)."""
+    return RedirectResponse(url="/", status_code=307)

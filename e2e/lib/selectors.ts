@@ -22,9 +22,11 @@ export type PageName = (typeof PAGES)[number]['name'];
 export const screenRoot = (page: Page, label: string): Locator =>
   page.locator(`[data-screen-label="${label}"]`);
 
-/** Full-load navigation via hash — fresh mount, deterministic state. */
+/** Full-load navigation via hash — fresh mount, deterministic state.
+ * (Jinja retirement 2026-07-30: the React shell owns `/`; the old `/v3`
+ * path 307s here, but the harness targets the truth directly.) */
 export async function gotoPage(page: Page, name: PageName): Promise<void> {
-  await page.goto(`/v3#${encodeURIComponent(name)}`);
+  await page.goto(`/#${encodeURIComponent(name)}`);
 }
 
 const reEscape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

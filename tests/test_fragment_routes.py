@@ -32,19 +32,6 @@ class TestFragmentTemplatesExist:
         assert "{% extends" not in content  # fragments don't extend base
 
 
-class TestDashboardTemplateUsesFragments:
-    def test_dashboard_references_risk_fragment(self):
-        content = open("templates/dashboard.html", encoding="utf-8").read()
-        assert "/fragments/dashboard/risk" in content
-
-    def test_dashboard_references_positions_fragment(self):
-        content = open("templates/dashboard.html", encoding="utf-8").read()
-        assert "/fragments/dashboard/positions" in content
-
-    def test_fragments_have_hx_trigger(self):
-        content = open("templates/dashboard.html", encoding="utf-8").read()
-        # Shell loads once; SSE triggers are on individual tbodies inside the shell
-        assert 'hx-trigger="load"' in content
 
 
 class TestFragmentContent:

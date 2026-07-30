@@ -22,11 +22,9 @@ _regime_jobs: Dict[int, Dict[str, Any]] = {}
 _regime_job_counter = 0
 
 
-@router.get("/regime", response_class=HTMLResponse)
-async def regime_page(request: Request):
-    return templates.TemplateResponse(
-        request, "regime.html", _ctx(request, active_page="regime")
-    )
+# (Jinja retirement 2026-07-30: GET /regime + regime.html retired — the
+# React Regime page is the twin. The /api/regime/* + fragment doors below
+# SURVIVE.)
 
 
 @router.get("/api/regime/current", response_class=JSONResponse)

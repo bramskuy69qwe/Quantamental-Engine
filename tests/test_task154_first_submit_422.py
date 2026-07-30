@@ -75,128 +75,11 @@ class TestConfigRequestHandlerShape:
     def _read(self) -> str:
         return Path("templates/calculator.html").read_text(encoding="utf-8")
 
-    def test_handler_listens_on_config_request_not_before_request(self):
-        """The calc-form submit handler must be attached to
-        htmx:configRequest. htmx:beforeRequest is too late — the
-        parameters object has already been gathered before that event
-        fires. The pre-T154 source listened on beforeRequest; that
-        shape must be gone for the calc-form path."""
-        src = self._read()
-        assert "addEventListener('htmx:configRequest'" in src, (
-            "FE-MED-029 regression: htmx:configRequest listener for the "
-            "calc-form path is missing. The fix is to mutate "
-            "evt.detail.parameters inside configRequest — this is the "
-            "load-bearing event for request-body modifications in htmx 1.9."
-        )
-        # Confirm the listener body references the calc-form id (i.e.
-        # this is the calc-form's listener, not some other module's).
-        idx = src.find("addEventListener('htmx:configRequest'")
-        assert idx > 0
-        body = src[idx:idx + 2000]
-        assert "calc-form" in body, (
-            "FE-MED-029 regression: the htmx:configRequest listener does "
-            "not gate on calc-form id — needs the same `if (evt.detail.elt.id "
-            "!== 'calc-form') return;` guard the pre-T154 beforeRequest "
-            "handler had."
-        )
 
-    def test_legacy_before_request_handler_is_gone(self):
-        """Pre-T154: the calc-form path had
-        `document.body.addEventListener('htmx:beforeRequest', function(evt) {
-            if (evt.detail.elt.id !== 'calc-form') return;
-            ...
-            document.getElementById('average_val').value = entry;`
-        Look for the (beforeRequest + calc-form + average_val) co-occurrence
-        in a single handler body and assert it's gone."""
-        src = self._read()
-        # Find every beforeRequest listener body and confirm none of them
-        # is the calc-form one. There's a separate responseError handler
-        # on calc-form for auto-refresh cleanup; that's unrelated.
-        for match in re.finditer(
-            r"addEventListener\('htmx:beforeRequest'\s*,\s*function\(evt\)\s*\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}",
-            src, re.DOTALL,
-        ):
-            body = match.group(0)
-            if "calc-form" in body and "average_val" in body:
-                raise AssertionError(
-                    "FE-MED-029 regression: calc-form's htmx:beforeRequest "
-                    "listener that mutates average_val is back. That "
-                    "listener fires AFTER htmx has gathered parameters; "
-                    "the first submit will have average='' again."
-                )
 
-    def test_parameters_average_mutated(self):
-        """The fix's load-bearing line is
-        `evt.detail.parameters.average = entry`. DOM mutation alone is
-        insufficient — at this event-tick, htmx has already cloned the
-        DOM values into evt.detail.parameters for the outgoing request.
-        Mutating .parameters is the htmx-supported way to inject."""
-        src = self._read()
-        assert "evt.detail.parameters.average=entry" in src or (
-            "evt.detail.parameters.average = entry" in src
-        ), (
-            "FE-MED-029 regression: handler does not mutate "
-            "evt.detail.parameters.average — DOM-only mutation will not "
-            "affect the FIRST submit's request body."
-        )
 
-    def test_parameters_tp_and_sl_mutated(self):
-        """tp_price and sl_price share the same hidden-field shape; mutate
-        them via parameters too for cleanliness, even though sl_price has
-        a non-empty initial value ('0') so the 422 wasn't triggered there."""
-        src = self._read()
-        for fld in ("tp_price", "sl_price"):
-            assert f"evt.detail.parameters.{fld}=" in src or (
-                f"evt.detail.parameters.{fld} =" in src
-            ), (
-                f"FE-MED-029 regression: handler does not mutate "
-                f"evt.detail.parameters.{fld} — left as DOM-only path."
-            )
 
-    def test_anchor_comment_references_fe_med_029_and_task_154(self):
-        src = self._read()
-        idx = src.find("addEventListener('htmx:configRequest'")
-        assert idx > 0
-        # The anchor block sits immediately above the listener
-        window = src[max(0, idx - 1500):idx]
-        assert "FE-MED-029" in window, (
-            "FE-MED-029 regression: anchor comment missing. Without it, "
-            "a future maintainer may 'simplify' back to beforeRequest "
-            "(the cleanup-looking move) and reintroduce the bug."
-        )
-        assert "Task 154" in window or "T154" in window
-        # The FE-17 cross-reference is what makes this anchor load-bearing.
-        assert "FE-17" in window, (
-            "FE-MED-029 anchor missing FE-17 cross-reference. FE-17 is "
-            "the prior lesson recallHistory already learned (line ~657 "
-            "anchor); future maintainers need that breadcrumb."
-        )
 
-    def test_average_val_hidden_field_still_has_no_initial_value(self):
-        """Defensive pin: if a future refactor adds value='0' to
-        average_val, the JS-side fix becomes pointless (the empty-string
-        problem disappears at the DOM level). But that fix would silently
-        send average=0 on first submit — a worse bug, since the calc
-        would compute against a nonsense entry price.
-
-        Pin: average_val keeps NO initial value. Force the JS fix to
-        remain the source of truth."""
-        src = self._read()
-        # Match the hidden input shape exactly
-        m = re.search(
-            r'<input\s+type="hidden"\s+name="average"\s+id="average_val"([^/]*)/>',
-            src,
-        )
-        assert m, "average_val hidden field not found in template"
-        attrs = m.group(1)
-        # No value="..." attribute
-        assert "value=" not in attrs, (
-            "FE-MED-029 regression: average_val hidden field gained a "
-            "value attr. If that's '0' the route will accept the first "
-            "submit but compute a nonsense calc against entry=0; remove "
-            "the value attr and let the JS configRequest handler inject "
-            "the live entry price."
-        )
 
 
 # ── Route-level pin: average is required, so the 422 contract is correct ──
@@ -374,30 +257,3 @@ class TestConfigRequestHandlerLogic:
 # ── Anti-regression: recallHistory still pre-populates fields ──────────────
 
 
-class TestRecallHistoryPathUntouched:
-    """recallHistory's pre-submit field population (the FE-17 lesson's
-    original solution) must remain — it's the alternative path that
-    doesn't depend on the htmx event lifecycle. Removing it would create
-    a new bug shape for the recall-from-Recent-panel flow."""
-
-    def test_recall_history_still_pre_populates_average_val(self):
-        src = Path("templates/calculator.html").read_text(encoding="utf-8")
-        idx = src.find("function recallHistory(")
-        assert idx > 0
-        body = src[idx:idx + 3000]
-        assert "document.getElementById('average_val').value=entry" in body, (
-            "FE-MED-029 anti-regression: recallHistory no longer "
-            "pre-populates average_val before requestSubmit(). That "
-            "path bypassed the htmx-event-timing bug since it set "
-            "values synchronously; removing it would re-expose the "
-            "Recent-panel calc path to the same race."
-        )
-
-    def test_recall_history_still_calls_request_submit(self):
-        src = Path("templates/calculator.html").read_text(encoding="utf-8")
-        idx = src.find("function recallHistory(")
-        body = src[idx:idx + 3000]
-        assert "requestSubmit()" in body, (
-            "FE-MED-029 anti-regression: recallHistory no longer "
-            "triggers the form submit."
-        )

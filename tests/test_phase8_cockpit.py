@@ -272,61 +272,11 @@ class TestClosesPane:
 # ── Page template compiles + lazy-loads all four panes ────────────────────────
 
 
-class TestCockpitPage:
-    def test_page_compiles(self):
-        # catches Jinja syntax / nested-comment in the content + extra_head blocks
-        _make_env().get_template("cockpit.html")
-
-    def test_page_lazy_loads_all_four_fragments(self):
-        with open("templates/cockpit.html", encoding="utf-8") as fh:
-            src = fh.read()
-        assert 'hx-get="/fragments/cockpit/positions"' in src
-        assert 'hx-get="/fragments/cockpit/calcs"' in src
-        assert 'hx-get="/fragments/cockpit/needs_link"' in src
-        assert 'hx-get="/fragments/cockpit/closes"' in src
-        # 2x2 grid scaffold present
-        assert "ck-grid" in src
-        assert "grid-template-columns:repeat(2" in src
-
-    def test_countdown_script_present(self):
-        # P8.T3: guarded client-side countdown tick.
-        with open("templates/cockpit.html", encoding="utf-8") as fh:
-            src = fh.read()
-        assert "data-calc-expiry" in src       # the tick targets this attr
-        assert "_ckCalcCountdown" in src        # single-interval guard
-        assert "setInterval(tick, 1000)" in src
 
 
 # ── Routes + nav registration (no TestClient — gotcha #9) ─────────────────────
 
 
-class TestCockpitRoutesAndNav:
-    def test_routes_registered(self):
-        import api.routes_cockpit as rc
-
-        def _has(path):
-            return any(
-                getattr(r, "path", None) == path and "GET" in getattr(r, "methods", set())
-                for r in rc.router.routes
-            )
-
-        assert _has("/cockpit")
-        assert _has("/fragments/cockpit/positions")
-        assert _has("/fragments/cockpit/calcs")
-        assert _has("/fragments/cockpit/needs_link")
-        assert _has("/fragments/cockpit/closes")
-
-    def test_router_includes_cockpit(self):
-        # the combined app router must mount the cockpit routes
-        import api.router as r
-        paths = {getattr(rt, "path", None) for rt in r.router.routes}
-        assert "/cockpit" in paths
-
-    def test_nav_and_page_meta_registered(self):
-        with open("templates/base.html", encoding="utf-8") as fh:
-            base = fh.read()
-        assert "('cockpit',    '/cockpit')" in base or "('cockpit', '/cockpit')" in base
-        assert "'cockpit':" in base
 
 
 # ── DB helper: get_active_calcs ───────────────────────────────────────────────

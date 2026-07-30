@@ -32,11 +32,6 @@ class TestGhostTemplatesExist:
         assert "ghost" in content
 
 
-class TestDashboardIncludesGhosts:
-    def test_dashboard_includes_all_ghosts(self):
-        content = open("templates/dashboard.html", encoding="utf-8").read()
-        for name in GHOST_FILES:
-            assert name in content, f"Ghost {name} not included in dashboard"
 
 
 class TestGhostCSS:

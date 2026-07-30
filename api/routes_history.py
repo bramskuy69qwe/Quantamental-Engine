@@ -18,12 +18,9 @@ log = logging.getLogger("routes.history")
 router = APIRouter()
 
 
-@router.get("/history", response_class=HTMLResponse)
-async def history_page(request: Request):
-    """Render the history page shell — all table data loads via HTMX."""
-    return templates.TemplateResponse(
-        request, "history.html", _ctx(request),
-    )
+# (Jinja retirement 2026-07-30: GET /history + history.html retired — the
+# React History page is the twin. The /fragments/history/* doors + the
+# notes/close_reason writers below SURVIVE.)
 
 
 @router.post("/history/log_execution", response_class=HTMLResponse)

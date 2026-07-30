@@ -89,7 +89,7 @@ $ok = $false
 for ($i = 0; $i -lt 45; $i++) {
     Start-Sleep -Seconds 2
     try {
-        $r = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/v3" -UseBasicParsing -TimeoutSec 3
+        $r = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/" -UseBasicParsing -TimeoutSec 3
         if ($r.StatusCode -eq 200) { $ok = $true; break }
     } catch {}
     if ($proc.HasExited) { break }
@@ -100,4 +100,4 @@ if (-not $ok) {
     Get-Content $LogFile -Tail 15 -ErrorAction SilentlyContinue
     exit 1
 }
-Write-Host "[sandbox] UP - http://127.0.0.1:$Port/v3"
+Write-Host "[sandbox] UP - http://127.0.0.1:$Port/"

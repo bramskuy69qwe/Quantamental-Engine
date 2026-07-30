@@ -270,11 +270,9 @@ async def api_model_usage(model_id: int):
 
 # ── Page (v2.7 Phase 4 — moved here from 3.2 once the template existed) ─────
 
-@router.get("/models", response_class=HTMLResponse)
-async def models_page(request: Request):
-    return templates.TemplateResponse(
-        request, "model_library.html", _ctx(request, active_page="models")
-    )
+# (Jinja retirement 2026-07-30: GET /models + model_library.html retired —
+# the React Models page is the twin. POST /models SURVIVES: a live fragment
+# form still posts to it, pinned by test_v27_phase3_model_routes.py.)
 
 
 # ── Fragments (GET — TemplateResponse + _ctx house idiom) ────────────────────

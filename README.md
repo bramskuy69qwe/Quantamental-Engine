@@ -63,15 +63,22 @@ full adapter inventory.
 
 ## Status
 
-- **Current**: v3.0 (Meridian — the React cockpit, served at `/v3`)
-  - Ground-up presentation-layer rebuild against the Meridian design reference:
-    precompiled React served as static JS from FastAPI (no Node at runtime, all
-    deps vendored offline), SSE live transport, one shared primitive layer
-  - Design-consistency audit vs the reference: 34 findings, all closed or
+- **Current**: v3.1 (Meridian — the React cockpit IS the app, served at `/`)
+  - **Jinja retirement complete (2026-07-30)**: the React shell owns `/`
+    (`/v3` 307s there); the 8 Jinja page twins and their routes are deleted.
+    Gate for the promotion was the Phase-7 live-acceptance report
+    (`docs/audits/2026-07-29-v3.0-e2e-phase7-acceptance.md`) — a full
+    Playwright E2E program (control sweep, order permutations, seeded monkey,
+    sandboxed mutations, 8 operator-in-the-loop live-trade scenarios) that
+    found and fixed 9 engine defects along the way
+  - Surviving Jinja: `/config` (account create/delete), `orders/needs_link`,
+    the `admin/*` pages, and every `/fragments/*` route (the `?format=json`
+    doors the React pages read)
+  - v3.0: ground-up presentation-layer rebuild against the Meridian design
+    reference — precompiled React served as static JS from FastAPI (no Node
+    at runtime, all deps vendored offline), SSE live transport, one shared
+    primitive layer; design-consistency audit: 34 findings, all closed or
     explicitly refuted
-  - **The Jinja UI is still the surface at `/`** and remains the parity
-    reference until each React page is accepted live. Promotion of `/v3` → `/`
-    and retirement of the Jinja page twins are the remaining v3.0 steps
   - v2.7: DB-backed library of reusable, exchange-agnostic models;
     backtest-import adapter framework (MultiCharts first); calculator pre-fill
     + close-time model tagging

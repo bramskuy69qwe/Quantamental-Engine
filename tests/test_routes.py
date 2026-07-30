@@ -66,15 +66,13 @@ def client():
 
 # ── HTML pages (should return 200 with HTML content) ────────────────────────
 
+# Jinja retirement 2026-07-30: the 8 page twins are gone — `/` is the React
+# shell (served by routes_v3) and the old page GETs no longer exist. The
+# surviving Jinja pages are /config (pinned in CONFIG tests below), /params,
+# and orders/needs_link + admin/*.
 PAGE_ROUTES = [
     "/",
-    "/calculator",
-    "/history",
     "/params",
-    "/analytics",
-    "/backtest",
-    "/models",  # v2.7 P4: model-library page
-    "/regime",
 ]
 
 
@@ -83,6 +81,30 @@ def test_page_returns_200(client, path):
     resp = client.get(path)
     assert resp.status_code == 200, f"{path} returned {resp.status_code}"
     assert "text/html" in resp.headers.get("content-type", "")
+
+
+def test_root_serves_the_react_shell(client):
+    """The retirement's core contract: `/` is the React app, not a Jinja page."""
+    resp = client.get("/")
+    assert resp.status_code == 200
+    body = resp.text
+    assert "/static/v3/" in body, "/ must serve the v3 shell (hashed assets)"
+    assert "hx-boost" not in body, "/ must not be a Jinja/HTMX page"
+
+
+def test_v3_redirects_to_root(client):
+    """Bookmark forward: /v3 → 307 / (fragment survives client-side)."""
+    resp = client.get("/v3", follow_redirects=False)
+    assert resp.status_code == 307
+    assert resp.headers["location"] == "/"
+
+
+@pytest.mark.parametrize("path", [
+    "/calculator", "/history", "/analytics", "/backtest", "/regime", "/cockpit",
+])
+def test_retired_page_gets_are_gone(client, path):
+    """The twins must STAY retired — a resurrected page GET is drift."""
+    assert client.get(path).status_code == 404
 
 
 # ── API endpoints (JSON or HTML fragments) ──────────────────────────────────

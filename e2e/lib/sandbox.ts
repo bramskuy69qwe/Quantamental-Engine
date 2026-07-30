@@ -56,7 +56,7 @@ export async function sandboxLaunch(timeoutMs = 120_000): Promise<void> {
   while (Date.now() - t0 < timeoutMs) {
     await new Promise((r) => setTimeout(r, 2500));
     try {
-      const res = await fetch(SANDBOX_URL + '/v3');
+      const res = await fetch(SANDBOX_URL + '/');
       if (res.status === 200) return;
     } catch {
       /* booting */

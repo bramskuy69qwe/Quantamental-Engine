@@ -115,19 +115,6 @@ class TestRowsOnlyRefresh:
         assert 'include "fragments/dashboard_orders_rows.html"' in content
         assert 'include "fragments/dashboard_history_rows.html"' in content
 
-    def test_dashboard_shell_load_only(self):
-        """dash-positions in dashboard.html triggers load only (no SSE on shell)."""
-        content = open("templates/dashboard.html", encoding="utf-8").read()
-        # Find the dash-positions line
-        for line in content.split("\n"):
-            if 'id="dash-positions"' in line:
-                break
-        # The hx-trigger should NOT contain sse: events
-        # Check the hx-trigger attribute in the surrounding block
-        idx = content.find('id="dash-positions"')
-        block = content[idx:idx+300]
-        assert 'hx-trigger="load"' in block
-        assert 'sse:position_update' not in block
 
     def test_rows_template_no_table_tags(self):
         """Position rows template contains only <tr> elements, no wrapping tags."""
@@ -185,12 +172,6 @@ class TestRowsOnlyRefresh:
 
 
 class TestPanelHeight:
-    def test_grid_uses_default_stretch(self):
-        """Grid for risk+positions uses default stretch (matched heights)."""
-        content = open("templates/dashboard.html", encoding="utf-8").read()
-        idx = content.find('id="dash-risk"')
-        block = content[max(0, idx-200):idx]
-        assert "align-items:start" not in block
 
     def test_risk_card_fills_cell(self):
         """Risk card has height:100% to fill grid cell."""
@@ -203,14 +184,6 @@ class TestPanelHeight:
         assert "height:100%" in content
         assert "flex-direction:column" in content
 
-    def test_wrappers_not_modified(self):
-        """Column wrappers (#dash-risk, #dash-positions) have no display:flex."""
-        content = open("templates/dashboard.html", encoding="utf-8").read()
-        for wrapper_id in ["dash-risk", "dash-positions"]:
-            idx = content.find(f'id="{wrapper_id}"')
-            block = content[idx:idx+300]
-            assert "display:flex" not in block, \
-                f"#{wrapper_id} should NOT have display:flex (breaks horizontal width)"
 
     def test_sticky_thead_has_background(self):
         """All sticky theads have opaque background to prevent overlap."""

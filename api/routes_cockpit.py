@@ -57,13 +57,8 @@ def _calc_expiry_ms(timestamp_iso, window_seconds):
         return None
 
 
-@router.get("/cockpit", response_class=HTMLResponse)
-async def cockpit_page(request: Request):
-    """The 4-pane cockpit page. Thin shell — each pane lazy-loads its
-    fragment (GET /fragments/cockpit/*)."""
-    return templates.TemplateResponse(
-        request, "cockpit.html", _ctx(request, active_page="cockpit"),
-    )
+# (Jinja retirement 2026-07-30: GET /cockpit + cockpit.html retired — the
+# React Linkage page is the twin. The /fragments/cockpit/* doors SURVIVE.)
 
 
 @router.get("/fragments/cockpit/positions", response_class=HTMLResponse)

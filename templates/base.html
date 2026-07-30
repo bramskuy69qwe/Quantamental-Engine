@@ -472,17 +472,15 @@
     <span style="font-family:var(--font-ui);font-size:.72rem;font-weight:800;color:var(--blue);letter-spacing:.06em;white-space:nowrap;flex-shrink:0;">
       {{ project_name_ }} <span style="color:var(--sub);font-weight:400;font-size:.65rem;">{{ project_version_ }}</span>
     </span>
-    <nav hx-boost="true" style="display:flex;overflow-x:auto;scrollbar-width:none;flex-shrink:1;">
+    {# Jinja retirement 2026-07-30: the 8 page twins are gone — `/` is the
+       React app. This chrome now serves only the SURVIVING Jinja pages
+       (/config, orders/needs_link, admin/*), so the nav is App + the
+       survivors. hx-boost dropped: boosting a link into the React shell
+       would swap its HTML into a Jinja body. #}
+    <nav style="display:flex;overflow-x:auto;scrollbar-width:none;flex-shrink:1;">
       {% set nav_items = [
-        ('dashboard',  '/'),
-        ('cockpit',    '/cockpit'),
-        ('calculator', '/calculator'),
-        ('history',    '/history'),
+        ('app',        '/'),
         ('needs_link', '/orders/needs_link'),
-        ('analytics',  '/analytics'),
-        ('backtest',   '/backtest'),
-        ('models',     '/models'),
-        ('regime',     '/regime'),
       ] %}
       {% for page_key, url in nav_items %}
       <a href="{{ url }}" style="
@@ -562,16 +560,8 @@
 
 <!-- ── Page title bar ──────────────────────────────────────────────────────── -->
 {% set page_meta = {
-  'dashboard':  ('Dashboard',   'Live overview · equity · risk · positions'),
-  'cockpit':    ('Cockpit',     'Calc-linkage workflow · positions · active calcs · needs-link · closes'),
-  'calculator': ('Calculator',  'Position sizing · TP/SL · order preview'),
-  'history':    ('History',     'Trade log · executions · pre-trade journal'),
   'needs_link': ('Needs Link',  'Manual-link queue · candidate calcs · per-criterion diff'),
   'config':     ('Configuration','Accounts · connections · risk parameters'),
-  'analytics':  ('Analytics',   'Portfolio performance · equity curve · pairs'),
-  'backtest':   ('Backtest',    'Strategy simulation · sessions · OHLCV fetch'),
-  'models':     ('Model Library', 'Reusable strategy models · risk presets · imported backtests'),
-  'regime':     ('Regime Classifier', 'Macro classifier · signals · timeline'),
 } %}
 {% if active_page in page_meta %}
 <div style="background:var(--card);border-bottom:1px solid var(--border);padding:5px 10px;display:flex;align-items:baseline;gap:10px;position:sticky;top:50px;z-index:190;flex-shrink:0;">

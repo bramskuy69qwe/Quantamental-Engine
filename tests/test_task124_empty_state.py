@@ -222,57 +222,9 @@ class TestAnalyticsMigrations:
         assert 'from "primitives/empty_state.html" import empty_state' in src
 
 
-# ── Regime JS migration (FE-MED-008 partial) ────────────────────────────────
+# (Jinja retirement 2026-07-30: the regime.html JS-migration pins are gone
+# with the template — the React Regime page has its own pins.)
 
-class TestRegimeMigration:
-
-    def _read(self) -> str:
-        return Path("templates/regime.html").read_text(encoding="utf-8")
-
-    def test_regime_uses_es_action_class_for_not_backfilled(self):
-        """FE-MED-008 visual normalization: the BTC Market Cap +
-        Aggregate OI Change cards previously had ad-hoc layouts for
-        the not-backfilled state. Now they emit the same .es-action
-        markup the primitive defines."""
-        src = self._read()
-        assert 'class="es es-action"' in src, (
-            "FE-MED-008 regression: Regime not-backfilled state no "
-            "longer uses .es-action class — visual treatment may have "
-            "drifted from the primitive."
-        )
-        assert "Use Backfill tab" in src
-
-    def test_regime_no_data_in_range_uses_es_info(self):
-        """The 'no data in range' state (data exists but filtered out)
-        uses info tone — distinct from action-tone 'not backfilled'."""
-        src = self._read()
-        assert 'class="es es-info"' in src
-
-    def test_regime_old_inline_empty_div_gone(self):
-        """Anti-revert: the prior ad-hoc inline style for the
-        not-backfilled chart div is gone."""
-        src = self._read()
-        # The old pattern had `display:flex;align-items:center;
-        # justify-content:center;height:100%;font-size:.65rem;
-        # color:var(--muted);` inline AND the "Not yet backfilled —
-        # use Backfill tab" text directly.
-        old_marker = (
-            ">Not yet backfilled \\u2014 use Backfill tab<"
-        )
-        # Use rfind for safety; the new code splits "Not yet backfilled"
-        # from "Use Backfill tab" into separate elements
-        assert "Not yet backfilled — use Backfill tab" not in src, (
-            "FE-MED-008 regression: the old single-string "
-            "'Not yet backfilled — use Backfill tab' is back."
-        )
-
-    def test_regime_action_cta_calls_showpanel(self):
-        """The action CTA is a navigation into the Backfill tab —
-        uses the existing showPanel function (not a fictional
-        switchTab)."""
-        src = self._read()
-        # The onclick handler should invoke showPanel('backfill')
-        assert "showPanel('backfill')" in src or "showPanel(\\'backfill\\')" in src
 
 
 # ── README + decision-tree update ───────────────────────────────────────────
@@ -324,7 +276,6 @@ class TestTemplateCompiles:
         "fragments/analytics/pairs_table.html",
         "fragments/analytics/beta_exposure.html",
         "fragments/analytics/funding_tracker.html",
-        "regime.html",
     ])
     def test_compiles(self, path):
         env = _make_env()

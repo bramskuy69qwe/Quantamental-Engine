@@ -179,51 +179,9 @@ class TestCalculatorHtmlJsHelpers:
     def _read(self) -> str:
         return Path("templates/calculator.html").read_text(encoding="utf-8")
 
-    def test_fmt_size_js_helper_present(self):
-        """fmtSize must be defined and applied to SETUP SUMMARY contracts.
-        Anchor comment ties it to FE-LOW-022."""
-        src = self._read()
-        assert "function fmtSize(" in src, (
-            "FE-LOW-022 regression: fmtSize JS helper missing."
-        )
-        # Applied at the contracts display site
-        assert "fmtSize(contracts)" in src, (
-            "FE-LOW-022 regression: SETUP SUMMARY contracts not routed "
-            "through fmtSize — fmtP's 6-decimal sub-$1 behaviour is back."
-        )
 
-    def test_fmt_pct_clamp_helper_present(self):
-        """fmtPct must clamp at >100% per FE-LOW-024 recommended fix."""
-        src = self._read()
-        assert "function fmtPct(" in src, (
-            "FE-LOW-024 regression: fmtPct JS helper missing."
-        )
-        assert ">100%" in src, (
-            "FE-LOW-024 regression: >100% clamp string missing."
-        )
-        # Applied to TP/SL preview
-        assert "fmtPct((tpP-entry)/entry*100)" in src, (
-            "FE-LOW-024 regression: TP preview not routed through fmtPct."
-        )
-        assert "fmtPct((slP-entry)/entry*100)" in src, (
-            "FE-LOW-024 regression: SL preview not routed through fmtPct."
-        )
 
-    def test_pre_fix_toFixed_call_pattern_removed(self):
-        """Pre-fix inline pattern `Math.abs(...).toFixed(2)+'%'` for TP/SL
-        preview must be gone — the route now goes through fmtPct."""
-        src = self._read()
-        # The single line containing both TP and SL inline-toFixed calls
-        # is the exact pre-fix shape. Match defensively.
-        bad = "Math.abs((tpP-entry)/entry*100).toFixed(2)+'%'"
-        assert bad not in src, (
-            f"FE-LOW-024 regression: pre-fix inline pattern reintroduced: {bad}"
-        )
 
-    def test_anchor_comments_reference_fe_low_022_and_fe_low_024(self):
-        src = self._read()
-        assert "FE-LOW-022" in src and "Task 152" in src
-        assert "FE-LOW-024" in src
 
 
 # ── Jinja-global exposure pin ───────────────────────────────────────────────
