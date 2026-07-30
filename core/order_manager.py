@@ -3830,7 +3830,7 @@ class OrderManager:
             #   - multi-TP ladder (SPEC-001): planned_tp is the single junction
             #     snapshot while final_tp is last-wins across the primary calc's
             #     TP legs, so the compared rung may differ (exact for the common
-            #     single-TP/SL case). See test_multi_tp_scenario.txt.
+            #     single-TP/SL case). See docs/archive/test_multi_tp_scenario.txt.
             final_tp = final_sl = None
             try:
                 last_amend: Dict[str, Any] = {}

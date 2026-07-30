@@ -94,8 +94,8 @@ full adapter inventory.
 
 The displayed product version is `PROJECT_VERSION_` in [config.py](config.py)
 — the single source of truth, bumped at program close (see CLAUDE.md
-§ "Release hygiene"). Historical specs: [v2.4.md](v2.4.md),
-[v2.5-v2.7_roadmap.md](v2.5-v2.7_roadmap.md); current designs live in
+§ "Release hygiene"). Historical specs: [v2.4.md](docs/archive/v2.4.md),
+[v2.5-v2.7_roadmap.md](docs/archive/v2.5-v2.7_roadmap.md); current designs live in
 `docs/design/`.
 
 ---
@@ -157,11 +157,11 @@ The displayed product version is `PROJECT_VERSION_` in [config.py](config.py)
   finding registry from the v2.3.1 audit.
 - **[Historical Audit Artifacts](docs/past/)** — Per-finding design docs,
   workflow logs, and prior version specs.
-- **[v2.4 Spec + Status](v2.4.md)** — Gate promotion, execution quality, UI
+- **[v2.4 Spec + Status](docs/archive/v2.4.md)** — Gate promotion, execution quality, UI
   architecture, and history redesign. Includes implementation status section.
 - **[v2.4 Release Notes](docs/release_notes/v2.4.md)** — User-facing summary
   of what v2.4 delivers.
-- **[v2.5–v2.7 Roadmap](v2.5-v2.7_roadmap.md)** — Backtesting subsystem,
+- **[v2.5–v2.7 Roadmap](docs/archive/v2.5-v2.7_roadmap.md)** — Backtesting subsystem,
   defensive ML, integration backtest.
 
 ---

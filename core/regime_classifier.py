@@ -19,7 +19,7 @@ The classifier auto-detects mode when not specified.
 Task 170 rewind:
   Restored to the pre-T163 hand-rolled cascade. The T163 JSON-interpreter
   + HysteresisWrapper infrastructure was rolled back (see
-  v2.5_regime-plan.md re-sync + T170 commit message). The regime
+  docs/archive/v2.5_regime-plan.md re-sync + T170 commit message). The regime
   direction will be rebuilt AFTER calc_linkage closes the foundational
   calc_id → closed_positions gap that left T167's forward two-track
   accumulating nothing.

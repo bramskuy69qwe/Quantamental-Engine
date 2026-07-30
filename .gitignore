@@ -32,6 +32,9 @@ desktop.ini
 data/
 *.csv
 !docs/archive/*.csv
+# on-disk-only debug bundles (screenshots + multi-MB engine logs) — archived
+# out of the repo root 2026-07-30 but deliberately NOT in git history
+docs/archive/debug-*/
 !tests/state_machine/fixtures/*.csv
 *.parquet
 *.log
