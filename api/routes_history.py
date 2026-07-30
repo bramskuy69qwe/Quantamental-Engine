@@ -212,7 +212,8 @@ async def update_position_note(trade_key: str = Form(""), notes: str = Form(""))
 # impossible (observe-only), but a manual close IS detectable post-WS — the
 # engine classifies it MANUAL_OTHER (order_manager._determine_exit_reason).
 # This lets the operator refine the reason (MANUAL_* subtype) + add a note on
-# a closed position. Returns the re-rendered badge cell for the table swap.
+# a closed position. Returns a JSON ok (fragments slim-down 2026-07-30 — the
+# React modal checks response.ok and re-fetches the table).
 _MANUAL_EXIT_REASONS = frozenset({
     "MANUAL_INTERVENTION", "MANUAL_DISCIPLINE_BREAK",
     "MANUAL_NEW_OPPORTUNITY", "MANUAL_OTHER",

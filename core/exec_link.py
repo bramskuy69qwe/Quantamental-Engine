@@ -70,7 +70,9 @@ def compute_link_window_status(
 ) -> dict:
     """HIGH-027 (Task 104b): compute the link-window UI state for a pretrade.
 
-    Returns a dict shape consumed by templates/fragments/link_window_countdown.html:
+    Returns a dict shape served (as JSON, + calc_id/t0) by
+    GET /calculator/link-window-status/{calc_id} to the React Pre-Trade
+    countdown chip:
       - status: "LINKABLE" | "EXPIRING_SOON" | "EXPIRED" | "LINKED_CONFIRMED"
       - effective_window_s: int — override if set, else account default
       - remaining_s: int — seconds until expiry (0 if expired or confirmed)

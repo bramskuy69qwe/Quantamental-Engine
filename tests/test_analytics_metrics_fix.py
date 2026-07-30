@@ -119,6 +119,3 @@ class TestRMultiplesFromClosedPositions:
         assert sorted(rv) == sorted([0.5, -0.3, 1.2])
 
 
-_OVERVIEW_TPL = "templates/fragments/analytics/overview_stats.html"
-
-

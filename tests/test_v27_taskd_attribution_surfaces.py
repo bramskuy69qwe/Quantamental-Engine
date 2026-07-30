@@ -158,14 +158,19 @@ async def test_pre_trade_fragment_dangling_fk_renders_deleted(tdb):
     assert "(deleted model)" in html
 
 
-# ── F12: Settings render in the run list ─────────────────────────────────────
+@pytest.mark.asyncio
+async def test_pre_trade_fragment_untagged_model_display_empty(tdb):
+    """The untagged lane (no free text, no FK) resolves model_display=""
+    — re-pinned on the JSON door (fragments slim-down 2026-07-30; the
+    template-shaped '—' assertion retired with pre_trade_table.html)."""
+    await tdb.insert_pre_trade_log(_ptl_row())
+    body = json.loads((await rh.frag_history_pre_trade(_req())).body)
+    assert body["rows"][0]["model_display"] == ""
 
-_RUN_BASE = {
-    "id": 7, "name": "@ES 1 Minute", "source_app": "multicharts",
-    "date_from": "2026-01-01T00:00:00", "date_to": "2026-02-01T00:00:00",
-    "summary": {"net_profit": 250.0, "win_rate": 0.5, "profit_factor": 2.0,
-                "total_trades": 10},
-}
+
+# (F12's run-list settings render retired with model_backtest_list.html —
+# the settings persistence itself stays pinned by test_v27_phase3's upload
+# happy-path.)
 
 
 # ── F16 residual: non-dict / malformed JSON bodies → 400 ─────────────────────

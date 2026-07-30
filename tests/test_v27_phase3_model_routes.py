@@ -304,25 +304,3 @@ async def test_prefill_returns_risk_preset(mdb):
     assert (await rm.calculator_prefill(99999)).status_code == 404
 
 
-# ── Fragment handlers (GET) ──────────────────────────────────────────────────
-
-
-# ── Template compile-render (MED-047 discipline) ────────────────────────────
-
-_MODEL_CTX = {
-    "id": 1, "name": "T", "type": "both", "description": "d",
-    "created_at": "2026-07-16", "updated_at": None,
-    "risk_preset": {"risk_pct": 1.0, "apply_regime_multiplier": True},
-    "strategy": {"entry_logic": "e", "exit_logic": "", "notes": "",
-                 "target_universe": "", "regime_config": ""},
-}
-_RUN_CTX = {
-    "id": 7, "name": "@ES 1 Minute", "source_app": "multicharts",
-    "date_from": "2026-01-01T00:00:00", "date_to": "2026-02-01T00:00:00",
-    "summary": {"net_profit": 250.0, "win_rate": 0.5, "profit_factor": 2.0,
-                "total_trades": 10},
-}
-_ADAPTERS = [{"app_id": "multicharts", "display_name": "MultiCharts",
-              "accepted_extensions": [".xlsx", ".xml"]}]
-
-

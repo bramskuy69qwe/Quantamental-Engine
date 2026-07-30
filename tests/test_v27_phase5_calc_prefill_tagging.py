@@ -37,7 +37,6 @@ from api.routes_calculator import _parse_model_id
 from api.helpers import templates
 from core.database import DatabaseManager
 
-TEMPLATES = Path(__file__).parent.parent / "templates"
 
 
 @pytest_asyncio.fixture

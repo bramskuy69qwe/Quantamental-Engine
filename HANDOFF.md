@@ -70,6 +70,35 @@ compile-render CLEAN; post-delete template-name + route-path greps CLEAN
 (inert comments only); e2e untouched (trade-oracles use the two surviving
 JSON doors' `?format=json`, unchanged behavior).
 
+**Independent 2-agent audit (house cycle): 0 CRIT on both lenses.**
+Lens 1 (broken consumers): all 79 React engine-URLs resolve, all 8 htmx
+verb targets inside the 5 keepers point at live routes, zero executable
+references to deleted surfaces. Lens 2 (payload drift): all 19 converted
+doors verified expression-identical to their old format=json branch;
+pin-retirement sampling (20 nodes + all 8 deleted files) confirmed no
+capability loss; mechanical removed-pin-vs-live-attribute cross-check
+clean. Findings FIXED in the hygiene follow-up commit: the skipped
+SQL-injection e2e class re-pointed off the deleted open_orders door
+(its skip reason had gone false — the one thing the "route greps clean"
+claim missed: tests/ wasn't in that grep), the untagged model_display
+lane re-pinned as JSON, 3 dead cockpit/orders constants
+(_CLOSES_LIMIT now actually feeds api_linkage_closes;
+_NEEDS_LINK_PREVIEW retired — /orders/needs_review is uncapped by
+design), ~10 orphan test constants/imports, .notes-cell CSS, the
+close_reason sniff.ts entry, backtest-upload's missing response_class,
+and 5 stale prose sites (routes_dashboard hot-path comment,
+exec_link docstring, routes_backtest, routes_models, routes_history).
+ACCEPTED as residue: close_reason/delete_account error lanes still
+return HTML spans under a JSONResponse decorator (status codes
+unchanged; React surfaces r.text on failure — converting them to JSON
+would WORSEN the operator-facing error text), 4 consumer-less primitives
+kept per the charge, htmx sse.js/idiomorph loads in base.html
+(pre-existing since the retirement, opportunistic cleanup). Pre-existing
+drift SURFACED (not caused) by the audit, left for a later pass: the
+add-account form's bare-Enter submit (hx-post /accounts) swaps a raw
+JSON body into #add-account-result (the button's add-and-reload lane is
+correct), and the `account-added` listener in base.html has no emitter.
+
 ## ▶ SESSION CLOSE 2026-07-30 (fourth block) — archive sweep + launcher
 
 Operator-directed. Root 30 → **13 files**. `9c1ae53`: 9 tracked

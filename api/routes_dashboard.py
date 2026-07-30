@@ -295,8 +295,9 @@ async def api_price(ticker: str):
     # #2 (debug 2026-06-08): the calculator polls this every 1s for the DISPLAYED
     # ticker, so set_calculator_symbol must run on EVERY poll — not just the
     # cache-miss fallback below. Otherwise, once the orderbook cache is warm (a
-    # liquid symbol like BTCUSDT, populated within ~2s by the separate
-    # /calculator/refresh poll), the price is served from cache, the fallback
+    # liquid symbol like BTCUSDT, populated within ~2s by the separate orderbook
+    # poll — /api/calculator/orderbook/{ticker} since the fragments slim-down
+    # retired /calculator/refresh), the price is served from cache, the fallback
     # never runs, set_calculator_symbol is skipped, and the market WS is never
     # rebuilt — so the OLD symbol's @depth20 keeps streaming ("still subscribing
     # to <old>"). A thinner symbol (slower/empty orderbook fetch) hit the

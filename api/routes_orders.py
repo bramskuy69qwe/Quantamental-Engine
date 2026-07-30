@@ -176,7 +176,6 @@ def _pretrade_ts_to_ms(pretrade: dict) -> int | None:
 async def frag_position_fills(request: Request, position_id: int = 0,
                               format: str = ""):
     """Return fills for a single closed position (lazy-loaded drawer)."""
-    from api.helpers import _ctx
     from core.exec_link import get_exec_link_status
 
     fills = []
@@ -239,12 +238,6 @@ async def frag_position_fills(request: Request, position_id: int = 0,
     # drawer rides GET /context/position/{id}.
     from api.routes_calculator import _json_safe
     return JSONResponse(_json_safe({"fills": fills}))
-
-
-# P8.T9: per-calc cap on the position-events drilldown. Generous for a single
-# position's lifecycle; the endpoint flags + logs when a calc exceeds it rather
-# than silently truncating (CLAUDE.md "No silent caps").
-_POSITION_EVENTS_CAP = 500
 
 
 # ── Manual-link operator actions (P3.T2 / spec §6, §10.3) ────────────────────

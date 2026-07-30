@@ -20,7 +20,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from api.helpers import templates
 
-TEMPLATES = Path(__file__).parent.parent / "templates"
 
 QT_ROUTE = "/api/backtest/" + "qt-" + "import"
 

@@ -201,5 +201,6 @@ async def api_backtest_session_delete(session_id: int):
 # retired here, superseded by the model library's per-app adapter upload
 # (POST /models/{model_id}/backtest-upload). Historical sessions it created
 # (type='microstructure', config/summary source 'quantower') remain in
-# backtest_sessions and still render — see the KEPT branch in
-# fragments/backtest/results.html.
+# backtest_sessions, readable via the /api/backtest/* JSON routes (their
+# Jinja renderer, fragments/backtest/results.html, retired with the
+# fragments slim-down 2026-07-30).

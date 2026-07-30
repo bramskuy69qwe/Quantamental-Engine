@@ -18,7 +18,6 @@ Run: pytest tests/test_task101_sql_injection_defense.py -v
 """
 from __future__ import annotations
 
-import asyncio
 import inspect
 from unittest.mock import AsyncMock, MagicMock
 
@@ -379,10 +378,13 @@ class TestRouteWiring:
     reason="LOW-023 (Task 101.1): double-TestClient hang. This class builds "
     "a second TestClient(app) when running in the full suite (test_routes.py "
     "already builds one earlier). The second lifespan startup deadlocks "
-    "indefinitely. In isolation (pytest tests/test_task101_sql_injection_defense.py) "
-    "the tests pass in ~4s. Coverage is preserved by TestRouteWiring above "
-    "(4 source-pin tests). Re-enable once the fixture is hoisted to a "
-    "module-shared conftest.py fixture or root cause is addressed."
+    "indefinitely. Coverage is preserved by TestRouteWiring above "
+    "(source-pin tests). Re-enable once the fixture is hoisted to a "
+    "module-shared conftest.py fixture or root cause is addressed. "
+    "(Fragments slim-down 2026-07-30: re-pointed from the deleted "
+    "/fragments/history/open_orders to the surviving order_history door — "
+    "same validate_sort_params family; the valid-sort case now returns "
+    "JSON, which the 200 assertion already tolerates.)"
 )
 class TestRoutesRejectInjection:
     """End-to-end: a HTTP request carrying a SQL injection payload in
@@ -420,8 +422,8 @@ class TestRoutesRejectInjection:
         payload. Pre-fix the route would have silently fallen back to the
         default sort and returned 200 (masking the abuse). Post-fix returns
         400 with a visible "invalid sort column" detail."""
-        payload = "created_at_ms; DROP TABLE orders--"
-        resp = client.get(f"/fragments/history/open_orders?sort_by={payload}")
+        payload = "updated_at_ms; DROP TABLE orders--"
+        resp = client.get(f"/fragments/history/order_history?sort_by={payload}")
         assert resp.status_code == 400, (
             f"Expected 400 for injection payload; got {resp.status_code}: "
             f"{resp.text[:200]}"
@@ -430,14 +432,14 @@ class TestRoutesRejectInjection:
     def test_injection_in_sort_dir_returns_400(self, client):
         """sort_dir injection — even with valid sort_by."""
         resp = client.get(
-            "/fragments/history/open_orders"
-            "?sort_by=created_at_ms&sort_dir=DESC; DELETE FROM orders--"
+            "/fragments/history/order_history"
+            "?sort_by=updated_at_ms&sort_dir=DESC; DELETE FROM orders--"
         )
         assert resp.status_code == 400
 
     def test_valid_sort_request_returns_200(self, client):
         """Functionality preservation: legitimate sort still works."""
         resp = client.get(
-            "/fragments/history/open_orders?sort_by=created_at_ms&sort_dir=DESC"
+            "/fragments/history/order_history?sort_by=updated_at_ms&sort_dir=DESC"
         )
         assert resp.status_code == 200

@@ -29,11 +29,13 @@ from api.routes_calculator import _json_safe
 log = logging.getLogger("routes.cockpit")
 router = APIRouter()
 
-# Per-pane caps — the cockpit panes are summaries, not full tables (the
-# full tables live on the dashboard / history / needs-link pages).
+# Per-pane caps — the Linkage panes are summaries, not full tables (the
+# full tables live on the React History page). The cockpit fragments'
+# _NEEDS_LINK_PREVIEW cap retired with them (fragments slim-down
+# 2026-07-30) — /orders/needs_review, the JSON needs-link path, is uncapped
+# by design (the React inbox shows the whole queue).
 _CALCS_LIMIT = 50
 _CLOSES_LIMIT = 15
-_NEEDS_LINK_PREVIEW = 8
 
 
 def _calc_expiry_ms(timestamp_iso, window_seconds):
@@ -126,12 +128,12 @@ async def api_linkage_calcs():
 
 
 @router.get("/api/linkage/closes")
-async def api_linkage_closes(limit: int = 15):
+async def api_linkage_closes(limit: int = _CLOSES_LIMIT):
     """Recent closes incl. the stamped deviation badge. `pending_reason` is
     DERIVED (named deviation): the engine defaults a detected manual close to
     MANUAL_OTHER; an un-annotated MANUAL_OTHER row is the design's
     'categorize me' nudge."""
-    limit = max(1, min(int(limit or 15), 50))
+    limit = max(1, min(int(limit or _CLOSES_LIMIT), 50))
     try:
         rows, _ = await db.query_closed_positions(
             app_state.active_account_id, page=1, per_page=limit,

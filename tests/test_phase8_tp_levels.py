@@ -172,7 +172,6 @@ class TestPersistTpLevels:
 # ── calc_result.html ladder display (full fragment render) ────────────────────
 
 
-_PARAMS = {"max_position_count": 10, "max_exposure": 3.0, "max_correlated_exposure": 0.5}
 
 
 # ── widget + endpoint wiring (source pins) ────────────────────────────────────

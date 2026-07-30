@@ -15,7 +15,8 @@ export const SNIFF_PATHS: RegExp[] = [
   /\/api\/config\/apply-preset$/,
   /\/api\/regime\/(reclassify|backfill)$/,
   /\/api\/news\/refresh$/,
-  /\/history\/close_reason\/\d+$/,
+  // (close_reason dropped 2026-07-30: since the fragments slim-down it
+  // returns real status codes + JSON, no longer 200-with-alert-body.)
 ];
 
 export const ALERT_RE = /alert-(error|warning)/;

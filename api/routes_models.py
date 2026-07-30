@@ -378,7 +378,7 @@ def _source_from_settings(settings: Dict[str, str], adapter) -> Dict[str, Any]:
     return out
 
 
-@router.post("/models/{model_id}/backtest-upload")
+@router.post("/models/{model_id}/backtest-upload", response_class=JSONResponse)
 async def upload_model_backtest(
     request: Request,
     model_id: int,
@@ -423,9 +423,8 @@ async def upload_model_backtest(
 
     payload = asdict(result)
     # §6-3b: persist the Settings-sheet params read-only — they ride
-    # summary_json (free-form). Rendered as a collapsed <details> row in
-    # the run LIST (model_backtest_list.html; Task D/F12 — there is no
-    # separate run-detail view in the minimal v2.7 UI).
+    # summary_json (free-form). Rendered by the React run report
+    # (pages-models-detail.jsx reads them off /api/models/{id}/runs).
     payload["summary"]["settings"] = payload.pop("settings", {})
     payload["summary"]["source_file"] = filename  # G-M7
     try:
