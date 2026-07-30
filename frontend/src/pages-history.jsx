@@ -99,6 +99,103 @@ const H_TABS = [
   ['pretrade',  'Pre-Trade Log',    '/fragments/history/pre_trade'],
 ];
 
+/* Row ids with an OPEN note editor. The page's 30 s auto-refresh re-reads a
+   server-paged table, so a refresh mid-edit can drop the edited row off page 1
+   and unmount the input with the operator's text in it. The poll skips while
+   this set is non-empty. Module-level because the poll lives in HistoryPage
+   while the edit state lives per-cell. */
+const HNOTE_EDITING = new Set();
+
+/* Editable row note — pre_trade_log.notes via PUT /history/notes/pre_trade/{id}
+   (ported 2026-07-30). Replaces the retired Jinja `editNote` inline editor: the
+   endpoint outlived its UI when the fragments slim-down deleted the table
+   template AND the base.html function its response used to call.
+
+   Click to edit · Enter or blur commits · Escape cancels. `guard` is a REF, not
+   state: Enter unmounts the input, which can fire blur in the same tick, and a
+   state flag wouldn't have flipped yet — so commit would run twice. */
+const HNoteCell = ({ row, onSaved }) => {
+  const [editing, setEditing] = React.useState(false);
+  const [val, setVal] = React.useState(row.notes || '');
+  const [phase, setPhase] = React.useState(null);   // 'busy' | 'err' | null
+  const [saved, setSaved] = React.useState(null);   // optimistic post-commit text
+  const guard = React.useRef(false);
+  const openedWith = React.useRef('');              // value at edit-open
+  const stored = (row.notes || '').trim();
+  // Show the just-committed text until the reload catches up — otherwise a
+  // successful save visibly reverts for the length of the round trip (and
+  // forever if the reload fails, since `load` keeps last-good on error).
+  const shown = saved != null ? saved : stored;
+  React.useEffect(() => { if (saved != null && stored === saved) setSaved(null); }, [stored, saved]);
+
+  // A reload can bring new server text while this cell sits idle.
+  React.useEffect(() => { if (!editing) setVal(row.notes || ''); }, [row.notes, editing]);
+
+  const open = (e) => {
+    if (e) e.stopPropagation();
+    const cur = row.notes || '';
+    setVal(cur); openedWith.current = cur; setPhase(null);
+    guard.current = false; setEditing(true);
+    HNOTE_EDITING.add(row.id);
+  };
+  const done = () => { setEditing(false); HNOTE_EDITING.delete(row.id); };
+  const cancel = () => { guard.current = true; setPhase(null); done(); };
+
+  const commit = async () => {
+    if (guard.current) return;
+    guard.current = true;
+    const next = val.trim();
+    // Untouched? Never write. Opening a cell and clicking away must not PUT the
+    // snapshot taken at open time — a concurrent update (the 30 s poll, or
+    // another tab) would be clobbered by stale text the operator never typed.
+    if (next === openedWith.current.trim() || next === stored) {
+      setPhase(null); done(); return;
+    }
+    setPhase('busy');
+    try {
+      const r = await _lkForm(`/history/notes/pre_trade/${row.id}`, { notes: next }, 'PUT', { jsonOk: true });
+      if (r.ok) { setSaved(next); setPhase(null); done(); if (onSaved) onSaved(); return; }
+    } catch (e) { /* fall through to the error surface */ }
+    // Stay in edit mode with a VISIBLE error and the text intact. The guard is
+    // re-armed by the next keystroke (below), not here: re-arming now would let
+    // a failed Enter's trailing blur fire a duplicate PUT.
+    setPhase('err');
+  };
+
+  if (editing) {
+    const bad = phase === 'err';
+    return (
+      <span onClick={(e) => e.stopPropagation()} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+        <input className="qe-input" autoFocus value={val}
+          placeholder="note…" readOnly={phase === 'busy'}
+          onChange={(e) => { guard.current = false; setPhase(null); setVal(e.target.value); }}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); commit(); }
+            else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+          }}
+          style={{
+            width: 190, height: 20, boxSizing: 'border-box', fontSize: '0.6rem',
+            borderColor: bad ? 'var(--qe-red)' : undefined,
+          }} />
+        {bad ? <span className="qe-mono" title="the engine rejected or never received the save"
+          style={{ fontSize: '0.52rem', color: 'var(--qe-red)', whiteSpace: 'nowrap' }}>save failed · edit + Enter</span> : null}
+        {phase === 'busy' ? <Spinner size="0.55rem" /> : null}
+      </span>
+    );
+  }
+  return (
+    <span onClick={open} title={shown ? 'Click to edit' : 'Click to add a note'}
+      style={{
+        cursor: 'pointer', fontSize: '0.6rem', maxWidth: 190, display: 'inline-block',
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom',
+        color: shown ? 'var(--qe-sub)' : 'var(--qe-muted)',
+      }}>
+      {shown || '+ note'}
+    </span>
+  );
+};
+
 /* reason-picker modal body (shared LP_MANUAL_REASONS) */
 const HReasonModal = ({ row, onClose, onSaved }) => {
   const [pick, setPick] = React.useState(null);
@@ -108,7 +205,7 @@ const HReasonModal = ({ row, onClose, onSaved }) => {
   const save = async () => {
     setBusy(true); setErr(null);
     try {
-      const r = await _lkForm(`/history/close_reason/${row.id}`, { exit_reason: pick, close_note: note }, 'PUT');
+      const r = await _lkForm(`/history/close_reason/${row.id}`, { exit_reason: pick, close_note: note }, 'PUT', { jsonOk: true });
       if (r.ok) { onSaved(); onClose(); } else setErr(r.text || 'save failed');
     } catch (e) { setErr('save failed — engine unreachable?'); }
     setBusy(false);
@@ -178,7 +275,13 @@ const HistoryPage = () => {
   }, [tab, period, q, page, perPage]);
 
   React.useEffect(() => { load(); }, [load]);
-  React.useEffect(() => { const t = setInterval(load, 30000); return () => clearInterval(t); }, [load]);
+  // The auto-refresh SKIPS while a note editor is open: this table is
+  // server-paged and newest-first, so a refresh mid-edit can push the edited row
+  // off page 1 and unmount the input with the operator's text still in it.
+  React.useEffect(() => {
+    const t = setInterval(() => { if (HNOTE_EDITING.size === 0) load(); }, 30000);
+    return () => clearInterval(t);
+  }, [load]);
   React.useEffect(() => { setPage(1); setSel(null); setDrill(null); }, [tab, period, q]);
 
   // design #2: fetch every tab's total so INACTIVE tabs show their count too —
@@ -387,6 +490,16 @@ const HistoryPage = () => {
       { key: 'size', label: 'SIZE', align: 'right', render: (r) => _ptFmtSz(r.size) },
       { key: 'model_display', label: 'MODEL', render: (r) => <span style={{ color: 'var(--qe-sub)' }}>{r.model_display || '—'}</span> },
       { key: 'status', label: 'LINK', render: (r) => <Badge tone={['matched', 'linked'].includes(r.status) ? 'ok' : r.status === 'active' ? 'info' : 'mute'}>{(r.status || '').toUpperCase()}</Badge> },
+      // notes ride the JSON rows already (the door is SELECT *); the write goes
+      // to PUT /history/notes/pre_trade/{id}. `load` re-reads the page so the
+      // committed text comes back from the server, not from local state.
+      // `filter:false` — free text must never auto-become a facet dropdown
+      // (DataList auto-facets short, low-cardinality columns). sort/search read
+      // the TRIMMED value so they agree with what the cell renders.
+      { key: 'notes', label: 'NOTES', filter: false,
+        sortVal: (r) => (r.notes || '').trim().toLowerCase(),
+        searchVal: (r) => (r.notes || '').trim(),
+        render: (r) => <HNoteCell row={r} onSaved={load} /> },
     ],
   };
 

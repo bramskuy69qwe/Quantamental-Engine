@@ -1,6 +1,107 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-07-30 (**MERIDIAN v3.1 — FRAGMENTS SLIM-DOWN + PRIMITIVES SWEEP SHIPPED, ALL PUSHED. templates/ is 23 → 18 files; the frontend/-vs-templates/ boundary is now documented in a README in each. Same day: Jinja retirement `1afc9f8` · archive/launcher sweep · E2E carry-forwards.**)
+**Date**: 2026-07-30 (**MERIDIAN v3.1 — DD-OVERRIDE + PRE-TRADE NOTES PORTED TO REACT (seventh block). Same day: fragments slim-down · primitives sweep + folder-boundary answer · Jinja retirement `1afc9f8` · archive/launcher sweep · E2E carry-forwards.**)
+
+## ▶ SESSION CLOSE 2026-07-30 (seventh block) — dd_override + notes PORTED TO REACT
+
+**Operator ask**: "port the dd_override and notes endpoints to react" (from
+the UI-orphaned list filed in the fifth block).
+
+**★ INVESTIGATION FIRST — only 2 of the 4 endpoints had a destination.**
+Traced each one's read surface before writing any UI:
+- `dd_override` → portable. The read side ALREADY existed: `/api/state`
+  ships `dd_state` + `dd_manually_unblocked`, and Pre-Trade's halt banner
+  already told the operator to "override via **Dashboard**" — so the
+  Dashboard Risk Monitor was the intended home, not a new invention.
+- `notes/pre_trade` → portable. `pre_trade_log.notes` already rides the
+  JSON rows (`_paginated_query` is `SELECT *`), and the React History page
+  has the Pre-Trade Log tab. No backend read change needed.
+- `notes/trade_history` + `notes/position` → **NO destination**. The tables
+  they annotate lost their last reader in the slim-down:
+  `db.query_trade_history` and `db.get_position_notes` are now
+  caller-less (their consumers were `/fragments/history/trade_history` and
+  `/fragments/history/exchange`). Porting them means first resurrecting
+  those tables in React. **JSON-ified but NOT ported — operator call:
+  retire, or port their tables** (trade_history is the legacy manual
+  close log, superseded by closed_positions).
+
+**Shipped**:
+- Backend: all four routes JSON-in/JSON-out with real status codes.
+  `dd_override` keeps every rule (reason ≥10 chars stripped · must be in
+  `limit` · already-active → 200 `already_active` · malformed body → 400)
+  and still writes the `manual_override` event. The notes routes stop
+  emitting `onclick="editNote(...)"` markup — **that function was deleted
+  from base.html in the slim-down**, so those responses had been calling
+  into nothing (closes the earlier audit's MED finding #2).
+- React · Dashboard: `Override` button in the Risk Monitor DD-STATE cell
+  (only when `dd_state == 'limit'` and not already overridden; otherwise an
+  `OVERRIDDEN` badge), opening a reason dialog that MIRRORS the engine's
+  ≥10-char rule so the operator is never sent into a guaranteed 400.
+- React · History: `NOTES` column on the Pre-Trade Log tab — click to
+  edit, Enter/blur commits, Escape cancels, then the page re-reads so the
+  text comes from the server.
+- **Two design traps caught during implementation, not after**: (1)
+  `ModelDialog` is `position:absolute` and `Pane` is `position:relative`,
+  so a dialog rendered inside the tile would have been CLIPPED to it —
+  hence `DdOverrideHost`, a page-level leaf sibling of `<TiledGrid />`
+  (pinned, because a future refactor moving it back in would look
+  harmless). (2) `_lkForm` decided success by sniffing the body for
+  `alert-error`; against a JSON door that ECHOES operator text, a note
+  containing "alert-error" would have read as a failed save — added an
+  explicit `opts.jsonOk` mode (status-only) and switched the notes save
+  plus BOTH `/history/close_reason/` sites onto it. That second one was a
+  latent false-negative I introduced yesterday when close_reason started
+  echoing `close_note`.
+
+**★★ THE 2-AGENT AUDIT FOUND REAL DEFECTS IN THE PORT — all fixed before
+commit.** Both agents independently confirmed the worst one. Do not treat
+"I checked the analogous path" as verification again:
+
+| Sev | Defect | Fix |
+|---|---|---|
+| **HIGH** | **Wrong-account override.** `QE_BOOTSTRAP.activeAccountId` is baked at page load; Config's Activate refetches data WITHOUT reloading (only the nav switcher reloads — I checked that one path and generalised). So the write targeted a stale id, and the route made it worse: it validated the ACTIVE account's `portfolio` but wrote + logged the PATH id, behind a 200. Net: the wrong account got a persisted, un-approved future gate bypass; the real one stayed halted. | Route now **409s** unless the path id IS the active account; `/api/state` gained `account_id`; the client reads `st.account_id` and the `\|\| 1` fallback is GONE (account 1 exists live). |
+| **HIGH** | **Silent note-save failure.** On error the cell kept `editing` with no error surface and a blurred input → no retry trigger, note lost, operator believes it saved. Plus a sticky false `⚠ retry` that HID the note text. | Error keeps the editor open with a red border + "save failed · edit + Enter"; guard re-arms on the next keystroke (not immediately, which would let a failed Enter's blur double-PUT); the no-change return clears `phase`. |
+| **HIGH** | **False-success notes write.** `UPDATE … WHERE id = ?` was unscoped with no rowcount check, so a stale/foreign id "succeeded" and the text then reverted with no error. | Account-scoped + rowcount → **404**, mirroring `update_close_reason`. |
+| MED | Blur wrote the OPEN-TIME snapshot, clobbering a concurrent update with text the operator never typed | `openedWith` ref — an untouched cell never writes |
+| MED | Successful save showed the OLD text for the whole reload round trip (forever if the reload failed) | optimistic paint until the server value catches up |
+| MED | The 30 s auto-refresh unmounted an in-progress edit (server-paged, newest-first) | poll skips while `HNOTE_EDITING` is non-empty |
+| MED | `already_active` returned 200 → client counted it a success and dropped the reason | now **409** with an `error` |
+| MED | Override offered in ADVISORY mode, where nothing is gated | gate is `dd_state=='limit' && enforced` |
+| MED | `close_reason`'s 400/404 were the last HTML spans behind a JSON decorator | now `{"error": …}` |
+| MED | `JSON.parse('null')` → `data.error` throws, mislabelled "engine unreachable" | `|| {}` in both wrappers |
+| MED | dialog flag was module-level and never reset → re-raised itself on Dashboard re-entry | reset in `stop()` |
+| INFO | Dashboard root lacked the `position:relative` every other dialog-hosting page has | added |
+
+**★ AND THE PINS THEMSELVES WERE WEAK — the adversarial agent proved it by
+mutation.** `_code()` stripped only `//`, but these modules are commented
+with `/* */` block headers, so three pins SURVIVED deletion of the code they
+protected (the notes PUT, the refreshState wiring, the guard's early
+return). Fixed: `_code()` now strips both comment forms and has its own
+tests (incl. a no-delimiters-inside-string-literals pin); every source pin
+routes through it; the min-reason pin now parses BOTH sides and asserts they
+agree; the gate pin asserts ternary STRUCTURE, not a substring that predated
+the change. **A scratch mutation harness now verifies 7 pins fail when
+their subject is deleted** — that check is the thing to repeat for future
+source pins.
+
+**Gate: 4093 passed / 6 skipped / 3 deselected** (4051 + the 42 pins in
+`test_react_port_dd_notes`, up from 24). Bundle `fc0125476b` →
+**`a1eab22c04`**.
+
+**Process note — I twice wrote a PREDICTED gate count into this file before
+the run finished** (4082 → actual 4051; 4102 → actual 4093), both corrected.
+Never write a number you have not read off the run.
+
+**⚠ ENGINE IS DOWN — could not browser-verify.** `data/engine.pid` holds a
+stale **43692**, nothing is listening on :8000, and `risk_engine.jsonl`
+ends at **18:09:46** with no crash line in the tail (last entries are a
+rate-limited reconciler abort + a normal Finnhub upsert). The operator
+restarted it earlier this session, so this may be **OBS-001 recurring**
+(silent engine stop, still unexplained) — or a deliberate/window-close
+stop. NOT diagnosed; surfaced per the audit-time-environment rule rather
+than guessed at. **A restart IS required for this feature**: the bundle
+alone is picked up on a hard refresh (v3.html re-reads `manifest.json` per
+request), but the JSON route changes need the process restarted.
 
 ## ▶ SESSION CLOSE 2026-07-30 (sixth block) — PRIMITIVES SWEEP + the folder-boundary answer
 

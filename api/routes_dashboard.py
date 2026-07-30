@@ -413,6 +413,12 @@ async def api_state():
         # halt). [P1 audit LOW-1]
         dd_mode = wk_mode = "unknown"
     return {
+        # The ACTIVE account id. Additive 2026-07-30: any client action keyed to
+        # an account (the DD-override write) must read it from the same live door
+        # that reports dd_state/dd_manually_unblocked — `QE_BOOTSTRAP` is baked at
+        # page load and goes stale on a Config-page activate (which refetches
+        # data without reloading), which would target the WRONG account.
+        "account_id":       aid,
         "total_equity":     acc.total_equity,
         "available_margin": acc.available_margin,
         "total_unrealized": acc.total_unrealized,

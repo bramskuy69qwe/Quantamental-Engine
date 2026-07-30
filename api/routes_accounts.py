@@ -516,12 +516,19 @@ async def update_account_detail(
 # ── DD manual override ───────────────────────────────────────────────────────
 
 
-@router.post("/account/{account_id}/dd_override", response_class=HTMLResponse)
+@router.post("/account/{account_id}/dd_override", response_class=JSONResponse)
 async def dd_override(account_id: int, request: Request):
     """Manually override the dd_state gate for an account in limit state.
 
     Requires a reason (min 10 chars). Override persists until dd_state
     transitions out of limit; next limit episode re-engages the gate.
+
+    JSON in, JSON out (ported to React 2026-07-30): the Dashboard Risk
+    Monitor raises the reason dialog when `/api/state` reports
+    `dd_state == "limit"` and `dd_manually_unblocked` false — the surface
+    the Pre-Trade halt banner's "override via Dashboard" copy points at.
+    Was HTML-alert-fragment-returning and UI-orphaned since the Jinja
+    retirement deleted its only caller.
     """
     try:
         body = await request.json()
@@ -533,25 +540,41 @@ async def dd_override(account_id: int, request: Request):
         body = {}
     reason = (body.get("reason") or "").strip()
 
+    # ACTIVE-ACCOUNT ONLY (2026-07-30 audit, HIGH). Every gate below reads
+    # app_state.portfolio — which is ACTIVE-account state — while the write and
+    # the event log take the PATH id. A mismatch therefore validated one
+    # account's drawdown, unblocked a DIFFERENT account (persisting an
+    # un-approved future gate bypass), and logged the wrong account's drawdown,
+    # all behind a 200. Refuse instead: this route is only ever meaningful for
+    # the active account.
+    if account_id != app_state.active_account_id:
+        return JSONResponse(
+            {"error": "Only the active account's DD gate can be overridden."},
+            status_code=409,
+        )
+
     # Validate reason
     if len(reason) < 10:
-        return HTMLResponse(
-            '<div class="alert alert-error">Reason must be at least 10 characters.</div>',
+        return JSONResponse(
+            {"error": "Reason must be at least 10 characters."},
             status_code=400,
         )
 
     # Validate account is in limit
     pf = app_state.portfolio
     if pf.dd_state != "limit":
-        return HTMLResponse(
-            '<div class="alert alert-error">Account is not in limit state — override not needed.</div>',
+        return JSONResponse(
+            {"error": "Account is not in limit state — override not needed."},
             status_code=400,
         )
 
-    # Already overridden?
+    # Already overridden? 409, not 200 — the client treats any 2xx as success,
+    # so a 200 here closed the dialog on a no-op and silently dropped the
+    # reason the operator had typed (2026-07-30 audit).
     if account_id in app_state.dd_manually_unblocked:
-        return HTMLResponse(
-            '<div class="alert alert-warning">Override already active.</div>',
+        return JSONResponse(
+            {"error": "Override already active.", "status": "already_active"},
+            status_code=409,
         )
 
     # Apply override
@@ -568,6 +591,7 @@ async def dd_override(account_id: int, request: Request):
     except Exception:
         log.warning("manual_override event log failed", exc_info=True)
 
-    return HTMLResponse(
-        '<div class="alert alert-success">DD gate overridden. Calculator unblocked until next recovery.</div>'
-    )
+    return JSONResponse({
+        "status": "ok",
+        "message": "DD gate overridden. Calculator unblocked until next recovery.",
+    })

@@ -4,7 +4,6 @@ import logging
 
 from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, JSONResponse
-from markupsafe import escape
 
 from core.state import app_state
 from core.database import db
@@ -174,38 +173,44 @@ async def frag_history_trade_events(
     return _rows_json(rows, total, page, per_page)
 
 
-@router.put("/history/notes/pre_trade/{row_id}", response_class=HTMLResponse)
+# ── Row notes (JSON; ported to React 2026-07-30) ─────────────────────────────
+# All three used to answer with an HTML `<span onclick="editNote(...)">` cell
+# for the Jinja tables' inline editor. That editor (base.html `editNote`) was
+# deleted in the fragments slim-down, so the markup referenced a function that
+# no longer exists. They now answer JSON; the caller re-renders from its own
+# rows.
+#
+# SURFACE STATUS — only `pre_trade` has a React consumer (the History page's
+# Pre-Trade Log tab, whose JSON door already carries `notes` via `SELECT *`).
+# `trade_history` and `position` annotate tables with NO reader left anywhere:
+# `db.query_trade_history` and `db.get_position_notes` lost their only callers
+# when `/fragments/history/trade_history` and `/fragments/history/exchange`
+# were deleted. They are kept JSON-correct here, but writing to them is
+# currently write-only — retire them or port their tables (operator call, filed
+# in HANDOFF).
+
+@router.put("/history/notes/pre_trade/{row_id}", response_class=JSONResponse)
 async def update_pre_trade_note(row_id: int, notes: str = Form("")):
-    await db.update_pre_trade_notes(row_id, notes)
-    safe = escape(notes)
-    return HTMLResponse(
-        f'<span class="text-sub cursor-pointer" '
-        f'onclick="editNote(this,{row_id},\'pre_trade\')" '
-        f'title="Click to edit">{safe or "+ Add note"}</span>'
+    ok = await db.update_pre_trade_notes(
+        row_id, notes, account_id=app_state.active_account_id,
     )
+    if not ok:
+        # A stale row id (the operator's page is older than the data) must not
+        # report success — the cell would close on a write that never landed.
+        return JSONResponse({"error": "pre-trade row not found"}, status_code=404)
+    return JSONResponse({"status": "ok", "row_id": row_id, "notes": notes})
 
 
-@router.put("/history/notes/trade_history/{row_id}", response_class=HTMLResponse)
+@router.put("/history/notes/trade_history/{row_id}", response_class=JSONResponse)
 async def update_trade_history_note(row_id: int, notes: str = Form("")):
     await db.update_trade_history_notes(row_id, notes)
-    safe = escape(notes)
-    return HTMLResponse(
-        f'<span class="text-sub cursor-pointer" '
-        f'onclick="editNote(this,{row_id},\'trade_history\')" '
-        f'title="Click to edit">{safe or "+ Add note"}</span>'
-    )
+    return JSONResponse({"status": "ok", "row_id": row_id, "notes": notes})
 
 
-@router.put("/history/notes/position", response_class=HTMLResponse)
+@router.put("/history/notes/position", response_class=JSONResponse)
 async def update_position_note(trade_key: str = Form(""), notes: str = Form("")):
     await db.upsert_position_note(trade_key, notes)
-    safe_notes = escape(notes)
-    safe_key   = escape(trade_key)
-    return HTMLResponse(
-        f'<span class="text-sub cursor-pointer" '
-        f'onclick="editNote(this,\'{safe_key}\',\'position\')" '
-        f'title="Click to edit">{safe_notes or "+ Add note"}</span>'
-    )
+    return JSONResponse({"status": "ok", "trade_key": trade_key, "notes": notes})
 
 
 # P8.T6 (spec §10.5): manual-close reason. The pre-submission modal is
@@ -224,17 +229,17 @@ _MANUAL_EXIT_REASONS = frozenset({
 async def update_close_reason(
     closed_pos_id: int, exit_reason: str = Form(...), close_note: str = Form(""),
 ):
+    # JSON on every lane (2026-07-30): these two were the last HTML spans behind
+    # a `response_class=JSONResponse` decorator, so the React caller's `jsonOk`
+    # mode fell back to HTML-stripping to recover the message — it worked, but
+    # only by accident.
     if exit_reason not in _MANUAL_EXIT_REASONS:
-        return HTMLResponse(
-            '<span class="text-red">invalid reason</span>', status_code=400,
-        )
+        return JSONResponse({"error": "invalid reason"}, status_code=400)
     ok = await db.update_close_reason(
         app_state.active_account_id, closed_pos_id, exit_reason, close_note,
     )
     if not ok:
-        return HTMLResponse(
-            '<span class="text-red">close not found</span>', status_code=404,
-        )
+        return JSONResponse({"error": "close not found"}, status_code=404)
     # Fragments slim-down (2026-07-30): the htmx cell re-render
     # (close_reason_cell.html) is retired with the Jinja History page; the
     # React modal only checks response.ok and re-fetches the table JSON.

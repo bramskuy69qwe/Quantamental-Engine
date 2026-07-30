@@ -17,17 +17,28 @@
    model/r/tags chips are dropped (not in the needs_review payload);
    funding rows treat null/0 sentinels as "no data" [P4 audit L1]. */
 
-const _lkForm = async (url, fields, method = 'POST') => {
+const _lkForm = async (url, fields, method = 'POST', opts = {}) => {
   const body = new URLSearchParams();
   Object.entries(fields || {}).forEach(([k, v]) => { if (v != null) body.append(k, v); });
   const r = await fetch(url, {
     method, headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body.toString(),
   });
+  const raw = await r.text();
+  // `jsonOk`: the endpoint answers with REAL status codes and a JSON body, so
+  // the HTTP status is the whole truth. Required for any door that ECHOES
+  // operator text (notes, close_note) — body-sniffing would read a note
+  // containing "alert-error" as a failed save (2026-07-30).
+  if (opts.jsonOk) {
+    let data = {};
+    // `|| {}`: JSON.parse('null') succeeds and yields null, which would make
+    // the `data.error` read below throw.
+    try { data = JSON.parse(raw) || {}; } catch (e) { /* non-JSON error page */ }
+    return { ok: r.ok, data, text: data.error || _ptStrip(raw) };
+  }
   // the link/cancel endpoints answer 200 for EVERY outcome with a
   // status-discriminated alert body — the alert-error/-warning class is the
   // real failure signal, not the HTTP status [P4 audit #2]
-  const raw = await r.text();
   return {
     ok: r.ok && !/alert-(error|warning)/.test(raw),
     text: _ptStrip(raw),
@@ -253,7 +264,7 @@ const LkReasonResolver = ({ item, onDone }) => {
   const save = async () => {
     setBusy(true); setMsg(null);
     try {
-      const r = await _lkForm(`/history/close_reason/${item.id}`, { exit_reason: pick, close_note: note }, 'PUT');
+      const r = await _lkForm(`/history/close_reason/${item.id}`, { exit_reason: pick, close_note: note }, 'PUT', { jsonOk: true });
       setMsg({ text: r.ok ? 'reason saved' : (r.text || 'save failed'), ok: r.ok });
       if (r.ok) onDone(`${item.symbol} close → ${(LP_EXIT_REASONS[pick] || {}).label || pick}`);
     } catch (e) { setMsg({ text: 'save failed — engine unreachable?', ok: false }); }

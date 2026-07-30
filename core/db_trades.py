@@ -457,12 +457,29 @@ class TradesMixin:
             sort_by, sort_dir, page, per_page, account_id,
         )
 
-    async def update_pre_trade_notes(self, row_id: int, notes: str) -> None:
-        """Update the notes field on a single pre_trade_log row."""
-        await self._conn.execute(
-            "UPDATE pre_trade_log SET notes = ? WHERE id = ?", (notes, row_id)
-        )
+    async def update_pre_trade_notes(
+        self, row_id: int, notes: str, account_id: Optional[int] = None,
+    ) -> bool:
+        """Update the notes field on a single pre_trade_log row.
+
+        Returns True iff a row actually changed. Account-scoped when
+        *account_id* is given — mirrors `update_close_reason`, the sibling
+        operator-annotation writer. Both were needed once the React NOTES cell
+        made this a first-class UI surface: an unscoped UPDATE by bare id
+        matched no row for a stale/foreign id yet still reported success, so the
+        cell closed on a save that had written nothing (2026-07-30 audit).
+        """
+        if account_id is None:
+            cur = await self._conn.execute(
+                "UPDATE pre_trade_log SET notes = ? WHERE id = ?", (notes, row_id)
+            )
+        else:
+            cur = await self._conn.execute(
+                "UPDATE pre_trade_log SET notes = ? WHERE id = ? AND account_id = ?",
+                (notes, row_id, account_id),
+            )
         await self._conn.commit()
+        return cur.rowcount > 0
 
     async def update_trade_history_notes(self, row_id: int, notes: str) -> None:
         await self._conn.execute(

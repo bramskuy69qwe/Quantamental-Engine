@@ -2588,6 +2588,12 @@ const QE_DASH = /* @__PURE__ */ function() {
     // snapshot rows; SSE position_update refreshes upnl/pct
     st: {},
     // /api/state (halted, blocked, dd_state, weekly_pnl_state, …)
+    // UI state that must be read OUTSIDE the tile that raises it: ModelDialog is
+    // position:absolute and Pane is position:relative, so a dialog rendered
+    // inside a tile would be CLIPPED to it. The flag lives here so the trigger
+    // (RiskMonitorPane, deep in the memoized grid) and the page-level host can
+    // meet without making DashTiled/TiledGrid subscribers.
+    ui: { ddOverride: false },
     macro: [],
     // /api/regime/signals/latest
     log: [],
@@ -2731,11 +2737,23 @@ const QE_DASH = /* @__PURE__ */ function() {
     _timers.forEach(clearInterval);
     _timers.length = 0;
     started = false;
+    state.ui = { ddOverride: false };
   }
-  return { start, stop, get: () => state, subscribe(fn) {
-    subs.add(fn);
-    return () => subs.delete(fn);
-  } };
+  function setUi(patch) {
+    state.ui = { ...state.ui, ...patch };
+    notify();
+  }
+  return {
+    start,
+    stop,
+    refreshState: loadState,
+    setUi,
+    get: () => state,
+    subscribe(fn) {
+      subs.add(fn);
+      return () => subs.delete(fn);
+    }
+  };
 }();
 const _dashFoot = (d, key, hasData) => {
   const n = d.net && d.net[key] || {};
@@ -2881,11 +2899,91 @@ const EquityCurvePane = () => {
 };
 const _stateTone = (s) => s === "limit" ? "err" : s === "warning" ? "warn" : "ok";
 const _stateLabel = (s) => s === "limit" ? "LIMIT" : s === "warning" ? "WARN" : "OK";
+const _dashPostJson = async (url, payload) => {
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload || {})
+  });
+  let data = {};
+  try {
+    data = JSON.parse(await r.text()) || {};
+  } catch (e) {
+  }
+  return { ok: r.ok, data };
+};
+const DD_OVERRIDE_MIN_REASON = 10;
+const DdOverrideDialog = ({ accountId, drawdownPct, onClose, onDone }) => {
+  const [reason, setReason] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState(null);
+  const short = reason.trim().length < DD_OVERRIDE_MIN_REASON;
+  const submit = async () => {
+    if (busy || short) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const { ok, data } = await _dashPostJson(
+        `/account/${accountId}/dd_override`,
+        { reason: reason.trim() }
+      );
+      if (ok) {
+        if (onDone) onDone();
+        onClose();
+        return;
+      }
+      setErr(data.error || "override rejected");
+    } catch (e) {
+      setErr("override failed \u2014 engine unreachable?");
+    }
+    setBusy(false);
+  };
+  return /* @__PURE__ */ React.createElement(
+    ModelDialog,
+    {
+      title: "Override DD gate",
+      width: 430,
+      onClose: () => {
+        if (!busy) onClose();
+      },
+      footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-ghost", disabled: busy, onClick: onClose }, "Keep gate"), /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          className: "qe-btn qe-btn-sm qe-btn-danger",
+          disabled: busy || short,
+          onClick: submit,
+          title: short ? `reason must be at least ${DD_OVERRIDE_MIN_REASON} characters` : "Unblock new sizing calcs"
+        },
+        busy ? /* @__PURE__ */ React.createElement(Spinner, { size: "0.62rem" }) : "Override gate"
+      ))
+    },
+    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 7 } }, /* @__PURE__ */ React.createElement(Badge, { tone: "err" }, "DD LIMIT"), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.62rem", color: "var(--qe-sub)" } }, "drawdown ", drawdownPct == null ? "\u2014" : _n(drawdownPct) + "%")), /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-muted)", lineHeight: 1.5 } }, "Unblocks NEW sizing calcs until the drawdown recovers \u2014 the next limit episode re-engages the gate automatically. Open positions are not affected. The reason is written to the account event log."), /* @__PURE__ */ React.createElement("label", { style: { display: "flex", flexDirection: "column", gap: 4 } }, /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-ui)", fontSize: "0.52rem", fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", color: "var(--qe-sub)" } }, "Reason (required)"), /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        className: "qe-input",
+        autoFocus: true,
+        value: reason,
+        placeholder: "why the gate is being overridden\u2026",
+        onChange: (e) => setReason(e.target.value),
+        onKeyDown: (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            submit();
+          }
+          if (e.key === "Escape" && !busy) onClose();
+        },
+        style: { height: 22, boxSizing: "border-box" }
+      }
+    ), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.52rem", color: short ? "var(--qe-amber)" : "var(--qe-green)" } }, reason.trim().length, "/", DD_OVERRIDE_MIN_REASON, " min")), err ? /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-red)" } }, err) : null)
+  );
+};
 const RiskMonitorPane = () => {
   const d = useDash();
   const rk = d.risk, st = d.st;
   const ddState = st.dd_state || rk.dd_state || "ok";
   const enforced = st.dd_enforcement_mode === "enforced";
+  const ddOverridden = !!st.dd_manually_unblocked;
+  const canOverride = ddState === "limit" && enforced;
   return /* @__PURE__ */ React.createElement(
     Pane,
     {
@@ -2894,7 +2992,29 @@ const RiskMonitorPane = () => {
       right: /* @__PURE__ */ React.createElement(Badge, { tone: enforced ? "err" : "info" }, enforced ? "ENFORCED" : "ADVISORY"),
       foot: _dashFoot(d, "st", d.st && d.st.dd_state != null)
     },
-    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 14 } }, /* @__PURE__ */ React.createElement(Gauge, { label: "Net Exposure", value: rk.exposure_pct != null ? rk.exposure_pct / 100 : 0, max: (rk.max_exposure_pct || 500) / 100, current: rk.exposure_pct != null ? _n(rk.exposure_pct / 100, 2) + "\xD7" : "\u2014", maxLabel: `${_n(rk.max_exposure_pct / 100, 1)}\xD7 cap` }), /* @__PURE__ */ React.createElement(Gauge, { label: "Drawdown 30d", value: Math.min(rk.drawdown_pct || 0, rk.max_dd_pct || 10), max: rk.max_dd_pct || 10, current: _n(rk.drawdown_pct) + "%", maxLabel: `${_n(rk.max_dd_pct)}% limit`, ticks: [0.5, 0.8].map((f) => f * (rk.max_dd_pct || 10)) }), /* @__PURE__ */ React.createElement(Gauge, { label: "Weekly Loss", value: Math.max(0, -(d.equity.weekly_pnl_pct || 0)), max: ((d.journal.params || {}).max_weekly_loss_pct || 0.05) * 100, current: d.equity.weekly_pnl_pct != null ? _sn(d.equity.weekly_pnl_pct) + "%" : "\u2014", maxLabel: `${_n(((d.journal.params || {}).max_weekly_loss_pct || 0.05) * 100, 1)}% cap` }), /* @__PURE__ */ React.createElement(Gauge, { label: "Positions", value: rk.positions_open || 0, max: rk.positions_max || 20, current: `${rk.positions_open || 0}/${rk.positions_max || 20}`, maxLabel: "capacity" }), /* @__PURE__ */ React.createElement("div", { className: "qe-divider-h" }), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "DD STATE"), /* @__PURE__ */ React.createElement(Badge, { tone: _stateTone(ddState) }, enforced && ddState === "limit" ? "HALTED" : _stateLabel(ddState))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "WEEKLY"), /* @__PURE__ */ React.createElement(Badge, { tone: _stateTone(st.weekly_pnl_state || rk.weekly_pnl_state) }, _stateLabel(st.weekly_pnl_state || rk.weekly_pnl_state)))), (rk.funding_lines || []).length > 0 && /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-muted)" } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, "FUNDING "), (rk.funding_lines || []).join(" \xB7 ")), (rk.sector_lines || []).length > 0 && /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-muted)" } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, "SECTOR "), (rk.sector_lines || []).join(" \xB7 ")))
+    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 14 } }, /* @__PURE__ */ React.createElement(Gauge, { label: "Net Exposure", value: rk.exposure_pct != null ? rk.exposure_pct / 100 : 0, max: (rk.max_exposure_pct || 500) / 100, current: rk.exposure_pct != null ? _n(rk.exposure_pct / 100, 2) + "\xD7" : "\u2014", maxLabel: `${_n(rk.max_exposure_pct / 100, 1)}\xD7 cap` }), /* @__PURE__ */ React.createElement(Gauge, { label: "Drawdown 30d", value: Math.min(rk.drawdown_pct || 0, rk.max_dd_pct || 10), max: rk.max_dd_pct || 10, current: _n(rk.drawdown_pct) + "%", maxLabel: `${_n(rk.max_dd_pct)}% limit`, ticks: [0.5, 0.8].map((f) => f * (rk.max_dd_pct || 10)) }), /* @__PURE__ */ React.createElement(Gauge, { label: "Weekly Loss", value: Math.max(0, -(d.equity.weekly_pnl_pct || 0)), max: ((d.journal.params || {}).max_weekly_loss_pct || 0.05) * 100, current: d.equity.weekly_pnl_pct != null ? _sn(d.equity.weekly_pnl_pct) + "%" : "\u2014", maxLabel: `${_n(((d.journal.params || {}).max_weekly_loss_pct || 0.05) * 100, 1)}% cap` }), /* @__PURE__ */ React.createElement(Gauge, { label: "Positions", value: rk.positions_open || 0, max: rk.positions_max || 20, current: `${rk.positions_open || 0}/${rk.positions_max || 20}`, maxLabel: "capacity" }), /* @__PURE__ */ React.createElement("div", { className: "qe-divider-h" }), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "DD STATE"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Badge, { tone: _stateTone(ddState) }, enforced && ddState === "limit" ? "HALTED" : _stateLabel(ddState)), ddOverridden ? /* @__PURE__ */ React.createElement("span", { title: "Manual override active \u2014 new calcs unblocked until the drawdown recovers" }, /* @__PURE__ */ React.createElement(Badge, { tone: "warn" }, "OVERRIDDEN")) : canOverride ? /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        className: "qe-btn qe-btn-sm qe-btn-ghost",
+        disabled: st.account_id == null,
+        onClick: () => QE_DASH.setUi({ ddOverride: true }),
+        title: st.account_id == null ? "waiting for engine state\u2026" : "Manually unblock new sizing calcs (reason required)"
+      },
+      "Override"
+    ) : null)), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "WEEKLY"), /* @__PURE__ */ React.createElement(Badge, { tone: _stateTone(st.weekly_pnl_state || rk.weekly_pnl_state) }, _stateLabel(st.weekly_pnl_state || rk.weekly_pnl_state)))), (rk.funding_lines || []).length > 0 && /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-muted)" } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, "FUNDING "), (rk.funding_lines || []).join(" \xB7 ")), (rk.sector_lines || []).length > 0 && /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-muted)" } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, "SECTOR "), (rk.sector_lines || []).join(" \xB7 ")))
+  );
+};
+const DdOverrideHost = () => {
+  const d = useDash();
+  if (!d.ui || !d.ui.ddOverride || d.st.account_id == null) return null;
+  return /* @__PURE__ */ React.createElement(
+    DdOverrideDialog,
+    {
+      accountId: d.st.account_id,
+      drawdownPct: d.st.drawdown != null ? d.st.drawdown * 100 : d.risk.drawdown_pct,
+      onClose: () => QE_DASH.setUi({ ddOverride: false }),
+      onDone: () => QE_DASH.refreshState()
+    }
   );
 };
 const OpenPositionsPane = () => {
@@ -3144,8 +3264,11 @@ const DashTiled = () => {
     background: "var(--qe-bg)",
     display: "flex",
     flexDirection: "column",
-    overflow: "hidden"
-  } }, /* @__PURE__ */ React.createElement(TopNavStd, { page: "Dashboard", variant: "line", dense: true }), /* @__PURE__ */ React.createElement(PageHeader, { title: "Dashboard", subtitle: "live positions \xB7 equity \xB7 risk \xB7 open orders" }, /* @__PURE__ */ React.createElement(DashHeaderDots, null)), /* @__PURE__ */ React.createElement(DashHaltBanner, null), /* @__PURE__ */ React.createElement(WatchlistTape, null), /* @__PURE__ */ React.createElement(TiledGrid, null), /* @__PURE__ */ React.createElement(DashNewsTicker, null), /* @__PURE__ */ React.createElement(StatusFooter, null));
+    overflow: "hidden",
+    // anchors DdOverrideHost's absolutely-positioned ModelDialog, matching
+    // every other dialog-hosting page root (linkage/models/history)
+    position: "relative"
+  } }, /* @__PURE__ */ React.createElement(TopNavStd, { page: "Dashboard", variant: "line", dense: true }), /* @__PURE__ */ React.createElement(PageHeader, { title: "Dashboard", subtitle: "live positions \xB7 equity \xB7 risk \xB7 open orders" }, /* @__PURE__ */ React.createElement(DashHeaderDots, null)), /* @__PURE__ */ React.createElement(DashHaltBanner, null), /* @__PURE__ */ React.createElement(WatchlistTape, null), /* @__PURE__ */ React.createElement(TiledGrid, null), /* @__PURE__ */ React.createElement(DashNewsTicker, null), /* @__PURE__ */ React.createElement(DdOverrideHost, null), /* @__PURE__ */ React.createElement(StatusFooter, null));
 };
 Object.assign(window, { DashTiled, QE_DASH });
 
@@ -4908,7 +5031,7 @@ Object.assign(window, {
 ;
 
 /* ==== pages-linkage.jsx ==== */
-const _lkForm = async (url, fields, method = "POST") => {
+const _lkForm = async (url, fields, method = "POST", opts = {}) => {
   const body = new URLSearchParams();
   Object.entries(fields || {}).forEach(([k, v]) => {
     if (v != null) body.append(k, v);
@@ -4919,6 +5042,14 @@ const _lkForm = async (url, fields, method = "POST") => {
     body: body.toString()
   });
   const raw = await r.text();
+  if (opts.jsonOk) {
+    let data = {};
+    try {
+      data = JSON.parse(raw) || {};
+    } catch (e) {
+    }
+    return { ok: r.ok, data, text: data.error || _ptStrip(raw) };
+  }
   return {
     ok: r.ok && !/alert-(error|warning)/.test(raw),
     text: _ptStrip(raw)
@@ -5031,7 +5162,7 @@ const LkReasonResolver = ({ item, onDone }) => {
     setBusy(true);
     setMsg(null);
     try {
-      const r = await _lkForm(`/history/close_reason/${item.id}`, { exit_reason: pick, close_note: note }, "PUT");
+      const r = await _lkForm(`/history/close_reason/${item.id}`, { exit_reason: pick, close_note: note }, "PUT", { jsonOk: true });
       setMsg({ text: r.ok ? "reason saved" : r.text || "save failed", ok: r.ok });
       if (r.ok) onDone(`${item.symbol} close \u2192 ${(LP_EXIT_REASONS[pick] || {}).label || pick}`);
     } catch (e) {
@@ -5544,6 +5675,127 @@ const H_TABS = [
   ["events", "Trade Events", "/fragments/history/trade_events"],
   ["pretrade", "Pre-Trade Log", "/fragments/history/pre_trade"]
 ];
+const HNOTE_EDITING = /* @__PURE__ */ new Set();
+const HNoteCell = ({ row, onSaved }) => {
+  const [editing, setEditing] = React.useState(false);
+  const [val, setVal] = React.useState(row.notes || "");
+  const [phase, setPhase] = React.useState(null);
+  const [saved, setSaved] = React.useState(null);
+  const guard = React.useRef(false);
+  const openedWith = React.useRef("");
+  const stored = (row.notes || "").trim();
+  const shown = saved != null ? saved : stored;
+  React.useEffect(() => {
+    if (saved != null && stored === saved) setSaved(null);
+  }, [stored, saved]);
+  React.useEffect(() => {
+    if (!editing) setVal(row.notes || "");
+  }, [row.notes, editing]);
+  const open = (e) => {
+    if (e) e.stopPropagation();
+    const cur = row.notes || "";
+    setVal(cur);
+    openedWith.current = cur;
+    setPhase(null);
+    guard.current = false;
+    setEditing(true);
+    HNOTE_EDITING.add(row.id);
+  };
+  const done = () => {
+    setEditing(false);
+    HNOTE_EDITING.delete(row.id);
+  };
+  const cancel = () => {
+    guard.current = true;
+    setPhase(null);
+    done();
+  };
+  const commit = async () => {
+    if (guard.current) return;
+    guard.current = true;
+    const next = val.trim();
+    if (next === openedWith.current.trim() || next === stored) {
+      setPhase(null);
+      done();
+      return;
+    }
+    setPhase("busy");
+    try {
+      const r = await _lkForm(`/history/notes/pre_trade/${row.id}`, { notes: next }, "PUT", { jsonOk: true });
+      if (r.ok) {
+        setSaved(next);
+        setPhase(null);
+        done();
+        if (onSaved) onSaved();
+        return;
+      }
+    } catch (e) {
+    }
+    setPhase("err");
+  };
+  if (editing) {
+    const bad = phase === "err";
+    return /* @__PURE__ */ React.createElement("span", { onClick: (e) => e.stopPropagation(), style: { display: "inline-flex", alignItems: "center", gap: 4 } }, /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        className: "qe-input",
+        autoFocus: true,
+        value: val,
+        placeholder: "note\u2026",
+        readOnly: phase === "busy",
+        onChange: (e) => {
+          guard.current = false;
+          setPhase(null);
+          setVal(e.target.value);
+        },
+        onBlur: commit,
+        onKeyDown: (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            cancel();
+          }
+        },
+        style: {
+          width: 190,
+          height: 20,
+          boxSizing: "border-box",
+          fontSize: "0.6rem",
+          borderColor: bad ? "var(--qe-red)" : void 0
+        }
+      }
+    ), bad ? /* @__PURE__ */ React.createElement(
+      "span",
+      {
+        className: "qe-mono",
+        title: "the engine rejected or never received the save",
+        style: { fontSize: "0.52rem", color: "var(--qe-red)", whiteSpace: "nowrap" }
+      },
+      "save failed \xB7 edit + Enter"
+    ) : null, phase === "busy" ? /* @__PURE__ */ React.createElement(Spinner, { size: "0.55rem" }) : null);
+  }
+  return /* @__PURE__ */ React.createElement(
+    "span",
+    {
+      onClick: open,
+      title: shown ? "Click to edit" : "Click to add a note",
+      style: {
+        cursor: "pointer",
+        fontSize: "0.6rem",
+        maxWidth: 190,
+        display: "inline-block",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+        verticalAlign: "bottom",
+        color: shown ? "var(--qe-sub)" : "var(--qe-muted)"
+      }
+    },
+    shown || "+ note"
+  );
+};
 const HReasonModal = ({ row, onClose, onSaved }) => {
   const [pick, setPick] = React.useState(null);
   const [note, setNote] = React.useState(row.close_note || "");
@@ -5553,7 +5805,7 @@ const HReasonModal = ({ row, onClose, onSaved }) => {
     setBusy(true);
     setErr(null);
     try {
-      const r = await _lkForm(`/history/close_reason/${row.id}`, { exit_reason: pick, close_note: note }, "PUT");
+      const r = await _lkForm(`/history/close_reason/${row.id}`, { exit_reason: pick, close_note: note }, "PUT", { jsonOk: true });
       if (r.ok) {
         onSaved();
         onClose();
@@ -5618,7 +5870,9 @@ const HistoryPage = () => {
     load();
   }, [load]);
   React.useEffect(() => {
-    const t = setInterval(load, 3e4);
+    const t = setInterval(() => {
+      if (HNOTE_EDITING.size === 0) load();
+    }, 3e4);
     return () => clearInterval(t);
   }, [load]);
   React.useEffect(() => {
@@ -5856,7 +6110,21 @@ const HistoryPage = () => {
       { key: "sl_price", label: "SL", align: "right", render: (r) => /* @__PURE__ */ React.createElement("span", { className: "qe-dn" }, lpPx(r.sl_price)) },
       { key: "size", label: "SIZE", align: "right", render: (r) => _ptFmtSz(r.size) },
       { key: "model_display", label: "MODEL", render: (r) => /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, r.model_display || "\u2014") },
-      { key: "status", label: "LINK", render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: ["matched", "linked"].includes(r.status) ? "ok" : r.status === "active" ? "info" : "mute" }, (r.status || "").toUpperCase()) }
+      { key: "status", label: "LINK", render: (r) => /* @__PURE__ */ React.createElement(Badge, { tone: ["matched", "linked"].includes(r.status) ? "ok" : r.status === "active" ? "info" : "mute" }, (r.status || "").toUpperCase()) },
+      // notes ride the JSON rows already (the door is SELECT *); the write goes
+      // to PUT /history/notes/pre_trade/{id}. `load` re-reads the page so the
+      // committed text comes back from the server, not from local state.
+      // `filter:false` — free text must never auto-become a facet dropdown
+      // (DataList auto-facets short, low-cardinality columns). sort/search read
+      // the TRIMMED value so they agree with what the cell renders.
+      {
+        key: "notes",
+        label: "NOTES",
+        filter: false,
+        sortVal: (r) => (r.notes || "").trim().toLowerCase(),
+        searchVal: (r) => (r.notes || "").trim(),
+        render: (r) => /* @__PURE__ */ React.createElement(HNoteCell, { row: r, onSaved: load })
+      }
     ]
   };
   const summary = (() => {

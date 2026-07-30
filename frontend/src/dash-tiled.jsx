@@ -17,6 +17,12 @@ const QE_DASH = (function () {
     equity: {}, risk: {}, journal: {}, regime: null,
     positions: [],          // snapshot rows; SSE position_update refreshes upnl/pct
     st: {},                 // /api/state (halted, blocked, dd_state, weekly_pnl_state, …)
+    // UI state that must be read OUTSIDE the tile that raises it: ModelDialog is
+    // position:absolute and Pane is position:relative, so a dialog rendered
+    // inside a tile would be CLIPPED to it. The flag lives here so the trigger
+    // (RiskMonitorPane, deep in the memoized grid) and the page-level host can
+    // meet without making DashTiled/TiledGrid subscribers.
+    ui: { ddOverride: false },
     macro: [],              // /api/regime/signals/latest
     log: [],                // engine-log lines, newest-first for the prepend feed
     logCursor: 0,
@@ -140,9 +146,18 @@ const QE_DASH = (function () {
     _timers.forEach(clearInterval);
     _timers.length = 0;
     started = false;
+    // `ui` is module-level, so a dialog left open would re-raise itself on the
+    // next visit to the Dashboard.
+    state.ui = { ddOverride: false };
   }
 
-  return { start, stop, get: () => state, subscribe(fn) { subs.add(fn); return () => subs.delete(fn); } };
+  function setUi(patch) { state.ui = { ...state.ui, ...patch }; notify(); }
+
+  // refreshState: an out-of-band /api/state pull, so a write the operator just
+  // made reflects without waiting out the 5 s poll. Fire-and-forget — the
+  // DD-override dialog closes immediately and the badge flips when it lands.
+  return { start, stop, refreshState: loadState, setUi, get: () => state,
+    subscribe(fn) { subs.add(fn); return () => subs.delete(fn); } };
 })();
 
 /* Subscribe a component to QE_DASH updates. Used at the LEAF level so the
@@ -338,11 +353,108 @@ const EquityCurvePane = () => {
 /* ── Tile: Risk monitor ─────────────────────────────────────────────────── */
 const _stateTone = (s) => s === 'limit' ? 'err' : s === 'warning' ? 'warn' : 'ok';
 const _stateLabel = (s) => s === 'limit' ? 'LIMIT' : s === 'warning' ? 'WARN' : 'OK';
+
+/* JSON POST — the dd_override door takes a JSON body (not form-encoded like
+   the /orders/* actions), so it gets its own tiny helper rather than reusing
+   pages-linkage's `_lkForm`. Returns {ok, data}; a non-2xx carries
+   `data.error` (the engine's operator-facing string). */
+const _dashPostJson = async (url, payload) => {
+  const r = await fetch(url, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload || {}),
+  });
+  let data = {};
+  // `|| {}`: JSON.parse('null') SUCCEEDS and yields null, so a bare-null body
+  // would make the caller's `data.error` throw and get mislabelled "engine
+  // unreachable".
+  try { data = JSON.parse(await r.text()) || {}; } catch (e) { /* non-JSON body */ }
+  return { ok: r.ok, data };
+};
+
+/* DD-gate manual override (ported from the retired Jinja fragment, 2026-07-30).
+   The engine requires a reason of >= 10 chars, refuses unless dd_state is
+   'limit', and refuses any account that is not the ACTIVE one; all three rules
+   are mirrored here so the operator is never sent into a guaranteed reject.
+   This is the surface Pre-Trade's halt banner points at with "override via
+   Dashboard".
+
+   `accountId` MUST come from /api/state (`st.account_id`) — never from
+   QE_BOOTSTRAP, which is baked at page load and goes stale the moment an
+   account is activated from the Config page (that path refetches data without
+   reloading). A stale id used to target the wrong account behind a 200. */
+const DD_OVERRIDE_MIN_REASON = 10;
+const DdOverrideDialog = ({ accountId, drawdownPct, onClose, onDone }) => {
+  const [reason, setReason] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState(null);
+  const short = reason.trim().length < DD_OVERRIDE_MIN_REASON;
+
+  const submit = async () => {
+    if (busy || short) return;
+    setBusy(true); setErr(null);
+    try {
+      const { ok, data } = await _dashPostJson(`/account/${accountId}/dd_override`,
+        { reason: reason.trim() });
+      if (ok) { if (onDone) onDone(); onClose(); return; }
+      setErr(data.error || 'override rejected');
+    } catch (e) { setErr('override failed — engine unreachable?'); }
+    setBusy(false);
+  };
+
+  return (
+    <ModelDialog title="Override DD gate" width={430} onClose={() => { if (!busy) onClose(); }}
+      footer={<React.Fragment>
+        <button className="qe-btn qe-btn-sm qe-btn-ghost" disabled={busy} onClick={onClose}>Keep gate</button>
+        <button className="qe-btn qe-btn-sm qe-btn-danger" disabled={busy || short} onClick={submit}
+          title={short ? `reason must be at least ${DD_OVERRIDE_MIN_REASON} characters` : 'Unblock new sizing calcs'}>
+          {busy ? <Spinner size="0.62rem" /> : 'Override gate'}
+        </button>
+      </React.Fragment>}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          <Badge tone="err">DD LIMIT</Badge>
+          <span className="qe-mono" style={{ fontSize: '0.62rem', color: 'var(--qe-sub)' }}>
+            drawdown {drawdownPct == null ? '—' : _n(drawdownPct) + '%'}
+          </span>
+        </div>
+        <div className="qe-mono" style={{ fontSize: '0.56rem', color: 'var(--qe-muted)', lineHeight: 1.5 }}>
+          Unblocks NEW sizing calcs until the drawdown recovers — the next limit
+          episode re-engages the gate automatically. Open positions are not
+          affected. The reason is written to the account event log.
+        </div>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span style={{ fontFamily: 'var(--qe-ui)', fontSize: '0.52rem', fontWeight: 700, letterSpacing: '0.09em', textTransform: 'uppercase', color: 'var(--qe-sub)' }}>
+            Reason (required)
+          </span>
+          <input className="qe-input" autoFocus value={reason} placeholder="why the gate is being overridden…"
+            onChange={(e) => setReason(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); submit(); }
+              if (e.key === 'Escape' && !busy) onClose();
+            }}
+            style={{ height: 22, boxSizing: 'border-box' }} />
+          <span className="qe-mono" style={{ fontSize: '0.52rem', color: short ? 'var(--qe-amber)' : 'var(--qe-green)' }}>
+            {reason.trim().length}/{DD_OVERRIDE_MIN_REASON} min
+          </span>
+        </label>
+        {err ? <span className="qe-mono" style={{ fontSize: '0.56rem', color: 'var(--qe-red)' }}>{err}</span> : null}
+      </div>
+    </ModelDialog>
+  );
+};
+
 const RiskMonitorPane = () => {
   const d = useDash();
   const rk = d.risk, st = d.st;
   const ddState = st.dd_state || rk.dd_state || 'ok';
   const enforced = st.dd_enforcement_mode === 'enforced';
+  const ddOverridden = !!st.dd_manually_unblocked;
+  // Offer the override only where it BOTH applies and does something: the route
+  // refuses unless dd_state is 'limit', and in advisory mode dd_gate already
+  // allows entries, so an "override" there would persist an approval for a gate
+  // that is not gating. (The fail-closed settings-unreadable lane halts with
+  // dd_state != 'limit'; the route would reject it, so no button — filed.)
+  const canOverride = ddState === 'limit' && enforced;
   return (
     <Pane title="Risk Monitor" style={{ height: '100%' }}
       right={<Badge tone={enforced ? 'err' : 'info'}>{enforced ? 'ENFORCED' : 'ADVISORY'}</Badge>}
@@ -359,7 +471,23 @@ const RiskMonitorPane = () => {
         <Gauge label="Positions" value={rk.positions_open || 0} max={rk.positions_max || 20} current={`${rk.positions_open || 0}/${rk.positions_max || 20}`} maxLabel="capacity" />
         <div className="qe-divider-h" />
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-          <div><Lbl>DD STATE</Lbl><Badge tone={_stateTone(ddState)}>{enforced && ddState === 'limit' ? 'HALTED' : _stateLabel(ddState)}</Badge></div>
+          <div><Lbl>DD STATE</Lbl>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+              <Badge tone={_stateTone(ddState)}>{enforced && ddState === 'limit' ? 'HALTED' : _stateLabel(ddState)}</Badge>
+              {/* DD-override control (ported 2026-07-30). Only reachable in the
+                  state the engine accepts: dd_state == 'limit' and not already
+                  overridden. Once set it reads OVERRIDDEN until recovery. */}
+              {ddOverridden
+                ? <span title="Manual override active — new calcs unblocked until the drawdown recovers"><Badge tone="warn">OVERRIDDEN</Badge></span>
+                : canOverride
+                  ? <button className="qe-btn qe-btn-sm qe-btn-ghost" disabled={st.account_id == null}
+                      onClick={() => QE_DASH.setUi({ ddOverride: true })}
+                      title={st.account_id == null
+                        ? 'waiting for engine state…'
+                        : 'Manually unblock new sizing calcs (reason required)'}>Override</button>
+                  : null}
+            </div>
+          </div>
           <div><Lbl>WEEKLY</Lbl><Badge tone={_stateTone(st.weekly_pnl_state || rk.weekly_pnl_state)}>{_stateLabel(st.weekly_pnl_state || rk.weekly_pnl_state)}</Badge></div>
         </div>
         {(rk.funding_lines || []).length > 0 &&
@@ -374,6 +502,26 @@ const RiskMonitorPane = () => {
           </div>}
       </div>
     </Pane>
+  );
+};
+
+/* Page-level host for the DD-override dialog — see the `ui` note in QE_DASH:
+   rendering it inside RiskMonitorPane would clip it to that tile. A leaf
+   subscriber, so DashTiled/TiledGrid stay unsubscribed + memoized. */
+const DdOverrideHost = () => {
+  const d = useDash();
+  // No live account id → no dialog. Never fall back to a literal id: account 1
+  // is the one that exists live, so a fallback would silently unblock a real
+  // account's DD gate.
+  if (!d.ui || !d.ui.ddOverride || d.st.account_id == null) return null;
+  return (
+    <DdOverrideDialog
+      accountId={d.st.account_id}
+      // st.drawdown is SSE-live; risk.drawdown_pct is the 15 s snapshot poll, so
+      // it could show a stale figure beside a fresh DD LIMIT badge.
+      drawdownPct={d.st.drawdown != null ? d.st.drawdown * 100 : d.risk.drawdown_pct}
+      onClose={() => QE_DASH.setUi({ ddOverride: false })}
+      onDone={() => QE_DASH.refreshState()} />
   );
 };
 
@@ -659,6 +807,9 @@ const DashTiled = () => {
     <div className="qe-scope" data-screen-label="01 Dashboard" style={{
       width: '100%', height: '100%', background: 'var(--qe-bg)',
       display: 'flex', flexDirection: 'column', overflow: 'hidden',
+      // anchors DdOverrideHost's absolutely-positioned ModelDialog, matching
+      // every other dialog-hosting page root (linkage/models/history)
+      position: 'relative',
     }}>
       <TopNavStd page="Dashboard" variant="line" dense />
       <PageHeader title="Dashboard" subtitle="live positions · equity · risk · open orders">
@@ -668,6 +819,7 @@ const DashTiled = () => {
       <WatchlistTape />
       <TiledGrid />
       <DashNewsTicker />
+      <DdOverrideHost />
       <StatusFooter />
     </div>
   );
