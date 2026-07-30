@@ -66,7 +66,7 @@ const _cfgFriendly = (raw) => {
   return t;
 };
 
-const _cfgPostForm = async (url, fields, method = 'POST') => {
+const _cfgPostForm = async (url, fields, method = 'POST', opts = {}) => {
   const body = new URLSearchParams();
   Object.entries(fields || {}).forEach(([k, v]) => { if (v != null) body.append(k, v); });
   const r = await fetch(url, {
@@ -74,7 +74,15 @@ const _cfgPostForm = async (url, fields, method = 'POST') => {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body.toString(),
   });
-  return { ok: r.ok, text: _cfgFriendly(_cfgStrip(await r.text())) };
+  const raw = await r.text();
+  // `json`: the door answers JSON (POST /accounts), so return the parsed body
+  // — HTML-stripping it would hand the caller a JSON string to read by eye.
+  if (opts.json) {
+    let data = {};
+    try { data = JSON.parse(raw) || {}; } catch (e) { /* non-JSON error page */ }
+    return { ok: r.ok, data, text: data.error || _cfgFriendly(_cfgStrip(raw)) };
+  }
+  return { ok: r.ok, text: _cfgFriendly(_cfgStrip(raw)) };
 };
 
 const _cfgPostJson = async (url, payload) => {
@@ -365,7 +373,128 @@ const CfgAccountForm = ({ account, detail, onReload }) => {
   );
 };
 
+/* Add Account (wired 2026-07-30 — operator report "add account in config not
+   working"). This button shipped DISABLED at P2 with the title "add accounts
+   via the current /config page", so on the React app it genuinely did nothing;
+   the workaround pointed at a Jinja page that is now the last of its kind.
+
+   POSTs form-encoded to /accounts, which answers JSON. `environment` and
+   `params_source` used to be accepted only by the HTML-returning
+   /accounts/add-and-reload twin — they are now on the JSON door too, which is
+   what unblocked this. Credentials are typed by the operator and posted
+   straight to the engine; nothing is logged or echoed back. */
+const CfgAddAccountDialog = ({ accounts, onClose, onCreated }) => {
+  const [f, setF] = React.useState({
+    name: '', exchange: 'binance', market_type: 'future',
+    environment: 'live', params_source: 'defaults',
+    api_key: '', api_secret: '',
+  });
+  const [cat, setCat] = React.useState(null);     // /api/config/exchanges
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState(null);
+  const set = (k) => (e) => setF((p) => ({ ...p, [k]: e.target.value }));
+
+  React.useEffect(() => {
+    let alive = true;
+    _cfgJson('/api/config/exchanges')
+      .then((d) => { if (alive) setCat(d); })
+      .catch(() => { if (alive) setCat({ exchanges: [], market_types: [] }); });
+    return () => { alive = false; };
+  }, []);
+
+  const incomplete = !f.name.trim() || !f.api_key.trim() || !f.api_secret.trim();
+  const submit = async () => {
+    if (busy || incomplete) return;
+    setBusy(true); setErr(null);
+    try {
+      const r = await _cfgPostForm('/accounts', f, 'POST', { json: true });
+      if (r.ok && r.data.status === 'ok') { onCreated(r.data.id); onClose(); return; }
+      setErr(r.text || 'could not create the account');
+    } catch (e) { setErr('create failed — engine unreachable?'); }
+    setBusy(false);
+  };
+
+  const Field = ({ label, children }) => (
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <span style={{ fontFamily: 'var(--qe-ui)', fontSize: '0.52rem', fontWeight: 700, letterSpacing: '0.09em', textTransform: 'uppercase', color: 'var(--qe-sub)' }}>{label}</span>
+      {children}
+    </label>
+  );
+
+  return (
+    <ModelDialog title="Add Account" width={480} onClose={() => { if (!busy) onClose(); }}
+      footer={<React.Fragment>
+        <button className="qe-btn qe-btn-sm qe-btn-ghost" disabled={busy} onClick={onClose}>Cancel</button>
+        <button className="qe-btn qe-btn-sm qe-btn-primary" disabled={busy || incomplete}
+          title={incomplete ? 'name, API key and API secret are required' : 'Create the account'}
+          onClick={submit}>{busy ? <Spinner size="0.62rem" /> : 'Add account'}</button>
+      </React.Fragment>}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}
+        onKeyDown={(e) => { if (e.key === 'Enter' && !incomplete) { e.preventDefault(); submit(); } }}>
+        <Field label="Account name">
+          <input className="qe-input" autoFocus value={f.name} placeholder="e.g. Binance Main"
+            onChange={set('name')} style={{ height: 24, boxSizing: 'border-box' }} />
+        </Field>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          <Field label="Exchange">
+            <select className="qe-input qe-select" value={f.exchange} onChange={set('exchange')}
+              style={{ height: 24 }} disabled={!cat}>
+              {(cat && cat.exchanges || []).map((x) => (
+                <option key={x.value} value={x.value}>{x.label}</option>
+              ))}
+              {/* pre-catalog placeholder so the control is never an empty box */}
+              {!cat ? <option value="binance">loading…</option> : null}
+            </select>
+          </Field>
+          <Field label="Market type">
+            <select className="qe-input qe-select" value={f.market_type} onChange={set('market_type')}
+              style={{ height: 24 }} disabled={!cat}>
+              {(cat && cat.market_types || ['future']).map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          </Field>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          <Field label="Environment">
+            <select className="qe-input qe-select" value={f.environment} onChange={set('environment')} style={{ height: 24 }}>
+              <option value="live">Live</option>
+              <option value="paper">Paper</option>
+              <option value="testnet">Testnet</option>
+            </select>
+          </Field>
+          <Field label="Initial parameters">
+            <select className="qe-input qe-select" value={f.params_source} onChange={set('params_source')} style={{ height: 24 }}>
+              <option value="defaults">Use defaults</option>
+              {(accounts || []).map((a) => (
+                <option key={a.id} value={'copy_' + a.id}>Copy from: {a.name}</option>
+              ))}
+            </select>
+          </Field>
+        </div>
+        <Field label="API key">
+          <input className="qe-input" value={f.api_key} onChange={set('api_key')}
+            autoComplete="off" spellCheck={false} placeholder="API key"
+            style={{ height: 24, boxSizing: 'border-box', fontFamily: 'var(--qe-mono)' }} />
+        </Field>
+        <Field label="API secret">
+          <input className="qe-input" type="password" value={f.api_secret} onChange={set('api_secret')}
+            autoComplete="new-password" placeholder="API secret"
+            style={{ height: 24, boxSizing: 'border-box', fontFamily: 'var(--qe-mono)' }} />
+        </Field>
+        <div className="qe-mono" style={{ fontSize: '0.54rem', color: 'var(--qe-muted)', lineHeight: 1.5 }}>
+          Credentials are encrypted at rest by the engine. The new account is
+          NOT activated — use Activate on its card once you have tested the
+          connection.
+        </div>
+        {err ? <span className="qe-mono" style={{ fontSize: '0.56rem', color: 'var(--qe-red)' }}>{err}</span> : null}
+      </div>
+    </ModelDialog>
+  );
+};
+
 const CfgAccountsTab = () => {
+  const [adding, setAdding] = React.useState(false);
   const [accounts, setAccounts] = React.useState(null);  // null = loading
   const [acct, setAcct]         = React.useState(null);  // selected id
   const [detail, setDetail]     = React.useState(null);  // {params, settings} for acct
@@ -420,6 +549,7 @@ const CfgAccountsTab = () => {
   const sel = (accounts || []).find((a) => a.id === acct);
 
   return (
+    <React.Fragment>
     <GridWorkspace>
       <GridItem x={0} y={0} w={6} h={20} minW={4} minH={6}>
         <Pane title="Accounts" count={accounts ? accounts.length : null} style={{ height: '100%' }}
@@ -444,8 +574,9 @@ const CfgAccountsTab = () => {
                   </div>
                 </Card>
               ))}
-              <button className="qe-btn qe-btn-primary qe-btn-sm" disabled
-                title="Not wired in P2 — add accounts via the current /config page"
+              <button className="qe-btn qe-btn-primary qe-btn-sm"
+                title="Add a new exchange account"
+                onClick={() => setAdding(true)}
                 style={{ marginTop: 4, justifyContent: 'center' }}>+ Add Account</button>
             </div>
           )}
@@ -466,6 +597,16 @@ const CfgAccountsTab = () => {
         </Pane>
       </GridItem>
     </GridWorkspace>
+    {/* Sibling of the workspace, NOT inside a Pane: ModelDialog is
+        position:absolute and Pane is position:relative, so a dialog mounted
+        in a tile would be clipped to it. */}
+    {adding && (
+      <CfgAddAccountDialog
+        accounts={accounts || []}
+        onClose={() => setAdding(false)}
+        onCreated={async (id) => { await loadAccounts(true); setAcct(id); }} />
+    )}
+    </React.Fragment>
   );
 };
 
@@ -830,6 +971,9 @@ const ConfigPage = () => {
     <div className="qe-scope" data-screen-label="08 Config" style={{
       width: '100%', height: '100%', background: 'var(--qe-bg)',
       display: 'flex', flexDirection: 'column', overflow: 'hidden',
+      // anchors the Add-Account ModelDialog, matching the other dialog-hosting
+      // page roots (linkage / models / dashboard)
+      position: 'relative',
     }}>
       <TopNavStd page="Config" variant="line" dense />
       <PageHeader title="Configuration" subtitle="accounts · connections · risk parameters · presets" />

@@ -3322,7 +3322,7 @@ const _cfgFriendly = (raw) => {
   }
   return t;
 };
-const _cfgPostForm = async (url, fields, method = "POST") => {
+const _cfgPostForm = async (url, fields, method = "POST", opts = {}) => {
   const body = new URLSearchParams();
   Object.entries(fields || {}).forEach(([k, v]) => {
     if (v != null) body.append(k, v);
@@ -3332,7 +3332,16 @@ const _cfgPostForm = async (url, fields, method = "POST") => {
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString()
   });
-  return { ok: r.ok, text: _cfgFriendly(_cfgStrip(await r.text())) };
+  const raw = await r.text();
+  if (opts.json) {
+    let data = {};
+    try {
+      data = JSON.parse(raw) || {};
+    } catch (e) {
+    }
+    return { ok: r.ok, data, text: data.error || _cfgFriendly(_cfgStrip(raw)) };
+  }
+  return { ok: r.ok, text: _cfgFriendly(_cfgStrip(raw)) };
 };
 const _cfgPostJson = async (url, payload) => {
   const r = await fetch(url, {
@@ -3533,7 +3542,145 @@ const CfgAccountForm = ({ account, detail, onReload }) => {
     "Delete Account"
   )), /* @__PURE__ */ React.createElement(CfgMsgLine, { msg }));
 };
+const CfgAddAccountDialog = ({ accounts, onClose, onCreated }) => {
+  const [f, setF] = React.useState({
+    name: "",
+    exchange: "binance",
+    market_type: "future",
+    environment: "live",
+    params_source: "defaults",
+    api_key: "",
+    api_secret: ""
+  });
+  const [cat, setCat] = React.useState(null);
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState(null);
+  const set = (k) => (e) => setF((p) => ({ ...p, [k]: e.target.value }));
+  React.useEffect(() => {
+    let alive = true;
+    _cfgJson("/api/config/exchanges").then((d) => {
+      if (alive) setCat(d);
+    }).catch(() => {
+      if (alive) setCat({ exchanges: [], market_types: [] });
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const incomplete = !f.name.trim() || !f.api_key.trim() || !f.api_secret.trim();
+  const submit = async () => {
+    if (busy || incomplete) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await _cfgPostForm("/accounts", f, "POST", { json: true });
+      if (r.ok && r.data.status === "ok") {
+        onCreated(r.data.id);
+        onClose();
+        return;
+      }
+      setErr(r.text || "could not create the account");
+    } catch (e) {
+      setErr("create failed \u2014 engine unreachable?");
+    }
+    setBusy(false);
+  };
+  const Field = ({ label, children }) => /* @__PURE__ */ React.createElement("label", { style: { display: "flex", flexDirection: "column", gap: 3 } }, /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-ui)", fontSize: "0.52rem", fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", color: "var(--qe-sub)" } }, label), children);
+  return /* @__PURE__ */ React.createElement(
+    ModelDialog,
+    {
+      title: "Add Account",
+      width: 480,
+      onClose: () => {
+        if (!busy) onClose();
+      },
+      footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-ghost", disabled: busy, onClick: onClose }, "Cancel"), /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          className: "qe-btn qe-btn-sm qe-btn-primary",
+          disabled: busy || incomplete,
+          title: incomplete ? "name, API key and API secret are required" : "Create the account",
+          onClick: submit
+        },
+        busy ? /* @__PURE__ */ React.createElement(Spinner, { size: "0.62rem" }) : "Add account"
+      ))
+    },
+    /* @__PURE__ */ React.createElement(
+      "div",
+      {
+        style: { display: "flex", flexDirection: "column", gap: 9 },
+        onKeyDown: (e) => {
+          if (e.key === "Enter" && !incomplete) {
+            e.preventDefault();
+            submit();
+          }
+        }
+      },
+      /* @__PURE__ */ React.createElement(Field, { label: "Account name" }, /* @__PURE__ */ React.createElement(
+        "input",
+        {
+          className: "qe-input",
+          autoFocus: true,
+          value: f.name,
+          placeholder: "e.g. Binance Main",
+          onChange: set("name"),
+          style: { height: 24, boxSizing: "border-box" }
+        }
+      )),
+      /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 } }, /* @__PURE__ */ React.createElement(Field, { label: "Exchange" }, /* @__PURE__ */ React.createElement(
+        "select",
+        {
+          className: "qe-input qe-select",
+          value: f.exchange,
+          onChange: set("exchange"),
+          style: { height: 24 },
+          disabled: !cat
+        },
+        (cat && cat.exchanges || []).map((x) => /* @__PURE__ */ React.createElement("option", { key: x.value, value: x.value }, x.label)),
+        !cat ? /* @__PURE__ */ React.createElement("option", { value: "binance" }, "loading\u2026") : null
+      )), /* @__PURE__ */ React.createElement(Field, { label: "Market type" }, /* @__PURE__ */ React.createElement(
+        "select",
+        {
+          className: "qe-input qe-select",
+          value: f.market_type,
+          onChange: set("market_type"),
+          style: { height: 24 },
+          disabled: !cat
+        },
+        (cat && cat.market_types || ["future"]).map((m) => /* @__PURE__ */ React.createElement("option", { key: m, value: m }, m))
+      ))),
+      /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 } }, /* @__PURE__ */ React.createElement(Field, { label: "Environment" }, /* @__PURE__ */ React.createElement("select", { className: "qe-input qe-select", value: f.environment, onChange: set("environment"), style: { height: 24 } }, /* @__PURE__ */ React.createElement("option", { value: "live" }, "Live"), /* @__PURE__ */ React.createElement("option", { value: "paper" }, "Paper"), /* @__PURE__ */ React.createElement("option", { value: "testnet" }, "Testnet"))), /* @__PURE__ */ React.createElement(Field, { label: "Initial parameters" }, /* @__PURE__ */ React.createElement("select", { className: "qe-input qe-select", value: f.params_source, onChange: set("params_source"), style: { height: 24 } }, /* @__PURE__ */ React.createElement("option", { value: "defaults" }, "Use defaults"), (accounts || []).map((a) => /* @__PURE__ */ React.createElement("option", { key: a.id, value: "copy_" + a.id }, "Copy from: ", a.name))))),
+      /* @__PURE__ */ React.createElement(Field, { label: "API key" }, /* @__PURE__ */ React.createElement(
+        "input",
+        {
+          className: "qe-input",
+          value: f.api_key,
+          onChange: set("api_key"),
+          autoComplete: "off",
+          spellCheck: false,
+          placeholder: "API key",
+          style: { height: 24, boxSizing: "border-box", fontFamily: "var(--qe-mono)" }
+        }
+      )),
+      /* @__PURE__ */ React.createElement(Field, { label: "API secret" }, /* @__PURE__ */ React.createElement(
+        "input",
+        {
+          className: "qe-input",
+          type: "password",
+          value: f.api_secret,
+          onChange: set("api_secret"),
+          autoComplete: "new-password",
+          placeholder: "API secret",
+          style: { height: 24, boxSizing: "border-box", fontFamily: "var(--qe-mono)" }
+        }
+      )),
+      /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.54rem", color: "var(--qe-muted)", lineHeight: 1.5 } }, "Credentials are encrypted at rest by the engine. The new account is NOT activated \u2014 use Activate on its card once you have tested the connection."),
+      err ? /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-red)" } }, err) : null
+    )
+  );
+};
 const CfgAccountsTab = () => {
+  const [adding, setAdding] = React.useState(false);
   const [accounts, setAccounts] = React.useState(null);
   const [acct, setAcct] = React.useState(null);
   const [detail, setDetail] = React.useState(null);
@@ -3591,7 +3738,7 @@ const CfgAccountsTab = () => {
     }
   };
   const sel = (accounts || []).find((a) => a.id === acct);
-  return /* @__PURE__ */ React.createElement(GridWorkspace, null, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 6, h: 20, minW: 4, minH: 6 }, /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(GridWorkspace, null, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 6, h: 20, minW: 4, minH: 6 }, /* @__PURE__ */ React.createElement(
     Pane,
     {
       title: "Accounts",
@@ -3608,8 +3755,8 @@ const CfgAccountsTab = () => {
       "button",
       {
         className: "qe-btn qe-btn-primary qe-btn-sm",
-        disabled: true,
-        title: "Not wired in P2 \u2014 add accounts via the current /config page",
+        title: "Add a new exchange account",
+        onClick: () => setAdding(true),
         style: { marginTop: 4, justifyContent: "center" }
       },
       "+ Add Account"
@@ -3624,7 +3771,17 @@ const CfgAccountsTab = () => {
       foot: !sel ? { tone: "sub", msg: "no account selected" } : qeFootState({ loading: detail == null && !netD.err, err: netD.err, hasData: detail != null && !detail._placeholder, ms: netD.ms })
     },
     !sel ? /* @__PURE__ */ React.createElement(EmptyState, { fill: true, tone: "neutral", glyph: "\u25C7", msg: "No account selected" }) : detail == null ? /* @__PURE__ */ React.createElement(Spinner, { label: "loading" }) : /* @__PURE__ */ React.createElement(CfgAccountForm, { key: sel.id, account: sel, detail, onReload: reload })
-  )));
+  ))), adding && /* @__PURE__ */ React.createElement(
+    CfgAddAccountDialog,
+    {
+      accounts: accounts || [],
+      onClose: () => setAdding(false),
+      onCreated: async (id) => {
+        await loadAccounts(true);
+        setAcct(id);
+      }
+    }
+  ));
 };
 const CfgConnectionsTab = () => {
   const [conns, setConns] = React.useState(null);
@@ -4021,7 +4178,10 @@ const ConfigPage = () => {
     background: "var(--qe-bg)",
     display: "flex",
     flexDirection: "column",
-    overflow: "hidden"
+    overflow: "hidden",
+    // anchors the Add-Account ModelDialog, matching the other dialog-hosting
+    // page roots (linkage / models / dashboard)
+    position: "relative"
   } }, /* @__PURE__ */ React.createElement(TopNavStd, { page: "Config", variant: "line", dense: true }), /* @__PURE__ */ React.createElement(PageHeader, { title: "Configuration", subtitle: "accounts \xB7 connections \xB7 risk parameters \xB7 presets" }), /* @__PURE__ */ React.createElement(TabStrip, { value: tab, onChange: setTab, tabs: [
     ["accounts", "Accounts"],
     ["connections", "Connections"],

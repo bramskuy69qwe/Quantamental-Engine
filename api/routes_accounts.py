@@ -75,6 +75,18 @@ def _validate_market_type(market_type: str) -> str:
     return f"Unknown market_type: '{market_type}'. Supported: {supported}."
 
 
+def _resolve_params_template(params_source: str):
+    """`params_source` → a params dict to seed the new account with, or None
+    for engine defaults. Accepts "defaults" or "copy_<account_id>"; an
+    unparseable id degrades to defaults rather than failing the create."""
+    if not (params_source or "").startswith("copy_"):
+        return None
+    try:
+        return account_registry.get_account_params(int(params_source.split("_", 1)[1]))
+    except (ValueError, IndexError):
+        return None
+
+
 @router.get("/accounts", response_class=JSONResponse)
 async def list_accounts(request: Request):
     return JSONResponse(await account_registry.list_accounts())
@@ -88,10 +100,22 @@ async def create_account(
     market_type: str = Form("future"),
     api_key: str = Form(...),
     api_secret: str = Form(...),
+    # 2026-07-30: `environment` + `params_source` were previously accepted ONLY
+    # by the HTML-returning /accounts/add-and-reload twin, so the JSON door
+    # could not create a testnet/paper account or seed params from an existing
+    # one — which is why the React Add-Account button shipped disabled. Both
+    # default to the prior behaviour, so existing callers are unaffected.
+    environment: str = Form("live"),
+    params_source: str = Form("defaults"),
 ):
     err = _validate_exchange(exchange, market_type)
     if err:
         return JSONResponse({"status": "error", "error": err}, status_code=400)
+    if not (name or "").strip():
+        return JSONResponse(
+            {"status": "error", "error": "Account name is required."},
+            status_code=400,
+        )
     # HIGH-029 (Task 116): wrap form-received credentials so an exception
     # during add_account (encrypt, DB insert, cache write) masks the raw
     # value in stack frames. account_registry unwraps at the cache
@@ -99,8 +123,13 @@ async def create_account(
     api_key = SensitiveStr(api_key)
     api_secret = SensitiveStr(api_secret)
     try:
-        new_id = await account_registry.add_account(name, exchange, market_type, api_key, api_secret)
-        return JSONResponse({"status": "ok", "id": new_id, "name": name})
+        params_template = _resolve_params_template(params_source)
+        new_id = await account_registry.add_account(
+            name.strip(), exchange, market_type, api_key, api_secret,
+            environment=environment,
+            params_template=params_template,
+        )
+        return JSONResponse({"status": "ok", "id": new_id, "name": name.strip()})
     except Exception as exc:
         log.error("create_account failed: %r", exc)
         return JSONResponse({"status": "error", "error": str(exc)}, status_code=500)
@@ -258,15 +287,7 @@ async def add_account_modal(
     api_key = SensitiveStr(api_key)
     api_secret = SensitiveStr(api_secret)
     try:
-        # Resolve params template
-        params_template = None
-        if params_source.startswith("copy_"):
-            try:
-                source_id = int(params_source.split("_", 1)[1])
-                params_template = account_registry.get_account_params(source_id)
-            except (ValueError, IndexError):
-                pass
-
+        params_template = _resolve_params_template(params_source)
         new_id = await account_registry.add_account(
             name, exchange, market_type, api_key, api_secret,
             environment=environment,

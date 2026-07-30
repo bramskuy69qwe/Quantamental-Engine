@@ -44,40 +44,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 _SRC = Path(__file__).parent.parent / "frontend" / "src"
 
 
-def _code(src: str) -> str:
-    """Executable source only — BOTH `/* … */` and `//` comment bodies stripped.
-
-    Source pins must never be satisfiable (or broken) by prose: these files
-    carry comments that NAME the very endpoints and components being pinned, so
-    a naive substring search matches the comment instead of the call site (the
-    `786b610` comment-trap class). Stripping only `//` is NOT enough — these
-    modules are commented predominantly with `/* */` block headers, and an
-    earlier version of this helper let three pins survive deletion of the code
-    they claimed to protect.
-
-    Order matters: block comments first (they can contain `//`), then line
-    comments. Crude but sufficient — neither delimiter appears inside a string
-    literal in these modules, which is asserted by
-    `TestCodeStripper::test_stripper_removes_both_comment_forms`.
-    """
-    out, i, n = [], 0, len(src)
-    while i < n:
-        j = src.find("/*", i)
-        if j < 0:
-            out.append(src[i:])
-            break
-        out.append(src[i:j])
-        k = src.find("*/", j + 2)
-        if k < 0:
-            break
-        # keep newlines so line-oriented reasoning still works
-        out.append("\n" * src.count("\n", j, k))
-        i = k + 2
-    stripped = "".join(out)
-    return "\n".join(
-        (ln if ln.find("//") < 0 else ln[:ln.find("//")])
-        for ln in stripped.splitlines()
-    )
+# The comment-stripper lives in tests/_srcpin.py so every source-pin file
+# shares one implementation (and one place to harden). Its self-tests stay
+# here, where the discipline was first paid for.
+from tests._srcpin import code as _code   # noqa: E402
 
 
 class TestCodeStripper:

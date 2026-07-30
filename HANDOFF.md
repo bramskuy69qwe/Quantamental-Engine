@@ -2,6 +2,53 @@
 
 **Date**: 2026-07-30 (**MERIDIAN v3.1 — DD-OVERRIDE + PRE-TRADE NOTES PORTED TO REACT (seventh block). Same day: fragments slim-down · primitives sweep + folder-boundary answer · Jinja retirement `1afc9f8` · archive/launcher sweep · E2E carry-forwards.**)
 
+## ▶ SESSION CLOSE 2026-07-30 (eighth block) — ADD ACCOUNT WIRED IN REACT
+
+**Operator report**: "add account in config not working."
+
+**★ MECHANISM (investigated, not assumed): the button was `disabled`.**
+React's Config page shipped `+ Add Account` with
+`disabled title="Not wired in P2 — add accounts via the current /config
+page"`. So on the React app clicking it did *nothing*, and the workaround
+it named was the Jinja `/config` page — the last of its kind after the
+retirement. Two things had blocked the wiring, both fixed:
+1. `POST /accounts` (the JSON door React can use) accepted neither
+   `environment` nor `params_source` — only the HTML-returning
+   `/accounts/add-and-reload` twin did. The JSON lane therefore could not
+   create a testnet/paper account or seed params from an existing one.
+   Both are now on it, **additively** (defaults preserve prior behaviour;
+   pinned on the signature, since a direct handler call bypasses FastAPI's
+   dependency resolution and would otherwise test the test's own defaults).
+2. Nothing exposed the adapter catalog as JSON, so React could not build
+   the exchange dropdown → new **`GET /api/config/exchanges`** (same
+   `list_rest_exchanges()` source the Jinja modal used, Beta flags intact).
+
+**Shipped**: a real `CfgAddAccountDialog` — name · exchange · market type ·
+environment · initial-params (defaults or copy-from-account) · API key ·
+secret (masked). Submit is blocked until name+key+secret are non-empty
+(the engine rejects a blank name, so the client must not offer a
+guaranteed-fail submit); on success the account list reloads and the NEW
+account is selected. Mounted as a sibling of the workspace, not inside a
+Pane — same clipping trap as the DD-override dialog — and the Config page
+root gained the `position:relative` anchor the other dialog-hosting pages
+carry. The dialog does NOT activate the account or test the connection:
+both already exist per-account and stay one deliberate step away.
+
+**Also fixed, same feature**: the Jinja modal's `<form hx-post="/accounts">`
+meant a bare **Enter-key** submit hit the JSON door and painted
+`{"status":"ok","id":7}` into the result div, never reloading (the submit
+BUTTON overrode with add-and-reload, so only the keyboard path was broken —
+filed as MED by the fragments-slim-down audit, now closed).
+
+**Gate: 4117 passed / 6 skipped / 3 deselected + 1 KNOWN FLAKE** —
+`test_periodic_loop_survives_reconcile_exception` (the 50 ms-budget timing
+test); re-ran 7/7 solo and the diff touches nothing near the reconciler.
+Bundle `a1eab22c04` → **`7268075fd2`**. New pins in
+`tests/test_add_account_react.py`; the comment-stripper moved to a shared
+`tests/_srcpin.py` (second file needed it) and **all 8 new source pins were
+mutation-checked** — including two bugs in my own harness (the password
+attribute shares a line with the value binding; one case was a no-op).
+
 ## ▶ SESSION CLOSE 2026-07-30 (seventh block) — dd_override + notes PORTED TO REACT
 
 **Operator ask**: "port the dd_override and notes endpoints to react" (from

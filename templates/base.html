@@ -540,7 +540,13 @@
       <button onclick="document.getElementById('add-account-modal').style.display='none'"
               class="btn btn-ghost btn-sm">✕</button>
     </div>
-    <form hx-post="/accounts"
+    {# The form posts to /accounts/add-and-reload, NOT /accounts. Both create an
+       account, but /accounts answers JSON — a bare Enter-key submit used to
+       paint `{"status":"ok","id":7}` into #add-account-result and never fire
+       the reload, so the operator saw raw JSON and a stale account list. The
+       Add-Account button below carries the same hx-post, so both submit paths
+       now agree. (2026-07-30) #}
+    <form hx-post="/accounts/add-and-reload"
           hx-target="#add-account-result"
           hx-swap="innerHTML"
           style="display:flex;flex-direction:column;gap:10px;">

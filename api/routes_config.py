@@ -144,6 +144,26 @@ async def api_config_apply_preset(request: Request):
     })
 
 
+@router.get("/api/config/exchanges")
+async def api_config_exchanges():
+    """Adapter catalog for the React Add-Account dialog (2026-07-30).
+
+    Same source the Jinja modal's dropdown used via `_ctx`'s
+    `available_exchanges` — non-canonical adapters carry an `is_beta` flag and
+    a "(Beta)" label suffix, so the operator can see that Bybit / MEXC are
+    adapter-supported but not operator-verified for production trading.
+    Without this door React had no way to build the dropdown, which is why
+    Add Account shipped disabled.
+    """
+    from core.adapters.registry import (
+        list_rest_exchanges, get_supported_market_types,
+    )
+    return JSONResponse({
+        "exchanges": list_rest_exchanges(),
+        "market_types": get_supported_market_types(),
+    })
+
+
 @router.get("/api/config/presets")
 async def api_config_presets():
     """The strategy-preset catalog for the React Config Presets tab (v3.0 P2):
