@@ -9768,14 +9768,7 @@ const readHashPage = () => {
 };
 const App = () => {
   const [page, setPage] = React.useState(() => {
-    const fromHash = readHashPage();
-    if (fromHash) return fromHash;
-    try {
-      const s = localStorage.getItem("qe.page");
-      if (QE_PAGES[s]) return s;
-    } catch (e) {
-    }
-    return "Dashboard";
+    return readHashPage() || "Dashboard";
   });
   window.qeNav = (p) => {
     if (QE_PAGES[p]) setPage(p);
@@ -9789,10 +9782,6 @@ const App = () => {
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
   React.useEffect(() => {
-    try {
-      localStorage.setItem("qe.page", page);
-    } catch (e) {
-    }
     if (readHashPage() !== page) {
       try {
         history.replaceState(null, "", "#" + page);

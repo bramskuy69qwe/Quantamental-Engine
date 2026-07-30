@@ -1,8 +1,8 @@
 import type { Page } from '@playwright/test';
 
-/** Every storage key the app writes (verified inventory, 2026-07-28). */
+/** Every storage key the app writes (verified inventory, 2026-07-30 —
+ *  `qe.page` removed: the shell no longer persists the active page). */
 export const LOCAL_KEYS = [
-  'qe.page',
   'qe.workspace.locked',
   'qe.ws.layout.dashboard',
   'qe.v3.calc_state',

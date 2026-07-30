@@ -1,8 +1,10 @@
 /* v3.0 — Application shell & router
    Turns the standalone page components into one navigable, wired website.
    Nav clicks (TopNavStd → window.qeNav) switch the active page; the active
-   page is persisted to the URL hash + localStorage. The whole app lives inside
-   a single NotificationProvider so the bell, banner and toasts work everywhere. */
+   page is reflected in the URL hash (deep-linkable), but a fresh load of /
+   always lands on Dashboard — last-visited is NOT restored (operator call,
+   2026-07-30). The whole app lives inside a single NotificationProvider so
+   the bell, banner and toasts work everywhere. */
 
 /* ── LiveValueDemo — wraps a LiveValue with a setInterval ticker so the
    Primitives spec card visibly shows live updates. Demo-only. ───────────── */
@@ -599,10 +601,10 @@ const readHashPage = () => {
 
 const App = () => {
   const [page, setPage] = React.useState(() => {
-    const fromHash = readHashPage();
-    if (fromHash) return fromHash;
-    try { const s = localStorage.getItem('qe.page'); if (QE_PAGES[s]) return s; } catch (e) {}
-    return 'Dashboard';   // P1: Dashboard is the default landing page
+    // Always land on Dashboard (operator call, 2026-07-30): the last-visited
+    // page is deliberately NOT restored from storage. An explicit #hash
+    // deep-link (e.g. fragments/model_detail's /#Pre-Trade) still wins.
+    return readHashPage() || 'Dashboard';
   });
 
   // Expose the global navigator immediately so TopNavStd clicks route on first paint.
@@ -615,7 +617,6 @@ const App = () => {
   }, []);
 
   React.useEffect(() => {
-    try { localStorage.setItem('qe.page', page); } catch (e) {}
     if (readHashPage() !== page) { try { history.replaceState(null, '', '#' + page); } catch (e) {} }
     const _brand = (window.QE_BOOTSTRAP && window.QE_BOOTSTRAP.projectName) || 'Quantamental Engine';
     document.title = _brand + ' — ' + page;
