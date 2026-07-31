@@ -1,6 +1,158 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-07-30 (**MERIDIAN v3.1 — WIRING INVENTORY FILED = NEXT SESSION'S FIX LIST (tenth block, top). Same day: UI-orphaned list closed · Add Account wired · DD-override + pre-trade notes ported · fragments slim-down · primitives sweep + folder-boundary answer · Jinja retirement `1afc9f8` · archive/launcher sweep · E2E carry-forwards.**)
+**Date**: 2026-07-31 (**MERIDIAN v3.1 — THE STALE-SHOWN-AS-LIVE SEAM: C1 + nav strip + pane foots (eleventh block, top). Prior day: wiring inventory filed · UI-orphaned list closed · Add Account wired · DD-override + pre-trade notes ported · fragments slim-down · primitives sweep · Jinja retirement `1afc9f8`.**)
+
+## ▶ SESSION CLOSE 2026-07-31 (eleventh block) — THREE FIXES DOWN THE SAME SEAM
+
+Operator worked the wiring inventory top-down. Three commits, all pushed, gate
+green at each: **`e395a46`** (C1 service worker) → **`9d2d134`** (nav strip) →
+**`8931a40`** (pane foots). Branch `v3.0/e2e-debug` in sync with origin.
+Bundle **`ef645e35c5`**. Final gate **4289 passed / 6 skipped / 3 deselected**.
+
+They turned out to be one seam, in ascending order of nastiness:
+
+| | surface | what the operator saw on a dead engine |
+|---|---|---|
+| `e395a46` | service worker | a fully populated dashboard, replayed from cache |
+| `9d2d134` | WorkspaceBar strip | live-looking DD / EXP / OPEN / P&L numbers |
+| `8931a40` | Risk Monitor foot | stale gauges under a **green `connected`** |
+
+The third is the worst of the three and worth stating as a rule: the first two
+showed stale data with **no** signal; the third showed it with an **affirmative
+healthy one**. An operator who learned to trust the foot is worse off than one
+who never had it.
+
+### 1 · `e395a46` — CRIT C1, the service worker
+
+`networkFirst` cached every 200 (including `/api/` and `/fragments/`) and
+replayed the cache on failure. Now DEFAULT-DENY: two `respondWith` lanes
+(immutable assets, page navigations); **everything else hits a bare `return`**
+so the browser owns the request and failures surface as real network errors.
+`CACHE_NAME` **qre-v2 → qre-v3** is load-bearing — `activate` purges by NAME
+only, so without it every cached API body survives the upgrade forever.
+
+Two things the filing did not contain, both from investigating first:
+- **The old prefix list was DECORATIVE** — both arms called the same
+  `networkFirst`, so naming a path changed nothing, and ten more live doors
+  fell through identically. Hence an inversion, not a longer exclusion list.
+- **The SSE lane was worse than stale**: the synthesized 503 makes the browser
+  *fail the connection permanently* (no reconnect), so the worker killed the
+  live channel during exactly the outage it was needed for. A `fetch`+`catch`
+  "network-only" rewrite would have preserved that bug exactly.
+
+**★ OPERATOR STEP THAT MATTERS**: load the app once **with the engine up**. The
+repair cannot install during the outage it repairs — the SW script fetch fails
+with everything else, so a poisoned profile keeps qre-v2 and the full CRIT for
+the whole outage. Confirm `qre-v3` in DevTools ▸ Application ▸ Cache Storage
+(Ctrl+Shift+I inside the `--app` window).
+
+### 2 · `9d2d134` — the nav strip
+
+`chrome-live.js` keeps last-good on a failed poll and raises only an err flag.
+`_navFeed` / `_navUserWs` honour that and say so in their own comments
+("check `stateErr` FIRST"); the strip read the payload directly. Fix = bind the
+guarded source once; every cell already had a `'—'` path. Also caught the DD
+cell's red/amber styling keying off `st`, so a **stale `dd_state` could keep
+flying a LIMIT colour**.
+
+- **Found by re-grepping the class**, not in the report: `StatusFooter`'s
+  uptime had the same defect against `sysErr`. Bounded ~60s there, not
+  eliminated (60s `/api/system` poll vs the 10s engine dot) — said so in the
+  comment rather than implying closure.
+- **DELIBERATE ASYMMETRY**: readings dash out, **warnings do not**. Halt and
+  clock banners still render off last-good — a halt is a warning, not a
+  reading, and hiding it is the failure `shell-chrome-1` refuses. Pinned WITH
+  its rationale so a consistency sweep must read the argument first.
+- Tier-3 owes the CAUSE (`DESIGN.md` 2-vs-3 rule): blanked cells carry
+  `_navStaleDash(source)` naming the dead endpoint, stamped only when the flag
+  is raised so a first-load `'—'` stays honestly unexplained.
+
+### 3 · `8931a40` — pane foots, and four rounds of being wrong
+
+Risk Monitor footed `/api/state` while four of five readouts came from
+`/api/dashboard/snapshot`. NOT a re-pointing — the pane has two real pipes, so
+naming the other would have moved the lie. `_dashFootWorst(d, [{src, hasData}])`
+derives the 4-tier state **per pipe** and reports the worst; single-pipe panes
+delegate through the same path.
+
+**The invariant is pinned, not the pane**: `foot_sources(pane) ⊇
+pipes_read_by(pane_body)`, both sides derived from source, one level into leaf
+children. It immediately found a second instance (`EquityCurvePane`).
+
+**Four adversarial rounds, each found what a green gate did not — every one by
+EXECUTING the derivation under node, none visible by reading it.** I got the
+design wrong three times; the corrections ARE the design:
+
+- **R1 BROKEN** — one OR'd `hasData` for N pipes. `qeFootState` gates tier 4 on
+  `loading && !hasData` and splits 2-vs-3 on `if (hasData)`, so that judged
+  every pipe by another pipe's data and re-created the bug. It also REGRESSED
+  `EquityCurvePane` — the code I replaced there was correct.
+- **R2** — per-pipe `hasData` taken at FACE VALUE. Those expressions are
+  **proxies with a SECOND WRITER**: SSE writes `st.dd_state` and
+  `equity.total_equity` straight into the store, so a hung `/api/state` still
+  satisfied the gate. Hence `answered = ms != null || err`.
+- **R3** — ranking by TONE. `warn` conflates "errored · showing last data" with
+  "delayed [Nms]", so any >500ms sibling masked a hung pipe.
+- **R4** — 576 rows, 0 lying, but severity still put errored-with-data above
+  never-answered. **Final order: `err` > never-answered > errored-with-data >
+  delayed > `ok`** (doctrine tiering: 3 and 4 alike have nothing usable, 2
+  does).
+
+The rule is recorded in `frontend/DESIGN.md` beside the ratified PaneFoot
+policy — a convention that lives only in a commit message gets re-derived
+wrongly by the next author.
+
+### ★ OPEN — filed, deliberately NOT fixed
+
+1. **THE WARM HANG (HIGH, app-wide, pre-existing).** All three fixes close the
+   COLD hang only. `answered` is a **latch**: a promise that never settles runs
+   neither the resolve nor the catch branch, so a pipe that succeeds once and
+   hangs later keeps its `{err:null, ms}` and reads `ok · connected [12ms]`
+   **forever** (executed: 24 h / ~17k outstanding polls, still green). Nothing
+   in the store records WHEN an entry was written. Needs a timestamp per net
+   write + a staleness threshold per poll interval — a store-level change
+   touching all eight panes. Aggravator: Chrome's ~6-connection-per-origin cap
+   means one hung 5s poll can queue every other same-origin poll behind it,
+   freezing the whole dashboard behind uniformly green feet.
+   **This is the natural next item.**
+2. `pages-pretrade.jsx`'s **Regime · ATR pane** violates the multi-pipe rule
+   (reads the CALC pipe, foots the REGIME pipe alone). `_dashFootWorst` is
+   dash-tiled-local, so only the Dashboard is mechanically pinned.
+3. Risk Monitor's **Positions gauge fabricates `0/20`** on an empty snapshot
+   (`${positions_open || 0}/${positions_max || 20}`).
+4. `QE_CHROME.accounts` is fetched **once** and `reloadAccounts` has **zero
+   callers** → after a Config activate the picker and EXCH name account A while
+   every number is account B's. Same root as H1/H2 below.
+5. `WatchlistTape` renders mark prices with **no staleness signal at all**.
+
+### Remaining from the tenth block's inventory
+
+C1 is **closed**. Untouched: **H1/H2** (SSE + Pre-Trade pinned to
+`QE_BOOTSTRAP.activeAccountId` — one shared accessor closes both, and #4 above
+is the same root, so all three likely go together), **H3**
+(`confirm_fill_exec_link` zero callers vs four readers — a decision, not a
+patch), **H4+M10** (one false-success class), **H5**, **H6**, **H7**, all MED
+and LOW tiers, and the three NOT-DEFECTS which must stay unfixed.
+
+### Method notes worth carrying
+
+- **Structural pins were green through every one of the four rounds.** There is
+  now a test that extracts the REAL `qeFootState`/`_dashFootWorst` from source
+  and EXECUTES them. My first version of even that was blind — every
+  never-answered case carried `hasData: false`, exactly the route R2 returned
+  through. Execute the thing; don't reason about it.
+- **`_srcpin.code()` returned 13 of 4924 chars** on the old service worker (a
+  `/static/vendor/*` glob inside a `//` comment opens a phantom block comment)
+  — every negative pin would have passed vacuously. Guard the precondition.
+- **`ch.stateErr` CONTAINS `ch.state`** → any `.index()` ordering pin compares a
+  position with itself. Mine did: `128 < 128`.
+- **Never edit files via PowerShell `Get-Content -Raw` / `Set-Content`.** It
+  decoded `DESIGN.md`'s UTF-8 as ANSI and wrote it back double-encoded across
+  24k chars. Restored from HEAD, redone with the Edit tool. Use Edit.
+- **JSX comments `{/* */}` are invalid in attribute position** — broke the
+  esbuild build twice in five minutes.
+- Every fix mutation-tested against the REAL file, then restored
+  byte-identical: 4 (C1) + 11 (nav strip) + 12 (foots) mutations, all RED.
 
 ## ▶ SESSION CLOSE 2026-07-30 (tenth block) — WIRING INVENTORY — **NEXT SESSION'S FIX LIST**
 
