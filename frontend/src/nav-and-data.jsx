@@ -95,6 +95,17 @@ const _navUserWs = (ch) => {
         : ` · last frame ${Math.round(u.last_frame_s)}s ago`) };
 };
 
+/* Tier-3 blank that NAMES ITS CAUSE — the second half of the _navFeed rule.
+ * Blanking a number when its source dies is only half the contract: '—' means
+ * "no reading yet" everywhere else in this app, so an unexplained blank makes a
+ * dead engine look like a flat account. Used by the WorkspaceBar strip and the
+ * footer's uptime cell, which have no pane foot to carry a tier-2
+ * "showing last data" instead. */
+const _navStaleDash = (source) => (
+  <span title={`Reading unavailable — ${source} is not responding`}
+    style={{ color: 'var(--qe-muted)' }}>—</span>
+);
+
 const _navCap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : '—');
 const _navPct = (v) => (v == null ? '—' : (v > 0 ? '+' : '') + v.toFixed(2) + '%');
 const _navPctCol = (v) => (v == null ? 'var(--qe-muted)'
@@ -208,13 +219,46 @@ const WorkspaceBar = ({ interactive = false, persistId = 'dashboard' }) => {
           /api/state.exchange_ws. LAT is the EXCHANGE FEED's latency; the SSE dot
           in the top nav is a different pipe entirely. */}
       <Strip dense items={(() => {
-        const st = ch.state, eq = ch.snap && ch.snap.equity, rk = ch.snap && ch.snap.risk;
-        const jr = ch.snap && ch.snap.journal, rg = ch.snap && ch.snap.regime;
+        /* SAME stateErr-first RULE AS _navFeed / _navUserWs — see their
+           comments above. chrome-live keeps the last-good payload and raises
+           only the err flag (chrome-live.js:37-38), so reading ch.state /
+           ch.snap directly kept this strip painting DD, EXP, OPEN and the three
+           P&L cells as current for as long as a dead engine stayed dead. Only
+           LAT degraded, because it alone routed through _navFeed.
+           That is the top-of-screen risk readout on a console whose whole
+           doctrine is that stale must never look live.
+
+           Dropping the source to null is all that is needed: every cell below
+           already renders '—' for a null source (the truthfulness contract at
+           chrome-live.js:15-18), and the DD cell's red/amber styling keys off
+           `st` too, so a stale dd_state stops painting a limit colour.
+
+           READINGS dash out; WARNINGS deliberately do not. ChromeHaltBanner and
+           ClockDriftBanner keep rendering off last-good state on purpose — a
+           halt banner is a warning, not a reading, and suppressing it because
+           its source went quiet is the exact failure this file's shell-chrome-1
+           note refuses ("an entry gate the operator cannot see"). So the engine
+           dying blanks the numbers while any standing halt stays on screen. */
+        const st = ch.stateErr ? null : ch.state;
+        const snap = ch.snapErr ? null : ch.snap;
+        const eq = snap && snap.equity, rk = snap && snap.risk;
+        const jr = snap && snap.journal, rg = snap && snap.regime;
         const active = (ch.accounts || []).find((a) => a.is_active);
         const dPct = eq ? eq.daily_pnl_pct : null;
         const wPct = eq ? eq.weekly_pnl_pct : null;
         const mPct = jr ? jr.monthly_pnl_pct : null;
         const feed = _navFeed(ch);
+        /* DESIGN.md's 2-vs-3 rule: "data on screen → tier 2 (warn, cause
+           appended); no data → tier 3 (err, cause DISPLAYED)". Tier 2 is not
+           available here — it lives in a pane FOOT ("· showing last data") and
+           this strip has no foot, which is exactly why _navFeed and _navUserWs
+           are tier 3 too. So tier 3 it is, and tier 3 owes the CAUSE.
+           A bare '—' would not do: '—' already means "no reading yet" all over
+           this app (chrome-live.js:15-18), so blanking without a reason makes a
+           dead engine look like a flat account. Only stamped when the err flag
+           is actually raised — a first-load '—' must stay unexplained. */
+        const stDash = ch.stateErr ? _navStaleDash('/api/state') : '—';
+        const snapDash = ch.snapErr ? _navStaleDash('/api/dashboard/snapshot') : '—';
         return [
           { label: 'EXCH',   value: active ? _navCap(active.exchange) : '—' },
           { label: 'LAT',    value: <span title={feed.title} style={{
@@ -224,13 +268,13 @@ const WorkspaceBar = ({ interactive = false, persistId = 'dashboard' }) => {
             }}>{feed.value}</span> },
           { label: 'REGIME', value: rg && rg.label && NAV_REGIME_TONE[rg.label]
               ? <RegimeBadge tone={NAV_REGIME_TONE[rg.label]} />
-              : <span style={{ color: 'var(--qe-muted)' }}>—</span> },
-          { label: 'P&L·D',  value: <LiveValue id="ws.pnl.d" value={dPct == null ? '—' : dPct} format={() => _navPct(dPct)} style={{ color: _navPctCol(dPct), fontWeight: 700 }} /> },
-          { label: 'P&L·W',  value: <LiveValue id="ws.pnl.w" value={wPct == null ? '—' : wPct} format={() => _navPct(wPct)} style={{ color: _navPctCol(wPct), fontWeight: 700 }} /> },
-          { label: 'P&L·M',  value: <LiveValue id="ws.pnl.m" value={mPct == null ? '—' : mPct} format={() => _navPct(mPct)} style={{ color: _navPctCol(mPct), fontWeight: 700 }} /> },
-          { label: 'OPEN',   value: st ? `${st.position_count}${rk && rk.positions_max != null ? '/' + rk.positions_max : ''}` : '—', color: 'var(--qe-cyan)' },
-          { label: 'EXP',    value: <LiveValue id="ws.exp" value={st ? st.total_exposure : '—'} format={(x) => (st ? (+x).toFixed(2) + '×' : '—')} /> },
-          { label: 'DD',     value: <LiveValue id="ws.dd" value={st ? st.drawdown * 100 : '—'} format={(x) => (st ? (+x).toFixed(2) + '%' : '—')} style={st && st.dd_state !== 'ok' ? { color: st.dd_state === 'limit' ? 'var(--qe-red)' : 'var(--qe-amber)', fontWeight: 700 } : undefined} /> },
+              : snapDash },
+          { label: 'P&L·D',  value: dPct == null ? snapDash : <LiveValue id="ws.pnl.d" value={dPct} format={() => _navPct(dPct)} style={{ color: _navPctCol(dPct), fontWeight: 700 }} /> },
+          { label: 'P&L·W',  value: wPct == null ? snapDash : <LiveValue id="ws.pnl.w" value={wPct} format={() => _navPct(wPct)} style={{ color: _navPctCol(wPct), fontWeight: 700 }} /> },
+          { label: 'P&L·M',  value: mPct == null ? snapDash : <LiveValue id="ws.pnl.m" value={mPct} format={() => _navPct(mPct)} style={{ color: _navPctCol(mPct), fontWeight: 700 }} /> },
+          { label: 'OPEN',   value: st ? `${st.position_count}${rk && rk.positions_max != null ? '/' + rk.positions_max : ''}` : stDash, color: 'var(--qe-cyan)' },
+          { label: 'EXP',    value: st ? <LiveValue id="ws.exp" value={st.total_exposure} format={(x) => (+x).toFixed(2) + '×'} /> : stDash },
+          { label: 'DD',     value: st ? <LiveValue id="ws.dd" value={st.drawdown * 100} format={(x) => (+x).toFixed(2) + '%'} style={st.dd_state !== 'ok' ? { color: st.dd_state === 'limit' ? 'var(--qe-red)' : 'var(--qe-amber)', fontWeight: 700 } : undefined} /> : stDash },
         ];
       })()} />
 
@@ -444,6 +488,7 @@ const TopNavStd = ({page='Dashboard', onChange, variant='line', dense=false}) =>
 const StatusFooter = () => {
   const ch = useQeChrome();
   const engineTone = ch.stateErr ? 'var(--qe-red)' : ch.state ? 'var(--qe-green)' : 'var(--qe-muted)';
+  const sys = ch.sysErr ? null : ch.sys;
   const sseTone = ch.sse === 'open' ? 'var(--qe-green)'
     : ch.sse === 'connecting' ? 'var(--qe-amber)'
     : ch.sse === 'error' ? 'var(--qe-red)' : 'var(--qe-muted)';
@@ -458,7 +503,16 @@ const StatusFooter = () => {
     }}>
       <span style={{color:'var(--qe-sub)'}}>{((window.QE_BOOTSTRAP && window.QE_BOOTSTRAP.projectShortName) || 'QRE') + ' ' + ((window.QE_BOOTSTRAP && window.QE_BOOTSTRAP.projectVersion) || 'v3')}</span>
       <span>·</span>
-      <span>uptime <LiveValue id="sb.uptime" value={ch.sys ? ch.sys.uptime_s : '—'} format={() => _navUptime(ch.sys ? ch.sys.uptime_s : null)}/></span>
+      {/* sysErr-gated for the same reason the strip above is stateErr-gated:
+          /api/system's last-good payload survives the engine, so an unguarded
+          read froze uptime at its final value and presented it as current,
+          forever. BOUNDED, NOT ELIMINATED: /api/system polls every 60s while
+          the engine dot beside it keys on the 10s /api/state poll, so a worst-
+          case window of ~60s still shows a red dot next to a live-looking
+          uptime. Closing that fully means either polling /api/system faster
+          for a cosmetic field, or deriving uptime locally from last-good +
+          elapsed — neither earns its complexity here. */}
+      <span>uptime <LiveValue id="sb.uptime" value={sys ? sys.uptime_s : '—'} format={() => _navUptime(sys ? sys.uptime_s : null)}/></span>
       <div className="qe-grow"/>
       <span style={{color:engineTone}}>● engine</span>
       <span style={{color:sseTone}}>● sse</span>

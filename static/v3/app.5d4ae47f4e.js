@@ -1713,6 +1713,14 @@ const _navUserWs = (ch) => {
     title: "User-data websocket live \u2014 fills flowing" + (u.last_frame_s == null ? " \xB7 no frame this session (normal when idle)" : ` \xB7 last frame ${Math.round(u.last_frame_s)}s ago`)
   };
 };
+const _navStaleDash = (source) => /* @__PURE__ */ React.createElement(
+  "span",
+  {
+    title: `Reading unavailable \u2014 ${source} is not responding`,
+    style: { color: "var(--qe-muted)" }
+  },
+  "\u2014"
+);
 const _navCap = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1) : "\u2014";
 const _navPct = (v) => v == null ? "\u2014" : (v > 0 ? "+" : "") + v.toFixed(2) + "%";
 const _navPctCol = (v) => v == null ? "var(--qe-muted)" : v > 0 ? "var(--qe-green)" : v < 0 ? "var(--qe-red)" : "var(--qe-sub)";
@@ -1797,25 +1805,29 @@ const WorkspaceBar = ({ interactive = false, persistId = "dashboard" }) => {
     height: 22,
     flexShrink: 0
   } }, /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-muted)", letterSpacing: "0.1em" } }, "WORKSPACE"), /* @__PURE__ */ React.createElement("div", { className: "qe-period", style: { opacity: dim, pointerEvents: interactive ? "auto" : "none" } }, presets.map((p) => /* @__PURE__ */ React.createElement("button", { key: p, className: preset === p ? "on" : "", onClick: guard(() => onPreset(p)) }, p))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 4, opacity: dim, pointerEvents: interactive ? "auto" : "none" } }, /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", onClick: guard(onSave), title: "Save current layout" }, "\u2913 Save"), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", onClick: guard(onLoad), title: "Load saved layout" }, "\u2912 Load"), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", onClick: guard(onCreate), title: "New workspace from default", style: { width: 22, padding: 0, justifyContent: "center" } }, "+"), flash && /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.54rem", color: flash[0] === "\u2713" ? "var(--qe-green)" : "var(--qe-amber)" } }, flash)), !interactive && /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.5rem", color: "var(--qe-faint)", letterSpacing: "0.06em" } }, "\xB7 dashboard only"), /* @__PURE__ */ React.createElement("div", { className: "qe-grow" }), /* @__PURE__ */ React.createElement(Strip, { dense: true, items: (() => {
-    const st = ch.state, eq = ch.snap && ch.snap.equity, rk = ch.snap && ch.snap.risk;
-    const jr = ch.snap && ch.snap.journal, rg = ch.snap && ch.snap.regime;
+    const st = ch.stateErr ? null : ch.state;
+    const snap = ch.snapErr ? null : ch.snap;
+    const eq = snap && snap.equity, rk = snap && snap.risk;
+    const jr = snap && snap.journal, rg = snap && snap.regime;
     const active = (ch.accounts || []).find((a) => a.is_active);
     const dPct = eq ? eq.daily_pnl_pct : null;
     const wPct = eq ? eq.weekly_pnl_pct : null;
     const mPct = jr ? jr.monthly_pnl_pct : null;
     const feed = _navFeed(ch);
+    const stDash = ch.stateErr ? _navStaleDash("/api/state") : "\u2014";
+    const snapDash = ch.snapErr ? _navStaleDash("/api/dashboard/snapshot") : "\u2014";
     return [
       { label: "EXCH", value: active ? _navCap(active.exchange) : "\u2014" },
       { label: "LAT", value: /* @__PURE__ */ React.createElement("span", { title: feed.title, style: {
         color: feed.tone === "err" ? "var(--qe-red)" : feed.tone === "warn" ? "var(--qe-amber)" : feed.tone === "off" ? "var(--qe-muted)" : "var(--qe-sub)"
       } }, feed.value) },
-      { label: "REGIME", value: rg && rg.label && NAV_REGIME_TONE[rg.label] ? /* @__PURE__ */ React.createElement(RegimeBadge, { tone: NAV_REGIME_TONE[rg.label] }) : /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\u2014") },
-      { label: "P&L\xB7D", value: /* @__PURE__ */ React.createElement(LiveValue, { id: "ws.pnl.d", value: dPct == null ? "\u2014" : dPct, format: () => _navPct(dPct), style: { color: _navPctCol(dPct), fontWeight: 700 } }) },
-      { label: "P&L\xB7W", value: /* @__PURE__ */ React.createElement(LiveValue, { id: "ws.pnl.w", value: wPct == null ? "\u2014" : wPct, format: () => _navPct(wPct), style: { color: _navPctCol(wPct), fontWeight: 700 } }) },
-      { label: "P&L\xB7M", value: /* @__PURE__ */ React.createElement(LiveValue, { id: "ws.pnl.m", value: mPct == null ? "\u2014" : mPct, format: () => _navPct(mPct), style: { color: _navPctCol(mPct), fontWeight: 700 } }) },
-      { label: "OPEN", value: st ? `${st.position_count}${rk && rk.positions_max != null ? "/" + rk.positions_max : ""}` : "\u2014", color: "var(--qe-cyan)" },
-      { label: "EXP", value: /* @__PURE__ */ React.createElement(LiveValue, { id: "ws.exp", value: st ? st.total_exposure : "\u2014", format: (x) => st ? (+x).toFixed(2) + "\xD7" : "\u2014" }) },
-      { label: "DD", value: /* @__PURE__ */ React.createElement(LiveValue, { id: "ws.dd", value: st ? st.drawdown * 100 : "\u2014", format: (x) => st ? (+x).toFixed(2) + "%" : "\u2014", style: st && st.dd_state !== "ok" ? { color: st.dd_state === "limit" ? "var(--qe-red)" : "var(--qe-amber)", fontWeight: 700 } : void 0 }) }
+      { label: "REGIME", value: rg && rg.label && NAV_REGIME_TONE[rg.label] ? /* @__PURE__ */ React.createElement(RegimeBadge, { tone: NAV_REGIME_TONE[rg.label] }) : snapDash },
+      { label: "P&L\xB7D", value: dPct == null ? snapDash : /* @__PURE__ */ React.createElement(LiveValue, { id: "ws.pnl.d", value: dPct, format: () => _navPct(dPct), style: { color: _navPctCol(dPct), fontWeight: 700 } }) },
+      { label: "P&L\xB7W", value: wPct == null ? snapDash : /* @__PURE__ */ React.createElement(LiveValue, { id: "ws.pnl.w", value: wPct, format: () => _navPct(wPct), style: { color: _navPctCol(wPct), fontWeight: 700 } }) },
+      { label: "P&L\xB7M", value: mPct == null ? snapDash : /* @__PURE__ */ React.createElement(LiveValue, { id: "ws.pnl.m", value: mPct, format: () => _navPct(mPct), style: { color: _navPctCol(mPct), fontWeight: 700 } }) },
+      { label: "OPEN", value: st ? `${st.position_count}${rk && rk.positions_max != null ? "/" + rk.positions_max : ""}` : stDash, color: "var(--qe-cyan)" },
+      { label: "EXP", value: st ? /* @__PURE__ */ React.createElement(LiveValue, { id: "ws.exp", value: st.total_exposure, format: (x) => (+x).toFixed(2) + "\xD7" }) : stDash },
+      { label: "DD", value: st ? /* @__PURE__ */ React.createElement(LiveValue, { id: "ws.dd", value: st.drawdown * 100, format: (x) => (+x).toFixed(2) + "%", style: st.dd_state !== "ok" ? { color: st.dd_state === "limit" ? "var(--qe-red)" : "var(--qe-amber)", fontWeight: 700 } : void 0 }) : stDash }
     ];
   })() }), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", disabled: true, title: "Add pane \u2014 planned, not wired in this build", style: { opacity: 0.4, cursor: "default" } }, "\u229E Pane"), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", disabled: true, title: "Pop out \u2014 planned, not wired in this build", style: { opacity: 0.4, cursor: "default" } }, "\u2922 Pop"));
 };
@@ -1998,6 +2010,7 @@ const TopNavStd = ({ page = "Dashboard", onChange, variant = "line", dense = fal
 const StatusFooter = () => {
   const ch = useQeChrome();
   const engineTone = ch.stateErr ? "var(--qe-red)" : ch.state ? "var(--qe-green)" : "var(--qe-muted)";
+  const sys = ch.sysErr ? null : ch.sys;
   const sseTone = ch.sse === "open" ? "var(--qe-green)" : ch.sse === "connecting" ? "var(--qe-amber)" : ch.sse === "error" ? "var(--qe-red)" : "var(--qe-muted)";
   const feed = _navFeed(ch);
   const fills = _navUserWs(ch);
@@ -2013,7 +2026,7 @@ const StatusFooter = () => {
     fontFamily: "var(--qe-mono)",
     fontSize: "0.54rem",
     color: "var(--qe-muted)"
-  } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, (window.QE_BOOTSTRAP && window.QE_BOOTSTRAP.projectShortName || "QRE") + " " + (window.QE_BOOTSTRAP && window.QE_BOOTSTRAP.projectVersion || "v3")), /* @__PURE__ */ React.createElement("span", null, "\xB7"), /* @__PURE__ */ React.createElement("span", null, "uptime ", /* @__PURE__ */ React.createElement(LiveValue, { id: "sb.uptime", value: ch.sys ? ch.sys.uptime_s : "\u2014", format: () => _navUptime(ch.sys ? ch.sys.uptime_s : null) })), /* @__PURE__ */ React.createElement("div", { className: "qe-grow" }), /* @__PURE__ */ React.createElement("span", { style: { color: engineTone } }, "\u25CF engine"), /* @__PURE__ */ React.createElement("span", { style: { color: sseTone } }, "\u25CF sse"), /* @__PURE__ */ React.createElement("span", { title: feed.title, style: {
+  } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, (window.QE_BOOTSTRAP && window.QE_BOOTSTRAP.projectShortName || "QRE") + " " + (window.QE_BOOTSTRAP && window.QE_BOOTSTRAP.projectVersion || "v3")), /* @__PURE__ */ React.createElement("span", null, "\xB7"), /* @__PURE__ */ React.createElement("span", null, "uptime ", /* @__PURE__ */ React.createElement(LiveValue, { id: "sb.uptime", value: sys ? sys.uptime_s : "\u2014", format: () => _navUptime(sys ? sys.uptime_s : null) })), /* @__PURE__ */ React.createElement("div", { className: "qe-grow" }), /* @__PURE__ */ React.createElement("span", { style: { color: engineTone } }, "\u25CF engine"), /* @__PURE__ */ React.createElement("span", { style: { color: sseTone } }, "\u25CF sse"), /* @__PURE__ */ React.createElement("span", { title: feed.title, style: {
     color: feed.tone === "ok" ? "var(--qe-green)" : feed.tone === "warn" ? "var(--qe-amber)" : feed.tone === "err" ? "var(--qe-red)" : "var(--qe-muted)"
   } }, "\u25CF feed"), /* @__PURE__ */ React.createElement("span", { title: fills.title, style: {
     color: fills.tone === "ok" ? "var(--qe-green)" : fills.tone === "err" ? "var(--qe-red)" : "var(--qe-muted)"
