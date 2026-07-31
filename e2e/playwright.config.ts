@@ -24,8 +24,13 @@ export default defineConfig({
     ['json', { outputFile: `./ledger/raw/${RUN_ID}/report.json` }],
   ],
   use: {
-    // The cache-first qre-v1 service worker serves stable /static/vendor/* filenames and
-    // would mask stale assets + real 4xx/5xx from the response oracles.
+    // The service worker (qre-v3 as of 2026-07-31) is cache-first for
+    // /static/vendor, whose filenames are stable, so it would mask stale assets
+    // and real 4xx/5xx from the response oracles.
+    // NB blocking it here is also why this suite could never have caught the
+    // CRIT that worker shipped with — it cached every API response and replayed
+    // it on failure. That behaviour is pinned in
+    // tests/test_service_worker_default_deny.py instead, at the source level.
     serviceWorkers: 'block',
     actionTimeout: 10_000,
     navigationTimeout: 15_000,

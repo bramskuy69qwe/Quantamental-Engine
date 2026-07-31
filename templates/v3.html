@@ -84,6 +84,19 @@
         if ((root && root.children.length > 1) || tries++ > 60) { boot.remove(); clearInterval(iv); }
       }, 150);
     })();
+
+    /* Nudge an ALREADY-INSTALLED service worker to check for a new version.
+       Deliberately getRegistration + update, never register: this shell must not
+       create a worker (see the header comment). It exists because the worker is
+       only ever installed from base.html, which the React nav no longer links
+       to — so a browser carrying the pre-2026-07-31 caching worker had no
+       reliable prompt to pick up its replacement from the one page the operator
+       actually opens. Silent by design; a rejection here is never actionable. */
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistration()
+        .then(function (reg) { if (reg) { return reg.update(); } })
+        .catch(function () {});
+    }
   </script>
   {% else %}
   <div id="boot-err">
