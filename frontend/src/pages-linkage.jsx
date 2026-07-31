@@ -17,6 +17,11 @@
    model/r/tags chips are dropped (not in the needs_review payload);
    funding rows treat null/0 sentinels as "no data" [P4 audit L1]. */
 
+/* The two lane cadences. One literal each, feeding both the scheduler and the
+   read deadline derived from it (warm-hang sweep, 2026-08-01). */
+const LK_FAST_MS = 5000;
+const LK_SLOW_MS = 30000;
+
 const _lkForm = async (url, fields, method = 'POST', opts = {}) => {
   const body = new URLSearchParams();
   Object.entries(fields || {}).forEach(([k, v]) => { if (v != null) body.append(k, v); });
@@ -336,13 +341,22 @@ const LinkagePage = () => {
   const [cancelBusy, setCancelBusy]     = React.useState(false);
 
   // Per-SOURCE pipe state (audit MED-1: the lanes span different routers —
-  // /orders/* vs /api/linkage/* — so a lane-representative foot would
-  // misattribute partial failures in both directions).
+  // the /orders/… router vs the /api/linkage/… one — so a lane-representative
+  // foot would misattribute partial failures in both directions).
+  // (Those two paths were once written as globs. A slash-star sequence inside
+  // a line comment opens a PHANTOM block comment for tests/_srcpin.py's
+  // stripper, which ate lines 344-389 of this file — every source pin over
+  // `nets`, `load` and `lkFoot` was passing vacuously. Same trap as C1's
+  // service worker. Never put a block-comment opener in a line comment;
+  // pinned app-wide by tests/test_net_deadline.py::TestTheCommentStripperTrap,
+  // whose first draft of THIS very comment tripped its own detector.)
   const [nets, setNets] = React.useState({});
   const load = React.useCallback((which) => {
-    const get = (url, fn, pick, key) => {
+    // `everyMs` is the lane's own cadence — the read deadline derives from it
+    // (warm-hang sweep, 2026-08-01), so retuning a lane retunes both.
+    const get = (url, fn, pick, key, everyMs) => {
       const t0 = performance.now();
-      return _ptJson(url)
+      return _ptJson(url, qePollDeadline(everyMs))
         .then((d) => {
           fn(pick ? d[pick] : d);
           setNets((m) => ({ ...m, [key]: { err: null, ms: performance.now() - t0 } }));
@@ -350,13 +364,13 @@ const LinkagePage = () => {
         .catch((err) => { setNets((m) => ({ ...m, [key]: { ...m[key], err } })); });
     };
     if (!which || which === 'fast') {
-      get('/orders/needs_review', setNeeds, 'orders', 'needs');
-      get('/api/linkage/positions', setPositions, 'positions', 'positions');
-      get('/api/linkage/calcs', setCalcs, 'calcs', 'calcs');
+      get('/orders/needs_review', setNeeds, 'orders', 'needs', LK_FAST_MS);
+      get('/api/linkage/positions', setPositions, 'positions', 'positions', LK_FAST_MS);
+      get('/api/linkage/calcs', setCalcs, 'calcs', 'calcs', LK_FAST_MS);
     }
     if (!which || which === 'slow') {
-      get('/api/linkage/funding', setFunding, null, 'funding');
-      get('/api/linkage/closes', setCloses, 'closes', 'closes');
+      get('/api/linkage/funding', setFunding, null, 'funding', LK_SLOW_MS);
+      get('/api/linkage/closes', setCloses, 'closes', 'closes', LK_SLOW_MS);
     }
   }, []);
   const lkFoot = (key, hasData) => {
@@ -365,8 +379,8 @@ const LinkagePage = () => {
   };
   React.useEffect(() => {
     load();
-    const t1 = setInterval(() => load('fast'), 5000);
-    const t2 = setInterval(() => load('slow'), 30000);
+    const t1 = setInterval(() => load('fast'), LK_FAST_MS);
+    const t2 = setInterval(() => load('slow'), LK_SLOW_MS);
     return () => { clearInterval(t1); clearInterval(t2); };
   }, [load]);
 

@@ -99,6 +99,10 @@ const H_TABS = [
   ['pretrade',  'Pre-Trade Log',    '/fragments/history/pre_trade'],
 ];
 
+/* Table auto-refresh cadence — one literal, feeding both the scheduler and the
+   read deadline derived from it (warm-hang sweep, 2026-08-01). */
+const H_REFRESH_MS = 30000;
+
 /* Row ids with an OPEN note editor. The page's 30 s auto-refresh re-reads a
    server-paged table, so a refresh mid-edit can drop the edited row off page 1
    and unmount the input with the operator's text in it. The poll skips while
@@ -265,7 +269,7 @@ const HistoryPage = () => {
     setLoading(true);
     const t0 = performance.now();
     try {
-      const d = await _ptJson(ep + '?' + params.toString());
+      const d = await _ptJson(ep + '?' + params.toString(), qePollDeadline(H_REFRESH_MS));
       if (seq === seqRef.current) { setData(d); setNet({ err: null, ms: performance.now() - t0 }); }
     } catch (err) {
       // keep last-good on a poll hiccup [P4 audit #5]
@@ -279,7 +283,7 @@ const HistoryPage = () => {
   // server-paged and newest-first, so a refresh mid-edit can push the edited row
   // off page 1 and unmount the input with the operator's text still in it.
   React.useEffect(() => {
-    const t = setInterval(() => { if (HNOTE_EDITING.size === 0) load(); }, 30000);
+    const t = setInterval(() => { if (HNOTE_EDITING.size === 0) load(); }, H_REFRESH_MS);
     return () => clearInterval(t);
   }, [load]);
   React.useEffect(() => { setPage(1); setSel(null); setDrill(null); }, [tab, period, q]);

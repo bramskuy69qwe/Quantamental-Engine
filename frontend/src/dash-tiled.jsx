@@ -33,12 +33,21 @@ const QE_DASH = (function () {
   const subs = new Set();
   const notify = () => subs.forEach((f) => { try { f(); } catch (e) { /* isolate */ } });
 
+  /* Poll interval per pipe, keyed by its net key. ONE literal per pipe: the
+     setInterval below and the read deadline in _json both read it, so the
+     deadline cannot drift away from the cadence it is derived from (pinned by
+     tests/test_net_deadline.py against the setInterval calls themselves). */
+  const _POLL = { st: 5000, log: 4000, macro: 60000, snapshot: 15000 };
+
   // net-tracking wrapper over the shared _ptJson plumbing (P8 wave 2: the
   // in-file fetch duplicate collapsed onto primitives' _ptJson — audit N7).
+  // Every read carries its pipe's DEADLINE (see _POLL above), so a hung
+  // endpoint can no longer hold this net entry at its last-good value while
+  // the tiles above render hours-old risk numbers.
   async function _json(url, key) {
     const t0 = performance.now();
     try {
-      const d = await _ptJson(url);
+      const d = await _ptJson(url, qePollDeadline(_POLL[key]));
       if (key) state.net[key] = { err: null, ms: performance.now() - t0 };
       return d;
     } catch (err) {
@@ -132,19 +141,33 @@ const QE_DASH = (function () {
 
   let started = false, wired = false;
   const _timers = [];
+  /* The deadline above bounds a lie only while a request is OUTSTANDING. It
+     cannot reach the other half of the same seam: a hidden page's timers are
+     throttled to ~1/min (and a frozen one's stop entirely), so no request is
+     outstanding at all and the last-painted frame keeps its `connected [12ms]`
+     foot over minute-old numbers. The operator's actual pattern makes this the
+     common case — they place in Quantower and alt-tab back to a dashboard that
+     has been in the background. Refreshing on return beats labelling it: one
+     round-trip replaces the stale frame instead of annotating it. (A staleness
+     timestamp cannot cover this either — the clock that would evaluate it is
+     throttled by exactly the same rule.) */
+  let _unVisible = null;
+  function refreshAll() { loadSnapshot(); loadState(); loadMacro(); loadLog(); }
   function start() {
     if (!wired) { _wireSSE(); wired = true; }   // SSE stays wired across mounts (idempotent)
     if (started) return;
     started = true;
-    loadSnapshot(); loadState(); loadMacro(); loadLog();
-    _timers.push(setInterval(loadState, 5000));
-    _timers.push(setInterval(loadLog, 4000));
-    _timers.push(setInterval(loadMacro, 60000));
-    _timers.push(setInterval(loadSnapshot, 15000));  // reconcile non-SSE tiles
+    _unVisible = qeOnVisible(refreshAll);
+    refreshAll();
+    _timers.push(setInterval(loadState, _POLL.st));
+    _timers.push(setInterval(loadLog, _POLL.log));
+    _timers.push(setInterval(loadMacro, _POLL.macro));
+    _timers.push(setInterval(loadSnapshot, _POLL.snapshot));  // reconcile non-SSE tiles
   }
   function stop() {   // clear the polls when the Dashboard unmounts (M1); SSE stays wired
     _timers.forEach(clearInterval);
     _timers.length = 0;
+    if (_unVisible) { _unVisible(); _unVisible = null; }
     started = false;
     // `ui` is module-level, so a dialog left open would re-raise itself on the
     // next visit to the Dashboard.
@@ -186,24 +209,25 @@ const QE_DASH = (function () {
  *
  * Both produced the same observable, and it is the one this helper exists to
  * kill: a pipe that had NEVER answered rendered green `connected [Nms]` with
- * the ms measured on its healthy sibling. `_ptJson` sets no timeout, so a hung
- * /api/state (blocked loop, deadlocked DB, black-holed TCP) never rejects and
- * never fills net.st, while Risk Monitor shows ADVISORY/OK badges built from
- * an empty `st` — during a real enforced DD halt, with every affirmative
- * signal on the tile saying otherwise. Hence `answered` below: a pipe that has
- * not reported has no data OF ITS OWN, whatever else painted the view.
- * The 2-vs-3 rule is per-PANE in the doctrine but the DATA is per-PIPE.
+ * the ms measured on its healthy sibling. A hung /api/state (blocked loop,
+ * deadlocked DB, black-holed TCP) never filled net.st, while Risk Monitor
+ * showed ADVISORY/OK badges built from an empty `st` — during a real enforced
+ * DD halt, with every affirmative signal on the tile saying otherwise. Hence
+ * `answered` below: a pipe that has not reported has no data OF ITS OWN,
+ * whatever else painted the view. The 2-vs-3 rule is per-PANE in the doctrine
+ * but the DATA is per-PIPE.
  *
- * ⚠ THIS CLOSES THE COLD HANG ONLY — the WARM hang is still open, and it is
- * the likelier production trigger. `answered` is a LATCH: once a pipe has
- * succeeded once, `_json` never clears its net entry (a promise that never
- * settles runs neither the resolve nor the catch branch), so a pipe that
- * answers at boot and hangs an hour later still reads `ok · connected [12ms]`
- * forever. Nothing in the store records WHEN an entry was written, so
- * "12ms, 3s ago" and "12ms, 4h ago" are identical inputs here. Closing it
- * needs a timestamp on every net write plus a staleness threshold per poll
- * interval — a store-level change affecting all eight panes, deliberately not
- * folded into this fix. Filed in DESIGN.md's scope caveat.
+ * ⚠ `answered` IS STILL A LATCH, AND MUST NOT BE RELIED ON AS A FRESHNESS
+ * TEST. It answers "has this pipe EVER reported", never "recently". What
+ * bounds the gap is upstream: every read now carries a DEADLINE (primitives'
+ * _ptJson + qePollDeadline, wired to _POLL above), so a pipe that hangs
+ * rejects within its own poll interval and lands in `n.err` — which this
+ * helper already ranks correctly. Before that deadline existed, a promise that
+ * never settled ran neither branch and this entry kept `{err:null, ms}`
+ * forever: 24 h of hanging still read `ok · connected [12ms]`. Anything added
+ * here that infers freshness from the net entry alone is re-deriving a fact
+ * this file does not hold — the timestamp is not missing by oversight, it was
+ * judged the wrong layer (DESIGN.md § the deadline rule).
  *
  * Reported tone = worst by _FOOT_RANK; within a tone a real FAILURE outranks
  * mere slowness, then the slower pipe wins. A slow pipe surfaces on its own
@@ -384,6 +408,7 @@ const EquityStatsPane = () => {
 };
 
 /* ── Tile: Equity curve — self-fetching OHLC chart + a live header ──────── */
+const EQUITY_OHLC_MS = 5000;
 const EquityOhlcChart = React.memo(function EquityOhlcChart({ tf, onNet, onBar }) {
   const [data, setData] = React.useState([]);
   React.useEffect(() => {
@@ -391,7 +416,7 @@ const EquityOhlcChart = React.memo(function EquityOhlcChart({ tf, onNet, onBar }
     const load = async () => {
       const t0 = performance.now();
       try {
-        const j = await _ptJson('/api/dashboard/equity_ohlc?tf=' + tf);
+        const j = await _ptJson('/api/dashboard/equity_ohlc?tf=' + tf, qePollDeadline(EQUITY_OHLC_MS));
         // CandlestickChart wants [[t, o, c, l, h], …]; snapshot candle = {x,o,h,l,c}
         const rows = (j.candles || []).map((c) => [c.x, c.o, c.c, c.l, c.h]);
         if (alive) {
@@ -408,7 +433,7 @@ const EquityOhlcChart = React.memo(function EquityOhlcChart({ tf, onNet, onBar }
       } catch (err) { if (alive && onNet) onNet((n) => ({ ...n, err })); }
     };
     load();
-    const id = setInterval(load, 5000);
+    const id = setInterval(load, EQUITY_OHLC_MS);
     return () => { alive = false; clearInterval(id); };
   }, [tf]);
   return data.length ? <CandlestickChart data={data} /> : <EmptyState tone="neutral" glyph="〰" msg="Loading equity…" />;
@@ -807,18 +832,19 @@ const ActiveParamsPane = () => {
    Its own tiny poller rather than QE_DASH: this is page chrome, not a tile, and
    useAnaJson lives in a module that loads AFTER this one. 60s because headlines
    are ambient, not actionable — the Regime News tab is the working surface. */
+const NEWS_FEED_MS = 60_000;
 const DashNewsTicker = () => {
   const [news, setNews] = React.useState(null);
   React.useEffect(() => {
     let alive = true;
     const load = async () => {
       try {
-        const d = await _ptJson('/api/news/feed?limit=40');
+        const d = await _ptJson('/api/news/feed?limit=40', qePollDeadline(NEWS_FEED_MS));
         if (alive) setNews(Array.isArray(d) ? d : (d.news || d.items || []));
       } catch (e) { /* keep last — an absent feed renders quiet by contract */ }
     };
     load();
-    const t = setInterval(load, 60_000);
+    const t = setInterval(load, NEWS_FEED_MS);
     return () => { alive = false; clearInterval(t); };
   }, []);
   if (!news || !news.length) return null;   // empty renders quiet, never a bar of nothing

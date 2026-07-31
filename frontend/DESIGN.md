@@ -279,7 +279,7 @@ break-even close that was never measured. Column label: `MAE ◂ HEAT ▸ MFE`.
   **MULTI-PIPE RULE (2026-07-31): a pane fed by more than one source must
   report the WORST of them, never a chosen one — each pipe carrying its
   OWN `hasData`.** Derive the 4-tier state per pipe, then reduce by
-  SEVERITY: `err` > errored-showing-last-data > never-answered >
+  SEVERITY: `err` > never-answered > errored-showing-last-data >
   merely-delayed > `ok`, ties breaking to the slower pipe. Use a helper
   taking a list of `{src, hasData}` (`_dashFootWorst(d, [{src:'snapshot',
   hasData:d.loaded}, …])`); single-pipe panes call the same path with one
@@ -318,25 +318,73 @@ break-even close that was never measured. Column label: `MAE ◂ HEAT ▸ MFE`.
   helper is lifted into `primitives.jsx` — `pages-pretrade.jsx`'s
   Regime · ATR pane is a known open violation (reads the CALC pipe, foots
   the REGIME pipe alone).
-- **OPEN — the WARM HANG (filed 2026-07-31, not fixed).** Every foot in
-  the app answers "did this pipe ever report?", never "did it report
-  RECENTLY". `_ptJson` sets no timeout and no `AbortSignal` anywhere in
-  `frontend/src`, and a promise that never settles runs neither the
-  resolve nor the catch branch — so a pipe that succeeds once and hangs
-  later keeps its `{err:null, ms}` entry unchanged and its foot reads
-  `ok · connected [12ms]` indefinitely. Executed: a snapshot pipe hung
-  for 24 h (≈17k outstanding polls) still reports green, freezing Net
-  Exposure / Drawdown / Weekly Loss / Positions at hours-old values.
-  Aggravator: Chrome's ~6-connections-per-origin cap means one hung
-  endpoint on a 5 s poll can queue every other same-origin poll behind
-  it, freezing the whole dashboard behind uniformly green feet. This is
-  **pre-existing and app-wide**, not specific to multi-pipe panes. Fix
-  shape: stamp `at` on every net write and treat
-  `now - at > k × pollInterval` as un-answered; nothing smaller reaches
-  it, because no field today distinguishes "12 ms, 3 s ago" from
-  "12 ms, 4 h ago". Related fabrication to fix alongside it: Risk
-  Monitor's Positions gauge renders `${rk.positions_open || 0}/${rk.
-  positions_max || 20}`, so an empty snapshot shows a confident "0/20".
+- **THE READ DEADLINE — every read pipe is bounded (closed 2026-08-01;
+  was the filed WARM HANG).** `fetch` has no default timeout, and a
+  promise that never settles runs neither the resolve nor the catch
+  branch. So a pipe that succeeded once and went dark kept its
+  `{err:null, ms}` entry unchanged and its foot read `ok · connected
+  [12ms]` indefinitely — executed: 24 h of hanging (≈17k outstanding
+  polls) still green, with Net Exposure / Drawdown / Weekly Loss /
+  Positions frozen at hours-old values. Every foot in the app answers
+  "did this pipe ever report?", never "did it report RECENTLY", so
+  nothing downstream could see it.
+  **THE RULE: every READ carries a deadline, and a POLLED read's
+  deadline is its own interval, floored at 5 s** (`qePollDeadline`,
+  `primitives.jsx`). A request that has not answered by the time its
+  successor is due is superseded — cancelling costs nothing (the
+  successor is going out anyway) and frees the connection it needs; the
+  floor keeps sub-second pollers from cancelling a merely slow but
+  healthy response. One-shot reads get `QE_READ_DEADLINE_MS` (30 s),
+  generous because aborting a request with no successor coming needs a
+  manual reload to recover. **Derive the deadline from the SAME literal
+  that feeds `setInterval`** — every polled module now names its cadence
+  once (`_POLL`, `PT_PRICE_MS`, `LK_FAST_MS`, …) so the two cannot
+  drift; a poller with two cadences (the link-window countdown) is
+  sized from the SLOWER one. **★ EXCEPTION — a client deadline must
+  never be tighter than the ENGINE's own upstream budget**, or it kills
+  requests the server was about to answer and the pane then never loads
+  at all, which is the same lie pointing the other way. Exactly two
+  polled reads have a handler that awaits a third-party call —
+  `/api/price/{ticker}` and `/api/calculator/orderbook/{ticker}`, both
+  via `fetch_orderbook` → ccxt, whose default timeout is 10 s with no
+  override and no retry — so those two take
+  `QE_UPSTREAM_READ_DEADLINE_MS` (12 s) instead of the poll floor. It
+  costs nothing: both are chained-`setTimeout` pollers that reschedule
+  only after their await, so each holds at most one request outstanding
+  whatever the deadline. The backend half of that premise is pinned too
+  (`TestTheUpstreamBudget`), so a third such endpoint cannot silently
+  inherit the tight floor. Deadline errors carry `status: 0` (so every existing
+  network-sentinel branch keeps working) plus `timeoutMs`, which
+  `qeFootCause` and `qeFootState` check FIRST — `no response in 5s —
+  engine not answering` rather than the false `no network — engine
+  unreachable`.
+  **WHY AT THE REQUEST AND NOT AT THE FOOT.** The originally filed shape
+  was a timestamp on every net write plus a `now - at > k × interval`
+  threshold. It was not taken, and the reason generalises: **a timestamp
+  needs a clock to evaluate it, and every clock a page has —
+  `setInterval`, `setTimeout`, a render tick — is throttled by exactly
+  the conditions that strand a pipe** (hidden pages ~1/min, frozen pages
+  not at all), so the detector sleeps precisely when it is needed. It
+  also cannot repaint on its own (nothing changes when data merely gets
+  old) and leaves the hung sockets outstanding, so it does not touch the
+  connection-cap aggravator at all. A deadline is self-triggering: the
+  rejection IS the event, it lands in the `err` channel the 4-tier
+  deriver already renders correctly, and **no foot call site changes.**
+  **WRITES ARE DELIBERATELY EXEMPT.** Aborting a mutation in flight
+  cannot cancel what the server already did, so it trades a stuck
+  spinner for "did my save land?". Reads carry no such ambiguity.
+  **The half a deadline cannot reach** is a throttled poller: no request
+  is outstanding to time out, so the app-lifetime stores (`QE_CHROME`,
+  `QE_DASH`) re-poll on return-to-visible via `qeOnVisible` — a fresh
+  answer beats a staleness label, and it is the operator's real pattern
+  (place in Quantower, alt-tab back). One helper, because it has two
+  easy-to-get-wrong parts: it must ignore the HIDE transition, and it
+  must rate-limit (the event fires on every toggle, so alt-tabbing
+  quickly would burst one request per pipe per toggle against the same
+  ~6-connection cap named above as the hang's aggravator).
+  Still open, filed alongside it: Risk Monitor's Positions gauge renders
+  `${rk.positions_open || 0}/${rk.positions_max || 20}`, so an empty
+  snapshot shows a confident "0/20".
 - **`PageHeader`** `{title, subtitle, left, children}` — the 34px page title bar. **Never repeat the page title inside content.**
 
 ---

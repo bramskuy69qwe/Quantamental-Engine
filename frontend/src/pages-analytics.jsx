@@ -98,13 +98,20 @@ const useAnaJson = (url, intervalMs = 0) => {
     const seq = ++seqRef.current;
     const t0 = performance.now();
     try {
-      const d = await _ptJson(url);
+      // Polled panes get their own cadence as the read deadline; a one-shot
+      // (intervalMs 0) keeps the generous default, because aborting a request
+      // with no successor coming would need a manual reload to recover
+      // (warm-hang sweep, 2026-08-01).
+      const d = await _ptJson(url, intervalMs ? qePollDeadline(intervalMs) : undefined);
       if (seq === seqRef.current) { setData(d); setErr(null); setMs(performance.now() - t0); }
     } catch (e) {
       if (seq === seqRef.current) { setErr(e); }  // keep last-good data
     }
     if (seq === seqRef.current) setLoading(false);
-  }, [url]);
+    // `intervalMs` joins the deps because the deadline above now reads it —
+    // omitting it would leave a stale closure deriving the OLD cadence's
+    // deadline after a caller retunes its poll.
+  }, [url, intervalMs]);
   React.useEffect(() => {
     if (!url) {  // reset so a later real url starts clean (P7 conditional fetch)
       seqRef.current++;

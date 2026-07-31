@@ -60,6 +60,25 @@ const _ptCalcFoot = (busy, calcErr, calc) => {
 /* _ptJson (the status/corrupt-tagging JSON fetch) now lives in
    primitives.jsx — hoisted in P8 wave 2 (audit L1-F8) so every consumer
    (dash-tiled loads BEFORE this module) sits forward of the definition. */
+
+/* Poll cadences for this page. ONE literal each, feeding both the scheduler
+   and the read deadline derived from it (warm-hang sweep, 2026-08-01).
+   Three of these pollers reschedule with setTimeout AFTER their await, so
+   before the deadline existed a single hung request stopped them for good —
+   permanently frozen price / depth / countdown, under foots that went on
+   promising `· retrying`. In MARKET mode the price pipe IS the sizing input
+   (doCalculate reads liveRef), so that one sized off a frozen number. */
+const PT_STATE_MS = 5000;
+const PT_REGIME_MS = 60000;
+/* These two are the app's only polled reads whose HANDLER makes a
+   synchronous exchange call, so their deadline is the engine's upstream
+   budget, not this cadence — see QE_UPSTREAM_READ_DEADLINE_MS. */
+const PT_PRICE_MS = 1000;
+const PT_BOOK_MS = 2000;
+/* The countdown polls fast while PENDING, then settles to the slow lane. */
+const PT_LINKWIN_FAST_MS = 1000;
+const PT_LINKWIN_MS = 5000;
+
 const _ptStrip = (html) => {
   let t;
   try {
@@ -262,20 +281,22 @@ const PreTradePage = () => {
   const [netRegime, setNetRegime] = React.useState({});   // regime-poll pipe (qeFootState)
   React.useEffect(() => {
     let alive = true;
-    const load = (url, fn, netFn) => {
+    const load = (url, fn, netFn, everyMs) => {
       const t0 = performance.now();
-      return _ptJson(url)
+      // Deadline per read (warm-hang sweep): polled reads get their own
+      // cadence, the one-shots on this effect keep the default budget.
+      return _ptJson(url, everyMs ? qePollDeadline(everyMs) : undefined)
         .then((d) => { if (alive) { fn(d); if (netFn) netFn({ err: null, ms: performance.now() - t0 }); } })
         .catch((err) => { if (alive && netFn) netFn((n) => ({ ...n, err })); });
     };
-    load('/api/state', setSt);
-    load('/api/regime/current', setRegime, setNetRegime);
+    load('/api/state', setSt, null, PT_STATE_MS);
+    load('/api/regime/current', setRegime, setNetRegime, PT_REGIME_MS);
     load('/api/models', (d) => setModels(Array.isArray(d) ? d : (d.models || [])));
     load('/api/calculator/context', setCtxInfo);
     const aid = window.QE_BOOTSTRAP && window.QE_BOOTSTRAP.activeAccountId;
     if (aid != null) load('/api/config/account/' + aid, (d) => setRiskPct((d.params || {}).individual_risk_per_trade));
-    const t1 = setInterval(() => load('/api/state', setSt), 5000);
-    const t2 = setInterval(() => load('/api/regime/current', setRegime, setNetRegime), 60000);
+    const t1 = setInterval(() => load('/api/state', setSt, null, PT_STATE_MS), PT_STATE_MS);
+    const t2 = setInterval(() => load('/api/regime/current', setRegime, setNetRegime, PT_REGIME_MS), PT_REGIME_MS);
     return () => { alive = false; clearInterval(t1); clearInterval(t2); };
   }, []);
 
@@ -326,7 +347,7 @@ const PreTradePage = () => {
     const poll = async () => {
       const t0 = performance.now();
       try {
-        const d = await _ptJson('/api/price/' + encodeURIComponent(tickerNorm));
+        const d = await _ptJson('/api/price/' + encodeURIComponent(tickerNorm), QE_UPSTREAM_READ_DEADLINE_MS);
         if (alive && tickerRef.current === tickerNorm) {
           const ms = performance.now() - t0;
           if (d.price) { hadPrice = true; setLivePrice(d.price); }
@@ -345,7 +366,7 @@ const PreTradePage = () => {
       } catch (err) {
         if (alive && tickerRef.current === tickerNorm) setNetPx((n) => ({ ...n, err }));
       }
-      if (alive) timer = setTimeout(poll, 1000);
+      if (alive) timer = setTimeout(poll, PT_PRICE_MS);
     };
     const debounce = setTimeout(poll, 500);
     return () => { alive = false; clearTimeout(debounce); clearTimeout(timer); };
@@ -361,10 +382,10 @@ const PreTradePage = () => {
     const poll = async () => {
       const t0 = performance.now();
       try {
-        const d = await _ptJson('/api/calculator/orderbook/' + encodeURIComponent(tickerNorm));
+        const d = await _ptJson('/api/calculator/orderbook/' + encodeURIComponent(tickerNorm), QE_UPSTREAM_READ_DEADLINE_MS);
         if (alive && tickerRef.current === tickerNorm) { setOb(d); setNetOb({ err: null, ms: performance.now() - t0 }); }
       } catch (err) { if (alive && tickerRef.current === tickerNorm) setNetOb((n) => ({ ...n, err })); }
-      if (alive) timer = setTimeout(poll, 2000);
+      if (alive) timer = setTimeout(poll, PT_BOOK_MS);
     };
     const debounce = setTimeout(poll, 600);
     return () => { alive = false; clearTimeout(debounce); clearTimeout(timer); };
@@ -379,15 +400,16 @@ const PreTradePage = () => {
     const poll = async () => {
       try {
         const q = t0Ref.current ? '&t0=' + t0Ref.current : '';
-        const d = await _ptJson('/calculator/link-window-status/' + encodeURIComponent(lwCalcId) + '?format=json' + q);
+        const d = await _ptJson('/calculator/link-window-status/' + encodeURIComponent(lwCalcId) + '?format=json' + q,
+                                qePollDeadline(PT_LINKWIN_MS));
         if (stop) return;
         setLw({ ...d, _at: Date.now() });   // receipt anchor for the skew-immune tick
         if (d.t0) t0Ref.current = d.t0;
-        if (d.status === 'PENDING') timer = setTimeout(poll, 1000);
-        else if (d.status === 'LINKABLE' || d.status === 'EXPIRING_SOON') timer = setTimeout(poll, 5000);
+        if (d.status === 'PENDING') timer = setTimeout(poll, PT_LINKWIN_FAST_MS);
+        else if (d.status === 'LINKABLE' || d.status === 'EXPIRING_SOON') timer = setTimeout(poll, PT_LINKWIN_MS);
         /* terminal states (ERROR/LINKED/LINKED_CONFIRMED/EXPIRED): stop */
       } catch (e) {
-        if (!stop) timer = setTimeout(poll, 5000);
+        if (!stop) timer = setTimeout(poll, PT_LINKWIN_MS);
       }
     };
     poll();

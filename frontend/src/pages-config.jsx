@@ -29,14 +29,14 @@
    (cards also show the sizing envelope Apply writes). */
 
 /* ── fetch helpers ───────────────────────────────────────────────────────── */
-const _cfgJson = async (url) => {
-  let r;
-  try { r = await fetch(url, { headers: { Accept: 'application/json' } }); }
-  catch (e) { const err = new Error(url + ' unreachable'); err.status = 0; throw err; }
-  if (!r.ok) { const err = new Error(url + ' ' + r.status); err.status = r.status; throw err; }
-  try { return await r.json(); }
-  catch (e) { const err = new Error(url + ' corrupt response'); err.corrupt = true; throw err; }
-};
+/* This page's reads are ONE-SHOTS (mount / selection change), so they cannot
+   go stale behind a green foot the way a poll can — their warm-hang symptom is
+   a spinner that never resolves and a Test/Reload button that stays busy
+   forever. Delegating to _ptJson gives them the same deadline discipline as
+   every other read; the error contract (status / corrupt / now timeoutMs) is
+   identical, which is why this wrapper survives as a one-liner rather than
+   being inlined at 8 call sites (warm-hang sweep, 2026-08-01). */
+const _cfgJson = (url) => _ptJson(url, QE_READ_DEADLINE_MS);
 
 /* Strip an HTML-snippet response (the Jinja-era endpoints answer with styled
    <span>s) to plain text via an inert DOMParser document. */

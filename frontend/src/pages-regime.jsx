@@ -125,6 +125,13 @@ const RG_THRESHOLD_LABELS = {
 /* JSON POST helper (backfill/reclassify take JSON bodies; news/refresh none).
    NEVER rejects — an unreachable engine returns {ok:false,status:0} so busy
    states always resolve (audit M1: the P2 idiom; Jinja wrapped all three). */
+/* Backfill-status poll cadence — one literal, feeding both the scheduler and
+   the read deadline derived from it (warm-hang sweep, 2026-08-01). The "4
+   consecutive failures ≈ 6 s" terminal rule below counts on this number, and
+   a hung status read used to stall that counter indefinitely with Start
+   disabled — the job never resolved either way. */
+const RG_BACKFILL_MS = 1500;
+
 const _rgPost = async (url, body) => {
   try {
     const r = await fetch(url, {
@@ -1195,7 +1202,7 @@ const RegimePage = () => {
     if (bfStatus !== 'running' || bfId == null) { bfBusyRef.current = bfStatus === 'starting'; return undefined; }
     const t = setInterval(async () => {
       try {
-        const s = await _ptJson(`/api/regime/backfill-status/${bfId}`);
+        const s = await _ptJson(`/api/regime/backfill-status/${bfId}`, qePollDeadline(RG_BACKFILL_MS));
         setBfJob((j) => (j && j.id === bfId ? { ...j, ...s, id: bfId, fails: 0 } : j));
       } catch (e) {
         // Jobs are in-memory server-side: a restart 404s forever. Terminal
@@ -1208,7 +1215,7 @@ const RegimePage = () => {
           return { ...j, fails };
         });
       }
-    }, 1500);
+    }, RG_BACKFILL_MS);
     return () => clearInterval(t);
   }, [bfId, bfStatus]);
   React.useEffect(() => {

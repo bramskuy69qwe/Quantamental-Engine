@@ -589,21 +589,154 @@ const PaneHead = ({title, count=null, right=null, hot=false, tag=null, onRefresh
 // tier 3 (err, cause displayed). `empty` (successful fetch, zero rows) is
 // accepted so callers can pass full state — it stays tier 1; the BODY owns
 // empty-state display (EmptyState), the foot reports the pipe.
+/* ── THE READ DEADLINE (2026-08-01, closes the filed WARM HANG) ────────────
+ * `fetch` has no default timeout, and a promise that never settles runs
+ * NEITHER the resolve nor the catch branch. So before this, a pipe that
+ * answered once and went dark later kept its `{err:null, ms}` entry forever
+ * and its foot read `ok · connected [12ms]` indefinitely — stale risk numbers
+ * under an affirmative healthy signal, the one failure a data-state foot
+ * exists to prevent. Nothing downstream could see it: every foot in the app
+ * answers "did this pipe ever report?", never "did it report RECENTLY".
+ *
+ * The cure is at the REQUEST, not at the foot: give every read a deadline, so
+ * a hang becomes a real rejection that flows through the `err` channel the
+ * 4-tier deriver already renders correctly. That is why no foot call site
+ * changes — and why the repaint happens at all. A timestamp-and-threshold
+ * scheme (the shape originally filed) would need a clock to evaluate it, and
+ * every clock available to a page — setInterval, setTimeout, a render tick —
+ * is throttled by exactly the conditions that strand a pipe, so the detector
+ * sleeps precisely when it is needed. See DESIGN.md § the deadline rule.
+ *
+ * Three further defects in this class die with the same change, each verified
+ * at the line before being claimed:
+ *   · chained-setTimeout pollers (Pre-Trade price 1 s / orderbook 2 s /
+ *     link-window) reschedule AFTER the await, so one hang stopped them
+ *     permanently — while their foots promised `· retrying`.
+ *   · the notification poll's `inFlight` latch is released in a `finally`
+ *     that a hang never reaches, silently killing the alert feed for the
+ *     session.
+ *   · hung requests held their connections, and Chrome's ~6-per-origin cap
+ *     then queued every other same-origin poll behind them.
+ *
+ * READS ONLY, DELIBERATELY. The write helpers (_cfgPostForm / _cfgPostJson /
+ * _lkForm / _rgPost / _mdlSend / _mdlUpload / _dashPostJson and the calculator
+ * POSTs) keep today's unbounded behaviour: aborting a mutation in flight
+ * cannot cancel what the server already did, so it would trade a stuck spinner
+ * for "did my save land?" — a worse question, and a different defect class
+ * from the one this closes. A read carries no such ambiguity: nothing happened,
+ * ask again.
+ */
+const QE_READ_DEADLINE_MS = 30_000;   // one-shot reads (no successor coming)
+
+// Duration for operator-facing text. Declared here rather than beside
+// qeFootCause because _ptDeadlineErr below builds a message with it too, and
+// two spellings of the same duration is how `no response in 0s` reaches a
+// console while the foot says `300ms` (caught by executing the probe).
+const _qeSecs = (ms) => (ms >= 1000 ? `${Math.round(ms / 1000)}s` : `${Math.round(ms)}ms`);
+
+/* A POLLED read's deadline is its own interval, floored at 5 s.
+ * Rationale, in one line: a request that has not answered by the time its
+ * successor is due is already superseded — cancelling costs nothing (the
+ * successor is going out anyway) and frees the connection it needs. The floor
+ * keeps sub-second pollers (price 1 s, orderbook 2 s) from cancelling a merely
+ * slow but healthy response. Derive this from the SAME literal that feeds
+ * setInterval so the two cannot drift. */
+const qePollDeadline = (intervalMs) => Math.max(intervalMs || 0, 5_000);
+
+/* ★ A CLIENT DEADLINE MUST NEVER BE TIGHTER THAN THE ENGINE'S OWN UPSTREAM
+ * BUDGET, or it kills requests the server was about to answer — and the pane
+ * then never loads AT ALL, which is a worse lie in the other direction.
+ * Two polled reads have a handler that makes a synchronous third-party call
+ * (verified by walking every polled endpoint's handler, not by sampling):
+ * `/api/price/{ticker}` and `/api/calculator/orderbook/{ticker}` both await
+ * `fetch_orderbook` → the ccxt adapter, whose default timeout is 10 s with no
+ * override and no retry. Under exchange latency or rate-limit backoff a
+ * healthy 6-10 s response is normal there, and the 5 s poll floor would abort
+ * every one of them forever. So those two get the upstream budget instead.
+ * It costs nothing: both are chained-setTimeout pollers that reschedule only
+ * AFTER their await, so each holds at most ONE outstanding request whatever
+ * the deadline. Every other polled read is cache- or DB-backed. */
+const QE_UPSTREAM_READ_DEADLINE_MS = 12_000;
+
+/* Re-poll when the page comes back to the front, at most once a second.
+ * WHY IT EXISTS: a hidden page's timers are throttled to ~1/min and a frozen
+ * page's stop entirely, so no request is outstanding for a deadline to bound
+ * and the last-painted frame keeps a `connected` foot over minute-old numbers.
+ * Refreshing on return beats labelling it stale.
+ * WHY IT IS RATE-LIMITED: `visibilitychange` fires on every transition, so
+ * alt-tabbing quickly would burst one request per pipe per toggle against the
+ * same ~6-connections-per-origin cap named above as the hang's aggravator.
+ * Returns an unsubscribe, so a store with a lifecycle can unhook. */
+const qeOnVisible = (fn, minGapMs = 1_000) => {
+  let last = 0;
+  const handler = () => {
+    if (document.hidden) return;
+    const now = Date.now();
+    if (now - last < minGapMs) return;
+    last = now;
+    fn();
+  };
+  document.addEventListener('visibilitychange', handler);
+  return () => document.removeEventListener('visibilitychange', handler);
+};
+
+const _ptDeadlineErr = (url, ms) => {
+  const err = new Error(url + ' no response in ' + _qeSecs(ms));
+  // `status: 0` keeps every existing consumer's network-sentinel branch
+  // working unchanged; `timeoutMs` lets qeFootCause say something truer than
+  // "no network" — the socket is fine, the ENGINE is not answering.
+  err.status = 0;
+  err.timeoutMs = ms;
+  return err;
+};
+
+/* Aborts with the tagged error as the abort REASON, so `fetch` (and the body
+   read) reject with exactly that object and the catches below can re-throw it
+   untouched. The timer is cleared on settle — an AbortSignal.timeout() would
+   leave one live timer per request, and the 1 Hz price poll issues 30 of them
+   inside a single 30 s window. */
+const _ptFetch = async (url, init, deadlineMs) => {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(_ptDeadlineErr(url, deadlineMs)), deadlineMs);
+  try {
+    return { r: await fetch(url, { ...init, signal: ac.signal }), t };
+  } catch (e) {
+    clearTimeout(t);
+    throw e;
+  }
+};
+
+/* Our own abort, whatever the engine did with the reason. `abort(reason)`
+   rejects the fetch WITH that object, so the tag normally survives; a runtime
+   that drops it still yields a DOMException named AbortError, and re-tagging
+   here keeps the foot's cause right instead of falling through to the
+   "no network" branch, which would name the wrong thing. */
+const _ptDeadlineHit = (e, url, deadlineMs) => (
+  e && e.timeoutMs != null ? e
+    : (e && e.name === 'AbortError') ? _ptDeadlineErr(url, deadlineMs)
+    : null
+);
+
 /* _ptJson — THE shared JSON-fetch plumbing (moved here from pages-pretrade
    in P8 wave 2, audit L1-F8: dash-tiled consumed it against load order).
-   Errors carry `status` (HTTP code; 0 = network-level failure) and `corrupt`
-   (body was not JSON) for the qeFootState 4-tier deriver — ADDITIVE: plain
-   catches see an Error exactly as before. */
-const _ptJson = async (url) => {
-  let r;
+   Errors carry `status` (HTTP code; 0 = network-level failure), `corrupt`
+   (body was not JSON) and `timeoutMs` (the deadline that fired) for the
+   qeFootState 4-tier deriver — ADDITIVE: plain catches see an Error exactly
+   as before. `deadlineMs` defaults to the one-shot budget; POLLED callers
+   pass qePollDeadline(theirInterval). */
+const _ptJson = async (url, deadlineMs = QE_READ_DEADLINE_MS) => {
+  let r, t;
   try {
-    r = await fetch(url, { headers: { Accept: 'application/json' } });
+    ({ r, t } = await _ptFetch(url, { headers: { Accept: 'application/json' } }, deadlineMs));
   } catch (e) {
+    const hit = _ptDeadlineHit(e, url, deadlineMs);
+    if (hit) throw hit;
     const err = new Error(url + ' unreachable');
     err.status = 0;
     throw err;
   }
   if (!r.ok) {
+    clearTimeout(t);
     const err = new Error(url + ' ' + r.status);
     err.status = r.status;
     throw err;
@@ -611,15 +744,26 @@ const _ptJson = async (url) => {
   try {
     return await r.json();
   } catch (e) {
+    // The deadline covers the BODY too: headers sent then a stalled stream is
+    // a hang like any other, and mapping it to `corrupt` would name the wrong
+    // cause on the foot.
+    const hit = _ptDeadlineHit(e, url, deadlineMs);
+    if (hit) throw hit;
     const err = new Error(url + ' corrupt response');
     err.corrupt = true;
     throw err;
+  } finally {
+    clearTimeout(t);
   }
 };
 
 const qeFootCause = (err) => {
   if (!err) return 'unknown error';
   if (err.corrupt) return 'corrupt response';
+  // BEFORE the status checks: a deadline error carries status 0 (the network
+  // sentinel), and "no network — engine unreachable" would be a false
+  // diagnosis. The connection was made; the engine did not answer on it.
+  if (err.timeoutMs != null) return `no response in ${_qeSecs(err.timeoutMs)} — engine not answering`;
   const s = err.status;
   if (s === 404) return 'endpoint not found (404)';
   if (s === 401 || s === 403) return `unauthorized (${s})`;
@@ -636,6 +780,7 @@ const qeFootState = ({ loading, err, corrupt, status, hasData, empty, ms, retryi
     ? {
         corrupt: (err && err.corrupt) != null ? err.corrupt : corrupt,
         status: (err && err.status) != null ? err.status : status,
+        timeoutMs: err ? err.timeoutMs : undefined,
       }
     : null;
   if (loading && !hasData) {
@@ -647,6 +792,10 @@ const qeFootState = ({ loading, err, corrupt, status, hasData, empty, ms, retryi
       // caller genuinely re-polls (a one-shot fetch must not promise it).
       const suffix = retrying ? ' · retrying' : '';
       if (e.corrupt) return { tone: 'warn', msg: `response corrupt · showing last data${suffix}` };
+      // Same precedence as qeFootCause, and for the same reason: a deadline
+      // error's status is 0, so the network branch below would claim the
+      // engine is unreachable when it is reachable and silent.
+      if (e.timeoutMs != null) return { tone: 'warn', msg: `no response in ${_qeSecs(e.timeoutMs)} · showing last data${suffix}` };
       if (e.status == null || e.status === 0) return { tone: 'warn', msg: `no network · showing last data${suffix}` };
       return { tone: 'warn', msg: `${qeFootCause(e)} · showing last data${suffix}` };
     }
@@ -1517,6 +1666,6 @@ Object.assign(window, {
   StatusDot, Badge, RegimeBadge, PeriodSelector, Gauge, EmptyState,
   Tabs, Strip, FlashCell, LiveValue, LiveClock,
   asciiSpark, ASCII_SPARK,
-  Pane, PaneHead, PaneFoot, ModelDialog, qeFootState, qeFootCause, _ptJson, RefreshButton, ReloadGlyph, ReloadIconSVG, BrailleSquares, Spinner, useSpinFrame, RELOAD_MS, PaneErrorBoundary, DataList, FieldList, StepperInput, LockButton, NewsTickerBar,
+  Pane, PaneHead, PaneFoot, ModelDialog, qeFootState, qeFootCause, _ptJson, _ptFetch, qePollDeadline, QE_READ_DEADLINE_MS, RefreshButton, ReloadGlyph, ReloadIconSVG, BrailleSquares, Spinner, useSpinFrame, RELOAD_MS, PaneErrorBoundary, DataList, FieldList, StepperInput, LockButton, NewsTickerBar,
   Switch, Chip, Banner, Toast, PageHeader,
 });

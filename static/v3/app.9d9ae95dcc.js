@@ -301,16 +301,52 @@ const PaneHead = ({ title, count = null, right = null, hot = false, tag = null, 
     /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "qe-grow" }), right, dots)
   ));
 };
-const _ptJson = async (url) => {
-  let r;
+const QE_READ_DEADLINE_MS = 3e4;
+const _qeSecs = (ms) => ms >= 1e3 ? `${Math.round(ms / 1e3)}s` : `${Math.round(ms)}ms`;
+const qePollDeadline = (intervalMs) => Math.max(intervalMs || 0, 5e3);
+const QE_UPSTREAM_READ_DEADLINE_MS = 12e3;
+const qeOnVisible = (fn, minGapMs = 1e3) => {
+  let last = 0;
+  const handler = () => {
+    if (document.hidden) return;
+    const now = Date.now();
+    if (now - last < minGapMs) return;
+    last = now;
+    fn();
+  };
+  document.addEventListener("visibilitychange", handler);
+  return () => document.removeEventListener("visibilitychange", handler);
+};
+const _ptDeadlineErr = (url, ms) => {
+  const err = new Error(url + " no response in " + _qeSecs(ms));
+  err.status = 0;
+  err.timeoutMs = ms;
+  return err;
+};
+const _ptFetch = async (url, init, deadlineMs) => {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(_ptDeadlineErr(url, deadlineMs)), deadlineMs);
   try {
-    r = await fetch(url, { headers: { Accept: "application/json" } });
+    return { r: await fetch(url, { ...init, signal: ac.signal }), t };
   } catch (e) {
+    clearTimeout(t);
+    throw e;
+  }
+};
+const _ptDeadlineHit = (e, url, deadlineMs) => e && e.timeoutMs != null ? e : e && e.name === "AbortError" ? _ptDeadlineErr(url, deadlineMs) : null;
+const _ptJson = async (url, deadlineMs = QE_READ_DEADLINE_MS) => {
+  let r, t;
+  try {
+    ({ r, t } = await _ptFetch(url, { headers: { Accept: "application/json" } }, deadlineMs));
+  } catch (e) {
+    const hit = _ptDeadlineHit(e, url, deadlineMs);
+    if (hit) throw hit;
     const err = new Error(url + " unreachable");
     err.status = 0;
     throw err;
   }
   if (!r.ok) {
+    clearTimeout(t);
     const err = new Error(url + " " + r.status);
     err.status = r.status;
     throw err;
@@ -318,14 +354,19 @@ const _ptJson = async (url) => {
   try {
     return await r.json();
   } catch (e) {
+    const hit = _ptDeadlineHit(e, url, deadlineMs);
+    if (hit) throw hit;
     const err = new Error(url + " corrupt response");
     err.corrupt = true;
     throw err;
+  } finally {
+    clearTimeout(t);
   }
 };
 const qeFootCause = (err) => {
   if (!err) return "unknown error";
   if (err.corrupt) return "corrupt response";
+  if (err.timeoutMs != null) return `no response in ${_qeSecs(err.timeoutMs)} \u2014 engine not answering`;
   const s = err.status;
   if (s === 404) return "endpoint not found (404)";
   if (s === 401 || s === 403) return `unauthorized (${s})`;
@@ -336,7 +377,8 @@ const qeFootCause = (err) => {
 const qeFootState = ({ loading, err, corrupt, status, hasData, empty, ms, retrying }) => {
   const e = err || corrupt != null || status != null ? {
     corrupt: (err && err.corrupt) != null ? err.corrupt : corrupt,
-    status: (err && err.status) != null ? err.status : status
+    status: (err && err.status) != null ? err.status : status,
+    timeoutMs: err ? err.timeoutMs : void 0
   } : null;
   if (loading && !hasData) {
     return { tone: "sub", busy: true, msg: e ? "reconnecting\u2026" : "loading\u2026" };
@@ -345,6 +387,7 @@ const qeFootState = ({ loading, err, corrupt, status, hasData, empty, ms, retryi
     if (hasData) {
       const suffix = retrying ? " \xB7 retrying" : "";
       if (e.corrupt) return { tone: "warn", msg: `response corrupt \xB7 showing last data${suffix}` };
+      if (e.timeoutMs != null) return { tone: "warn", msg: `no response in ${_qeSecs(e.timeoutMs)} \xB7 showing last data${suffix}` };
       if (e.status == null || e.status === 0) return { tone: "warn", msg: `no network \xB7 showing last data${suffix}` };
       return { tone: "warn", msg: `${qeFootCause(e)} \xB7 showing last data${suffix}` };
     }
@@ -1038,6 +1081,9 @@ Object.assign(window, {
   qeFootState,
   qeFootCause,
   _ptJson,
+  _ptFetch,
+  qePollDeadline,
+  QE_READ_DEADLINE_MS,
   RefreshButton,
   ReloadGlyph,
   ReloadIconSVG,
@@ -1586,15 +1632,12 @@ const QE_CHROME = function() {
     } catch (e) {
     }
   });
-  const j = async (url) => {
-    const r = await fetch(url, { headers: { Accept: "application/json" } });
-    if (!r.ok) throw new Error(url + " " + r.status);
-    return r.json();
-  };
+  const j = (url, deadlineMs) => _ptJson(url, deadlineMs);
   const poll = (url, key, errKey, ms) => {
+    const deadlineMs = qePollDeadline(ms);
     const run = async () => {
       try {
-        st[key] = await j(url);
+        st[key] = await j(url, deadlineMs);
         st[errKey] = false;
       } catch (e) {
         st[errKey] = true;
@@ -1603,10 +1646,16 @@ const QE_CHROME = function() {
     };
     run();
     setInterval(run, ms);
+    return run;
   };
-  poll("/api/state", "state", "stateErr", 1e4);
-  poll("/api/dashboard/snapshot", "snap", "snapErr", 3e4);
-  poll("/api/system", "sys", "sysErr", 6e4);
+  const _runState = poll("/api/state", "state", "stateErr", 1e4);
+  const _runSnap = poll("/api/dashboard/snapshot", "snap", "snapErr", 3e4);
+  const _runSys = poll("/api/system", "sys", "sysErr", 6e4);
+  qeOnVisible(() => {
+    _runState();
+    _runSnap();
+    _runSys();
+  });
   const loadAccounts = async () => {
     try {
       st.accounts = await j("/accounts");
@@ -2097,6 +2146,7 @@ const N_SCENARIOS = {
   ])
 };
 const N_STREAM = ["fill", "partial", "risk", "link", "ws"];
+const N_POLL_MS = 5e3;
 function nRel(ts, now) {
   const s = Math.max(0, Math.round((now - ts) / 1e3));
   if (s < 5) return "now";
@@ -2331,13 +2381,17 @@ function NotificationProvider({ children, demo = false }) {
     const poll = async () => {
       if (inFlight) return;
       inFlight = true;
+      const url = "/notifications/poll?since=" + sinceRef.current;
+      let deadline = null;
       try {
-        const r = await fetch(
-          "/notifications/poll?since=" + sinceRef.current,
-          { headers: { Accept: "application/json" } }
+        const got = await _ptFetch(
+          url,
+          { headers: { Accept: "application/json" } },
+          qePollDeadline(N_POLL_MS)
         );
-        if (!r.ok) return;
-        const d = await r.json();
+        deadline = got.t;
+        if (!got.r.ok) return;
+        const d = await got.r.json();
         if (!alive || !d || typeof d.latest_id !== "number") return;
         const priming = sinceRef.current < 0;
         sinceRef.current = d.latest_id;
@@ -2362,11 +2416,12 @@ function NotificationProvider({ children, demo = false }) {
         });
       } catch (e) {
       } finally {
+        clearTimeout(deadline);
         inFlight = false;
       }
     };
     poll();
-    const t = setInterval(poll, 5e3);
+    const t = setInterval(poll, N_POLL_MS);
     return () => {
       alive = false;
       clearInterval(t);
@@ -2623,10 +2678,11 @@ const QE_DASH = /* @__PURE__ */ function() {
     } catch (e) {
     }
   });
+  const _POLL = { st: 5e3, log: 4e3, macro: 6e4, snapshot: 15e3 };
   async function _json(url, key) {
     const t0 = performance.now();
     try {
-      const d = await _ptJson(url);
+      const d = await _ptJson(url, qePollDeadline(_POLL[key]));
       if (key) state.net[key] = { err: null, ms: performance.now() - t0 };
       return d;
     } catch (err) {
@@ -2730,6 +2786,13 @@ const QE_DASH = /* @__PURE__ */ function() {
   }
   let started = false, wired = false;
   const _timers = [];
+  let _unVisible = null;
+  function refreshAll() {
+    loadSnapshot();
+    loadState();
+    loadMacro();
+    loadLog();
+  }
   function start() {
     if (!wired) {
       _wireSSE();
@@ -2737,18 +2800,20 @@ const QE_DASH = /* @__PURE__ */ function() {
     }
     if (started) return;
     started = true;
-    loadSnapshot();
-    loadState();
-    loadMacro();
-    loadLog();
-    _timers.push(setInterval(loadState, 5e3));
-    _timers.push(setInterval(loadLog, 4e3));
-    _timers.push(setInterval(loadMacro, 6e4));
-    _timers.push(setInterval(loadSnapshot, 15e3));
+    _unVisible = qeOnVisible(refreshAll);
+    refreshAll();
+    _timers.push(setInterval(loadState, _POLL.st));
+    _timers.push(setInterval(loadLog, _POLL.log));
+    _timers.push(setInterval(loadMacro, _POLL.macro));
+    _timers.push(setInterval(loadSnapshot, _POLL.snapshot));
   }
   function stop() {
     _timers.forEach(clearInterval);
     _timers.length = 0;
+    if (_unVisible) {
+      _unVisible();
+      _unVisible = null;
+    }
     started = false;
     state.ui = { ddOverride: false };
   }
@@ -2879,6 +2944,7 @@ const EquityStatsPane = () => {
     /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Total"), /* @__PURE__ */ React.createElement(EquityHero, null)), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Daily"), /* @__PURE__ */ React.createElement(DeltaPct, { id: "eq.daily", value: eq.daily_pnl_pct })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Weekly"), /* @__PURE__ */ React.createElement(DeltaPct, { id: "eq.weekly", value: eq.weekly_pnl_pct })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Monthly"), /* @__PURE__ */ React.createElement(DeltaPct, { id: "eq.monthly", value: j.monthly_pnl_pct })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Unrealized"), /* @__PURE__ */ React.createElement(LiveValue, { id: "eq.unreal", value: eq.unrealized_pnl == null ? 0 : eq.unrealized_pnl, format: (x) => _sn(x), style: { color: (eq.unrealized_pnl || 0) >= 0 ? "var(--qe-green)" : "var(--qe-red)", fontWeight: 700, fontSize: "var(--qe-fs-md)" } }))), /* @__PURE__ */ React.createElement("div", { className: "qe-divider-h" }), /* @__PURE__ */ React.createElement(FieldList, { cols: 2, dense: true, rows: blocks.map(([label, v]) => ({ label, value: _n(v) })) }))
   );
 };
+const EQUITY_OHLC_MS = 5e3;
 const EquityOhlcChart = React.memo(function EquityOhlcChart2({ tf, onNet, onBar }) {
   const [data, setData] = React.useState([]);
   React.useEffect(() => {
@@ -2886,7 +2952,7 @@ const EquityOhlcChart = React.memo(function EquityOhlcChart2({ tf, onNet, onBar 
     const load = async () => {
       const t0 = performance.now();
       try {
-        const j = await _ptJson("/api/dashboard/equity_ohlc?tf=" + tf);
+        const j = await _ptJson("/api/dashboard/equity_ohlc?tf=" + tf, qePollDeadline(EQUITY_OHLC_MS));
         const rows = (j.candles || []).map((c) => [c.x, c.o, c.c, c.l, c.h]);
         if (alive) {
           setData(rows);
@@ -2903,7 +2969,7 @@ const EquityOhlcChart = React.memo(function EquityOhlcChart2({ tf, onNet, onBar 
       }
     };
     load();
-    const id = setInterval(load, 5e3);
+    const id = setInterval(load, EQUITY_OHLC_MS);
     return () => {
       alive = false;
       clearInterval(id);
@@ -3197,19 +3263,20 @@ const ActiveParamsPane = () => {
     /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, /* @__PURE__ */ React.createElement(FieldList, { rows }), preset ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "qe-divider-h" }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6 } }, /* @__PURE__ */ React.createElement(Badge, { tone: "info" }, "PRESET: ", String(preset).toUpperCase()))) : null)
   );
 };
+const NEWS_FEED_MS = 6e4;
 const DashNewsTicker = () => {
   const [news, setNews] = React.useState(null);
   React.useEffect(() => {
     let alive = true;
     const load = async () => {
       try {
-        const d = await _ptJson("/api/news/feed?limit=40");
+        const d = await _ptJson("/api/news/feed?limit=40", qePollDeadline(NEWS_FEED_MS));
         if (alive) setNews(Array.isArray(d) ? d : d.news || d.items || []);
       } catch (e) {
       }
     };
     load();
-    const t = setInterval(load, 6e4);
+    const t = setInterval(load, NEWS_FEED_MS);
     return () => {
       alive = false;
       clearInterval(t);
@@ -3316,28 +3383,7 @@ Object.assign(window, { DashTiled, QE_DASH });
 ;
 
 /* ==== pages-config.jsx ==== */
-const _cfgJson = async (url) => {
-  let r;
-  try {
-    r = await fetch(url, { headers: { Accept: "application/json" } });
-  } catch (e) {
-    const err = new Error(url + " unreachable");
-    err.status = 0;
-    throw err;
-  }
-  if (!r.ok) {
-    const err = new Error(url + " " + r.status);
-    err.status = r.status;
-    throw err;
-  }
-  try {
-    return await r.json();
-  } catch (e) {
-    const err = new Error(url + " corrupt response");
-    err.corrupt = true;
-    throw err;
-  }
-};
+const _cfgJson = (url) => _ptJson(url, QE_READ_DEADLINE_MS);
 const _cfgStrip = (html) => {
   try {
     return (new DOMParser().parseFromString(html || "", "text/html").body.textContent || "").trim();
@@ -4242,6 +4288,12 @@ const _ptCalcFoot = (busy, calcErr, calc) => {
   }
   return calc ? { tone: "ok", msg: "calc ok" } : { tone: "sub", msg: "no calc yet" };
 };
+const PT_STATE_MS = 5e3;
+const PT_REGIME_MS = 6e4;
+const PT_PRICE_MS = 1e3;
+const PT_BOOK_MS = 2e3;
+const PT_LINKWIN_FAST_MS = 1e3;
+const PT_LINKWIN_MS = 5e3;
 const _ptStrip = (html) => {
   let t;
   try {
@@ -4432,9 +4484,9 @@ const PreTradePage = () => {
   const [netRegime, setNetRegime] = React.useState({});
   React.useEffect(() => {
     let alive = true;
-    const load = (url, fn, netFn) => {
+    const load = (url, fn, netFn, everyMs) => {
       const t0 = performance.now();
-      return _ptJson(url).then((d) => {
+      return _ptJson(url, everyMs ? qePollDeadline(everyMs) : void 0).then((d) => {
         if (alive) {
           fn(d);
           if (netFn) netFn({ err: null, ms: performance.now() - t0 });
@@ -4443,14 +4495,14 @@ const PreTradePage = () => {
         if (alive && netFn) netFn((n) => ({ ...n, err }));
       });
     };
-    load("/api/state", setSt);
-    load("/api/regime/current", setRegime, setNetRegime);
+    load("/api/state", setSt, null, PT_STATE_MS);
+    load("/api/regime/current", setRegime, setNetRegime, PT_REGIME_MS);
     load("/api/models", (d) => setModels(Array.isArray(d) ? d : d.models || []));
     load("/api/calculator/context", setCtxInfo);
     const aid = window.QE_BOOTSTRAP && window.QE_BOOTSTRAP.activeAccountId;
     if (aid != null) load("/api/config/account/" + aid, (d) => setRiskPct((d.params || {}).individual_risk_per_trade));
-    const t1 = setInterval(() => load("/api/state", setSt), 5e3);
-    const t2 = setInterval(() => load("/api/regime/current", setRegime, setNetRegime), 6e4);
+    const t1 = setInterval(() => load("/api/state", setSt, null, PT_STATE_MS), PT_STATE_MS);
+    const t2 = setInterval(() => load("/api/regime/current", setRegime, setNetRegime, PT_REGIME_MS), PT_REGIME_MS);
     return () => {
       alive = false;
       clearInterval(t1);
@@ -4492,7 +4544,7 @@ const PreTradePage = () => {
     const poll = async () => {
       const t0 = performance.now();
       try {
-        const d = await _ptJson("/api/price/" + encodeURIComponent(tickerNorm));
+        const d = await _ptJson("/api/price/" + encodeURIComponent(tickerNorm), QE_UPSTREAM_READ_DEADLINE_MS);
         if (alive && tickerRef.current === tickerNorm) {
           const ms = performance.now() - t0;
           if (d.price) {
@@ -4504,7 +4556,7 @@ const PreTradePage = () => {
       } catch (err) {
         if (alive && tickerRef.current === tickerNorm) setNetPx((n) => ({ ...n, err }));
       }
-      if (alive) timer = setTimeout(poll, 1e3);
+      if (alive) timer = setTimeout(poll, PT_PRICE_MS);
     };
     const debounce = setTimeout(poll, 500);
     return () => {
@@ -4522,7 +4574,7 @@ const PreTradePage = () => {
     const poll = async () => {
       const t0 = performance.now();
       try {
-        const d = await _ptJson("/api/calculator/orderbook/" + encodeURIComponent(tickerNorm));
+        const d = await _ptJson("/api/calculator/orderbook/" + encodeURIComponent(tickerNorm), QE_UPSTREAM_READ_DEADLINE_MS);
         if (alive && tickerRef.current === tickerNorm) {
           setOb(d);
           setNetOb({ err: null, ms: performance.now() - t0 });
@@ -4530,7 +4582,7 @@ const PreTradePage = () => {
       } catch (err) {
         if (alive && tickerRef.current === tickerNorm) setNetOb((n) => ({ ...n, err }));
       }
-      if (alive) timer = setTimeout(poll, 2e3);
+      if (alive) timer = setTimeout(poll, PT_BOOK_MS);
     };
     const debounce = setTimeout(poll, 600);
     return () => {
@@ -4547,14 +4599,17 @@ const PreTradePage = () => {
     const poll = async () => {
       try {
         const q = t0Ref.current ? "&t0=" + t0Ref.current : "";
-        const d = await _ptJson("/calculator/link-window-status/" + encodeURIComponent(lwCalcId) + "?format=json" + q);
+        const d = await _ptJson(
+          "/calculator/link-window-status/" + encodeURIComponent(lwCalcId) + "?format=json" + q,
+          qePollDeadline(PT_LINKWIN_MS)
+        );
         if (stop) return;
         setLw({ ...d, _at: Date.now() });
         if (d.t0) t0Ref.current = d.t0;
-        if (d.status === "PENDING") timer = setTimeout(poll, 1e3);
-        else if (d.status === "LINKABLE" || d.status === "EXPIRING_SOON") timer = setTimeout(poll, 5e3);
+        if (d.status === "PENDING") timer = setTimeout(poll, PT_LINKWIN_FAST_MS);
+        else if (d.status === "LINKABLE" || d.status === "EXPIRING_SOON") timer = setTimeout(poll, PT_LINKWIN_MS);
       } catch (e) {
-        if (!stop) timer = setTimeout(poll, 5e3);
+        if (!stop) timer = setTimeout(poll, PT_LINKWIN_MS);
       }
     };
     poll();
@@ -5232,6 +5287,8 @@ Object.assign(window, {
 ;
 
 /* ==== pages-linkage.jsx ==== */
+const LK_FAST_MS = 5e3;
+const LK_SLOW_MS = 3e4;
 const _lkForm = async (url, fields, method = "POST", opts = {}) => {
   const body = new URLSearchParams();
   Object.entries(fields || {}).forEach(([k, v]) => {
@@ -5400,9 +5457,9 @@ const LinkagePage = () => {
   const [cancelBusy, setCancelBusy] = React.useState(false);
   const [nets, setNets] = React.useState({});
   const load = React.useCallback((which) => {
-    const get = (url, fn, pick, key) => {
+    const get = (url, fn, pick, key, everyMs) => {
       const t0 = performance.now();
-      return _ptJson(url).then((d) => {
+      return _ptJson(url, qePollDeadline(everyMs)).then((d) => {
         fn(pick ? d[pick] : d);
         setNets((m) => ({ ...m, [key]: { err: null, ms: performance.now() - t0 } }));
       }).catch((err) => {
@@ -5410,13 +5467,13 @@ const LinkagePage = () => {
       });
     };
     if (!which || which === "fast") {
-      get("/orders/needs_review", setNeeds, "orders", "needs");
-      get("/api/linkage/positions", setPositions, "positions", "positions");
-      get("/api/linkage/calcs", setCalcs, "calcs", "calcs");
+      get("/orders/needs_review", setNeeds, "orders", "needs", LK_FAST_MS);
+      get("/api/linkage/positions", setPositions, "positions", "positions", LK_FAST_MS);
+      get("/api/linkage/calcs", setCalcs, "calcs", "calcs", LK_FAST_MS);
     }
     if (!which || which === "slow") {
-      get("/api/linkage/funding", setFunding, null, "funding");
-      get("/api/linkage/closes", setCloses, "closes", "closes");
+      get("/api/linkage/funding", setFunding, null, "funding", LK_SLOW_MS);
+      get("/api/linkage/closes", setCloses, "closes", "closes", LK_SLOW_MS);
     }
   }, []);
   const lkFoot = (key, hasData) => {
@@ -5425,8 +5482,8 @@ const LinkagePage = () => {
   };
   React.useEffect(() => {
     load();
-    const t1 = setInterval(() => load("fast"), 5e3);
-    const t2 = setInterval(() => load("slow"), 3e4);
+    const t1 = setInterval(() => load("fast"), LK_FAST_MS);
+    const t2 = setInterval(() => load("slow"), LK_SLOW_MS);
     return () => {
       clearInterval(t1);
       clearInterval(t2);
@@ -5876,6 +5933,7 @@ const H_TABS = [
   ["events", "Trade Events", "/fragments/history/trade_events"],
   ["pretrade", "Pre-Trade Log", "/fragments/history/pre_trade"]
 ];
+const H_REFRESH_MS = 3e4;
 const HNOTE_EDITING = /* @__PURE__ */ new Set();
 const HNoteCell = ({ row, onSaved }) => {
   const [editing, setEditing] = React.useState(false);
@@ -6054,7 +6112,7 @@ const HistoryPage = () => {
     setLoading(true);
     const t0 = performance.now();
     try {
-      const d = await _ptJson(ep + "?" + params.toString());
+      const d = await _ptJson(ep + "?" + params.toString(), qePollDeadline(H_REFRESH_MS));
       if (seq === seqRef.current) {
         setData(d);
         setNet({ err: null, ms: performance.now() - t0 });
@@ -6073,7 +6131,7 @@ const HistoryPage = () => {
   React.useEffect(() => {
     const t = setInterval(() => {
       if (HNOTE_EDITING.size === 0) load();
-    }, 3e4);
+    }, H_REFRESH_MS);
     return () => clearInterval(t);
   }, [load]);
   React.useEffect(() => {
@@ -6506,7 +6564,7 @@ const useAnaJson = (url, intervalMs = 0) => {
     const seq = ++seqRef.current;
     const t0 = performance.now();
     try {
-      const d = await _ptJson(url);
+      const d = await _ptJson(url, intervalMs ? qePollDeadline(intervalMs) : void 0);
       if (seq === seqRef.current) {
         setData(d);
         setErr(null);
@@ -6518,7 +6576,7 @@ const useAnaJson = (url, intervalMs = 0) => {
       }
     }
     if (seq === seqRef.current) setLoading(false);
-  }, [url]);
+  }, [url, intervalMs]);
   React.useEffect(() => {
     if (!url) {
       seqRef.current++;
@@ -7636,6 +7694,7 @@ const RG_THRESHOLD_LABELS = {
   btc_dom_change_bull: "BTC Dom Bull",
   btc_dom_change_bear: "BTC Dom Bear"
 };
+const RG_BACKFILL_MS = 1500;
 const _rgPost = async (url, body) => {
   try {
     const r = await fetch(url, {
@@ -8663,7 +8722,7 @@ const RegimePage = () => {
     }
     const t = setInterval(async () => {
       try {
-        const s = await _ptJson(`/api/regime/backfill-status/${bfId}`);
+        const s = await _ptJson(`/api/regime/backfill-status/${bfId}`, qePollDeadline(RG_BACKFILL_MS));
         setBfJob((j) => j && j.id === bfId ? { ...j, ...s, id: bfId, fails: 0 } : j);
       } catch (e) {
         setBfJob((j) => {
@@ -8673,7 +8732,7 @@ const RegimePage = () => {
           return { ...j, fails };
         });
       }
-    }, 1500);
+    }, RG_BACKFILL_MS);
     return () => clearInterval(t);
   }, [bfId, bfStatus]);
   React.useEffect(() => {

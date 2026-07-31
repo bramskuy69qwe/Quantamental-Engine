@@ -26,25 +26,42 @@ const QE_CHROME = (function () {
   const subs = new Set();
   const emit = () => subs.forEach((f) => { try { f(); } catch (e) { /* isolate */ } });
 
-  const j = async (url) => {
-    const r = await fetch(url, { headers: { Accept: 'application/json' } });
-    if (!r.ok) throw new Error(url + ' ' + r.status);
-    return r.json();
-  };
+  /* Deadline per read — see primitives' _ptJson block for the full argument.
+     This store is the one that matters most for it: the nav strip and the
+     footer render on EVERY page, and their whole degradation contract is the
+     `*Err` flags below. A hung poll wrote neither the payload nor the flag and
+     never even reached emit(), so the strip kept flying last-good DD / EXP /
+     OPEN / P&L numbers under a GREEN engine dot — the same lie the tier-3 rule
+     fixed for a failed poll, arriving by the one route that fix could not see.
+     `_ptJson` is defined in primitives.jsx, which the build loads first. */
+  const j = (url, deadlineMs) => _ptJson(url, deadlineMs);
 
   const poll = (url, key, errKey, ms) => {
+    // The deadline is DERIVED from this poll's own interval, so the two cannot
+    // drift apart when someone retunes the cadence.
+    const deadlineMs = qePollDeadline(ms);
     const run = async () => {
-      try { st[key] = await j(url); st[errKey] = false; }
+      try { st[key] = await j(url, deadlineMs); st[errKey] = false; }
       catch (e) { st[errKey] = true; }  // keep last-good; flag the pipe
       emit();
     };
     run();
     setInterval(run, ms);
+    return run;
   };
 
-  poll('/api/state', 'state', 'stateErr', 10_000);
-  poll('/api/dashboard/snapshot', 'snap', 'snapErr', 30_000);
-  poll('/api/system', 'sys', 'sysErr', 60_000);
+  const _runState = poll('/api/state', 'state', 'stateErr', 10_000);
+  const _runSnap = poll('/api/dashboard/snapshot', 'snap', 'snapErr', 30_000);
+  const _runSys = poll('/api/system', 'sys', 'sysErr', 60_000);
+
+  /* The half of the seam a deadline cannot reach: while the page is HIDDEN its
+     timers are throttled to ~1/min (frozen pages stop entirely), so no request
+     is outstanding to time out and the strip keeps a `connected` dot over
+     minute-old numbers the moment the operator alt-tabs back from Quantower.
+     Re-poll on return — a fresh answer beats a staleness label, and a
+     timestamp-based one could not fire here anyway (its clock is throttled by
+     the same rule). */
+  qeOnVisible(() => { _runState(); _runSnap(); _runSys(); });
 
   // audit LOW-3: retry until first success (a transient boot failure would
   // otherwise leave the picker at "— no accounts —" for the whole session).

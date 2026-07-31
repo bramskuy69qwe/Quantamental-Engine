@@ -47,6 +47,10 @@ const N_SCENARIOS = {
 };
 const N_STREAM = ['fill', 'partial', 'risk', 'link', 'ws'];
 
+// The real feed's cadence — one literal, read by both the setInterval and the
+// read deadline derived from it (warm-hang sweep, 2026-08-01).
+const N_POLL_MS = 5000;
+
 /* P8 wave 1: N_SEED (7 fabricated events, 3 "unread" at boot) is GONE — the
    provider seeds empty and fills from the REAL feed (GET /notifications/poll,
    the G-O3 backend that shipped in P1). */
@@ -267,11 +271,21 @@ function NotificationProvider({ children, demo = false }) {
     const poll = async () => {
       if (inFlight) return;
       inFlight = true;
+      // DEADLINE (2026-08-01, warm-hang sweep). This latch is released in the
+      // `finally` below — which a promise that never settles never reaches.
+      // One hung poll therefore killed the alert feed for the rest of the
+      // session, silently: no error, no retry, a quiet bell on a risk console.
+      // The deadline turns the hang into a rejection, so the finally runs.
+      const url = '/notifications/poll?since=' + sinceRef.current;
+      let deadline = null;   // cleared in the finally, so the BODY read is
+                             // covered too (headers-then-stalled-stream hangs
+                             // exactly like a dead socket)
       try {
-        const r = await fetch('/notifications/poll?since=' + sinceRef.current,
-          { headers: { Accept: 'application/json' } });
-        if (!r.ok) return;
-        const d = await r.json();
+        const got = await _ptFetch(url,
+          { headers: { Accept: 'application/json' } }, qePollDeadline(N_POLL_MS));
+        deadline = got.t;
+        if (!got.r.ok) return;
+        const d = await got.r.json();
         if (!alive || !d || typeof d.latest_id !== 'number') return;
         const priming = sinceRef.current < 0;
         sinceRef.current = d.latest_id;
@@ -295,10 +309,10 @@ function NotificationProvider({ children, demo = false }) {
           }
         });
       } catch (e) { /* engine unreachable — nothing to show */ }
-      finally { inFlight = false; }
+      finally { clearTimeout(deadline); inFlight = false; }
     };
     poll();
-    const t = setInterval(poll, 5000);
+    const t = setInterval(poll, N_POLL_MS);
     return () => { alive = false; clearInterval(t); };
   }, []);
 
