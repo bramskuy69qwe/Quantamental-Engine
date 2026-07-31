@@ -162,13 +162,117 @@ const QE_DASH = (function () {
 
 /* Subscribe a component to QE_DASH updates. Used at the LEAF level so the
    memoized TiledGrid never re-renders. */
-// Per-source pane foot: never-responded → tier-4 loading; then the 4-tier
-// model off the tracked {err, ms} (qeFootState from primitives).
-const _dashFoot = (d, key, hasData) => {
-  const n = (d.net && d.net[key]) || {};
-  // every QE_DASH source is on a poll interval → retrying is truthful
-  return qeFootState({ loading: n.ms == null && !n.err, err: n.err, hasData: !!hasData, ms: n.ms, retrying: true });
+/* Pane foot over one OR MORE pipes: derive the 4-tier model per pipe off the
+ * tracked {err, ms} (qeFootState from primitives), then report the WORST.
+ *
+ * A pane fed by more than one pipe must report the worst of them. Naming only
+ * one leaves the others free to fail behind a green `connected`: Risk Monitor
+ * reported /api/state while FOUR of its five readouts (exposure, drawdown,
+ * weekly loss, positions) come from /api/dashboard/snapshot, so a snapshot
+ * outage painted all four stale under an affirmative healthy foot. An
+ * affirmative WRONG signal is worse than no signal — the operator who learned
+ * to trust the foot is worse off than one who never had it.
+ *
+ * ★ hasData IS PER-PIPE, AND IT IS ONLY MEANINGFUL ONCE THE PIPE HAS ANSWERED.
+ * qeFootState pivots BOTH decisions on hasData: tier 4 is gated behind
+ * `loading && !hasData` (primitives.jsx:641) and the tier-2-vs-3 split is
+ * `if (hasData)` (:645). Two drafts of this helper died on that:
+ *
+ *   1. ONE OR'd hasData for N pipes judged every pipe by another pipe's data.
+ *   2. Per-pipe hasData, but taken at face value — and the callers' hasData
+ *      expressions are PROXIES with a SECOND WRITER. SSE writes st.dd_state
+ *      and equity.total_equity straight into the store, so a /api/state that
+ *      has hung since page load still satisfied `d.st.dd_state != null`.
+ *
+ * Both produced the same observable, and it is the one this helper exists to
+ * kill: a pipe that had NEVER answered rendered green `connected [Nms]` with
+ * the ms measured on its healthy sibling. `_ptJson` sets no timeout, so a hung
+ * /api/state (blocked loop, deadlocked DB, black-holed TCP) never rejects and
+ * never fills net.st, while Risk Monitor shows ADVISORY/OK badges built from
+ * an empty `st` — during a real enforced DD halt, with every affirmative
+ * signal on the tile saying otherwise. Hence `answered` below: a pipe that has
+ * not reported has no data OF ITS OWN, whatever else painted the view.
+ * The 2-vs-3 rule is per-PANE in the doctrine but the DATA is per-PIPE.
+ *
+ * ⚠ THIS CLOSES THE COLD HANG ONLY — the WARM hang is still open, and it is
+ * the likelier production trigger. `answered` is a LATCH: once a pipe has
+ * succeeded once, `_json` never clears its net entry (a promise that never
+ * settles runs neither the resolve nor the catch branch), so a pipe that
+ * answers at boot and hangs an hour later still reads `ok · connected [12ms]`
+ * forever. Nothing in the store records WHEN an entry was written, so
+ * "12ms, 3s ago" and "12ms, 4h ago" are identical inputs here. Closing it
+ * needs a timestamp on every net write plus a staleness threshold per poll
+ * interval — a store-level change affecting all eight panes, deliberately not
+ * folded into this fix. Filed in DESIGN.md's scope caveat.
+ *
+ * Reported tone = worst by _FOOT_RANK; within a tone a real FAILURE outranks
+ * mere slowness, then the slower pipe wins. A slow pipe surfaces on its own
+ * (>500ms is already a warn), so no max() is needed.
+ */
+/* Worst-first severity. NOT a plain tone ranking: tone `warn` covers two very
+ * different states — "errored · showing last data" and a merely slow
+ * "delayed [Nms]" — and both make an AFFIRMATIVE claim that data is on screen.
+ * A pipe that has never answered has none, so it outranks both.
+ *
+ * The order follows the doctrine's own tiering: tiers 3 and 4 are alike in
+ * having nothing usable to show (3 knows why, 4 is still trying), while tier 2
+ * does have something. So: err → never-answered → errored-with-data → delayed.
+ * Two earlier orders were wrong here. Ranking by tone alone put `sub` under
+ * both warns, so any sibling measured >500ms masked a hung pipe with
+ * `delayed [640ms]`. Putting `sub` between them still let
+ * `… · showing last data · retrying` — a stronger claim than `delayed` — win
+ * over a pipe with no data at all, while the body beneath rendered a
+ * fabricated `0/20` for Positions and the literal string "Loading equity…".
+ */
+const _FOOT_SEVERITY = ({ foot, failed }) => (
+  foot.tone === 'err' ? 0                       // nothing usable, cause named
+    : foot.tone === 'sub' ? 1                   // never answered — nothing yet
+    : foot.tone === 'warn' && failed ? 2        // errored · showing last data
+    : foot.tone === 'warn' ? 3                  // merely delayed
+    : 4                                         // connected
+);
+
+const _dashFootWorst = (d, sources) => {
+  // An empty list would make the reduce below throw, and the foot is computed
+  // in the PANE's render — outside Pane's PaneErrorBoundary — so the throw
+  // would take down the whole GridWorkspace subtree instead of one tile. No
+  // current caller passes one; a pane assembling its sources conditionally
+  // could.
+  if (!sources || !sources.length) return qeFootState({ loading: true });
+  const derived = sources.map(({ src, hasData }) => {
+    // A source is either a QE_DASH net key, or a raw {err, ms} for a pipe a
+    // pane owns itself (EquityCurvePane's chart child reports its own onNet).
+    const n = (typeof src === 'string' ? (d.net && d.net[src]) : src) || {};
+    // ★ Has THIS pipe ever reported? hasData is the CALLER's claim about what
+    // is on screen, and several of those claims are satisfiable by a SECOND
+    // WRITER: SSE sets st.dd_state and equity.total_equity directly, so a
+    // /api/state that has hung since page load still looks "hasData" to the
+    // gate. qeFootState's tier-4 test is `loading && !hasData`, so that alone
+    // pushed a never-answered pipe through to tier 1 `connected` — carrying
+    // the SIBLING's ms, because the -1 sentinel loses every tie. A pipe that
+    // has not answered has no data OF ITS OWN, whatever else painted the view.
+    const answered = n.ms != null || !!n.err;
+    return {
+      failed: !!n.err,
+      ms: n.ms == null ? -1 : n.ms,
+      // every QE_DASH source is on a poll interval → retrying is truthful
+      foot: qeFootState({
+        loading: !answered, err: n.err,
+        hasData: answered && !!hasData, ms: n.ms, retrying: true,
+      }),
+    };
+  });
+  return derived.reduce((a, b) => {
+    const sev = _FOOT_SEVERITY(a) - _FOOT_SEVERITY(b);
+    if (sev !== 0) return sev < 0 ? a : b;
+    // equal severity → the SLOWER pipe, so `connected [Nms]` is never
+    // flattered by the faster one
+    return a.ms >= b.ms ? a : b;
+  }).foot;
 };
+
+// Single-pipe panes delegate, so there is exactly one derivation path.
+const _dashFoot = (d, key, hasData) => _dashFootWorst(d, [{ src: key, hasData }]);
 
 const useDash = () => {
   const [, force] = React.useReducer((x) => x + 1, 0);
@@ -317,10 +421,26 @@ const EquityCurvePane = () => {
   const d = useDash();
   const c = d.equity.total_equity;
   const chg = (c != null && bar && bar.prevC != null) ? c - bar.prevC : null;
+  /* TWO pipes, same rule as Risk Monitor: the candles come from the chart
+     child's own equity_ohlc poll (reported up through onNet), but C and Chg
+     below are read from d.equity — the SNAPSHOT pipe, refreshed by SSE
+     equity_update. Keyed to the chart alone, a snapshot-only outage painted a
+     stale current equity under a green `connected`. Found by this fix's own
+     coverage pin, not by the audit that reported Risk Monitor.
+     Each pipe carries ITS OWN hasData: the chart's stays `net.ms != null`,
+     exactly as before this change. An earlier draft OR'd the two, which made
+     the pane claim `connected` over a body reading "Loading equity…" on every
+     re-entry to the Dashboard (QE_DASH.stop() leaves d.loaded and d.net
+     populated while the chart's React state resets), and downgraded a failed
+     chart fetch from tier 3 to "showing last data" over a chart showing
+     none. */
   return (
     <Pane title="Equity Curve" hot tag="OHLC" style={{ height: '100%' }}
       right={<PeriodSelector options={[['1h', '1H'], ['4h', '4H'], ['1d', '1D'], ['1w', '1W']]} value={tf} onChange={setTf} />}
-      foot={qeFootState({ loading: net.ms == null && !net.err, err: net.err, hasData: net.ms != null, ms: net.ms, retrying: true })}
+      foot={_dashFootWorst(d, [
+        { src: 'snapshot', hasData: c != null },
+        { src: net, hasData: net.ms != null },
+      ])}
       bodyStyle={{ padding: 6 }}>
       <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
         {/* O/H/L from the latest fetched candle, C live from SSE equity, Chg vs
@@ -455,10 +575,18 @@ const RiskMonitorPane = () => {
   // that is not gating. (The fail-closed settings-unreadable lane halts with
   // dd_state != 'limit'; the route would reject it, so no button — filed.)
   const canOverride = ddState === 'limit' && enforced;
+  /* TWO pipes, so the foot reports the WORSE of them (see _dashFootWorst).
+     The four gauges below are snapshot-fed; only the DD-state badge, the
+     ENFORCED chip and the override button come from /api/state. Keying the
+     foot to 'st' alone let a snapshot outage paint four stale risk readouts
+     under a green `connected`. */
   return (
     <Pane title="Risk Monitor" style={{ height: '100%' }}
       right={<Badge tone={enforced ? 'err' : 'info'}>{enforced ? 'ENFORCED' : 'ADVISORY'}</Badge>}
-      foot={_dashFoot(d, 'st', d.st && d.st.dd_state != null)}>
+      foot={_dashFootWorst(d, [
+        { src: 'snapshot', hasData: d.loaded },
+        { src: 'st', hasData: d.st && d.st.dd_state != null },
+      ])}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <Gauge label="Net Exposure" value={rk.exposure_pct != null ? rk.exposure_pct / 100 : 0} max={(rk.max_exposure_pct || 500) / 100} current={rk.exposure_pct != null ? _n(rk.exposure_pct / 100, 2) + '×' : '—'} maxLabel={`${_n(rk.max_exposure_pct / 100, 1)}× cap`} />
         {/* ticks proportional to the REAL cap (audit N6 — hardcoded [5,8]

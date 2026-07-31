@@ -276,6 +276,67 @@ break-even close that was never measured. Column label: `MAE ◂ HEAT ▸ MFE`.
   honest (`reloaded · refetched` with `onRefresh`, `reloaded · body
   remounted` without). A successful-but-empty fetch is tier 1 — the BODY
   owns empty-state display (EmptyState); the foot reports the pipe.
+  **MULTI-PIPE RULE (2026-07-31): a pane fed by more than one source must
+  report the WORST of them, never a chosen one — each pipe carrying its
+  OWN `hasData`.** Derive the 4-tier state per pipe, then reduce by
+  SEVERITY: `err` > errored-showing-last-data > never-answered >
+  merely-delayed > `ok`, ties breaking to the slower pipe. Use a helper
+  taking a list of `{src, hasData}` (`_dashFootWorst(d, [{src:'snapshot',
+  hasData:d.loaded}, …])`); single-pipe panes call the same path with one
+  entry. Three things here are load-bearing, and each was learned by
+  shipping it wrong:
+  1. **`hasData` is per-pipe.** `qeFootState` pivots BOTH decisions on it
+     — tier 4 is `loading && !hasData`, the 2-vs-3 split is `if
+     (hasData)` — so one OR'd flag across N pipes judges every pipe by
+     another pipe's data.
+  2. **`hasData` is void until the pipe has answered.** The callers'
+     expressions are PROXIES with a SECOND WRITER (SSE writes
+     `st.dd_state` and `equity.total_equity` straight into the store), so
+     a hung poll still satisfies them. Gate on
+     `answered = ms != null || err`.
+  3. **Rank by severity, not by tone.** Both `warn` flavours — "errored ·
+     showing last data" and a merely slow "delayed [Nms]" — assert that
+     data is on screen, and a never-answered pipe has none, so it
+     outranks both. Order: `err` > never-answered > errored-with-data >
+     delayed > `ok`, following the doctrine's own tiering (3 and 4 alike
+     have nothing usable; 2 does). Tone-ranking let any >500ms sibling
+     mask a hung pipe with `delayed [Nms]`.
+  Each of those three, alone, reproduced the same observable: **a pipe
+  that had never answered reporting healthy, carrying its sibling's
+  latency.** Why the rule exists at all: Risk Monitor keyed its foot to
+  `/api/state` while four of its five readouts came from
+  `/api/dashboard/snapshot`, so a snapshot outage painted stale exposure,
+  drawdown, weekly-loss and positions under a green `connected`. **An
+  affirmative WRONG signal is worse than no signal** — the one failure
+  mode a data-state foot exists to prevent, and invisible to any test
+  that only checks a foot is present. When adding a pane, list every
+  source its body AND its leaf children read, and pass them all.
+  **Scope caveat:** `_dashFootWorst` lives in `dash-tiled.jsx`, so only
+  the Dashboard is mechanically pinned
+  (`tests/test_dash_foot_covers_its_sources.py`). Other pages hand-roll
+  `qeFootState` per source and must apply this rule by hand until the
+  helper is lifted into `primitives.jsx` — `pages-pretrade.jsx`'s
+  Regime · ATR pane is a known open violation (reads the CALC pipe, foots
+  the REGIME pipe alone).
+- **OPEN — the WARM HANG (filed 2026-07-31, not fixed).** Every foot in
+  the app answers "did this pipe ever report?", never "did it report
+  RECENTLY". `_ptJson` sets no timeout and no `AbortSignal` anywhere in
+  `frontend/src`, and a promise that never settles runs neither the
+  resolve nor the catch branch — so a pipe that succeeds once and hangs
+  later keeps its `{err:null, ms}` entry unchanged and its foot reads
+  `ok · connected [12ms]` indefinitely. Executed: a snapshot pipe hung
+  for 24 h (≈17k outstanding polls) still reports green, freezing Net
+  Exposure / Drawdown / Weekly Loss / Positions at hours-old values.
+  Aggravator: Chrome's ~6-connections-per-origin cap means one hung
+  endpoint on a 5 s poll can queue every other same-origin poll behind
+  it, freezing the whole dashboard behind uniformly green feet. This is
+  **pre-existing and app-wide**, not specific to multi-pipe panes. Fix
+  shape: stamp `at` on every net write and treat
+  `now - at > k × pollInterval` as un-answered; nothing smaller reaches
+  it, because no field today distinguishes "12 ms, 3 s ago" from
+  "12 ms, 4 h ago". Related fabrication to fix alongside it: Risk
+  Monitor's Positions gauge renders `${rk.positions_open || 0}/${rk.
+  positions_max || 20}`, so an empty snapshot shows a confident "0/20".
 - **`PageHeader`** `{title, subtitle, left, children}` — the 34px page title bar. **Never repeat the page title inside content.**
 
 ---

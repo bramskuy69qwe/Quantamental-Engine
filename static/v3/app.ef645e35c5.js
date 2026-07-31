@@ -2768,10 +2768,32 @@ const QE_DASH = /* @__PURE__ */ function() {
     }
   };
 }();
-const _dashFoot = (d, key, hasData) => {
-  const n = d.net && d.net[key] || {};
-  return qeFootState({ loading: n.ms == null && !n.err, err: n.err, hasData: !!hasData, ms: n.ms, retrying: true });
+const _FOOT_SEVERITY = ({ foot, failed }) => foot.tone === "err" ? 0 : foot.tone === "sub" ? 1 : foot.tone === "warn" && failed ? 2 : foot.tone === "warn" ? 3 : 4;
+const _dashFootWorst = (d, sources) => {
+  if (!sources || !sources.length) return qeFootState({ loading: true });
+  const derived = sources.map(({ src, hasData }) => {
+    const n = (typeof src === "string" ? d.net && d.net[src] : src) || {};
+    const answered = n.ms != null || !!n.err;
+    return {
+      failed: !!n.err,
+      ms: n.ms == null ? -1 : n.ms,
+      // every QE_DASH source is on a poll interval → retrying is truthful
+      foot: qeFootState({
+        loading: !answered,
+        err: n.err,
+        hasData: answered && !!hasData,
+        ms: n.ms,
+        retrying: true
+      })
+    };
+  });
+  return derived.reduce((a, b) => {
+    const sev = _FOOT_SEVERITY(a) - _FOOT_SEVERITY(b);
+    if (sev !== 0) return sev < 0 ? a : b;
+    return a.ms >= b.ms ? a : b;
+  }).foot;
 };
+const _dashFoot = (d, key, hasData) => _dashFootWorst(d, [{ src: key, hasData }]);
 const useDash = () => {
   const [, force] = React.useReducer((x) => x + 1, 0);
   React.useEffect(() => QE_DASH.subscribe(force), []);
@@ -2904,7 +2926,10 @@ const EquityCurvePane = () => {
       tag: "OHLC",
       style: { height: "100%" },
       right: /* @__PURE__ */ React.createElement(PeriodSelector, { options: [["1h", "1H"], ["4h", "4H"], ["1d", "1D"], ["1w", "1W"]], value: tf, onChange: setTf }),
-      foot: qeFootState({ loading: net.ms == null && !net.err, err: net.err, hasData: net.ms != null, ms: net.ms, retrying: true }),
+      foot: _dashFootWorst(d, [
+        { src: "snapshot", hasData: c != null },
+        { src: net, hasData: net.ms != null }
+      ]),
       bodyStyle: { padding: 6 }
     },
     /* @__PURE__ */ React.createElement("div", { style: { height: "100%", display: "flex", flexDirection: "column" } }, /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.62rem", display: "flex", gap: 14, flexWrap: "wrap", padding: "2px 4px", alignItems: "baseline" } }, /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "O"), " ", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-text)" } }, bar ? "$" + _n(bar.o) : "\u2014")), /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "H"), " ", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-green)" } }, bar ? "$" + _n(bar.h) : "\u2014")), /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "L"), " ", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-red)" } }, bar ? "$" + _n(bar.l) : "\u2014")), /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "C"), " ", /* @__PURE__ */ React.createElement(LiveValue, { id: "ohlc.c", value: c == null ? 0 : c, format: (x) => "$" + _n(x), style: { color: "var(--qe-text)", fontWeight: 700 } })), /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "Chg"), " ", /* @__PURE__ */ React.createElement("span", { style: { color: chg == null ? "var(--qe-muted)" : chg >= 0 ? "var(--qe-green)" : "var(--qe-red)" } }, chg == null ? "\u2014" : _sn(chg))), /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "Bar Range"), " ", /* @__PURE__ */ React.createElement("span", null, bar ? "$" + _n(bar.h - bar.l) : "\u2014")), /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "Cash Flow"), " ", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-blue)" } }, bar && bar.cf ? `${bar.cf >= 0 ? "+" : "-"}$${_n(Math.abs(+bar.cf))}` : "$0.00")), /* @__PURE__ */ React.createElement("span", { style: { marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 4 } }, /* @__PURE__ */ React.createElement("span", { style: { color: net.err ? "var(--qe-red)" : "var(--qe-muted)" } }, net.err ? "stalled" : "poll 5s"))), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0 } }, /* @__PURE__ */ React.createElement(EquityOhlcChart, { tf, onNet: setNet, onBar: setBar })))
@@ -3003,7 +3028,10 @@ const RiskMonitorPane = () => {
       title: "Risk Monitor",
       style: { height: "100%" },
       right: /* @__PURE__ */ React.createElement(Badge, { tone: enforced ? "err" : "info" }, enforced ? "ENFORCED" : "ADVISORY"),
-      foot: _dashFoot(d, "st", d.st && d.st.dd_state != null)
+      foot: _dashFootWorst(d, [
+        { src: "snapshot", hasData: d.loaded },
+        { src: "st", hasData: d.st && d.st.dd_state != null }
+      ])
     },
     /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 14 } }, /* @__PURE__ */ React.createElement(Gauge, { label: "Net Exposure", value: rk.exposure_pct != null ? rk.exposure_pct / 100 : 0, max: (rk.max_exposure_pct || 500) / 100, current: rk.exposure_pct != null ? _n(rk.exposure_pct / 100, 2) + "\xD7" : "\u2014", maxLabel: `${_n(rk.max_exposure_pct / 100, 1)}\xD7 cap` }), /* @__PURE__ */ React.createElement(Gauge, { label: "Drawdown 30d", value: Math.min(rk.drawdown_pct || 0, rk.max_dd_pct || 10), max: rk.max_dd_pct || 10, current: _n(rk.drawdown_pct) + "%", maxLabel: `${_n(rk.max_dd_pct)}% limit`, ticks: [0.5, 0.8].map((f) => f * (rk.max_dd_pct || 10)) }), /* @__PURE__ */ React.createElement(Gauge, { label: "Weekly Loss", value: Math.max(0, -(d.equity.weekly_pnl_pct || 0)), max: ((d.journal.params || {}).max_weekly_loss_pct || 0.05) * 100, current: d.equity.weekly_pnl_pct != null ? _sn(d.equity.weekly_pnl_pct) + "%" : "\u2014", maxLabel: `${_n(((d.journal.params || {}).max_weekly_loss_pct || 0.05) * 100, 1)}% cap` }), /* @__PURE__ */ React.createElement(Gauge, { label: "Positions", value: rk.positions_open || 0, max: rk.positions_max || 20, current: `${rk.positions_open || 0}/${rk.positions_max || 20}`, maxLabel: "capacity" }), /* @__PURE__ */ React.createElement("div", { className: "qe-divider-h" }), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "DD STATE"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Badge, { tone: _stateTone(ddState) }, enforced && ddState === "limit" ? "HALTED" : _stateLabel(ddState)), ddOverridden ? /* @__PURE__ */ React.createElement("span", { title: "Manual override active \u2014 new calcs unblocked until the drawdown recovers" }, /* @__PURE__ */ React.createElement(Badge, { tone: "warn" }, "OVERRIDDEN")) : canOverride ? /* @__PURE__ */ React.createElement(
       "button",
