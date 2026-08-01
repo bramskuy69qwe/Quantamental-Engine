@@ -259,6 +259,11 @@ const CfgAccountForm = ({ account, detail, onReload }) => {
       const d = r.data || {};
       if (d.status === 'ok') {
         setMsg({ text: d.message === 'already active' ? 'already active' : `activated · ${d.name || account.name}`, tone: 'ok' });
+        // THE path that made H1/H2 reachable: unlike the nav picker, this does
+        // not reload, so nothing else would notice the switch until the 10 s
+        // /api/state poll. Tell the store now — it re-points the SSE stream and
+        // re-reads every account-scoped page. The poll remains the backstop.
+        if (window.QE_CHROME) window.QE_CHROME.refreshAccount();
         onReload(true);
       } else {
         setMsg({ text: d.error || 'activate failed', tone: 'err' });
@@ -502,12 +507,22 @@ const CfgAccountsTab = () => {
 
   const [netA, setNetA] = React.useState({});   // /accounts pipe (qeFootState)
   const [netD, setNetD] = React.useState({});   // /api/config/account/{id} pipe
+  /* THE funnel every accounts-list write on this page already goes through —
+     create, activate, an env/exchange edit, the manual ↻. So it is also the
+     one place that can keep the CHROME's copy honest: that list feeds the nav
+     account picker and the WorkspaceBar EXCH cell on every page, was fetched
+     exactly once at boot, and `reloadAccounts` had no callers at all — so
+     adding or renaming an account here left the picker naming a set of
+     accounts that no longer existed, indefinitely. (An account SWITCH is
+     handled separately and automatically, by the store's own account watcher;
+     this covers the changes an id watcher cannot see.) */
   const loadAccounts = React.useCallback(async (keepSelection) => {
     const t0 = performance.now();
     try {
       const rows = await _cfgJson('/accounts');
       setNetA({ err: null, ms: performance.now() - t0 });
       setAccounts(rows);
+      if (window.QE_CHROME) window.QE_CHROME.reloadAccounts();
       setAcct((cur) => {
         if (keepSelection && cur != null && rows.some((a) => a.id === cur)) return cur;
         const act = rows.find((a) => a.is_active) || rows[0];

@@ -1633,29 +1633,31 @@ const QE_CHROME = function() {
     }
   });
   const j = (url, deadlineMs) => _ptJson(url, deadlineMs);
-  const poll = (url, key, errKey, ms) => {
+  const poll = (url, key, errKey, ms, after) => {
     const deadlineMs = qePollDeadline(ms);
+    let issued = 0, applied = 0;
     const run = async () => {
+      const mine = ++issued;
+      let payload = null, failed = false;
       try {
-        st[key] = await j(url, deadlineMs);
-        st[errKey] = false;
+        payload = await j(url, deadlineMs);
       } catch (e) {
-        st[errKey] = true;
+        failed = true;
       }
+      if (mine < applied) return;
+      applied = mine;
+      if (failed) st[errKey] = true;
+      else {
+        st[key] = payload;
+        st[errKey] = false;
+      }
+      if (after) after();
       emit();
     };
     run();
     setInterval(run, ms);
     return run;
   };
-  const _runState = poll("/api/state", "state", "stateErr", 1e4);
-  const _runSnap = poll("/api/dashboard/snapshot", "snap", "snapErr", 3e4);
-  const _runSys = poll("/api/system", "sys", "sysErr", 6e4);
-  qeOnVisible(() => {
-    _runState();
-    _runSnap();
-    _runSys();
-  });
   const loadAccounts = async () => {
     try {
       st.accounts = await j("/accounts");
@@ -1665,6 +1667,30 @@ const QE_CHROME = function() {
     emit();
     if (st.accounts == null) setTimeout(loadAccounts, 6e4);
   };
+  let _acctId = window.QE_BOOTSTRAP && window.QE_BOOTSTRAP.activeAccountId;
+  if (_acctId === void 0) _acctId = null;
+  const acctSubs = /* @__PURE__ */ new Set();
+  const _noteAccount = () => {
+    if (st.stateErr || !st.state) return;
+    const id = st.state.account_id;
+    if (id == null || String(id) === String(_acctId)) return;
+    _acctId = id;
+    loadAccounts();
+    acctSubs.forEach((f) => {
+      try {
+        f(id);
+      } catch (e) {
+      }
+    });
+  };
+  const _runState = poll("/api/state", "state", "stateErr", 1e4, _noteAccount);
+  const _runSnap = poll("/api/dashboard/snapshot", "snap", "snapErr", 3e4);
+  const _runSys = poll("/api/system", "sys", "sysErr", 6e4);
+  qeOnVisible(() => {
+    _runState();
+    _runSnap();
+    _runSys();
+  });
   loadAccounts();
   setInterval(() => {
     const s = window.QE_SSE && window.QE_SSE.status() || "idle";
@@ -1679,7 +1705,32 @@ const QE_CHROME = function() {
       subs.add(f);
       return () => subs.delete(f);
     },
-    reloadAccounts: loadAccounts
+    /* The accounts list changes for reasons the account-id watcher cannot see
+       — a new account, a rename, an exchange/env edit. Config calls this from
+       the ONE funnel every such write already goes through, which is what
+       stops the nav picker from listing a set of accounts that no longer
+       exists. (Before, this had zero callers and the list was whatever it was
+       at page load.) */
+    reloadAccounts: loadAccounts,
+    /* The ACTIVE account, live. Null until the first /api/state answers if the
+       page carried no bootstrap id. */
+    accountId: () => _acctId,
+    /* Fires with the new id when the engine's active account CHANGES, and
+       never off an errored poll. Returns unsubscribe.
+       It does NOT fire on the first successful poll of a page whose bootstrap
+       already named the account (the normal case — the seed matches, so there
+       is no change). It DOES fire on a page rendered with no active account
+       (`activeAccountId` is `null` then), and that firing is what connects the
+       stream at all — so subscribers must be idempotent, not once-only. */
+    onAccountChange: (f) => {
+      acctSubs.add(f);
+      return () => acctSubs.delete(f);
+    },
+    /* Out-of-band /api/state pull, so a switch the operator just made lands
+       without waiting out the 10 s poll. Same idiom as QE_DASH.refreshState.
+       The poll stays the backstop: it catches a switch made from anywhere
+       else (another tab, the engine itself) that never calls this. */
+    refreshAccount: () => _runState()
   };
 }();
 const useQeChrome = () => {
@@ -1687,7 +1738,15 @@ const useQeChrome = () => {
   React.useEffect(() => QE_CHROME.sub(force), []);
   return QE_CHROME.get();
 };
-Object.assign(window, { QE_CHROME, useQeChrome });
+const useQeAccount = () => {
+  const [id, setId] = React.useState(() => QE_CHROME.accountId());
+  React.useEffect(() => {
+    setId(QE_CHROME.accountId());
+    return QE_CHROME.onAccountChange(setId);
+  }, []);
+  return id;
+};
+Object.assign(window, { QE_CHROME, useQeChrome, useQeAccount });
 
 ;
 
@@ -2543,8 +2602,9 @@ const QE_SSE = function() {
   const values = /* @__PURE__ */ new Map();
   const valSubs = /* @__PURE__ */ new Map();
   let source = null;
+  let streamId = null;
   let status = "idle";
-  const accountId = () => window.QE_BOOTSTRAP && window.QE_BOOTSTRAP.activeAccountId;
+  const accountId = () => window.QE_CHROME ? window.QE_CHROME.accountId() : window.QE_BOOTSTRAP && window.QE_BOOTSTRAP.activeAccountId;
   function fanout(map, key, arg) {
     const subs = map.get(key);
     if (subs) subs.forEach((fn) => {
@@ -2564,6 +2624,7 @@ const QE_SSE = function() {
     status = "connecting";
     try {
       source = new EventSource("/stream/account/" + id);
+      streamId = id;
     } catch (e) {
       status = "error";
       return status;
@@ -2595,11 +2656,19 @@ const QE_SSE = function() {
       }
       source = null;
     }
+    streamId = null;
     status = "idle";
+  }
+  function retarget(id) {
+    if (id == null || String(id) === String(streamId)) return status;
+    disconnect();
+    return connect();
   }
   return {
     connect,
     disconnect,
+    retarget,
+    streamAccountId: () => streamId,
     status: () => status,
     channels: CHANNELS.slice(),
     /* Subscribe to a raw channel's decoded payloads. Returns an unsubscribe fn. */
@@ -2641,6 +2710,9 @@ const useLiveId = (liveId, initial) => {
   return v;
 };
 QE_SSE.connect();
+if (window.QE_CHROME && window.QE_CHROME.onAccountChange) {
+  window.QE_CHROME.onAccountChange(QE_SSE.retarget);
+}
 Object.assign(window, { QE_SSE, useSSEChannel, useLiveId });
 
 ;
@@ -3581,6 +3653,7 @@ const CfgAccountForm = ({ account, detail, onReload }) => {
       const d = r.data || {};
       if (d.status === "ok") {
         setMsg({ text: d.message === "already active" ? "already active" : `activated \xB7 ${d.name || account.name}`, tone: "ok" });
+        if (window.QE_CHROME) window.QE_CHROME.refreshAccount();
         onReload(true);
       } else {
         setMsg({ text: d.error || "activate failed", tone: "err" });
@@ -3780,6 +3853,7 @@ const CfgAccountsTab = () => {
       const rows = await _cfgJson("/accounts");
       setNetA({ err: null, ms: performance.now() - t0 });
       setAccounts(rows);
+      if (window.QE_CHROME) window.QE_CHROME.reloadAccounts();
       setAcct((cur) => {
         if (keepSelection && cur != null && rows.some((a) => a.id === cur)) return cur;
         const act = rows.find((a) => a.is_active) || rows[0];
@@ -4482,6 +4556,7 @@ const PreTradePage = () => {
   regimeRef.current = regime;
   const calcTickerRef = React.useRef(calc ? calc.ticker : null);
   const [netRegime, setNetRegime] = React.useState({});
+  const acctId = useQeAccount();
   React.useEffect(() => {
     let alive = true;
     const load = (url, fn, netFn, everyMs) => {
@@ -4499,8 +4574,7 @@ const PreTradePage = () => {
     load("/api/regime/current", setRegime, setNetRegime, PT_REGIME_MS);
     load("/api/models", (d) => setModels(Array.isArray(d) ? d : d.models || []));
     load("/api/calculator/context", setCtxInfo);
-    const aid = window.QE_BOOTSTRAP && window.QE_BOOTSTRAP.activeAccountId;
-    if (aid != null) load("/api/config/account/" + aid, (d) => setRiskPct((d.params || {}).individual_risk_per_trade));
+    if (acctId != null) load("/api/config/account/" + acctId, (d) => setRiskPct((d.params || {}).individual_risk_per_trade));
     const t1 = setInterval(() => load("/api/state", setSt, null, PT_STATE_MS), PT_STATE_MS);
     const t2 = setInterval(() => load("/api/regime/current", setRegime, setNetRegime, PT_REGIME_MS), PT_REGIME_MS);
     return () => {
@@ -4508,7 +4582,7 @@ const PreTradePage = () => {
       clearInterval(t1);
       clearInterval(t2);
     };
-  }, []);
+  }, [acctId]);
   const applyPrefill = React.useCallback((id) => {
     if (!id) return;
     _ptJson("/calculator/prefill/" + encodeURIComponent(id)).then((p) => {

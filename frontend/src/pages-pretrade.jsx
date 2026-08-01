@@ -279,6 +279,15 @@ const PreTradePage = () => {
 
   /* ── context fetches + polls ── */
   const [netRegime, setNetRegime] = React.useState({});   // regime-poll pipe (qeFootState)
+  /* H2. This effect used to key its account read off QE_BOOTSTRAP and run
+     ONCE, so after a Config-page Activate (which refetches without reloading)
+     the sizing panel showed the PREVIOUS account's individual_risk_per_trade
+     while the engine sized against the new one — two different numbers, both
+     presented as the truth, on the page whose whole job is position size.
+     `acctId` is the live id (QE_CHROME off /api/state), and it is a DEPENDENCY:
+     everything below is account-scoped, so the switch re-runs all of it rather
+     than only the one URL that happened to embed the id. */
+  const acctId = useQeAccount();
   React.useEffect(() => {
     let alive = true;
     const load = (url, fn, netFn, everyMs) => {
@@ -293,12 +302,11 @@ const PreTradePage = () => {
     load('/api/regime/current', setRegime, setNetRegime, PT_REGIME_MS);
     load('/api/models', (d) => setModels(Array.isArray(d) ? d : (d.models || [])));
     load('/api/calculator/context', setCtxInfo);
-    const aid = window.QE_BOOTSTRAP && window.QE_BOOTSTRAP.activeAccountId;
-    if (aid != null) load('/api/config/account/' + aid, (d) => setRiskPct((d.params || {}).individual_risk_per_trade));
+    if (acctId != null) load('/api/config/account/' + acctId, (d) => setRiskPct((d.params || {}).individual_risk_per_trade));
     const t1 = setInterval(() => load('/api/state', setSt, null, PT_STATE_MS), PT_STATE_MS);
     const t2 = setInterval(() => load('/api/regime/current', setRegime, setNetRegime, PT_REGIME_MS), PT_REGIME_MS);
     return () => { alive = false; clearInterval(t1); clearInterval(t2); };
-  }, []);
+  }, [acctId]);
 
   /* model prefill — shared by the ?model_id= handoff AND the in-page picker
      change (the Jinja applyModelPrefill lane) [P3 audit MED-2]. Truthy-applied

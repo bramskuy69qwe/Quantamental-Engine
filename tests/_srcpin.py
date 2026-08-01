@@ -17,6 +17,8 @@ Discipline for any new source pin (see the memory note "source pins must bite"):
 """
 from __future__ import annotations
 
+import re
+
 
 def code(src: str) -> str:
     """Executable source only — `/* … */` and `//` comment bodies removed.
@@ -44,3 +46,71 @@ def code(src: str) -> str:
         (ln if ln.find("//") < 0 else ln[:ln.find("//")])
         for ln in stripped.splitlines()
     )
+
+
+
+def args(src: str, fn: str) -> list[list[str]]:
+    """Every call to `fn(...)` in `src`, as a list of its top-level arguments.
+
+    Balanced-paren, not a regex. The first draft of this file used
+    `fn\\((.*?)\\)` and it reported ZERO calls in two modules and the wrong
+    argument in two more — `_ptJson(url, qePollDeadline(everyMs))` stops the
+    lazy match at the INNER `)`. A coverage pin that silently parses nothing
+    passes vacuously, which is the exact failure mode `_srcpin` exists to warn
+    about, so `test_the_call_parser_is_not_blind` checks it finds what it
+    should before anything reasons with it.
+    """
+    out = []
+    # `(?<![\w$.])`: without it, args(src, "load") also matches
+    # `reload(` / `upload(` / `_mdlUpload(`, and args(src, "get")
+    # matches `params.get(` — a future `preload(a, b, c, SOME_MS)` would
+    # then satisfy the drift pin for a constant that feeds no read.
+    for m in re.finditer(r"(?<![\w$.])" + re.escape(fn) + r"\(", src):
+        i, depth, arg, args = m.end(), 1, [], []
+        while i < len(src) and depth:
+            ch = src[i]
+            if ch in "([{":
+                depth += 1
+            elif ch in ")]}":
+                depth -= 1
+                if not depth:
+                    break
+            if depth == 1 and ch == ",":
+                args.append("".join(arg).strip())
+                arg = []
+            else:
+                arg.append(ch)
+            i += 1
+        args.append("".join(arg).strip())
+        out.append([a for a in args if a != ""])
+    return out
+
+
+def phantom_openers(src: str) -> list[int]:
+    """1-based line numbers where a `//` comment contains a block-comment
+    opener — see TestTheCommentStripperTrap for what that costs.
+
+    A FUNCTION, not two lines inlined in the test: the self-check below has to
+    exercise the same code the parametrized test runs, or it proves only that
+    its own copy works (which is exactly how the first draft passed while the
+    real assertion was neutered).
+    """
+    out = []
+    for n, line in enumerate(src.splitlines(), 1):
+        i = line.find("//")
+        if i >= 0 and "/" + "*" in line[i:]:
+            out.append(n)
+    return out
+
+
+def scheduled_delays(src: str) -> list[str]:
+    """The delay argument of every setInterval/setTimeout call."""
+    return [a[-1] for fn in ("setInterval", "setTimeout")
+            for a in args(src, fn) if len(a) >= 2]
+
+
+def const(src: str, name: str) -> int:
+    """The numeric value of a `const NAME = 1234;` declaration."""
+    m = re.search(rf"const {re.escape(name)} = ([0-9_]+);", src)
+    assert m, f"{name} is not a numeric const"
+    return int(m.group(1).replace("_", ""))
