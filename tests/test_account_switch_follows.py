@@ -236,6 +236,21 @@ class TestTheSseStreamFollows:
             "disconnect must clear it, or a later connect looks like a no-op"
         )
 
+    def test_retarget_actually_targets_its_ARGUMENT(self):
+        """`connect()` used to re-read the live store and ignore what retarget
+        was switching TO. In production those agree — QE_CHROME updates _acctId
+        before firing onAccountChange — so it was never a live mis-target, but
+        the parameter read as a destination while behaving as a mere trigger.
+        Found by calling `QE_SSE.retarget(2)` against the running engine and
+        watching `streamAccountId()` stay on 1 while the socket churned."""
+        assert "function connect(explicitId) {" in _SSE
+        assert "const id = explicitId != null ? explicitId : accountId();" in _SSE, (
+            "connect() no longer honours an explicit target, so retarget(N) "
+            "reopens on whatever the store says instead of on N"
+        )
+        body = _SSE[_SSE.index("function retarget"):_SSE.index("return {")]
+        assert "return connect(id);" in body, "retarget drops its own argument"
+
     def test_retarget_is_idempotent_and_tears_down_first(self):
         body = _SSE[_SSE.index("function retarget"):_SSE.index("return {")]
         assert "if (id == null || String(id) === String(streamId)) return status;" in body

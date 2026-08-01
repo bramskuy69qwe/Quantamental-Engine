@@ -40,9 +40,17 @@ const QE_SSE = (function () {
     if (subs) subs.forEach((fn) => { try { fn(arg); } catch (e) { /* isolate */ } });
   }
 
-  function connect() {
+  function connect(explicitId) {
     if (source) return status;
-    const id = accountId();
+    // `explicitId` is what retarget() is switching TO. Without it this read the
+    // live store instead, so `retarget(N)` did not actually target N — it tore
+    // the connection down and reopened it on whatever the store happened to
+    // say. In production those are the same value (QE_CHROME updates _acctId
+    // BEFORE firing onAccountChange), so this was never a live mis-target — but
+    // the parameter looked like a destination while behaving as a mere trigger,
+    // and a manual retarget(N) churned the socket for nothing. Found by calling
+    // it against the live engine and watching the stream id not move.
+    const id = explicitId != null ? explicitId : accountId();
     if (id == null || typeof EventSource === 'undefined') { status = 'disabled'; return status; }
     status = 'connecting';
     try {
@@ -88,7 +96,7 @@ const QE_SSE = (function () {
   function retarget(id) {
     if (id == null || String(id) === String(streamId)) return status;
     disconnect();
-    return connect();
+    return connect(id);
   }
 
   return {

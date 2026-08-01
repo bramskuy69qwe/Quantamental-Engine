@@ -2614,9 +2614,9 @@ const QE_SSE = function() {
       }
     });
   }
-  function connect() {
+  function connect(explicitId) {
     if (source) return status;
-    const id = accountId();
+    const id = explicitId != null ? explicitId : accountId();
     if (id == null || typeof EventSource === "undefined") {
       status = "disabled";
       return status;
@@ -2662,7 +2662,7 @@ const QE_SSE = function() {
   function retarget(id) {
     if (id == null || String(id) === String(streamId)) return status;
     disconnect();
-    return connect();
+    return connect(id);
   }
   return {
     connect,
