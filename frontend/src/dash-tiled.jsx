@@ -621,7 +621,12 @@ const RiskMonitorPane = () => {
             guardrails had no magnitude readout). weekly_pnl_pct is already
             %, params.max_weekly_loss_pct a fraction. */}
         <Gauge label="Weekly Loss" value={Math.max(0, -(d.equity.weekly_pnl_pct || 0))} max={((d.journal.params || {}).max_weekly_loss_pct || 0.05) * 100} current={d.equity.weekly_pnl_pct != null ? _sn(d.equity.weekly_pnl_pct) + '%' : '—'} maxLabel={`${_n(((d.journal.params || {}).max_weekly_loss_pct || 0.05) * 100, 1)}% cap`} />
-        <Gauge label="Positions" value={rk.positions_open || 0} max={rk.positions_max || 20} current={`${rk.positions_open || 0}/${rk.positions_max || 20}`} maxLabel="capacity" />
+        {/* The READOUT dashes when the snapshot has not delivered — an empty
+            snapshot used to print a confident fabricated `0/20` (filed with
+            the warm hang). The numeric fallbacks on value/max stay: they are
+            bar GEOMETRY only (an empty bar over a dashed readout is honest;
+            a gauge cannot draw without a max). */}
+        <Gauge label="Positions" value={rk.positions_open || 0} max={rk.positions_max || 20} current={rk.positions_open != null ? `${rk.positions_open}/${rk.positions_max != null ? rk.positions_max : '—'}` : '—'} maxLabel="capacity" />
         <div className="qe-divider-h" />
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
           <div><Lbl>DD STATE</Lbl>
@@ -723,7 +728,9 @@ const OpenPositionsPane = () => {
         rows={rows}
         emptyMsg="No open positions"
         summary={<>
-          <span>{rows.length} / {d.risk.positions_max || 20} positions · {longs} long · {rows.length - longs} short</span>
+          {/* same fabrication class as the Positions gauge: the CAP dashes
+              until the snapshot delivers it (rows.length is always real) */}
+          <span>{rows.length} / {d.risk.positions_max != null ? d.risk.positions_max : '—'} positions · {longs} long · {rows.length - longs} short</span>
           <PosUnrealSum />
         </>}
       />
@@ -935,6 +942,14 @@ const DashHaltBanner = () => {
 const WatchlistTape = () => {
   const d = useDash();
   const rows = d.positions;
+  /* Staleness (filed with the warm hang: the tape had NO signal at all).
+     MARK prices are snapshot-enriched only — the SSE position_update merge
+     deliberately keeps them as static fields — so when the snapshot pipe is
+     failing the marks are frozen. Nav-strip discipline for a footless strip:
+     READINGS dash out, with the cause on the title (the _navStaleDash shape).
+     The uPnL% keeps rendering — its dominant writer is SSE, a different pipe
+     with its own app-wide health surface (the WS dot). */
+  const markStale = !!(d.net.snapshot && d.net.snapshot.err);
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 0,
@@ -944,9 +959,10 @@ const WatchlistTape = () => {
     }}>
       {rows.length === 0 && <span style={{ color: 'var(--qe-muted)', padding: '0 9px' }}>no open positions</span>}
       {rows.map((r, i) => (
-        <span key={r._k || r.sym} style={{ display: 'inline-flex', alignItems: 'baseline', gap: 5, padding: '0 9px', borderRight: i < rows.length - 1 ? '1px solid var(--qe-faint)' : 'none' }}>
+        <span key={r._k || r.sym} title={markStale ? 'mark stale — /api/dashboard/snapshot failing' : undefined}
+          style={{ display: 'inline-flex', alignItems: 'baseline', gap: 5, padding: '0 9px', borderRight: i < rows.length - 1 ? '1px solid var(--qe-faint)' : 'none' }}>
           <span style={{ color: 'var(--qe-cyan)', fontWeight: 700 }}>{(r.sym || '').replace('USDT', '')}</span>
-          <LiveValue id={`tape.${r._k || r.sym}`} value={r.mark != null ? r.mark : '—'} format={(x) => (r.mark == null ? '—' : _loc(x, 2))} style={{ color: 'var(--qe-text)', fontWeight: 600 }} />
+          <LiveValue id={`tape.${r._k || r.sym}`} value={markStale || r.mark == null ? '—' : r.mark} format={(x) => (markStale || r.mark == null ? '—' : _loc(x, 2))} style={{ color: 'var(--qe-text)', fontWeight: 600 }} />
           <LiveValue id={`tape.${r._k || r.sym}.pct`} value={r.pct != null ? r.pct : 0} format={(x) => _sn(x) + '%'} style={{ fontSize: '0.56rem', fontWeight: 600, color: (r.pct || 0) >= 0 ? 'var(--qe-green)' : 'var(--qe-red)' }} />
         </span>
       ))}

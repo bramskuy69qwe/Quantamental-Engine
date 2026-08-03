@@ -3300,7 +3300,7 @@ const RiskMonitorPane = () => {
         { src: "st", hasData: d.st && d.st.dd_state != null }
       ])
     },
-    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 14 } }, /* @__PURE__ */ React.createElement(Gauge, { label: "Net Exposure", value: rk.exposure_pct != null ? rk.exposure_pct / 100 : 0, max: (rk.max_exposure_pct || 500) / 100, current: rk.exposure_pct != null ? _n(rk.exposure_pct / 100, 2) + "\xD7" : "\u2014", maxLabel: `${_n(rk.max_exposure_pct / 100, 1)}\xD7 cap` }), /* @__PURE__ */ React.createElement(Gauge, { label: "Drawdown 30d", value: Math.min(rk.drawdown_pct || 0, rk.max_dd_pct || 10), max: rk.max_dd_pct || 10, current: _n(rk.drawdown_pct) + "%", maxLabel: `${_n(rk.max_dd_pct)}% limit`, ticks: [0.5, 0.8].map((f) => f * (rk.max_dd_pct || 10)) }), /* @__PURE__ */ React.createElement(Gauge, { label: "Weekly Loss", value: Math.max(0, -(d.equity.weekly_pnl_pct || 0)), max: ((d.journal.params || {}).max_weekly_loss_pct || 0.05) * 100, current: d.equity.weekly_pnl_pct != null ? _sn(d.equity.weekly_pnl_pct) + "%" : "\u2014", maxLabel: `${_n(((d.journal.params || {}).max_weekly_loss_pct || 0.05) * 100, 1)}% cap` }), /* @__PURE__ */ React.createElement(Gauge, { label: "Positions", value: rk.positions_open || 0, max: rk.positions_max || 20, current: `${rk.positions_open || 0}/${rk.positions_max || 20}`, maxLabel: "capacity" }), /* @__PURE__ */ React.createElement("div", { className: "qe-divider-h" }), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "DD STATE"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Badge, { tone: _stateTone(ddState) }, enforced && ddState === "limit" ? "HALTED" : _stateLabel(ddState)), ddOverridden ? /* @__PURE__ */ React.createElement("span", { title: "Manual override active \u2014 new calcs unblocked until the drawdown recovers" }, /* @__PURE__ */ React.createElement(Badge, { tone: "warn" }, "OVERRIDDEN")) : canOverride ? /* @__PURE__ */ React.createElement(
+    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 14 } }, /* @__PURE__ */ React.createElement(Gauge, { label: "Net Exposure", value: rk.exposure_pct != null ? rk.exposure_pct / 100 : 0, max: (rk.max_exposure_pct || 500) / 100, current: rk.exposure_pct != null ? _n(rk.exposure_pct / 100, 2) + "\xD7" : "\u2014", maxLabel: `${_n(rk.max_exposure_pct / 100, 1)}\xD7 cap` }), /* @__PURE__ */ React.createElement(Gauge, { label: "Drawdown 30d", value: Math.min(rk.drawdown_pct || 0, rk.max_dd_pct || 10), max: rk.max_dd_pct || 10, current: _n(rk.drawdown_pct) + "%", maxLabel: `${_n(rk.max_dd_pct)}% limit`, ticks: [0.5, 0.8].map((f) => f * (rk.max_dd_pct || 10)) }), /* @__PURE__ */ React.createElement(Gauge, { label: "Weekly Loss", value: Math.max(0, -(d.equity.weekly_pnl_pct || 0)), max: ((d.journal.params || {}).max_weekly_loss_pct || 0.05) * 100, current: d.equity.weekly_pnl_pct != null ? _sn(d.equity.weekly_pnl_pct) + "%" : "\u2014", maxLabel: `${_n(((d.journal.params || {}).max_weekly_loss_pct || 0.05) * 100, 1)}% cap` }), /* @__PURE__ */ React.createElement(Gauge, { label: "Positions", value: rk.positions_open || 0, max: rk.positions_max || 20, current: rk.positions_open != null ? `${rk.positions_open}/${rk.positions_max != null ? rk.positions_max : "\u2014"}` : "\u2014", maxLabel: "capacity" }), /* @__PURE__ */ React.createElement("div", { className: "qe-divider-h" }), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "DD STATE"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Badge, { tone: _stateTone(ddState) }, enforced && ddState === "limit" ? "HALTED" : _stateLabel(ddState)), ddOverridden ? /* @__PURE__ */ React.createElement("span", { title: "Manual override active \u2014 new calcs unblocked until the drawdown recovers" }, /* @__PURE__ */ React.createElement(Badge, { tone: "warn" }, "OVERRIDDEN")) : canOverride ? /* @__PURE__ */ React.createElement(
       "button",
       {
         className: "qe-btn qe-btn-sm qe-btn-ghost",
@@ -3398,7 +3398,7 @@ const OpenPositionsPane = () => {
         ],
         rows,
         emptyMsg: "No open positions",
-        summary: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", null, rows.length, " / ", d.risk.positions_max || 20, " positions \xB7 ", longs, " long \xB7 ", rows.length - longs, " short"), /* @__PURE__ */ React.createElement(PosUnrealSum, null))
+        summary: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", null, rows.length, " / ", d.risk.positions_max != null ? d.risk.positions_max : "\u2014", " positions \xB7 ", longs, " long \xB7 ", rows.length - longs, " short"), /* @__PURE__ */ React.createElement(PosUnrealSum, null))
       }
     )
   );
@@ -3547,6 +3547,7 @@ const DashHaltBanner = () => {
 const WatchlistTape = () => {
   const d = useDash();
   const rows = d.positions;
+  const markStale = !!(d.net.snapshot && d.net.snapshot.err);
   return /* @__PURE__ */ React.createElement("div", { style: {
     display: "flex",
     alignItems: "center",
@@ -3560,7 +3561,17 @@ const WatchlistTape = () => {
     fontSize: "0.62rem",
     overflow: "hidden",
     whiteSpace: "nowrap"
-  } }, rows.length === 0 && /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)", padding: "0 9px" } }, "no open positions"), rows.map((r, i) => /* @__PURE__ */ React.createElement("span", { key: r._k || r.sym, style: { display: "inline-flex", alignItems: "baseline", gap: 5, padding: "0 9px", borderRight: i < rows.length - 1 ? "1px solid var(--qe-faint)" : "none" } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, (r.sym || "").replace("USDT", "")), /* @__PURE__ */ React.createElement(LiveValue, { id: `tape.${r._k || r.sym}`, value: r.mark != null ? r.mark : "\u2014", format: (x) => r.mark == null ? "\u2014" : _loc(x, 2), style: { color: "var(--qe-text)", fontWeight: 600 } }), /* @__PURE__ */ React.createElement(LiveValue, { id: `tape.${r._k || r.sym}.pct`, value: r.pct != null ? r.pct : 0, format: (x) => _sn(x) + "%", style: { fontSize: "0.56rem", fontWeight: 600, color: (r.pct || 0) >= 0 ? "var(--qe-green)" : "var(--qe-red)" } }))));
+  } }, rows.length === 0 && /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)", padding: "0 9px" } }, "no open positions"), rows.map((r, i) => /* @__PURE__ */ React.createElement(
+    "span",
+    {
+      key: r._k || r.sym,
+      title: markStale ? "mark stale \u2014 /api/dashboard/snapshot failing" : void 0,
+      style: { display: "inline-flex", alignItems: "baseline", gap: 5, padding: "0 9px", borderRight: i < rows.length - 1 ? "1px solid var(--qe-faint)" : "none" }
+    },
+    /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-cyan)", fontWeight: 700 } }, (r.sym || "").replace("USDT", "")),
+    /* @__PURE__ */ React.createElement(LiveValue, { id: `tape.${r._k || r.sym}`, value: markStale || r.mark == null ? "\u2014" : r.mark, format: (x) => markStale || r.mark == null ? "\u2014" : _loc(x, 2), style: { color: "var(--qe-text)", fontWeight: 600 } }),
+    /* @__PURE__ */ React.createElement(LiveValue, { id: `tape.${r._k || r.sym}.pct`, value: r.pct != null ? r.pct : 0, format: (x) => _sn(x) + "%", style: { fontSize: "0.56rem", fontWeight: 600, color: (r.pct || 0) >= 0 ? "var(--qe-green)" : "var(--qe-red)" } })
+  )));
 };
 const DashTiled = () => {
   React.useEffect(() => {
@@ -4547,7 +4558,7 @@ Object.assign(window, { ConfigPage });
 
 /* ==== pages-pretrade.jsx ==== */
 const _ptCalcFoot = (busy, calcErr, calc, autoErr, autoLive) => {
-  if (busy) return { tone: "sub", busy: true, msg: "calculating\u2026" };
+  if (busy) return { tone: "sub", busy: true, msg: "calculating\u2026", hasData: calc != null };
   if (calcErr) {
     return calc ? { tone: "warn", msg: "calc failed \xB7 showing last result" } : { tone: "err", msg: String(calcErr).slice(0, 80) };
   }
@@ -4558,6 +4569,11 @@ const _ptCalcFoot = (busy, calcErr, calc, autoErr, autoLive) => {
     };
   }
   return calc ? { tone: "ok", msg: "calc ok" } : { tone: "sub", msg: "no calc yet" };
+};
+const _ptFootRank = ({ foot, failed }) => foot.tone === "err" ? 0 : foot.tone === "sub" && foot.busy && !foot.hasData ? 1 : foot.tone === "warn" && failed ? 2 : foot.tone === "warn" ? 3 : foot.tone === "sub" && !foot.busy ? 4 : foot.tone === "sub" ? 5 : 6;
+const _ptWorstFoot = (entries) => {
+  if (!entries || !entries.length) return qeFootState({ loading: true });
+  return entries.reduce((a, b) => _ptFootRank(a) <= _ptFootRank(b) ? a : b).foot;
 };
 const PT_STATE_MS = 5e3;
 const PT_REGIME_MS = 6e4;
@@ -5338,7 +5354,16 @@ const PreTradePage = () => {
       title: "Regime \xB7 ATR Volatility",
       hot: true,
       style: { height: "100%" },
-      foot: qeFootState({ loading: netRegime.ms == null && !netRegime.err, err: netRegime.err, hasData: regime != null, ms: netRegime.ms, retrying: true })
+      foot: busy || calc != null || calcErr != null ? _ptWorstFoot([
+        {
+          foot: qeFootState({ loading: netRegime.ms == null && !netRegime.err, err: netRegime.err, hasData: regime != null, ms: netRegime.ms, retrying: true }),
+          failed: !!netRegime.err
+        },
+        {
+          foot: _ptCalcFoot(busy, calcErr, calc, autoErr, autoLive),
+          failed: !!(calcErr || autoErr)
+        }
+      ]) : qeFootState({ loading: netRegime.ms == null && !netRegime.err, err: netRegime.err, hasData: regime != null, ms: netRegime.ms, retrying: true })
     },
     /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Current Regime"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, marginTop: 4, flexWrap: "wrap" } }, regTone ? /* @__PURE__ */ React.createElement(RegimeBadge, { tone: regTone, label: String(regLabel).toUpperCase() }) : /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.74rem", fontWeight: 700, color: "var(--qe-cyan)" } }, String(regLabel).toUpperCase()), calc && calc.regime_stale || !calc && regime && regime.label == null ? /* @__PURE__ */ React.createElement(Badge, { tone: "warn" }, "STALE") : null, /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.78rem", fontWeight: 700, color: "var(--qe-cyan)" } }, "\xD7", _ptFmtN(regMult, 1), " size")), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.56rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)", marginTop: 2 } }, riskPct != null ? `${_ptFmtN(riskPct * 100, 2)}% \u2192 ${_ptFmtN(riskPct * 100 * regMult, 2)}% risk` : "", calc && calc.regime_mode ? ` \xB7 mode ${calc.regime_mode}` : regime && regime.mode ? ` \xB7 mode ${regime.mode}` : "")), /* @__PURE__ */ React.createElement("div", { style: { borderTop: "1px solid var(--qe-line)" } }), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Volatility (atr_c)"), calc && calc.atr_c != null ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, marginTop: 4, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "1rem", fontWeight: 700 } }, _ptFmtN(calc.atr_c, 2)), /* @__PURE__ */ React.createElement(Badge, { tone: calc.atr_category === "normal" ? "ok" : calc.atr_category === "not_volatile" ? "info" : "warn" }, String(calc.atr_category || "").toUpperCase())), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.56rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)", marginTop: 2 } }, "ATR(", "100", ",4h) ", _ptFmtP(calc.atr100), " \xB7 ATR(14,4h) ", _ptFmtP(calc.atr14))) : /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.6rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)", marginTop: 4 } }, "run Calculate for the ticker's ATR read")))
   )), /* @__PURE__ */ React.createElement(GridItem, { x: 10, y: 5, w: 14, h: 7, minW: 8, minH: 7 }, /* @__PURE__ */ React.createElement(

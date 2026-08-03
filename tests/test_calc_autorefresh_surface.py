@@ -210,10 +210,13 @@ class TestTheAutoDeadline:
 # ── 3. the surface ──────────────────────────────────────────────────────────
 
 class TestTheFootSurface:
-    def test_all_three_result_panes_thread_the_flag(self):
-        assert _PT.count("_ptCalcFoot(busy, calcErr, calc, autoErr, autoLive)") == 3
+    def test_every_calc_fed_pane_threads_the_flag(self):
+        """FOUR call sites since the Regime·ATR multi-pipe fix (2026-08-04):
+        the three result panes bind it directly, and the ATR pane feeds it
+        into `_ptWorstFoot` as its calc-pipe entry."""
+        assert _PT.count("_ptCalcFoot(busy, calcErr, calc, autoErr, autoLive)") == 4
         assert "_ptCalcFoot(busy, calcErr, calc)" not in _PT, (
-            "a result pane still derives its foot without the auto flag — "
+            "a calc-fed pane still derives its foot without the auto flag — "
             "that pane reads `calc ok` over a stale calc"
         )
 
@@ -261,7 +264,12 @@ class TestFootDerivationExecuted:
         return {row["n"]: row["r"] for row in json.loads(r.stdout)}
 
     def test_the_truth_table(self, rows):
-        assert rows["busy"] == {"tone": "sub", "busy": True, "msg": "calculating…"}
+        # `hasData` rides the busy foot since the ATR multi-pipe fix: it lets
+        # _ptWorstFoot tell a COLD first calc from a REFRESH over a shown
+        # result (the flat busy rank masked a degraded sibling — audit F1 of
+        # that fix). True here because this case carries calc={x:1}.
+        assert rows["busy"] == {"tone": "sub", "busy": True,
+                                "msg": "calculating…", "hasData": True}
         # a MANUAL error outranks the auto flag — it answers the operator's
         # own click, and painting the generic staleness warning over it would
         # bury the specific refusal they just triggered

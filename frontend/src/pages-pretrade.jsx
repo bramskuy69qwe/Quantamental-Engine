@@ -59,7 +59,13 @@
    auto flag (it is the operator's own click answering); auto staleness beats
    `calc ok`. */
 const _ptCalcFoot = (busy, calcErr, calc, autoErr, autoLive) => {
-  if (busy) return { tone: 'sub', busy: true, msg: 'calculating…' };
+  // `hasData` rides the busy foot so _ptFootRank can tell a COLD first calc
+  // (nothing usable yet — ranks with never-answered) from a REFRESH over a
+  // result already on screen (audit: the flat busy rank let a manual recalc
+  // hide a failing regime pipe for the POST's duration — a masking window
+  // the single-pipe foot never had). qeFootState makes the same split with
+  // its `loading && !hasData` gate; this mirrors it.
+  if (busy) return { tone: 'sub', busy: true, msg: 'calculating…', hasData: calc != null };
   if (calcErr) {
     return calc
       ? { tone: 'warn', msg: 'calc failed · showing last result' }
@@ -75,6 +81,34 @@ const _ptCalcFoot = (busy, calcErr, calc, autoErr, autoLive) => {
              msg: 'auto-refresh failing · showing last calc' + (autoLive ? ' · retrying' : '') };
   }
   return calc ? { tone: 'ok', msg: 'calc ok' } : { tone: 'sub', msg: 'no calc yet' };
+};
+
+/* Worst of two ALREADY-DERIVED feet (the DESIGN.md §5 multi-pipe rule,
+   hand-applied per its own interim instruction — `_dashFootWorst` is
+   dashboard-local until the helper is lifted into primitives). Severity is
+   the ratified order: err > trying(sub·busy) > errored-with-data(warn+failed)
+   > merely-delayed(warn) > idle(sub) > ok. `failed` disambiguates the two
+   warn flavours, which tone alone conflates — the exact mistake the pane-foot
+   arc shipped once and executed its way out of. */
+const _ptFootRank = ({ foot, failed }) => (
+  foot.tone === 'err' ? 0
+    // busy WITHOUT data = a cold attempt, nothing usable yet — ranks with
+    // never-answered. Busy WITH data (a refresh over a shown result) sits
+    // just above ok: it still surfaces `calculating…` when every sibling is
+    // healthy, but can no longer mask a degraded one (audit F1).
+    : foot.tone === 'sub' && foot.busy && !foot.hasData ? 1
+    : foot.tone === 'warn' && failed ? 2
+    : foot.tone === 'warn' ? 3
+    : foot.tone === 'sub' && !foot.busy ? 4
+    : foot.tone === 'sub' ? 5
+    : 6
+);
+const _ptWorstFoot = (entries) => {
+  // Same guard, same reason as _dashFootWorst: this runs in the PANE's
+  // render, outside PaneErrorBoundary — an empty list's reduce would throw
+  // and take down the whole workspace subtree, not one tile.
+  if (!entries || !entries.length) return qeFootState({ loading: true });
+  return entries.reduce((a, b) => (_ptFootRank(a) <= _ptFootRank(b) ? a : b)).foot;
 };
 
 /* _ptJson (the status/corrupt-tagging JSON fetch) now lives in
@@ -1034,8 +1068,27 @@ const PreTradePage = () => {
 
           {/* REGIME + ATR pane */}
           <GridItem x={17} y={0} w={7} h={5} minW={5} minH={4}>
+            {/* MULTI-PIPE (the DESIGN.md rule's known open violation, closed
+                2026-08-04): the Volatility half of this pane is entirely
+                CALC-fed (atr_c/atr_category/atr100/atr14; the Regime half's
+                STALE badge is calc-fed too),
+                but the foot named the REGIME pipe alone — a failing calc pipe
+                painted stale ATR under a green regime `connected`. The calc
+                entry participates only once that pipe EXISTS: something in
+                flight, a result on screen, or a manual error answering the
+                operator's own click. NOT the bare auto flag — with no calc on
+                screen _ptCalcFoot reads idle `no calc yet`, which must not
+                outrank a healthy regime pipe; before the first calc the ATR
+                half honestly shows its run-Calculate instruction. */}
             <Pane title="Regime · ATR Volatility" hot style={{ height: '100%' }}
-              foot={qeFootState({ loading: netRegime.ms == null && !netRegime.err, err: netRegime.err, hasData: regime != null, ms: netRegime.ms, retrying: true })}>
+              foot={(busy || calc != null || calcErr != null)
+                ? _ptWorstFoot([
+                    { foot: qeFootState({ loading: netRegime.ms == null && !netRegime.err, err: netRegime.err, hasData: regime != null, ms: netRegime.ms, retrying: true }),
+                      failed: !!netRegime.err },
+                    { foot: _ptCalcFoot(busy, calcErr, calc, autoErr, autoLive),
+                      failed: !!(calcErr || autoErr) },
+                  ])
+                : qeFootState({ loading: netRegime.ms == null && !netRegime.err, err: netRegime.err, hasData: regime != null, ms: netRegime.ms, retrying: true })}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <div>
                   <Lbl>Current Regime</Lbl>

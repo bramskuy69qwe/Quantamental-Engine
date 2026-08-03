@@ -315,9 +315,14 @@ break-even close that was never measured. Column label: `MAE ◂ HEAT ▸ MFE`.
   the Dashboard is mechanically pinned
   (`tests/test_dash_foot_covers_its_sources.py`). Other pages hand-roll
   `qeFootState` per source and must apply this rule by hand until the
-  helper is lifted into `primitives.jsx` — `pages-pretrade.jsx`'s
-  Regime · ATR pane is a known open violation (reads the CALC pipe, foots
-  the REGIME pipe alone).
+  helper is lifted into `primitives.jsx`. The formerly-known violation —
+  `pages-pretrade.jsx`'s Regime · ATR pane (read the CALC pipe, footed
+  the REGIME pipe alone) — was closed 2026-08-04 by exactly that hand
+  application: `_ptWorstFoot` reduces two ALREADY-DERIVED feet by the
+  ratified severity order, with the calc entry participating only once
+  that pipe exists (before the first calc, the ATR half honestly shows
+  its run-Calculate instruction). The primitives lift itself is still
+  open.
 - **THE READ DEADLINE — every read pipe is bounded (closed 2026-08-01;
   was the filed WARM HANG).** `fetch` has no default timeout, and a
   promise that never settles runs neither the resolve nor the catch
@@ -382,9 +387,13 @@ break-even close that was never measured. Column label: `MAE ◂ HEAT ▸ MFE`.
   must rate-limit (the event fires on every toggle, so alt-tabbing
   quickly would burst one request per pipe per toggle against the same
   ~6-connection cap named above as the hang's aggravator).
-  Still open, filed alongside it: Risk Monitor's Positions gauge renders
-  `${rk.positions_open || 0}/${rk.positions_max || 20}`, so an empty
-  snapshot shows a confident "0/20".
+  The fabrications filed alongside it were closed 2026-08-04: the Risk
+  Monitor Positions gauge (and the Open Positions summary cap) now dash
+  their READOUTS until the snapshot delivers — the numeric fallbacks
+  survive only as bar geometry — and `WatchlistTape` dashes its MARK
+  prices (title names the failing endpoint, the `_navStaleDash` shape)
+  when the snapshot pipe errs, while uPnL% keeps rendering off its own
+  SSE writer.
 - **`PageHeader`** `{title, subtitle, left, children}` — the 34px page title bar. **Never repeat the page title inside content.**
 
 ---
