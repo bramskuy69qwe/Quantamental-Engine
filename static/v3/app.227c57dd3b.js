@@ -1030,9 +1030,9 @@ const _BANNER = {
   info: ["var(--qe-cyan)", "var(--qe-bg-cyan)"],
   ok: ["var(--qe-green)", "var(--qe-bg-green)"]
 };
-const Banner = ({ tone = "err", tag = null, title, detail = null, time = null, releaseIn = null, releaseLabel = "RELEASES IN", actionLabel = "ACKNOWLEDGE", onAction = null }) => {
+const Banner = ({ tone = "err", tag = null, title, detail = null, time = null, releaseIn = null, releaseLabel = "RELEASES IN", actionLabel = "ACKNOWLEDGE", onAction = null, onDismiss = null }) => {
   const [c, bg] = _BANNER[tone] || _BANNER.err;
-  return /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, position: "relative", display: "flex", alignItems: "center", gap: 12, height: 30, padding: "0 12px", background: bg, borderBottom: `1px solid ${c}` } }, /* @__PURE__ */ React.createElement("span", { style: { position: "absolute", left: 0, top: 0, bottom: 0, width: 3, background: c } }), tag && /* @__PURE__ */ React.createElement("span", { className: "qe-badge qe-badge-solid", style: { background: c } }, tag), time && /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.62rem", fontWeight: 600, color: "var(--qe-sub)", whiteSpace: "nowrap", letterSpacing: "0.02em" } }, time), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-ui)", fontWeight: 700, color: c, fontSize: "0.72rem", letterSpacing: "0.02em", whiteSpace: "nowrap" } }, title), detail && /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", color: "var(--qe-text-dim)", fontSize: "0.64rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 } }, detail), /* @__PURE__ */ React.createElement("span", { className: "qe-grow" }), releaseIn != null && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.5rem", fontWeight: 700, letterSpacing: "0.14em", color: "var(--qe-muted)", whiteSpace: "nowrap" } }, releaseLabel), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.72rem", fontWeight: 700, color: c, whiteSpace: "nowrap", border: `1px solid ${c}`, padding: "1px 7px", background: "rgba(0,0,0,0.28)" } }, releaseIn)), onAction && /* @__PURE__ */ React.createElement("button", { className: `qe-btn qe-btn-sm ${tone === "err" ? "qe-btn-danger" : ""}`, onClick: onAction }, actionLabel));
+  return /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, position: "relative", display: "flex", alignItems: "center", gap: 12, height: 30, padding: "0 12px", background: bg, borderBottom: `1px solid ${c}` } }, /* @__PURE__ */ React.createElement("span", { style: { position: "absolute", left: 0, top: 0, bottom: 0, width: 3, background: c } }), tag && /* @__PURE__ */ React.createElement("span", { className: "qe-badge qe-badge-solid", style: { background: c } }, tag), time && /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.62rem", fontWeight: 600, color: "var(--qe-sub)", whiteSpace: "nowrap", letterSpacing: "0.02em" } }, time), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-ui)", fontWeight: 700, color: c, fontSize: "0.72rem", letterSpacing: "0.02em", whiteSpace: "nowrap" } }, title), detail && /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", color: "var(--qe-text-dim)", fontSize: "0.64rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 } }, detail), /* @__PURE__ */ React.createElement("span", { className: "qe-grow" }), releaseIn != null && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.5rem", fontWeight: 700, letterSpacing: "0.14em", color: "var(--qe-muted)", whiteSpace: "nowrap" } }, releaseLabel), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.72rem", fontWeight: 700, color: c, whiteSpace: "nowrap", border: `1px solid ${c}`, padding: "1px 7px", background: "rgba(0,0,0,0.28)" } }, releaseIn)), onAction && /* @__PURE__ */ React.createElement("button", { className: `qe-btn qe-btn-sm ${tone === "err" ? "qe-btn-danger" : ""}`, onClick: onAction }, actionLabel), onDismiss && /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-ghost", title: "Dismiss", onClick: onDismiss }, "\u2715"));
 };
 const _TOASTC = { err: "var(--qe-red)", warn: "var(--qe-amber)", info: "var(--qe-cyan)", ok: "var(--qe-green)", mute: "var(--qe-line-2)" };
 const Toast = ({ tone = "mute", tag = null, time = null, title, detail = null, onClose = null, onClick = null }) => {
@@ -1961,6 +1961,24 @@ const ChromeHaltBanner = () => {
     }
   );
 };
+const OperatorSeatBanner = () => {
+  const s = useQeSeat();
+  if (s.state !== "foreign" || s.dismissed) return null;
+  const who = s.foreign ? " (seat \u2026" + String(s.foreign).slice(-6) + ")" : "";
+  const since = s.sinceMs ? new Date(s.sinceMs).toLocaleString() : null;
+  return /* @__PURE__ */ React.createElement(
+    Banner,
+    {
+      tone: "warn",
+      tag: "SEAT",
+      title: "ANOTHER SESSION IS ACTIVE",
+      detail: "on this account" + who + (since ? ", since " + since : "") + " \u2014 your changes may conflict with theirs",
+      actionLabel: "TAKE OVER",
+      onAction: () => QE_SEAT.takeover(),
+      onDismiss: () => QE_SEAT.dismiss()
+    }
+  );
+};
 const ClockDriftBanner = () => {
   const ch = useQeChrome();
   const state = ch && ch.state || {};
@@ -2113,7 +2131,7 @@ const TopNavStd = ({ page = "Dashboard", onChange, variant = "line", dense = fal
       }
     },
     "\u2699"
-  ), /* @__PURE__ */ React.createElement(NotifBell, null)))), /* @__PURE__ */ React.createElement(ClockDriftBanner, null), /* @__PURE__ */ React.createElement(ChromeHaltBanner, null), /* @__PURE__ */ React.createElement(WorkspaceBar, { interactive: page === "Dashboard" }));
+  ), /* @__PURE__ */ React.createElement(NotifBell, null)))), /* @__PURE__ */ React.createElement(ClockDriftBanner, null), /* @__PURE__ */ React.createElement(ChromeHaltBanner, null), /* @__PURE__ */ React.createElement(OperatorSeatBanner, null), /* @__PURE__ */ React.createElement(WorkspaceBar, { interactive: page === "Dashboard" }));
 };
 const StatusFooter = () => {
   const ch = useQeChrome();
@@ -2714,6 +2732,117 @@ if (window.QE_CHROME && window.QE_CHROME.onAccountChange) {
   window.QE_CHROME.onAccountChange(QE_SSE.retarget);
 }
 Object.assign(window, { QE_SSE, useSSEChannel, useLiveId });
+
+;
+
+/* ==== operator-seat.js ==== */
+const QE_SEAT = function() {
+  const st = {
+    state: "idle",
+    // idle | owner | foreign  (idle = never confirmed)
+    foreign: null,
+    // the OTHER seat's id when state === 'foreign'
+    sinceMs: null,
+    // when the foreign session started
+    accountId: null,
+    // the account the last register bound (server truth)
+    dismissed: false
+    // operator waved the advisory away (until a switch)
+  };
+  const subs = /* @__PURE__ */ new Set();
+  const emit = () => subs.forEach((f) => {
+    try {
+      f();
+    } catch (e) {
+    }
+  });
+  const seatToken = () => {
+    try {
+      let t = localStorage.getItem("op_seat");
+      if (!t) {
+        t = window.crypto && crypto.randomUUID ? crypto.randomUUID() : "seat-" + Date.now() + "-" + Math.floor(Math.random() * 1e9);
+        localStorage.setItem("op_seat", t);
+      }
+      return t;
+    } catch (e) {
+      return "seat-nostore";
+    }
+  };
+  const seat = seatToken();
+  const post = (url) => fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: "operator_id=" + encodeURIComponent(seat)
+  }).then((r) => r.ok ? r.json() : null);
+  let applied = false;
+  let epoch = 0;
+  const apply = (d) => {
+    if (!d || !d.state) return;
+    applied = true;
+    st.state = d.state;
+    st.foreign = d.foreign_operator_id || null;
+    st.sinceMs = d.since_ms || null;
+    if (d.account_id != null) st.accountId = d.account_id;
+    emit();
+  };
+  const register = () => {
+    const e = epoch;
+    return post("/operator/session/register").then((d) => {
+      if (e === epoch) apply(d);
+    }).catch(() => {
+    });
+  };
+  const takeover = () => {
+    const e = epoch;
+    return post("/operator/session/takeover").then((d) => {
+      if (e === epoch) apply(d);
+    }).catch(() => {
+    });
+  };
+  register();
+  setInterval(() => {
+    if (!applied || st.state === "foreign") {
+      register();
+      return;
+    }
+    const e = epoch;
+    post("/operator/session/heartbeat").then((d) => {
+      if (e === epoch && d && d.bumped === false) register();
+    }).catch(() => {
+    });
+  }, 6e4);
+  if (window.QE_CHROME && window.QE_CHROME.onAccountChange) {
+    window.QE_CHROME.onAccountChange(() => {
+      epoch += 1;
+      st.state = "idle";
+      st.foreign = null;
+      st.sinceMs = null;
+      st.dismissed = false;
+      applied = false;
+      emit();
+      register();
+    });
+  }
+  return {
+    get: () => st,
+    sub: (f) => {
+      subs.add(f);
+      return () => subs.delete(f);
+    },
+    takeover,
+    dismiss: () => {
+      st.dismissed = true;
+      emit();
+    },
+    seatId: () => seat
+  };
+}();
+const useQeSeat = () => {
+  const [, force] = React.useReducer((x) => x + 1, 0);
+  React.useEffect(() => QE_SEAT.sub(force), []);
+  return QE_SEAT.get();
+};
+Object.assign(window, { QE_SEAT, useQeSeat });
 
 ;
 

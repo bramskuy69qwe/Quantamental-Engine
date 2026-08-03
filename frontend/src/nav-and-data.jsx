@@ -324,6 +324,26 @@ const ChromeHaltBanner = () => {
   );
 };
 
+/* H6: the multi-seat advisory, ported from base.html's IIFE banner. Renders
+   only on a CONFIRMED foreign state (QE_SEAT never claims one on a failed or
+   unanswered register), and the operator can dismiss it — unlike the halt and
+   clock banners above it, this one is advisory by design (no hard lock until
+   the full P9.T1). React's default text escaping covers what base.html needed
+   textContent for: the foreign seat id is a client-minted string. */
+const OperatorSeatBanner = () => {
+  const s = useQeSeat();
+  if (s.state !== 'foreign' || s.dismissed) return null;
+  const who = s.foreign ? ' (seat …' + String(s.foreign).slice(-6) + ')' : '';
+  const since = s.sinceMs ? new Date(s.sinceMs).toLocaleString() : null;
+  return (
+    <Banner tone="warn" tag="SEAT" title="ANOTHER SESSION IS ACTIVE"
+      detail={'on this account' + who + (since ? ', since ' + since : '')
+        + ' — your changes may conflict with theirs'}
+      actionLabel="TAKE OVER" onAction={() => QE_SEAT.takeover()}
+      onDismiss={() => QE_SEAT.dismiss()} />
+  );
+};
+
 const ClockDriftBanner = () => {
   const ch = useQeChrome();
   const state = (ch && ch.state) || {};
@@ -474,6 +494,7 @@ const TopNavStd = ({page='Dashboard', onChange, variant='line', dense=false}) =>
       the shared under-nav slot (system alert first, like a notification stack). */}
   <ClockDriftBanner/>
   <ChromeHaltBanner/>
+  <OperatorSeatBanner/>
   <WorkspaceBar interactive={page === 'Dashboard'} />
   </React.Fragment>
   );

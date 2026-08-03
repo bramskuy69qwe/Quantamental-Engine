@@ -1593,7 +1593,10 @@ const _BANNER = {
   info: ['var(--qe-cyan)',  'var(--qe-bg-cyan)'],
   ok:   ['var(--qe-green)', 'var(--qe-bg-green)'],
 };
-const Banner = ({tone='err', tag=null, title, detail=null, time=null, releaseIn=null, releaseLabel='RELEASES IN', actionLabel='ACKNOWLEDGE', onAction=null}) => {
+// `onDismiss` (additive, default null — no visual change for existing
+// callers): an advisory banner the operator may wave away renders a slim ✕
+// after the action. Enforcement banners (halt/clock) deliberately pass none.
+const Banner = ({tone='err', tag=null, title, detail=null, time=null, releaseIn=null, releaseLabel='RELEASES IN', actionLabel='ACKNOWLEDGE', onAction=null, onDismiss=null}) => {
   const [c, bg] = _BANNER[tone] || _BANNER.err;
   return (
     <div style={{flexShrink:0, position:'relative', display:'flex', alignItems:'center', gap:12, height:30, padding:'0 12px', background:bg, borderBottom:`1px solid ${c}`}}>
@@ -1610,6 +1613,7 @@ const Banner = ({tone='err', tag=null, title, detail=null, time=null, releaseIn=
         </React.Fragment>
       )}
       {onAction && <button className={`qe-btn qe-btn-sm ${tone==='err'?'qe-btn-danger':''}`} onClick={onAction}>{actionLabel}</button>}
+      {onDismiss && <button className="qe-btn qe-btn-sm qe-btn-ghost" title="Dismiss" onClick={onDismiss}>✕</button>}
     </div>
   );
 };

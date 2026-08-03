@@ -50,6 +50,7 @@ const JSX_ORDER = [
   'nav-and-data.jsx',
   'notifications.jsx',
   'sse-adapter.js',           // SSE client-adapter skeleton (§1.2)
+  'operator-seat.js',         // H6 — seat register/heartbeat store; AFTER chrome-live (consumes onAccountChange at eval)
   'dash-tiled.jsx',           // P1 — Dashboard page (wired to snapshot + SSE)
   'pages-config.jsx',         // P2 — Config page (accounts/connections/presets/system)
   'pages-pretrade.jsx',       // P3 — Pre-Trade page (calc JSON mirror + §1.3 freeze overlay)

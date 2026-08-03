@@ -1,8 +1,8 @@
 {
-  "hash": "acefdca707",
-  "app": "app.acefdca707.js",
-  "tokens": "tokens.acefdca707.css",
-  "shell": "shell.acefdca707.css",
+  "hash": "227c57dd3b",
+  "app": "app.227c57dd3b.js",
+  "tokens": "tokens.227c57dd3b.css",
+  "shell": "shell.227c57dd3b.css",
   "modules": [
     "primitives.jsx",
     "charts.jsx",
@@ -11,6 +11,7 @@
     "nav-and-data.jsx",
     "notifications.jsx",
     "sse-adapter.js",
+    "operator-seat.js",
     "dash-tiled.jsx",
     "pages-config.jsx",
     "pages-pretrade.jsx",
