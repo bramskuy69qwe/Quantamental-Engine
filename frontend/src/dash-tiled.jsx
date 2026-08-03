@@ -597,17 +597,46 @@ const RiskMonitorPane = () => {
   // Offer the override only where it BOTH applies and does something: the route
   // refuses unless dd_state is 'limit', and in advisory mode dd_gate already
   // allows entries, so an "override" there would persist an approval for a gate
-  // that is not gating. (The fail-closed settings-unreadable lane halts with
-  // dd_state != 'limit'; the route would reject it, so no button — filed.)
-  const canOverride = ddState === 'limit' && enforced;
+  // that is not gating.
+  //
+  // M6, closed 2026-08-04 — AND THE FILED MECHANISM WAS WRONG (the previous
+  // comment here repeated it): it claimed the fail-closed settings-unreadable
+  // lane "halts with dd_state != 'limit'; the route would reject it".
+  // Investigated: dd_gate fail-closes only INSIDE dd_state=='limit' (the
+  // settings read sits after the != limit early-return), the route's only
+  // state guard is dd_state!='limit' so it ACCEPTS that lane, and dd_gate
+  // checks the override BEFORE the settings read — so an override genuinely
+  // un-halts it. What actually made the control unreachable was THIS gate:
+  // /api/state reports dd_enforcement_mode 'unknown' when settings are
+  // unreadable (deliberately — 'advisory' would contradict the halt), and
+  // `enforced` alone hid the button in exactly the lane whose Pre-Trade
+  // banner says "override via Dashboard".
+  //
+  // The gate keys on st.halted — THE TRUE BLOCK — not on mode strings (the
+  // audit's second pass): /api/state makes TWO independent settings reads
+  // (dd_gate's own + the route's mode read), and under the transient DB
+  // stress this lane exists for they can disagree within one response. A
+  // mode-sentinel arm left both disagreement cells wrong (no button while
+  // hard-halted / a button while nothing gates); `halted` is derived from
+  // dd_gate itself, so it is right in every cell — including known-advisory
+  // (halted false → no button, preserving the argument above) and
+  // post-override (halted false, the OVERRIDDEN badge branch renders
+  // instead). The `limit` conjunct keeps a hypothetical future non-DD halt
+  // from offering a DD override.
+  const modeUnknown = st.dd_enforcement_mode === 'unknown';
+  const canOverride = ddState === 'limit' && !!st.halted;
   /* TWO pipes, so the foot reports the WORSE of them (see _dashFootWorst).
      The four gauges below are snapshot-fed; only the DD-state badge, the
      ENFORCED chip and the override button come from /api/state. Keying the
      foot to 'st' alone let a snapshot outage paint four stale risk readouts
      under a green `connected`. */
+  /* Mode chip third arm (audit): 'unknown' used to render as ADVISORY —
+     beside a red HALTED badge and a live Override button, in the one lane
+     where the mode is genuinely unreadable. (Comment sits HERE because JSX
+     comments are invalid in attribute position — the recorded esbuild trap.) */
   return (
     <Pane title="Risk Monitor" style={{ height: '100%' }}
-      right={<Badge tone={enforced ? 'err' : 'info'}>{enforced ? 'ENFORCED' : 'ADVISORY'}</Badge>}
+      right={<Badge tone={enforced ? 'err' : modeUnknown ? 'warn' : 'info'}>{enforced ? 'ENFORCED' : modeUnknown ? 'MODE UNKNOWN' : 'ADVISORY'}</Badge>}
       foot={_dashFootWorst(d, [
         { src: 'snapshot', hasData: d.loaded },
         { src: 'st', hasData: d.st && d.st.dd_state != null },
@@ -631,7 +660,12 @@ const RiskMonitorPane = () => {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
           <div><Lbl>DD STATE</Lbl>
             <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
-              <Badge tone={_stateTone(ddState)}>{enforced && ddState === 'limit' ? 'HALTED' : _stateLabel(ddState)}</Badge>
+              {/* HALTED keys on st.halted — the engine's true block — not on
+                  mode && limit. The old derivation was wrong in BOTH
+                  directions in this lane: fail-closed (mode 'unknown') showed
+                  LIMIT while the engine was hard-halted, and an OVERRIDDEN
+                  account kept showing HALTED while entries were unblocked. */}
+              <Badge tone={st.halted ? 'err' : _stateTone(ddState)}>{st.halted ? 'HALTED' : _stateLabel(ddState)}</Badge>
               {/* DD-override control (ported 2026-07-30). Only reachable in the
                   state the engine accepts: dd_state == 'limit' and not already
                   overridden. Once set it reads OVERRIDDEN until recovery. */}

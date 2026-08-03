@@ -446,9 +446,16 @@ class TestDashboardOverrideWiring:
     def test_trigger_is_gated_on_limit_enforced_and_not_overridden(self):
         """Structure, not substrings: `ddState === 'limit'` alone predates this
         change (the HALTED badge uses it), so a substring pin would survive
-        deleting the whole control."""
+        deleting the whole control.
+
+        M6 (2026-08-04) re-keyed the gate on st.halted — the TRUE block: the
+        enforced-only gate hid the button in the fail-closed settings-
+        unreadable lane (engine halted, route accepts, dd_gate honours the
+        override), and the intermediate mode-sentinel shape was wrong in both
+        two-reads-disagreement cells. Detail pins + the cell matrix live in
+        tests/test_m6_override_reachable.py."""
         code = _code(self._src())
-        assert "const canOverride = ddState === 'limit' && enforced" in code
+        assert "const canOverride = ddState === 'limit' && !!st.halted" in code
         # the ternary must put the BADGE on overridden and the BUTTON on
         # canOverride — an inverted ternary is a real regression shape
         seg = code[code.index("{ddOverridden"):]

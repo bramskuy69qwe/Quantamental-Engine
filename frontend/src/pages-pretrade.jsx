@@ -122,6 +122,16 @@ const _ptWorstFoot = (entries) => {
    permanently frozen price / depth / countdown, under foots that went on
    promising `· retrying`. In MARKET mode the price pipe IS the sizing input
    (doCalculate reads liveRef), so that one sized off a frozen number. */
+/* Operator words for the one halt_reason that is an internal token (M6
+   audit): the fail-closed lane's banner used to read the literal
+   `dd_gate_settings_unreadable · … · override via Dashboard`. Every other
+   reason dd_gate emits is already a sentence. */
+const _ptHaltReason = (st) => (
+  st.halt_reason === 'dd_gate_settings_unreadable'
+    ? 'risk settings unreadable — engine failed closed'
+    : st.halt_reason
+);
+
 const PT_STATE_MS = 5000;
 const PT_REGIME_MS = 60000;
 /* These two — plus the calc AUTO-refresh POST in doCalculate (H7) — are the
@@ -768,7 +778,7 @@ const PreTradePage = () => {
       {halted && (
         <Banner tone="err" tag="HALT"
           title="CALCULATOR BLOCKED — DD hard stop (enforced)"
-          detail={(st.halt_reason || 'drawdown limit breached') + ' · new sizing calcs are gated · open positions are NOT affected · override via Dashboard'} />
+          detail={(_ptHaltReason(st) || 'drawdown limit breached') + ' · new sizing calcs are gated · open positions are NOT affected · override via Dashboard'} />
       )}
       {!halted && blocked && (
         <Banner tone="warn" tag="RISK"
@@ -1270,7 +1280,7 @@ const PreTradePage = () => {
             <div style={{ background: 'var(--qe-card)', border: '1px solid var(--qe-red)', borderLeft: '4px solid var(--qe-red)', padding: '14px 18px', maxWidth: 460 }}>
               <div className="qe-mono" style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--qe-red)', letterSpacing: '0.06em' }}>CALCULATOR BLOCKED</div>
               <div className="qe-mono" style={{ fontSize: '0.64rem', color: 'var(--qe-text)', marginTop: 6, lineHeight: 1.6 }}>
-                {st.halt_reason || 'DD limit breached · enforcement mode ENFORCED'}
+                {_ptHaltReason(st) || 'DD limit breached · enforcement mode ENFORCED'}
               </div>
               <div className="qe-mono" style={{ fontSize: '0.58rem', color: 'var(--qe-sub)', marginTop: 6, lineHeight: 1.6 }}>
                 New sizing calcs are gated by the DD hard stop. Open positions are NOT affected.

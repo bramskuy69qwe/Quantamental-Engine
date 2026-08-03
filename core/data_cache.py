@@ -836,6 +836,24 @@ class DataCache:
                 pf.dd_state = "warning"
             else:
                 pf.dd_state = "ok"
+            # M6 audit (2026-08-04): recovery must clear the manual override in
+            # THIS lane too. The discard used to live only in the rolling
+            # branch above — which is unreachable exactly when settings are
+            # unreadable — so an override taken during a fail-closed halt
+            # (reachable from the UI since M6 un-hid the button there)
+            # survived recovery and LEAKED into a later readable+enforced
+            # limit episode: dd_gate honours the stale membership before
+            # reading anything, i.e. a silent gate bypass for an episode the
+            # operator never approved. Mirrors the rolling branch's
+            # leaving-limit clearing; sharing dd_previous_states between the
+            # two lanes is deliberate (a transition seen by either lane is
+            # the account's transition).
+            _aid = app_state.active_account_id
+            _prev = app_state.dd_previous_states.get(_aid, "ok")
+            if _prev == "limit" and pf.dd_state != "limit":
+                app_state.dd_would_have_blocked_logged.discard(_aid)
+                app_state.dd_manually_unblocked.discard(_aid)
+            app_state.dd_previous_states[_aid] = pf.dd_state
 
         # v2.4 Phase 5: publish position_update on every recalc cycle
         # (covers continuous PnL drift from mark-price ticks between fills)

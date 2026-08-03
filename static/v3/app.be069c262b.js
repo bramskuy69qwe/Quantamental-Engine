@@ -3288,19 +3288,20 @@ const RiskMonitorPane = () => {
   const ddState = st.dd_state || rk.dd_state || "ok";
   const enforced = st.dd_enforcement_mode === "enforced";
   const ddOverridden = !!st.dd_manually_unblocked;
-  const canOverride = ddState === "limit" && enforced;
+  const modeUnknown = st.dd_enforcement_mode === "unknown";
+  const canOverride = ddState === "limit" && !!st.halted;
   return /* @__PURE__ */ React.createElement(
     Pane,
     {
       title: "Risk Monitor",
       style: { height: "100%" },
-      right: /* @__PURE__ */ React.createElement(Badge, { tone: enforced ? "err" : "info" }, enforced ? "ENFORCED" : "ADVISORY"),
+      right: /* @__PURE__ */ React.createElement(Badge, { tone: enforced ? "err" : modeUnknown ? "warn" : "info" }, enforced ? "ENFORCED" : modeUnknown ? "MODE UNKNOWN" : "ADVISORY"),
       foot: _dashFootWorst(d, [
         { src: "snapshot", hasData: d.loaded },
         { src: "st", hasData: d.st && d.st.dd_state != null }
       ])
     },
-    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 14 } }, /* @__PURE__ */ React.createElement(Gauge, { label: "Net Exposure", value: rk.exposure_pct != null ? rk.exposure_pct / 100 : 0, max: (rk.max_exposure_pct || 500) / 100, current: rk.exposure_pct != null ? _n(rk.exposure_pct / 100, 2) + "\xD7" : "\u2014", maxLabel: `${_n(rk.max_exposure_pct / 100, 1)}\xD7 cap` }), /* @__PURE__ */ React.createElement(Gauge, { label: "Drawdown 30d", value: Math.min(rk.drawdown_pct || 0, rk.max_dd_pct || 10), max: rk.max_dd_pct || 10, current: _n(rk.drawdown_pct) + "%", maxLabel: `${_n(rk.max_dd_pct)}% limit`, ticks: [0.5, 0.8].map((f) => f * (rk.max_dd_pct || 10)) }), /* @__PURE__ */ React.createElement(Gauge, { label: "Weekly Loss", value: Math.max(0, -(d.equity.weekly_pnl_pct || 0)), max: ((d.journal.params || {}).max_weekly_loss_pct || 0.05) * 100, current: d.equity.weekly_pnl_pct != null ? _sn(d.equity.weekly_pnl_pct) + "%" : "\u2014", maxLabel: `${_n(((d.journal.params || {}).max_weekly_loss_pct || 0.05) * 100, 1)}% cap` }), /* @__PURE__ */ React.createElement(Gauge, { label: "Positions", value: rk.positions_open || 0, max: rk.positions_max || 20, current: rk.positions_open != null ? `${rk.positions_open}/${rk.positions_max != null ? rk.positions_max : "\u2014"}` : "\u2014", maxLabel: "capacity" }), /* @__PURE__ */ React.createElement("div", { className: "qe-divider-h" }), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "DD STATE"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Badge, { tone: _stateTone(ddState) }, enforced && ddState === "limit" ? "HALTED" : _stateLabel(ddState)), ddOverridden ? /* @__PURE__ */ React.createElement("span", { title: "Manual override active \u2014 new calcs unblocked until the drawdown recovers" }, /* @__PURE__ */ React.createElement(Badge, { tone: "warn" }, "OVERRIDDEN")) : canOverride ? /* @__PURE__ */ React.createElement(
+    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 14 } }, /* @__PURE__ */ React.createElement(Gauge, { label: "Net Exposure", value: rk.exposure_pct != null ? rk.exposure_pct / 100 : 0, max: (rk.max_exposure_pct || 500) / 100, current: rk.exposure_pct != null ? _n(rk.exposure_pct / 100, 2) + "\xD7" : "\u2014", maxLabel: `${_n(rk.max_exposure_pct / 100, 1)}\xD7 cap` }), /* @__PURE__ */ React.createElement(Gauge, { label: "Drawdown 30d", value: Math.min(rk.drawdown_pct || 0, rk.max_dd_pct || 10), max: rk.max_dd_pct || 10, current: _n(rk.drawdown_pct) + "%", maxLabel: `${_n(rk.max_dd_pct)}% limit`, ticks: [0.5, 0.8].map((f) => f * (rk.max_dd_pct || 10)) }), /* @__PURE__ */ React.createElement(Gauge, { label: "Weekly Loss", value: Math.max(0, -(d.equity.weekly_pnl_pct || 0)), max: ((d.journal.params || {}).max_weekly_loss_pct || 0.05) * 100, current: d.equity.weekly_pnl_pct != null ? _sn(d.equity.weekly_pnl_pct) + "%" : "\u2014", maxLabel: `${_n(((d.journal.params || {}).max_weekly_loss_pct || 0.05) * 100, 1)}% cap` }), /* @__PURE__ */ React.createElement(Gauge, { label: "Positions", value: rk.positions_open || 0, max: rk.positions_max || 20, current: rk.positions_open != null ? `${rk.positions_open}/${rk.positions_max != null ? rk.positions_max : "\u2014"}` : "\u2014", maxLabel: "capacity" }), /* @__PURE__ */ React.createElement("div", { className: "qe-divider-h" }), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "DD STATE"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Badge, { tone: st.halted ? "err" : _stateTone(ddState) }, st.halted ? "HALTED" : _stateLabel(ddState)), ddOverridden ? /* @__PURE__ */ React.createElement("span", { title: "Manual override active \u2014 new calcs unblocked until the drawdown recovers" }, /* @__PURE__ */ React.createElement(Badge, { tone: "warn" }, "OVERRIDDEN")) : canOverride ? /* @__PURE__ */ React.createElement(
       "button",
       {
         className: "qe-btn qe-btn-sm qe-btn-ghost",
@@ -4575,6 +4576,7 @@ const _ptWorstFoot = (entries) => {
   if (!entries || !entries.length) return qeFootState({ loading: true });
   return entries.reduce((a, b) => _ptFootRank(a) <= _ptFootRank(b) ? a : b).foot;
 };
+const _ptHaltReason = (st) => st.halt_reason === "dd_gate_settings_unreadable" ? "risk settings unreadable \u2014 engine failed closed" : st.halt_reason;
 const PT_STATE_MS = 5e3;
 const PT_REGIME_MS = 6e4;
 const PT_PRICE_MS = 1e3;
@@ -5162,7 +5164,7 @@ const PreTradePage = () => {
       tone: "err",
       tag: "HALT",
       title: "CALCULATOR BLOCKED \u2014 DD hard stop (enforced)",
-      detail: (st.halt_reason || "drawdown limit breached") + " \xB7 new sizing calcs are gated \xB7 open positions are NOT affected \xB7 override via Dashboard"
+      detail: (_ptHaltReason(st) || "drawdown limit breached") + " \xB7 new sizing calcs are gated \xB7 open positions are NOT affected \xB7 override via Dashboard"
     }
   ), !halted && blocked && /* @__PURE__ */ React.createElement(
     Banner,
@@ -5445,7 +5447,7 @@ const PreTradePage = () => {
     alignItems: "center",
     justifyContent: "center",
     background: "rgba(0,0,0,0.35)"
-  } }, /* @__PURE__ */ React.createElement("div", { style: { background: "var(--qe-card)", border: "1px solid var(--qe-red)", borderLeft: "4px solid var(--qe-red)", padding: "14px 18px", maxWidth: 460 } }, /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.8rem", fontWeight: 700, color: "var(--qe-red)", letterSpacing: "0.06em" } }, "CALCULATOR BLOCKED"), /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.64rem", color: "var(--qe-text)", marginTop: 6, lineHeight: 1.6 } }, st.halt_reason || "DD limit breached \xB7 enforcement mode ENFORCED"), /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.58rem", color: "var(--qe-sub)", marginTop: 6, lineHeight: 1.6 } }, "New sizing calcs are gated by the DD hard stop. Open positions are NOT affected. Recovery clears the gate automatically; a manual override lives on the Dashboard.")))), /* @__PURE__ */ React.createElement(StatusFooter, null));
+  } }, /* @__PURE__ */ React.createElement("div", { style: { background: "var(--qe-card)", border: "1px solid var(--qe-red)", borderLeft: "4px solid var(--qe-red)", padding: "14px 18px", maxWidth: 460 } }, /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.8rem", fontWeight: 700, color: "var(--qe-red)", letterSpacing: "0.06em" } }, "CALCULATOR BLOCKED"), /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.64rem", color: "var(--qe-text)", marginTop: 6, lineHeight: 1.6 } }, _ptHaltReason(st) || "DD limit breached \xB7 enforcement mode ENFORCED"), /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.58rem", color: "var(--qe-sub)", marginTop: 6, lineHeight: 1.6 } }, "New sizing calcs are gated by the DD hard stop. Open positions are NOT affected. Recovery clears the gate automatically; a manual override lives on the Dashboard.")))), /* @__PURE__ */ React.createElement(StatusFooter, null));
 };
 Object.assign(window, { PreTradePage });
 
