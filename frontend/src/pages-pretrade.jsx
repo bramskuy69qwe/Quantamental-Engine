@@ -46,13 +46,33 @@
 /* ── helpers ─────────────────────────────────────────────────────────────── */
 /* Last-submit result foot for the calc-result family of panes (Position
    Result / Setup Summary / Correlated Exposure): POST state, not a poll pipe
-   (DESIGN.md §5 — non-fetch panes carry their nearest truthful state). */
-const _ptCalcFoot = (busy, calcErr, calc) => {
+   (DESIGN.md §5 — non-fetch panes carry their nearest truthful state).
+
+   H7 (wiring inventory, fixed 2026-08-03): `autoErr` is the AUTO-refresh
+   pipe's own flag. Every auto failure used to be `if (!auto)`-gated into
+   nothing, so while the 1 s/30 s re-computes failed the foot went on reading
+   `calc ok` over sizing numbers that stopped tracking the market — a stale
+   calc presented as current, on the pane that feeds order entry. Tier-2
+   idiom: the last calc stays on screen (keep-last-good), the foot names the
+   failing pipe. `· retrying` is truthful — the interval keeps running.
+   Precedence: an in-flight manual beats everything; a MANUAL error beats the
+   auto flag (it is the operator's own click answering); auto staleness beats
+   `calc ok`. */
+const _ptCalcFoot = (busy, calcErr, calc, autoErr, autoLive) => {
   if (busy) return { tone: 'sub', busy: true, msg: 'calculating…' };
   if (calcErr) {
     return calc
       ? { tone: 'warn', msg: 'calc failed · showing last result' }
       : { tone: 'err', msg: String(calcErr).slice(0, 80) };
+  }
+  // `· retrying` only while the auto lane actually RUNS (audit: the promise
+  // was false on three reachable paths — cadence paused, ticker edited away
+  // from the calc'd one, DD hard-stop — all of which silently no-op the
+  // ticks while the flag persists). The staleness half stays either way:
+  // the calc on screen genuinely failed to refresh.
+  if (calc && autoErr) {
+    return { tone: 'warn',
+             msg: 'auto-refresh failing · showing last calc' + (autoLive ? ' · retrying' : '') };
   }
   return calc ? { tone: 'ok', msg: 'calc ok' } : { tone: 'sub', msg: 'no calc yet' };
 };
@@ -70,9 +90,10 @@ const _ptCalcFoot = (busy, calcErr, calc) => {
    (doCalculate reads liveRef), so that one sized off a frozen number. */
 const PT_STATE_MS = 5000;
 const PT_REGIME_MS = 60000;
-/* These two are the app's only polled reads whose HANDLER makes a
-   synchronous exchange call, so their deadline is the engine's upstream
-   budget, not this cadence — see QE_UPSTREAM_READ_DEADLINE_MS. */
+/* These two — plus the calc AUTO-refresh POST in doCalculate (H7) — are the
+   app's only polled requests whose HANDLER makes a synchronous exchange
+   call, so their deadline is the engine's upstream budget, not their
+   cadence — see QE_UPSTREAM_READ_DEADLINE_MS. */
 const PT_PRICE_MS = 1000;
 const PT_BOOK_MS = 2000;
 /* The countdown polls fast while PENDING, then settles to the slow lane. */
@@ -244,6 +265,7 @@ const PreTradePage = () => {
   const [ob, setOb]               = React.useState(null);
   const [calc, setCalc]           = React.useState(() => _ptReadJSON(sessionStorage, PT_RESULT_KEY));
   const [calcErr, setCalcErr]     = React.useState(null);
+  const [autoErr, setAutoErr]     = React.useState(null);  // the auto-refresh pipe's own flag (H7)
   const [busy, setBusy]           = React.useState(false);
   const [lwCalcId, setLwCalcId]   = React.useState(() => {
     const c = _ptReadJSON(sessionStorage, PT_RESULT_KEY);
@@ -269,6 +291,7 @@ const PreTradePage = () => {
   const liveRef    = React.useRef(null);
   liveRef.current  = livePrice;
   const stRef      = React.useRef(null);      // live halt state for submit/auto guards
+  const autoRateRef = React.useRef(1);        // live cadence, read by the auto deadline (H7)
   stRef.current    = st;
   const regimeRef  = React.useRef(null);      // read by doCalculate without a dep [P3 audit L1]
   regimeRef.current = regime;
@@ -501,23 +524,63 @@ const PreTradePage = () => {
         tp_levels: ladder.length ? JSON.stringify(ladder) : '',
         model_id: f.modelId,
       });
-      const r = await fetch('/calculator/calculate?format=json', {
+      /* H7: the AUTO lane carries a deadline; the MANUAL lane stays
+         unbounded. Not an inconsistency — an `auto_refresh=1` compute NEVER
+         WRITES A DURABLE ROW (the pre_trade_log insert rides the
+         `risk:risk_calculated` publish, which the handler gates off for
+         auto — pinned against the gate's structure), so the deadline
+         doctrine's write exemption ("did my save land?") has nothing to
+         protect. Precision the audit forced: the handler is not literally
+         side-effect-free — set_calculator_symbol and the orderbook/ohlcv
+         caches are touched — but all of that is synchronous or idempotent
+         and precedes the first await, so an abort cannot half-apply it.
+         The warm-hang latch is why the deadline matters: `inFlight`
+         releases only in the finally, so ONE hung auto request used to
+         freeze every later tick AND the queued manual re-fire — the
+         calculator silently bricked until a page reload. The manual POST
+         is a real row-writing mutation; aborting it would trade a visibly
+         stuck spinner for save-state ambiguity.
+         ★ The deadline is FLOORED AT THE UPSTREAM BUDGET: the handler
+         awaits fetch_orderbook (ccxt, 10 s default, no retry) on every
+         call, making this the app's THIRD exchange-backed polled request —
+         the 5 s poll floor at market cadence would abort healthy 6-10 s
+         exchange responses forever, freezing the calc harder than the bug
+         this fixes (the audit caught this fix violating the rule two
+         commits above it). */
+      const init = {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: body.toString(),
-      });
-      const text = await r.text();
+      };
+      let r, deadline = null;
+      if (auto) {
+        const got = await _ptFetch('/calculator/calculate?format=json', init,
+                                   Math.max(qePollDeadline(autoRateRef.current * 1000),
+                                            QE_UPSTREAM_READ_DEADLINE_MS));
+        r = got.r; deadline = got.t;
+      } else {
+        r = await fetch('/calculator/calculate?format=json', init);
+      }
+      let text;
+      try { text = await r.text(); } finally { clearTimeout(deadline); }
       let data = null;
       try { data = JSON.parse(text); } catch (e) { /* HTML error fragment */ }
       if (tickerRef.current !== t) return;                  // ticker switched mid-flight
       if (!data || !r.ok) {
-        if (!auto) setCalcErr(_ptStrip(text) || ('calc failed (' + r.status + ')'));
+        if (auto) setAutoErr(_ptStrip(text) || ('calc failed (' + r.status + ')'));
+        else setCalcErr(_ptStrip(text) || ('calc failed (' + r.status + ')'));
         return;
       }
       setCalc(data);
+      // ANY successful compute proves the pipe again — BOTH flags. calcErr
+      // too (audit L-1): a manual refusal followed by an auto success left
+      // `calc failed · showing last result` over a result that IS fresh —
+      // the mirror of the H7 lie. An auto success proves the form as well:
+      // the same validation guards abort the auto lane on an invalid form.
+      setAutoErr(null);
+      setCalcErr(null);
       calcTickerRef.current = t;
       if (!auto) {
-        setCalcErr(null);
         if (data.calc_id && data.eligible) setLwCalcId(data.calc_id);
         else setLwCalcId(null);
         /* cache + persist on MANUAL calcs ONLY — auto-refresh calc_ids are
@@ -541,7 +604,8 @@ const PreTradePage = () => {
         });
       }
     } catch (e) {
-      if (!auto) setCalcErr('calc failed — engine unreachable?');
+      if (auto) setAutoErr(e && e.timeoutMs != null ? 'deadline' : 'unreachable');
+      else setCalcErr('calc failed — engine unreachable?');
     } finally {
       inFlight.current = false;
       if (!auto) setBusy(false);
@@ -557,6 +621,12 @@ const PreTradePage = () => {
         by every result object [P3 audit L1]; the cross-ticker + halt guards
         live inside doCalculate. ── */
   const hasCalc = !!calc;
+  // Is the auto lane actually RUNNING? Mirrors the guards inside
+  // doCalculate(true): cadence on, a calc'd ticker still in the form, no
+  // enforced halt. Feeds the foot's `· retrying` suffix only (H7 audit).
+  const autoLive = !!autoRate && hasCalc
+    && tickerNorm === calcTickerRef.current && !(st && st.halted);
+  React.useEffect(() => { autoRateRef.current = autoRate; }, [autoRate]);
   React.useEffect(() => {
     if (!autoRate || !hasCalc) return;
     const t = setInterval(() => {
@@ -574,7 +644,7 @@ const PreTradePage = () => {
 
   const doClear = async () => {
     setForm({ ...PT_FORM_DEFAULTS });
-    setCalc(null); setCalcErr(null); setLwCalcId(null); setLw(null);
+    setCalc(null); setCalcErr(null); setAutoErr(null); setLwCalcId(null); setLw(null);
     setLivePrice(null); setOb(null);
     setSizeUnit('notional');
     setAutoRate(1);
@@ -890,7 +960,7 @@ const PreTradePage = () => {
           {/* SETUP SUMMARY pane */}
           <GridItem x={0} y={12} w={10} h={6} minW={6} minH={5}>
             <Pane title="Setup Summary" tag="CLICK TO COPY" style={{ height: '100%' }}
-              foot={_ptCalcFoot(busy, calcErr, calc)}
+              foot={_ptCalcFoot(busy, calcErr, calc, autoErr, autoLive)}
               right={<PeriodSelector
                 options={isCommodity ? [['notional', 'NOTIONAL'], ['contracts', 'CONTRACTS'], ['lot', 'LOT']] : [['notional', 'NOTIONAL'], ['contracts', 'CONTRACTS']]}
                 value={effSizeUnit} onChange={setSizeUnit} />}>
@@ -1004,7 +1074,7 @@ const PreTradePage = () => {
             <Pane title="Position Result" style={{ height: '100%' }}
               right={calc ? <Badge tone={c.eligible ? 'ok' : 'err'}>{c.eligible ? '✓ ELIGIBLE' : '⛔ INELIGIBLE'}</Badge> : null}
               bodyStyle={{ padding: 0 }}
-              foot={_ptCalcFoot(busy, calcErr, calc)}>
+              foot={_ptCalcFoot(busy, calcErr, calc, autoErr, autoLive)}>
               {!calc ? <div style={{ padding: 10 }}><EmptyState fill tone="neutral" glyph="◇" msg="No calc yet" hint="Size a setup to see the position result." /></div> : (
                 <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
                   {!c.eligible && c.ineligible_reason ? (
@@ -1075,7 +1145,7 @@ const PreTradePage = () => {
           {/* CORRELATED EXPOSURE pane */}
           <GridItem x={10} y={12} w={7} h={6} minW={5} minH={4}>
             <Pane title="Correlated Sector Exposure" style={{ height: '100%' }}
-              foot={_ptCalcFoot(busy, calcErr, calc)}>
+              foot={_ptCalcFoot(busy, calcErr, calc, autoErr, autoLive)}>
               {!calc || !c.correlated_exposure ? <EmptyState fill tone="neutral" glyph="◇" msg="No calc yet" /> : (
                 <React.Fragment>
                   {c.exceeds_corr_limit ? (

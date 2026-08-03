@@ -4546,10 +4546,16 @@ Object.assign(window, { ConfigPage });
 ;
 
 /* ==== pages-pretrade.jsx ==== */
-const _ptCalcFoot = (busy, calcErr, calc) => {
+const _ptCalcFoot = (busy, calcErr, calc, autoErr, autoLive) => {
   if (busy) return { tone: "sub", busy: true, msg: "calculating\u2026" };
   if (calcErr) {
     return calc ? { tone: "warn", msg: "calc failed \xB7 showing last result" } : { tone: "err", msg: String(calcErr).slice(0, 80) };
+  }
+  if (calc && autoErr) {
+    return {
+      tone: "warn",
+      msg: "auto-refresh failing \xB7 showing last calc" + (autoLive ? " \xB7 retrying" : "")
+    };
   }
   return calc ? { tone: "ok", msg: "calc ok" } : { tone: "sub", msg: "no calc yet" };
 };
@@ -4719,6 +4725,7 @@ const PreTradePage = () => {
   const [ob, setOb] = React.useState(null);
   const [calc, setCalc] = React.useState(() => _ptReadJSON(sessionStorage, PT_RESULT_KEY));
   const [calcErr, setCalcErr] = React.useState(null);
+  const [autoErr, setAutoErr] = React.useState(null);
   const [busy, setBusy] = React.useState(false);
   const [lwCalcId, setLwCalcId] = React.useState(() => {
     const c2 = _ptReadJSON(sessionStorage, PT_RESULT_KEY);
@@ -4742,6 +4749,7 @@ const PreTradePage = () => {
   const liveRef = React.useRef(null);
   liveRef.current = livePrice;
   const stRef = React.useRef(null);
+  const autoRateRef = React.useRef(1);
   stRef.current = st;
   const regimeRef = React.useRef(null);
   regimeRef.current = regime;
@@ -4947,12 +4955,32 @@ const PreTradePage = () => {
         tp_levels: ladder.length ? JSON.stringify(ladder) : "",
         model_id: f.modelId
       });
-      const r = await fetch("/calculator/calculate?format=json", {
+      const init = {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: body.toString()
-      });
-      const text = await r.text();
+      };
+      let r, deadline = null;
+      if (auto) {
+        const got = await _ptFetch(
+          "/calculator/calculate?format=json",
+          init,
+          Math.max(
+            qePollDeadline(autoRateRef.current * 1e3),
+            QE_UPSTREAM_READ_DEADLINE_MS
+          )
+        );
+        r = got.r;
+        deadline = got.t;
+      } else {
+        r = await fetch("/calculator/calculate?format=json", init);
+      }
+      let text;
+      try {
+        text = await r.text();
+      } finally {
+        clearTimeout(deadline);
+      }
       let data = null;
       try {
         data = JSON.parse(text);
@@ -4960,13 +4988,15 @@ const PreTradePage = () => {
       }
       if (tickerRef.current !== t) return;
       if (!data || !r.ok) {
-        if (!auto) setCalcErr(_ptStrip(text) || "calc failed (" + r.status + ")");
+        if (auto) setAutoErr(_ptStrip(text) || "calc failed (" + r.status + ")");
+        else setCalcErr(_ptStrip(text) || "calc failed (" + r.status + ")");
         return;
       }
       setCalc(data);
+      setAutoErr(null);
+      setCalcErr(null);
       calcTickerRef.current = t;
       if (!auto) {
-        setCalcErr(null);
         if (data.calc_id && data.eligible) setLwCalcId(data.calc_id);
         else setLwCalcId(null);
         _ptWriteJSON(sessionStorage, PT_RESULT_KEY, data);
@@ -4990,7 +5020,8 @@ const PreTradePage = () => {
         });
       }
     } catch (e) {
-      if (!auto) setCalcErr("calc failed \u2014 engine unreachable?");
+      if (auto) setAutoErr(e && e.timeoutMs != null ? "deadline" : "unreachable");
+      else setCalcErr("calc failed \u2014 engine unreachable?");
     } finally {
       inFlight.current = false;
       if (!auto) setBusy(false);
@@ -5001,6 +5032,10 @@ const PreTradePage = () => {
     }
   }, []);
   const hasCalc = !!calc;
+  const autoLive = !!autoRate && hasCalc && tickerNorm === calcTickerRef.current && !(st && st.halted);
+  React.useEffect(() => {
+    autoRateRef.current = autoRate;
+  }, [autoRate]);
   React.useEffect(() => {
     if (!autoRate || !hasCalc) return;
     const t = setInterval(() => {
@@ -5016,6 +5051,7 @@ const PreTradePage = () => {
     setForm({ ...PT_FORM_DEFAULTS });
     setCalc(null);
     setCalcErr(null);
+    setAutoErr(null);
     setLwCalcId(null);
     setLw(null);
     setLivePrice(null);
@@ -5255,7 +5291,7 @@ const PreTradePage = () => {
       title: "Setup Summary",
       tag: "CLICK TO COPY",
       style: { height: "100%" },
-      foot: _ptCalcFoot(busy, calcErr, calc),
+      foot: _ptCalcFoot(busy, calcErr, calc, autoErr, autoLive),
       right: /* @__PURE__ */ React.createElement(
         PeriodSelector,
         {
@@ -5312,7 +5348,7 @@ const PreTradePage = () => {
       style: { height: "100%" },
       right: calc ? /* @__PURE__ */ React.createElement(Badge, { tone: c.eligible ? "ok" : "err" }, c.eligible ? "\u2713 ELIGIBLE" : "\u26D4 INELIGIBLE") : null,
       bodyStyle: { padding: 0 },
-      foot: _ptCalcFoot(busy, calcErr, calc)
+      foot: _ptCalcFoot(busy, calcErr, calc, autoErr, autoLive)
     },
     !calc ? /* @__PURE__ */ React.createElement("div", { style: { padding: 10 } }, /* @__PURE__ */ React.createElement(EmptyState, { fill: true, tone: "neutral", glyph: "\u25C7", msg: "No calc yet", hint: "Size a setup to see the position result." })) : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", height: "100%" } }, !c.eligible && c.ineligible_reason ? /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.62rem", color: "var(--qe-red)", padding: "4px 8px", borderBottom: "1px solid var(--qe-line)" } }, "\u26D4 ", c.ineligible_reason) : null, c.equity_stale || c.mark_price_stale ? /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.58rem", color: "var(--qe-amber)", padding: "3px 8px", borderBottom: "1px solid var(--qe-line)" } }, c.equity_stale ? "\u26A0 equity snapshot stale" : "", c.equity_stale && c.mark_price_stale ? " \xB7 " : "", c.mark_price_stale ? `\u26A0 mark price stale${c.mark_price_age != null ? ` (${Math.round(c.mark_price_age)}s)` : ""}` : "") : null, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "1fr 1px 1.05fr 1px 1fr", gap: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "7px 12px 7px 8px", display: "flex", flexDirection: "column", overflow: "auto" } }, /* @__PURE__ */ React.createElement(SecLbl, { rule: true }, "Position"), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 4 } }, /* @__PURE__ */ React.createElement(Lbl, null, "Size (Contracts) ", form.applyMult && c.regime_multiplier != null && c.regime_multiplier !== 1 ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, "\xD7", _ptFmtN(c.regime_multiplier, 1), " regime") : null, " ", c.size_overridden ? /* @__PURE__ */ React.createElement(Badge, { tone: "warn" }, "OVERRIDE") : null), /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "1.5rem", fontWeight: 700, color: "var(--qe-cyan)", lineHeight: 1.05 } }, _ptFmtSz(c.size)), c.size_raw != null && c.size_raw !== c.size ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.54rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)" } }, "without regime: ", _ptFmtSz(c.size_raw)) : null, !c.eligible && c.would_be_size ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.54rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)" } }, "would-be: ", _ptFmtSz(c.would_be_size)) : null), /* @__PURE__ */ React.createElement(FieldList, { rows: [
       { label: "Notional", value: _ptFmtN(c.notional) + " USDT" },
@@ -5346,7 +5382,7 @@ const PreTradePage = () => {
     {
       title: "Correlated Sector Exposure",
       style: { height: "100%" },
-      foot: _ptCalcFoot(busy, calcErr, calc)
+      foot: _ptCalcFoot(busy, calcErr, calc, autoErr, autoLive)
     },
     !calc || !c.correlated_exposure ? /* @__PURE__ */ React.createElement(EmptyState, { fill: true, tone: "neutral", glyph: "\u25C7", msg: "No calc yet" }) : /* @__PURE__ */ React.createElement(React.Fragment, null, c.exceeds_corr_limit ? /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.6rem", color: "var(--qe-red)", marginBottom: 4 } }, "\u26D4 correlated-exposure cap exceeded") : null, /* @__PURE__ */ React.createElement(FieldList, { rows: [
       ...Object.entries(c.correlated_exposure).map(([sector, v]) => ({
