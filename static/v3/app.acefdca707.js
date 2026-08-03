@@ -3555,7 +3555,7 @@ const cfgRatioError = (form) => {
   }
   return null;
 };
-const CfgAccountForm = ({ account, detail, onReload }) => {
+const CfgAccountForm = ({ account, detail, onReload, onDelete }) => {
   const p = detail.params || {};
   const s = detail.settings || {};
   const [form, setForm] = React.useState(() => ({
@@ -3696,11 +3696,62 @@ const CfgAccountForm = ({ account, detail, onReload }) => {
     "button",
     {
       className: "qe-btn qe-btn-danger",
-      disabled: true,
-      title: "Not wired in P2 \u2014 delete via the current /config page"
+      onClick: () => onDelete(account),
+      disabled: !!busy || !!account.is_active,
+      title: account.is_active ? "The active account cannot be deleted \u2014 activate another account first" : "Delete this account (asks for confirmation)"
     },
     "Delete Account"
   )), /* @__PURE__ */ React.createElement(CfgMsgLine, { msg }));
+};
+const CfgDeleteAccountDialog = ({ account, onClose, onDeleted }) => {
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState(null);
+  const doDelete = async () => {
+    if (busy) return;
+    setBusy(true);
+    setErr(null);
+    let deleted = false;
+    try {
+      const r = await _cfgPostForm(`/accounts/${account.id}`, {}, "DELETE", { json: true });
+      deleted = !!(r.ok && r.data && r.data.status === "ok");
+      if (!deleted) setErr(r.text || "delete failed");
+    } catch (e) {
+      setErr("delete failed \u2014 engine unreachable?");
+    }
+    if (deleted) {
+      await onDeleted();
+      return;
+    }
+    setBusy(false);
+  };
+  return /* @__PURE__ */ React.createElement(
+    ModelDialog,
+    {
+      title: `Delete account \xB7 ${account.name}`,
+      width: 430,
+      onClose: () => {
+        if (!busy) onClose();
+      },
+      footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          className: "qe-btn qe-btn-sm qe-btn-ghost",
+          disabled: busy,
+          onClick: onClose
+        },
+        "Keep account"
+      ), /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          className: "qe-btn qe-btn-sm qe-btn-danger",
+          disabled: busy,
+          onClick: doDelete
+        },
+        busy ? /* @__PURE__ */ React.createElement(Spinner, { size: "0.62rem" }) : "Delete account"
+      ))
+    },
+    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 7 } }, /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-text)", fontWeight: 700, fontSize: "0.72rem" } }, account.name), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { color: "var(--qe-sub)", fontSize: "0.6rem" } }, account.exchange, " \xB7 ", account.market_type), /* @__PURE__ */ React.createElement(Badge, { tone: account.environment === "live" ? "err" : account.environment === "testnet" ? "info" : "blue" }, (account.environment || "live").toUpperCase())), /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-muted)", lineHeight: 1.4 } }, "Removes this account from the engine \u2014 its registration, stored API credentials, and saved risk-parameter set. Historical trade data on disk is NOT deleted. This cannot be undone."), err && /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.58rem", color: "var(--qe-red)" } }, "\u2717 ", err))
+  );
 };
 const CfgAddAccountDialog = ({ accounts, onClose, onCreated }) => {
   const [f, setF] = React.useState({
@@ -3841,6 +3892,7 @@ const CfgAddAccountDialog = ({ accounts, onClose, onCreated }) => {
 };
 const CfgAccountsTab = () => {
   const [adding, setAdding] = React.useState(false);
+  const [deleting, setDeleting] = React.useState(null);
   const [accounts, setAccounts] = React.useState(null);
   const [acct, setAcct] = React.useState(null);
   const [detail, setDetail] = React.useState(null);
@@ -3931,7 +3983,7 @@ const CfgAccountsTab = () => {
       onRefresh: () => reload(true),
       foot: !sel ? { tone: "sub", msg: "no account selected" } : qeFootState({ loading: detail == null && !netD.err, err: netD.err, hasData: detail != null && !detail._placeholder, ms: netD.ms })
     },
-    !sel ? /* @__PURE__ */ React.createElement(EmptyState, { fill: true, tone: "neutral", glyph: "\u25C7", msg: "No account selected" }) : detail == null ? /* @__PURE__ */ React.createElement(Spinner, { label: "loading" }) : /* @__PURE__ */ React.createElement(CfgAccountForm, { key: sel.id, account: sel, detail, onReload: reload })
+    !sel ? /* @__PURE__ */ React.createElement(EmptyState, { fill: true, tone: "neutral", glyph: "\u25C7", msg: "No account selected" }) : detail == null ? /* @__PURE__ */ React.createElement(Spinner, { label: "loading" }) : /* @__PURE__ */ React.createElement(CfgAccountForm, { key: sel.id, account: sel, detail, onReload: reload, onDelete: setDeleting })
   ))), adding && /* @__PURE__ */ React.createElement(
     CfgAddAccountDialog,
     {
@@ -3940,6 +3992,16 @@ const CfgAccountsTab = () => {
       onCreated: async (id) => {
         await loadAccounts(true);
         setAcct(id);
+      }
+    }
+  ), deleting && /* @__PURE__ */ React.createElement(
+    CfgDeleteAccountDialog,
+    {
+      account: deleting,
+      onClose: () => setDeleting(null),
+      onDeleted: async () => {
+        setDeleting(null);
+        await loadAccounts(true);
       }
     }
   ));

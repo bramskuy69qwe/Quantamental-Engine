@@ -167,7 +167,7 @@ const cfgRatioError = (form) => {
 };
 
 /* ── Accounts tab ────────────────────────────────────────────────────────── */
-const CfgAccountForm = ({ account, detail, onReload }) => {
+const CfgAccountForm = ({ account, detail, onReload, onDelete }) => {
   const p = detail.params || {};
   const s = detail.settings || {};
   const [form, setForm] = React.useState(() => ({
@@ -370,11 +370,86 @@ const CfgAccountForm = ({ account, detail, onReload }) => {
           {busy === 'activate' ? <Spinner size="0.7rem" label="switching" /> : 'Activate'}
         </button>
         <div className="qe-grow" />
-        <button className="qe-btn qe-btn-danger" disabled
-          title="Not wired in P2 — delete via the current /config page">Delete Account</button>
+        {/* H5 (wiring inventory, fixed 2026-08-03): this button shipped
+            hard-`disabled` with a title pointing at the Jinja /config page —
+            which the retirement then removed, leaving delete with NO surface
+            at all while DELETE /accounts/{id} worked the whole time. Same
+            shape as the Add Account bug. The active-account disable mirrors
+            the backend's own 409 guard truthfully instead of letting the
+            operator click into a refusal. */}
+        <button className="qe-btn qe-btn-danger" onClick={() => onDelete(account)}
+          disabled={!!busy || !!account.is_active}
+          title={account.is_active
+            ? 'The active account cannot be deleted — activate another account first'
+            : 'Delete this account (asks for confirmation)'}>Delete Account</button>
       </div>
       <CfgMsgLine msg={msg} />
     </React.Fragment>
+  );
+};
+
+/* Delete Account confirm (H5, wired 2026-08-03 — the last of the two
+   disabled-in-P2 buttons; same pattern as CfgAddAccountDialog below).
+
+   DELETE /accounts/{id} removes the account ROW — registration + stored API
+   credentials. It does NOT drop historical trade data on disk (retiring an
+   account is not a data migration), and the copy says so rather than implying
+   a bigger blast radius than the door has. Success is `r.ok && data.status
+   === 'ok'` — the false-success discipline (H4/M10): the active-account
+   refusal arrives as a 409 with a plain-text body, which the OLD Jinja flow
+   discarded outright (`hx-swap="none"`), so even its refusal was invisible.
+   Here a refusal keeps the dialog open and shows it. */
+const CfgDeleteAccountDialog = ({ account, onClose, onDeleted }) => {
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState(null);
+  const doDelete = async () => {
+    if (busy) return;   // the sibling Add dialog's re-entrancy guard, same reason
+    setBusy(true); setErr(null);
+    let deleted = false;
+    try {
+      const r = await _cfgPostForm(`/accounts/${account.id}`, {}, 'DELETE', { json: true });
+      deleted = !!(r.ok && r.data && r.data.status === 'ok');
+      if (!deleted) setErr(r.text || 'delete failed');
+    } catch (e) { setErr('delete failed — engine unreachable?'); }
+    // OUTSIDE the try (audit): a throw from the post-delete reload used to be
+    // reported as "delete failed" over a delete that LANDED — the H4/M10
+    // inversion, from inside its own fix.
+    if (deleted) { await onDeleted(); return; }
+    setBusy(false);
+  };
+  return (
+    <ModelDialog title={`Delete account · ${account.name}`} width={430}
+      onClose={() => { if (!busy) onClose(); }}
+      footer={<React.Fragment>
+        <button className="qe-btn qe-btn-sm qe-btn-ghost" disabled={busy}
+          onClick={onClose}>Keep account</button>
+        <button className="qe-btn qe-btn-sm qe-btn-danger" disabled={busy}
+          onClick={doDelete}>
+          {busy ? <Spinner size="0.62rem" /> : 'Delete account'}
+        </button>
+      </React.Fragment>}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          <span className="qe-mono" style={{ color: 'var(--qe-text)', fontWeight: 700, fontSize: '0.72rem' }}>{account.name}</span>
+          <span className="qe-mono" style={{ color: 'var(--qe-sub)', fontSize: '0.6rem' }}>{account.exchange} · {account.market_type}</span>
+          <Badge tone={account.environment === 'live' ? 'err' : account.environment === 'testnet' ? 'info' : 'blue'}>{(account.environment || 'live').toUpperCase()}</Badge>
+        </div>
+        {/* Blast radius verified at the schema, not assumed (audit): the
+            accounts row carries the credentials, and account_params rides
+            `ON DELETE CASCADE` off it (core/database.py, foreign_keys=ON on
+            the same connection) — so the risk-parameter set goes WITH the
+            account, and the first draft of this copy under-claimed. Trade
+            tables carry no accounts FK; the data files survive. */}
+        <div className="qe-mono" style={{ fontSize: '0.56rem', color: 'var(--qe-muted)', lineHeight: 1.4 }}>
+          Removes this account from the engine — its registration, stored API
+          credentials, and saved risk-parameter set. Historical trade data on
+          disk is NOT deleted. This cannot be undone.
+        </div>
+        {err && (
+          <div className="qe-mono" style={{ fontSize: '0.58rem', color: 'var(--qe-red)' }}>✗ {err}</div>
+        )}
+      </div>
+    </ModelDialog>
   );
 };
 
@@ -500,6 +575,7 @@ const CfgAddAccountDialog = ({ accounts, onClose, onCreated }) => {
 
 const CfgAccountsTab = () => {
   const [adding, setAdding] = React.useState(false);
+  const [deleting, setDeleting] = React.useState(null);  // account awaiting delete-confirm (H5)
   const [accounts, setAccounts] = React.useState(null);  // null = loading
   const [acct, setAcct]         = React.useState(null);  // selected id
   const [detail, setDetail]     = React.useState(null);  // {params, settings} for acct
@@ -608,7 +684,7 @@ const CfgAccountsTab = () => {
             : qeFootState({ loading: detail == null && !netD.err, err: netD.err, hasData: detail != null && !detail._placeholder, ms: netD.ms })}>
           {!sel ? <EmptyState fill tone="neutral" glyph="◇" msg="No account selected" /> :
            detail == null ? <Spinner label="loading" /> :
-           <CfgAccountForm key={sel.id} account={sel} detail={detail} onReload={reload} />}
+           <CfgAccountForm key={sel.id} account={sel} detail={detail} onReload={reload} onDelete={setDeleting} />}
         </Pane>
       </GridItem>
     </GridWorkspace>
@@ -620,6 +696,15 @@ const CfgAccountsTab = () => {
         accounts={accounts || []}
         onClose={() => setAdding(false)}
         onCreated={async (id) => { await loadAccounts(true); setAcct(id); }} />
+    )}
+    {/* H5: loadAccounts(true)'s own setAcct updater migrates a selection whose
+        id no longer exists to active-or-first, so the deleted account cannot
+        stay selected — no extra selection handling here on purpose. */}
+    {deleting && (
+      <CfgDeleteAccountDialog
+        account={deleting}
+        onClose={() => setDeleting(null)}
+        onDeleted={async () => { setDeleting(null); await loadAccounts(true); }} />
     )}
     </React.Fragment>
   );

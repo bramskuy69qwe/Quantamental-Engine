@@ -165,13 +165,18 @@ class TestH4SettingsWriteFailure:
         assert re.search(r"saved", r.body.decode(), re.I)
         assert settings_writer.calls == []
 
-    def test_a_blank_timezone_is_rejected_not_a_500(self, settings_writer):
-        """ZoneInfo('') raises ValueError, NOT ZoneInfoNotFoundError — with
-        the original two-member except tuple a present-but-blank timezone was
-        an unhandled 500 (audit finding; the OLD code 500'd there too, just
-        after writing everything). Unreachable from the React form (`|| null`
-        omits blanks) but one dropped `|| null` away from blocking the whole
-        save."""
+    def test_a_valueerror_timezone_is_rejected_not_a_500(self, settings_writer):
+        """ZoneInfo('') and path-shaped keys ('/etc/UTC') raise ValueError,
+        NOT ZoneInfoNotFoundError — with the original two-member except tuple
+        those were unhandled 500s (audit finding; the OLD code 500'd there
+        too, just after writing everything).
+
+        Live-verified against the running engine (2026-08-03), which also
+        CORRECTED this test's first docstring: through the real door a blank
+        `timezone=` arrives as None (FastAPI coerces the empty form value for
+        Form(None)), so the '' lane below is direct-call-only defense-in-depth
+        — the door-reachable ValueError trigger is the path-shaped key, which
+        returned the 400 red span live."""
         for bad in ("", "/etc/UTC"):
             r = _call(timezone=bad)
             assert r.status_code == 400, f"timezone={bad!r} did not 400"
