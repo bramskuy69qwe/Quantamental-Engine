@@ -415,7 +415,18 @@ const LinkagePage = () => {
     });
   }, []);
 
-  const flash = (m) => { setToast(m); setTimeout(() => setToast(null), 2600); };
+  /* M10 (wiring inventory, fixed 2026-08-03): the toast carries a TONE. It
+     used to be a bare string rendered under a hardcoded green ✓ — so an
+     engine REFUSAL ("Calc is no longer cancellable…"), and even this page's
+     own "cancel failed — engine unreachable?", flashed as success. The
+     cancel door answers 200 for every outcome with the truth in the alert
+     class (_lkForm body-sniffs it into `ok`), so painting green
+     unconditionally threw that signal away at the last hop. Err toasts
+     dwell longer: refusal text is a sentence, 2.6 s was sized for "done". */
+  const flash = (m, tone = 'ok') => {
+    setToast({ text: m, tone });
+    setTimeout(() => setToast(null), tone === 'ok' ? 2600 : 5200);
+  };
 
   /* unified inbox: link items + pending-reason closes */
   const inbox = [
@@ -700,9 +711,16 @@ const LinkagePage = () => {
                 try {
                   const res = await _lkForm(`/calculator/cancel/${cancelCalc.calc_id}`,
                     cancelReason.trim() ? { reason: cancelReason.trim() } : {});
-                  flash(res.text || 'cancel sent');
+                  // M10: `res.ok` is _lkForm's body-sniffed truth (the door
+                  // answers 200 for every outcome) — it used to be discarded
+                  // here, so refusals flashed under the green ✓. The dialog
+                  // still closes on refusal (not_found / not_cancellable /
+                  // race_lost are all terminal for it) and the reload
+                  // refreshes the list either way.
+                  flash(res.text || (res.ok ? 'cancel sent' : 'cancel failed'),
+                        res.ok ? 'ok' : 'err');
                   setCancelCalc(null); setCancelReason(''); load('fast');
-                } catch (err) { flash('cancel failed — engine unreachable?'); }
+                } catch (err) { flash('cancel failed — engine unreachable?', 'err'); }
                 setCancelBusy(false);
               }}>{cancelBusy ? <Spinner size="0.62rem" /> : 'Cancel calc'}</button>
           </React.Fragment>}>
@@ -732,9 +750,9 @@ const LinkagePage = () => {
       )}
 
       {toast && (
-        <div style={{ position: 'absolute', bottom: 14, left: '50%', transform: 'translateX(-50%)', zIndex: 80, display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', background: 'var(--qe-bg)', border: '1px solid var(--qe-green)' }}>
-          <span style={{ color: 'var(--qe-green)' }}>✓</span>
-          <span className="qe-mono" style={{ fontSize: '0.62rem', color: 'var(--qe-text)' }}>{toast}</span>
+        <div style={{ position: 'absolute', bottom: 14, left: '50%', transform: 'translateX(-50%)', zIndex: 80, display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', background: 'var(--qe-bg)', border: `1px solid ${toast.tone === 'ok' ? 'var(--qe-green)' : 'var(--qe-red)'}` }}>
+          <span style={{ color: toast.tone === 'ok' ? 'var(--qe-green)' : 'var(--qe-red)' }}>{toast.tone === 'ok' ? '✓' : '✗'}</span>
+          <span className="qe-mono" style={{ fontSize: '0.62rem', color: 'var(--qe-text)' }}>{toast.text}</span>
         </div>
       )}
       <StatusFooter />

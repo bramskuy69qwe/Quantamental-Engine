@@ -424,6 +424,36 @@ async def update_account_detail(
                 status_code=400,
             )
         cred_kwargs["link_window_seconds"] = link_window_seconds
+    # H4 (wiring inventory, fixed 2026-08-03): validate the preference fields
+    # BEFORE any write, like link_window above. Both used to be validated at
+    # their write site at the BOTTOM of this handler, with the invalid lane a
+    # silent drop — an unknown timezone or period was discarded while the
+    # handler went on to return the green `Saved.` span. Silent data loss with
+    # positive confirmation, on the page that edits risk posture. Hoisting the
+    # check also means a rejected preference no longer costs a partial save
+    # (credentials/params written, preference gone).
+    if analytics_default_period is not None:
+        from core.period_resolver import VALID_PERIODS
+        if analytics_default_period not in VALID_PERIODS:
+            return HTMLResponse(
+                f'<span style="color:var(--red);font-size:.65rem;">'
+                f'Unknown analytics period: {analytics_default_period}.</span>',
+                status_code=400,
+            )
+    if timezone is not None:
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+        try:
+            ZoneInfo(timezone)  # validate
+        # ValueError is in the tuple because ZoneInfo('') and path-shaped
+        # keys ('/etc/UTC') raise IT, not ZoneInfoNotFoundError — without it
+        # a present-but-blank timezone was an unhandled 500 (audit finding on
+        # this fix; the OLD code 500'd there too, just after writing).
+        except (ZoneInfoNotFoundError, KeyError, ValueError):
+            return HTMLResponse(
+                f'<span style="color:var(--red);font-size:.65rem;">'
+                f'Unknown timezone: {timezone}.</span>',
+                status_code=400,
+            )
     if cred_kwargs:
         await account_registry.update_account(account_id, **cred_kwargs)
 
@@ -526,25 +556,33 @@ async def update_account_detail(
             from core.event_bus import event_bus
             await event_bus.publish("risk:params_updated", {"ts": "config_save"})
 
-    # Update account_settings preferences
+    # Update account_settings preferences (validated at the TOP of this
+    # handler, before any write — see the H4 block there).
     settings_updates = {}
     if analytics_default_period is not None:
-        from core.period_resolver import VALID_PERIODS
-        if analytics_default_period in VALID_PERIODS:
-            settings_updates["analytics_default_period"] = analytics_default_period
+        settings_updates["analytics_default_period"] = analytics_default_period
     if timezone is not None:
-        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-        try:
-            ZoneInfo(timezone)  # validate
-            settings_updates["timezone"] = timezone
-        except (ZoneInfoNotFoundError, KeyError):
-            pass
+        settings_updates["timezone"] = timezone
     if settings_updates:
         from core.db_account_settings import update_account_settings
         try:
             update_account_settings(account_id, **settings_updates)
-        except Exception:
-            pass
+        except Exception as exc:
+            # H4: this lane used to be `pass` + the unconditional green
+            # `Saved.` below — a failed preferences write reported success.
+            # Everything above HAS been written by this point, so the honest
+            # message is the split, in an err span. ★ The word "saved" must
+            # NOT appear in this text in any casing: /saved/i on the response
+            # IS the React doSave success discriminator (pinned by
+            # tests/test_false_success_class.py).
+            log.error("account_settings write failed for account %d: %s",
+                      account_id, exc)
+            return HTMLResponse(
+                '<span style="color:var(--red);font-size:.65rem;">'
+                'Preferences write failed (timezone/period) — any other '
+                'submitted fields were stored. Check engine logs and retry.'
+                '</span>'
+            )
 
     # v3.0 P2: the React Config page detects success via /saved/i on this span
     # (frontend/src/pages-config.jsx doSave) — keep "Saved" in the success copy.

@@ -5581,9 +5581,9 @@ const LinkagePage = () => {
       });
     });
   }, []);
-  const flash = (m) => {
-    setToast(m);
-    setTimeout(() => setToast(null), 2600);
+  const flash = (m, tone = "ok") => {
+    setToast({ text: m, tone });
+    setTimeout(() => setToast(null), tone === "ok" ? 2600 : 5200);
   };
   const inbox = [
     ...(needs || []).map((o) => ({ ...o, kind: "link", key: "L" + o.id })),
@@ -5918,12 +5918,15 @@ const LinkagePage = () => {
                 `/calculator/cancel/${cancelCalc.calc_id}`,
                 cancelReason.trim() ? { reason: cancelReason.trim() } : {}
               );
-              flash(res.text || "cancel sent");
+              flash(
+                res.text || (res.ok ? "cancel sent" : "cancel failed"),
+                res.ok ? "ok" : "err"
+              );
               setCancelCalc(null);
               setCancelReason("");
               load("fast");
             } catch (err) {
-              flash("cancel failed \u2014 engine unreachable?");
+              flash("cancel failed \u2014 engine unreachable?", "err");
             }
             setCancelBusy(false);
           }
@@ -5947,7 +5950,7 @@ const LinkagePage = () => {
         style: { height: 22, boxSizing: "border-box" }
       }
     )))
-  ), toast && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", bottom: 14, left: "50%", transform: "translateX(-50%)", zIndex: 80, display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", background: "var(--qe-bg)", border: "1px solid var(--qe-green)" } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-green)" } }, "\u2713"), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.62rem", color: "var(--qe-text)" } }, toast)), /* @__PURE__ */ React.createElement(StatusFooter, null));
+  ), toast && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", bottom: 14, left: "50%", transform: "translateX(-50%)", zIndex: 80, display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", background: "var(--qe-bg)", border: `1px solid ${toast.tone === "ok" ? "var(--qe-green)" : "var(--qe-red)"}` } }, /* @__PURE__ */ React.createElement("span", { style: { color: toast.tone === "ok" ? "var(--qe-green)" : "var(--qe-red)" } }, toast.tone === "ok" ? "\u2713" : "\u2717"), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.62rem", color: "var(--qe-text)" } }, toast.text)), /* @__PURE__ */ React.createElement(StatusFooter, null));
 };
 Object.assign(window, { LinkagePage });
 
