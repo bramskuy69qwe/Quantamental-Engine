@@ -15,21 +15,33 @@ Shipped so far (in commit order):
   M4  · position_changes — the per-refresh write retired (19,151 live
         rows, zero prod readers ever); the table, its rows and the
         db_snapshots API all stay (forensics + kept-API convention).
+  M2a · Config's weekly threshold rows show the EFFECTIVE values the
+        engine derives (account_params max_w_loss_percent × warn/limit
+        ratio); the dead account_settings weekly columns are no longer
+        rendered or served to the form (data stays).
+  M2b · weekly enforcement rendered as the constant ADVISORY-ONLY — no
+        gate consumes the stored mode (advisory by design; /api/state's
+        G-O2 comment is the backend statement of the same fact).
 
 Run: pytest tests/test_dead_settings_batch.py -v
 """
 from __future__ import annotations
 
 import ast
+import json
 import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from tests._srcpin import code as _code  # noqa: E402
 
 _ROOT = Path(__file__).parent.parent
+_NODE = shutil.which("node")
 
 
 # ── M2c: EXCHANGE_REFRESH_HZ is gone and stays gone ─────────────────────────
@@ -201,3 +213,189 @@ class TestM4PositionChangesWriteRetired:
         finally:
             conn.close()
         assert row, "position_changes is no longer created by the base schema"
+
+
+# ── M2a + M2b: the weekly posture rows tell the truth ───────────────────────
+
+
+class TestM2aM2bWeeklyPostureHonest:
+    """account_settings.weekly_pnl_{warning,limit}_threshold and
+    weekly_pnl_enforcement_mode are DEAD as inputs: the engine's weekly
+    state machine reads account_params ratios only (core/data_cache), and
+    no gate consumes a weekly enforcement mode. The Config form used to
+    render all three as if live (and claimed presets write them — presets
+    never carried weekly keys). Post-M2a/M2b the form derives the
+    EFFECTIVE thresholds from params and states ADVISORY-ONLY."""
+
+    def test_api_no_longer_serves_the_dead_weekly_fields(self, monkeypatch):
+        """Executed against the real endpoint handler: a settings row that
+        UNMISTAKABLY carries the dead fields must come back without them,
+        while the live DD posture + prefs still flow."""
+        import asyncio
+
+        import core.db_account_settings as smod
+        from api.routes_config import api_config_account
+        from core.account_registry import account_registry
+        from core.db_account_settings import AccountSettings
+
+        stub = AccountSettings(
+            account_id=999,
+            weekly_pnl_warning_threshold=0.04,
+            weekly_pnl_limit_threshold=0.0475,
+            weekly_pnl_enforcement_mode="enforced",
+            strategy_preset="scalping",
+        )
+        monkeypatch.setattr(smod, "get_account_settings", lambda aid: stub)
+        monkeypatch.setattr(account_registry, "get_account_params",
+                            lambda aid: {"max_w_loss_percent": 0.05})
+
+        payload = json.loads(asyncio.run(api_config_account(999)).body)
+        settings = payload["settings"]
+        for dead in ("weekly_pnl_warning_threshold",
+                     "weekly_pnl_limit_threshold",
+                     "weekly_pnl_enforcement_mode"):
+            assert dead not in settings, (
+                f"M2a/M2b regression: /api/config/account serves {dead} "
+                "again — the one consumer renders whatever arrives here."
+            )
+        for live in ("dd_rolling_window_days", "dd_warning_threshold",
+                     "dd_limit_threshold", "dd_recovery_threshold",
+                     "dd_enforcement_mode", "strategy_preset", "timezone"):
+            assert live in settings, f"live field {live} vanished"
+
+    def test_form_no_longer_reads_the_dead_columns(self):
+        """Comment-stripped absence pin over the whole module: no executing
+        reference to any of the three dead fields survives in
+        pages-config.jsx (the M2a explainer comment there names them —
+        raw-source grep would false-fail)."""
+        stripped = _code((_ROOT / "frontend" / "src" / "pages-config.jsx")
+                         .read_text(encoding="utf-8"))
+        for dead in ("weekly_pnl_warning_threshold",
+                     "weekly_pnl_limit_threshold",
+                     "weekly_pnl_enforcement_mode"):
+            assert dead not in stripped
+
+    def test_the_enforcement_row_is_the_honest_constant(self):
+        """M2b: the row's value is the CONSTANT 'ADVISORY-ONLY', not a
+        read of any store — structural: the label and the constant share
+        one object literal."""
+        import re
+
+        stripped = _code((_ROOT / "frontend" / "src" / "pages-config.jsx")
+                         .read_text(encoding="utf-8"))
+        m = re.search(
+            r"\{\s*label:\s*'Weekly enforcement',\s*value:\s*'ADVISORY-ONLY'\s*\}",
+            stripped,
+        )
+        assert m, (
+            "the Weekly-enforcement row no longer renders the honest "
+            "ADVISORY-ONLY constant (M2b)"
+        )
+
+    def test_derivation_reads_the_two_live_param_fields(self):
+        """The effective rows must derive from the SAME params fields the
+        form edits: _cfgEffWeekly reads max_w_loss_percent × the passed
+        ratio key, and both weekly rows call it with the two ratio keys."""
+        stripped = _code((_ROOT / "frontend" / "src" / "pages-config.jsx")
+                         .read_text(encoding="utf-8"))
+        assert "_cfgEffWeekly(p, 'weekly_loss_warning_pct')" in stripped
+        assert "_cfgEffWeekly(p, 'weekly_loss_limit_pct')" in stripped
+
+
+@pytest.mark.skipif(_NODE is None, reason="node not on PATH")
+class TestM2aEffectiveThresholdParity:
+    """BOTH sides executed: the JSX derivation under node, and the REAL
+    engine weekly state machine (DataCache._do_recalculate_portfolio,
+    called unbound on a stub app_state). The displayed effective
+    threshold must be exactly the loss fraction where the engine flips —
+    that is the entire claim of the word 'effective'."""
+
+    CAP, WARN_R, LIMIT_R = 0.05, 0.8, 0.95
+
+    def _js(self, tmp_path):
+        src = (_ROOT / "frontend" / "src" / "pages-config.jsx").read_text(
+            encoding="utf-8")
+        fn = src[src.index("const _cfgEffWeekly"):src.index("const _cfgUptime")]
+        js = fn + (
+            "const p = { max_w_loss_percent: %s, weekly_loss_warning_pct: %s,"
+            " weekly_loss_limit_pct: %s };\n"
+            "console.log(JSON.stringify({\n"
+            "  warn: _cfgEffWeekly(p, 'weekly_loss_warning_pct'),\n"
+            "  limit: _cfgEffWeekly(p, 'weekly_loss_limit_pct'),\n"
+            "  null_cap: _cfgEffWeekly({ weekly_loss_warning_pct: 0.8 }, 'weekly_loss_warning_pct'),\n"
+            "  null_p: _cfgEffWeekly(null, 'weekly_loss_warning_pct'),\n"
+            "  nan: _cfgEffWeekly({ max_w_loss_percent: 'x', weekly_loss_warning_pct: 0.8 }, 'weekly_loss_warning_pct'),\n"
+            # The replacer maps NaN → the STRING 'NaN': bare JSON.stringify
+            # serializes NaN as null, which made the nan-lane assertion
+            # below unable to tell the guard from its absence (this pin's
+            # first draft SURVIVED deletion of the isNaN guard — mutation
+            # sweep finding).
+            "}, (k, v) => (typeof v === 'number' && Number.isNaN(v)) ? 'NaN' : v));\n"
+            % (self.CAP, self.WARN_R, self.LIMIT_R)
+        )
+        f = tmp_path / "eff.mjs"
+        f.write_text(js, encoding="utf-8")
+        r = subprocess.run([_NODE, str(f)], capture_output=True, text=True,
+                           encoding="utf-8", timeout=30)
+        assert r.returncode == 0, r.stderr
+        return json.loads(r.stdout)
+
+    def _engine_state(self, loss_frac):
+        """pf.weekly_pnl_state after the REAL recalc at `loss_frac` weekly
+        loss. The stub account id resolves no settings row, so the
+        rolling-DD block takes its legacy fallback — the weekly branch
+        above it is unconditional either way."""
+        from types import SimpleNamespace
+
+        from core.data_cache import DataCache
+
+        sow = 10_000.0
+        eq = sow * (1.0 - loss_frac)
+        acc = SimpleNamespace(
+            total_equity=eq, bod_equity=sow, sow_equity=sow,
+            max_total_equity=sow, min_total_equity=eq,
+            total_tp_usdt=0.0, total_sl_usdt=0.0,
+            daily_pnl=0.0, daily_pnl_percent=0.0,
+            available_margin=eq, total_unrealized=0.0,
+        )
+        pf = SimpleNamespace(
+            total_exposure=0.0, total_correlated_exposure={},
+            total_weekly_pnl=0.0, total_weekly_pnl_percent=0.0,
+            drawdown=0.0, weekly_pnl_state="ok", dd_state="ok",
+            dd_degraded=False,
+        )
+        prm = {
+            "max_w_loss_percent": self.CAP,
+            "weekly_loss_warning_pct": self.WARN_R,
+            "weekly_loss_limit_pct": self.LIMIT_R,
+            "max_dd_percent": 0.10, "max_dd_warning_pct": 0.8,
+            "max_dd_limit_pct": 0.95,
+        }
+        st = SimpleNamespace(
+            account_state=acc, params=prm, portfolio=pf,
+            active_account_id=999_999_999,
+            dd_previous_states={}, dd_episode_peaks={},
+            dd_would_have_blocked_logged=set(),
+            dd_manually_unblocked=set(),
+        )
+        DataCache._do_recalculate_portfolio(
+            SimpleNamespace(_positions=[]), st)
+        return pf.weekly_pnl_state
+
+    def test_displayed_thresholds_are_where_the_engine_flips(self, tmp_path):
+        eff = self._js(tmp_path)
+        assert eff["warn"] == pytest.approx(self.CAP * self.WARN_R)
+        assert eff["limit"] == pytest.approx(self.CAP * self.LIMIT_R)
+        # null lanes: a missing cap, missing params object, or non-numeric
+        # cap must all render '—', never 0% (0% would read as "always at
+        # limit")
+        assert eff["null_cap"] is None
+        assert eff["null_p"] is None
+        assert eff["nan"] is None, (
+            "non-numeric cap leaked through as NaN — the isNaN guard is "
+            "gone (NaN arrives here as the string 'NaN' via the replacer)"
+        )
+        # the engine, 0.1% either side of each displayed number
+        assert self._engine_state(eff["warn"] * 0.999) == "ok"
+        assert self._engine_state(eff["warn"] * 1.001) == "warning"
+        assert self._engine_state(eff["limit"] * 1.001) == "limit"

@@ -142,9 +142,13 @@ class TestConfig1ThresholdsEditable:
 
     def test_readonly_block_still_labelled_readonly(self):
         """The account_settings block below stays read-only — the two stores are
-        disjoint and conflating them was the audit's own confusion risk."""
+        disjoint and conflating them was the audit's own confusion risk.
+        (Chip text updated 2026-08-04, dead-settings M2a: the block's weekly
+        rows became params-DERIVED display, so the chip now says which half
+        is preset-written and which is derived — the READ-ONLY property this
+        pin protects is unchanged.)"""
         s = _src("pages-config.jsx")
-        assert "READ-ONLY · set via Presets tab" in s
+        assert "READ-ONLY · DD set via Presets tab · weekly derived from the ratios above" in s
 
     def test_reaches_the_bundle(self, bundle):
         for k in _RATIOS:

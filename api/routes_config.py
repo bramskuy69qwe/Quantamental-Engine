@@ -34,11 +34,17 @@ async def api_config_account(account_id: int):
     params = account_registry.get_account_params(account_id)
     try:
         s = get_account_settings(account_id)
+        # M2a/M2b (dead-settings batch, 2026-08-04): the three weekly_pnl_*
+        # fields are no longer served. They are DEAD as inputs — the weekly
+        # state machine derives from account_params ratios (core/data_cache)
+        # and no gate consumes the enforcement mode (advisory-only by
+        # design) — and the ONE consumer of this endpoint used to render
+        # them as if live. Columns + data stay in the DB; /api/state still
+        # reports the stored enforcement mode.
         settings = {f: getattr(s, f) for f in (
             "dd_rolling_window_days", "dd_warning_threshold", "dd_limit_threshold",
             "dd_recovery_threshold", "dd_enforcement_mode",
-            "weekly_pnl_warning_threshold", "weekly_pnl_limit_threshold",
-            "weekly_pnl_enforcement_mode", "strategy_preset",
+            "strategy_preset",
             # config-3 (Meridian audit): every timestamp the operator reads is
             # rendered against this, and it was surfaced NOWHERE in v3 — a wrong
             # timezone stayed invisible until timestamps looked off. Real

@@ -33,9 +33,9 @@ Accessor: `core.db_account_settings.get_account_settings(account_id)`
 | `dd_limit_threshold` | REAL | NULL | Absolute DD ratio triggering limit state |
 | `dd_recovery_threshold` | REAL | 0.50 | Fraction of DD peak equity must recover for early-unblock |
 | `dd_enforcement_mode` | TEXT | `'advisory'` | `advisory` (log only) or `enforced` (block calculator) |
-| `weekly_pnl_warning_threshold` | REAL | NULL | Weekly loss ratio triggering warning |
-| `weekly_pnl_limit_threshold` | REAL | NULL | Weekly loss ratio triggering limit |
-| `weekly_pnl_enforcement_mode` | TEXT | `'advisory'` | Same as DD enforcement mode |
+| `weekly_pnl_warning_threshold` | REAL | NULL | DEAD as input (M2a 2026-08-04): the weekly state machine derives its warn threshold from account_params (`max_w_loss_percent` × `weekly_loss_warning_pct`); column + data retained, no reader |
+| `weekly_pnl_limit_threshold` | REAL | NULL | DEAD as input (M2a): as above with `weekly_loss_limit_pct`; column + data retained, no reader |
+| `weekly_pnl_enforcement_mode` | TEXT | `'advisory'` | DEAD as input (M2b): no gate consumes it — weekly is advisory-only by design; `/api/state` still reports the stored value |
 | `strategy_preset` | TEXT | NULL | Informational: which preset seeded this account |
 | `analytics_default_period` | TEXT | `'monthly'` | UI default period for analytics views |
 | `week_start_dow` | INTEGER | 1 | ISO weekday for week start (1=Monday, 7=Sunday) |

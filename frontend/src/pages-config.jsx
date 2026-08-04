@@ -14,9 +14,11 @@
      · System       ← GET /api/system (G-O8; read-only facts).
    The inline mock literals (accounts/conns arrays, defaultValue inputs) are
    stripped. TWO DISJOINT RISK STORES (HANDOFF ★ P2): account_params sizing
-   knobs are EDITABLE here (validated /update path); account_settings DD/weekly
-   posture is DISPLAY-ONLY — written only by preset Apply; the enforcement-mode
-   flip is DEFERRED to a later phase (needs the name-confirm safety gate).
+   knobs are EDITABLE here (validated /update path); account_settings DD
+   posture is DISPLAY-ONLY — written only by preset Apply; the weekly rows
+   show EFFECTIVE params-derived thresholds + an ADVISORY-ONLY constant
+   (M2a/M2b — the account_settings weekly columns are dead inputs); the
+   enforcement-mode flip is DEFERRED to a later phase (name-confirm gate).
    Add/Delete Account are NOT wired in P2 (spec scope: safe writes only) —
    rendered disabled; the Jinja /config page remains the management surface.
    Micro-deviations vs the reference ConfigPage (all deliberate): paper-env
@@ -98,6 +100,21 @@ const _cfgPostJson = async (url, payload) => {
 
 /* fraction → percent display ("0.06" → "6%", "0.095" → "9.5%") */
 const _cfgPct = (v) => (v == null || isNaN(v)) ? '—' : ((+v * 100).toFixed(1).replace(/\.0$/, '') + '%');
+
+/* M2a (dead-settings batch, 2026-08-04) — the EFFECTIVE weekly threshold.
+   The engine's weekly state machine (core/data_cache._do_recalculate_
+   portfolio) never reads the account_settings weekly_pnl_* columns: it
+   compares the weekly loss against account_params' max_w_loss_percent ×
+   weekly_loss_{warning,limit}_pct. This form used to render the DEAD
+   columns as if live (and its note claimed presets write them — presets
+   never carried weekly keys at all); now it shows the numbers the engine
+   actually acts on, derived from the same params fields this form edits. */
+const _cfgEffWeekly = (p, ratioKey) => {
+  const cap = p ? p.max_w_loss_percent : null;
+  const ratio = p ? p[ratioKey] : null;
+  return (cap == null || ratio == null || isNaN(cap) || isNaN(ratio))
+    ? null : cap * ratio;
+};
 
 const _cfgUptime = (s) => {
   if (s == null || isNaN(s)) return '—';
@@ -340,8 +357,17 @@ const CfgAccountForm = ({ account, detail, onReload, onDelete }) => {
         absolute thresholds below, and these two are read solely if that path errors.
       </div>
 
-      <SecLbl rule right={<span style={{ color: 'var(--qe-muted)', fontSize: '0.54rem' }}>READ-ONLY · set via Presets tab</span>}>
-        Enforcement &amp; Recovery · DD posture (account_settings)
+      {/* M2a+M2b (dead-settings batch, 2026-08-04): the weekly rows used to
+          render account_settings.weekly_pnl_{warning,limit}_threshold and
+          _enforcement_mode as if live. All three are DEAD as inputs — no
+          engine code reads them (weekly state derives from the params
+          ratios, see _cfgEffWeekly) and no gate consumes a weekly
+          enforcement mode (/api/state documents weekly as advisory-only by
+          design). The rows now show the DERIVED effective thresholds and an
+          honest ADVISORY-ONLY constant; the dead columns keep their data
+          but are no longer served to this form (routes_config tuple). */}
+      <SecLbl rule right={<span style={{ color: 'var(--qe-muted)', fontSize: '0.54rem' }}>READ-ONLY · DD set via Presets tab · weekly derived from the ratios above</span>}>
+        Enforcement &amp; Recovery · effective posture
       </SecLbl>
       <FieldList cols={2} rows={[
         { label: 'Strategy preset', value: (s.strategy_preset || 'custom').toUpperCase(), color: 'cyan' },
@@ -350,15 +376,17 @@ const CfgAccountForm = ({ account, detail, onReload, onDelete }) => {
         { label: 'DD limit',        value: _cfgPct(s.dd_limit_threshold), color: 'red' },
         { label: 'DD recovery',     value: _cfgPct(s.dd_recovery_threshold), color: 'green' },
         { label: 'DD enforcement',  value: (s.dd_enforcement_mode || '—').toUpperCase() },
-        { label: 'Weekly warn',     value: _cfgPct(s.weekly_pnl_warning_threshold), color: 'amber' },
-        { label: 'Weekly limit',    value: _cfgPct(s.weekly_pnl_limit_threshold), color: 'red' },
-        { label: 'Weekly enforcement', value: (s.weekly_pnl_enforcement_mode || '—').toUpperCase() },
+        { label: 'Weekly warn (effective)',  value: _cfgPct(_cfgEffWeekly(p, 'weekly_loss_warning_pct')), color: 'amber' },
+        { label: 'Weekly limit (effective)', value: _cfgPct(_cfgEffWeekly(p, 'weekly_loss_limit_pct')), color: 'red' },
+        { label: 'Weekly enforcement', value: 'ADVISORY-ONLY' },
       ]} />
       <div className="qe-mono" style={{ fontSize: '0.56rem', color: 'var(--qe-muted)', margin: '6px 0 10px', lineHeight: 1.5 }}>
-        The rolling-DD gate reads THIS store — ABSOLUTE thresholds, written by preset Apply (Presets tab).
-        Disjoint from the ratios above, which live in account_params. Note a preset rewrites these
-        thresholds and the six sizing knobs, but NOT the four ratios — those stay as you set them.
-        The advisory→enforced flip ships with its name-confirm safety gate in a later phase.
+        The rolling-DD gate reads the account_settings store — ABSOLUTE DD thresholds, written by preset
+        Apply (Presets tab; a preset rewrites those and the six sizing knobs, but NOT the four ratios).
+        WEEKLY is different: its effective warn/limit are DERIVED live as Max Weekly Loss × the two
+        weekly ratios above (account_params) — the stored weekly columns are dead inputs and are not
+        shown. Weekly has NO enforcement gate by design (advisory-only); the DD advisory→enforced flip
+        ships with its name-confirm safety gate in a later phase.
       </div>
 
       <div style={{ display: 'flex', gap: 6, marginTop: 8, alignItems: 'center' }}>
