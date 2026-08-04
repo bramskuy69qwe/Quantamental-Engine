@@ -416,6 +416,24 @@ async def calculator_link_window_status(
             "expires_at_ms": None,
         }, t0_echo=t0_to_echo)
 
+    # H3 (wiring inventory, wired 2026-08-04): operator confirmation is
+    # AUTHORITATIVE and outranks BOTH terminal short-circuits below — that
+    # is compute_link_window_status's own ratified contract ("a confirmed
+    # link must NOT render as Expired — that would suggest the link is
+    # broken when it is in fact load-bearing for analytics"). The two
+    # short-circuits were added after that contract and silently preempted
+    # it, which kept LINKED_CONFIRMED unreachable even once the manual-link
+    # flow started confirming fills: manual link flips the calc → matched
+    # in the same breath, so the LINKED arm always won (audit MED on the
+    # first H3 draft). The React chip renders this state and stops polling.
+    if confirmed:
+        return _out({
+            "status": "LINKED_CONFIRMED",
+            "effective_window_s": account_window,
+            "remaining_s": 0,
+            "expires_at_ms": None,
+        })
+
     # Auto-link surfaced (debug 2026-06-08): once the matcher links this calc its
     # status flips to 'matched'/'linked'. Show a terminal LINKED state instead of
     # the bare time-window countdown — which an auto-matched calc would otherwise

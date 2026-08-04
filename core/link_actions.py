@@ -277,6 +277,47 @@ async def _manual_link_order_impl(
     except Exception:
         log.debug("manual_link_order: fill calc_id propagation failed", exc_info=True)
 
+    # 3b. H3 (wiring inventory, wired 2026-08-04): a manual link IS the
+    #    human confirming the fill↔calc linkage, so the opening fills are
+    #    also CONFIRMED via db.confirm_fill_exec_link. Provenance
+    #    (git-corrected by the H3 audit — this comment's first draft
+    #    claimed "zero callers its whole life"): Task 142 EXTRACTED the
+    #    helper from a live caller, POST /history/exec_link/confirm (the
+    #    History Confirm-Link button), which the 2026-07-30 fragments
+    #    slim-down then deleted — a regression-by-deletion, not
+    #    designed-but-never-wired. The operational premise held either
+    #    way: live data showed 4,928 fills, 0 ever confirmed. Confirmation
+    #    is authoritative PAST the match window (exec_link.py's contract)
+    #    — exactly right here: the operator may resolve the queue long
+    #    after the window closed. The confirm set is SELECTed after the
+    #    UPDATE, keyed on THIS calc, so it is the attribution result,
+    #    never a guess. Guarded on a non-empty exchange_order_id: an empty
+    #    eid would key the SELECT to every empty-eoid opening fill
+    #    account-wide (a real live shape — db_analytics guards its joins
+    #    on it) and mark them all operator-confirmed (audit LOW-4).
+    #    Separate best-effort lane with its own WARNING: a confirm failure
+    #    after a successful link leaves partial confirmation (per-fill
+    #    commits), which re-linking cannot repair (already_linked returns
+    #    first) — the operator should see it, not a DEBUG line about
+    #    propagation.
+    if eid:
+        try:
+            async with db._conn.execute(
+                "SELECT id FROM fills "
+                "WHERE account_id = ? AND exchange_order_id = ? "
+                "  AND is_close = 0 AND calc_id = ?",
+                (account_id, eid, calc_id),
+            ) as fcur:
+                fill_ids = [r[0] for r in await fcur.fetchall()]
+            for fid in fill_ids:
+                await db.confirm_fill_exec_link(fid)
+        except Exception:
+            log.warning(
+                "manual_link_order: exec-link confirm failed after link "
+                "(order=%s calc=%s) — fills may be partially confirmed",
+                order_id, calc_id, exc_info=True,
+            )
+
     # 4. LB-F1 (linkage battery 2026-07-14): replay the junction for an
     #    already-filled order. The Defect-8 replay fired only from the
     #    auto lane (_enrich_order_best_effort), so a manual link placed

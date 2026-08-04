@@ -45,9 +45,36 @@ recommended" covers all seven.
 
 ### Also open
 
-- **H3 — the operator's decision, still deciding**: `confirm_fill_exec_link`
-  zero callers vs four readers. Wire the confirm (my lean: from the linkage
-  resolve flow) or stop rendering four indicators that can only say no.
+- **H3 — DECIDED 2026-08-04: Option 1, wire it up** (operator picked it off
+  the ELI15 framing below, which they asked to keep for reports — reuse this
+  register when presenting decisions).
+  **H3, ELI15**: the engine doesn't place trades, it *watches* them, and
+  plays detective matching each fill to the calculator plan that predicted
+  it — that match is a smart GUESS (the fuzzy matcher). The DB has a
+  checkbox per fill, `fills.exec_link_confirmed`, meaning "a human
+  double-checked this guess". The function that ticks it
+  (`confirm_fill_exec_link`, core/db_orders.py) had NO caller — so the box
+  could never be ticked, while four readers (analytics ×2 via
+  db_analytics; the calculator link-window widget ×2 via the db_orders
+  helpers) show "confirmed?" indicators that are physically incapable of
+  saying yes. A "seatbelt fastened" light that isn't wired to the
+  seatbelt: it trains the operator to ignore it, or worse, to distrust
+  links that are actually fine. Option 1 (chosen): tick the box at the
+  natural human-confirmation moment — the linkage triage manual-resolve
+  flow. Option 2 (rejected): rip the four indicators out. Doing nothing =
+  a permanently-lying indicator on a risk console.
+  ★ PROVENANCE CORRECTED by the H3 audit (the inventory's "zero callers
+  EVER" was git-false): Task 142 extracted the helper FROM a live caller —
+  `POST /history/exec_link/confirm`, the History Confirm-Link button —
+  which the 2026-07-30 fragments slim-down deleted. Regression-by-
+  deletion, five days before the inventory filed it. Operationally the
+  premise held regardless: 4,928 live fills, 0 ever confirmed (the button
+  existed; nobody ever clicked it). The audit also caught that the
+  calculator pair needed a second fix: the widget's matched/linked +
+  terminal short-circuits preempted the confirmed check (manual link flips
+  the calc → matched in the same flow), so LINKED_CONFIRMED stayed
+  unreachable — the confirmed check is now hoisted above both, per
+  compute_link_window_status's own ratified precedence.
 - Remaining MEDs after the batch: M5 (dead risk-gate path), M7 (`app_id`
   hardcoded `'multicharts'`), M9 (client-side tools on a server-paged table),
   M11 (backfill/audit-export/backtest have no UI), M12 (WorkspaceBar inert

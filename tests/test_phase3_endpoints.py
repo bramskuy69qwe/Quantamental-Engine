@@ -286,6 +286,208 @@ class TestManualLink:
         assert await _fill_calc(linkdb, "f-close") is None     # closing untouched (T2.2)
 
 
+# ── H3 (wiring inventory, wired 2026-08-04): manual link CONFIRMS ───────
+
+
+async def _fill_confirm(db, fid):
+    """(exec_link_confirmed, exec_link_confirmed_by, at-is-set) for one fill."""
+    async with db._conn.execute(
+        "SELECT exec_link_confirmed, exec_link_confirmed_by, "
+        "       exec_link_confirmed_at IS NOT NULL "
+        "FROM fills WHERE exchange_fill_id = ?",
+        (fid,),
+    ) as cur:
+        row = await cur.fetchone()
+    return (row[0], row[1], bool(row[2]))
+
+
+class TestH3ManualLinkConfirmsFills:
+    """`db.confirm_fill_exec_link` had NO caller — its one caller ever
+    (POST /history/exec_link/confirm, the History Confirm-Link button that
+    Task 142 extracted the helper FROM) was deleted by the 2026-07-30
+    fragments slim-down, a regression-by-deletion the wiring inventory
+    then filed as "zero callers" (H3 audit git-corrected the provenance;
+    live data: 4,928 fills, 0 ever confirmed). Either way the seatbelt
+    light was unwired: fills.exec_link_confirmed could never become 1
+    while four readers rendered "confirmed?" indicators. The operator
+    chose Option 1: a manual link IS the human confirming the linkage, so
+    the resolve flow now confirms the opening fills it stamps. These
+    tests EXECUTE the real handler against the real schema — a green here
+    means the box can actually be ticked."""
+
+    @pytest.mark.asyncio
+    async def test_manual_link_confirms_opening_fills_only(self, linkdb):
+        from core.link_actions import manual_link_order
+        oid = await _seed_order(linkdb, eoid="H3A", link_status="NEEDS_MANUAL_REVIEW")
+        await _seed_calc(linkdb, calc_id="CH3", status="active")
+        await _seed_fill(linkdb, fid="h3-open", eoid="H3A", is_close=0)
+        # the close fill ALREADY carries the same calc via position-primary
+        # attribution (same-eoid open+close = the flip-order shape; the
+        # usual T2.2 close-stamp lands on another order's fills — audit
+        # note). This seeding is load-bearing: a calc-only guard in the
+        # confirm SELECT still excludes a calc-less close fill, so this
+        # test's first draft let an is_close-guard deletion SURVIVE its own
+        # mutation sweep.
+        await _seed_fill(linkdb, fid="h3-close", eoid="H3A", is_close=1,
+                         calc_id="CH3")
+        # an opening fill on the same order carrying a DIFFERENT calc must
+        # not be swept into the confirmation (covers the SELECT's calc_id
+        # guard — the audit found it mutation-uncovered; the shape is
+        # doubtful-reachable but the guard is load-bearing if it ever is)
+        await _seed_fill(linkdb, fid="h3-other", eoid="H3A", is_close=0,
+                         calc_id="C-OTHER")
+
+        assert await manual_link_order(ACCOUNT_ID, oid, "CH3") == "linked"
+
+        confirmed, by, at_set = await _fill_confirm(linkdb, "h3-open")
+        assert confirmed == 1, (
+            "H3 regression: the manual link no longer confirms the opening "
+            "fill — exec_link_confirmed is back to being unreachable"
+        )
+        assert by == "user"   # the helper's contract: a HUMAN confirmed
+        assert at_set
+        # the closing fill's attribution is the POSITION's (T2.2), not the
+        # order's exec link — the human confirmed the entry linkage only,
+        # and a blanket confirm would forge review of a lane they never saw
+        assert (await _fill_confirm(linkdb, "h3-close"))[0] in (0, None)
+        # the different-calc opening fill stays untouched
+        assert (await _fill_confirm(linkdb, "h3-other"))[0] in (0, None)
+
+    @pytest.mark.asyncio
+    async def test_the_readers_can_now_say_yes(self, linkdb):
+        """The reader the link-window widget actually calls
+        (db.has_confirmed_fill_for_calc — routes_calculator) flips true
+        after a manual link. This is the four-readers' truth restored,
+        executed end to end through the same DB layer prod uses."""
+        from core.link_actions import manual_link_order
+        oid = await _seed_order(linkdb, eoid="H3B", link_status="UNLINKED")
+        await _seed_calc(linkdb, calc_id="CH3B", status="active")
+        await _seed_fill(linkdb, fid="h3b-open", eoid="H3B", is_close=0)
+
+        assert await linkdb.has_confirmed_fill_for_calc(
+            calc_id="CH3B", account_id=ACCOUNT_ID) is False
+        assert await manual_link_order(ACCOUNT_ID, oid, "CH3B") == "linked"
+        assert await linkdb.has_confirmed_fill_for_calc(
+            calc_id="CH3B", account_id=ACCOUNT_ID) is True
+
+    @pytest.mark.asyncio
+    async def test_failed_link_confirms_nothing(self, linkdb):
+        """Only the linked lane may confirm: an invalid transition (NULL
+        link_status) leaves every fill unconfirmed."""
+        from core.link_actions import manual_link_order
+        oid = await _seed_order(linkdb, eoid="H3C", link_status=None)
+        await _seed_calc(linkdb, calc_id="CH3C", status="active")
+        await _seed_fill(linkdb, fid="h3c-open", eoid="H3C", is_close=0)
+
+        assert await manual_link_order(ACCOUNT_ID, oid, "CH3C") == "invalid_transition"
+        assert (await _fill_confirm(linkdb, "h3c-open"))[0] in (0, None)
+
+    @pytest.mark.asyncio
+    async def test_already_linked_lane_confirms_nothing(self, linkdb):
+        """The early-return lane must not re-stamp confirmation the human
+        didn't just give."""
+        from core.link_actions import manual_link_order
+        oid = await _seed_order(linkdb, eoid="H3D", link_status="LINKED",
+                                calc_id="C-PRE")
+        await _seed_calc(linkdb, calc_id="C-PRE", status="matched")
+        await _seed_fill(linkdb, fid="h3d-open", eoid="H3D", is_close=0,
+                         calc_id="C-PRE")
+
+        assert await manual_link_order(ACCOUNT_ID, oid, "C-PRE") == "already_linked"
+        assert (await _fill_confirm(linkdb, "h3d-open"))[0] in (0, None)
+
+    @pytest.mark.asyncio
+    async def test_empty_eoid_order_confirms_nothing_account_wide(self, linkdb):
+        """Audit LOW-4: an order with an empty exchange_order_id would key
+        the confirm SELECT to EVERY empty-eoid opening fill on the account
+        (a real live shape — db_analytics guards its joins on exactly
+        this) and mark them all operator-confirmed. The confirm lane is
+        gated on a non-empty eid; the link itself still succeeds."""
+        from core.link_actions import manual_link_order
+        oid = await _seed_order(linkdb, eoid="", link_status="NEEDS_MANUAL_REVIEW")
+        await _seed_calc(linkdb, calc_id="CH3E", status="active")
+        # a stray empty-eoid fill that has NOTHING to do with this order,
+        # pre-stamped with the same calc (worst case for the blast radius)
+        await _seed_fill(linkdb, fid="h3e-stray", eoid="", is_close=0,
+                         calc_id="CH3E")
+
+        assert await manual_link_order(ACCOUNT_ID, oid, "CH3E") == "linked"
+        assert (await _fill_confirm(linkdb, "h3e-stray"))[0] in (0, None), (
+            "an empty-eoid manual link blanket-confirmed account-wide "
+            "empty-eoid fills"
+        )
+
+
+class TestH3WidgetConfirmedPrecedence:
+    """H3's second half (audit MED-2 on the first draft): the link-window
+    widget's matched/linked + terminal short-circuits ran BEFORE the
+    confirmed check, and the manual-link flow itself flips the calc →
+    matched — so LINKED_CONFIRMED stayed unreachable even with the confirm
+    wired, and a confirmed calc whose position completed rendered EXPIRED,
+    directly contradicting compute_link_window_status's ratified contract
+    ("a confirmed link must NOT render as Expired"). The confirmed check
+    is hoisted above both; these tests EXECUTE the real route handler with
+    the DB helpers stubbed at the singleton (the same call-time-import
+    seam the H4 harness uses)."""
+
+    def _stub(self, monkeypatch, *, confirmed, calc_status):
+        import core.database as dbmod
+        from datetime import datetime, timezone
+
+        ts = datetime.now(timezone.utc).isoformat()
+
+        async def _ptl(**kw):
+            return {"timestamp": ts, "link_window_seconds_override": None}
+
+        async def _win(aid):
+            return 300
+
+        async def _conf(**kw):
+            return confirmed
+
+        async def _status(**kw):
+            return calc_status
+
+        monkeypatch.setattr(dbmod.db, "get_pretrade_timestamp_for_link_window", _ptl)
+        monkeypatch.setattr(dbmod.db, "get_account_link_window_seconds", _win)
+        monkeypatch.setattr(dbmod.db, "has_confirmed_fill_for_calc", _conf)
+        monkeypatch.setattr(dbmod.db, "get_calc_status", _status)
+
+    async def _call(self):
+        import json
+
+        from api.routes_calculator import calculator_link_window_status
+
+        resp = await calculator_link_window_status(
+            request=None, calc_id="CW", t0=0, format="",
+        )
+        return json.loads(resp.body)["status"]
+
+    @pytest.mark.asyncio
+    async def test_confirmed_beats_the_matched_shortcircuit(self, monkeypatch):
+        """Manual link flips the calc → matched in the same flow that
+        confirms; the widget must show the STRONGER truth."""
+        self._stub(monkeypatch, confirmed=True, calc_status="matched")
+        assert await self._call() == "LINKED_CONFIRMED"
+
+    @pytest.mark.asyncio
+    async def test_confirmed_beats_the_terminal_expired_bucket(self, monkeypatch):
+        """The contract's own words: a confirmed link must NOT render as
+        Expired — that would suggest the link is broken when it is in fact
+        load-bearing for analytics. completed_via_position is the normal
+        end-state of every confirmed link that worked."""
+        self._stub(monkeypatch, confirmed=True,
+                   calc_status="completed_via_position")
+        assert await self._call() == "LINKED_CONFIRMED"
+
+    @pytest.mark.asyncio
+    async def test_unconfirmed_matched_still_reads_linked(self, monkeypatch):
+        """The auto-link surface is unchanged: matcher-linked without a
+        human confirm renders LINKED, not CONFIRMED."""
+        self._stub(monkeypatch, confirmed=False, calc_status="matched")
+        assert await self._call() == "LINKED"
+
+
 # ── mark_order_unplanned ───────────────────────────────────────────────
 
 
