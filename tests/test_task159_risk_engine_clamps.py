@@ -40,8 +40,9 @@ Mechanism investigations + deviations (per T155 deviation discipline):
   MED-021. Spec said "bounds-checking at load, reject/clamp with clear
   startup error." Helper `_bounded_float_env(name, default, *, lo, hi)`
   fails loud at module import with RuntimeError for NaN/inf/out-of-range/
-  unparseable inputs. EXEC_LINK_PRICE_TOL bounded [1e-6, 0.1];
-  EXCHANGE_REFRESH_HZ bounded [0.01, 100].
+  unparseable inputs. EXEC_LINK_PRICE_TOL bounded [1e-6, 0.1].
+  (EXCHANGE_REFRESH_HZ was also bounded here until its 2026-08-04
+  removal — dead-settings batch M2c, zero consumers.)
 
 Run: pytest tests/test_task159_risk_engine_clamps.py -v
 """
@@ -325,20 +326,13 @@ class TestMed021BoundedFloatEnv:
             "float(os.getenv(...)) — accepts NaN/inf/negative again."
         )
 
-    def test_exchange_refresh_hz_uses_bounded_helper(self):
-        src = Path("config.py").read_text(encoding="utf-8")
-        assert "EXCHANGE_REFRESH_HZ = _bounded_float_env(" in src, (
-            "MED-021 regression: EXCHANGE_REFRESH_HZ reverted to bare "
-            "float(os.getenv(...)) — 0Hz would cause div-by-zero downstream."
-        )
-
     def test_bare_float_pattern_gone(self):
-        """Defensive: the pre-T159 form `float(os.getenv("EXEC..."` or
-        `float(os.getenv("EXCHANGE_REFRESH_HZ"...`
-        must not reappear via revert."""
+        """Defensive: the pre-T159 form `float(os.getenv("EXEC..."`
+        must not reappear via revert. (The sibling EXCHANGE_REFRESH_HZ
+        pins were retired with the constant itself — 2026-08-04
+        dead-settings batch M2c.)"""
         src = Path("config.py").read_text(encoding="utf-8")
         assert 'float(os.getenv("EXEC_LINK_PRICE_TOL"' not in src
-        assert 'float(os.getenv("EXCHANGE_REFRESH_HZ"' not in src
 
 
 # ── Top-level anchors ──────────────────────────────────────────────────────

@@ -1,18 +1,10 @@
-"""Tests for Phase 5 polish: config knob, equity publish, row IDs, client tick."""
+"""Tests for Phase 5 polish — the equity recalc publish (sole survivor).
+
+(TestExchangeRefreshHz retired 2026-08-04, dead-settings batch M2c: the
+constant it pinned had zero consumers and was removed from config.py —
+the negative pin lives in tests/test_dead_settings_batch.py.)
+"""
 import inspect
-import os
-
-
-class TestExchangeRefreshHz:
-    def test_config_exists(self):
-        import config
-        assert hasattr(config, "EXCHANGE_REFRESH_HZ")
-        assert isinstance(config.EXCHANGE_REFRESH_HZ, float)
-        assert config.EXCHANGE_REFRESH_HZ > 0
-
-    def test_default_is_1hz(self):
-        # Default from env var parsing
-        assert float(os.getenv("EXCHANGE_REFRESH_HZ", "1.0")) == 1.0
 
 
 class TestEquityRecalcPublish:

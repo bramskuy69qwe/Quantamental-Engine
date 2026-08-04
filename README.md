@@ -182,7 +182,7 @@ cp .env.example .env             # Edit with API keys, master encryption key
 # Required: ENV_MASTER_KEY (Fernet key for API key encryption)
 # Required: Exchange API credentials (added via /accounts UI)
 # Optional: PUBSUB_BACKEND=redis REDIS_URL=redis://localhost:6379/0
-# Optional: EXCHANGE_REFRESH_HZ=1.0 EXEC_LINK_PRICE_TOL=0.0005
+# Optional: EXEC_LINK_PRICE_TOL=0.0005
 
 # Run
 uvicorn main:app --host 0.0.0.0 --port 8000

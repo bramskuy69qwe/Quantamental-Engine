@@ -7,11 +7,10 @@ load_dotenv()
 
 # Task 159 (MED-021): fail-loud bounded float parse for env-derived numeric
 # config. Bare `float(os.getenv(...))` previously accepted 0 / negative /
-# NaN / inf — each had a downstream failure mode (div-by-zero on
-# EXCHANGE_REFRESH_HZ, logic inversion on EXEC_LINK_PRICE_TOL when
-# negative, NaN propagation through all consumers). Reject at module
-# import with a clear RuntimeError; let startup fail loudly instead of
-# misbehaving silently downstream.
+# NaN / inf — each had a downstream failure mode (logic inversion on
+# EXEC_LINK_PRICE_TOL when negative, NaN propagation through all
+# consumers). Reject at module import with a clear RuntimeError; let
+# startup fail loudly instead of misbehaving silently downstream.
 def _bounded_float_env(name: str, default: str, *, lo: float, hi: float) -> float:
     raw = os.getenv(name, default)
     try:
@@ -139,14 +138,10 @@ EXEC_LINK_PRICE_TOL = _bounded_float_env(
     "EXEC_LINK_PRICE_TOL", "0.0005", lo=1e-6, hi=0.1,
 )
 
-# Unified exchange refresh rate (Hz). Controls how frequently exchange-derived
-# state publishes to SSE consumers. Default 1.0 = one cycle per second.
-# Task 159 (MED-021): bounded float parse. 0 = div-by-zero (1/Hz → inf);
-# negative = asyncio.sleep raises; above 100 Hz = wasteful (no consumer
-# benefits from >100 Hz; almost certainly a typo).
-EXCHANGE_REFRESH_HZ = _bounded_float_env(
-    "EXCHANGE_REFRESH_HZ", "1.0", lo=0.01, hi=100.0,
-)
+# (EXCHANGE_REFRESH_HZ removed 2026-08-04, dead-settings batch M2c: zero
+# consumers anywhere in the engine — only its own test pins asserted it
+# existed. The v2.4 release notes describe the knob it was meant to be;
+# nothing was ever wired to read it.)
 
 # ── UI polling intervals (seconds) ───────────────────────────────────────────
 DASHBOARD_POLL_INTERVAL   = 3
