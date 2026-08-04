@@ -1,6 +1,85 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-07-31 (**MERIDIAN v3.1 — THE STALE-SHOWN-AS-LIVE SEAM: C1 + nav strip + pane foots (eleventh block, top). Prior day: wiring inventory filed · UI-orphaned list closed · Add Account wired · DD-override + pre-trade notes ported · fragments slim-down · primitives sweep · Jinja retirement `1afc9f8`.**)
+**Date**: 2026-08-04 (**MERIDIAN v3.1 — THE WIRING-INVENTORY FIX ARC IS NEARLY CLOSED (twelfth block, top): warm hang · H1–H7 · M10 · M6 · the three readout fabrications — 9 commits, every one audited, ALL PUSHED. NEXT SESSION STARTS AT THE DEAD-SETTINGS DECISION TABLE (§ below) + the H3 decision.** Prior: the stale-shown-as-live seam (C1/nav/foots) · wiring inventory filed · Jinja retirement `1afc9f8`.)
+
+## ▶ SESSION CLOSE 2026-08-04 (twelfth block) — NINE COMMITS DOWN THE TRUTHFULNESS SEAM
+
+All pushed, gate green at each step, final **4546 passed / 6 skipped / 3
+deselected**, bundle **`be069c262b`**. Branch `v3.0/e2e-debug` in sync with
+origin at `765476c` + this wrap. Every task: verify-at-line → class grep →
+fix → EXECUTED pins → mutation-all-RED → independent agent audit → solo gate
+→ commit. **The audits found real defects IN MY FIXES on five of nine tasks**
+— the folds are described per-commit below and are the most valuable content
+in the log.
+
+| commit | what |
+|---|---|
+| `89e6d15` | **THE WARM HANG** — fixed at the REQUEST, not the foot: every read carries an AbortController deadline (`qePollDeadline` = own interval floored 5 s; one-shots 30 s; `QE_UPSTREAM_READ_DEADLINE_MS` 12 s for exchange-backed reads — ccxt default is 10 s, no retry). The filed timestamp-shape was REJECTED: every page clock is throttled by exactly the conditions that strand a pipe. `qeOnVisible` re-polls the app-lifetime stores on return-to-visible (rate-limited). Killed three siblings: chained-setTimeout pollers that died permanently behind `· retrying`, the notification `inFlight` latch, the ~6-connection pile-up. ALSO: `pages-linkage.jsx:344`'s glob-in-`//`-comment PHANTOM block had eaten lines 344-389 from every source pin (detector now app-wide); DESIGN.md stated the foot severity order twice, contradictorily. |
+| `6ca5e9e` | **H1+H2** — one shared live-account accessor (`QE_CHROME.accountId()` + `onAccountChange`); SSE and Pre-Trade risk% follow the LIVE account, not the page-load bake. |
+| `8e80080` | **SSE retarget(N) actually targets N** — found LIVE: `connect()` re-read the store and ignored the argument. Plus the live verification of both prior commits: every deadline ≥21× headroom over measured latency; and the browser pane is `document.hidden` → its timers throttle → **abort/timer tests in that pane are INVALID; prove hangs against a real socket** (done: 700 ms deadline → 715 ms rejection, stalled-body = timeout not corrupt, 6 concurrent hangs all settle). |
+| `919e5da` | **H4+M10, the false-success class** — settings-save swallow → err span that deliberately avoids `/saved/i` (the two-file discriminator contract, pinned both sides); invalid tz/period REJECTED (hoisted above all writers; `ValueError` in the tuple — `ZoneInfo('')` raises IT); cancel toast tone-aware (`flash(m, tone)`), err dwell 5.2 s. Audit folds: the blank-tz 500, a vacuous sweep exemption deleted, "any other submitted fields" wording. ⚠ my live probe wrote `timezone=UTC` to account 1 — prior value unrecoverable; re-set it if you'd customised. |
+| `1e0dc37` | **H5 Delete Account** — real confirm dialog, success = `r.ok && data.status==='ok'`, refusals stay on screen, active-account disable mirrors the 409. ★ Audit corrected the blast radius: **`account_params` CASCADES off accounts(id)** (FK + `foreign_keys=ON` in risk_engine.db — the DB the delete actually runs on); the copy says so and a schema-DERIVED pin holds both sides. |
+| `b40315b` | **H6 operator attribution** — `operator-seat.js` (same `op_seat` key as base.html — one seat across both UIs, full-set-equality pinned), register + 60 s heartbeat + takeover + advisory banner (additive `Banner onDismiss`). The lanes a reloading page never needed: re-register-with-RESET on account switch, register-retry after engine-down boot, ★ the EPOCH GUARD (audit-proven race: an in-flight register from account A landing after the switch stamped A's answer AND latched `applied` — H6 restored by its own fix), the foreign lane re-registers (claims the seat the moment the foreign session is reaped), `bumped:false` → re-register (a lost seat is learned within a tick). **LIVE-VERIFIED end to end**: operator_sessions row 20 ACTIVE for the React seat; a foreign register probe answered `foreign` without displacing it. |
+| `41855d0` | **H7 calc auto-refresh** — `autoErr` + tier-2 foot (`auto-refresh failing · showing last calc`, `· retrying` gated on `autoLive` — the promise was false on paused/edited-ticker/halted lanes); ANY success clears BOTH flags (the mirror lie); the AUTO lane is a BOUNDED read (compute-only premise pinned against the GATE'S STRUCTURE after the audit's planted deletion beat a substring pin) — one hung auto POST used to brick the calculator via the `inFlight` latch. ★ Audit H-1: my 5 s floor violated my own upstream-budget rule (the handler awaits `fetch_orderbook` — the app's THIRD exchange-backed polled request) → `Math.max(…, QE_UPSTREAM_READ_DEADLINE_MS)`. |
+| `ecfc8cd` | **The three filed readout fabrications** — Positions gauge `0/20` (readouts dash, geometry fallbacks stay; a REAL zero still reads `0/N`; live cap is **10**, so `\|\| 20` was fabricating a 2×-wrong cap) + the summary cap (class grep); Regime·ATR pane joins the multi-pipe rule via `_ptWorstFoot` (hand-applied per DESIGN.md's interim instruction — the primitives lift is STILL OPEN); tape marks dash with cause-on-title when the snapshot pipe errs (uPnL% stays — SSE is its writer). ★ Audit F1: the flat busy rank let a manual recalc MASK a degraded regime pipe → busy foot carries `hasData`, cold-vs-refresh split. My own executed table had an `or True` vacuous assertion — caught by its own mutation sweep. |
+| `765476c` | **M6 Override reachable in the fail-closed lane** — ★ THE FILED MECHANISM WAS WRONG (recorded at the site): dd_gate fail-closes only INSIDE `limit`, the route ACCEPTS that lane, the override check precedes the settings read so it CURES the halt; what hid the button was the UI's `enforced` gate vs `/api/state`'s deliberate `'unknown'`. Fix twice-corrected by its audit: gate keys on THE TRUE BLOCK (`limit && st.halted` — a mode-sentinel arm was wrong in both two-reads-disagreement cells). Badge keys HALTED on `st.halted`; mode chip gained MODE UNKNOWN; `dd_gate_settings_unreadable` translated for the operator. ★ NOT frontend-only: **data_cache's legacy fallback lane never cleared `dd_manually_unblocked` on recovery** → an override taken there would have silently bypassed the NEXT enforced episode. Plugged. |
+
+### ▶ NEXT SESSION STARTS HERE — the dead-settings batch (M1-M4, M8), INVESTIGATED, awaiting the operator's picks
+
+Every claim verified at the line (two filings corrected). NO code shipped yet
+— the operator asked for the recommendation table first:
+
+| knob | verified state | recommendation |
+|---|---|---|
+| M1 `config_json` knobs | **Knobs are LIVE** (`read_account_config_async` ← data_cache + handlers; these are the matcher tolerances). Orphaned = the EDIT surface: only Jinja `/config`'s Calc-Linkage tab writes them; React has no path there (type the URL). | Bridge link in React Config + README note now; full React port = separate task if wanted. |
+| M2a weekly thresholds (settings) | Dead as inputs — engine computes `weekly_pnl_state` from **account_params ratios**. WORSE: Config preset card DISPLAYS the dead columns as if live. | Display the EFFECTIVE thresholds (params-derived); stop rendering the dead columns. Data stays. |
+| M2b `weekly_pnl_enforcement_mode` | Displayed + `/api/state` reports it; NO gate consumes it (weekly is advisory-only by design). | Label honestly ("advisory-only — no enforcement gate"). A real weekly hard-stop gate = a deliberate feature decision, operator's. |
+| M2c `EXCHANGE_REFRESH_HZ` | ZERO consumers (only its own tests assert it exists). | REMOVE (config.py + 2 test pins). The batch's only true deletion. |
+| M3 `week_start_dow` | Read-no-writer CONFIRMED — but the reader is REAL (analytics weekly bucketing). Permanent Monday. | Add the writer: Config field + update-handler validation (1-7). |
+| M4 `position_changes` | Written every refresh (**19,151 live rows**), zero prod readers ever. The only open-positions time-series (potential forensics). | Stop the write, keep table + data (one call site in handlers.py:158). **ASK: forensic value?** |
+| M8 `analytics_default_period` | Write-no-reader CONFIRMED — presets differentiate on it, the Analytics page hardcodes its default (its own comment says "residue"). | Wire the reader: Analytics fetches it once for the initial period. |
+
+**Operator input needed on**: M4 (stop vs keep-as-forensics), M2b (want a real
+weekly gate later?), M1 (bridge enough, or queue the full port?). "Go as
+recommended" covers all seven.
+
+### Also open
+
+- **H3 — the operator's decision, still deciding**: `confirm_fill_exec_link`
+  zero callers vs four readers. Wire the confirm (my lean: from the linkage
+  resolve flow) or stop rendering four indicators that can only say no.
+- Remaining MEDs after the batch: M5 (dead risk-gate path), M7 (`app_id`
+  hardcoded `'multicharts'`), M9 (client-side tools on a server-paged table),
+  M11 (backfill/audit-export/backtest have no UI), M12 (WorkspaceBar inert
+  off-Dashboard), M13 (false DEV badge text). Then the LOW batch. The 3
+  NOT-DEFECTS stay unfixed.
+- The `_dashFootWorst`/`_ptWorstFoot` **primitives lift** (DESIGN.md names it).
+- Operator owes: **testnet account** (unlocks switch/delete/foreign-banner
+  E2E), **timezone re-check** (my probe wrote UTC to account 1), **qre-v3
+  check** in the `--app` profile (DevTools ▸ Application ▸ Cache Storage),
+  Finnhub key rotation.
+
+### Method notes worth carrying (all paid for this session)
+
+- **The browser pane is `document.hidden`** — its timers throttle (~1/min),
+  so abort/deadline tests there silently never fire. Prove hangs against a
+  REAL socket under node. (Three "failed" runs before diagnosing.)
+- **The phantom comment trap**: `/*` inside a `//` comment opens a block for
+  `_srcpin.code()` — ate 45 lines of linkage pins invisibly (5% file loss;
+  the bulk-size guard missed it). App-wide detector in test_net_deadline;
+  its own first replacement comment tripped it.
+- **Never patch files via heredoc-python `\\n` string surgery** — the outer
+  heredoc unescapes and corrupts anchors (hit 4×). Use the Edit tool;
+  scratch harnesses must be EOL-aware (CRLF checkouts silently miss every
+  multi-line LF anchor — one run "passed" with 5 mutations skipped as
+  ANCHOR MISSING).
+- **JSX comments in attribute position break esbuild** — the recorded trap,
+  hit again anyway.
+- Executed pins keep beating structural ones: the `or True` assertion, the
+  count-survives-dead-branch warn tie, the aid-999 unpatch-insensitive boom,
+  the substring pin the audit's gate-deletion mutation walked through.
+- Mutation harnesses must target EVERY file that pins the subject (one
+  "SURVIVED" was a harness running the wrong test file).
 
 ## ▶ SESSION CLOSE 2026-07-31 (eleventh block) — THREE FIXES DOWN THE SAME SEAM
 
