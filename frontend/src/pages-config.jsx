@@ -116,6 +116,13 @@ const _cfgEffWeekly = (p, ratioKey) => {
     ? null : cap * ratio;
 };
 
+/* M3 (dead-settings batch, 2026-08-04) — week_start_dow's writer. ISO
+   weekday names in 1=Monday … 7=Sunday order; the update endpoint validates
+   the same 1-7 range, and the reader (analytics weekly bucketing via
+   period_resolver) was real the whole time — this select is what un-fixes
+   the permanent Monday. */
+const CFG_DOW_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
 const _cfgUptime = (s) => {
   if (s == null || isNaN(s)) return '—';
   s = Math.floor(+s);
@@ -211,6 +218,9 @@ const CfgAccountForm = ({ account, detail, onReload, onDelete }) => {
     max_dd_warning_pct:        p.max_dd_warning_pct        != null ? String(p.max_dd_warning_pct)        : '',
     max_dd_limit_pct:          p.max_dd_limit_pct          != null ? String(p.max_dd_limit_pct)          : '',
     timezone:                  s.timezone || '',   // config-3 (account_settings, not params)
+    // M3: '' = settings unavailable → the select shows '—' and doSave omits
+    // the field (blank keeps stored, the form's convention).
+    week_start_dow:            s.week_start_dow != null ? String(s.week_start_dow) : '',
   }));
   const [busy, setBusy] = React.useState(null);   // 'save' | 'test' | 'activate'
   const [msg, setMsg]   = React.useState(null);
@@ -246,6 +256,8 @@ const CfgAccountForm = ({ account, detail, onReload, onDelete }) => {
         // config-3: blank keeps the stored value; the endpoint ZoneInfo-validates
         // and rejects an unknown zone rather than silently storing it.
         timezone: form.timezone.trim() || null,
+        // M3: blank keeps stored; the endpoint validates 1-7.
+        week_start_dow: form.week_start_dow || null,
       });
       const ok = r.ok && /saved/i.test(r.text);
       setMsg({ text: r.text || (r.ok ? 'Saved.' : 'save failed'), tone: ok ? 'ok' : 'err' });
@@ -324,6 +336,13 @@ const CfgAccountForm = ({ account, detail, onReload, onDelete }) => {
         <div><Lbl>Broker Account ID</Lbl><input className="qe-input" value={form.broker_account_id} onChange={set('broker_account_id')} /></div>
         <div><Lbl>Timezone (IANA)</Lbl><input className="qe-input" value={form.timezone} onChange={set('timezone')} placeholder="Asia/Bangkok"
           title="Every timestamp on the page renders against this. IANA name, e.g. UTC or Asia/Bangkok — the engine validates it." /></div>
+        <div><Lbl>Week starts (analytics)</Lbl>
+          <select className="qe-input qe-select" value={form.week_start_dow} onChange={set('week_start_dow')}
+            title="First day of the analytics week — drives weekly bucketing (the 'weekly' period boundary). ISO: 1=Monday … 7=Sunday.">
+            <option value="">—</option>
+            {CFG_DOW_NAMES.map((d, i) => <option key={d} value={String(i + 1)}>{d}</option>)}
+          </select>
+        </div>
       </div>
 
       <SecLbl rule>Risk Parameters · sizing (account_params)</SecLbl>

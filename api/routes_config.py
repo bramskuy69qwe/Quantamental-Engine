@@ -51,6 +51,10 @@ async def api_config_account(account_id: int):
             # per-account setting, ZoneInfo-validated by the same
             # POST /accounts/{id}/update the Config form already posts to.
             "timezone",
+            # M3 (dead-settings batch, 2026-08-04): the form now edits it, so
+            # it must see the stored value. 1-7-validated by the same update
+            # endpoint.
+            "week_start_dow",
         )}
     except Exception:
         settings = {}

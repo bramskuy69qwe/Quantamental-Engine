@@ -77,6 +77,7 @@ def _call(**over):
         weekly_loss_warning_pct=None, weekly_loss_limit_pct=None,
         max_dd_warning_pct=None, max_dd_limit_pct=None,
         timezone=None, analytics_default_period=None,
+        week_start_dow=None,
         link_window_seconds=None,
     )
     kwargs.update(over)
@@ -229,6 +230,47 @@ class TestH4InvalidPreferenceRejected:
             "a rejected preference still cost a partial write — the "
             "validation is no longer hoisted above the writers"
         )
+        assert settings_writer.calls == []
+
+
+class TestM3WeekStartDowValidation:
+    """M3 (dead-settings batch, 2026-08-04): week_start_dow joined the
+    preference lane — same site, same H4 hoist discipline, same failure
+    modes to pin: an invalid value must be REJECTED (never dropped-then-
+    'Saved.'), a valid one must reach the settings writer."""
+
+    def test_out_of_range_rejected_not_dropped(self, settings_writer):
+        for bad in (0, 8, -1):
+            r = _call(week_start_dow=bad)
+            body = r.body.decode()
+            assert r.status_code == 400, f"week_start_dow={bad} did not 400"
+            assert str(bad) in body, "the rejection must name the bad input"
+            assert not re.search(r"saved", body, re.I)
+        assert settings_writer.calls == []
+
+    def test_both_boundaries_write(self, settings_writer):
+        for ok_dow in (1, 7):
+            settings_writer.calls.clear()
+            r = _call(week_start_dow=ok_dow)
+            assert re.search(r"saved", r.body.decode(), re.I)
+            assert settings_writer.calls == [
+                (999, {"week_start_dow": ok_dow})
+            ]
+
+    def test_rejection_happens_before_any_write(self, settings_writer,
+                                                monkeypatch):
+        """The hoist, exercised for THIS field: a bad dow submitted with a
+        credential edit must cost nothing."""
+        from api.routes_accounts import account_registry
+        reg_calls = []
+
+        async def reg_stub(*a, **kw):
+            reg_calls.append(a)
+
+        monkeypatch.setattr(account_registry, "update_account", reg_stub)
+        r = _call(week_start_dow=9, api_key="k")
+        assert r.status_code == 400
+        assert reg_calls == []
         assert settings_writer.calls == []
 
 

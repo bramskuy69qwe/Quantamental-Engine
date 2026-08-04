@@ -391,6 +391,11 @@ async def update_account_detail(
     # Preferences (account_settings table)
     timezone: Optional[str] = Form(None),
     analytics_default_period: Optional[str] = Form(None),
+    # M3 (dead-settings batch, 2026-08-04): week_start_dow finally gets its
+    # writer — the reader was REAL the whole time (routes_analytics weekly
+    # bucketing via period_resolver), so the stored default was a permanent
+    # Monday. ISO weekday, 1=Monday … 7=Sunday.
+    week_start_dow: Optional[int] = Form(None),
     # HIGH-027 (Task 104b): per-account default link window. Bounded
     # 1..MAX_LINK_WINDOW_SECONDS (24h).
     link_window_seconds: Optional[int] = Form(None),
@@ -440,6 +445,16 @@ async def update_account_detail(
                 f'Unknown analytics period: {analytics_default_period}.</span>',
                 status_code=400,
             )
+    # M3: same H4 hoist discipline as the two preferences above — validate
+    # BEFORE any write, reject loudly instead of dropping. (A non-integer
+    # form value never reaches here: FastAPI 422s it at coercion.)
+    if week_start_dow is not None and not (1 <= week_start_dow <= 7):
+        return HTMLResponse(
+            f'<span style="color:var(--red);font-size:.65rem;">'
+            f'week_start_dow must be 1 (Monday) … 7 (Sunday); '
+            f'got {week_start_dow}.</span>',
+            status_code=400,
+        )
     if timezone is not None:
         from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
         try:
@@ -563,6 +578,8 @@ async def update_account_detail(
         settings_updates["analytics_default_period"] = analytics_default_period
     if timezone is not None:
         settings_updates["timezone"] = timezone
+    if week_start_dow is not None:
+        settings_updates["week_start_dow"] = week_start_dow
     if settings_updates:
         from core.db_account_settings import update_account_settings
         try:
@@ -579,8 +596,9 @@ async def update_account_detail(
                       account_id, exc)
             return HTMLResponse(
                 '<span style="color:var(--red);font-size:.65rem;">'
-                'Preferences write failed (timezone/period) — any other '
-                'submitted fields were stored. Check engine logs and retry.'
+                'Preferences write failed (timezone/period/week-start) — '
+                'any other submitted fields were stored. Check engine logs '
+                'and retry.'
                 '</span>'
             )
 

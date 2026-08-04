@@ -22,6 +22,12 @@ Shipped so far (in commit order):
   M2b · weekly enforcement rendered as the constant ADVISORY-ONLY — no
         gate consumes the stored mode (advisory by design; /api/state's
         G-O2 comment is the backend statement of the same fact).
+  M3  · week_start_dow gains its writer: Config form select (ISO 1-7)
+        → POST /accounts/{id}/update with hoisted 1-7 validation → the
+        settings writer. The reader (routes_analytics weekly bucketing
+        via period_resolver) was real the whole time. Validation lanes
+        live in tests/test_false_success_class.py::TestM3* (that file
+        owns the handler's false-success/validation harness).
 
 Run: pytest tests/test_dead_settings_batch.py -v
 """
@@ -300,6 +306,116 @@ class TestM2aM2bWeeklyPostureHonest:
                          .read_text(encoding="utf-8"))
         assert "_cfgEffWeekly(p, 'weekly_loss_warning_pct')" in stripped
         assert "_cfgEffWeekly(p, 'weekly_loss_limit_pct')" in stripped
+
+
+# ── M3: week_start_dow finally has a writer ─────────────────────────────────
+
+
+class TestM3WeekStartDowWriter:
+    """The reader (routes_analytics.py weekly bucketing) was always real;
+    nothing ever wrote the column, so every account bucketed weeks from
+    Monday forever. The writer chain: Config select → /accounts/{id}/update
+    (1-7-validated, see test_false_success_class.TestM3*) → settings row.
+    This class pins the two ends this chain newly grew."""
+
+    def test_api_serves_the_stored_value(self, monkeypatch):
+        """Executed: the Config form can only render the current value if
+        /api/config/account serves it."""
+        import asyncio
+
+        import core.db_account_settings as smod
+        from api.routes_config import api_config_account
+        from core.account_registry import account_registry
+        from core.db_account_settings import AccountSettings
+
+        monkeypatch.setattr(
+            smod, "get_account_settings",
+            lambda aid: AccountSettings(account_id=999, week_start_dow=3),
+        )
+        monkeypatch.setattr(account_registry, "get_account_params",
+                            lambda aid: {})
+        payload = json.loads(asyncio.run(api_config_account(999)).body)
+        assert payload["settings"].get("week_start_dow") == 3
+
+    def test_form_seeds_posts_and_offers_exactly_iso_1_to_7(self):
+        """Comment-stripped structural pins over pages-config.jsx: the form
+        state seeds from settings, doSave posts the field (blank keeps
+        stored), and the select offers exactly the values the endpoint
+        accepts — both sides of that range parsed and compared (the server
+        side from its own validation expression)."""
+        import re
+
+        stripped = _code((_ROOT / "frontend" / "src" / "pages-config.jsx")
+                         .read_text(encoding="utf-8"))
+        assert re.search(
+            r"week_start_dow:\s*s\.week_start_dow != null "
+            r"\? String\(s\.week_start_dow\) : ''", stripped)
+        assert "week_start_dow: form.week_start_dow || null" in stripped
+        # the select maps CFG_DOW_NAMES with value=String(i + 1) → values
+        # are exactly 1..len(CFG_DOW_NAMES)
+        m = re.search(r"const CFG_DOW_NAMES = \[([^\]]*)\];", stripped)
+        assert m, "CFG_DOW_NAMES literal not found"
+        names = [n.strip().strip("'\"") for n in m.group(1).split(",")]
+        # the FULL ISO sequence, not just count + endpoints — a swapped
+        # middle pair passed the first draft (audit LOW on this pin)
+        assert names == ["Monday", "Tuesday", "Wednesday", "Thursday",
+                         "Friday", "Saturday", "Sunday"]
+        assert "CFG_DOW_NAMES.map((d, i) =>" in stripped
+        assert "value={String(i + 1)}" in stripped
+        # server side: PARSE the update handler's own range expression and
+        # compare option count against it — both sides derived, neither
+        # hardcoded twice
+        handler = (_ROOT / "api" / "routes_accounts.py").read_text(
+            encoding="utf-8")
+        sm = re.search(
+            r"not \((\d+) <= week_start_dow <= (\d+)\)", handler)
+        assert sm, "the handler's 1-7 range expression is gone"
+        lo, hi = int(sm.group(1)), int(sm.group(2))
+        assert (lo, hi) == (1, 7), "ISO weekday range drifted"
+        assert hi - lo + 1 == len(names), (
+            "the form offers a different number of days than the server "
+            "accepts"
+        )
+
+    def test_the_reader_still_reads_it(self):
+        """M3's whole premise: the reader is real. TWO AST pins on
+        routes_analytics, because the chain has two severable halves the
+        first draft covered only one of (audit LOW: dropping the
+        `week_start_dow=week_dow` kwarg from the resolve_period call —
+        which silently reinstates permanent-Monday — left the read-only
+        pin green): (a) the settings attribute is read, (b) a
+        resolve_period CALL actually carries a week_start_dow keyword."""
+        src = (_ROOT / "api" / "routes_analytics.py").read_text(
+            encoding="utf-8")
+        tree = ast.parse(src)
+        reads = [
+            node.attr for node in ast.walk(tree)
+            if isinstance(node, ast.Attribute)
+            and isinstance(node.ctx, ast.Load)
+        ]
+        assert "week_start_dow" in reads, (
+            "routes_analytics no longer reads week_start_dow — if the "
+            "reader died, M3's writer is decoration; re-decide, don't "
+            "just re-pin"
+        )
+        rp_calls = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and (
+                (isinstance(node.func, ast.Name)
+                 and node.func.id == "resolve_period")
+                or (isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "resolve_period")
+            )
+        ]
+        assert rp_calls, "no resolve_period call found in routes_analytics"
+        assert any(
+            kw.arg == "week_start_dow"
+            for call in rp_calls for kw in call.keywords
+        ), (
+            "resolve_period is called WITHOUT week_start_dow — the "
+            "setting no longer influences weekly bucketing (permanent "
+            "Monday is back)"
+        )
 
 
 @pytest.mark.skipif(_NODE is None, reason="node not on PATH")

@@ -3662,6 +3662,7 @@ const _cfgEffWeekly = (p, ratioKey) => {
   const ratio = p ? p[ratioKey] : null;
   return cap == null || ratio == null || isNaN(cap) || isNaN(ratio) ? null : cap * ratio;
 };
+const CFG_DOW_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 const _cfgUptime = (s) => {
   if (s == null || isNaN(s)) return "\u2014";
   s = Math.floor(+s);
@@ -3728,8 +3729,11 @@ const CfgAccountForm = ({ account, detail, onReload, onDelete }) => {
     weekly_loss_limit_pct: p.weekly_loss_limit_pct != null ? String(p.weekly_loss_limit_pct) : "",
     max_dd_warning_pct: p.max_dd_warning_pct != null ? String(p.max_dd_warning_pct) : "",
     max_dd_limit_pct: p.max_dd_limit_pct != null ? String(p.max_dd_limit_pct) : "",
-    timezone: s.timezone || ""
+    timezone: s.timezone || "",
     // config-3 (account_settings, not params)
+    // M3: '' = settings unavailable → the select shows '—' and doSave omits
+    // the field (blank keeps stored, the form's convention).
+    week_start_dow: s.week_start_dow != null ? String(s.week_start_dow) : ""
   }));
   const [busy, setBusy] = React.useState(null);
   const [msg, setMsg] = React.useState(null);
@@ -3765,7 +3769,9 @@ const CfgAccountForm = ({ account, detail, onReload, onDelete }) => {
         ...cfgRatioPairs(form, p),
         // config-3: blank keeps the stored value; the endpoint ZoneInfo-validates
         // and rejects an unknown zone rather than silently storing it.
-        timezone: form.timezone.trim() || null
+        timezone: form.timezone.trim() || null,
+        // M3: blank keeps stored; the endpoint validates 1-7.
+        week_start_dow: form.week_start_dow || null
       });
       const ok = r.ok && /saved/i.test(r.text);
       setMsg({ text: r.text || (r.ok ? "Saved." : "save failed"), tone: ok ? "ok" : "err" });
@@ -3819,6 +3825,16 @@ const CfgAccountForm = ({ account, detail, onReload, onDelete }) => {
       placeholder: "Asia/Bangkok",
       title: "Every timestamp on the page renders against this. IANA name, e.g. UTC or Asia/Bangkok \u2014 the engine validates it."
     }
+  )), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Week starts (analytics)"), /* @__PURE__ */ React.createElement(
+    "select",
+    {
+      className: "qe-input qe-select",
+      value: form.week_start_dow,
+      onChange: set("week_start_dow"),
+      title: "First day of the analytics week \u2014 drives weekly bucketing (the 'weekly' period boundary). ISO: 1=Monday \u2026 7=Sunday."
+    },
+    /* @__PURE__ */ React.createElement("option", { value: "" }, "\u2014"),
+    CFG_DOW_NAMES.map((d, i) => /* @__PURE__ */ React.createElement("option", { key: d, value: String(i + 1) }, d))
   ))), /* @__PURE__ */ React.createElement(SecLbl, { rule: true }, "Risk Parameters \xB7 sizing (account_params)"), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Risk / Trade (fraction)"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.individual_risk_per_trade, onChange: set("individual_risk_per_trade"), placeholder: "0.01" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Weekly Loss (fraction)"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_w_loss_percent, onChange: set("max_w_loss_percent"), placeholder: "0.05" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Drawdown (fraction)"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_dd_percent, onChange: set("max_dd_percent"), placeholder: "0.10" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Exposure \xD7"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_exposure, onChange: set("max_exposure"), placeholder: "5.0" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Positions"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_position_count, onChange: set("max_position_count"), placeholder: "10" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Corr. Exposure (fraction)"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_correlated_exposure, onChange: set("max_correlated_exposure"), placeholder: "0.50" }))), /* @__PURE__ */ React.createElement(SecLbl, { rule: true, right: /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)", fontSize: "0.54rem" } }, "fraction of the budget above \xB7 warn < limit") }, "Warn & Hard-stop ratios (account_params)"), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, marginBottom: 4 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "DD Warn \xD7 Max DD"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_dd_warning_pct, onChange: set("max_dd_warning_pct"), placeholder: "0.80" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "DD Hard-stop \xD7 Max DD"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_dd_limit_pct, onChange: set("max_dd_limit_pct"), placeholder: "0.95" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Weekly Warn \xD7 Max W. Loss"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.weekly_loss_warning_pct, onChange: set("weekly_loss_warning_pct"), placeholder: "0.80" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Weekly Hard-stop \xD7 Max W. Loss"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.weekly_loss_limit_pct, onChange: set("weekly_loss_limit_pct"), placeholder: "0.95" }))), /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-muted)", margin: "0 0 10px", lineHeight: 1.5 } }, "Range 0.50\u20130.99 (hard-stop to 1.00); warn must stay below its hard-stop or the save is rejected. Leave a field blank to keep its stored value \u2014 edit either half of a pair and both are sent.", /* @__PURE__ */ React.createElement("br", null), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, "WEEKLY"), " drives the live weekly state machine.", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, " DD"), " is a FALLBACK only \u2014 the rolling-DD path uses the absolute thresholds below, and these two are read solely if that path errors."), /* @__PURE__ */ React.createElement(SecLbl, { rule: true, right: /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)", fontSize: "0.54rem" } }, "READ-ONLY \xB7 DD set via Presets tab \xB7 weekly derived from the ratios above") }, "Enforcement & Recovery \xB7 effective posture"), /* @__PURE__ */ React.createElement(FieldList, { cols: 2, rows: [
     { label: "Strategy preset", value: (s.strategy_preset || "custom").toUpperCase(), color: "cyan" },
     { label: "DD window", value: s.dd_rolling_window_days != null ? s.dd_rolling_window_days + "d" : "\u2014" },
