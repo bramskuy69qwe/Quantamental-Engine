@@ -4,7 +4,8 @@ Async SQLite persistence layer (aiosqlite).
 Tables:
   account_snapshots  – written on every WS ACCOUNT_UPDATE / REST refresh
   pre_trade_log      – every risk-calculator run (replaces pre_trade_log.csv)
-  position_changes   – snapshot of all open positions on each refresh
+  position_changes   – historical open-position snapshots (write retired
+                       2026-08-04, dead-settings M4 — rows kept as forensics)
   execution_log      – filled trades (manual via UI)
   trade_history      – closed trades (manual via UI)
 

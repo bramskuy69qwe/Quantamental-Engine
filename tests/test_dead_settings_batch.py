@@ -12,6 +12,9 @@ M2c was in the tree — the fabricated-provenance class).
 Shipped so far (in commit order):
   M2c · EXCHANGE_REFRESH_HZ — REMOVED (zero consumers ever; git-verified
         back to its v2.4 introduction — it shipped without wiring).
+  M4  · position_changes — the per-refresh write retired (19,151 live
+        rows, zero prod readers ever); the table, its rows and the
+        db_snapshots API all stay (forensics + kept-API convention).
 
 Run: pytest tests/test_dead_settings_batch.py -v
 """
@@ -96,3 +99,105 @@ class TestM2cExchangeRefreshHzRemoved:
             "EXCHANGE_REFRESH_HZ is referenced in executing code — it was "
             f"removed as consumer-less (M2c). Sites: {hits}"
         )
+
+
+# ── M4: the position_changes write is retired; table + API + data stay ──────
+
+
+class TestM4PositionChangesWriteRetired:
+    @pytest.mark.asyncio
+    async def test_handler_writes_snapshot_but_not_position_changes(
+        self, monkeypatch
+    ):
+        """Executed against the real handler: a positions refresh with a
+        NON-EMPTY book persists the account snapshot and never touches
+        position_changes. (Non-empty matters: insert_position_changes
+        no-ops on [], so an empty-book run could pass vacuously even
+        pre-fix. The symbol set is pre-seeded equal so the ws_manager
+        restart branch stays cold — this test is about the writes.)"""
+        from types import SimpleNamespace
+
+        from core import handlers
+        from core.state import app_state
+
+        calls = {"pos": 0, "snap": 0}
+
+        async def pos_stub(*a, **kw):
+            calls["pos"] += 1
+
+        async def snap_stub(*a, **kw):
+            calls["snap"] += 1
+
+        monkeypatch.setattr(handlers.db, "insert_position_changes", pos_stub,
+                            raising=False)
+        monkeypatch.setattr(handlers.db, "insert_account_snapshot", snap_stub,
+                            raising=False)
+        monkeypatch.setattr(app_state, "_data_cache", None, raising=False)
+        monkeypatch.setattr(
+            app_state, "_positions_legacy",
+            [SimpleNamespace(ticker="BTCUSDT", direction="LONG",
+                             contract_amount=0.1, average=80000.0,
+                             fair_price=80000.0, position_value_usdt=8000.0,
+                             individual_unrealized=0.0,
+                             individual_margin_used=400.0,
+                             sector="big_two_crypto")],
+            raising=False,
+        )
+        # monkeypatch, not direct assignment — a bare set here leaks the
+        # sentinel symbol set into every later handler test in the session
+        # (audit LOW on this test's first draft).
+        monkeypatch.setattr(handlers.handle_positions_refreshed,
+                            "_prev_syms", {"BTCUSDT"}, raising=False)
+
+        await handlers.handle_positions_refreshed({"trigger": "m4-test"})
+
+        assert calls["snap"] == 1, "the account-snapshot write must survive M4"
+        assert calls["pos"] == 0, (
+            "M4 regression: handle_positions_refreshed wrote "
+            "position_changes again — the write was retired 2026-08-04 "
+            "(19k rows, zero prod readers ever)."
+        )
+
+    def test_no_call_site_in_handlers_source(self):
+        """AST pin: no `<anything>.insert_position_changes(...)` call left
+        in core/handlers.py. AST, because the retirement's anchor comment
+        there names the method — a text grep would false-fail (or be
+        written to skip comments and rot)."""
+        tree = ast.parse(
+            (_ROOT / "core" / "handlers.py").read_text(encoding="utf-8")
+        )
+        called = [
+            node.func.attr
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+        ]
+        assert "insert_position_changes" not in called
+
+    def test_the_api_and_the_table_stay(self):
+        """The retirement is the WRITE only. Deleting the DB-layer method
+        or the CREATE TABLE is a data-affecting decision this batch
+        explicitly did NOT take (HANDOFF decision table: 'Stop the write,
+        keep table + data') — a later dead-code sweep must meet this pin
+        and read that reasoning first.
+
+        The table check EXECUTES the base schema into :memory: and asks
+        sqlite_master — this pin's first draft was a substring match that
+        its own mutation sweep walked through (a renamed
+        `position_changes_x` still contained the asserted prefix)."""
+        import sqlite3
+
+        import core.database as dbmod
+        from core.db_snapshots import SnapshotsMixin
+
+        assert hasattr(SnapshotsMixin, "insert_position_changes")
+        conn = sqlite3.connect(":memory:")
+        try:
+            conn.executescript(dbmod._CREATE_STATEMENTS)
+            row = conn.execute(
+                "SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='position_changes'"
+            ).fetchone()
+        finally:
+            conn.close()
+        assert row, "position_changes is no longer created by the base schema"

@@ -53,6 +53,11 @@ class SnapshotsMixin:
     async def insert_position_changes(
         self, positions: List[Dict[str, Any]], trigger: str, account_id: int = 1
     ) -> None:
+        # M4 (dead-settings batch, 2026-08-04): ZERO prod callers — the
+        # handlers.py per-refresh write (the only one it ever had) was
+        # retired. Kept as the table-level API for a table that still holds
+        # ~19k rows of real history; wiring a NEW caller is a deliberate
+        # feature decision, not a revert.
         if not positions:
             return
         ts = datetime.now(timezone.utc).isoformat()

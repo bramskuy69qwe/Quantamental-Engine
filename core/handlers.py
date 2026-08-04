@@ -109,9 +109,13 @@ async def handle_positions_refreshed(payload: Dict[str, Any]) -> None:
       - ws_manager._refresh_positions_after_fill  (trigger="fill")
       - main._account_refresh_loop                (trigger="periodic")
 
-    1. Recalculate portfolio metrics
-    2. Persist all open positions snapshot to DB
-    3. Persist account snapshot (position refresh changes portfolio state)
+    1. Rebuild market WS streams if the position symbol set changed
+    2. Persist account snapshot (position refresh changes portfolio state)
+
+    (Portfolio recalculation happens UPSTREAM — DataCache.apply_position_
+    snapshot() runs it before publishing this event, see the comment
+    below; the "persist all open positions to position_changes" step was
+    retired 2026-08-04 — dead-settings batch M4, note at the write site.)
     """
     # recalculate_portfolio() now called inside DataCache.apply_position_snapshot()
     # before this event is published — portfolio is already up-to-date.
@@ -138,28 +142,16 @@ async def handle_positions_refreshed(payload: Dict[str, Any]) -> None:
 
     trigger = payload.get("trigger", "unknown")
 
-    # Snapshot all current positions
-    position_records = [
-        {
-            "ticker":                 p.ticker,
-            "direction":              p.direction,
-            "contract_amount":        p.contract_amount,
-            "average":                p.average,
-            "fair_price":             p.fair_price,
-            "position_value_usdt":    p.position_value_usdt,
-            "individual_unrealized":  p.individual_unrealized,
-            "individual_margin_used": p.individual_margin_used,
-            "sector":                 p.sector,
-        }
-        for p in app_state.positions
-    ]
+    # M4 (dead-settings batch, 2026-08-04): the per-position write to
+    # position_changes is RETIRED. It ran on every refresh since its v2.x
+    # introduction (19,151 live rows) and no prod code ever read the table.
+    # The table, its historical rows and db.insert_position_changes all
+    # STAY (forensic time-series + the kept table-level-API convention,
+    # same reasoning as insert_trade_history in the ninth-block retirement)
+    # — only this, its ONLY caller, stops. `trigger` still feeds the log
+    # line below.
 
     try:
-        await db.insert_position_changes(
-            position_records,
-            trigger=f"risk:positions_refreshed:{trigger}",
-            account_id=app_state.active_account_id,
-        )
         await db.insert_account_snapshot(_build_account_snapshot("risk:positions_refreshed"))
     except Exception as exc:
         log.error("handle_positions_refreshed DB write failed: %s", exc)
