@@ -36,6 +36,12 @@ Shipped so far (in commit order):
         editor beside the other two preferences (the only remaining
         writer was preset Apply, which couples the period to a whole
         risk posture; the endpoint already validated the field).
+  M1  · config_json knobs (LIVE matcher tolerances — read_account_config
+        consumers in data_cache/handlers/routes) kept their only editor
+        on the Jinja /config Calc-Linkage tab, which nothing linked to
+        after the Jinja retirement. Bridge shipped per the decision
+        table: a React Config header link to /config?tab=calc-linkage +
+        a README note; the full React port stays a separate task.
 
 Run: pytest tests/test_dead_settings_batch.py -v
 """
@@ -424,6 +430,87 @@ class TestM3WeekStartDowWriter:
             "setting no longer influences weekly bucketing (permanent "
             "Monday is back)"
         )
+
+
+# ── M1: the LIVE config_json knobs get a visible door ───────────────────────
+
+
+class TestM1CalcLinkageBridge:
+    """The knobs are live (matcher tolerances); only their EDITOR was
+    orphaned. The bridge is two-sided by construction — a React link is
+    only honest while the Jinja tab it targets still exists — so both
+    sides are pinned together and either half dying turns this class red
+    with the other half named."""
+
+    BRIDGE = "/config?tab=calc-linkage"
+
+    def test_react_config_carries_the_bridge_link(self):
+        stripped = _code((_ROOT / "frontend" / "src" / "pages-config.jsx")
+                         .read_text(encoding="utf-8"))
+        assert 'href="/config?tab=calc-linkage"' in stripped
+        # new tab — an SPA-killing same-tab nav would silently drop live
+        # page state (the title says so too, but the attribute is the
+        # behavior)
+        i = stripped.index('href="/config?tab=calc-linkage"')
+        vicinity = stripped[i:i + 300]
+        assert 'target="_blank"' in vicinity
+        assert 'rel="noopener noreferrer"' in vicinity
+
+    def test_the_bridge_reaches_the_emitted_bundle(self):
+        """Source is not what runs (the repo's standing stale-build guard,
+        e.g. test_net_deadline): the door the operator actually gets is
+        the manifest-named bundle. Audit MED on this class's first draft —
+        it claimed 'either half dying turns this red' while never reading
+        the shipped half; an edit-without-rebuild would have dropped the
+        link from the UI with every pin green."""
+        man = json.loads((_ROOT / "static" / "v3" / "manifest.json")
+                         .read_text(encoding="utf-8"))
+        bundle = (_ROOT / "static" / "v3" / man["app"]).read_text(
+            encoding="utf-8")
+        i = bundle.index('href: "/config?tab=calc-linkage"')
+        assert 'target: "_blank"' in bundle[i - 300:i + 300]
+
+    def test_the_jinja_side_of_the_bridge_still_exists(self):
+        """The tab div, the tab-switch registry entry, AND the ?tab= query
+        handling — all three are load-bearing for the link to land
+        somewhere real. If the Jinja Calc-Linkage tab is ever retired,
+        the React port must ship FIRST and this bridge (link + README
+        note) must be removed in the same change."""
+        cfg = (_ROOT / "templates" / "config.html").read_text(
+            encoding="utf-8")
+        assert 'id="tab-calc-linkage"' in cfg
+        # the show/hide REGISTRY ARRAY specifically — a bare 'calc-linkage'
+        # scan also matched the tab button's onclick, so dropping the tab
+        # from the array alone (which breaks exactly the ?tab= deep link
+        # the bridge rides) stayed green (audit LOW on this pin's first
+        # draft)
+        assert "['accounts','connections','calc-linkage']" in cfg
+        assert "URLSearchParams(window.location.search).get('tab')" in cfg
+        # and the page is still served at all
+        routes = (_ROOT / "api" / "routes_config.py").read_text(
+            encoding="utf-8")
+        assert '@router.get("/config"' in routes
+
+    def test_the_readme_documents_the_door(self):
+        assert self.BRIDGE in (_ROOT / "README.md").read_text(
+            encoding="utf-8")
+
+    def test_the_knobs_are_actually_live(self):
+        """M1's premise, pinned so the bridge can't outlive its point: at
+        least the matcher/data-cache lane still resolves per-account
+        config through core.account_config (if THIS goes, the whole
+        config_json surface is a new dead-settings finding, not a
+        bridge)."""
+        import ast as _ast
+
+        src = (_ROOT / "core" / "data_cache.py").read_text(encoding="utf-8")
+        tree = _ast.parse(src)
+        called = {
+            n.func.attr if isinstance(n.func, _ast.Attribute)
+            else getattr(n.func, "id", None)
+            for n in _ast.walk(tree) if isinstance(n, _ast.Call)
+        }
+        assert "read_account_config_async" in called
 
 
 # ── M8: analytics_default_period finally has readers ────────────────────────

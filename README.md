@@ -194,6 +194,12 @@ pytest tests/
 The engine creates SQLite databases in `data/` on first startup. Schema
 migrations in `core/migrations/` are applied automatically.
 
+**Calc-linkage knobs** (`accounts.config_json`: match window, skew/price
+tolerances, deviation thresholds, webhook, notification subscriptions) are
+LIVE matcher inputs edited on the legacy page at `/config?tab=calc-linkage`
+— linked from the React Config page header (M1, 2026-08-04). A full React
+editor is a planned separate task.
+
 ---
 
 ## Architectural Principles

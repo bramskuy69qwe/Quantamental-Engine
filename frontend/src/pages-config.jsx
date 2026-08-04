@@ -1149,7 +1149,25 @@ const ConfigPage = () => {
       position: 'relative',
     }}>
       <TopNavStd page="Config" variant="line" dense />
-      <PageHeader title="Configuration" subtitle="accounts · connections · risk parameters · presets" />
+      <PageHeader title="Configuration" subtitle="accounts · connections · risk parameters · presets">
+        {/* M1 (dead-settings batch, 2026-08-04): the accounts.config_json
+            knob set (match window, skew/price tolerances, deviation
+            thresholds, webhook, notification subscriptions) is LIVE — the
+            matcher and notification paths read it every cycle — but its only
+            editor is the Jinja /config Calc-Linkage tab, which nothing has
+            linked to since the Jinja retirement (type-the-URL access only).
+            Bridge, not port: the full React editor is a planned separate
+            task; until then the door must at least be visible. New tab so
+            the SPA stays alive. */}
+        {/* textDecoration: an <a> in .qe-btn clothing renders the UA
+            underline under button chrome — the one anchor precedent
+            (pages-regime) sets it inline for the same reason (audit LOW). */}
+        <a className="qe-btn qe-btn-sm" style={{ textDecoration: 'none' }}
+          href="/config?tab=calc-linkage" target="_blank" rel="noopener noreferrer"
+          title="Calc-linkage knobs (accounts.config_json): match window, skew/price tolerances, deviation thresholds, webhook, notification subscriptions. LIVE matcher inputs — edited on the legacy page until the React port lands. Opens in a new tab.">
+          Calc-Linkage knobs ↗
+        </a>
+      </PageHeader>
 
       <TabStrip value={tab} onChange={setTab} tabs={[
         ['accounts', 'Accounts'], ['connections', 'Connections'], ['presets', 'Presets'], ['system', 'System'],

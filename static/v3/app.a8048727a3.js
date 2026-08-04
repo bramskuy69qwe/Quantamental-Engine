@@ -4591,7 +4591,18 @@ const ConfigPage = () => {
     // anchors the Add-Account ModelDialog, matching the other dialog-hosting
     // page roots (linkage / models / dashboard)
     position: "relative"
-  } }, /* @__PURE__ */ React.createElement(TopNavStd, { page: "Config", variant: "line", dense: true }), /* @__PURE__ */ React.createElement(PageHeader, { title: "Configuration", subtitle: "accounts \xB7 connections \xB7 risk parameters \xB7 presets" }), /* @__PURE__ */ React.createElement(TabStrip, { value: tab, onChange: setTab, tabs: [
+  } }, /* @__PURE__ */ React.createElement(TopNavStd, { page: "Config", variant: "line", dense: true }), /* @__PURE__ */ React.createElement(PageHeader, { title: "Configuration", subtitle: "accounts \xB7 connections \xB7 risk parameters \xB7 presets" }, /* @__PURE__ */ React.createElement(
+    "a",
+    {
+      className: "qe-btn qe-btn-sm",
+      style: { textDecoration: "none" },
+      href: "/config?tab=calc-linkage",
+      target: "_blank",
+      rel: "noopener noreferrer",
+      title: "Calc-linkage knobs (accounts.config_json): match window, skew/price tolerances, deviation thresholds, webhook, notification subscriptions. LIVE matcher inputs \u2014 edited on the legacy page until the React port lands. Opens in a new tab."
+    },
+    "Calc-Linkage knobs \u2197"
+  )), /* @__PURE__ */ React.createElement(TabStrip, { value: tab, onChange: setTab, tabs: [
     ["accounts", "Accounts"],
     ["connections", "Connections"],
     ["presets", "Presets"],
