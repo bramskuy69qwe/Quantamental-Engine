@@ -123,6 +123,20 @@ const _cfgEffWeekly = (p, ratioKey) => {
    the permanent Monday. */
 const CFG_DOW_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
+/* M8 (dead-settings batch, 2026-08-04 — a NAMED ADDITION beyond the filed
+   "wire the reader" recommendation): with the Jinja pages retired, the only
+   remaining writer of analytics_default_period was preset Apply, which
+   couples the period to a whole risk posture. A direct editor belongs
+   beside the other two preferences. Values are pinned 1:1 against
+   period_resolver.VALID_PERIODS (test_dead_settings_batch); labels follow
+   the retired Jinja account_detail dropdown. */
+const CFG_ANA_PERIODS = [
+  ['monthly', 'Monthly (This Month)'], ['weekly', 'Weekly (This Week)'],
+  ['quarterly', 'Quarterly'], ['yearly', 'Yearly'],
+  ['rolling_30d', 'Rolling 30 Days'], ['rolling_90d', 'Rolling 90 Days'],
+  ['all_time', 'All Time'],
+];
+
 const _cfgUptime = (s) => {
   if (s == null || isNaN(s)) return '—';
   s = Math.floor(+s);
@@ -221,6 +235,9 @@ const CfgAccountForm = ({ account, detail, onReload, onDelete }) => {
     // M3: '' = settings unavailable → the select shows '—' and doSave omits
     // the field (blank keeps stored, the form's convention).
     week_start_dow:            s.week_start_dow != null ? String(s.week_start_dow) : '',
+    // M8: same convention. Preset Apply also writes this; whatever was
+    // stored last wins on the Analytics page's next mount.
+    analytics_default_period:  s.analytics_default_period || '',
   }));
   const [busy, setBusy] = React.useState(null);   // 'save' | 'test' | 'activate'
   const [msg, setMsg]   = React.useState(null);
@@ -258,6 +275,8 @@ const CfgAccountForm = ({ account, detail, onReload, onDelete }) => {
         timezone: form.timezone.trim() || null,
         // M3: blank keeps stored; the endpoint validates 1-7.
         week_start_dow: form.week_start_dow || null,
+        // M8: blank keeps stored; the endpoint validates VALID_PERIODS.
+        analytics_default_period: form.analytics_default_period || null,
       });
       const ok = r.ok && /saved/i.test(r.text);
       setMsg({ text: r.text || (r.ok ? 'Saved.' : 'save failed'), tone: ok ? 'ok' : 'err' });
@@ -341,6 +360,13 @@ const CfgAccountForm = ({ account, detail, onReload, onDelete }) => {
             title="First day of the analytics week — drives weekly bucketing (the 'weekly' period boundary). ISO: 1=Monday … 7=Sunday.">
             <option value="">—</option>
             {CFG_DOW_NAMES.map((d, i) => <option key={d} value={String(i + 1)}>{d}</option>)}
+          </select>
+        </div>
+        <div><Lbl>Analytics default period</Lbl>
+          <select className="qe-input qe-select" value={form.analytics_default_period} onChange={set('analytics_default_period')}
+            title="The period the Analytics page opens on. Preset Apply also writes this.">
+            <option value="">—</option>
+            {CFG_ANA_PERIODS.map(([val, label]) => <option key={val} value={val}>{label}</option>)}
           </select>
         </div>
       </div>

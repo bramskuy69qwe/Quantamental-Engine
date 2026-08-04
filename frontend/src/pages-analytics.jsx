@@ -24,8 +24,9 @@
      display (and signed Σ) is derived client-side from `adverse`.
    - Sortino/PF 999.0 = the engine "no downside/no losers" sentinel → rendered ∞.
    - PaneFoot telemetry lines from the design are mock ornaments — not ported
-     (P1-P4 parity). Period default is 'monthly' (the account's saved
-     analytics_default_period is not fetched — residue).
+     (P1-P4 parity). Initial period: the account's saved
+     analytics_default_period, fetched once at mount (M8, dead-settings batch
+     2026-08-04); 'monthly' is the pre-answer + failure fallback.
    - PERIOD nav (‹ ›) is ENABLED for month/week/quarter/year (real offset nav —
      the reference disabled it only because its demo dataset was frozen).
    - Execution slippage is RESIDUAL-vs-plan (audit H-1): fills.slippage_actual
@@ -58,6 +59,20 @@ const ANA_TABS = [
 // (disabled) on the rest — a dead control must look dead.
 const ANA_PERIOD_TABS = new Set(['overview', 'dist', 'pairs', 'excursions', 'rmultiples', 'risk']);
 const ANA_NO_NAV = new Set(['rolling_30d', 'rolling_90d', 'all_time']);
+
+/* M8 — the preset vocabulary is module-level so the saved-period seed can
+   validate against EXACTLY what the selector offers (one list, two uses:
+   AnaPeriodNav renders it, _anaSeedPeriod gates on it). */
+const ANA_PERIODS = [['monthly', 'Month'], ['weekly', 'Week'], ['quarterly', 'Quarter'],
+  ['yearly', 'Year'], ['rolling_30d', '30D'], ['rolling_90d', '90D'], ['all_time', 'All']];
+const ANA_PERIOD_IDS = new Set(ANA_PERIODS.map(([id]) => id));
+
+/* M8 — pure seed decision: adopt the account's saved default only when the
+   operator hasn't touched the selector AND the value is one the selector
+   offers. Null = keep the current period. Pure so the batch tests execute
+   it under node. */
+const _anaSeedPeriod = (touched, fetched) =>
+  (!touched && fetched && ANA_PERIOD_IDS.has(fetched)) ? fetched : null;
 
 const _anaPnl = (v) => (v > 0 ? 'var(--qe-green)' : v < 0 ? 'var(--qe-red)' : 'var(--qe-sub)');
 
@@ -160,8 +175,6 @@ const AnaVRow = ({ label, value, color }) => (
 
 /* ── period bar (design PeriodNav; real offset nav, server label) ───────── */
 const AnaPeriodNav = ({ period, offset = 0, onPeriod, onNav, disabled, label }) => {
-  const presets = [['monthly', 'Month'], ['weekly', 'Week'], ['quarterly', 'Quarter'],
-    ['yearly', 'Year'], ['rolling_30d', '30D'], ['rolling_90d', '90D'], ['all_time', 'All']];
   const noNav = ANA_NO_NAV.has(period);
   // › clamps at the CURRENT period (P8 audit L4-LOW-2 — the Calendar tab
   // already clamps exactly this dead-end; unbounded › walked into empty
@@ -175,7 +188,7 @@ const AnaPeriodNav = ({ period, offset = 0, onPeriod, onNav, disabled, label }) 
       <button className="qe-btn qe-btn-sm qe-btn-ghost" disabled={noFwd} style={noFwd ? { opacity: 0.45 } : undefined}
         title={offset >= 0 && !noNav ? 'already at the current period' : undefined} onClick={() => onNav(+1)}>›</button>
       <span style={{ color: 'var(--qe-muted)', margin: '0 2px' }}>│</span>
-      <PeriodSelector options={presets} value={period} onChange={onPeriod} />
+      <PeriodSelector options={ANA_PERIODS} value={period} onChange={onPeriod} />
     </div>
   );
 };
@@ -1282,8 +1295,35 @@ const AnalyticsPage = () => {
   const [srvLabel, setSrvLabel] = React.useState('');
   const periodEnabled = ANA_PERIOD_TABS.has(tab);
   const onLabel = React.useCallback((l) => setSrvLabel(l), []);
-  const setP = (p) => { setPeriod(p); setOffset(0); setSrvLabel(''); };
-  const nav = (d) => { setOffset((o) => o + d); setSrvLabel(''); };
+  /* M8 (dead-settings batch, 2026-08-04): the reader this setting never
+     had. Seed the initial period from the account's saved
+     analytics_default_period — fetched ONCE per mount from
+     /api/config/account/{active}; the 'monthly' useState above stays the
+     pre-answer + failure fallback (it is also the column's own default).
+     After the operator touches the selector, a late answer is discarded
+     (_anaSeedPeriod) — a fetch must never stomp a human choice. */
+  const touchedRef = React.useRef(false);
+  React.useEffect(() => {
+    let dead = false;
+    const aid = window.QE_CHROME && QE_CHROME.accountId();
+    if (aid == null) return undefined;   // no account known yet — keep the fallback
+    _ptJson('/api/config/account/' + aid, QE_READ_DEADLINE_MS)
+      .then((d) => {
+        const p = _anaSeedPeriod(touchedRef.current,
+          d && d.settings && d.settings.analytics_default_period);
+        if (!dead && p) setPeriod(p);
+      })
+      .catch(() => { /* best-effort seed; the fallback stands */ });
+    return () => { dead = true; };
+  }, []);
+  const setP = (p) => { touchedRef.current = true; setPeriod(p); setOffset(0); setSrvLabel(''); };
+  /* ‹ › is ALSO a human choice (audit MED on this fix's first draft: an
+     un-marked offset click let a late seed flip the PERIOD under a
+     navigated offset — "weekly @ -1", a state no user path can produce,
+     since setP resets offset on every period change). Marking touched here
+     also guarantees the seed only ever lands at offset 0, so its bare
+     setPeriod cannot bypass the reset invariant. */
+  const nav = (d) => { touchedRef.current = true; setOffset((o) => o + d); setSrvLabel(''); };
 
   const common = { period, offset, onLabel };
   const tabContent = {

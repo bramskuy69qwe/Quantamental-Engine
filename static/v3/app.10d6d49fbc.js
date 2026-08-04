@@ -3663,6 +3663,15 @@ const _cfgEffWeekly = (p, ratioKey) => {
   return cap == null || ratio == null || isNaN(cap) || isNaN(ratio) ? null : cap * ratio;
 };
 const CFG_DOW_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const CFG_ANA_PERIODS = [
+  ["monthly", "Monthly (This Month)"],
+  ["weekly", "Weekly (This Week)"],
+  ["quarterly", "Quarterly"],
+  ["yearly", "Yearly"],
+  ["rolling_30d", "Rolling 30 Days"],
+  ["rolling_90d", "Rolling 90 Days"],
+  ["all_time", "All Time"]
+];
 const _cfgUptime = (s) => {
   if (s == null || isNaN(s)) return "\u2014";
   s = Math.floor(+s);
@@ -3733,7 +3742,10 @@ const CfgAccountForm = ({ account, detail, onReload, onDelete }) => {
     // config-3 (account_settings, not params)
     // M3: '' = settings unavailable → the select shows '—' and doSave omits
     // the field (blank keeps stored, the form's convention).
-    week_start_dow: s.week_start_dow != null ? String(s.week_start_dow) : ""
+    week_start_dow: s.week_start_dow != null ? String(s.week_start_dow) : "",
+    // M8: same convention. Preset Apply also writes this; whatever was
+    // stored last wins on the Analytics page's next mount.
+    analytics_default_period: s.analytics_default_period || ""
   }));
   const [busy, setBusy] = React.useState(null);
   const [msg, setMsg] = React.useState(null);
@@ -3771,7 +3783,9 @@ const CfgAccountForm = ({ account, detail, onReload, onDelete }) => {
         // and rejects an unknown zone rather than silently storing it.
         timezone: form.timezone.trim() || null,
         // M3: blank keeps stored; the endpoint validates 1-7.
-        week_start_dow: form.week_start_dow || null
+        week_start_dow: form.week_start_dow || null,
+        // M8: blank keeps stored; the endpoint validates VALID_PERIODS.
+        analytics_default_period: form.analytics_default_period || null
       });
       const ok = r.ok && /saved/i.test(r.text);
       setMsg({ text: r.text || (r.ok ? "Saved." : "save failed"), tone: ok ? "ok" : "err" });
@@ -3835,6 +3849,16 @@ const CfgAccountForm = ({ account, detail, onReload, onDelete }) => {
     },
     /* @__PURE__ */ React.createElement("option", { value: "" }, "\u2014"),
     CFG_DOW_NAMES.map((d, i) => /* @__PURE__ */ React.createElement("option", { key: d, value: String(i + 1) }, d))
+  )), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Analytics default period"), /* @__PURE__ */ React.createElement(
+    "select",
+    {
+      className: "qe-input qe-select",
+      value: form.analytics_default_period,
+      onChange: set("analytics_default_period"),
+      title: "The period the Analytics page opens on. Preset Apply also writes this."
+    },
+    /* @__PURE__ */ React.createElement("option", { value: "" }, "\u2014"),
+    CFG_ANA_PERIODS.map(([val, label]) => /* @__PURE__ */ React.createElement("option", { key: val, value: val }, label))
   ))), /* @__PURE__ */ React.createElement(SecLbl, { rule: true }, "Risk Parameters \xB7 sizing (account_params)"), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Risk / Trade (fraction)"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.individual_risk_per_trade, onChange: set("individual_risk_per_trade"), placeholder: "0.01" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Weekly Loss (fraction)"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_w_loss_percent, onChange: set("max_w_loss_percent"), placeholder: "0.05" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Drawdown (fraction)"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_dd_percent, onChange: set("max_dd_percent"), placeholder: "0.10" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Exposure \xD7"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_exposure, onChange: set("max_exposure"), placeholder: "5.0" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Positions"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_position_count, onChange: set("max_position_count"), placeholder: "10" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Max Corr. Exposure (fraction)"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_correlated_exposure, onChange: set("max_correlated_exposure"), placeholder: "0.50" }))), /* @__PURE__ */ React.createElement(SecLbl, { rule: true, right: /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)", fontSize: "0.54rem" } }, "fraction of the budget above \xB7 warn < limit") }, "Warn & Hard-stop ratios (account_params)"), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, marginBottom: 4 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "DD Warn \xD7 Max DD"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_dd_warning_pct, onChange: set("max_dd_warning_pct"), placeholder: "0.80" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "DD Hard-stop \xD7 Max DD"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.max_dd_limit_pct, onChange: set("max_dd_limit_pct"), placeholder: "0.95" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Weekly Warn \xD7 Max W. Loss"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.weekly_loss_warning_pct, onChange: set("weekly_loss_warning_pct"), placeholder: "0.80" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Lbl, null, "Weekly Hard-stop \xD7 Max W. Loss"), /* @__PURE__ */ React.createElement("input", { className: "qe-input", value: form.weekly_loss_limit_pct, onChange: set("weekly_loss_limit_pct"), placeholder: "0.95" }))), /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-muted)", margin: "0 0 10px", lineHeight: 1.5 } }, "Range 0.50\u20130.99 (hard-stop to 1.00); warn must stay below its hard-stop or the save is rejected. Leave a field blank to keep its stored value \u2014 edit either half of a pair and both are sent.", /* @__PURE__ */ React.createElement("br", null), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, "WEEKLY"), " drives the live weekly state machine.", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, " DD"), " is a FALLBACK only \u2014 the rolling-DD path uses the absolute thresholds below, and these two are read solely if that path errors."), /* @__PURE__ */ React.createElement(SecLbl, { rule: true, right: /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)", fontSize: "0.54rem" } }, "READ-ONLY \xB7 DD set via Presets tab \xB7 weekly derived from the ratios above") }, "Enforcement & Recovery \xB7 effective posture"), /* @__PURE__ */ React.createElement(FieldList, { cols: 2, rows: [
     { label: "Strategy preset", value: (s.strategy_preset || "custom").toUpperCase(), color: "cyan" },
     { label: "DD window", value: s.dd_rolling_window_days != null ? s.dd_rolling_window_days + "d" : "\u2014" },
@@ -6888,6 +6912,17 @@ const ANA_TABS = [
 ];
 const ANA_PERIOD_TABS = /* @__PURE__ */ new Set(["overview", "dist", "pairs", "excursions", "rmultiples", "risk"]);
 const ANA_NO_NAV = /* @__PURE__ */ new Set(["rolling_30d", "rolling_90d", "all_time"]);
+const ANA_PERIODS = [
+  ["monthly", "Month"],
+  ["weekly", "Week"],
+  ["quarterly", "Quarter"],
+  ["yearly", "Year"],
+  ["rolling_30d", "30D"],
+  ["rolling_90d", "90D"],
+  ["all_time", "All"]
+];
+const ANA_PERIOD_IDS = new Set(ANA_PERIODS.map(([id]) => id));
+const _anaSeedPeriod = (touched, fetched) => !touched && fetched && ANA_PERIOD_IDS.has(fetched) ? fetched : null;
 const _anaPnl = (v) => v > 0 ? "var(--qe-green)" : v < 0 ? "var(--qe-red)" : "var(--qe-sub)";
 const _anaMean = (a) => a && a.length ? a.reduce((s, v) => s + v, 0) / a.length : null;
 const _anaStd = (a) => {
@@ -6966,15 +7001,6 @@ const AnaEmpty = ({ err, msg }) => /* @__PURE__ */ React.createElement("div", { 
 const AnaKv = ({ label, value, color }) => /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 2, minWidth: 0 } }, /* @__PURE__ */ React.createElement(Lbl, null, label), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.82rem", fontWeight: 700, color: color || "var(--qe-text)" } }, value));
 const AnaVRow = ({ label, value, color }) => /* @__PURE__ */ React.createElement("div", { className: "qe-fl-row" }, /* @__PURE__ */ React.createElement("div", { className: "qe-fl-l" }, /* @__PURE__ */ React.createElement("span", { style: { overflow: "hidden", textOverflow: "ellipsis" } }, label)), /* @__PURE__ */ React.createElement("div", { className: "qe-fl-v", style: color ? { color } : void 0 }, value));
 const AnaPeriodNav = ({ period, offset = 0, onPeriod, onNav, disabled, label }) => {
-  const presets = [
-    ["monthly", "Month"],
-    ["weekly", "Week"],
-    ["quarterly", "Quarter"],
-    ["yearly", "Year"],
-    ["rolling_30d", "30D"],
-    ["rolling_90d", "90D"],
-    ["all_time", "All"]
-  ];
   const noNav = ANA_NO_NAV.has(period);
   const noFwd = noNav || offset >= 0;
   return /* @__PURE__ */ React.createElement(
@@ -6997,7 +7023,7 @@ const AnaPeriodNav = ({ period, offset = 0, onPeriod, onNav, disabled, label }) 
       "\u203A"
     ),
     /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)", margin: "0 2px" } }, "\u2502"),
-    /* @__PURE__ */ React.createElement(PeriodSelector, { options: presets, value: period, onChange: onPeriod })
+    /* @__PURE__ */ React.createElement(PeriodSelector, { options: ANA_PERIODS, value: period, onChange: onPeriod })
   );
 };
 const AnaHistChart = ({ bins, color = "var(--qe-cyan)", height = "100%", unit = "", divergent = false, noun = "trade", tip = null }) => {
@@ -7917,12 +7943,31 @@ const AnalyticsPage = () => {
   const [srvLabel, setSrvLabel] = React.useState("");
   const periodEnabled = ANA_PERIOD_TABS.has(tab);
   const onLabel = React.useCallback((l) => setSrvLabel(l), []);
+  const touchedRef = React.useRef(false);
+  React.useEffect(() => {
+    let dead = false;
+    const aid = window.QE_CHROME && QE_CHROME.accountId();
+    if (aid == null) return void 0;
+    _ptJson("/api/config/account/" + aid, QE_READ_DEADLINE_MS).then((d) => {
+      const p = _anaSeedPeriod(
+        touchedRef.current,
+        d && d.settings && d.settings.analytics_default_period
+      );
+      if (!dead && p) setPeriod(p);
+    }).catch(() => {
+    });
+    return () => {
+      dead = true;
+    };
+  }, []);
   const setP = (p) => {
+    touchedRef.current = true;
     setPeriod(p);
     setOffset(0);
     setSrvLabel("");
   };
   const nav = (d) => {
+    touchedRef.current = true;
     setOffset((o) => o + d);
     setSrvLabel("");
   };

@@ -28,6 +28,14 @@ Shipped so far (in commit order):
         via period_resolver) was real the whole time. Validation lanes
         live in tests/test_false_success_class.py::TestM3* (that file
         owns the handler's false-success/validation harness).
+  M8  · analytics_default_period gains its reader: the Analytics page
+        seeds its initial period from the account's saved value (once
+        per mount, discarded after the operator touches the selector or
+        when the value isn't one the selector offers), and — a NAMED
+        ADDITION beyond the filed recommendation — a direct Config
+        editor beside the other two preferences (the only remaining
+        writer was preset Apply, which couples the period to a whole
+        risk posture; the endpoint already validated the field).
 
 Run: pytest tests/test_dead_settings_batch.py -v
 """
@@ -416,6 +424,123 @@ class TestM3WeekStartDowWriter:
             "setting no longer influences weekly bucketing (permanent "
             "Monday is back)"
         )
+
+
+# ── M8: analytics_default_period finally has readers ────────────────────────
+
+
+class TestM8DefaultPeriodReader:
+    """Write-no-reader closed from the read side: Analytics seeds its
+    initial period from the saved setting; the Config form gains a direct
+    editor (named addition — see the module docstring). The seed decision
+    is the PURE _anaSeedPeriod so the node test below executes it."""
+
+    def test_api_serves_the_stored_value(self, monkeypatch):
+        import asyncio
+
+        import core.db_account_settings as smod
+        from api.routes_config import api_config_account
+        from core.account_registry import account_registry
+        from core.db_account_settings import AccountSettings
+
+        monkeypatch.setattr(
+            smod, "get_account_settings",
+            lambda aid: AccountSettings(account_id=999,
+                                        analytics_default_period="weekly"),
+        )
+        monkeypatch.setattr(account_registry, "get_account_params",
+                            lambda aid: {})
+        payload = json.loads(asyncio.run(api_config_account(999)).body)
+        assert payload["settings"].get("analytics_default_period") == "weekly"
+
+    def test_analytics_wires_the_seed(self):
+        """Comment-stripped structural pins: the mount effect fetches the
+        config-account door for the LIVE account id, routes the answer
+        through _anaSeedPeriod, and the selector's own setter marks
+        touched FIRST (so a late fetch can never stomp a human choice)."""
+        stripped = _code((_ROOT / "frontend" / "src" / "pages-analytics.jsx")
+                         .read_text(encoding="utf-8"))
+        assert "_ptJson('/api/config/account/' + aid, QE_READ_DEADLINE_MS)" in stripped
+        assert "_anaSeedPeriod(touchedRef.current," in stripped
+        assert "const setP = (p) => { touchedRef.current = true; setPeriod(p);" in stripped
+        # ‹ › marks touched TOO (audit MED: an un-marked offset click let a
+        # late seed flip the period under a navigated offset — "weekly @
+        # -1", unreachable by any user path). This also guarantees the
+        # seed's bare setPeriod only ever lands at offset 0.
+        assert "const nav = (d) => { touchedRef.current = true; setOffset((o) => o + d);" in stripped
+        # the nav renders the SAME module-level list the seed validates
+        # against — one vocabulary, two uses
+        assert "<PeriodSelector options={ANA_PERIODS}" in stripped
+        assert "const ANA_PERIOD_IDS = new Set(ANA_PERIODS.map(([id]) => id));" in stripped
+
+    def _ids_from(self, src_name, const_name):
+        import re
+
+        stripped = _code((_ROOT / "frontend" / "src" / src_name)
+                         .read_text(encoding="utf-8"))
+        m = re.search(r"const %s = \[(.*?)\];" % const_name, stripped,
+                      re.DOTALL)
+        assert m, f"{const_name} literal not found in {src_name}"
+        return set(re.findall(r"\['([a-z_0-9]+)',", m.group(1)))
+
+    def test_both_selectors_offer_exactly_the_valid_periods(self):
+        """Three-way parity, every side PARSED: the Analytics selector
+        (ANA_PERIODS), the Config editor (CFG_ANA_PERIODS), and the
+        backend's period_resolver.VALID_PERIODS must be the same set —
+        an option the server rejects (or a server period no selector
+        offers) is a silent dead end."""
+        from core.period_resolver import VALID_PERIODS
+
+        ana = self._ids_from("pages-analytics.jsx", "ANA_PERIODS")
+        cfg = self._ids_from("pages-config.jsx", "CFG_ANA_PERIODS")
+        assert ana == set(VALID_PERIODS), f"Analytics drift: {ana ^ set(VALID_PERIODS)}"
+        assert cfg == set(VALID_PERIODS), f"Config drift: {cfg ^ set(VALID_PERIODS)}"
+
+    def test_config_form_seeds_and_posts_it(self):
+        stripped = _code((_ROOT / "frontend" / "src" / "pages-config.jsx")
+                         .read_text(encoding="utf-8"))
+        assert "analytics_default_period:  s.analytics_default_period || ''" in stripped
+        assert "analytics_default_period: form.analytics_default_period || null" in stripped
+
+
+@pytest.mark.skipif(_NODE is None, reason="node not on PATH")
+class TestM8SeedDecisionExecuted:
+    """The pure seed decision under node: adopt only untouched+valid."""
+
+    def test_seed_semantics(self, tmp_path):
+        src = (_ROOT / "frontend" / "src" / "pages-analytics.jsx").read_text(
+            encoding="utf-8")
+        block = src[src.index("const ANA_PERIODS"):src.index("const _anaPnl")]
+        js = block + (
+            "const CASES = [\n"
+            "  { n: 'untouched_valid',   t: false, f: 'weekly' },\n"
+            "  { n: 'touched_valid',     t: true,  f: 'weekly' },\n"
+            "  { n: 'untouched_invalid', t: false, f: 'fortnightly' },\n"
+            "  { n: 'untouched_missing', t: false, f: undefined },\n"
+            "  { n: 'untouched_empty',   t: false, f: '' },\n"
+            "  { n: 'untouched_default', t: false, f: 'monthly' },\n"
+            "];\n"
+            "console.log(JSON.stringify(CASES.map(c => ({ n: c.n, r: _anaSeedPeriod(c.t, c.f) }))));\n"
+        )
+        f = tmp_path / "seed.mjs"
+        f.write_text(js, encoding="utf-8")
+        r = subprocess.run([_NODE, str(f)], capture_output=True, text=True,
+                           encoding="utf-8", timeout=30)
+        assert r.returncode == 0, r.stderr
+        rows = {row["n"]: row["r"] for row in json.loads(r.stdout)}
+        assert rows["untouched_valid"] == "weekly"
+        assert rows["touched_valid"] is None, (
+            "a late fetch stomped the operator's own selection"
+        )
+        assert rows["untouched_invalid"] is None, (
+            "an unknown stored period leaked into the selector state"
+        )
+        assert rows["untouched_missing"] is None
+        assert rows["untouched_empty"] is None
+        # adopting the value that EQUALS the fallback is a harmless no-op
+        # setState — allowed, pinned so a 'skip if monthly' optimization
+        # is a deliberate change
+        assert rows["untouched_default"] == "monthly"
 
 
 @pytest.mark.skipif(_NODE is None, reason="node not on PATH")

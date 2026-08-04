@@ -55,6 +55,10 @@ async def api_config_account(account_id: int):
             # it must see the stored value. 1-7-validated by the same update
             # endpoint.
             "week_start_dow",
+            # M8 (same batch): the setting finally has readers — Analytics
+            # seeds its initial period from it, and the Config form edits it
+            # (VALID_PERIODS-checked by the update endpoint).
+            "analytics_default_period",
         )}
     except Exception:
         settings = {}
