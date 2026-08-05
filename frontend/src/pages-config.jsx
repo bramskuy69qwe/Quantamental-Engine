@@ -1103,6 +1103,64 @@ const CfgSystemTab = () => {
   }, []);
   React.useEffect(() => { load(); }, [load]);
 
+  /* M11 (wiring inventory, 2026-08-04): POST /api/orders/backfill — the
+     userTrades offline-trade recovery (gap-scoped, collision-safe; the
+     lane that REPLACED the fee-inflating income reconstruction) — had no
+     door at all. Confirm-gated; 180s deadline as a NAMED DEVIATION from
+     the poll-deadline discipline: this is a deliberate operator-initiated
+     long job scanning up to a year of userTrades, not a poll — the
+     warm-hang rule exists for reads with a successor coming. */
+  const [bfDays, setBfDays] = React.useState('90');
+  const [bfBusy, setBfBusy] = React.useState(false);
+  const [bfMsg, setBfMsg] = React.useState(null);
+  const doBackfill = async () => {
+    if (bfBusy) return;
+    if (!window.confirm(
+      `Recover offline trades for the ACTIVE account from Binance userTrades (last ${bfDays} days)?\n\n`
+      + 'Gap-scoped and collision-safe: inserts only fills / closed positions '
+      + 'missing locally; existing rows are never replaced. May take a while '
+      + 'on large windows.')) return;
+    setBfBusy(true); setBfMsg(null);
+    let t;
+    try {
+      const res = await _ptFetch(`/api/orders/backfill?days=${bfDays}`,
+        { method: 'POST' }, 180_000);
+      t = res.t;
+      const d = await res.r.json().catch(() => ({}));
+      clearTimeout(t);
+      if (!res.r.ok) {
+        setBfMsg({ text: (d && d.error) || `backfill answered ${res.r.status}`, tone: 'err' });
+      } else {
+        const errs = Object.keys(d.errors || {}).length;
+        // count symbols with ACTUAL recovered activity — the route puts
+        // every error-free symbol into `recovered`, zeros included, so
+        // Object.keys().length always equals `symbols` and would claim
+        // recovery that never happened (audit MED on this door's first
+        // draft)
+        const active = Object.values(d.recovered || {}).filter((v) =>
+          v && Object.values(v).some((n) => typeof n === 'number' && n > 0)).length;
+        setBfMsg({
+          text: `${d.symbols ?? '?'} gap symbol(s) scanned · `
+            + `${active} with recovered rows`
+            + (errs ? ` · ${errs} error(s) — check engine logs` : ''),
+          tone: errs ? 'err' : 'ok',
+        });
+      }
+    } catch (e) {
+      clearTimeout(t);
+      // the abort kills the FETCH, not the server job — saying "engine
+      // not answering" invites a restart mid-write (audit LOW)
+      setBfMsg({
+        text: e && e.timeoutMs != null
+          ? 'no response in 180s — the recovery may STILL be running '
+            + 'server-side; check engine logs before re-running'
+          : 'backfill failed — ' + qeFootCause(e),
+        tone: 'err',
+      });
+    }
+    setBfBusy(false);
+  };
+
   const c = (sys && sys.cadences) || {};
   return (
     <GridWorkspace>
@@ -1129,6 +1187,29 @@ const CfgSystemTab = () => {
                 { label: 'WS status poll',  value: c.ws_status_poll_s  != null ? c.ws_status_poll_s  + 's' : '—' },
                 { label: 'WS ping',         value: c.ws_ping_s         != null ? c.ws_ping_s         + 's' : '—' },
               ]} />
+              <SecLbl rule right={<span style={{ color: 'var(--qe-muted)', fontSize: '0.54rem' }}>ACTIVE account · writes recovered rows</span>}>
+                Data recovery
+              </SecLbl>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
+                <Lbl>Window</Lbl>
+                <select className="qe-input qe-select" style={{ width: 'auto', height: 22, fontSize: '0.6rem' }}
+                  value={bfDays} onChange={(e) => setBfDays(e.target.value)} disabled={bfBusy}>
+                  <option value="30">30 days</option>
+                  <option value="90">90 days</option>
+                  <option value="180">180 days</option>
+                  <option value="365">365 days</option>
+                </select>
+                <button className="qe-btn qe-btn-sm" onClick={doBackfill} disabled={bfBusy}
+                  title="Recover offline-traded fills + closed positions from Binance userTrades. Gap-scoped and collision-safe — only rows missing locally are inserted; asks for confirmation.">
+                  {bfBusy ? <Spinner size="0.7rem" label="recovering" /> : 'Recover offline trades'}
+                </button>
+              </div>
+              <div className="qe-mono" style={{ fontSize: '0.56rem', color: 'var(--qe-muted)', margin: '4px 0 0', lineHeight: 1.5 }}>
+                For gaps left by trading while the engine was OFF. Replaced the
+                income-reconstruction backfill (which inflated fees 8-70×) —
+                this lane is gap-scoped and idempotent.
+              </div>
+              <CfgMsgLine msg={bfMsg} />
             </React.Fragment>
           )}
         </Pane>

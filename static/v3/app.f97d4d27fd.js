@@ -4559,6 +4559,48 @@ const CfgSystemTab = () => {
   React.useEffect(() => {
     load();
   }, [load]);
+  const [bfDays, setBfDays] = React.useState("90");
+  const [bfBusy, setBfBusy] = React.useState(false);
+  const [bfMsg, setBfMsg] = React.useState(null);
+  const doBackfill = async () => {
+    var _a;
+    if (bfBusy) return;
+    if (!window.confirm(
+      `Recover offline trades for the ACTIVE account from Binance userTrades (last ${bfDays} days)?
+
+Gap-scoped and collision-safe: inserts only fills / closed positions missing locally; existing rows are never replaced. May take a while on large windows.`
+    )) return;
+    setBfBusy(true);
+    setBfMsg(null);
+    let t;
+    try {
+      const res = await _ptFetch(
+        `/api/orders/backfill?days=${bfDays}`,
+        { method: "POST" },
+        18e4
+      );
+      t = res.t;
+      const d = await res.r.json().catch(() => ({}));
+      clearTimeout(t);
+      if (!res.r.ok) {
+        setBfMsg({ text: d && d.error || `backfill answered ${res.r.status}`, tone: "err" });
+      } else {
+        const errs = Object.keys(d.errors || {}).length;
+        const active = Object.values(d.recovered || {}).filter((v) => v && Object.values(v).some((n) => typeof n === "number" && n > 0)).length;
+        setBfMsg({
+          text: `${(_a = d.symbols) != null ? _a : "?"} gap symbol(s) scanned \xB7 ${active} with recovered rows` + (errs ? ` \xB7 ${errs} error(s) \u2014 check engine logs` : ""),
+          tone: errs ? "err" : "ok"
+        });
+      }
+    } catch (e) {
+      clearTimeout(t);
+      setBfMsg({
+        text: e && e.timeoutMs != null ? "no response in 180s \u2014 the recovery may STILL be running server-side; check engine logs before re-running" : "backfill failed \u2014 " + qeFootCause(e),
+        tone: "err"
+      });
+    }
+    setBfBusy(false);
+  };
   const c = sys && sys.cadences || {};
   return /* @__PURE__ */ React.createElement(GridWorkspace, null, /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 0, w: 24, h: 12, minW: 10, minH: 5 }, /* @__PURE__ */ React.createElement(
     Pane,
@@ -4581,7 +4623,29 @@ const CfgSystemTab = () => {
       { label: "History poll", value: c.history_poll_s != null ? c.history_poll_s + "s" : "\u2014" },
       { label: "WS status poll", value: c.ws_status_poll_s != null ? c.ws_status_poll_s + "s" : "\u2014" },
       { label: "WS ping", value: c.ws_ping_s != null ? c.ws_ping_s + "s" : "\u2014" }
-    ] }))
+    ] }), /* @__PURE__ */ React.createElement(SecLbl, { rule: true, right: /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)", fontSize: "0.54rem" } }, "ACTIVE account \xB7 writes recovered rows") }, "Data recovery"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 2 } }, /* @__PURE__ */ React.createElement(Lbl, null, "Window"), /* @__PURE__ */ React.createElement(
+      "select",
+      {
+        className: "qe-input qe-select",
+        style: { width: "auto", height: 22, fontSize: "0.6rem" },
+        value: bfDays,
+        onChange: (e) => setBfDays(e.target.value),
+        disabled: bfBusy
+      },
+      /* @__PURE__ */ React.createElement("option", { value: "30" }, "30 days"),
+      /* @__PURE__ */ React.createElement("option", { value: "90" }, "90 days"),
+      /* @__PURE__ */ React.createElement("option", { value: "180" }, "180 days"),
+      /* @__PURE__ */ React.createElement("option", { value: "365" }, "365 days")
+    ), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        className: "qe-btn qe-btn-sm",
+        onClick: doBackfill,
+        disabled: bfBusy,
+        title: "Recover offline-traded fills + closed positions from Binance userTrades. Gap-scoped and collision-safe \u2014 only rows missing locally are inserted; asks for confirmation."
+      },
+      bfBusy ? /* @__PURE__ */ React.createElement(Spinner, { size: "0.7rem", label: "recovering" }) : "Recover offline trades"
+    )), /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-muted)", margin: "4px 0 0", lineHeight: 1.5 } }, "For gaps left by trading while the engine was OFF. Replaced the income-reconstruction backfill (which inflated fees 8-70\xD7) \u2014 this lane is gap-scoped and idempotent."), /* @__PURE__ */ React.createElement(CfgMsgLine, { msg: bfMsg }))
   )));
 };
 const ConfigPage = () => {
@@ -6557,6 +6621,7 @@ const HistoryPage = () => {
   }, [loadCounts]);
   const drillSeq = React.useRef(0);
   const openDrill = async (row) => {
+    setExpErr(null);
     if (sel && sel.id === row.id) {
       setSel(null);
       setDrill(null);
@@ -6799,6 +6864,38 @@ const HistoryPage = () => {
     ];
   })();
   const dp = sel;
+  const [expBusy, setExpBusy] = React.useState(null);
+  const [expErr, setExpErr] = React.useState(null);
+  const exportAudit = async (fmt) => {
+    if (!dp || expBusy) return;
+    setExpBusy(fmt);
+    setExpErr(null);
+    let t;
+    try {
+      const res = await _ptFetch(
+        `/export/closed_position/${dp.id}?format=${fmt}`,
+        { method: "POST" },
+        QE_READ_DEADLINE_MS
+      );
+      t = res.t;
+      if (!res.r.ok) {
+        const err = new Error(`export answered ${res.r.status}`);
+        err.status = res.r.status;
+        throw err;
+      }
+      const blob = await res.r.blob();
+      clearTimeout(t);
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `audit_closed_position_${dp.id}.${fmt === "pdf" ? "pdf" : "json"}`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch (e) {
+      clearTimeout(t);
+      setExpErr(e);
+    }
+    setExpBusy(null);
+  };
   return /* @__PURE__ */ React.createElement("div", { className: "qe-scope", "data-screen-label": "04 History", style: { width: "100%", height: "100%", background: "var(--qe-bg)", display: "flex", flexDirection: "column", overflow: "hidden" } }, /* @__PURE__ */ React.createElement(TopNavStd, { page: "History", variant: "line", dense: true }), /* @__PURE__ */ React.createElement(PageHeader, { title: "History", subtitle: "closed positions \xB7 orders \xB7 fills \xB7 events \xB7 pre-trade log" }, /* @__PURE__ */ React.createElement(PeriodSelector, { options: [["7d", "7D"], ["15d", "15D"], ["30d", "30D"], ["90d", "90D"], ["ytd", "YTD"], ["all", "ALL"]], value: period, onChange: setPeriod }), /* @__PURE__ */ React.createElement(
     "input",
     {
@@ -6883,10 +6980,29 @@ const HistoryPage = () => {
       bodyStyle: { overflow: "auto" },
       foot: !sel ? { tone: "sub", msg: "select a position" } : qeFootState({ loading: drill == null && !netDrill.err, err: netDrill.err, hasData: drill != null, ms: netDrill.ms })
     },
-    !dp ? /* @__PURE__ */ React.createElement(EmptyState, { fill: true, tone: "neutral", glyph: "\u25CE", msg: "Select a closed position", hint: "Click a row to inspect its fills, exec link and amendments." }) : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, /* @__PURE__ */ React.createElement(SecLbl, { rule: true, right: /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-ghost", onClick: () => {
+    !dp ? /* @__PURE__ */ React.createElement(EmptyState, { fill: true, tone: "neutral", glyph: "\u25CE", msg: "Select a closed position", hint: "Click a row to inspect its fills, exec link and amendments." }) : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, /* @__PURE__ */ React.createElement(SecLbl, { rule: true, right: /* @__PURE__ */ React.createElement("span", { style: { display: "inline-flex", gap: 4 } }, /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        className: "qe-btn qe-btn-sm",
+        disabled: !!expBusy,
+        onClick: () => exportAudit("json"),
+        title: "Signed audit bundle (JSON) \u2014 the position's full causal graph with a signed-timestamp envelope"
+      },
+      expBusy === "json" ? /* @__PURE__ */ React.createElement(Spinner, { size: "0.6rem", label: "export" }) : "Audit JSON"
+    ), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        className: "qe-btn qe-btn-sm",
+        disabled: !!expBusy,
+        onClick: () => exportAudit("pdf"),
+        title: "Same signed bundle rendered as a paginated PDF (signature in the footer)"
+      },
+      expBusy === "pdf" ? /* @__PURE__ */ React.createElement(Spinner, { size: "0.6rem", label: "export" }) : "Audit PDF"
+    ), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-ghost", onClick: () => {
       setSel(null);
       setDrill(null);
-    } }, "\u2715") }, dp.symbol, " \xB7 CLOSED \xB7 ", dp.direction), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 10px" } }, /* @__PURE__ */ React.createElement(KV, { l: "Net", v: `${lpUsd(dp.net_pnl)}${_hNetPct(dp) == null ? "" : `  (${lpPct(_hNetPct(dp))})`}`, color: lpSgn(dp.net_pnl) }), /* @__PURE__ */ React.createElement(KV, { l: "Duration", v: _hDur(dp.hold_time_ms) }), /* @__PURE__ */ React.createElement(KV, { l: "Entry", v: lpPx(dp.entry_price) }), /* @__PURE__ */ React.createElement(KV, { l: "Exit", v: lpPx(dp.exit_price) }), /* @__PURE__ */ React.createElement(KV, { l: "TP plan", v: lpPx(dp.tp_price), color: "var(--qe-green)" }), /* @__PURE__ */ React.createElement(KV, { l: "SL plan", v: lpPx(dp.sl_price), color: "var(--qe-red)" }), /* @__PURE__ */ React.createElement(KV, { l: "Size", v: dp.quantity == null ? "\u2014" : _ptFmtSz(dp.quantity) }), /* @__PURE__ */ React.createElement(KV, { l: "Fee \xB7 all-in", v: _ptFmtN(dp.total_fees, 4), color: "var(--qe-sub)" }), /* @__PURE__ */ React.createElement(KV, { l: "Funding", v: lpUsd(dp.funding_fees, 3), color: lpSgn(dp.funding_fees) }), /* @__PURE__ */ React.createElement(KV, { l: "Model", v: dp.model_name || "\u2014" }), /* @__PURE__ */ React.createElement(KV, { l: "Calc", v: dp.calc_id ? String(dp.calc_id).slice(-8) : "\u2014", color: "var(--qe-cyan)" })), /* @__PURE__ */ React.createElement(HeatBarLabelled, { mfe: dp.mfe, mae: dp.mae, pnl: dp.net_pnl, pct: _hNetPct(dp) }), /* @__PURE__ */ React.createElement("div", { style: { borderTop: "1px solid var(--qe-line)" } }), /* @__PURE__ */ React.createElement(SecLbl, { rule: true }, "Fills"), drill == null ? /* @__PURE__ */ React.createElement(Spinner, { label: "loading" }) : !drill.fills.length ? /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.58rem", color: "var(--qe-muted)" } }, "No fills recorded for this position.") : (
+      setExpErr(null);
+    } }, "\u2715")) }, dp.symbol, " \xB7 CLOSED \xB7 ", dp.direction), expErr && /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.58rem", color: "var(--qe-red)" } }, "audit export failed \u2014 ", qeFootCause(expErr)), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 10px" } }, /* @__PURE__ */ React.createElement(KV, { l: "Net", v: `${lpUsd(dp.net_pnl)}${_hNetPct(dp) == null ? "" : `  (${lpPct(_hNetPct(dp))})`}`, color: lpSgn(dp.net_pnl) }), /* @__PURE__ */ React.createElement(KV, { l: "Duration", v: _hDur(dp.hold_time_ms) }), /* @__PURE__ */ React.createElement(KV, { l: "Entry", v: lpPx(dp.entry_price) }), /* @__PURE__ */ React.createElement(KV, { l: "Exit", v: lpPx(dp.exit_price) }), /* @__PURE__ */ React.createElement(KV, { l: "TP plan", v: lpPx(dp.tp_price), color: "var(--qe-green)" }), /* @__PURE__ */ React.createElement(KV, { l: "SL plan", v: lpPx(dp.sl_price), color: "var(--qe-red)" }), /* @__PURE__ */ React.createElement(KV, { l: "Size", v: dp.quantity == null ? "\u2014" : _ptFmtSz(dp.quantity) }), /* @__PURE__ */ React.createElement(KV, { l: "Fee \xB7 all-in", v: _ptFmtN(dp.total_fees, 4), color: "var(--qe-sub)" }), /* @__PURE__ */ React.createElement(KV, { l: "Funding", v: lpUsd(dp.funding_fees, 3), color: lpSgn(dp.funding_fees) }), /* @__PURE__ */ React.createElement(KV, { l: "Model", v: dp.model_name || "\u2014" }), /* @__PURE__ */ React.createElement(KV, { l: "Calc", v: dp.calc_id ? String(dp.calc_id).slice(-8) : "\u2014", color: "var(--qe-cyan)" })), /* @__PURE__ */ React.createElement(HeatBarLabelled, { mfe: dp.mfe, mae: dp.mae, pnl: dp.net_pnl, pct: _hNetPct(dp) }), /* @__PURE__ */ React.createElement("div", { style: { borderTop: "1px solid var(--qe-line)" } }), /* @__PURE__ */ React.createElement(SecLbl, { rule: true }, "Fills"), drill == null ? /* @__PURE__ */ React.createElement(Spinner, { label: "loading" }) : !drill.fills.length ? /* @__PURE__ */ React.createElement("div", { className: "qe-mono", style: { fontSize: "0.58rem", color: "var(--qe-muted)" } }, "No fills recorded for this position.") : (
       // drilldown fills. tools were off here ("a handful of rows
       // inside a modal"); lifted 2026-07-25 per the operator
       // directive — a scaled-in position has many legs, and that

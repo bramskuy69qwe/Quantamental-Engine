@@ -316,6 +316,9 @@ const HistoryPage = () => {
   /* drilldown for a selected closed position */
   const drillSeq = React.useRef(0);
   const openDrill = async (row) => {
+    // a stale export error must not follow the operator to another
+    // position — it names the WRONG row there (audit LOW, M11)
+    setExpErr(null);
     if (sel && sel.id === row.id) { setSel(null); setDrill(null); return; }
     const seq = ++drillSeq.current;          // stale-response guard [P4 audit #3]
     setSel(row); setDrill(null); setNetDrill({});
@@ -530,6 +533,43 @@ const HistoryPage = () => {
   })();
 
   const dp = sel;
+
+  /* M11 (wiring inventory, 2026-08-04): the signed-audit-export subsystem
+     (P7.4-7.6 — per-position signed JSON/PDF bundles, verifiable causal
+     graph) lost its ONLY door when the Jinja Export-Audit button rode the
+     fragments slim-down out. POST + blob + anchor-click because the door
+     is a POST answering with a Content-Disposition attachment; the batch
+     ZIP door (/export/closed_positions) stays UI-less — a named remainder,
+     not an oversight. */
+  const [expBusy, setExpBusy] = React.useState(null);   // 'json' | 'pdf'
+  const [expErr, setExpErr] = React.useState(null);
+  const exportAudit = async (fmt) => {
+    if (!dp || expBusy) return;
+    setExpBusy(fmt); setExpErr(null);
+    let t;
+    try {
+      const res = await _ptFetch(`/export/closed_position/${dp.id}?format=${fmt}`,
+        { method: 'POST' }, QE_READ_DEADLINE_MS);
+      t = res.t;
+      if (!res.r.ok) {
+        // status-tagged like _ptJson does (audit MED on this door's first
+        // draft: an untagged Error fell through qeFootCause to "no network
+        // — engine unreachable" on a 404/500 the engine ANSWERED)
+        const err = new Error(`export answered ${res.r.status}`);
+        err.status = res.r.status;
+        throw err;
+      }
+      const blob = await res.r.blob();
+      clearTimeout(t);
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `audit_closed_position_${dp.id}.${fmt === 'pdf' ? 'pdf' : 'json'}`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch (e) { clearTimeout(t); setExpErr(e); }
+    setExpBusy(null);
+  };
+
   return (
     <div className="qe-scope" data-screen-label="04 History" style={{ width: '100%', height: '100%', background: 'var(--qe-bg)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <TopNavStd page="History" variant="line" dense />
@@ -596,9 +636,19 @@ const HistoryPage = () => {
                 <EmptyState fill tone="neutral" glyph="◎" msg="Select a closed position" hint="Click a row to inspect its fills, exec link and amendments." />
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <SecLbl rule right={<button className="qe-btn qe-btn-sm qe-btn-ghost" onClick={() => { setSel(null); setDrill(null); }}>✕</button>}>
+                  <SecLbl rule right={<span style={{ display: 'inline-flex', gap: 4 }}>
+                    <button className="qe-btn qe-btn-sm" disabled={!!expBusy} onClick={() => exportAudit('json')}
+                      title="Signed audit bundle (JSON) — the position's full causal graph with a signed-timestamp envelope">
+                      {expBusy === 'json' ? <Spinner size="0.6rem" label="export" /> : 'Audit JSON'}</button>
+                    <button className="qe-btn qe-btn-sm" disabled={!!expBusy} onClick={() => exportAudit('pdf')}
+                      title="Same signed bundle rendered as a paginated PDF (signature in the footer)">
+                      {expBusy === 'pdf' ? <Spinner size="0.6rem" label="export" /> : 'Audit PDF'}</button>
+                    <button className="qe-btn qe-btn-sm qe-btn-ghost" onClick={() => { setSel(null); setDrill(null); setExpErr(null); }}>✕</button>
+                  </span>}>
                     {dp.symbol} · CLOSED · {dp.direction}
                   </SecLbl>
+                  {expErr && <div className="qe-mono" style={{ fontSize: '0.58rem', color: 'var(--qe-red)' }}>
+                    audit export failed — {qeFootCause(expErr)}</div>}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 10px' }}>
                     {/* history-7: Net carries its % again (same figure the table's
                         '%' column computes), and Size / Fee · all-in are back. */}

@@ -56,6 +56,17 @@ Shipped so far (in commit order):
         The registry's list_backtest_adapters docstring says it was
         "shaped for the upload dropdown (task 3.4)" — the consumer that
         never came, until now.
+  M11 · two of the three UI-less subsystems got their doors: the
+        per-position SIGNED AUDIT EXPORT (JSON + PDF buttons on the
+        History drilldown — restoring the parity the fragments
+        slim-down deleted with the Jinja Export-Audit button) and the
+        userTrades OFFLINE-TRADE RECOVERY (confirm-gated button on
+        Config ▸ System, 180s deadline as a named deviation — a
+        deliberate long job, not a poll). NAMED REMAINDERS, not
+        oversights: the batch-ZIP export door stays UI-less, and the
+        BACKTEST RUNNER (6 live /api/backtest/* routes, zero consumers)
+        is a workbench-scale feature parked for the operator's call —
+        see the session report.
 
 Run: pytest tests/test_med_tail_batch.py -v
 """
@@ -376,3 +387,113 @@ class TestM7AdapterWiring:
             encoding="utf-8")
         assert 'fd.append("app_id", adapter)' in bundle
         assert 'fd.append("app_id", "multicharts")' not in bundle
+
+
+# ── M11: the audit-export and offline-recovery doors ────────────────────────
+
+
+class TestM11AuditExportDoor:
+    """The signed per-position bundle (P7.4-7.6) lost its only UI when
+    the slim-down deleted the Jinja Export-Audit button. Both sides
+    pinned: the React drilldown POSTs the real door for both formats,
+    and the door itself still answers (executed with the builder
+    stubbed — no live DB)."""
+
+    def test_drilldown_offers_both_formats_and_threads_fmt(self):
+        h = _src("pages-history.jsx")
+        assert "exportAudit('json')" in h
+        assert "exportAudit('pdf')" in h
+        # fmt is THREADED, not frozen — both buttons ride one lane
+        assert "`/export/closed_position/${dp.id}?format=${fmt}`" in h
+        assert ("`audit_closed_position_${dp.id}.${fmt === 'pdf' "
+                "? 'pdf' : 'json'}`") in h
+        # a failed export is SAID (the drilldown's own red line)…
+        assert "audit export failed" in h
+        # …with the TRUE cause: the thrown error is status-tagged like
+        # _ptJson's, so a 404/500 the engine ANSWERED cannot render as
+        # "no network — engine unreachable" (audit MED); and a stale
+        # error never follows the operator to another position — both
+        # exit paths clear it (audit LOW)
+        assert "err.status = res.r.status" in h
+        assert h.count("setExpErr(null)") >= 3  # export start + openDrill + ✕
+
+    @pytest.mark.asyncio
+    async def test_the_door_still_answers(self, monkeypatch):
+        """Executed: 404 on a missing row; JSON attachment on a hit —
+        the exact contract the React lane's r.ok + blob flow needs."""
+        import api.routes_export as rex
+
+        async def none_builder(db, cid):
+            return None
+
+        monkeypatch.setattr(rex, "build_closed_position_export", none_builder)
+        r = await rex.export_closed_position(4242, fmt="json")
+        assert r.status_code == 404
+
+        async def stub_builder(db, cid):
+            return {"closed_position_id": cid, "signature": "sig"}
+
+        monkeypatch.setattr(rex, "build_closed_position_export", stub_builder)
+        r = await rex.export_closed_position(7, fmt="json")
+        assert r.status_code == 200
+        assert "attachment" in r.headers.get("content-disposition", "")
+        assert "audit_closed_position_7.json" in r.headers["content-disposition"]
+
+
+class TestM11BackfillDoor:
+    """POST /api/orders/backfill (the gap-scoped userTrades recovery that
+    REPLACED the fee-inflating income reconstruction) had no door.
+    Confirm-gated Config ▸ System button; the days window threads all
+    the way to core.exchange_income."""
+
+    def test_config_offers_the_confirm_gated_button(self):
+        c = _src("pages-config.jsx")
+        assert "`/api/orders/backfill?days=${bfDays}`" in c
+        assert "Recover offline trades" in c
+        # the confirm PRECEDES the busy/POST — executed index math, and the
+        # guard's exact form (`if (!window.confirm(`) so a `false &&`
+        # neutering can't keep the substring alive (the session's
+        # substring-contains-mutant class)
+        i = c.index("const doBackfill = async () => {")
+        seg = c[i:c.index("setBfBusy(false);", i)]
+        assert "if (!window.confirm(" in seg
+        assert seg.index("window.confirm(") < seg.index("setBfBusy(true)")
+        assert seg.index("setBfBusy(true)") < seg.index("_ptFetch(")
+        # the result line counts ACTUAL recovered activity — the route
+        # returns every error-free symbol in `recovered`, zeros included,
+        # so a raw key-count always equals `symbols` and claims recovery
+        # that never happened (audit MED)
+        assert "typeof n === 'number' && n > 0" in seg
+        assert "${active} with recovered rows" in seg
+        # a 180s abort must not read as "engine not answering" — the
+        # server job keeps running and that message invites a restart
+        # mid-write (audit LOW)
+        assert "may STILL be running" in seg
+        # ternary-head anchored (`text: e && …`) — a `false &&` neutering
+        # keeps the bare condition substring alive
+        assert "text: e && e.timeoutMs != null" in seg
+
+    @pytest.mark.asyncio
+    async def test_the_door_threads_days_and_account(self, monkeypatch):
+        """Executed against the real route handler with the recovery
+        stubbed at its module (the handler imports it inside the body —
+        the call-time-import seam)."""
+        import core.exchange_income as xi
+        from api.routes_orders import backfill_from_exchange_history
+        from core.state import app_state
+
+        seen = {}
+
+        async def stub(*, account_id, days):
+            seen["account_id"] = account_id
+            seen["days"] = days
+            return {"symbols": 0, "recovered": {}, "errors": {}}
+
+        monkeypatch.setattr(xi, "recover_offline_trades", stub)
+        r = await backfill_from_exchange_history(days=7)
+        assert r.status_code == 200
+        assert seen["days"] == 7, (
+            "the days window no longer threads through — the UI select "
+            "is decoration"
+        )
+        assert seen["account_id"] == app_state.active_account_id
