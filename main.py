@@ -16,9 +16,11 @@ try:
 except ImportError:
     pass  # Windows dev — standard asyncio
 
+import asyncio
 import logging
 import os
 import sys
+import threading
 import time
 from contextlib import asynccontextmanager
 
@@ -77,8 +79,97 @@ _json_handler = ConcurrentRotatingFileHandler(
     use_gzip=False,  # match prior behavior — flip later if rotated-log size becomes a concern
 )
 _json_handler.setFormatter(JsonFormatter())
+
+
+class _EngineLogNudgeHandler(logging.Handler):
+    """Real-time nudge for the Dashboard Engine-Log tile (2026-08-05).
+
+    Every root-logger record already lands in risk_engine.jsonl via
+    _json_handler; this sibling publishes a TINY content-free nudge on the
+    pubsub bus (account:{aid}:engine_log) so the React pane re-polls
+    /api/engine/log/live immediately instead of waiting out its 4 s tick.
+    The nudge carries NO log text — the pane re-reads through the route,
+    which owns formatting/tz/cursor semantics (and the credential-hygiene
+    lesson: log content never rides a second transport).
+
+    Loop safety, in layers:
+    - The ROUTE side is closed as a CLASS by a positive marker, not by
+      logger names: _IN_ENGINE_LOG_POLL (routes_dashboard) is True for
+      the exact span of the /api/engine/log/live handler, and emit()
+      refuses to nudge while it is set — so ANY log fired inside the
+      nudge-triggered poll, whatever its logger (the live instance was
+      core/tz.py's per-call "tz" WARNING on a bad account-tz row, a name
+      no denylist listed — nudge audit HIGH-1), cannot self-sustain a
+      nudge→poll→log→nudge cycle.
+    - _DENY covers the CONSUMER side: the bus's own queue-full/delivery
+      logs ('pubsub'), the SSE stream's ('routes.streams'), the
+      dashboard route's own logger as belt-and-braces
+      ('routes.dashboard'), asyncio's internal error logs (the
+      scheduling primitive), and correlation_log's (the bus taps emit
+      there).
+    - A thread-local reentrancy latch covers same-stack recursion the
+      other two layers miss.
+    - emit() is fail-SILENT end to end: a logging handler must never
+      break its caller, and a dropped nudge costs nothing — the 4 s poll
+      remains the reconciler.
+
+    Inert until set_loop() (the lifespan's non-test lane provides the
+    running loop); under pytest the handler is never attached at all,
+    same F5 gate as _json_handler.
+    """
+
+    _DENY = ("pubsub", "routes.streams", "routes.dashboard", "asyncio",
+             "correlation_log")
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.INFO)
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._tl = threading.local()
+
+    def set_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        self._loop = loop
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            loop = self._loop
+            if loop is None or loop.is_closed():
+                return
+            if (record.name or "").startswith(self._DENY):
+                return
+            # route-side class closure (see docstring): a log fired inside
+            # the live-poll handler must never nudge, whatever its logger.
+            from api.routes_dashboard import _IN_ENGINE_LOG_POLL
+            if _IN_ENGINE_LOG_POLL.get():
+                return
+            if getattr(self._tl, "busy", False):
+                return
+            self._tl.busy = True
+            try:
+                from core.state import app_state
+                aid = app_state.active_account_id
+                if aid is None:
+                    return
+                from core.pubsub.bus import get_bus
+                from core.pubsub.channels import engine_log_channel
+                fut = asyncio.run_coroutine_threadsafe(
+                    get_bus().publish(engine_log_channel(aid), {"nudge": 1}),
+                    loop,
+                )
+                # retrieve the outcome so a failed publish never warns
+                # "exception was never retrieved"; cancelled() first — a
+                # cancelled future raises FROM .exception().
+                fut.add_done_callback(
+                    lambda f: f.cancelled() or f.exception())
+            finally:
+                self._tl.busy = False
+        except Exception:
+            pass  # a nudge must never break logging
+
+
+_engine_log_nudge = _EngineLogNudgeHandler()
 if not _TESTING:
     logging.getLogger().addHandler(_json_handler)
+    logging.getLogger().addHandler(_engine_log_nudge)
 
 # Credential hygiene (phase-3/5 ledger observation, fixed 2026-07-30):
 # httpx logs every request URL at INFO — including Finnhub's token QUERY
@@ -247,6 +338,9 @@ async def lifespan(app: FastAPI):
     # the operator's real API keys (calc-expiry / stale-order /
     # session-reaper are live-mutation vectors on the operator's account).
     if not _TESTING:
+        # Arm the Engine-Log SSE nudge: the handler is attached at import
+        # but inert until it can schedule onto the running loop.
+        _engine_log_nudge.set_loop(asyncio.get_running_loop())
         start_background_tasks()
 
     log.info(f"{config.PROJECT_NAME} accepting connections at http://localhost:8000")

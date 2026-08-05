@@ -9,16 +9,18 @@
  * + P0 executed-notes):
  *   - Endpoint: GET /stream/account/{id} (multiplexed), one connection.
  *   - Bus: core/pubsub InProcessBus (NOT core/event_bus) — in-process, no broker.
- *   - 5 LIVE channels (SSE `event:` = channel suffix): position_update,
- *     equity_update, dd_state, order_update, fill.
+ *   - 6 LIVE channels (SSE `event:` = channel suffix): position_update,
+ *     equity_update, dd_state, order_update, fill, engine_log (a
+ *     content-free "new log line exists" nudge from main.py's
+ *     _EngineLogNudgeHandler — consumers re-poll, payload carries no text).
  *   - weekly_pnl is a DEAD channel (defined but never published) — do NOT wire
  *     an SSE listener; weekly-PnL state comes from the /api/state poll instead.
  *   - Scoping caveat: position_update/equity_update/dd_state publish only to the
  *     ACTIVE account; fill/order_update carry a true per-order account id.
  */
 const QE_SSE = (function () {
-  // Exactly the 5 channels the engine actually publishes. weekly_pnl omitted.
-  const CHANNELS = ['position_update', 'equity_update', 'dd_state', 'order_update', 'fill'];
+  // Exactly the 6 channels the engine actually publishes. weekly_pnl omitted.
+  const CHANNELS = ['position_update', 'equity_update', 'dd_state', 'order_update', 'fill', 'engine_log'];
 
   const chanSubs = new Map();   // channel -> Set(fn(payload))
   const values = new Map();     // data-live-id -> latest value (P1 populates)

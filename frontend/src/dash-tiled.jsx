@@ -2,7 +2,8 @@
    and WIRED to real engine data:
      · initial state ← GET /api/dashboard/snapshot
      · live values   ← SSE (window.QE_SSE): equity_update / position_update / dd_state
-     · engine log     ← GET /api/engine/log/live?off=&eid= (poll — jsonl tail + risk events)
+     · engine log     ← GET /api/engine/log/live?off=&eid= (4s poll, reconciler)
+                        + SSE engine_log nudge → immediate re-poll (real-time)
      · macro signals  ← GET /api/regime/signals/latest (poll)
      · halt/state      ← GET /api/state (poll, incl. G-O2 `halted`)
      · equity curve   ← GET /api/dashboard/equity_ohlc
@@ -92,9 +93,9 @@ const QE_DASH = (function () {
   // response resolving late would regress the cursors. The deadline
   // guarantees settlement, so this latch cannot wedge the lane the way the
   // pre-deadline notification inFlight latch once did (twelfth block).
-  let _logInFlight = false;
+  let _logInFlight = false, _logPending = false;
   async function loadLog() {
-    if (_logInFlight) return;
+    if (_logInFlight) { _logPending = true; return; }
     _logInFlight = true;
     try {
       const d = await _json('/api/engine/log/live?off=' + state.logOff + '&eid=' + state.logEid + '&limit=60', 'log');
@@ -107,7 +108,13 @@ const QE_DASH = (function () {
       }
       notify();   // quiet poll still refreshes net.log (foot recovery) [foot-audit LOW-5]
     } catch (e) { /* keep prior feed; net.log carries the error for the foot */ }
-    finally { _logInFlight = false; }
+    finally {
+      _logInFlight = false;
+      // trailing edge: nudges (SSE engine_log) or ticks that landed while a
+      // poll was in flight coalesce into exactly ONE follow-up run, so a
+      // burst is drained back-to-back instead of waiting out the 4 s tick.
+      if (_logPending) { _logPending = false; loadLog(); }
+    }
   }
 
   function _wireSSE() {
@@ -149,6 +156,11 @@ const QE_DASH = (function () {
         drawdown: p.drawdown != null ? p.drawdown : state.st.drawdown };
       notify();
     });
+    // engine_log is a content-free NUDGE (main.py _EngineLogNudgeHandler): a
+    // new jsonl line exists — re-poll the live route NOW instead of waiting
+    // out the 4 s tick. loadLog's latch + pending flag coalesce nudge bursts
+    // into back-to-back polls, never overlaps.
+    window.QE_SSE.onChannel('engine_log', () => loadLog());
   }
 
   let started = false, wired = false;

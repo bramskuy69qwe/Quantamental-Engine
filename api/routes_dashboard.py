@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 import time as _time
 from datetime import datetime, timezone
@@ -586,6 +587,14 @@ _LIVE_LEVEL_TONES = {
 # the offset only advances to the last complete line actually consumed.
 _LIVE_MAX_BYTES = 65536
 
+# Poll-path marker for main._EngineLogNudgeHandler (nudge audit HIGH-1): ANY
+# log fired synchronously inside the live-poll handler — whatever its logger
+# name — must not publish a nudge, or nudge→poll→log→nudge self-sustains at
+# round-trip period (the live instance was core/tz.py's per-call WARNING on a
+# missing/bad account-tz row, logger "tz" — a name no denylist listed). The
+# handler checks this contextvar; the route sets it for exactly its own span.
+_IN_ENGINE_LOG_POLL = contextvars.ContextVar("in_engine_log_poll", default=False)
+
 
 def _tail_jsonl_lines(path: str, off: int, limit: int,
                       max_bytes: int = _LIVE_MAX_BYTES) -> tuple[list[dict], int]:
@@ -696,45 +705,50 @@ async def api_engine_log_live(off: int = 0, eid: int = 0, limit: int = 60):
     new risk events flow in highlighted. Each lane fails soft (empty page +
     cursor unchanged) — never a 500 in the poll loop."""
     from core.event_log import query_events_since
-    aid = app_state.active_account_id
-    limit = max(1, min(int(limit or 60), 500))
+    _tok = _IN_ENGINE_LOG_POLL.set(True)
     try:
-        tz = get_account_tz(aid)
-    except Exception:
-        tz = None  # tz is presentation-only — the poll loop must not 500 (audit LOW-7)
-    now = datetime.now(timezone.utc)
-    today = (now.astimezone(tz) if tz is not None else now).strftime("%Y-%m-%d")
-    lines: list[dict] = []
-    new_off = int(off or 0)
-    try:
-        raw, new_off = _tail_jsonl_lines(config.LOG_FILE, int(off or 0), limit)
-        lines.extend(_jsonl_live_line(d, tz, today) for d in raw)
-    except Exception as e:
-        log.warning("[api_engine_log_live] jsonl tail failed: %s", e)
-    new_eid = int(eid or 0)
-    try:
-        if new_eid > 0:
-            rows = query_events_since(aid, since_id=new_eid, limit=limit)
-        elif new_eid < 0:
-            # armed-at-empty (audit LOW-4): the table had NO rows at arming,
-            # so everything present now is new — the id-0 seed query IS the
-            # incremental read here. Without this lane the first-ever event
-            # lands between two arming polls and is swallowed unseen.
-            rows = query_events_since(aid, since_id=0, limit=limit)
-        else:
-            rows = []
-            newest = query_events_since(aid, since_id=0, limit=1)
-            new_eid = newest[-1]["id"] if newest else -1  # -1 = armed at empty
-        for r in rows:
-            line = _engine_log_line(r, tz, today=today)
-            line["src"] = "event"
-            line["_ts"] = str(r.get("timestamp") or "")
-            lines.append(line)
-        if rows:
-            new_eid = rows[-1]["id"]
-    except Exception as e:
-        log.warning("[api_engine_log_live] events lane failed: %s", e)
-    lines.sort(key=lambda x: x.get("_ts", ""))  # stable: ties keep lane order
-    for x in lines:
-        x.pop("_ts", None)
-    return JSONResponse({"lines": lines, "off": new_off, "eid": new_eid})
+        aid = app_state.active_account_id
+        limit = max(1, min(int(limit or 60), 500))
+        try:
+            tz = get_account_tz(aid)
+        except Exception:
+            tz = None  # tz is presentation-only — the poll loop must not 500 (audit LOW-7)
+        now = datetime.now(timezone.utc)
+        today = (now.astimezone(tz) if tz is not None else now).strftime("%Y-%m-%d")
+        lines: list[dict] = []
+        new_off = int(off or 0)
+        try:
+            raw, new_off = _tail_jsonl_lines(config.LOG_FILE, int(off or 0), limit)
+            lines.extend(_jsonl_live_line(d, tz, today) for d in raw)
+        except Exception as e:
+            log.warning("[api_engine_log_live] jsonl tail failed: %s", e)
+        new_eid = int(eid or 0)
+        try:
+            if new_eid > 0:
+                rows = query_events_since(aid, since_id=new_eid, limit=limit)
+            elif new_eid < 0:
+                # armed-at-empty (audit LOW-4): the table had NO rows at
+                # arming, so everything present now is new — the id-0 seed
+                # query IS the incremental read here. Without this lane the
+                # first-ever event lands between two arming polls and is
+                # swallowed unseen.
+                rows = query_events_since(aid, since_id=0, limit=limit)
+            else:
+                rows = []
+                newest = query_events_since(aid, since_id=0, limit=1)
+                new_eid = newest[-1]["id"] if newest else -1  # -1 = armed at empty
+            for r in rows:
+                line = _engine_log_line(r, tz, today=today)
+                line["src"] = "event"
+                line["_ts"] = str(r.get("timestamp") or "")
+                lines.append(line)
+            if rows:
+                new_eid = rows[-1]["id"]
+        except Exception as e:
+            log.warning("[api_engine_log_live] events lane failed: %s", e)
+        lines.sort(key=lambda x: x.get("_ts", ""))  # stable: ties keep lane order
+        for x in lines:
+            x.pop("_ts", None)
+        return JSONResponse({"lines": lines, "off": new_off, "eid": new_eid})
+    finally:
+        _IN_ENGINE_LOG_POLL.reset(_tok)

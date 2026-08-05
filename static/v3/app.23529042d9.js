@@ -2620,7 +2620,7 @@ Object.assign(window, { NotifCtx, NotifBell, NotifBanner, NotifRow, Notification
 
 /* ==== sse-adapter.js ==== */
 const QE_SSE = function() {
-  const CHANNELS = ["position_update", "equity_update", "dd_state", "order_update", "fill"];
+  const CHANNELS = ["position_update", "equity_update", "dd_state", "order_update", "fill", "engine_log"];
   const chanSubs = /* @__PURE__ */ new Map();
   const values = /* @__PURE__ */ new Map();
   const valSubs = /* @__PURE__ */ new Map();
@@ -2934,9 +2934,12 @@ const QE_DASH = /* @__PURE__ */ function() {
     } catch (e) {
     }
   }
-  let _logInFlight = false;
+  let _logInFlight = false, _logPending = false;
   async function loadLog() {
-    if (_logInFlight) return;
+    if (_logInFlight) {
+      _logPending = true;
+      return;
+    }
     _logInFlight = true;
     try {
       const d = await _json("/api/engine/log/live?off=" + state.logOff + "&eid=" + state.logEid + "&limit=60", "log");
@@ -2950,6 +2953,10 @@ const QE_DASH = /* @__PURE__ */ function() {
     } catch (e) {
     } finally {
       _logInFlight = false;
+      if (_logPending) {
+        _logPending = false;
+        loadLog();
+      }
     }
   }
   function _wireSSE() {
@@ -2995,6 +3002,7 @@ const QE_DASH = /* @__PURE__ */ function() {
       };
       notify();
     });
+    window.QE_SSE.onChannel("engine_log", () => loadLog());
   }
   let started = false, wired = false;
   const _timers = [];

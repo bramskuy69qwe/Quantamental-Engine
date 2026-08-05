@@ -30,6 +30,13 @@ def weekly_pnl_channel(account_id: int) -> str:
     return f"account:{account_id}:weekly_pnl"
 
 
+def engine_log_channel(account_id: int) -> str:
+    """Content-free 'new engine-log line exists' nudge for the Dashboard
+    Engine-Log tile (2026-08-05). The payload carries NO log text — the
+    client re-polls /api/engine/log/live, which owns formatting + cursors."""
+    return f"account:{account_id}:engine_log"
+
+
 def channel_pattern(account_id: int) -> str:
     """PSUBSCRIBE pattern matching all channels for an account."""
     return f"account:{account_id}:*"

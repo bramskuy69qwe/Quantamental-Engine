@@ -21,9 +21,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import sys
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -366,15 +369,29 @@ class TestFrontendLiveFeedPins:
         assert "if (d.off != null) state.logOff = d.off;" in body
         assert "if (d.eid != null) state.logEid = d.eid;" in body
 
-    def test_loadlog_carries_the_overlap_latch(self):
-        """audit MED-2: the 5 s deadline exceeds the 4 s interval, so without
-        a latch two overlapping polls carry the same cursors and prepend the
-        same lines twice (and a late stale response regresses the cursors).
-        Safe now BECAUSE every read carries the settlement-guaranteed
-        deadline — the pre-deadline latch-wedge class cannot recur."""
+    def test_loadlog_carries_the_overlap_latch_with_trailing_edge(self):
+        """audit MED-2 + the SSE nudge follow-up: the 5 s deadline exceeds
+        the 4 s interval, so without a latch two overlapping polls carry the
+        same cursors and prepend the same lines twice (and a late stale
+        response regresses the cursors). Safe BECAUSE every read carries the
+        settlement-guaranteed deadline — the pre-deadline latch-wedge class
+        cannot recur. The pending flag is the trailing edge: nudges landing
+        mid-poll coalesce into exactly one follow-up run instead of being
+        dropped to the 4 s tick."""
         body = _slice(_DASH, "async function loadLog(")
-        assert "if (_logInFlight) return;" in body
-        assert "finally { _logInFlight = false; }" in body
+        assert "if (_logInFlight) { _logPending = true; return; }" in body
+        assert "_logInFlight = false;" in body
+        assert "if (_logPending) { _logPending = false; loadLog(); }" in body
+
+    def test_sse_nudge_is_wired_end_to_end_in_the_frontend(self):
+        """The engine_log channel must be BOTH registered on the EventSource
+        (sse-adapter CHANNELS — without it the named listener never exists)
+        AND subscribed by the dashboard store (nudge → immediate re-poll)."""
+        sse = _code((_ROOT / "frontend" / "src" / "sse-adapter.js").read_text(encoding="utf-8"))
+        m = re.search(r"const CHANNELS = \[([^\]]*)\]", sse)
+        assert m and "'engine_log'" in m.group(1)
+        wire = _slice(_DASH, "function _wireSSE(")
+        assert "window.QE_SSE.onChannel('engine_log', () => loadLog());" in wire
 
     def test_event_rows_skip_the_fade_and_bold_the_tag(self):
         body = _slice(_DASH, "const EngineLogBody")
@@ -402,3 +419,209 @@ class TestRouteRegistration:
         consumer moved to /live — if this pin ever blocks a retirement sweep,
         retire the route WITH it."""
         assert self._SRC.count('@router.get("/api/engine/log")') == 1
+
+
+# ── 7. the SSE nudge (real-time follow-up, 2026-08-05) ──────────────────────
+
+class _FakeBus:
+    def __init__(self):
+        self.published = []
+
+    async def publish(self, channel, payload):
+        self.published.append((channel, payload))
+
+
+def _wait_until(cond, timeout=2.0):
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < timeout:
+        if cond():
+            return True
+        time.sleep(0.01)
+    return False
+
+
+@pytest.fixture()
+def bg_loop():
+    loop = asyncio.new_event_loop()
+    t = threading.Thread(target=loop.run_forever, daemon=True)
+    t.start()
+    yield loop
+    loop.call_soon_threadsafe(loop.stop)
+    t.join(timeout=5)
+    loop.close()
+
+
+class TestEngineLogNudgeHandler:
+    """Executed against a REAL background event loop — the handler's job is
+    exactly the sync-logging→async-bus bridge, so the bridge is what's tested."""
+
+    def _handler(self, monkeypatch, *, aid=7):
+        import main
+        import core.state as cs
+        import core.pubsub.bus as pb
+        fake = _FakeBus()
+        monkeypatch.setattr(cs, "app_state", SimpleNamespace(active_account_id=aid))
+        monkeypatch.setattr(pb, "get_bus", lambda: fake)
+        return main._EngineLogNudgeHandler(), fake
+
+    def _rec(self, name="risk_engine.test", level=logging.INFO):
+        return logging.LogRecord(name=name, level=level, pathname=__file__,
+                                 lineno=1, msg="hello", args=(), exc_info=None)
+
+    def test_emit_publishes_on_the_account_engine_log_channel(self, monkeypatch, bg_loop):
+        h, fake = self._handler(monkeypatch)
+        h.set_loop(bg_loop)
+        h.emit(self._rec())
+        assert _wait_until(lambda: fake.published)
+        assert fake.published == [("account:7:engine_log", {"nudge": 1})]
+
+    def test_denylisted_loggers_never_nudge_but_siblings_do(self, monkeypatch, bg_loop):
+        """The loop-breaker: every logger on the publish/consume path is
+        denied (each would self-sustain a publish→log→publish cycle), while
+        an ordinary sibling still nudges — the deny is a prefix list, not a
+        mute-all."""
+        h, fake = self._handler(monkeypatch)
+        h.set_loop(bg_loop)
+        for name in ("pubsub.inprocess", "routes.streams", "routes.dashboard",
+                     "asyncio", "correlation_log"):
+            h.emit(self._rec(name=name))
+        time.sleep(0.15)  # give any wrong publish time to land
+        assert fake.published == []
+        h.emit(self._rec(name="routes.accounts"))
+        assert _wait_until(lambda: fake.published)
+
+    def test_inert_without_a_loop(self, monkeypatch):
+        h, fake = self._handler(monkeypatch)
+        h.emit(self._rec())  # no set_loop — must neither raise nor publish
+        assert fake.published == []
+
+    def test_none_account_does_not_publish(self, monkeypatch, bg_loop):
+        h, fake = self._handler(monkeypatch, aid=None)
+        h.set_loop(bg_loop)
+        h.emit(self._rec())
+        time.sleep(0.15)
+        assert fake.published == []
+
+    def test_failures_are_swallowed_never_raised(self, monkeypatch, bg_loop):
+        """A logging handler must never break its caller: a raising bus
+        factory and a closed loop are both absorbed."""
+        h, _ = self._handler(monkeypatch)
+        import core.pubsub.bus as pb
+
+        def _boom():
+            raise RuntimeError("bus down")
+        monkeypatch.setattr(pb, "get_bus", _boom)
+        h.set_loop(bg_loop)
+        h.emit(self._rec())  # get_bus raises inside emit — swallowed
+        dead = asyncio.new_event_loop()
+        dead.close()
+        h2, fake2 = self._handler(monkeypatch)
+        h2.set_loop(dead)
+        h2.emit(self._rec())  # closed loop — the guard returns early
+        assert fake2.published == []
+
+    def test_level_gate_debug_records_do_not_nudge(self, monkeypatch, bg_loop):
+        """Through a REAL logger (Handler.level is enforced by callHandlers,
+        not by emit): DEBUG stays silent, INFO nudges."""
+        h, fake = self._handler(monkeypatch)
+        h.set_loop(bg_loop)
+        lg = logging.getLogger("nudge-level-gate-test")
+        lg.propagate = False
+        lg.setLevel(logging.DEBUG)
+        lg.addHandler(h)
+        try:
+            lg.debug("quiet")
+            time.sleep(0.15)
+            assert fake.published == []
+            lg.info("loud")
+            assert _wait_until(lambda: fake.published)
+        finally:
+            lg.removeHandler(h)
+
+    def test_not_attached_and_unarmed_under_pytest(self):
+        """F5 mirror of the _json_handler pin: the nudge handler exists but
+        is neither attached to root nor armed with a loop under pytest."""
+        import main
+        assert isinstance(main._engine_log_nudge, main._EngineLogNudgeHandler)
+        assert main._engine_log_nudge not in logging.getLogger().handlers
+        assert main._engine_log_nudge._loop is None
+
+    def test_prod_lane_attaches_and_arms(self):
+        """Structural, two-sided: the attach rides the SAME not-_TESTING block
+        as _json_handler, and the lifespan's non-test lane arms the loop."""
+        src = (_ROOT / "main.py").read_text(encoding="utf-8")
+        attach = ("\nif not _TESTING:\n"
+                  "    logging.getLogger().addHandler(_json_handler)\n"
+                  "    logging.getLogger().addHandler(_engine_log_nudge)\n")
+        assert attach in src
+        assert "        _engine_log_nudge.set_loop(asyncio.get_running_loop())" in src
+
+
+class TestPollPathMarkerClosesTheLoopClass:
+    def test_logs_fired_inside_the_poll_do_not_nudge_but_outside_do(
+            self, monkeypatch, tmp_path, bg_loop):
+        """nudge audit HIGH-1, fixed as a CLASS: get_account_tz logs a
+        per-call root-propagating WARNING (logger "tz" — in no denylist) and
+        the live route calls it per poll, so nudge→poll→warning→nudge would
+        self-sustain at round-trip period. The _IN_ENGINE_LOG_POLL contextvar
+        marks the handler's span; emit() refuses to nudge inside it — for ANY
+        logger name — while the SAME logger outside the poll still nudges."""
+        import main
+        import core.state as cs
+        import core.pubsub.bus as pb
+        fake = _FakeBus()
+        monkeypatch.setattr(cs, "app_state", SimpleNamespace(active_account_id=7))
+        monkeypatch.setattr(pb, "get_bus", lambda: fake)
+        h = main._EngineLogNudgeHandler()
+        h.set_loop(bg_loop)
+        lg = logging.getLogger("nudge-ctx-probe")  # deliberately NOT denylisted
+        lg.propagate = False
+        lg.setLevel(logging.INFO)
+        lg.addHandler(h)
+        try:
+            f = tmp_path / "risk_engine.jsonl"
+            _write_jsonl(f, [_rec(0)])
+            monkeypatch.setattr(config, "LOG_FILE", str(f))
+            monkeypatch.setattr(rd, "app_state", SimpleNamespace(active_account_id=1))
+
+            def _warn_like_tz(aid):
+                lg.warning("bad tz — the audit's live loop instance")
+                return None
+
+            monkeypatch.setattr(rd, "get_account_tz", _warn_like_tz)
+            import core.event_log as ev
+            monkeypatch.setattr(ev, "query_events_since", lambda *a, **k: [])
+            asyncio.run(rd.api_engine_log_live(off=0, eid=0, limit=10))
+            time.sleep(0.15)  # give a wrongful publish time to land
+            assert fake.published == []          # in-poll log: suppressed
+            lg.warning("outside the poll")       # same logger, marker unset
+            assert _wait_until(lambda: fake.published)
+        finally:
+            lg.removeHandler(h)
+
+
+class TestEngineLogChannelRouting:
+    def test_channel_shape(self):
+        from core.pubsub.channels import engine_log_channel
+        assert engine_log_channel(3) == "account:3:engine_log"
+
+    def test_bus_routes_engine_log_to_the_account_pattern(self):
+        """Executed InProcessBus round-trip: the multiplexed SSE endpoint
+        subscribes account:{id}:* and names events by _channel_suffix — an
+        engine_log publish must arrive there as event 'engine_log'."""
+        from core.pubsub.in_process_bus import InProcessBus
+        from core.pubsub.channels import channel_pattern, engine_log_channel
+
+        async def run():
+            bus = InProcessBus()
+            gen = bus.subscribe(channel_pattern(5))
+            task = asyncio.ensure_future(gen.__anext__())
+            await asyncio.sleep(0.01)  # let the subscriber queue register
+            await bus.publish(engine_log_channel(5), {"nudge": 1})
+            payload = await asyncio.wait_for(task, 2)
+            await gen.aclose()
+            return payload
+
+        payload = asyncio.run(run())
+        assert payload["_channel_suffix"] == "engine_log"
+        assert payload["nudge"] == 1
