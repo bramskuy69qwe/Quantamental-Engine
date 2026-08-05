@@ -42,6 +42,18 @@ class BacktestMixin:
         )
         await self._conn.commit()
 
+    # ── Route-orphaned trio (get/list/delete session) ─────────────────────
+    # The backtest-runner retirement (2026-08-04, operator decision) removed
+    # their only prod callers (api/routes_backtest.py). KEPT deliberately:
+    # the table still holds real engine-run + historical Quantower
+    # ('microstructure') rows — those rows are now UNREADABLE through any
+    # door until a reader is added (recorded, not accidental). The import
+    # lane's own tests use GET and LIST as fixtures for the
+    # model_id-IS-NULL filtering; DELETE has zero callers of any kind and
+    # survives purely on the table-level-API convention (audit-precise:
+    # the first draft said "these methods" for all three). Same convention
+    # as insert_trade_history / insert_position_changes.
+
     async def get_backtest_session(self, session_id: int) -> Optional[Dict[str, Any]]:
         """Return a backtest_sessions row with decoded config/summary dicts, or None."""
         async with self._conn.execute(

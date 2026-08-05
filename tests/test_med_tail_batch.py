@@ -63,10 +63,10 @@ Shipped so far (in commit order):
         userTrades OFFLINE-TRADE RECOVERY (confirm-gated button on
         Config ▸ System, 180s deadline as a named deviation — a
         deliberate long job, not a poll). NAMED REMAINDERS, not
-        oversights: the batch-ZIP export door stays UI-less, and the
-        BACKTEST RUNNER (6 live /api/backtest/* routes, zero consumers)
-        is a workbench-scale feature parked for the operator's call —
-        see the session report.
+        oversights: the batch-ZIP export door stays UI-less; the
+        BACKTEST RUNNER was parked here for the operator's call and
+        RETIRED by their decision the same day (2026-08-04) — pins in
+        tests/test_v27_phase6_retirement.
 
 Run: pytest tests/test_med_tail_batch.py -v
 """

@@ -1,10 +1,13 @@
 """
-Task 97 regression tests for HIGH-022 + HIGH-023 + MED-036.
+Task 97 regression tests for HIGH-023 + MED-036.
 
-HIGH-022: backtest date-range validation (api/routes_backtest.py).
 HIGH-023: cross-parameter validation in validate_params (warning < limit pairs).
 MED-036: runtime-state check in /params/update — reject max_position_count
          reductions below the current open-position count.
+
+(HIGH-022's TestBacktestDateRangeValidation retired 2026-08-04 with its
+subject — the backtest-runner retirement deleted api/routes_backtest.py
+and _validate_date_range with it; pins in tests/test_v27_phase6_retirement.)
 
 Run: pytest tests/test_task97_route_validation.py -v
 """
@@ -14,54 +17,6 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-
-
-# ── HIGH-022: backtest date-range validation ─────────────────────────────────
-
-class TestBacktestDateRangeValidation:
-    """HIGH-022: bound the backtest date range to prevent DoS via
-    crafted multi-year requests + reject malformed/inverted ranges."""
-
-    def test_valid_30_day_range_accepted(self):
-        from api.routes_backtest import _validate_date_range
-        assert _validate_date_range("2025-01-01", "2025-01-31") is None
-
-    def test_valid_1_year_range_accepted(self):
-        from api.routes_backtest import _validate_date_range
-        assert _validate_date_range("2024-01-01", "2024-12-31") is None
-
-    def test_empty_strings_short_circuit(self):
-        """Empty dates short-circuit to None — the metadata-style lane (used
-        by the Quantower JSON importer until v2.7 P6 retired it)."""
-        from api.routes_backtest import _validate_date_range
-        assert _validate_date_range("", "") is None
-        assert _validate_date_range("2025-01-01", "") is None
-        assert _validate_date_range("", "2025-01-31") is None
-
-    def test_inverted_range_rejected(self):
-        from api.routes_backtest import _validate_date_range
-        err = _validate_date_range("2025-01-31", "2025-01-01")
-        assert err is not None
-        assert ">=" in err
-
-    def test_zero_day_range_rejected(self):
-        from api.routes_backtest import _validate_date_range
-        err = _validate_date_range("2025-01-15", "2025-01-15")
-        assert err is not None
-        assert "at least 1 day" in err
-
-    def test_over_one_year_range_rejected(self):
-        from api.routes_backtest import _validate_date_range
-        err = _validate_date_range("2024-01-01", "2025-06-01")  # ~517 days
-        assert err is not None
-        assert "exceeds maximum" in err
-        assert "365 days" in err
-
-    def test_malformed_date_format_rejected(self):
-        from api.routes_backtest import _validate_date_range
-        err = _validate_date_range("01/15/2025", "01/31/2025")
-        assert err is not None
-        assert "invalid date format" in err
 
 
 # ── HIGH-023: cross-parameter validation in validate_params ──────────────────

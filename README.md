@@ -162,7 +162,9 @@ The displayed product version is `PROJECT_VERSION_` in [config.py](config.py)
 - **[v2.4 Release Notes](docs/release_notes/v2.4.md)** — User-facing summary
   of what v2.4 delivers.
 - **[v2.5–v2.7 Roadmap](docs/archive/v2.5-v2.7_roadmap.md)** — Backtesting subsystem,
-  defensive ML, integration backtest.
+  defensive ML, integration backtest. *(The in-engine backtest runner was
+  retired 2026-08-04 by operator decision — external report imports via the
+  Models page are the ratified backtesting lane.)*
 
 ---
 

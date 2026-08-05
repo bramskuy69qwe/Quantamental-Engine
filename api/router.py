@@ -15,7 +15,9 @@ from api.routes_history    import router as history_router
 from api.routes_params     import router as params_router
 from api.routes_analytics  import router as analytics_router
 from api.routes_accounts   import router as accounts_router
-from api.routes_backtest   import router as backtest_router
+# (routes_backtest retired 2026-08-04 — the backtest RUNNER subsystem was
+# deleted by operator decision; external report imports via routes_models
+# are the ratified backtesting lane. Pins: tests/test_v27_phase6_retirement.)
 from api.routes_models     import router as models_router
 from api.routes_regime     import router as regime_router
 from api.routes_news        import router as news_router
@@ -38,7 +40,6 @@ router.include_router(history_router)
 router.include_router(params_router)
 router.include_router(analytics_router)
 router.include_router(accounts_router)
-router.include_router(backtest_router)
 router.include_router(models_router)
 router.include_router(regime_router)
 router.include_router(news_router)

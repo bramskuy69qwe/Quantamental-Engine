@@ -1,6 +1,18 @@
 """
 Historical OHLCV ingestion — fetches via adapter and stores in ohlcv_cache.
 
+CLI-ONLY since 2026-08-04 (backtest-runner retirement, operator decision):
+its only route consumer, POST /api/backtest/fetch-ohlcv, died with the
+runner. This module DELIBERATELY SURVIVES — it is the SOLE writer of the
+``ohlcv_cache`` table, and ``core/regime_fetcher.compute_btc_rvol_ratio``
+(the live ``btc_rvol_ratio`` regime signal) READS that table. Deleting a
+route must not starve a live signal's feed (the rehomed-guard precedent,
+MED-036). Without periodic CLI runs the STORED signal goes
+stale/absent — compute_btc_rvol_ratio returns 0 ROWS WRITTEN and logs
+"No BTCUSDT OHLCV data" (empty window) or "Insufficient BTCUSDT candles"
+(1-34 candles) — refresh with the command below. Pinned by
+tests/test_v27_phase6_retirement.
+
 Usage (standalone):
     python -m core.ohlcv_fetcher --symbols BTCUSDT ETHUSDT --timeframe 4h --days 365
 

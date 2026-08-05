@@ -213,22 +213,10 @@ async def test_create_model_valid_dict_still_works(tdb):
 # sites (the audit's finding was a sample — broad re-grep surfaced 8 more
 # bare-`.get`-after-parse sites in routes_backtest / routes_regime /
 # routes_admin / routes_accounts; JSON lanes → 400, HTML-alert lanes
-# degrade to {} like their malformed-JSON lane). One pin per lane shape. ──
-
-@pytest.mark.asyncio
-async def test_fetch_ohlcv_non_dict_body_400():
-    import api.routes_backtest as rb
-    resp = await rb.api_fetch_ohlcv(_raw_body_req(b'[1, 2]'))
-    assert resp.status_code == 400
-    assert json.loads(resp.body)["error"] == "Body must be a JSON object"
-
-
-@pytest.mark.asyncio
-async def test_backtest_run_non_dict_body_400():
-    import api.routes_backtest as rb
-    resp = await rb.api_backtest_run(_raw_body_req(b'"config"'))
-    assert resp.status_code == 400
-
+# degrade to {} like their malformed-JSON lane). One pin per lane shape.
+# (The two routes_backtest members retired 2026-08-04 with their subject —
+# the backtest-runner retirement; the CLASS pin lives on in the surviving
+# regime/admin lanes below.) ──
 
 @pytest.mark.asyncio
 async def test_regime_backfill_non_dict_body_400():

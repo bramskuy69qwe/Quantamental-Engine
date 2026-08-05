@@ -4,7 +4,9 @@ Model-library routes (v2.7 Phase 3).
 Co-locates the JSON API (/api/models — pre-v2.7 contract, extended),
 the server-rendered fragments (/fragments/models/*), the Form-post
 mutations, the backtest-report upload, and the calculator prefill —
-mirroring the routes_backtest.py co-location precedent.
+mirroring the routes_backtest.py co-location precedent (that file was
+retired 2026-08-04 with the backtest runner; the precedent held when
+this was written).
 
 The GET /models PAGE route ships in Phase 4, not here (executed
 deviation, plan 3.2): it needs model_library.html + the nav/page_meta
