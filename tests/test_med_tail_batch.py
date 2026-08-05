@@ -42,6 +42,20 @@ Shipped so far (in commit order):
         tools.scope; History passes 'loaded page only' and the toolbar
         carries the caption beside the count, title-expanded ("the
         server-side controls above the table span the full set").
+  M7  · the Models upload lanes parse with the SELECTED Source app's
+        adapter instead of hardcoding 'multicharts' four times. An app
+        without a registered parser is REFUSED before uploading (named
+        message listing what IS supported) rather than mis-parsed; the
+        ImportModal's decorative one-option select became the real,
+        controlled parser choice, its options exactly the registry.
+        MDL_ADAPTERS (display → app_id) is a compile-time map pinned
+        1:1 against core.backtest_adapters.list_backtest_adapters —
+        mapping-with-parity-pin instead of a live endpoint because
+        adapters are compiled-in (a new one ships in a release, and the
+        parity pin fails that release's gate until the map learns it).
+        The registry's list_backtest_adapters docstring says it was
+        "shaped for the upload dropdown (task 3.4)" — the consumer that
+        never came, until now.
 
 Run: pytest tests/test_med_tail_batch.py -v
 """
@@ -236,3 +250,129 @@ class TestM9PageScopeCaption:
         # still CONTAINS the bare name (the session's recurring
         # substring-contains-mutant class, third instance)
         assert ".qe-dl-scope {" in tokens
+
+
+# ── M7: uploads parse with the SELECTED app's adapter ───────────────────────
+
+
+class TestM7AdapterWiring:
+    """Four upload lanes hardcoded app_id='multicharts' whatever the
+    operator's Source-app select said — a foreign report got chewed by
+    the wrong parser while the model recorded the foreign source. Now
+    every lane derives the adapter from the selection via MDL_ADAPTERS
+    and REFUSES (named message) when none exists. The map is pinned 1:1
+    against the live registry — both sides derived, neither assumed."""
+
+    def _models(self):
+        return _src("pages-models.jsx")
+
+    def test_map_matches_the_registry_exactly(self):
+        """Executed on the python side (the real registry, decorators
+        fired), parsed on the JS side: same app_ids, same display names.
+        A registered adapter the UI doesn't offer — or a UI offer no
+        adapter backs — fails here by construction."""
+        from core.backtest_adapters import list_backtest_adapters
+
+        rows = list_backtest_adapters()
+        registry = {r["display_name"]: r["app_id"] for r in rows}
+        m = re.search(r"const MDL_ADAPTERS = \{([^}]*)\};", self._models())
+        assert m, "MDL_ADAPTERS literal not found"
+        js = dict(re.findall(r"'([^']+)':\s*'([^']+)'", m.group(1)))
+        assert js == registry, (
+            f"UI adapter map {js} != registry {registry} — a new adapter "
+            "ships with its UI entry in the same release (M7 doctrine)"
+        )
+
+    def test_no_lane_hardcodes_the_parser(self):
+        s = self._models()
+        assert "fd.append('app_id', 'multicharts')" not in s, (
+            "an upload lane hardcodes the parser again — the Source-app "
+            "select is decoration on that lane (M7)"
+        )
+        assert s.count("fd.append('app_id', adapter)") == 4, (
+            "expected exactly 4 derived-adapter upload lanes (form parse, "
+            "form submit, import preview, import confirm)"
+        )
+        # the HELPER body too: `_mdlAdapterFor = () => 'multicharts'` would
+        # re-create the defect while every wiring pin above stays green
+        # (found while designing this class's own mutation sweep)
+        assert ("const _mdlAdapterFor = (app) => "
+                "MDL_ADAPTERS[(app || '').trim()] || null;") in s
+
+    def test_every_lane_refuses_an_unparsable_app(self):
+        """The guard precedes the upload in all four lanes: derive →
+        refuse-with-named-message → only then busy/FormData."""
+        s = self._models()
+        assert s.count("const adapter = _mdlAdapterFor(") == 4
+        # exactly the 4 refusal CALL sites (the definition is an arrow
+        # assignment — `_mdlNoParserErr = (app)` — and doesn't match)
+        assert s.count("_mdlNoParserErr(") == 4
+        # the message names what IS supported, not just what isn't
+        assert "imports currently support: " in s
+
+    def test_import_modal_select_is_the_registry(self):
+        """The one-option decorative select became a controlled choice
+        whose options are exactly the adapter map's keys."""
+        s = self._models()
+        assert "{Object.keys(MDL_ADAPTERS).map((a) => <option key={a}>{a}</option>)}" in s
+        assert "<option>MultiCharts</option>" not in s
+        assert "value={srcApp} onChange={(e) => setSrcApp(e.target.value)}" in s
+
+    def test_refusal_renders_locally_and_in_full(self):
+        """Audit MED on this fix's first draft: the refusal Error fell
+        through qeFootCause's transport checks to 'no network — engine
+        unreachable' (false diagnosis) and the foot's 60-char slice cut
+        the supported-apps remedy to 'Mult'. The refusal now carries
+        `.local` and the foot renders local errors whole, transport
+        errors through the cause channel."""
+        s = self._models()
+        assert "e.local = true;" in s
+        # brace-anchored: `? (false && subErr.local` must not satisfy it
+        assert "? (subErr.local" in s
+        assert ("? { tone: 'err', msg: String(subErr.message || '') }"
+                ) in s
+
+    def test_lane_copy_names_every_supported_app(self):
+        """Audit LOW: the form's import-section subtitle is hardcoded
+        copy — pinned to the map so a second adapter fails this gate
+        until the copy learns it (the registry-parity doctrine applied
+        to prose)."""
+        s = self._models()
+        m = re.search(r"const MDL_ADAPTERS = \{([^}]*)\};", s)
+        keys = re.findall(r"'([^']+)':", m.group(1))
+        sub = re.search(r'title="Import Backtest Report" sub="([^"]*)"', s)
+        assert sub, "import-section subtitle not found"
+        for k in keys:
+            assert k in sub.group(1), (
+                f"the import subtitle no longer names {k} — hardcoded "
+                "lane copy drifted from the adapter map"
+            )
+
+    def test_guard_precedes_the_upload_in_every_lane(self):
+        """Audit LOW: order, not just count — a guard moved AFTER the
+        FormData build would pass a count pin while uploading before
+        refusing. Executed index math per lane slice."""
+        s = self._models()
+        lanes = [
+            ("const doParse", "const errors"),
+            ("} else if (parsed) {", "onSave({ kind: 'created+imported'"),
+            ("const doPreview", "const doConfirm"),
+            ("const doConfirm", "const foot"),
+        ]
+        for start, end in lanes:
+            i = s.index(start)
+            seg = s[i:s.index(end, i)]
+            assert seg.index("_mdlNoParserErr(") < seg.index("new FormData()"), (
+                f"lane starting {start!r}: the refusal guard no longer "
+                "precedes the upload construction"
+            )
+
+    def test_the_wiring_reaches_the_emitted_bundle(self):
+        import json as _json
+
+        man = _json.loads((_ROOT / "static" / "v3" / "manifest.json")
+                          .read_text(encoding="utf-8"))
+        bundle = (_ROOT / "static" / "v3" / man["app"]).read_text(
+            encoding="utf-8")
+        assert 'fd.append("app_id", adapter)' in bundle
+        assert 'fd.append("app_id", "multicharts")' not in bundle

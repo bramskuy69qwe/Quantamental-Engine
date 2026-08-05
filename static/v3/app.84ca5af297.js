@@ -10106,6 +10106,15 @@ const _MdlFileBtn = ({ label, onFile, className = "qe-btn qe-btn-sm qe-btn-on", 
   ), /* @__PURE__ */ React.createElement("button", { className, onClick: () => ref.current && ref.current.click() }, label));
 };
 const MDL_SOURCE_APPS = ["MultiCharts", "TradeStation", "NinjaTrader", "Generic CSV"];
+const MDL_ADAPTERS = { "MultiCharts": "multicharts" };
+const _mdlAdapterFor = (app) => MDL_ADAPTERS[(app || "").trim()] || null;
+const _mdlNoParserErr = (app) => {
+  const e = new Error(
+    `No ${(app || "").trim() || "(unset)"} parser yet \u2014 imports currently support: ` + Object.keys(MDL_ADAPTERS).join(", ")
+  );
+  e.local = true;
+  return e;
+};
 const ModelFormModal = ({ model, onClose, onSave }) => {
   const editing = !!model;
   const blank = {
@@ -10165,12 +10174,17 @@ const ModelFormModal = ({ model, onClose, onSave }) => {
   const [touched, setTouched] = React.useState(false);
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
   const doParse = async (file) => {
+    const adapter = _mdlAdapterFor(f.app);
+    if (!adapter) {
+      setSubErr(_mdlNoParserErr(f.app));
+      return;
+    }
     setBusy(true);
     setSubErr(null);
     try {
       const fd = new FormData();
       fd.append("file", file);
-      fd.append("app_id", "multicharts");
+      fd.append("app_id", adapter);
       const pv = await _mdlUpload("/api/models/import?dry_run=1", fd);
       setParsed({ file, preview: pv });
       const sug = pv.source_suggestion || {};
@@ -10246,9 +10260,15 @@ const ModelFormModal = ({ model, onClose, onSave }) => {
         await _mdlSend("/api/models/" + model.id, "PUT", body);
         onSave({ kind: "updated", modelId: model.id });
       } else if (parsed) {
+        const adapter = _mdlAdapterFor(f.app);
+        if (!adapter) {
+          setSubErr(_mdlNoParserErr(f.app));
+          setBusy(false);
+          return;
+        }
         const fd = new FormData();
         fd.append("file", parsed.file);
-        fd.append("app_id", "multicharts");
+        fd.append("app_id", adapter);
         fd.append("payload", JSON.stringify(body));
         const res = await _mdlUpload("/api/models/import", fd);
         onSave({ kind: "created+imported", modelId: res.model_id, runId: res.run_id });
@@ -10284,7 +10304,7 @@ const ModelFormModal = ({ model, onClose, onSave }) => {
     },
     label
   );
-  const foot = busy ? { tone: "sub", busy: true, msg: parsed && !editing ? "uploading\u2026" : "saving\u2026" } : subErr ? { tone: "err", msg: qeFootCause(subErr) + " \u2014 " + String(subErr.message || "").slice(0, 60) } : parsed ? { tone: "ok", msg: `parsed ${parsed.file.name} \xB7 fields auto-filled` } : { tone: "sub", msg: "ok \xB7 local \u2014 nothing submitted yet" };
+  const foot = busy ? { tone: "sub", busy: true, msg: parsed && !editing ? "uploading\u2026" : "saving\u2026" } : subErr ? subErr.local ? { tone: "err", msg: String(subErr.message || "") } : { tone: "err", msg: qeFootCause(subErr) + " \u2014 " + String(subErr.message || "").slice(0, 60) } : parsed ? { tone: "ok", msg: `parsed ${parsed.file.name} \xB7 fields auto-filled` } : { tone: "sub", msg: "ok \xB7 local \u2014 nothing submitted yet" };
   const pvk = parsed ? mdlRunKpis(parsed.preview.summary) : null;
   return /* @__PURE__ */ React.createElement(
     ModelDialog,
@@ -10309,18 +10329,25 @@ const ModelFormModal = ({ model, onClose, onSave }) => {
 };
 const ImportModal = ({ model, onClose, onDone }) => {
   const [step, setStep] = React.useState("source");
+  const [srcApp, setSrcApp] = React.useState(Object.keys(MDL_ADAPTERS)[0]);
   const [file, setFile] = React.useState(null);
   const [preview, setPreview] = React.useState(null);
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState(null);
   const doPreview = async (f) => {
+    const adapter = _mdlAdapterFor(srcApp);
+    if (!adapter) {
+      setErr(_mdlNoParserErr(srcApp));
+      setStep("error");
+      return;
+    }
     setBusy(true);
     setErr(null);
     setFile(f);
     try {
       const fd = new FormData();
       fd.append("file", f);
-      fd.append("app_id", "multicharts");
+      fd.append("app_id", adapter);
       const pv = await _mdlUpload(`/models/${model.id}/backtest-upload?format=json&dry_run=1`, fd);
       setPreview(pv);
       setStep("preview");
@@ -10332,12 +10359,18 @@ const ImportModal = ({ model, onClose, onDone }) => {
   };
   const doConfirm = async () => {
     if (!file || busy) return;
+    const adapter = _mdlAdapterFor(srcApp);
+    if (!adapter) {
+      setErr(_mdlNoParserErr(srcApp));
+      setStep("error");
+      return;
+    }
     setBusy(true);
     setErr(null);
     try {
       const fd = new FormData();
       fd.append("file", file);
-      fd.append("app_id", "multicharts");
+      fd.append("app_id", adapter);
       const res = await _mdlUpload(`/models/${model.id}/backtest-upload?format=json`, fd);
       onDone(res);
     } catch (e) {
@@ -10377,8 +10410,8 @@ const ImportModal = ({ model, onClose, onDone }) => {
         fontWeight: 700
       } }, done ? "\u2713" : i + 1), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.5rem", textTransform: "uppercase", letterSpacing: "0.08em", color: active ? "var(--qe-cyan)" : "var(--qe-muted)" } }, s));
     })),
-    step === "source" && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10 } }, /* @__PURE__ */ React.createElement(_MdlField, { label: "Source application", hint: "More backtesting apps will be supported over time." }, /* @__PURE__ */ React.createElement("select", { className: "qe-input qe-select", defaultValue: "MultiCharts" }, /* @__PURE__ */ React.createElement("option", null, "MultiCharts"))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "flex-end" } }, /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-primary", onClick: () => setStep("upload") }, "Next \u2192"))),
-    step === "upload" && /* @__PURE__ */ React.createElement("div", { style: { border: "1px dashed var(--qe-line-2)", padding: "26px 16px", textAlign: "center", background: "var(--qe-panel)" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "1.4rem", color: "var(--qe-muted)", lineHeight: 1 } }, "\u2913"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.62rem", color: "var(--qe-sub)", marginTop: 8 } }, "Pick a MultiCharts report"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.5rem", color: "var(--qe-muted)", marginTop: 3 } }, ".xlsx or .xml \u2014 performance summary + trade list"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, justifyContent: "center", marginTop: 12 } }, busy ? /* @__PURE__ */ React.createElement(Spinner, { label: "parsing" }) : /* @__PURE__ */ React.createElement(_MdlFileBtn, { label: "Choose file\u2026", onFile: doPreview }))),
+    step === "source" && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10 } }, /* @__PURE__ */ React.createElement(_MdlField, { label: "Source application", hint: "More backtesting apps will be supported over time." }, /* @__PURE__ */ React.createElement("select", { className: "qe-input qe-select", value: srcApp, onChange: (e) => setSrcApp(e.target.value) }, Object.keys(MDL_ADAPTERS).map((a) => /* @__PURE__ */ React.createElement("option", { key: a }, a)))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "flex-end" } }, /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm qe-btn-primary", onClick: () => setStep("upload") }, "Next \u2192"))),
+    step === "upload" && /* @__PURE__ */ React.createElement("div", { style: { border: "1px dashed var(--qe-line-2)", padding: "26px 16px", textAlign: "center", background: "var(--qe-panel)" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "1.4rem", color: "var(--qe-muted)", lineHeight: 1 } }, "\u2913"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.62rem", color: "var(--qe-sub)", marginTop: 8 } }, "Pick a ", srcApp, " report"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.5rem", color: "var(--qe-muted)", marginTop: 3 } }, ".xlsx or .xml \u2014 performance summary + trade list"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, justifyContent: "center", marginTop: 12 } }, busy ? /* @__PURE__ */ React.createElement(Spinner, { label: "parsing" }) : /* @__PURE__ */ React.createElement(_MdlFileBtn, { label: "Choose file\u2026", onFile: doPreview }))),
     step === "preview" && preview && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 7 } }, /* @__PURE__ */ React.createElement(Badge, { tone: "ok" }, "PARSED"), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.6rem", color: "var(--qe-text)" } }, preview.file)), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 7 } }, /* @__PURE__ */ React.createElement(KpiTile, { label: "Net Profit", value: _mdlMoney(pvk.net, 0), color: _mdlPl(pvk.net) }), /* @__PURE__ */ React.createElement(KpiTile, { label: "Profit Factor", value: pvk.pf.toFixed(2), color: pvk.pf >= 1.3 ? "var(--qe-green)" : "var(--qe-text)" }), /* @__PURE__ */ React.createElement(KpiTile, { label: "Win %", value: pvk.winPct + "%" }), /* @__PURE__ */ React.createElement(KpiTile, { label: "Max DD", value: pvk.maxDDPct + "%", color: "var(--qe-red)" }), /* @__PURE__ */ React.createElement(KpiTile, { label: "Sharpe", value: pvk.sharpe.toFixed(2) }), /* @__PURE__ */ React.createElement(KpiTile, { label: "Trades", value: pvk.nTrades })), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.54rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)" } }, preview.session_name, preview.summary && (preview.summary.period_start || preview.summary.period_end) ? ` \xB7 ${preview.summary.period_start || "?"} \u2192 ${preview.summary.period_end || "?"}` : "", ` \xB7 ${preview.trades_count} trades \xB7 ${(preview.sheets || []).length} sheets captured`), (preview.warnings || []).map((w, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", gap: 6, alignItems: "center", fontSize: "0.54rem", color: "var(--qe-amber)" } }, /* @__PURE__ */ React.createElement("span", null, "!"), /* @__PURE__ */ React.createElement("span", null, w)))),
     step === "error" && /* @__PURE__ */ React.createElement(
       EmptyState,

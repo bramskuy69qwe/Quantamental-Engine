@@ -46,6 +46,35 @@ const _MdlFileBtn = ({ label, onFile, className = 'qe-btn qe-btn-sm qe-btn-on', 
    ═══════════════════════════════════════════════════════════════════════════ */
 const MDL_SOURCE_APPS = ['MultiCharts', 'TradeStation', 'NinjaTrader', 'Generic CSV'];
 
+/* M7 (wiring inventory, wired 2026-08-04): which Source apps have a PARSER.
+   All four upload lanes used to hardcode app_id='multicharts' whatever the
+   operator selected — a TradeStation report would be chewed by the
+   MultiCharts parser (confusing parse error at best, a garbage parse at
+   worst) while the model recorded source.app='TradeStation'. Display name →
+   registry app_id, pinned 1:1 against
+   core.backtest_adapters.list_backtest_adapters by test_med_tail_batch —
+   the registry's own docstring says it was "shaped for the upload dropdown
+   (task 3.4)" and no consumer ever came. A Source app WITHOUT an entry here
+   remains a legitimate metadata choice; it just cannot parse an upload yet,
+   and the upload lanes now SAY so instead of mis-parsing.
+   Mapping-with-parity-pin instead of a live registry endpoint because
+   adapters are compiled-in: a new one requires a release anyway, and the
+   parity pin fails that release's gate until this map learns the entry. */
+const MDL_ADAPTERS = { 'MultiCharts': 'multicharts' };
+const _mdlAdapterFor = (app) => MDL_ADAPTERS[(app || '').trim()] || null;
+const _mdlNoParserErr = (app) => {
+  const e = new Error(
+    `No ${(app || '').trim() || '(unset)'} parser yet — imports currently support: `
+    + Object.keys(MDL_ADAPTERS).join(', '));
+  // audit MED on this fix's first draft: a plain Error fell through
+  // qeFootCause's transport checks to "no network — engine unreachable" —
+  // a FALSE diagnosis leading the operator to restart a healthy engine —
+  // and the foot's 60-char slice cut the supported-apps remedy to "Mult".
+  // `local` routes it around the transport channel, rendered in full.
+  e.local = true;
+  return e;
+};
+
 const ModelFormModal = ({ model, onClose, onSave }) => {
   const editing = !!model;
   const blank = {
@@ -80,11 +109,16 @@ const ModelFormModal = ({ model, onClose, onSave }) => {
 
   /* Real dry-run parse (server-side) → autofill from the report's Settings. */
   const doParse = async (file) => {
+    // M7: parse with the SELECTED Source app's adapter — refuse BEFORE
+    // uploading when none exists, instead of silently running the
+    // MultiCharts parser over a foreign report.
+    const adapter = _mdlAdapterFor(f.app);
+    if (!adapter) { setSubErr(_mdlNoParserErr(f.app)); return; }
     setBusy(true); setSubErr(null);
     try {
       const fd = new FormData();
       fd.append('file', file);
-      fd.append('app_id', 'multicharts');
+      fd.append('app_id', adapter);
       const pv = await _mdlUpload('/api/models/import?dry_run=1', fd);
       setParsed({ file, preview: pv });
       const sug = pv.source_suggestion || {};
@@ -151,9 +185,14 @@ const ModelFormModal = ({ model, onClose, onSave }) => {
         await _mdlSend('/api/models/' + model.id, 'PUT', body);
         onSave({ kind: 'updated', modelId: model.id });
       } else if (parsed) {
+        // M7: derived at SUBMIT time too — the operator can change the
+        // Source app after a successful parse, and committing the old
+        // parser's preview under a new app must refuse, not mislabel.
+        const adapter = _mdlAdapterFor(f.app);
+        if (!adapter) { setSubErr(_mdlNoParserErr(f.app)); setBusy(false); return; }
         const fd = new FormData();
         fd.append('file', parsed.file);
-        fd.append('app_id', 'multicharts');
+        fd.append('app_id', adapter);
         fd.append('payload', JSON.stringify(body));
         const res = await _mdlUpload('/api/models/import', fd);
         onSave({ kind: 'created+imported', modelId: res.model_id, runId: res.run_id });
@@ -174,9 +213,13 @@ const ModelFormModal = ({ model, onClose, onSave }) => {
         background: mode === val ? 'var(--qe-bg-cyan)' : 'transparent', color: mode === val ? 'var(--qe-cyan)' : 'var(--qe-sub)' }}>{label}</button>
   );
 
-  /* last-submit foot (non-fetch pane, DESIGN.md §5) */
+  /* last-submit foot (non-fetch pane, DESIGN.md §5). A LOCAL refusal
+     (err.local — no request happened) renders its message whole; only
+     transport errors go through qeFootCause + the slice (audit MED). */
   const foot = busy ? { tone: 'sub', busy: true, msg: parsed && !editing ? 'uploading…' : 'saving…' }
-    : subErr ? { tone: 'err', msg: qeFootCause(subErr) + ' — ' + String(subErr.message || '').slice(0, 60) }
+    : subErr ? (subErr.local
+        ? { tone: 'err', msg: String(subErr.message || '') }
+        : { tone: 'err', msg: qeFootCause(subErr) + ' — ' + String(subErr.message || '').slice(0, 60) })
     : parsed ? { tone: 'ok', msg: `parsed ${parsed.file.name} · fields auto-filled` }
     : { tone: 'sub', msg: 'ok · local — nothing submitted yet' };
 
@@ -335,17 +378,24 @@ const ModelFormModal = ({ model, onClose, onSave }) => {
    ═══════════════════════════════════════════════════════════════════════════ */
 const ImportModal = ({ model, onClose, onDone }) => {
   const [step, setStep] = React.useState('source');   // source | upload | preview | error
+  // M7: the source-step select used to be an UNCONTROLLED one-option
+  // decoration while both POSTs hardcoded 'multicharts'. It is now the
+  // actual parser choice — options are exactly the registered adapters
+  // (MDL_ADAPTERS), so an unbuilt app cannot be selected here at all.
+  const [srcApp, setSrcApp] = React.useState(Object.keys(MDL_ADAPTERS)[0]);
   const [file, setFile] = React.useState(null);
   const [preview, setPreview] = React.useState(null);
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState(null);
 
   const doPreview = async (f) => {
+    const adapter = _mdlAdapterFor(srcApp);
+    if (!adapter) { setErr(_mdlNoParserErr(srcApp)); setStep('error'); return; }
     setBusy(true); setErr(null); setFile(f);
     try {
       const fd = new FormData();
       fd.append('file', f);
-      fd.append('app_id', 'multicharts');
+      fd.append('app_id', adapter);
       const pv = await _mdlUpload(`/models/${model.id}/backtest-upload?format=json&dry_run=1`, fd);
       setPreview(pv); setStep('preview');
     } catch (e) { setErr(e); setStep('error'); }
@@ -354,11 +404,13 @@ const ImportModal = ({ model, onClose, onDone }) => {
 
   const doConfirm = async () => {
     if (!file || busy) return;
+    const adapter = _mdlAdapterFor(srcApp);
+    if (!adapter) { setErr(_mdlNoParserErr(srcApp)); setStep('error'); return; }
     setBusy(true); setErr(null);
     try {
       const fd = new FormData();
       fd.append('file', file);
-      fd.append('app_id', 'multicharts');
+      fd.append('app_id', adapter);
       const res = await _mdlUpload(`/models/${model.id}/backtest-upload?format=json`, fd);
       onDone(res);
     } catch (e) { setErr(e); setStep('error'); setBusy(false); }
@@ -400,8 +452,8 @@ const ImportModal = ({ model, onClose, onDone }) => {
       {step === 'source' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <_MdlField label="Source application" hint="More backtesting apps will be supported over time.">
-            <select className="qe-input qe-select" defaultValue="MultiCharts">
-              <option>MultiCharts</option>
+            <select className="qe-input qe-select" value={srcApp} onChange={(e) => setSrcApp(e.target.value)}>
+              {Object.keys(MDL_ADAPTERS).map((a) => <option key={a}>{a}</option>)}
             </select>
           </_MdlField>
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
@@ -413,7 +465,7 @@ const ImportModal = ({ model, onClose, onDone }) => {
       {step === 'upload' && (
         <div style={{ border: '1px dashed var(--qe-line-2)', padding: '26px 16px', textAlign: 'center', background: 'var(--qe-panel)' }}>
           <div style={{ fontSize: '1.4rem', color: 'var(--qe-muted)', lineHeight: 1 }}>⤓</div>
-          <div style={{ fontSize: '0.62rem', color: 'var(--qe-sub)', marginTop: 8 }}>Pick a MultiCharts report</div>
+          <div style={{ fontSize: '0.62rem', color: 'var(--qe-sub)', marginTop: 8 }}>Pick a {srcApp} report</div>
           <div style={{ fontSize: '0.5rem', color: 'var(--qe-muted)', marginTop: 3 }}>.xlsx or .xml — performance summary + trade list</div>
           <div style={{ display: 'flex', gap: 6, justifyContent: 'center', marginTop: 12 }}>
             {busy ? <Spinner label="parsing" /> : <_MdlFileBtn label="Choose file…" onFile={doPreview} />}
