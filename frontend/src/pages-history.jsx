@@ -522,6 +522,10 @@ const HistoryPage = () => {
       { label: 'GROSS', value: lpUsd(gross), color: lpSgn(gross) },
       { label: 'FEES', value: _ptFmtN(fees), color: 'var(--qe-sub)' },
       { label: 'NET', value: lpUsd(net), color: lpSgn(net) },
+      // M9 audit LOW: these aggregates cover the LOADED PAGE (the same
+      // scope the table tools got their caption for) — a page-level NET
+      // read as period-level was the filing's own named remainder.
+      { label: 'SCOPE', value: 'loaded page', color: 'var(--qe-muted)' },
     ];
   })();
 
@@ -560,7 +564,11 @@ const HistoryPage = () => {
                  // page, this one refines the page in view. Keep both — dropping
                  // the server box would silently miss rows on other pages.
                  // Global server-wired facets/sort remains a named follow-up.
-                 <DataList dense tools={{ search: true, sort: true, filter: true }}
+                 // M9 (wiring inventory, 2026-08-04): the page-scope is now SAID
+                 // in the toolbar, not just in this comment — the tools refine
+                 // the loaded page while the pager below walks the full set.
+                 <DataList dense tools={{ search: true, sort: true, filter: true, scope: 'loaded page only',
+                     scopeTitle: 'Search, sort and filter act on the loaded page — the symbol/period controls above span the full set; the pager below walks it.' }}
                    columns={COLS[tab]} rows={rows}
                    selKey="id" selected={tab === 'positions' && sel ? sel.id : null}
                    onClick={tab === 'positions' ? (r) => openDrill(r) : undefined}

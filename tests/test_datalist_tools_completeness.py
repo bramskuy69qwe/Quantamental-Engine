@@ -88,9 +88,13 @@ class TestNoToolSuppression:
     def test_history_search_is_on(self):
         """History's search was the one deliberate granular suppression (paging is
         server-side). The operator lifted it; the server box above the tabs stays
-        as the cross-page search — the two are complementary."""
+        as the cross-page search — the two are complementary.
+        (Pin updated 2026-08-04, MED-tail M9: the tools object gained the
+        page-scope caption — the three tools this pin protects are unchanged;
+        tests/test_med_tail_batch.py owns the scope pins.)"""
         s = _src("pages-history.jsx")
-        assert "tools={{ search: true, sort: true, filter: true }}" in s
+        assert ("tools={{ search: true, sort: true, filter: true, "
+                "scope: 'loaded page only',") in s
 
 
 class TestDerivedColumnsAreSortable:

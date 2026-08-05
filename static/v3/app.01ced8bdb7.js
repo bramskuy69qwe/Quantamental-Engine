@@ -701,7 +701,12 @@ const DataList = ({ columns, rows, dense = true, onClick, selKey = "id", selecte
       /* @__PURE__ */ React.createElement("option", { value: "" }, "ALL"),
       f.options.map((o) => /* @__PURE__ */ React.createElement("option", { key: o, value: o }, o))
     ));
-  }), /* @__PURE__ */ React.createElement("span", { className: "qe-grow" }), /* @__PURE__ */ React.createElement("span", { className: "qe-dl-count" }, view.length === allRows.length ? allRows.length : `${view.length} / ${allRows.length}`), anyActive && /* @__PURE__ */ React.createElement("button", { type: "button", className: "qe-dl-clear", onClick: clearAll }, "CLEAR")), view.length ? /* @__PURE__ */ React.createElement("table", { className: `qe-table ${dense ? "tight" : ""}`, style: fixed ? { tableLayout: "fixed" } : void 0 }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, columns.map((col, ci) => {
+  }), /* @__PURE__ */ React.createElement("span", { className: "qe-grow" }), toolsObj && toolsObj.scope && /* @__PURE__ */ React.createElement("span", { className: "qe-dl-scope", title: (
+    // caller-agnostic default; a host whose full-set controls have
+    // a specific shape supplies scopeTitle (audit LOW: the first
+    // draft baked "controls above the table" into the primitive)
+    toolsObj.scopeTitle || "Search, sort and filter here act only on the rows currently loaded."
+  ) }, "\xB7 ", toolsObj.scope), /* @__PURE__ */ React.createElement("span", { className: "qe-dl-count" }, view.length === allRows.length ? allRows.length : `${view.length} / ${allRows.length}`), anyActive && /* @__PURE__ */ React.createElement("button", { type: "button", className: "qe-dl-clear", onClick: clearAll }, "CLEAR")), view.length ? /* @__PURE__ */ React.createElement("table", { className: `qe-table ${dense ? "tight" : ""}`, style: fixed ? { tableLayout: "fixed" } : void 0 }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, columns.map((col, ci) => {
     var _a;
     const isEdge = ci === 0 || ci === columns.length - 1;
     const eff = isEdge ? col.align : "center";
@@ -6786,7 +6791,11 @@ const HistoryPage = () => {
       { label: "WINRATE", value: rows.length ? Math.round(wins / rows.length * 100) + "%" : "\u2014" },
       { label: "GROSS", value: lpUsd(gross), color: lpSgn(gross) },
       { label: "FEES", value: _ptFmtN(fees), color: "var(--qe-sub)" },
-      { label: "NET", value: lpUsd(net2), color: lpSgn(net2) }
+      { label: "NET", value: lpUsd(net2), color: lpSgn(net2) },
+      // M9 audit LOW: these aggregates cover the LOADED PAGE (the same
+      // scope the table tools got their caption for) — a page-level NET
+      // read as period-level was the filing's own named remainder.
+      { label: "SCOPE", value: "loaded page", color: "var(--qe-muted)" }
     ];
   })();
   const dp = sel;
@@ -6827,11 +6836,20 @@ const HistoryPage = () => {
       // page, this one refines the page in view. Keep both — dropping
       // the server box would silently miss rows on other pages.
       // Global server-wired facets/sort remains a named follow-up.
+      // M9 (wiring inventory, 2026-08-04): the page-scope is now SAID
+      // in the toolbar, not just in this comment — the tools refine
+      // the loaded page while the pager below walks the full set.
       /* @__PURE__ */ React.createElement(
         DataList,
         {
           dense: true,
-          tools: { search: true, sort: true, filter: true },
+          tools: {
+            search: true,
+            sort: true,
+            filter: true,
+            scope: "loaded page only",
+            scopeTitle: "Search, sort and filter act on the loaded page \u2014 the symbol/period controls above span the full set; the pager below walks it."
+          },
           columns: COLS[tab],
           rows,
           selKey: "id",

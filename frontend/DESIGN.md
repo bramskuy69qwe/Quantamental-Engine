@@ -199,7 +199,7 @@ look with inline styles.
 ### Data display
 - **`Tabs`** `{tabs:[id,label,count], value, onChange}` — the only tab primitive (`.qe-tabs`, cyan underline).
 - **`TabStrip`** `{tabs, value, onChange, right}` — THE canonical sub-tab navigator bar wrapping `Tabs`.
-- **`DataList`** `{columns, rows, dense, onClick, selected, summary, tools}` — the canonical table (built-in search · click-to-sort · auto filters); falls back to `EmptyState` when empty.
+- **`DataList`** `{columns, rows, dense, onClick, selected, summary, tools}` — the canonical table (built-in search · click-to-sort · auto filters); falls back to `EmptyState` when empty. **Usage rule (M9, 2026-08-04): a host whose `rows` are one SERVER page of a larger set must pass `tools.scope` (e.g. `'loaded page only'`, optional `scopeTitle` for the hover sentence) — the tools refine the rows in hand, and that must be said on screen, not in a comment. Any page-level aggregates beside such a table carry the same qualifier.** Enforced by `tests/test_med_tail_batch.py::TestM9PageScopeCaption` (glob sweep over the pager idiom).
 - **`FieldList`** `{rows, cols, dense}` — vertical key→value rows (20px pane-head rhythm).
 - **`Gauge`** `{label, value, max, ticks}` — auto-tones `ok<60 / warn 60–80 / err>80`.
 - **`EmptyState`** `{tone, glyph, msg, hint, cta, fill}` — the one empty/placeholder treatment. See **No-data standard** below for `fill`.

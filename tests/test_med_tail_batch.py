@@ -35,6 +35,14 @@ Shipped so far (in commit order):
         Quantower removal: the observe-only engine has no order to gate.
         core/dd_gate stays THE gate (calculator lane + /api/state).
 
+  M9  · the History table's DataList tools (search/sort/filter — all ON
+        by the operator's 2026-07-25 directive) refine only the LOADED
+        PAGE of a server-paged set, and nothing on screen said so — the
+        scope lived in a source comment. The DataList primitive gained
+        tools.scope; History passes 'loaded page only' and the toolbar
+        carries the caption beside the count, title-expanded ("the
+        server-side controls above the table span the full set").
+
 Run: pytest tests/test_med_tail_batch.py -v
 """
 from __future__ import annotations
@@ -145,3 +153,86 @@ class TestM5OrderGateRemoved:
             if isinstance(node, ast.Call)
         }
         assert "dd_gate_allows_new_entry" in called
+
+
+# ── M9: the page-scope of client-side table tools is SAID, not implied ──────
+
+
+class TestM9PageScopeCaption:
+    """History's table is server-paged; its DataList tools act on the rows
+    in hand. That is the operator-ratified shape (tools LIFTED,
+    2026-07-25) — the M9 defect was the SILENCE: the scope lived in a
+    source comment while the operator saw a filter that 'found no
+    matches' on rows sitting one page away. Both halves pinned: the
+    primitive renders the caption, and the one server-paged caller
+    passes it."""
+
+    def test_the_primitive_renders_a_passed_scope(self):
+        p = _src("primitives.jsx")
+        # anchored on the JSX expression's OPENING BRACE — this pin's first
+        # draft matched a substring that a `{false && toolsObj && …}` mutant
+        # still contained (mutation-sweep finding, the recurring
+        # substring-contains-mutant class)
+        assert "{toolsObj && toolsObj.scope && (" in p
+        assert "{false && toolsObj" not in p
+        assert ">· {toolsObj.scope}</span>" in p
+        # the caption's title carries a full-sentence explanation: the
+        # caller-agnostic default, overridable per host via scopeTitle
+        # (audit LOW: the first draft baked History's "controls above the
+        # table" geography into the generic primitive)
+        i = p.index("{toolsObj && toolsObj.scope && (")
+        vicinity = p[i:i + 600]
+        assert "toolsObj.scopeTitle" in vicinity
+        assert ("Search, sort and filter here act only on the rows "
+                "currently loaded.") in vicinity
+
+    def test_history_passes_the_scope_on_its_paged_table(self):
+        h = _src("pages-history.jsx")
+        assert "scope: 'loaded page only'" in h
+        # …with its host-specific hover sentence naming BOTH full-set
+        # controls (the server filters above AND the pager below)
+        assert "the pager below walks it." in h
+        # …and the page-level summary strip carries the same qualifier
+        # (audit LOW: the filing named the strip's silence too — a
+        # page-level NET reads as period-level without it)
+        assert "{ label: 'SCOPE', value: 'loaded page'" in h
+
+    def test_no_other_paged_caller_is_silent(self):
+        """Class sweep, DERIVED not enumerated: every module in
+        frontend/src that renders the server-pager idiom must pass a
+        tools.scope. (This pin's first draft hard-coded 4 files while the
+        sibling completeness test maintains 9 DataList hosts — the
+        audit-inventory-undercounts class, caught by the M9 audit. A glob
+        cannot under-count.)"""
+        hosts = []
+        for f in sorted((_ROOT / "frontend" / "src").glob("*.jsx")):
+            src = _code(f.read_text(encoding="utf-8"))
+            if "page {page}/{totalPages}" in src:
+                hosts.append(f.name)
+                assert "scope: 'loaded page only'" in src, (
+                    f"{f.name} renders a server pager without a DataList "
+                    "scope caption (M9 / DESIGN.md usage rule)"
+                )
+        assert hosts == ["pages-history.jsx"], (
+            f"server-pager hosts changed ({hosts}) — extend the M9 scope "
+            "convention deliberately, don't just re-pin"
+        )
+
+    def test_the_caption_reaches_the_emitted_bundle(self):
+        """Source is not what runs (the house stale-build guard — the M1
+        audit filed the same gap on the bridge pin; the M9 audit filed it
+        here)."""
+        import json as _json
+
+        man = _json.loads((_ROOT / "static" / "v3" / "manifest.json")
+                          .read_text(encoding="utf-8"))
+        bundle = (_ROOT / "static" / "v3" / man["app"]).read_text(
+            encoding="utf-8")
+        assert "qe-dl-scope" in bundle
+        assert "loaded page only" in bundle
+        tokens = (_ROOT / "static" / "v3" / man["tokens"]).read_text(
+            encoding="utf-8")
+        # selector + brace, not the bare name — a renamed `.qe-dl-scopex`
+        # still CONTAINS the bare name (the session's recurring
+        # substring-contains-mutant class, third instance)
+        assert ".qe-dl-scope {" in tokens

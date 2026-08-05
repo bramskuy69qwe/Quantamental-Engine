@@ -1064,7 +1064,13 @@ const _dlDeriveFacets = (columns, rows) => {
 // summary: optional summary line under the table (e.g. "5 / 20 · Σ +5.49")
 // tools:   undefined → AUTO (toolbar shows past DL_AUTO_MIN rows)
 //          true / false → force on / off
-//          {search?, sort?, filter?} → force on with granular control
+//          {search?, sort?, filter?, scope?} → force on with granular control
+//          scope: string — M9 (wiring inventory, 2026-08-04): on a
+//          SERVER-PAGED table these tools refine only the rows in hand, and
+//          nothing on screen said so — a filter that silently ignores the
+//          other pages reads as "no matches elsewhere". Callers whose rows
+//          are one page of a larger set pass e.g. scope:'loaded page only'
+//          and the toolbar carries the caption beside the row count.
 //
 // When tools are active the DataList gains: a live cross-column SEARCH box,
 // click-to-SORT headers (asc → desc → off, numeric-aware), and auto-derived
@@ -1186,6 +1192,15 @@ const DataList = ({columns, rows, dense=true, onClick, selKey='id', selected=nul
             </label>
           ))}
           <span className="qe-grow"/>
+          {toolsObj && toolsObj.scope && (
+            <span className="qe-dl-scope" title={
+              // caller-agnostic default; a host whose full-set controls have
+              // a specific shape supplies scopeTitle (audit LOW: the first
+              // draft baked "controls above the table" into the primitive)
+              toolsObj.scopeTitle
+              || 'Search, sort and filter here act only on the rows currently loaded.'
+            }>· {toolsObj.scope}</span>
+          )}
           <span className="qe-dl-count">
             {view.length === allRows.length ? allRows.length : `${view.length} / ${allRows.length}`}
           </span>

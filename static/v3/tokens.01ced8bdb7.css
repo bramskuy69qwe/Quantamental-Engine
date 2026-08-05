@@ -616,6 +616,16 @@
   font-family: var(--qe-mono); font-size: var(--qe-fs-xs);
   color: var(--qe-muted); letter-spacing: 0.04em; white-space: nowrap;
 }
+/* M9: the tools' page-scope caption on server-paged tables ("· loaded page
+   only") — SAME register as the count it deliberately sits beside
+   (--qe-muted; the first draft used --qe-faint at ~1.7:1 contrast, which
+   made the fix for "nothing on screen said so" itself near-invisible —
+   audit MED). cursor-help because the title carries the full sentence. */
+.qe-dl-scope {
+  font-family: var(--qe-mono); font-size: var(--qe-fs-xs);
+  color: var(--qe-muted); letter-spacing: 0.04em; white-space: nowrap;
+  cursor: help;
+}
 .qe-dl-clear {
   background: none; border: 1px solid var(--qe-line); cursor: pointer;
   height: 18px; padding: 0 7px; color: var(--qe-sub);
