@@ -30,7 +30,12 @@ const PrimitivesPage = () => (
   }}>
     <TopNavStd page="Primitives" variant="line" dense/>
     <PageHeader title="Primitives" subtitle="standardized component vocabulary · every page is composed from these">
-      <Badge tone="warn">DEV · NOT IN PRODUCTION NAV</Badge>
+      {/* M13 (wiring inventory, fixed 2026-08-04): the badge used to read
+          "NOT IN PRODUCTION NAV" while the page IS in production nav — a
+          recorded operator decision keeps it there (the inventory's third
+          NOT-DEFECT). The page itself was never the defect; the claim was.
+          Say what the page IS instead of where it isn't. */}
+      <Badge tone="warn">DEV · DESIGN-SYSTEM REFERENCE · DEMO DATA</Badge>
     </PageHeader>
     <div style={{flex:1, minHeight:0, overflow:'auto', padding:14}}>
       <div style={{display:'grid', gridTemplateColumns:'minmax(0,1fr) minmax(0,1fr)', gap:14}}>

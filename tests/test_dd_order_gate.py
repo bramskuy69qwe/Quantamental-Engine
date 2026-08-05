@@ -1,5 +1,12 @@
-"""Tests for dd_gate shared logic + order_manager gate + is_new_entry classification."""
-import json
+"""Tests for dd_gate shared logic + is_new_entry classification.
+
+(TestOrderManagerGate retired 2026-08-04, MED-tail M5: its subject
+OrderManager.check_dd_gate_for_order was removed — never called by prod
+code; the observe-only engine has no order-placement lane to gate. The
+negative pins live in tests/test_med_tail_batch.py. The two classes
+below pin LIVE code — core/dd_gate feeds the calculator gate +
+/api/state.)
+"""
 import os
 import sqlite3
 
@@ -120,51 +127,4 @@ class TestDDGateAllowsNewEntry:
         assert allowed is True
 
 
-# ── OrderManager.check_dd_gate_for_order ─────────────────────────────────────
-
-
-class TestOrderManagerGate:
-    def test_new_entry_blocked_when_enforced(self, tmp_path, monkeypatch):
-        data_dir, db_path = _make_env(tmp_path, enforcement_mode="enforced")
-        _set_state(monkeypatch, data_dir, dd_state="limit")
-
-        from core.order_manager import OrderManager
-        om = OrderManager(db=None)
-
-        order = {"side": "BUY", "order_type": "market", "symbol": "BTCUSDT"}
-        allowed, reason = om.check_dd_gate_for_order(1, order)
-        assert allowed is False
-        assert "dd_state=limit" in reason
-
-        # Event logged
-        conn = sqlite3.connect(db_path)
-        rows = conn.execute(
-            "SELECT payload_json FROM engine_events WHERE event_type='calculator_blocked'"
-        ).fetchall()
-        conn.close()
-        assert len(rows) >= 1
-        payload = json.loads(rows[0][0])
-        assert payload["gate"] == "order_manager_dd"
-
-    def test_reduce_only_allowed_when_enforced(self, tmp_path, monkeypatch):
-        data_dir, _ = _make_env(tmp_path, enforcement_mode="enforced")
-        _set_state(monkeypatch, data_dir, dd_state="limit")
-
-        from core.order_manager import OrderManager
-        om = OrderManager(db=None)
-
-        order = {"side": "SELL", "reduce_only": True, "symbol": "BTCUSDT"}
-        allowed, reason = om.check_dd_gate_for_order(1, order)
-        assert allowed is True
-
-    def test_tp_sl_allowed_when_enforced(self, tmp_path, monkeypatch):
-        data_dir, _ = _make_env(tmp_path, enforcement_mode="enforced")
-        _set_state(monkeypatch, data_dir, dd_state="limit")
-
-        from core.order_manager import OrderManager
-        om = OrderManager(db=None)
-
-        for order_type in ["stop_loss", "take_profit", "trailing_stop"]:
-            order = {"order_type": order_type, "symbol": "BTCUSDT"}
-            allowed, reason = om.check_dd_gate_for_order(1, order)
-            assert allowed is True, f"{order_type} should be allowed"
+# (TestOrderManagerGate retired with its subject — see module docstring.)

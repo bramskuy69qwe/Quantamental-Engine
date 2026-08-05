@@ -422,36 +422,16 @@ class OrderManager:
         except Exception:
             log.debug("duplicate-order detection failed", exc_info=True)
 
-    # ── DD-aware order gate (v2.4 Priority 1c) ─────────────────────────────
-
-    def check_dd_gate_for_order(
-        self, account_id: int, order: Dict[str, Any]
-    ) -> Tuple[bool, Optional[str]]:
-        """Check whether *order* is allowed under current dd_state.
-
-        New entries are gated when dd_state == limit + enforced mode.
-        TP/SL modifications and reduce-only closes always pass.
-
-        Returns ``(allowed, reason_or_None)``.
-        """
-        from core.dd_gate import dd_gate_allows_new_entry, is_new_entry
-
-        if not is_new_entry(order):
-            return True, None
-
-        allowed, reason = dd_gate_allows_new_entry(account_id)
-        if not allowed:
-            try:
-                from core.event_log import log_event
-                log_event(account_id, "calculator_blocked", {
-                    "gate": "order_manager_dd",
-                    "order_type": "new_entry",
-                    "symbol": order.get("symbol", ""),
-                    "side": order.get("side", ""),
-                }, source="order_manager")
-            except Exception:
-                log.warning("order dd gate log failed", exc_info=True)
-        return allowed, reason
+    # (check_dd_gate_for_order removed 2026-08-04, MED-tail M5: added by
+    # v2.4 Priority 1c for an engine-side order-placement lane and never
+    # called by prod code in its whole life — git -S shows exactly two
+    # CODE commits, its introduction 5391042 and its tests b63e06b; the
+    # only other -S hit is the wiring inventory's own doc filing e6c7bde
+    # (audit-corrected count). The premise died with the v2.6
+    # Quantower-plugin removal: this engine OBSERVES orders, it does not
+    # place them, so there is no order to gate. core/dd_gate stays THE
+    # gate — the calculator lane (monitoring._check_dd_gate) + /api/state
+    # consume it live.)
 
     # ── calc_id enrichment (v2.4) ────────────────────────────────────────────
 
