@@ -285,8 +285,12 @@ const WorkspaceBar = ({ interactive = false, persistId = 'dashboard' }) => {
 };
 
 // ── OS-clock-drift banner (operator clock-drift bug) ────────────────────────
-// Renders in the SAME shared under-nav slot as the halt banner (NotifBanner),
-// stacked ABOVE it (system alert takes priority), on EVERY page — a drifted OS
+// Renders in the SAME shared under-nav slot as the halt banner
+// (ChromeHaltBanner, just below — this comment used to name `NotifBanner`,
+// which stopped being rendered on 2026-07-25 and was DELETED in the
+// 2026-08-05 LOW batch; a comment naming a dead component sends the next
+// author to the wrong banner), stacked ABOVE it (system alert takes
+// priority), on EVERY page — a drifted OS
 // clock breaks every SIGNED exchange read (Binance -1021, >1000ms ahead), not
 // one page. Reads the shared QE_CHROME store (/api/state clock_severity ·
 // offset = exchange − local, so local drift = −offset; positive ⇒ AHEAD, the
@@ -300,13 +304,22 @@ const WorkspaceBar = ({ interactive = false, persistId = 'dashboard' }) => {
 /* shell-chrome-4 — how many under-nav banners are currently visible. The scrim
    offset used to be derived from the (permanently false) halt flag, so with the
    clock-drift banner up the drawer covered the whole workspace bar and the
-   bottom of a LIVE system alert. Both banners are Banner primitives: 30px + 1px
-   border. */
+   bottom of a LIVE system alert. Every banner is a Banner primitive: 30px + 1px
+   border.
+   ★ THREE banners render in that slot, not two: ClockDriftBanner,
+   ChromeHaltBanner AND OperatorSeatBanner (see the render block below). The
+   seat term was missing, so with a foreign seat up every consumer of this
+   count under-measured by 31px — the scrim dimmed, and the toast stack
+   covered, the bottom of the seat banner exactly where its TAKE OVER and ✕
+   controls sit. Each arm below must mirror its banner's OWN render guard;
+   they are pinned against each other. */
 const qeChromeBannerCount = () => {
   const st = (window.QE_CHROME && window.QE_CHROME.get().state) || {};
   let k = 0;
   if (st.clock_severity && st.clock_severity !== 'ok') k += 1;
   if (st.halted || st.blocked) k += 1;
+  const seat = (window.QE_SEAT && window.QE_SEAT.get()) || {};
+  if (seat.state === 'foreign' && !seat.dismissed) k += 1;
   return k;
 };
 

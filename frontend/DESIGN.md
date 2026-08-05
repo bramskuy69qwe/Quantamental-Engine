@@ -184,7 +184,7 @@ look with inline styles.
 
 ### Numbers
 - **`Stat`** `{label, value, sub, color}` · **`HeroNumber`** `{value, ccy}` · **`Delta`** `{value, pct, flat}`.
-- **Live numbers:** `LiveValue`, `LiveClock`, `FlashCell` — streaming values that flash on change and show a stale indicator. Bind them to real data via the SSE adapter (`window.QE_SSE` / `useLiveId`) or a poll, never a client random-walk. (The reference's `LiveNumber`/`LivePct`/`useLiveTicker` random-walk family was stripped in P8 wave 1 — zero production callers.) The shared chrome (TopNav / WorkspaceBar / StatusFooter) binds the `QE_CHROME` store (`chrome-live.js`: `/api/state` 10s · snapshot 30s · `/api/system` 60s · `/accounts` · SSE status), rendering `—` when a source has no data.
+- **Live numbers:** `LiveValue`, `LiveClock`, `FlashCell` — streaming values that flash on change and show a stale indicator. Bind them to real data via the SSE adapter (`window.QE_SSE.onChannel(...)` → fold into the page's own module store → `notify()`, the shape `dash-tiled.jsx`'s `_wireSSE` established) or a poll, never a client random-walk. `LiveValue` takes its value as a PROP; its `data-live-id` attribute is a RESERVED hook for a server-side htmx/OOB swap target and currently has no instances (`/v3` is a React SPA — an OOB swap into React-managed DOM would be reconciled away), so never treat it as a lookup key. (This rule used to name a `useLiveId` hook and a live-value registry — P1 shipped the store-fold instead, the registry never gained a writer, and both were deleted 2026-08-05.) (The reference's `LiveNumber`/`LivePct`/`useLiveTicker` random-walk family was stripped in P8 wave 1 — zero production callers.) The shared chrome (TopNav / WorkspaceBar / StatusFooter) binds the `QE_CHROME` store (`chrome-live.js`: `/api/state` 10s · snapshot 30s · `/api/system` 60s · `/accounts` · SSE status), rendering `—` when a source has no data.
 
 ### Status & badges
 - **`StatusDot`** `{tone, label, value, sq}` — the single status indicator (tones `ok|warn|err|info|off`).
@@ -496,7 +496,7 @@ note.)
 | Keep the `border-radius:50%` carve-out to small status dots (§1) | Round cards / panes / buttons |
 | Use `--qe-mono` + tabular-nums for all numbers | Use UI/system fonts for numbers |
 | Compose pages from the primitives in §5 | Re-implement a card/tab/badge with inline styles |
-| Bind live values to `window.QE_SSE` / `useLiveId` | Drive live values from a client random-walk |
+| Bind live values via `QE_SSE.onChannel` → page store → `notify()` | Drive live values from a client random-walk (or reach for the deleted `useLiveId` registry) |
 | Put tileable panes in `GridWorkspace`/`GridItem` | Lay panes out in a fixed CSS grid |
 | Let `GridWorkspace` own the pane gutter (`--qe-pane-gap`) | Wrap a workspace in a padded container |
 | Reach `Config` via the gear; keep `Primitives` DEV-badged (§9) | Add a PRODUCTION page to `NAV_ITEMS` (the Primitives DEV chip rides there pending the P8 retirement call) |

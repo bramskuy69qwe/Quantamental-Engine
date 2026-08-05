@@ -1949,6 +1949,8 @@ const qeChromeBannerCount = () => {
   let k = 0;
   if (st.clock_severity && st.clock_severity !== "ok") k += 1;
   if (st.halted || st.blocked) k += 1;
+  const seat = window.QE_SEAT && window.QE_SEAT.get() || {};
+  if (seat.state === "foreign" && !seat.dismissed) k += 1;
   return k;
 };
 const ChromeHaltBanner = () => {
@@ -2314,47 +2316,11 @@ function readHaltUntil() {
 function readHaltAt() {
   return 0;
 }
-const fmtHaltAt = (ts) => {
-  try {
-    return new Date(ts + (window.QE_CLOCK_OFFSET || 0)).toISOString().slice(11, 19);
-  } catch (e) {
-    return "";
-  }
-};
 function nextHaltRelease() {
   const d = /* @__PURE__ */ new Date();
   d.setUTCHours(24, 0, 0, 0);
   return d.getTime();
 }
-function fmtHaltLeft(ms) {
-  if (ms < 0) ms = 0;
-  const dd = Math.floor(ms / 864e5), hh = Math.floor(ms % 864e5 / 36e5), mm = Math.floor(ms % 36e5 / 6e4), ss = Math.floor(ms % 6e4 / 1e3);
-  return `${dd}d ${String(hh).padStart(2, "0")}h ${String(mm).padStart(2, "0")}m ${String(ss).padStart(2, "0")}s`;
-}
-const HALT_GRASS = [
-  "step away \u2014 go touch some grass.",
-  "markets will survive without you. go outside.",
-  "breathe, hydrate, go touch some grass.",
-  "the highest-EV trade right now is a walk."
-];
-const NotifBanner = () => {
-  const ctx = React.useContext(NotifCtx);
-  if (!ctx || !ctx.haltUntil) return null;
-  const rem = ctx.haltUntil - Date.now();
-  if (rem <= 0) return null;
-  const grass = HALT_GRASS[Math.floor(ctx.haltUntil / 6e4) % HALT_GRASS.length];
-  return /* @__PURE__ */ React.createElement(
-    Banner,
-    {
-      tone: "err",
-      tag: "HALT",
-      time: ctx.haltAt > 0 ? fmtHaltAt(ctx.haltAt) : null,
-      title: "CALCULATOR BLOCKED",
-      detail: /* @__PURE__ */ React.createElement(React.Fragment, null, "hard-stop breached \xB7 new entries gated \xB7 open positions unaffected \xB7 ", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-sub)" } }, grass)),
-      releaseIn: fmtHaltLeft(rem)
-    }
-  );
-};
 const NotifRow = ({ ev, now, muted, onRead, onDismiss, onAction }) => {
   const sev = nSev(ev.pri);
   const colored = ev.pri !== "routine";
@@ -2437,7 +2403,6 @@ function NotificationProvider({ children, demo = false }) {
     const t = setInterval(() => setNow(Date.now()), 1e3);
     return () => clearInterval(t);
   }, []);
-  const banner = haltUntil > now;
   React.useEffect(() => {
     if (haltUntil && Date.now() >= haltUntil) {
       setHaltUntil(0);
@@ -2594,7 +2559,7 @@ function NotificationProvider({ children, demo = false }) {
   const visible = events.filter((e) => (filter === "All" || e.ch === filter) && priPass(e));
   const justNow = visible.filter((e) => now - e.ts < 12e4);
   const earlier = visible.filter((e) => now - e.ts >= 12e4);
-  const ctx = { unread, open, banner, haltUntil, haltAt, toggleOpen: () => setOpen((o) => !o) };
+  const ctx = { unread, open, toggleOpen: () => setOpen((o) => !o) };
   const navH = 54 + 31 * (typeof qeChromeBannerCount === "function" ? qeChromeBannerCount() : 0);
   const Group = ({ title, rows }) => rows.length === 0 ? null : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { padding: "4px 11px 3px", fontFamily: "var(--qe-ui)", fontSize: "0.5rem", fontWeight: 700, letterSpacing: "0.16em", color: "var(--qe-muted)", textTransform: "uppercase" } }, title), rows.map((ev) => /* @__PURE__ */ React.createElement(NotifRow, { key: ev.id, ev, now, muted: !!muted[ev.ch], onRead: markRead, onDismiss: dismiss, onAction: handleAction })));
   return /* @__PURE__ */ React.createElement(NotifCtx.Provider, { value: ctx }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative", height: "100%", width: "100%", overflow: "hidden" } }, children, open && /* @__PURE__ */ React.createElement("div", { onClick: () => setOpen(false), style: { position: "absolute", top: navH, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.4)", zIndex: 55 } }), open && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: navH, right: 0, bottom: 0, width: 362, zIndex: 58, background: "var(--qe-card)", borderLeft: "1px solid var(--qe-line-2)", borderTop: "1px solid var(--qe-line-2)", boxShadow: "-14px 0 40px rgba(0,0,0,0.6)", display: "flex", flexDirection: "column" } }, /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, padding: "8px 11px", borderBottom: "1px solid var(--qe-line)", display: "flex", flexDirection: "column", gap: 7 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-ui)", fontWeight: 700, fontSize: "0.72rem", letterSpacing: "0.12em", color: "var(--qe-text)" } }, "NOTIFICATIONS"), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.56rem", color: unread ? "var(--qe-sub)" : "var(--qe-muted)" } }, unread, " unread"), dnd && /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.5rem", fontWeight: 700, letterSpacing: "0.1em", color: "var(--qe-amber)", border: "1px solid var(--qe-amber)", padding: "0 4px" } }, "DND"), /* @__PURE__ */ React.createElement("span", { className: "qe-grow" }), /* @__PURE__ */ React.createElement("button", { onClick: markAll, className: "qe-btn qe-btn-ghost qe-btn-sm", style: { opacity: unread ? 1 : 0.4 } }, "MARK ALL READ"), /* @__PURE__ */ React.createElement("button", { onClick: clearAll, className: "qe-btn qe-btn-ghost qe-btn-sm", style: { opacity: events.length ? 1 : 0.4 } }, "CLEAR"), /* @__PURE__ */ React.createElement("span", { onClick: () => setOpen(false), title: "Close", style: { color: "var(--qe-muted)", fontSize: "0.95rem", cursor: "pointer", paddingLeft: 2 } }, "\xD7")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 4 } }, /* @__PURE__ */ React.createElement(NotifChip, { label: "All", count: events.length, active: filter === "All", onFilter: () => setFilter("All") }), N_CHANNELS.map((ch) => /* @__PURE__ */ React.createElement(NotifChip, { key: ch, label: ch, count: counts[ch], active: filter === ch, muted: !!muted[ch], onFilter: () => setFilter(ch), onMute: () => toggleMute(ch) }))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-ui)", fontSize: "0.52rem", fontWeight: 700, letterSpacing: "0.12em", color: "var(--qe-muted)", textTransform: "uppercase" } }, "PRIORITY"), /* @__PURE__ */ React.createElement(NotifSeg, { options: ["All", "Risk+", "Halt"], active: priority, onPick: setPriority }))), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0, overflowY: "auto" } }, visible.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "qe-empty", style: { margin: 12 } }, /* @__PURE__ */ React.createElement("div", { className: "qe-empty-glyph" }, "\u2014 \u2014 \u2014"), /* @__PURE__ */ React.createElement("div", { className: "qe-empty-msg" }, events.length ? "Nothing matches this filter" : "No notifications"), events.length > 0 && /* @__PURE__ */ React.createElement("button", { onClick: () => {
@@ -2608,13 +2573,13 @@ function NotificationProvider({ children, demo = false }) {
       disabled: true,
       title: "Desktop notifications are deferred (plan \xA77) \u2014 not yet implemented"
     }
-  ), /* @__PURE__ */ React.createElement(NotifSwitch, { label: "DND", on: dnd, onToggle: () => setDnd((v) => !v), title: "Do not disturb" }))), toasts.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: banner ? 92 : 62, right: open ? 370 : 8, zIndex: 60, display: "flex", flexDirection: "column", gap: 5, transition: "right .18s ease" } }, toasts.map((t) => /* @__PURE__ */ React.createElement(NotifToast, { key: t.id, ev: t, onClick: () => {
+  ), /* @__PURE__ */ React.createElement(NotifSwitch, { label: "DND", on: dnd, onToggle: () => setDnd((v) => !v), title: "Do not disturb" }))), toasts.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: navH + 8, right: open ? 370 : 8, zIndex: 60, display: "flex", flexDirection: "column", gap: 5, transition: "right .18s ease" } }, toasts.map((t) => /* @__PURE__ */ React.createElement(NotifToast, { key: t.id, ev: t, onClick: () => {
     setOpen(true);
     markRead(t.id);
     removeToast(t.id);
   }, onClose: () => removeToast(t.id) }))), demo && (demoOpen ? /* @__PURE__ */ React.createElement(NotifDemo, { fire, autostream, onAuto: () => setAutostream((v) => !v), onReset: reset, onHide: () => setDemoOpen(false) }) : /* @__PURE__ */ React.createElement("button", { onClick: () => setDemoOpen(true), title: "Open the notification demo panel", className: "qe-btn qe-btn-sm", style: { position: "absolute", left: 10, bottom: 50, zIndex: 70, opacity: 0.8 } }, "\u25C6 DEMO"))));
 }
-Object.assign(window, { NotifCtx, NotifBell, NotifBanner, NotifRow, NotificationProvider });
+Object.assign(window, { NotifCtx, NotifBell, NotifRow, NotificationProvider });
 
 ;
 
@@ -2622,8 +2587,6 @@ Object.assign(window, { NotifCtx, NotifBell, NotifBanner, NotifRow, Notification
 const QE_SSE = function() {
   const CHANNELS = ["position_update", "equity_update", "dd_state", "order_update", "fill", "engine_log"];
   const chanSubs = /* @__PURE__ */ new Map();
-  const values = /* @__PURE__ */ new Map();
-  const valSubs = /* @__PURE__ */ new Map();
   let source = null;
   let streamId = null;
   let status = "idle";
@@ -2694,7 +2657,9 @@ const QE_SSE = function() {
     streamAccountId: () => streamId,
     status: () => status,
     channels: CHANNELS.slice(),
-    /* Subscribe to a raw channel's decoded payloads. Returns an unsubscribe fn. */
+    /* Subscribe to a raw channel's decoded payloads. Returns an unsubscribe fn.
+       THE binding mechanism: pages subscribe here, fold the payload into their
+       own module store, and notify — see dash-tiled.jsx's _wireSSE. */
     onChannel(channel, fn) {
       if (!chanSubs.has(channel)) chanSubs.set(channel, /* @__PURE__ */ new Set());
       chanSubs.get(channel).add(fn);
@@ -2702,41 +2667,14 @@ const QE_SSE = function() {
         const s = chanSubs.get(channel);
         if (s) s.delete(fn);
       };
-    },
-    /* data-live-id registry — P1 maps channel payloads → live-id values here so
-       leaf LiveValue spans re-render without touching their surrounding pane. */
-    setValue(liveId, v) {
-      values.set(liveId, v);
-      fanout(valSubs, liveId, v);
-    },
-    getValue(liveId) {
-      return values.get(liveId);
-    },
-    onValue(liveId, fn) {
-      if (!valSubs.has(liveId)) valSubs.set(liveId, /* @__PURE__ */ new Set());
-      valSubs.get(liveId).add(fn);
-      return () => {
-        const s = valSubs.get(liveId);
-        if (s) s.delete(fn);
-      };
     }
   };
 }();
-const useSSEChannel = (channel) => {
-  const [payload, setPayload] = React.useState(null);
-  React.useEffect(() => QE_SSE.onChannel(channel, setPayload), [channel]);
-  return payload;
-};
-const useLiveId = (liveId, initial) => {
-  const [v, setV] = React.useState(() => QE_SSE.getValue(liveId) !== void 0 ? QE_SSE.getValue(liveId) : initial);
-  React.useEffect(() => QE_SSE.onValue(liveId, setV), [liveId]);
-  return v;
-};
 QE_SSE.connect();
 if (window.QE_CHROME && window.QE_CHROME.onAccountChange) {
   window.QE_CHROME.onAccountChange(QE_SSE.retarget);
 }
-Object.assign(window, { QE_SSE, useSSEChannel, useLiveId });
+Object.assign(window, { QE_SSE });
 
 ;
 
@@ -10866,9 +10804,6 @@ data: 93580.40`), /* @__PURE__ */ React.createElement("div", { style: { fontSize
   { label: "ETHUSDT", value: "+3.47", color: "green" },
   { label: "SOLUSDT", value: "-0.85", color: "red" }
 ] }))), /* @__PURE__ */ React.createElement(GridItem, { x: 0, y: 7, w: 12, h: 5 }, /* @__PURE__ */ React.createElement(Pane, { title: "Sparkline", hot: true, foot: { tone: "info", id: 2102, msg: "drag my title bar \xB7 resize my edges", ms: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "10px 8px" } }, /* @__PURE__ */ React.createElement(Sparkline, { data: DEMO_EQUITY, height: 44, color: "var(--qe-cyan)" }))))))))), /* @__PURE__ */ React.createElement(StatusFooter, null));
-const _PagePlaceholder = (name, phase) => function PagePlaceholder() {
-  return /* @__PURE__ */ React.createElement("div", { className: "qe-scope", style: { width: "100%", height: "100%", background: "var(--qe-bg)", display: "flex", flexDirection: "column", overflow: "hidden" } }, /* @__PURE__ */ React.createElement(TopNavStd, { page: name, variant: "line", dense: true }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", fontFamily: "var(--qe-mono)" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "1.1rem", fontWeight: 700, color: "var(--qe-text)", letterSpacing: "0.06em" } }, name), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 8, fontSize: "0.6rem", color: "var(--qe-muted)", letterSpacing: "0.14em" } }, "REACT PORT \xB7 ", phase))), /* @__PURE__ */ React.createElement(StatusFooter, null));
-};
 const QE_PAGES = {
   Dashboard: DashTiled,
   // P1 — real page (dash-tiled.jsx)

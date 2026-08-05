@@ -565,28 +565,13 @@ data: 93580.40`}</pre>
   </div>
 );
 
-/* ── Page placeholders (P0) ────────────────────────────────────────────
-   v3.0 P0 ships only the Primitives proving ground + the shared foundation.
-   The 8 production pages are ported in their own phases (P1–P7); until then
-   the nav routes to a labelled placeholder so navigation is exercised without
-   pulling in the not-yet-ported page modules. Each stub names its target phase;
-   replace with the real component when its phase lands. */
-const _PagePlaceholder = (name, phase) => function PagePlaceholder() {
-  return (
-    <div className="qe-scope" style={{width:'100%', height:'100%', background:'var(--qe-bg)', display:'flex', flexDirection:'column', overflow:'hidden'}}>
-      <TopNavStd page={name} variant="line" dense/>
-      <div style={{flex:1, minHeight:0, display:'flex', alignItems:'center', justifyContent:'center'}}>
-        <div style={{textAlign:'center', fontFamily:'var(--qe-mono)'}}>
-          <div style={{fontSize:'1.1rem', fontWeight:700, color:'var(--qe-text)', letterSpacing:'0.06em'}}>{name}</div>
-          <div style={{marginTop:8, fontSize:'0.6rem', color:'var(--qe-muted)', letterSpacing:'0.14em'}}>REACT PORT · {phase}</div>
-        </div>
-      </div>
-      <StatusFooter/>
-    </div>
-  );
-};
-
 /* ── App router ───────────────────────────────────────────────────────── */
+/* The P0 `_PagePlaceholder` factory (and the comment claiming "the nav routes
+   to a labelled placeholder") were DELETED in the 2026-08-05 LOW batch: P1-P7
+   landed every page, QE_PAGES below binds all 9 routes to real modules, and
+   the factory had zero call sites left. If a future phase needs scaffolding
+   again, write it then — a placeholder kept past its phase is indistinguishable
+   from a page that silently failed to port. */
 const QE_PAGES = {
   Dashboard:  DashTiled,   // P1 — real page (dash-tiled.jsx)
   'Pre-Trade': PreTradePage,  // P3 — real page (pages-pretrade.jsx)

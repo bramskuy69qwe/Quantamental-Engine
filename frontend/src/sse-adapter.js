@@ -1,9 +1,11 @@
 /* v3.0 SSE client-adapter (P0 skeleton).
  *
- * ONE EventSource per active account → a live-value registry that leaf
- * LiveValue components subscribe to. P0 lands the transport + the 5 REAL
- * channels and the subscribe/registry API; P1 (Dashboard) binds specific tiles
- * to data-live-id keys and replaces the nav-and-data random-walk placeholder.
+ * ONE EventSource per active account → per-channel subscribers. Pages bind by
+ * calling onChannel(), folding the payload into their own module store, and
+ * notifying their leaves. (The P0 header promised a data-live-id VALUE
+ * REGISTRY that leaf LiveValue spans would subscribe to; P1 shipped the
+ * store-fold instead and the registry never gained a writer — deleted
+ * 2026-08-05, see the note below.)
  *
  * Verified against the engine surface (docs/design/v3.0_ui_rebuild_plan.md §1.2
  * + P0 executed-notes):
@@ -23,8 +25,6 @@ const QE_SSE = (function () {
   const CHANNELS = ['position_update', 'equity_update', 'dd_state', 'order_update', 'fill', 'engine_log'];
 
   const chanSubs = new Map();   // channel -> Set(fn(payload))
-  const values = new Map();     // data-live-id -> latest value (P1 populates)
-  const valSubs = new Map();    // data-live-id -> Set(fn(value))
   let source = null;
   let streamId = null;          // the account this `source` is subscribed to
   let status = 'idle';          // idle | connecting | open | error | disabled
@@ -109,40 +109,28 @@ const QE_SSE = (function () {
     status: () => status,
     channels: CHANNELS.slice(),
 
-    /* Subscribe to a raw channel's decoded payloads. Returns an unsubscribe fn. */
+    /* Subscribe to a raw channel's decoded payloads. Returns an unsubscribe fn.
+       THE binding mechanism: pages subscribe here, fold the payload into their
+       own module store, and notify — see dash-tiled.jsx's _wireSSE. */
     onChannel(channel, fn) {
       if (!chanSubs.has(channel)) chanSubs.set(channel, new Set());
       chanSubs.get(channel).add(fn);
       return () => { const s = chanSubs.get(channel); if (s) s.delete(fn); };
     },
-
-    /* data-live-id registry — P1 maps channel payloads → live-id values here so
-       leaf LiveValue spans re-render without touching their surrounding pane. */
-    setValue(liveId, v) { values.set(liveId, v); fanout(valSubs, liveId, v); },
-    getValue(liveId) { return values.get(liveId); },
-    onValue(liveId, fn) {
-      if (!valSubs.has(liveId)) valSubs.set(liveId, new Set());
-      valSubs.get(liveId).add(fn);
-      return () => { const s = valSubs.get(liveId); if (s) s.delete(fn); };
-    },
   };
 })();
 
-/* React hook: subscribe a component to a channel's latest payload (P1 binds
-   tiles with this). Ships unused-but-ready in P0. */
-const useSSEChannel = (channel) => {
-  const [payload, setPayload] = React.useState(null);
-  React.useEffect(() => QE_SSE.onChannel(channel, setPayload), [channel]);
-  return payload;
-};
-
-/* React hook: subscribe to a single data-live-id's latest value. */
-const useLiveId = (liveId, initial) => {
-  const [v, setV] = React.useState(() =>
-    QE_SSE.getValue(liveId) !== undefined ? QE_SSE.getValue(liveId) : initial);
-  React.useEffect(() => QE_SSE.onValue(liveId, setV), [liveId]);
-  return v;
-};
+/* The P0 data-live-id VALUE REGISTRY (values/valSubs + setValue/getValue/
+   onValue) and the useLiveId / useSSEChannel hooks were DELETED in the
+   2026-08-05 LOW batch. `setValue` was the registry's only writer and had zero
+   callers repo-wide: P1 shipped a different mechanism — onChannel → per-page
+   store → notify() — and every page followed it, so the registry sat dead from
+   the day it was written. NOTE the `LiveValue` PRIMITIVE is unaffected and very
+   much alive (~30 call sites): it takes its value as a PROP and its
+   data-live-id attribute is a server-side htmx/OOB swap target, not a lookup
+   into this registry. DESIGN.md's binding rules were corrected in the same
+   commit — a ratified rule naming a deleted symbol is worse than the dead code
+   it described. */
 
 /* Open the stream once the app boots. No-op (status 'disabled') when there is no
    account id or no EventSource; a failed connect just sits in 'error' and the
@@ -157,4 +145,4 @@ if (window.QE_CHROME && window.QE_CHROME.onAccountChange) {
   window.QE_CHROME.onAccountChange(QE_SSE.retarget);
 }
 
-Object.assign(window, { QE_SSE, useSSEChannel, useLiveId });
+Object.assign(window, { QE_SSE });

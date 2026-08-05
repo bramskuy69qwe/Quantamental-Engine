@@ -357,8 +357,10 @@ const LiveValue = ({id, value, format=String, tone='auto', stale=false, style={}
 /* P8 wave 1: useLiveTicker/LiveNumber/LivePct (the random-walk live-number
    family) are GONE — zero production callers existed and plan §4 lists them
    as strip targets. Live numbers bind LiveValue to real SSE/poll data
-   (window.QE_SSE / useLiveId); the DEV proving ground's LiveValueDemo
-   (app-shell.jsx) carries its own sanctioned demo ticker. */
+   (QE_SSE.onChannel → the page's own store → notify; the `useLiveId` registry
+   this once named was deleted 2026-08-05, never having had a writer); the DEV
+   proving ground's LiveValueDemo (app-shell.jsx) carries its own sanctioned
+   demo ticker. */
 
 // LiveClock — wall clock that ticks every second (string LiveValue, no flash)
 const LiveClock = ({id='clock', style={}, format=null}) => {

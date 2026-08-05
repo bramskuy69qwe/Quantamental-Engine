@@ -5,7 +5,7 @@
 //  overlay the page. App-global notification taxonomy (the REAL producer
 //  set, G-O3): fills, risk/drawdown, calc-link, system/WS.
 //  Single script scope — all helpers below are visible to each other; only
-//  NotifCtx / NotifBell / NotifBanner / NotificationProvider are exported.
+//  NotifCtx / NotifBell / NotifRow / NotificationProvider are exported.
 // ════════════════════════════════════════════════════════════════════════
 
 const NotifCtx = React.createContext(null);
@@ -113,34 +113,23 @@ const HALT_AT_KEY = 'qe.haltAt';
 // weekly_pnl SSE + a `halted` flag on /api/state — G-O2) is wired in P1/P3.
 function readHaltUntil() { return 0; }
 function readHaltAt() { return 0; }
-const fmtHaltAt = (ts) => { try { return new Date(ts + (window.QE_CLOCK_OFFSET || 0)).toISOString().slice(11, 19); } catch (e) { return ''; } };
-// daily hard-stop releases at the next UTC day boundary (00:00 UTC)
+// daily hard-stop releases at the next UTC day boundary (00:00 UTC).
+// KEPT: pushEvent's halt branch still calls this (demo-gated), so it dies with
+// the demo panel, not with NotifBanner. Deleting it as "NotifBanner's helper"
+// left a live ReferenceError behind — caught by the post-edit class grep, not
+// by the build (a call to a missing name parses fine).
 function nextHaltRelease() { const d = new Date(); d.setUTCHours(24, 0, 0, 0); return d.getTime(); }
-function fmtHaltLeft(ms) { if (ms < 0) ms = 0;
-  const dd = Math.floor(ms / 86400000), hh = Math.floor(ms % 86400000 / 3600000), mm = Math.floor(ms % 3600000 / 60000), ss = Math.floor(ms % 60000 / 1000);
-  return `${dd}d ${String(hh).padStart(2,'0')}h ${String(mm).padStart(2,'0')}m ${String(ss).padStart(2,'0')}s`; }
-const HALT_GRASS = [
-  'step away — go touch some grass.',
-  'markets will survive without you. go outside.',
-  'breathe, hydrate, go touch some grass.',
-  'the highest-EV trade right now is a walk.',
-];
 
-const NotifBanner = () => {
-  const ctx = React.useContext(NotifCtx);
-  if (!ctx || !ctx.haltUntil) return null;
-  const rem = ctx.haltUntil - Date.now();
-  if (rem <= 0) return null;
-  const grass = HALT_GRASS[Math.floor(ctx.haltUntil / 60000) % HALT_GRASS.length];
-  // rendered with the Banner primitive (one banner implementation app-wide)
-  return (
-    <Banner tone="err" tag="HALT"
-      time={ctx.haltAt > 0 ? fmtHaltAt(ctx.haltAt) : null}
-      title="CALCULATOR BLOCKED"
-      detail={<React.Fragment>hard-stop breached · new entries gated · open positions unaffected · <span style={{ color:'var(--qe-sub)' }}>{grass}</span></React.Fragment>}
-      releaseIn={fmtHaltLeft(rem)}/>
-  );
-};
+/* NotifBanner (+ its exclusive helpers fmtHaltAt / fmtHaltLeft / HALT_GRASS)
+   DELETED in the 2026-08-05 LOW batch. It was doubly
+   unreachable: no JSX render site existed anywhere after 2026-07-25, and its
+   own guard `if (!ctx.haltUntil) return null` read state that readHaltUntil()
+   above pins at 0 by deliberate P0 design. The REAL chrome-wide halt banner is
+   `ChromeHaltBanner` (nav-and-data.jsx), driven by /api/state's `halted` —
+   see the note there. The halt STATE below (haltUntil/haltAt + the
+   auto-release effect) is deliberately kept: its only writer is pushEvent's
+   demo-gated halt branch, so it lives or dies with the demo panel, which is
+   an open operator decision. */
 
 // ── row ──────────────────────────────────────────────────────────────────
 const NotifRow = ({ ev, now, muted, onRead, onDismiss, onAction }) => {
@@ -244,8 +233,9 @@ function NotificationProvider({ children, demo = false }) {
   const idRef = React.useRef(1);
 
   React.useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
-  // halt banner is up whenever the cooldown is still in the future
-  const banner = haltUntil > now;
+  // (the `banner` flag — `haltUntil > now`, permanently false — was deleted
+  //  with NotifBanner in the 2026-08-05 LOW batch; the toast stack it also
+  //  gated now reads the live navH, same source as the scrim.)
   // auto-release once the cooldown elapses (survives reload via localStorage)
   React.useEffect(() => {
     if (haltUntil && Date.now() >= haltUntil) {
@@ -367,7 +357,9 @@ function NotificationProvider({ children, demo = false }) {
   const justNow = visible.filter(e => now - e.ts < 120000);
   const earlier = visible.filter(e => now - e.ts >= 120000);
 
-  const ctx = { unread, open, banner, haltUntil, haltAt, toggleOpen: () => setOpen(o => !o) };
+  // haltUntil/haltAt left the context with NotifBanner, their only reader
+  // (batch audit #6) — the state itself stays for the demo-gated halt lane.
+  const ctx = { unread, open, toggleOpen: () => setOpen(o => !o) };
   // height of the nav chrome (dense nav 32 + workspace bar 22, + halt banner 30)
   // so the center / scrim sit BELOW the title bar and never cover or dim it.
   // 54 = dense nav 32 + workspace bar 22. Each under-nav Banner is 30px + 1px
@@ -437,9 +429,20 @@ function NotificationProvider({ children, demo = false }) {
             </div>
           </div>
         )}
-        {/* toasts — persist through open/close; slide left of the drawer when open */}
+        {/* toasts — persist through open/close; slide left of the drawer when
+            open. Offset is navH + 8, NOT a hardcoded 62/92 pair keyed on the
+            dead `banner` flag: `banner` derived from haltUntil, which
+            readHaltUntil() pins at 0 forever (P0 removed the localStorage halt
+            authority as fiction), so the 92 arm was unreachable and toasts sat
+            at 62 while the drawer/scrim above followed the LIVE
+            qeChromeBannerCount. One real under-nav banner put navH at 85 and
+            the toast overlapped it by ~23px; two banners, 54px. Same navH
+            source as the scrim, so they cannot disagree. (The counter itself
+            was missing its operator-seat arm — fixed in nav-and-data.jsx in
+            the same commit; this comment claimed coverage the counter did not
+            have, which is the exact failure this batch elsewhere repairs.) */}
         {toasts.length > 0 && (
-          <div style={{ position:'absolute', top: banner ? 92 : 62, right: open ? 370 : 8, zIndex:60, display:'flex', flexDirection:'column', gap:5, transition:'right .18s ease' }}>
+          <div style={{ position:'absolute', top: navH + 8, right: open ? 370 : 8, zIndex:60, display:'flex', flexDirection:'column', gap:5, transition:'right .18s ease' }}>
             {toasts.map(t => <NotifToast key={t.id} ev={t} onClick={() => { setOpen(true); markRead(t.id); removeToast(t.id); }} onClose={() => removeToast(t.id)} />)}
           </div>
         )}
@@ -451,4 +454,4 @@ function NotificationProvider({ children, demo = false }) {
   );
 }
 
-Object.assign(window, { NotifCtx, NotifBell, NotifBanner, NotifRow, NotificationProvider });
+Object.assign(window, { NotifCtx, NotifBell, NotifRow, NotificationProvider });

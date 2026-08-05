@@ -237,6 +237,28 @@
 }
 .qe-btn:hover    { background: var(--qe-hover); border-color: var(--qe-line-2); }
 .qe-btn:active   { background: var(--qe-active); }
+/* A `disabled` .qe-btn had NO rule at all: it kept the base `cursor: pointer`
+   and — because CSS :hover still matches disabled elements — it LIT UP under
+   the cursor and then swallowed the click. Full-brightness Delete Account /
+   Activate / pagination arrows all read as live (LOW batch 2026-08-05).
+   Declared AFTER :hover/:active: equal specificity, so source order decides.
+   Panes carrying their own inline dim (nav-and-data's ⊞ Pane / ⤢ Pop) keep it
+   — inline styles win, harmlessly. */
+.qe-btn:disabled,
+.qe-btn:disabled:hover,
+.qe-btn:disabled:active {
+  background: var(--qe-panel); border-color: var(--qe-line);
+  color: var(--qe-muted); opacity: 0.45; cursor: not-allowed;
+}
+/* Ghost buttons are chromeless BY DESIGN (transparent bg + border). The rule
+   above is (0,2,0) and beats `.qe-btn-ghost` (0,1,0), so without this it would
+   paint a faint filled box onto ~16 disabled ghost buttons that never had one
+   — a visual regression introduced by the fix itself (batch audit #8). */
+.qe-btn-ghost:disabled,
+.qe-btn-ghost:disabled:hover,
+.qe-btn-ghost:disabled:active {
+  background: transparent; border-color: transparent;
+}
 .qe-btn-sm       { height: 18px; padding: 1px 6px; font-size: var(--qe-fs-sm); }
 /* horizontal scroll strip — children never wrap or clip; scrollbar hidden */
 .qe-hscroll{overflow-x:auto;overflow-y:hidden;scrollbar-width:none;white-space:nowrap}.qe-hscroll::-webkit-scrollbar{display:none}.qe-hscroll>*{flex-shrink:0}
