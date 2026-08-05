@@ -1,6 +1,73 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-08-04 (**MERIDIAN v3.1 — THE WIRING INVENTORY'S CRIT+HIGH+MED TIERS ARE ALL CLOSED (thirteenth block, top): the dead-settings table · H3 wired · the full MED tail · the backtest-runner RETIREMENT — 12 commits `cf82762..caa3f8f`, every one audited, ALL PUSHED. NEXT SESSION STARTS AT THE OPERATOR'S FILED SIGHTING (§ below, UNVERIFIED): "app state in engine log is not updating at all" — debunk checklist first, then debug. Then the LOW batch · primitives lift · e2e manifest re-accept.** Prior: warm hang + H-series (twelfth block) · the stale-shown-as-live seam · wiring inventory filed · Jinja retirement `1afc9f8`.)
+**Date**: 2026-08-05 (**MERIDIAN v3.1 — THE ENGINE-LOG SIGHTING IS CLOSED AND THE PANE IS NOW GENUINELY LIVE (fourteenth block, top): the sighting debunked at checklist item #1 (the PANE, not the jsonl) · the tile rebuilt as a real jsonl feed with risk events highlighted · then made REAL-TIME by an SSE nudge — 2 commits `3b9ef67` + `7f348d7`, both audited, gate 4637/6/3, bundle `23529042d9`, **LOCAL-ONLY (push is the operator's call)**. Operator LIVE-VERIFIED the real-time feed. NEXT: the LOW/cosmetic tier (IN FLIGHT) · primitives lift · e2e manifest re-accept.** Prior: the MED tier + runner retirement (thirteenth block) · warm hang + H-series · the stale-shown-as-live seam · wiring inventory filed.)
+
+## ▶ SESSION CLOSE 2026-08-05 (fourteenth block) — THE ENGINE LOG BECOMES A REAL FEED
+
+The operator's filed sighting resolved at **debunk-checklist item #1**
+("which artifact, exactly?"): they meant the **Engine-Log PANE on the
+dashboard** — not `risk_engine.jsonl`, not app-state persistence, not
+`position_changes`. Two commits, each through the full cycle
+(verify-at-line → fix → executed pins → mutation-ALL-RED → independent
+agent audit → fold → solo gate → commit). Final gate **4637 passed / 6
+skipped / 3 deselected**, bundle **`23529042d9`**. **Both commits are
+LOCAL — push is the operator's call.**
+
+| commit | what |
+|---|---|
+| `3b9ef67` | **THE PANE WAS HONEST BUT MISLABELED.** It tailed `engine_events` — an audit trail of RARE stateful risk events whose newest live row was **13 days old** (id 1216, 2026-07-23) — rendered TIME-ONLY under a hardcoded-green `LOG` dot and a `LIVE` tag, so a weeks-old audit row read as today's activity. (The operator's "wrong sorting?" hypothesis was RULED OUT by EXECUTING the seed query against the live DB: the window was ids 1157-1216, the newest 60, not the oldest.) Option 3 shipped: **`GET /api/engine/log/live`** merges a byte-offset tail of `risk_engine.jsonl` with NEW `engine_events` rows (`src='event'`, highlighted un-faded + bold tag), oldest-first by ISO ts; non-today stamps gain an `MM-DD ` prefix; the dot mirrors the pipe. ★ Audit MEDs folded: a **>64 KB line WEDGED the jsonl lane until rotation** (silently recreating the very frozen-pane symptom the fix exists to kill), and **no in-flight latch** → duplicate line bursts under normal 4-5 s latency. |
+| `7f348d7` | **REAL-TIME** (operator ask: "should be async and real-time"). `main._EngineLogNudgeHandler` sits beside `_json_handler` on the root logger and publishes a **content-free** nudge (`account:{aid}:engine_log`, new channel helper) per INFO+ record; the pane re-polls immediately; the 4 s poll stays the RECONCILER. Payload carries no log text (credential-hygiene lesson: content never rides a second transport). ★ Audit HIGH-1 folded: `core/tz.py` logs a per-call root-propagating WARNING under logger **`"tz"` — in NO denylist** — and the live route calls `get_account_tz` on EVERY poll → an airtight nudge→poll→warning→nudge loop at round-trip period (armed by a missing/bad account-tz row). Fixed as a **CLASS**: `_IN_ENGINE_LOG_POLL` (contextvar) marks the route handler's exact span and `emit()` refuses inside it, for ANY logger name. **Operator LIVE-VERIFIED the feed.** |
+
+### Method notes worth carrying
+
+- **The F5 tripwire has a WAL lane** (new disambiguation, both observed the
+  same day): the tripwire fired on `data/risk_engine.db` after a gate run
+  with the engine DOWN. The explanation the evidence supports: the engine
+  had died earlier leaving a **dirty WAL**, and the suite's first
+  legacy-DB connection close CHECKPOINTED it into the main file — content
+  changed with no test writing anything. Evidence: `-wal` at 0 bytes
+  afterwards + an immediate re-run 100% clean. A LATER gate fired it again
+  — that one was the already-documented benign case (engine running
+  alongside the suite). Neither lane is test pollution; this also
+  retroactively explains the thirteenth block's one-shot fire.
+- **A pane showing nothing is not necessarily broken.** Verify the
+  SUBJECT's freshness (the newest row in the source table) before touching
+  the transport. The entire first investigation cost less than one
+  speculative code fix would have.
+- **Executing the query beats reading it** — the wrong-sorting hypothesis
+  died in a single run against the live DB.
+- **Denylists over open sets rot.** The nudge's logger denylist was correct
+  for every logger I could enumerate and STILL missed `tz`. A POSITIVE
+  marker (contextvar over the exact span) closes the class instead of
+  chasing names — prefer it whenever "everything reachable from X" is the
+  real predicate.
+- **JSONL tailing has three separate traps** and all three are now pinned:
+  partial trailing line (never consume), oversized line (must skip forward
+  or the lane wedges), rotation (size < offset → reseed).
+
+### Closed this session
+
+- **The sighting** — resolved; not a transport bug. The pane now shows real
+  live engine activity with risk events highlighted inside the flow.
+- **The engine RESTART** owed since 2026-08-04 — DONE (real-time cannot
+  work without it), so all 14 commits from 2026-08-04/05 now run live.
+- **The engine's silent death at ~15:17 today** — the operator closed it
+  themselves (asked, answered). No silent-death bug.
+
+### ▶ NEXT SESSION
+
+1. **The LOW/cosmetic tier** — IN FLIGHT (tenth-block Tier 3: stub controls
+   `⊞ Pane` / `⤢ Pop` / desktop notifications; dead code `NotifBanner` /
+   demo panel / `_PagePlaceholder` / `data-live-id` registry / deferred
+   enforcement-flip). Batch or drop whole, per the filing.
+2. The `_dashFootWorst`/`_ptWorstFoot` **primitives lift** (DESIGN.md).
+3. **Operator owes**: **push** (2 commits local), **Finnhub key rotation**
+   (today's boot logged `HTTP 403 Forbidden` on the economic calendar — the
+   feed is degraded RIGHT NOW), **timezone re-check** (an earlier probe
+   wrote UTC to account 1; a bad/missing tz row is exactly what the HIGH-1
+   loop-fix defends against, and it still silently falls back to UTC), e2e
+   crawl manifest re-accept (4 control ids), testnet account, qre-v3
+   profile check, periodic `python -m core.ohlcv_fetcher` runs.
 
 ## ▶ SESSION CLOSE 2026-08-04 (thirteenth block) — THE MED TIER FALLS, AND THE RUNNER WITH IT
 
