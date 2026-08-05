@@ -1,9 +1,10 @@
 // ════════════════════════════════════════════════════════════════════════
 //  v3.0 — Notification System (ported from Meridian QE v2.5)
-//  Context-driven: <NotificationProvider> wraps any page; the bell + halt
-//  banner live in the real TopNavStd; the drawer / toasts / demo panel
-//  overlay the page. App-global notification taxonomy (the REAL producer
-//  set, G-O3): fills, risk/drawdown, calc-link, system/WS.
+//  Context-driven: <NotificationProvider> wraps any page; the bell lives in
+//  the real TopNavStd and the drawer / toasts overlay the page. App-global
+//  notification taxonomy (the REAL producer set, G-O3): fills, risk/drawdown,
+//  calc-link, system/WS. (The halt banner is SERVER state and lives in
+//  nav-and-data's ChromeHaltBanner; the demo panel is gone — 2026-08-05.)
 //  Single script scope — all helpers below are visible to each other; only
 //  NotifCtx / NotifBell / NotifRow / NotificationProvider are exported.
 // ════════════════════════════════════════════════════════════════════════
@@ -16,36 +17,35 @@ const NotifCtx = React.createContext(null);
 // fallback). The design's REGIME/NEWS channels have no producer — their
 // chips were fiction and are gone until real producers exist.
 const N_CHANNELS = ['FILLS', 'RISK', 'LINK', 'SYSTEM'];
-// per-channel primary action — [button label, target description]
+// Per-channel primary action — [button label, DESTINATION PAGE].
+// The second element used to be a prose "target description" that was only
+// ever rendered into a confirmation toast; the button marked the row read,
+// closed the drawer, claimed "→ Review risk / risk panel" and then went
+// NOWHERE (2026-08-05 batch). Each entry is now a real QE_PAGES key routed
+// through window.qeNav, and a channel with no honest destination gets NO
+// button rather than one pointing approximately.
+//   FILLS  → History   (the fills / order rows live there; "order detail" as
+//                       a standalone page never existed — that was the
+//                       ambiguity that made the original CTA unwireable)
+//   RISK   → Dashboard (Risk Monitor: DD state, gauges, the override control)
+//   LINK   → Linkage   (the triage board the alert is about)
+//   SYSTEM → Dashboard (the Engine Log pane — a real live feed since
+//                       3b9ef67; before that this channel had no destination)
 const N_ACTIONS = {
-  FILLS:  ['View order',  'order detail'],
-  RISK:   ['Review risk', 'risk panel'],
-  SYSTEM: ['Details',     'system log'],
-  LINK:   ['Link trades', 'linkage queue'],
+  FILLS:  ['View in History', 'History'],
+  RISK:   ['Review risk',     'Dashboard'],
+  SYSTEM: ['Engine log',      'Dashboard'],
+  LINK:   ['Link trades',     'Linkage'],
 };
 const nSev = (pri) => pri === 'halt' ? 'var(--qe-red)' : pri === 'risk' ? 'var(--qe-amber)' : 'var(--qe-line-2)';
-const _rnd = (a) => a[Math.floor(Math.random() * a.length)];
-const _px = (n, d = 1) => n.toFixed(d);
 
-const N_SCENARIOS = {
-  fill: () => { const side = _rnd(['BUY', 'SELL']); const s = _rnd([['BTC', 93580, 0.04], ['ETH', 3208, 0.18], ['SOL', 139, 12]]);
-    const p = s[1] * (1 + (Math.random() - 0.5) * 0.004);
-    return { ch: 'FILLS', pri: 'routine', head: `FILLED · ${side} ${_px(s[2] * (0.5 + Math.random()), 3)} ${s[0]}`,
-      detail: `@ ${_px(p, 1)} · slippage +${_px(Math.random() * 0.9, 1)}bp · order #A${1900 + Math.floor(Math.random() * 99)}` }; },
-  partial: () => { const s = _rnd([['ETH', 3208], ['SOL', 139], ['BTC', 93580]]);
-    return { ch: 'FILLS', pri: 'routine', head: `Order #A${1880 + Math.floor(Math.random() * 40)} partially filled ${40 + Math.floor(Math.random() * 5) * 10}%`,
-      detail: `SELL ${_px(Math.random(), 3)} / ${_px(1 + Math.random(), 3)} ${s[0]} @ ${_px(s[1], 1)}` }; },
-  risk: () => _rnd([
-    { ch: 'RISK', pri: 'risk', head: `Weekly loss ${78 + Math.floor(Math.random() * 12)}% of limit`, detail: `−$${(3.10 + Math.random() * 0.6).toFixed(2)} of −$4.11 · 1 more stop trips the cap` },
-    { ch: 'RISK', pri: 'risk', head: `Daily drawdown ${_px(3.5 + Math.random(), 1)}% — approaching 5.0% cap`, detail: 'position sizing throttled to ×0.5' }]),
-  halt: () => ({ ch: 'RISK', pri: 'halt', head: 'CALCULATOR BLOCKED — hard-stop breached', detail: 'Realized DD 5.04% > 5.00% cap · new entries gated · open positions unaffected' }),
-  link: () => { const nl = (window.L_NEEDS_LINK || []).filter(o => o.status === 'NEEDS_MANUAL_REVIEW' || o.status === 'UNLINKED').length || 5;
-    const nc = (window.L_CLOSES || []).filter(c => c.pending_reason).length || 3;
-    return { ch: 'LINK', pri: 'risk', head: `Calc link window closes in 0${2 + Math.floor(Math.random() * 4)}:${10 + Math.floor(Math.random() * 49)}`, detail: `triage ${nl + nc} open · ${nl} orders below 6/6 · ${nc} closes to review` }; },
-  ws: () => _rnd([
-    { ch: 'SYSTEM', pri: 'routine', head: 'Market WS reconnected', detail: '2 streams · 108ms · gap 1.4s recovered' }]),
-};
-const N_STREAM = ['fill', 'partial', 'risk', 'link', 'ws'];
+/* N_SCENARIOS / N_STREAM / _rnd / _px DELETED 2026-08-05 with the demo panel:
+   seven Math.random() event templates that fabricated fills, drawdowns and a
+   hard-stop halt. They were the mock feed this provider used before the real
+   one existed (GET /notifications/poll, P8 wave 1). Keeping fabricated RISK
+   and HALT payloads in a shipped risk console is a liability even behind a
+   flag — the halt template is exactly the string an operator would screenshot
+   in a panic. */
 
 // The real feed's cadence — one literal, read by both the setInterval and the
 // read deadline derived from it (warm-hang sweep, 2026-08-01).
@@ -99,37 +99,25 @@ const NotifBell = () => {
   );
 };
 
-// ── pinned halt banner (rendered under the nav by TopNavStd) ─────────────
-// Circuit-breaker banner: shows a live countdown until the halt releases and
-// stays up no matter what — across reloads / app startup — until the cooldown
-// elapses. No acknowledge: you cannot dismiss a hard-stop, only wait it out.
-const HALT_KEY = 'qe.haltUntil';
-const HALT_AT_KEY = 'qe.haltAt';
-// P0: the localStorage halt AUTHORITY is removed (plan §4 + §1.3, HIGH). The
-// reference persisted a "TRADING HALTED · positions frozen" banner in
-// localStorage with a client countdown — but the engine is advisory-only and
-// never freezes positions, so that banner is fiction. These readers return 0 so
-// the banner never shows from stale/persisted state; the real driver (dd_state /
-// weekly_pnl SSE + a `halted` flag on /api/state — G-O2) is wired in P1/P3.
-function readHaltUntil() { return 0; }
-function readHaltAt() { return 0; }
-// daily hard-stop releases at the next UTC day boundary (00:00 UTC).
-// KEPT: pushEvent's halt branch still calls this (demo-gated), so it dies with
-// the demo panel, not with NotifBanner. Deleting it as "NotifBanner's helper"
-// left a live ReferenceError behind — caught by the post-edit class grep, not
-// by the build (a call to a missing name parses fine).
-function nextHaltRelease() { const d = new Date(); d.setUTCHours(24, 0, 0, 0); return d.getTime(); }
+/* ── THE CLIENT-SIDE HALT SUBSYSTEM IS GONE (2026-08-05, whole) ───────────
+   Removed together, because they only ever fed each other: HALT_KEY /
+   HALT_AT_KEY, readHaltUntil / readHaltAt (both `return 0` since P0),
+   nextHaltRelease, the haltUntil / haltAt state, the auto-release effect,
+   and — earlier the same day — NotifBanner with fmtHaltAt / fmtHaltLeft /
+   HALT_GRASS.
 
-/* NotifBanner (+ its exclusive helpers fmtHaltAt / fmtHaltLeft / HALT_GRASS)
-   DELETED in the 2026-08-05 LOW batch. It was doubly
-   unreachable: no JSX render site existed anywhere after 2026-07-25, and its
-   own guard `if (!ctx.haltUntil) return null` read state that readHaltUntil()
-   above pins at 0 by deliberate P0 design. The REAL chrome-wide halt banner is
-   `ChromeHaltBanner` (nav-and-data.jsx), driven by /api/state's `halted` —
-   see the note there. The halt STATE below (haltUntil/haltAt + the
-   auto-release effect) is deliberately kept: its only writer is pushEvent's
-   demo-gated halt branch, so it lives or dies with the demo panel, which is
-   an open operator decision. */
+   Why it was inert: P0 deleted the localStorage halt AUTHORITY as fiction
+   (the reference persisted a "TRADING HALTED · positions frozen" banner with
+   a client countdown, but this engine is advisory-only and never freezes
+   positions). The readers were stubbed to 0, leaving the demo panel's halt
+   scenario as the ONLY writer — so with the demo panel deleted, every last
+   piece is unreachable.
+
+   Halt is SERVER state now, and has been since P1/P3: `ChromeHaltBanner`
+   (nav-and-data.jsx) renders chrome-wide off /api/state's `halted` /
+   `blocked`, with dd_state over SSE. Nothing here should ever again decide
+   whether trading is halted — a client that can persist its own halt can
+   also disagree with the engine about one. */
 
 // ── row ──────────────────────────────────────────────────────────────────
 const NotifRow = ({ ev, now, muted, onRead, onDismiss, onAction }) => {
@@ -147,7 +135,10 @@ const NotifRow = ({ ev, now, muted, onRead, onDismiss, onAction }) => {
           {muted && <span style={{ fontFamily:'var(--qe-mono)', fontSize:'0.5rem', letterSpacing:'0.08em', color:'var(--qe-muted)' }}>MUTED</span>}
           <span className="qe-grow" />
           <div className="qe-notif-actions" style={{ display:'flex', gap:4, alignItems:'center' }}>
-            {onAction && <button title="Open" onClick={(e)=>{e.stopPropagation();onAction(ev);}} className="qe-notif-cta">{(N_ACTIONS[ev.ch]||['View'])[0]}</button>}
+            {/* No fallback label: a channel absent from N_ACTIONS has no
+                destination, so it gets NO button. The old `||['View']` armed a
+                button that could only ever go nowhere. */}
+            {onAction && N_ACTIONS[ev.ch] && <button title={'Open ' + N_ACTIONS[ev.ch][1]} onClick={(e)=>{e.stopPropagation();onAction(ev);}} className="qe-notif-cta">{N_ACTIONS[ev.ch][0]}</button>}
             {ev.unread && <button title="Mark read" onClick={(e)=>{e.stopPropagation();onRead(ev.id);}} className="qe-notif-ib">✓</button>}
             <button title="Dismiss" onClick={(e)=>{e.stopPropagation();onDismiss(ev.id);}} className="qe-notif-ib">×</button>
           </div>
@@ -182,69 +173,49 @@ const NotifToast = ({ ev, onClick, onClose }) =>
   <Toast tone={ev.pri==='halt'?'err':ev.pri==='risk'?'warn':'mute'} tag={ev.ch} time={nAbs(ev.ts)}
     title={ev.head} detail={ev.detail} onClose={onClose} onClick={onClick} />;
 
-// ── demo panel (fire scenarios) ──────────────────────────────────────────
-const NotifDemo = ({ fire, autostream, onAuto, onReset, onHide }) => {
-  const Btn = ({ label, k, danger }) => (
-    <button onClick={()=>fire(k)} className={'qe-btn qe-btn-sm' + (danger ? ' qe-btn-danger' : '')} style={{ justifyContent:'center' }}>{label}</button>
-  );
-  return (
-    <div style={{ position:'absolute', left:10, bottom:50, zIndex:70, width:198, background:'var(--qe-card)', border:'1px solid var(--qe-line-2)', boxShadow:'0 10px 30px rgba(0,0,0,0.6)' }}>
-      <div style={{ display:'flex', alignItems:'center', gap:6, padding:'5px 9px', borderBottom:'1px solid var(--qe-line)', background:'var(--qe-panel)' }}>
-        <span style={{ width:6, height:6, background:'var(--qe-cyan)' }} />
-        <span style={{ fontFamily:'var(--qe-ui)', fontSize:'0.54rem', fontWeight:800, letterSpacing:'0.14em', color:'var(--qe-sub)' }}>DEMO · FIRE EVENTS</span>
-        <span className="qe-grow" />
-        <button onClick={onHide} title="Collapse demo panel" className="qe-btn qe-btn-ghost qe-btn-sm" style={{ height:16, padding:'0 5px' }}>–</button>
-      </div>
-      <div style={{ padding:8, display:'grid', gridTemplateColumns:'1fr 1fr', gap:5 }}>
-        <Btn label="Fill" k="fill" /><Btn label="Partial" k="partial" /><Btn label="Risk" k="risk" />
-        <Btn label="Link" k="link" /><Btn label="WS recon" k="ws" /><Btn label="Burst ×5" k="burst" />
-        <button onClick={()=>fire('halt')} className="qe-btn qe-btn-sm qe-btn-danger" style={{ gridColumn:'1 / -1', justifyContent:'center' }}>⛔ HARD-STOP HALT</button>
-      </div>
-      <div style={{ display:'flex', alignItems:'center', gap:8, padding:'6px 9px', borderTop:'1px solid var(--qe-line)' }}>
-        <NotifSwitch label="Auto-stream" on={autostream} onToggle={onAuto} />
-        <span className="qe-grow" />
-        <button onClick={onReset} className="qe-btn qe-btn-ghost qe-btn-sm">RESET</button>
-      </div>
-    </div>
-  );
-};
+/* NotifDemo (the "DEMO · FIRE EVENTS" panel) DELETED 2026-08-05, with its
+   `demo` prop, the ◆ DEMO chip, `demoOpen`, `autostream` + its interval,
+   `pushEvent`, `fire` and `reset`.
+
+   It was already UNREACHABLE: `demo` defaulted false and the app's sole mount
+   (app-shell.jsx) passes no props — so it could not be opened without editing
+   code, which means nothing was lost as a debugging affordance. Deleting it
+   is what let the client-side halt subsystem go whole (see the note above):
+   the panel's halt scenario was that subsystem's last writer. */
 
 // ── provider — owns state, exposes ctx, overlays the page ────────────────
-// `demo` defaults FALSE — the DEMO fire-events panel, autostream, WebAudio
-// beep and desktop-notification dispatch are the reference's mock devices
-// (plan §4) and must not ship. P8 wave 1: the provider is wired to the REAL
-// feed — GET /notifications/poll (backend shipped in P1, G-O3) — and seeds
-// EMPTY; the first poll (since=-1) primes the cursor without backlog replay.
-function NotificationProvider({ children, demo = false }) {
+// Wired to the REAL feed — GET /notifications/poll (backend shipped in P1,
+// G-O3) — and seeds EMPTY; the first poll (since=-1) primes the cursor
+// without backlog replay. The WebAudio beep is the one reference "mock
+// device" still here, and it is real feedback on real events.
+function NotificationProvider({ children }) {
   const [events, setEvents] = React.useState([]);
   const [open, setOpen] = React.useState(false);
   const [filter, setFilter] = React.useState('All');
   const [priority, setPriority] = React.useState('All');
   const [muted, setMuted] = React.useState({});
   const [sound, setSound] = React.useState(true);
-  const [demoOpen, setDemoOpen] = React.useState(false); // demo panel starts collapsed — chip re-opens it
-  const [desktop, setDesktop] = React.useState(false);
   const [dnd, setDnd] = React.useState(false);
-  const [haltUntil, setHaltUntil] = React.useState(readHaltUntil);
-  const [haltAt, setHaltAt] = React.useState(readHaltAt);
   const [toasts, setToasts] = React.useState([]);
-  const [autostream, setAutostream] = React.useState(false);
   const [now, setNow] = React.useState(Date.now());
-  const idRef = React.useRef(1);
+  /* `idRef` (the client-side id minter) went with them too — its only three
+     consumers were pushEvent, actionToast and the halt auto-release event.
+     The real feed mints ids server-side (`id: 'n' + n.id` in poll()). It
+     survived my first stranded-state sweep and was caught by the audit. */
 
   React.useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
-  // (the `banner` flag — `haltUntil > now`, permanently false — was deleted
-  //  with NotifBanner in the 2026-08-05 LOW batch; the toast stack it also
-  //  gated now reads the live navH, same source as the scrim.)
-  // auto-release once the cooldown elapses (survives reload via localStorage)
-  React.useEffect(() => {
-    if (haltUntil && Date.now() >= haltUntil) {
-      setHaltUntil(0); try { localStorage.removeItem(HALT_KEY); } catch (e) {}
-      setHaltAt(0); try { localStorage.removeItem(HALT_AT_KEY); } catch (e) {}
-      setEvents(list => [{ id:'e'+(idRef.current++), ch:'SYSTEM', pri:'routine', head:'Trading halt released', detail:'Daily hard-stop window elapsed · trading re-enabled', ts: Date.now(), unread:true }, ...list]);
-    }
-  }, [now, haltUntil]);
-  const flags = React.useRef({}); flags.current = { muted, sound, desktop, dnd, open };
+  /* Gone with the demo panel + halt subsystem (2026-08-05): the `banner` flag,
+     haltUntil / haltAt and the auto-release effect that cleared them, plus
+     `demoOpen` / `autostream`. Also `desktop` + `toggleDesktop`: the ONLY
+     dispatch site was inside the demo's pushEvent, so once that went the state
+     had no reader — the real feed's toast path below never consulted it. The
+     drawer's Desktop switch stays exactly as the 2026-07-25 operator decision
+     left it (rendered, disabled, honestly titled); to SHIP the capability,
+     request permission when that switch is enabled and dispatch a
+     `new Notification(...)` in poll() beside the nBeep call, respecting
+     muted/dnd. That instruction is the documentation — a dead toggleDesktop
+     standing in for it was itself the pattern this batch removes. */
+  const flags = React.useRef({}); flags.current = { muted, sound, dnd, open };
   const removeToast = (id) => setToasts(ts => ts.filter(t => t.id !== id));
 
   // ── G-O3 UI wire: the real notification feed (P8 wave 1) ────────────────
@@ -306,49 +277,31 @@ function NotificationProvider({ children, demo = false }) {
     return () => { alive = false; clearInterval(t); };
   }, []);
 
-  const pushEvent = React.useCallback((key) => {
-    const tpl = N_SCENARIOS[key](); if (!tpl) return;
-    const ev = { ...tpl, id: 'e' + (idRef.current++), ts: Date.now(), unread: true };
-    setEvents(list => [ev, ...list]);
-    if (ev.pri === 'halt') { const until = nextHaltRelease(); setHaltUntil(until); try { localStorage.setItem(HALT_KEY, String(until)); } catch (e) {} const at = Date.now(); setHaltAt(at); try { localStorage.setItem(HALT_AT_KEY, String(at)); } catch (e) {} }
-    const f = flags.current; const suppressed = f.dnd || f.muted[ev.ch];
-    if (!suppressed) {
-      if (f.sound) nBeep(ev.pri);
-      setToasts(ts => [ev, ...ts].slice(0, 4));
-      setTimeout(() => removeToast(ev.id), 5200);
-      if (f.desktop && 'Notification' in window && Notification.permission === 'granted') {
-        try { new Notification(ev.ch + ' · ' + ev.head, { body: ev.detail }); } catch (e) {}
-      }
-    }
-  }, []);
-
-  const fire = (key) => { if (key === 'burst') { ['fill','link','risk','ws','partial'].forEach((k,i)=>setTimeout(()=>pushEvent(k), i*420)); return; } pushEvent(key); };
-
-  React.useEffect(() => { if (!autostream) return;
-    const t = setInterval(() => pushEvent(N_STREAM[Math.floor(Math.random()*N_STREAM.length)]), 4500); return () => clearInterval(t); }, [autostream, pushEvent]);
-
   const markRead = (id) => setEvents(l => l.map(e => e.id === id ? { ...e, unread: false } : e));
   const dismiss = (id) => setEvents(l => l.filter(e => e.id !== id));
-  // transient confirmation toast (not added to history)
-  const actionToast = (label, target) => { const ev = { id:'act'+(idRef.current++), ch:'', pri:'routine', head:'→ ' + label, detail: target, ts: Date.now() };
-    setToasts(ts => [ev, ...ts].slice(0, 4)); setTimeout(() => removeToast(ev.id), 3200); };
-  // primary notification action: resolve (mark read), close the center, route
-  const handleAction = (ev) => { const [label, target] = N_ACTIONS[ev.ch] || ['View', 'detail'];
-    markRead(ev.id); setOpen(false); actionToast(label, target); };
+  /* Primary notification action: resolve (mark read), close the drawer, and
+     ACTUALLY NAVIGATE. The `actionToast` that used to stand in for the
+     navigation is deleted — it rendered "→ Review risk / risk panel", which
+     reads as confirmation that the jump happened. On a risk console a control
+     that reports success it did not achieve is worse than one that visibly
+     does nothing: it trains the operator to believe the alert was actioned.
+     Arriving on the page is its own feedback, so nothing replaces it; if
+     qeNav is somehow absent the row still marks read and the drawer still
+     closes, and NOTHING claims a jump occurred. */
+  const handleAction = (ev) => {
+    const entry = N_ACTIONS[ev.ch];
+    if (!entry) return;               // no destination → the row renders no button
+    markRead(ev.id); setOpen(false);
+    if (window.qeNav) window.qeNav(entry[1]);
+  };
   const markAll = () => setEvents(l => l.map(e => ({ ...e, unread: false })));
   const clearAll = () => setEvents([]);
   const toggleMute = (ch) => setMuted(m => ({ ...m, [ch]: !m[ch] }));
-  // Desktop notifications are DEFERRED (plan §7 explicit defer list): no browser
-  // Notification.requestPermission() prompt, and the only dispatch site is inside
-  // pushEvent, which is demo-only. shell-chrome-2 (Meridian audit) made the fact
-  // visible instead of implicit — the drawer's Desktop switch now renders
-  // disabled, so `desktop` can no longer be turned on. `desktop` is in-memory
-  // only (nothing in this file persists it) and is still read by pushEvent's
-  // dispatch guard. toggleDesktop is currently unreferenced and kept as the
-  // documented hook for whoever ships the capability: wire the permission
-  // request here and dispatch from poll(), beside the nBeep call.
-  const toggleDesktop = () => setDesktop(v => !v);
-  const reset = () => { setEvents([]); setHaltUntil(0); try { localStorage.removeItem(HALT_KEY); } catch (e) {} setHaltAt(0); try { localStorage.removeItem(HALT_AT_KEY); } catch (e) {} setToasts([]); setFilter('All'); setPriority('All'); setMuted({}); };
+  /* Desktop notifications stay DEFERRED (plan §7 explicit defer list) — the
+     drawer's switch is rendered disabled with an honest title, per the
+     2026-07-25 operator decision. See the state block above for how to ship
+     it; `desktop`/`toggleDesktop` are gone because the demo's pushEvent was
+     their only reader. `reset` went with the demo panel that called it. */
 
   const unread = events.filter(e => e.unread && !muted[e.ch]).length;
   const counts = N_CHANNELS.reduce((a, ch) => (a[ch] = events.filter(e => e.ch === ch).length, a), {});
@@ -421,8 +374,9 @@ function NotificationProvider({ children, demo = false }) {
                   switch promised out-of-focus reachability it could not deliver —
                   worse than either wiring it or showing it off. Operator decision
                   2026-07-25: keep the deferral, make the control honest. To ship
-                  it later: request permission in toggleDesktop and dispatch from
-                  poll() beside the nBeep call, respecting muted/dnd. */}
+                  it later: request permission when this switch is enabled and
+                  dispatch from poll() beside the nBeep call, respecting
+                  muted/dnd. */}
               <NotifSwitch label="Desktop" on={false} disabled
                 title="Desktop notifications are deferred (plan §7) — not yet implemented" />
               <NotifSwitch label="DND" on={dnd} onToggle={()=>setDnd(v=>!v)} title="Do not disturb" />
@@ -446,9 +400,6 @@ function NotificationProvider({ children, demo = false }) {
             {toasts.map(t => <NotifToast key={t.id} ev={t} onClick={() => { setOpen(true); markRead(t.id); removeToast(t.id); }} onClose={() => removeToast(t.id)} />)}
           </div>
         )}
-        {demo && (demoOpen
-          ? <NotifDemo fire={fire} autostream={autostream} onAuto={()=>setAutostream(v=>!v)} onReset={reset} onHide={()=>setDemoOpen(false)} />
-          : <button onClick={()=>setDemoOpen(true)} title="Open the notification demo panel" className="qe-btn qe-btn-sm" style={{ position:'absolute', left:10, bottom:50, zIndex:70, opacity:0.8 }}>◆ DEMO</button>)}
       </div>
     </NotifCtx.Provider>
   );

@@ -6,19 +6,24 @@ each filed root to the line first, and the filing turned out to be wrong in
 BOTH directions:
 
 - Two filed items are NOT DEFECTS and must stay untouched: the ⊞ Pane / ⤢ Pop
-  buttons are bare-`disabled` with honest titles and an inline dim, and the
-  Desktop-notifications switch is the *outcome* of a prior audit + a recorded
-  2026-07-25 operator decision. Pinned here so a future "cleanup" cannot
-  quietly delete a ratified planned-feature signal.
+  buttons are bare-`disabled` with honest titles, and the Desktop-notifications
+  switch is the *outcome* of a prior audit + a recorded 2026-07-25 operator
+  decision. Pinned here so a future "cleanup" cannot quietly delete a ratified
+  planned-feature signal.
 - The sweeps found real defects the filing never named — the ones fixed here
   are the toast/banner offset bug and the missing `.qe-btn:disabled` rule.
 
-Shipped in this batch: 2 fixes + 3 deletions (each with the doc/comment truth
-edit that the deletion makes mandatory). Deliberately NOT shipped: `asciiSpark`
-(present in the vendored Meridian reference — removing it would widen the very
-port divergence the pending reference audit exists to measure) and the four
-operator lane-choices (··· pane dots, notification-row CTA, workspace +, demo
-panel).
+Shipped in the first pass: 2 fixes + 3 deletions (each with the doc/comment
+truth edit the deletion makes mandatory). Then the operator took three of the
+four lane-choices, shipped in a second pass and pinned below: the notification
+CTA now really navigates, the workspace `+` is honestly disabled, and the demo
+panel went — taking the whole client-side halt subsystem it was the last writer
+of.
+
+Deliberately NOT shipped: `asciiSpark` (present in the vendored Meridian
+reference — removing it would widen the very port divergence the pending
+reference audit exists to measure), and the `···` pane-overflow dots, which the
+operator DEFERRED while deciding. Do not "clean up" the dots as part of a sweep.
 
 The strongest pin here is the LAST one: it scans the EMITTED bundle (comments
 stripped by esbuild) for the deleted identifiers, so a surviving caller is
@@ -74,7 +79,7 @@ def test_strippers_are_not_vacuous():
     # `'https://…'` literal could truncate a line here and quietly hollow out
     # the negative pins below — the markers are the backstop for that.
     for name, src, marker, floor in (
-        ("notifications", _NOTIF, "NotificationProvider", 290),
+        ("notifications", _NOTIF, "NotificationProvider", 225),
         ("app-shell", _SHELL, "QE_PAGES", 520),
         ("sse-adapter", _SSE, "EventSource", 55),
         ("primitives", _PRIM, "const LiveValue", 1000),
@@ -189,12 +194,16 @@ class TestNotifBannerClusterDeleted:
     def test_symbol_is_gone(self, sym):
         assert sym not in _NOTIF
 
-    def test_next_halt_release_SURVIVES_because_it_still_has_a_caller(self):
-        """The near-miss this batch actually made: nextHaltRelease looks like
-        one of NotifBanner's helpers, but pushEvent's halt branch CALLS it.
-        Deleting it left a ReferenceError the build could not see."""
-        assert "function nextHaltRelease()" in _NOTIF
-        assert "nextHaltRelease()" in _NOTIF.split("function nextHaltRelease()", 1)[1]
+    def test_next_halt_release_went_WITH_its_caller_not_before_it(self):
+        """The near-miss this batch made, recorded: `nextHaltRelease` LOOKS like
+        one of NotifBanner's helpers, so the first pass deleted it — while
+        pushEvent's halt branch still called it, leaving a ReferenceError the
+        build cannot see (a call to a missing name parses fine). It was
+        restored, then removed for real once item 4 deleted that caller. The
+        repo's own precedent: remove a symbol WITH or AFTER its last consumer,
+        never before. Both sides must now be absent together."""
+        assert "nextHaltRelease" not in _NOTIF
+        assert "pushEvent" not in _NOTIF
 
     def test_the_window_export_dropped_it(self):
         m = re.search(r"Object\.assign\(window, \{([^}]*)\}\)", _NOTIF)
@@ -281,9 +290,10 @@ class TestLiveValueRegistryDeleted:
 class TestVerifiedNotDefectsStayUntouched:
     def test_pane_and_pop_stay_disabled_and_honest(self):
         """Filed as "stubs presented as controls"; refuted at the line. They are
-        bare-`disabled`, handler-less, honestly titled and inline-dimmed, and no
-        underlying capability exists. primitives.jsx ratifies preserving the
-        planned-feature signal, so deleting them is the defect."""
+        bare-`disabled`, handler-less, honestly titled, and no underlying
+        capability exists. primitives.jsx ratifies preserving the
+        planned-feature signal, so deleting them is the defect. (Their inline
+        dim was later removed — `.qe-btn:disabled` owns that now.)"""
         # STRIPPED source: the glyphs also appear in a prose comment above the
         # bar, and matching that one proved nothing about the rendered button.
         for glyph in ("⊞ Pane", "⤢ Pop"):
@@ -314,6 +324,165 @@ class TestVerifiedNotDefectsStayUntouched:
         assert "asciiSpark" in ref.read_text(encoding="utf-8")
 
 
+# ── ITEM 2 — the notification CTA actually navigates ────────────────────────
+
+class TestNotificationCtaNavigates:
+    """It used to mark read, close the drawer, fire a toast reading
+    "→ Review risk / risk panel" — and then go NOWHERE. On a risk console a
+    control that REPORTS success it did not achieve is worse than one that
+    visibly does nothing."""
+
+    _PAGES = {"Dashboard", "Pre-Trade", "Linkage", "History", "Analytics",
+              "Models", "Regime", "Config", "Primitives"}
+
+    def test_every_action_target_is_a_REAL_page(self):
+        """Derived against app-shell's router, not a hardcoded list: a typo or
+        a renamed page turns the CTA back into a no-op (qeNav silently ignores
+        an unknown key — `if (QE_PAGES[p]) setPage(p)`)."""
+        m = re.search(r"const N_ACTIONS = \{(.*?)\n\};", _NOTIF, re.S)
+        assert m, "N_ACTIONS is gone"
+        targets = re.findall(r"\[\s*'[^']+',\s*'([^']+)'\s*\]", m.group(1))
+        assert len(targets) == 4, targets
+        routes = set(re.findall(r"^\s*'?([\w-]+)'?:\s*\w+Page\b|^\s*(\w+):\s*DashTiled\b",
+                                _SHELL[_SHELL.index("const QE_PAGES"):], re.M))
+        declared = {a or b for a, b in routes}
+        for t in targets:
+            assert t in self._PAGES, f"{t} is not a page"
+            assert t in declared, f"{t} is not bound in QE_PAGES"
+
+    def test_the_handler_calls_qenav_and_claims_nothing_otherwise(self):
+        i = _NOTIF.index("const handleAction")
+        body = _NOTIF[i:_NOTIF.index("\n  const markAll", i)]
+        assert "window.qeNav(entry[1])" in body
+        assert "if (!entry) return;" in body      # no destination → no action
+        assert "actionToast" not in _NOTIF         # the fake confirmation is gone
+
+    def test_a_channel_without_a_destination_renders_no_button(self):
+        """The old `(N_ACTIONS[ev.ch]||['View'])[0]` armed a button for ANY
+        channel, including ones with nowhere to go."""
+        i = _NOTIF.index("const NotifRow")
+        row = _NOTIF[i:_NOTIF.index("\nconst ", i + 10)]
+        assert "onAction && N_ACTIONS[ev.ch] &&" in row
+        assert "||['View']" not in row and "|| ['View']" not in row
+
+
+# ── ITEM 3 — the workspace + tells the truth ────────────────────────────────
+
+class TestWorkspacePlusIsHonest:
+    def test_it_is_disabled_and_says_why(self):
+        """It called the SAME reset as the `Default` preset while labelled
+        "New workspace from default" — a misleading label AND a duplicate."""
+        i = _NAV.index(">+<")
+        btn = _NAV[_NAV.rindex("<button", 0, i):i]
+        assert "disabled" in btn
+        assert "not implemented" in btn
+        assert "onClick" not in btn
+
+    def test_the_misleading_handler_is_gone(self):
+        assert "onCreate" not in _NAV
+        # the reset it duplicated is still reachable, correctly labelled
+        assert "if (p === 'Default') { window.qeWorkspaceReset(persistId)" in _NAV
+
+    def test_disabled_buttons_use_ONE_CURSOR_convention_repo_wide(self):
+        """audit #9 + #6: ⊞ Pane / ⤢ Pop carried inline `cursor:'default'`
+        while every other disabled .qe-btn shows `not-allowed`.
+
+        Scoped honestly to the CURSOR, which IS uniform. Two lanes exist and
+        both are correct: `.qe-btn:disabled { cursor: not-allowed }` for
+        buttons, and an explicit `disabled?'not-allowed':'pointer'` on the
+        non-button controls (Switch is a <div>). The banned value is the third
+        one — a hardcoded `'default'`, which reads as "inert decoration" on a
+        control that is merely temporarily off.
+
+        (Opacity is NOT uniform — five buttons in analytics/linkage carry an
+        inline opacity overriding the rule's .45. Harmless, since it cannot
+        touch the cursor, and out of this batch's scope; asserting uniformity
+        there would be a false claim. NB a `<button…>` regex is unreliable in
+        JSX — attribute expressions contain `>` — so this scans for the banned
+        VALUE, not for tag boundaries.)"""
+        for name in ("nav-and-data.jsx", "notifications.jsx", "app-shell.jsx",
+                     "pages-analytics.jsx", "pages-linkage.jsx", "pages-config.jsx",
+                     "pages-history.jsx", "pages-models.jsx", "dash-tiled.jsx",
+                     "primitives.jsx"):
+            src = _stripped(name)
+            assert not re.search(r"cursor:\s*'default'", src), f"{name}: 'default' cursor"
+        # the non-button lane is intact
+        assert "cursor: disabled?'not-allowed':'pointer'" in _PRIM
+
+    def test_the_two_placeholder_buttons_carry_no_inline_style_at_all(self):
+        """The half of the change the cursor scan alone does not pin: the
+        audit restored `style={{opacity: 0.4}}` on ⊞ Pane and all 86 pins
+        stayed green."""
+        for glyph in ("⊞ Pane", "⤢ Pop"):
+            i = _NAV.index(glyph)
+            btn = _NAV[_NAV.rindex("<button", 0, i):i]
+            assert "style=" not in btn, glyph
+
+
+# ── ITEM 4 — the demo panel and the halt subsystem it stranded ──────────────
+
+class TestDemoAndClientHaltSubsystemDeleted:
+    @pytest.mark.parametrize("sym", [
+        "NotifDemo", "pushEvent", "autostream", "demoOpen", "N_SCENARIOS",
+        "N_STREAM", "nextHaltRelease", "readHaltUntil", "readHaltAt",
+        "haltUntil", "haltAt", "HALT_KEY", "HALT_AT_KEY", "toggleDesktop",
+        "idRef",   # the client id minter — audit #1, missed by my own sweep
+    ])
+    def test_symbol_is_gone(self, sym):
+        assert sym not in _NOTIF
+
+    def test_no_client_side_halt_copy_survives_even_on_the_DEV_page(self):
+        """The Primitives Banner swatch rendered the SAME fabricated hard-stop
+        wording item 4 deleted. Dev-only, so not an operator-facing lie — but
+        the page is the design system's spec sheet, and it was advertising copy
+        the architecture has ruled out."""
+        assert not re.search(r"CALCULATOR\s+BLOCKED", _SHELL, re.I)
+        assert "hard-stop 5.04%" not in _SHELL
+        assert "EXAMPLE · halt banner" in _SHELL
+
+    def test_the_provider_takes_no_demo_prop(self):
+        assert "function NotificationProvider({ children })" in _NOTIF
+
+    def test_no_fabricated_risk_or_halt_payload_survives(self):
+        """The halt template read 'CALCULATOR BLOCKED — hard-stop breached'.
+        Fabricated RISK/HALT copy in a shipped risk console is a liability even
+        behind a flag — it is exactly what an operator screenshots in a panic.
+
+        STRUCTURAL, not exact-copy: the audit defeated the first draft by
+        re-adding the same fabrication with one hyphen dropped
+        ('hard stop breached'), and `Math.random()` was simultaneously
+        over-broad (a future poll jitter/backoff would false-red) and
+        under-broad (a hardcoded fabrication needs no RNG). Pin the SHAPE
+        instead: no event-like literal may carry halt/risk copy, and no
+        module-level template table may exist."""
+        assert not re.search(r"hard[\s\-—]?stop\s+breached", _NOTIF, re.I)
+        assert not re.search(r"CALCULATOR\s+BLOCKED", _NOTIF, re.I)
+        # no object literal in this file may mint an event with a priority —
+        # only the server-fed poll() builds events now, from `n.pri`
+        for m in re.finditer(r"pri:\s*'(\w+)'", _NOTIF):
+            assert m.group(1) not in ("halt", "risk"), m.group(0)
+        assert "Math.random" not in _NOTIF   # no RNG feeds the feed at all
+
+    def test_halt_is_server_state_only(self):
+        """The client can no longer decide, persist, or disagree about halt."""
+        assert "localStorage" not in _NOTIF
+        assert "const ChromeHaltBanner" in _NAV
+        assert "st.halted" in _NAV
+
+    def test_the_deferred_desktop_switch_still_stands(self):
+        """Deleting the demo removed `desktop`'s only reader — but the SWITCH
+        is a recorded operator decision and must survive the cleanup."""
+        raw = _raw("notifications.jsx")
+        i = raw.index('NotifSwitch label="Desktop"')
+        assert "on={false} disabled" in raw[i:i + 200]
+        assert "2026-07-25" in raw
+
+    def test_the_real_feed_is_untouched(self):
+        """The whole point: the demo went, the live poll stayed."""
+        assert "'/notifications/poll?since='" in _NOTIF
+        assert "nBeep(ev.pri)" in _NOTIF
+
+
 # ── THE EXECUTED PIN — no dangling reference survives in the SHIPPED bundle ──
 
 class TestNoDanglingReferencesInTheEmittedBundle:
@@ -328,7 +497,14 @@ class TestNoDanglingReferencesInTheEmittedBundle:
     _DELETED = [r"\buseLiveId\b", r"\buseSSEChannel\b", r"\bNotifBanner\b",
                 r"\b_?PagePlaceholder\b", r"\bHALT_GRASS\b", r"\bfmtHaltLeft\b",
                 r"\bfmtHaltAt\b", r"\bvalSubs\b",
-                r"\bsetValue\s*\(", r"\bgetValue\s*\(", r"\bonValue\s*\("]
+                r"\bsetValue\s*\(", r"\bgetValue\s*\(", r"\bonValue\s*\(",
+                # items 2-4
+                r"\bNotifDemo\b", r"\bpushEvent\b", r"\bautostream\b",
+                r"\bdemoOpen\b", r"\bN_SCENARIOS\b", r"\bN_STREAM\b",
+                r"\bnextHaltRelease\b", r"\breadHaltUntil\b", r"\breadHaltAt\b",
+                r"\bhaltUntil\b", r"\bhaltAt\b", r"\bHALT_KEY\b",
+                r"\btoggleDesktop\b", r"\bactionToast\b", r"\bonCreate\b",
+                r"\bidRef\b"]
 
     @pytest.fixture(scope="class")
     def bundle(self):
@@ -346,10 +522,11 @@ class TestNoDanglingReferencesInTheEmittedBundle:
     def test_surviving_symbols_are_actually_in_the_bundle(self, bundle):
         """Guards the pin itself: if the bundle were some unrelated file, every
         assertion above would pass for the wrong reason."""
-        # WORD-BOUNDARY, not substring: `nextHaltReleaseX` contains
-        # `nextHaltRelease`, so a .count() kept reading 2 while the declaration
-        # had been renamed out from under its caller (the mutation that this
-        # pin failed to catch on the first harness run).
-        assert len(re.findall(r"\bnextHaltRelease\b", bundle)) == 2  # decl + live caller
+        # (`nextHaltRelease` was pinned here at exactly 2 — declaration + its
+        #  live caller — until item 4 deleted the demo panel that called it and
+        #  the whole client halt subsystem with it; it is now in _DELETED.)
         assert "onChannel" in bundle
         assert "LiveValue" in bundle
+        assert "qeNav" in bundle          # the CTA's real destination (item 2)
+        assert "N_ACTIONS" in bundle
+        assert "nBeep" in bundle          # the real feed's cue survived item 4

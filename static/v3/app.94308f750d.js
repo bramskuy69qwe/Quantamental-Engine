@@ -1894,10 +1894,6 @@ const WorkspaceBar = ({ interactive = false, persistId = "dashboard" }) => {
   const presets = ["Default", "Risk", "Execution", "Macro"];
   const onSave = () => say(window.qeWorkspaceSave(persistId) ? "\u2713 Saved" : "Save failed");
   const onLoad = () => say(window.qeWorkspaceHasSaved(persistId) ? window.qeWorkspaceLoad(persistId) ? "\u2713 Loaded" : "Load failed" : "No saved layout");
-  const onCreate = () => {
-    window.qeWorkspaceReset(persistId);
-    say("New workspace");
-  };
   const onPreset = (p) => {
     setPreset(p);
     if (p === "Default") {
@@ -1917,7 +1913,7 @@ const WorkspaceBar = ({ interactive = false, persistId = "dashboard" }) => {
     background: "var(--qe-page)",
     height: 22,
     flexShrink: 0
-  } }, /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-muted)", letterSpacing: "0.1em" } }, "WORKSPACE"), /* @__PURE__ */ React.createElement("div", { className: "qe-period", style: { opacity: dim, pointerEvents: interactive ? "auto" : "none" } }, presets.map((p) => /* @__PURE__ */ React.createElement("button", { key: p, className: preset === p ? "on" : "", onClick: guard(() => onPreset(p)) }, p))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 4, opacity: dim, pointerEvents: interactive ? "auto" : "none" } }, /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", onClick: guard(onSave), title: "Save current layout" }, "\u2913 Save"), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", onClick: guard(onLoad), title: "Load saved layout" }, "\u2912 Load"), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", onClick: guard(onCreate), title: "New workspace from default", style: { width: 22, padding: 0, justifyContent: "center" } }, "+"), flash && /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.54rem", color: flash[0] === "\u2713" ? "var(--qe-green)" : "var(--qe-amber)" } }, flash)), !interactive && /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.5rem", color: "var(--qe-faint)", letterSpacing: "0.06em" } }, "\xB7 dashboard only"), /* @__PURE__ */ React.createElement("div", { className: "qe-grow" }), /* @__PURE__ */ React.createElement(Strip, { dense: true, items: (() => {
+  } }, /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-muted)", letterSpacing: "0.1em" } }, "WORKSPACE"), /* @__PURE__ */ React.createElement("div", { className: "qe-period", style: { opacity: dim, pointerEvents: interactive ? "auto" : "none" } }, presets.map((p) => /* @__PURE__ */ React.createElement("button", { key: p, className: preset === p ? "on" : "", onClick: guard(() => onPreset(p)) }, p))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 4 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 4, opacity: dim, pointerEvents: interactive ? "auto" : "none" } }, /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", onClick: guard(onSave), title: "Save current layout" }, "\u2913 Save"), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", onClick: guard(onLoad), title: "Load saved layout" }, "\u2912 Load")), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", disabled: true, title: "New workspace \u2014 not implemented; Default (left) resets this layout", style: { width: 22, padding: 0, justifyContent: "center" } }, "+"), flash && /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.54rem", opacity: dim, color: flash[0] === "\u2713" ? "var(--qe-green)" : "var(--qe-amber)" } }, flash)), !interactive && /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.5rem", color: "var(--qe-faint)", letterSpacing: "0.06em" } }, "\xB7 dashboard only"), /* @__PURE__ */ React.createElement("div", { className: "qe-grow" }), /* @__PURE__ */ React.createElement(Strip, { dense: true, items: (() => {
     const st = ch.stateErr ? null : ch.state;
     const snap = ch.snapErr ? null : ch.snap;
     const eq = snap && snap.equity, rk = snap && snap.risk;
@@ -1942,7 +1938,7 @@ const WorkspaceBar = ({ interactive = false, persistId = "dashboard" }) => {
       { label: "EXP", value: st ? /* @__PURE__ */ React.createElement(LiveValue, { id: "ws.exp", value: st.total_exposure, format: (x) => (+x).toFixed(2) + "\xD7" }) : stDash },
       { label: "DD", value: st ? /* @__PURE__ */ React.createElement(LiveValue, { id: "ws.dd", value: st.drawdown * 100, format: (x) => (+x).toFixed(2) + "%", style: st.dd_state !== "ok" ? { color: st.dd_state === "limit" ? "var(--qe-red)" : "var(--qe-amber)", fontWeight: 700 } : void 0 }) : stDash }
     ];
-  })() }), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", disabled: true, title: "Add pane \u2014 planned, not wired in this build", style: { opacity: 0.4, cursor: "default" } }, "\u229E Pane"), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", disabled: true, title: "Pop out \u2014 planned, not wired in this build", style: { opacity: 0.4, cursor: "default" } }, "\u2922 Pop"));
+  })() }), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", disabled: true, title: "Add pane \u2014 planned, not wired in this build" }, "\u229E Pane"), /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", disabled: true, title: "Pop out \u2014 planned, not wired in this build" }, "\u2922 Pop"));
 };
 const qeChromeBannerCount = () => {
   const st = window.QE_CHROME && window.QE_CHROME.get().state || {};
@@ -2186,50 +2182,12 @@ Object.assign(window, {
 const NotifCtx = React.createContext(null);
 const N_CHANNELS = ["FILLS", "RISK", "LINK", "SYSTEM"];
 const N_ACTIONS = {
-  FILLS: ["View order", "order detail"],
-  RISK: ["Review risk", "risk panel"],
-  SYSTEM: ["Details", "system log"],
-  LINK: ["Link trades", "linkage queue"]
+  FILLS: ["View in History", "History"],
+  RISK: ["Review risk", "Dashboard"],
+  SYSTEM: ["Engine log", "Dashboard"],
+  LINK: ["Link trades", "Linkage"]
 };
 const nSev = (pri) => pri === "halt" ? "var(--qe-red)" : pri === "risk" ? "var(--qe-amber)" : "var(--qe-line-2)";
-const _rnd = (a) => a[Math.floor(Math.random() * a.length)];
-const _px = (n, d = 1) => n.toFixed(d);
-const N_SCENARIOS = {
-  fill: () => {
-    const side = _rnd(["BUY", "SELL"]);
-    const s = _rnd([["BTC", 93580, 0.04], ["ETH", 3208, 0.18], ["SOL", 139, 12]]);
-    const p = s[1] * (1 + (Math.random() - 0.5) * 4e-3);
-    return {
-      ch: "FILLS",
-      pri: "routine",
-      head: `FILLED \xB7 ${side} ${_px(s[2] * (0.5 + Math.random()), 3)} ${s[0]}`,
-      detail: `@ ${_px(p, 1)} \xB7 slippage +${_px(Math.random() * 0.9, 1)}bp \xB7 order #A${1900 + Math.floor(Math.random() * 99)}`
-    };
-  },
-  partial: () => {
-    const s = _rnd([["ETH", 3208], ["SOL", 139], ["BTC", 93580]]);
-    return {
-      ch: "FILLS",
-      pri: "routine",
-      head: `Order #A${1880 + Math.floor(Math.random() * 40)} partially filled ${40 + Math.floor(Math.random() * 5) * 10}%`,
-      detail: `SELL ${_px(Math.random(), 3)} / ${_px(1 + Math.random(), 3)} ${s[0]} @ ${_px(s[1], 1)}`
-    };
-  },
-  risk: () => _rnd([
-    { ch: "RISK", pri: "risk", head: `Weekly loss ${78 + Math.floor(Math.random() * 12)}% of limit`, detail: `\u2212$${(3.1 + Math.random() * 0.6).toFixed(2)} of \u2212$4.11 \xB7 1 more stop trips the cap` },
-    { ch: "RISK", pri: "risk", head: `Daily drawdown ${_px(3.5 + Math.random(), 1)}% \u2014 approaching 5.0% cap`, detail: "position sizing throttled to \xD70.5" }
-  ]),
-  halt: () => ({ ch: "RISK", pri: "halt", head: "CALCULATOR BLOCKED \u2014 hard-stop breached", detail: "Realized DD 5.04% > 5.00% cap \xB7 new entries gated \xB7 open positions unaffected" }),
-  link: () => {
-    const nl = (window.L_NEEDS_LINK || []).filter((o) => o.status === "NEEDS_MANUAL_REVIEW" || o.status === "UNLINKED").length || 5;
-    const nc = (window.L_CLOSES || []).filter((c) => c.pending_reason).length || 3;
-    return { ch: "LINK", pri: "risk", head: `Calc link window closes in 0${2 + Math.floor(Math.random() * 4)}:${10 + Math.floor(Math.random() * 49)}`, detail: `triage ${nl + nc} open \xB7 ${nl} orders below 6/6 \xB7 ${nc} closes to review` };
-  },
-  ws: () => _rnd([
-    { ch: "SYSTEM", pri: "routine", head: "Market WS reconnected", detail: "2 streams \xB7 108ms \xB7 gap 1.4s recovered" }
-  ])
-};
-const N_STREAM = ["fill", "partial", "risk", "link", "ws"];
 const N_POLL_MS = 5e3;
 function nRel(ts, now) {
   const s = Math.max(0, Math.round((now - ts) / 1e3));
@@ -2308,19 +2266,6 @@ const NotifBell = () => {
     } }, count)
   );
 };
-const HALT_KEY = "qe.haltUntil";
-const HALT_AT_KEY = "qe.haltAt";
-function readHaltUntil() {
-  return 0;
-}
-function readHaltAt() {
-  return 0;
-}
-function nextHaltRelease() {
-  const d = /* @__PURE__ */ new Date();
-  d.setUTCHours(24, 0, 0, 0);
-  return d.getTime();
-}
 const NotifRow = ({ ev, now, muted, onRead, onDismiss, onAction }) => {
   const sev = nSev(ev.pri);
   const colored = ev.pri !== "routine";
@@ -2341,10 +2286,10 @@ const NotifRow = ({ ev, now, muted, onRead, onDismiss, onAction }) => {
       }
     },
     ev.unread && /* @__PURE__ */ React.createElement("span", { style: { position: "absolute", left: 0, top: 0, bottom: 0, width: 2, background: sev } }),
-    /* @__PURE__ */ React.createElement("div", { style: { minWidth: 0, flex: 1, display: "flex", flexDirection: "column", gap: 1 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 7 } }, /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.5rem", fontWeight: 700, letterSpacing: "0.14em", color: "var(--qe-muted)" } }, ev.ch), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.5rem", letterSpacing: "0.02em", color: "var(--qe-muted)" } }, "\xB7 ", nAbs(ev.ts)), colored && /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.5rem", fontWeight: 700, letterSpacing: "0.1em", color: sev } }, ev.pri === "halt" ? "HALT" : "RISK"), muted && /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.5rem", letterSpacing: "0.08em", color: "var(--qe-muted)" } }, "MUTED"), /* @__PURE__ */ React.createElement("span", { className: "qe-grow" }), /* @__PURE__ */ React.createElement("div", { className: "qe-notif-actions", style: { display: "flex", gap: 4, alignItems: "center" } }, onAction && /* @__PURE__ */ React.createElement("button", { title: "Open", onClick: (e) => {
+    /* @__PURE__ */ React.createElement("div", { style: { minWidth: 0, flex: 1, display: "flex", flexDirection: "column", gap: 1 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 7 } }, /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.5rem", fontWeight: 700, letterSpacing: "0.14em", color: "var(--qe-muted)" } }, ev.ch), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.5rem", letterSpacing: "0.02em", color: "var(--qe-muted)" } }, "\xB7 ", nAbs(ev.ts)), colored && /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.5rem", fontWeight: 700, letterSpacing: "0.1em", color: sev } }, ev.pri === "halt" ? "HALT" : "RISK"), muted && /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.5rem", letterSpacing: "0.08em", color: "var(--qe-muted)" } }, "MUTED"), /* @__PURE__ */ React.createElement("span", { className: "qe-grow" }), /* @__PURE__ */ React.createElement("div", { className: "qe-notif-actions", style: { display: "flex", gap: 4, alignItems: "center" } }, onAction && N_ACTIONS[ev.ch] && /* @__PURE__ */ React.createElement("button", { title: "Open " + N_ACTIONS[ev.ch][1], onClick: (e) => {
       e.stopPropagation();
       onAction(ev);
-    }, className: "qe-notif-cta" }, (N_ACTIONS[ev.ch] || ["View"])[0]), ev.unread && /* @__PURE__ */ React.createElement("button", { title: "Mark read", onClick: (e) => {
+    }, className: "qe-notif-cta" }, N_ACTIONS[ev.ch][0]), ev.unread && /* @__PURE__ */ React.createElement("button", { title: "Mark read", onClick: (e) => {
       e.stopPropagation();
       onRead(ev.id);
     }, className: "qe-notif-ib" }, "\u2713"), /* @__PURE__ */ React.createElement("button", { title: "Dismiss", onClick: (e) => {
@@ -2379,47 +2324,22 @@ const NotifToast = ({ ev, onClick, onClose }) => /* @__PURE__ */ React.createEle
     onClick
   }
 );
-const NotifDemo = ({ fire, autostream, onAuto, onReset, onHide }) => {
-  const Btn = ({ label, k, danger }) => /* @__PURE__ */ React.createElement("button", { onClick: () => fire(k), className: "qe-btn qe-btn-sm" + (danger ? " qe-btn-danger" : ""), style: { justifyContent: "center" } }, label);
-  return /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", left: 10, bottom: 50, zIndex: 70, width: 198, background: "var(--qe-card)", border: "1px solid var(--qe-line-2)", boxShadow: "0 10px 30px rgba(0,0,0,0.6)" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, padding: "5px 9px", borderBottom: "1px solid var(--qe-line)", background: "var(--qe-panel)" } }, /* @__PURE__ */ React.createElement("span", { style: { width: 6, height: 6, background: "var(--qe-cyan)" } }), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-ui)", fontSize: "0.54rem", fontWeight: 800, letterSpacing: "0.14em", color: "var(--qe-sub)" } }, "DEMO \xB7 FIRE EVENTS"), /* @__PURE__ */ React.createElement("span", { className: "qe-grow" }), /* @__PURE__ */ React.createElement("button", { onClick: onHide, title: "Collapse demo panel", className: "qe-btn qe-btn-ghost qe-btn-sm", style: { height: 16, padding: "0 5px" } }, "\u2013")), /* @__PURE__ */ React.createElement("div", { style: { padding: 8, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5 } }, /* @__PURE__ */ React.createElement(Btn, { label: "Fill", k: "fill" }), /* @__PURE__ */ React.createElement(Btn, { label: "Partial", k: "partial" }), /* @__PURE__ */ React.createElement(Btn, { label: "Risk", k: "risk" }), /* @__PURE__ */ React.createElement(Btn, { label: "Link", k: "link" }), /* @__PURE__ */ React.createElement(Btn, { label: "WS recon", k: "ws" }), /* @__PURE__ */ React.createElement(Btn, { label: "Burst \xD75", k: "burst" }), /* @__PURE__ */ React.createElement("button", { onClick: () => fire("halt"), className: "qe-btn qe-btn-sm qe-btn-danger", style: { gridColumn: "1 / -1", justifyContent: "center" } }, "\u26D4 HARD-STOP HALT")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, padding: "6px 9px", borderTop: "1px solid var(--qe-line)" } }, /* @__PURE__ */ React.createElement(NotifSwitch, { label: "Auto-stream", on: autostream, onToggle: onAuto }), /* @__PURE__ */ React.createElement("span", { className: "qe-grow" }), /* @__PURE__ */ React.createElement("button", { onClick: onReset, className: "qe-btn qe-btn-ghost qe-btn-sm" }, "RESET")));
-};
-function NotificationProvider({ children, demo = false }) {
+function NotificationProvider({ children }) {
   const [events, setEvents] = React.useState([]);
   const [open, setOpen] = React.useState(false);
   const [filter, setFilter] = React.useState("All");
   const [priority, setPriority] = React.useState("All");
   const [muted, setMuted] = React.useState({});
   const [sound, setSound] = React.useState(true);
-  const [demoOpen, setDemoOpen] = React.useState(false);
-  const [desktop, setDesktop] = React.useState(false);
   const [dnd, setDnd] = React.useState(false);
-  const [haltUntil, setHaltUntil] = React.useState(readHaltUntil);
-  const [haltAt, setHaltAt] = React.useState(readHaltAt);
   const [toasts, setToasts] = React.useState([]);
-  const [autostream, setAutostream] = React.useState(false);
   const [now, setNow] = React.useState(Date.now());
-  const idRef = React.useRef(1);
   React.useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1e3);
     return () => clearInterval(t);
   }, []);
-  React.useEffect(() => {
-    if (haltUntil && Date.now() >= haltUntil) {
-      setHaltUntil(0);
-      try {
-        localStorage.removeItem(HALT_KEY);
-      } catch (e) {
-      }
-      setHaltAt(0);
-      try {
-        localStorage.removeItem(HALT_AT_KEY);
-      } catch (e) {
-      }
-      setEvents((list) => [{ id: "e" + idRef.current++, ch: "SYSTEM", pri: "routine", head: "Trading halt released", detail: "Daily hard-stop window elapsed \xB7 trading re-enabled", ts: Date.now(), unread: true }, ...list]);
-    }
-  }, [now, haltUntil]);
   const flags = React.useRef({});
-  flags.current = { muted, sound, desktop, dnd, open };
+  flags.current = { muted, sound, dnd, open };
   const removeToast = (id) => setToasts((ts) => ts.filter((t) => t.id !== id));
   const sinceRef = React.useRef(-1);
   React.useEffect(() => {
@@ -2474,85 +2394,18 @@ function NotificationProvider({ children, demo = false }) {
       clearInterval(t);
     };
   }, []);
-  const pushEvent = React.useCallback((key) => {
-    const tpl = N_SCENARIOS[key]();
-    if (!tpl) return;
-    const ev = { ...tpl, id: "e" + idRef.current++, ts: Date.now(), unread: true };
-    setEvents((list) => [ev, ...list]);
-    if (ev.pri === "halt") {
-      const until = nextHaltRelease();
-      setHaltUntil(until);
-      try {
-        localStorage.setItem(HALT_KEY, String(until));
-      } catch (e) {
-      }
-      const at = Date.now();
-      setHaltAt(at);
-      try {
-        localStorage.setItem(HALT_AT_KEY, String(at));
-      } catch (e) {
-      }
-    }
-    const f = flags.current;
-    const suppressed = f.dnd || f.muted[ev.ch];
-    if (!suppressed) {
-      if (f.sound) nBeep(ev.pri);
-      setToasts((ts) => [ev, ...ts].slice(0, 4));
-      setTimeout(() => removeToast(ev.id), 5200);
-      if (f.desktop && "Notification" in window && Notification.permission === "granted") {
-        try {
-          new Notification(ev.ch + " \xB7 " + ev.head, { body: ev.detail });
-        } catch (e) {
-        }
-      }
-    }
-  }, []);
-  const fire = (key) => {
-    if (key === "burst") {
-      ["fill", "link", "risk", "ws", "partial"].forEach((k, i) => setTimeout(() => pushEvent(k), i * 420));
-      return;
-    }
-    pushEvent(key);
-  };
-  React.useEffect(() => {
-    if (!autostream) return;
-    const t = setInterval(() => pushEvent(N_STREAM[Math.floor(Math.random() * N_STREAM.length)]), 4500);
-    return () => clearInterval(t);
-  }, [autostream, pushEvent]);
   const markRead = (id) => setEvents((l) => l.map((e) => e.id === id ? { ...e, unread: false } : e));
   const dismiss = (id) => setEvents((l) => l.filter((e) => e.id !== id));
-  const actionToast = (label, target) => {
-    const ev = { id: "act" + idRef.current++, ch: "", pri: "routine", head: "\u2192 " + label, detail: target, ts: Date.now() };
-    setToasts((ts) => [ev, ...ts].slice(0, 4));
-    setTimeout(() => removeToast(ev.id), 3200);
-  };
   const handleAction = (ev) => {
-    const [label, target] = N_ACTIONS[ev.ch] || ["View", "detail"];
+    const entry = N_ACTIONS[ev.ch];
+    if (!entry) return;
     markRead(ev.id);
     setOpen(false);
-    actionToast(label, target);
+    if (window.qeNav) window.qeNav(entry[1]);
   };
   const markAll = () => setEvents((l) => l.map((e) => ({ ...e, unread: false })));
   const clearAll = () => setEvents([]);
   const toggleMute = (ch) => setMuted((m) => ({ ...m, [ch]: !m[ch] }));
-  const toggleDesktop = () => setDesktop((v) => !v);
-  const reset = () => {
-    setEvents([]);
-    setHaltUntil(0);
-    try {
-      localStorage.removeItem(HALT_KEY);
-    } catch (e) {
-    }
-    setHaltAt(0);
-    try {
-      localStorage.removeItem(HALT_AT_KEY);
-    } catch (e) {
-    }
-    setToasts([]);
-    setFilter("All");
-    setPriority("All");
-    setMuted({});
-  };
   const unread = events.filter((e) => e.unread && !muted[e.ch]).length;
   const counts = N_CHANNELS.reduce((a, ch) => (a[ch] = events.filter((e) => e.ch === ch).length, a), {});
   const priPass = (e) => priority === "All" ? true : priority === "Risk+" ? e.pri === "risk" || e.pri === "halt" : e.pri === "halt";
@@ -2577,7 +2430,7 @@ function NotificationProvider({ children, demo = false }) {
     setOpen(true);
     markRead(t.id);
     removeToast(t.id);
-  }, onClose: () => removeToast(t.id) }))), demo && (demoOpen ? /* @__PURE__ */ React.createElement(NotifDemo, { fire, autostream, onAuto: () => setAutostream((v) => !v), onReset: reset, onHide: () => setDemoOpen(false) }) : /* @__PURE__ */ React.createElement("button", { onClick: () => setDemoOpen(true), title: "Open the notification demo panel", className: "qe-btn qe-btn-sm", style: { position: "absolute", left: 10, bottom: 50, zIndex: 70, opacity: 0.8 } }, "\u25C6 DEMO"))));
+  }, onClose: () => removeToast(t.id) })))));
 }
 Object.assign(window, { NotifCtx, NotifBell, NotifRow, NotificationProvider });
 
@@ -10795,7 +10648,7 @@ data: 93580.40`), /* @__PURE__ */ React.createElement("div", { style: { fontSize
 ] }))), /* @__PURE__ */ React.createElement("div", { className: "spec-row" }, /* @__PURE__ */ React.createElement("span", { className: "l" }, "HeatStrip"), /* @__PURE__ */ React.createElement("div", { style: { width: "100%" } }, /* @__PURE__ */ React.createElement(HeatStrip, { height: 20, data: Array.from({ length: 30 }, (_, i) => ({ date: `04-${String(i + 1).padStart(2, "0")}`, pnl: +((Math.sin(i * 1.7) + Math.cos(i * 0.5)) * 0.9).toFixed(2) })) }))), /* @__PURE__ */ React.createElement("div", { className: "spec-row" }, /* @__PURE__ */ React.createElement("span", { className: "l" }, "Gauge tone"), /* @__PURE__ */ React.createElement("div", { style: { width: "100%", display: "flex", flexDirection: "column", gap: 10 } }, /* @__PURE__ */ React.createElement(Gauge, { label: "OK", value: 1.2, max: 5, current: "24%", maxLabel: "cap" }), /* @__PURE__ */ React.createElement(Gauge, { label: "WARN", value: 6.5, max: 10, current: "65%", maxLabel: "limit" }), /* @__PURE__ */ React.createElement(Gauge, { label: "ERR", value: 9.1, max: 10, current: "91%", maxLabel: "hard stop" })))), /* @__PURE__ */ React.createElement(Card, { pad: true, style: { gridColumn: "1 / span 2", borderColor: "var(--qe-cyan)" } }, /* @__PURE__ */ React.createElement(SecLbl, { rule: true }, "Notifications \xB7 new primitives (Switch \xB7 Chip \xB7 Banner \xB7 Toast \xB7 Bell \xB7 Row)"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.62rem", color: "var(--qe-sub)", marginBottom: 8, lineHeight: 1.5 } }, "Added with the notification system. ", /* @__PURE__ */ React.createElement("code", { style: { color: "var(--qe-cyan)" } }, "Switch"), " = boolean toggle \xB7", /* @__PURE__ */ React.createElement("code", { style: { color: "var(--qe-cyan)" } }, " Chip"), " = muteable filter pill \xB7", /* @__PURE__ */ React.createElement("code", { style: { color: "var(--qe-cyan)" } }, " Banner"), " = pinned alert bar (under nav) \xB7", /* @__PURE__ */ React.createElement("code", { style: { color: "var(--qe-cyan)" } }, " Toast"), " = transient corner popup, severity rail + auto-dismiss countdown \xB7", /* @__PURE__ */ React.createElement("code", { style: { color: "var(--qe-cyan)" } }, " NotifBell"), " = nav icon + unread badge \xB7", /* @__PURE__ */ React.createElement("code", { style: { color: "var(--qe-cyan)" } }, " NotifRow"), " = notification-center list item. The priority filter reuses", /* @__PURE__ */ React.createElement("code", { style: { color: "var(--qe-cyan)" } }, " PeriodSelector"), "; buttons/empty-state reuse existing primitives."), /* @__PURE__ */ React.createElement("div", { className: "spec-row" }, /* @__PURE__ */ React.createElement("span", { className: "l" }, "Switch"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 18 } }, /* @__PURE__ */ React.createElement(Switch, { label: "Sound", checked: true }), /* @__PURE__ */ React.createElement(Switch, { label: "Desktop", checked: true, accent: "var(--qe-green)" }), /* @__PURE__ */ React.createElement(Switch, { label: "DND", checked: false }))), /* @__PURE__ */ React.createElement("div", { className: "spec-row" }, /* @__PURE__ */ React.createElement("span", { className: "l" }, "Chip \xB7 filter"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 5, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Chip, { label: "All", count: 8, active: true }), /* @__PURE__ */ React.createElement(Chip, { label: "Fills", count: 3, onMute: () => {
 } }), /* @__PURE__ */ React.createElement(Chip, { label: "Risk", count: 2, onMute: () => {
 } }), /* @__PURE__ */ React.createElement(Chip, { label: "Link", count: 1, muted: true, onMute: () => {
-} }))), /* @__PURE__ */ React.createElement("div", { className: "spec-row" }, /* @__PURE__ */ React.createElement("span", { className: "l" }, "Bell"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement(NotifBell, null), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-muted)" } }, "+ red unread-count badge when count > 0"))), /* @__PURE__ */ React.createElement("div", { className: "spec-row" }, /* @__PURE__ */ React.createElement("span", { className: "l" }, "Banner \xB7 alert"), /* @__PURE__ */ React.createElement("div", { style: { width: "100%", border: "1px solid var(--qe-line)" } }, /* @__PURE__ */ React.createElement(Banner, { tone: "err", tag: "HALT", title: "CALCULATOR BLOCKED", detail: "Daily hard-stop 5.04% > 5.00% cap \xB7 new entries gated", time: "14:31:06", releaseIn: "0d 19h 21m 16s" }))), /* @__PURE__ */ React.createElement("div", { className: "spec-row" }, /* @__PURE__ */ React.createElement("span", { className: "l" }, "Toast"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Toast, { tone: "ok", tag: "FILLS", time: "14:31:06", title: "EXAMPLE \xB7 fill toast", detail: "demo content \xB7 not a live event" }), /* @__PURE__ */ React.createElement(Toast, { tone: "warn", tag: "RISK", time: "14:30:18", title: "Weekly loss 78% of limit", detail: "\u2212$1,840 of \u2212$2,360" }), /* @__PURE__ */ React.createElement(Toast, { tone: "err", tag: "RISK", time: "14:31:06", title: "CALCULATOR BLOCKED \u2014 hard-stop breached", detail: "DD 5.04% > 5.00% cap" }))), /* @__PURE__ */ React.createElement("div", { className: "spec-row" }, /* @__PURE__ */ React.createElement("span", { className: "l" }, "NotifRow"), /* @__PURE__ */ React.createElement("div", { style: { width: "100%", border: "1px solid var(--qe-line)" } }, /* @__PURE__ */ React.createElement(NotifRow, { ev: { id: "x1", ch: "RISK", pri: "risk", head: "EXAMPLE \xB7 risk notification row", detail: "demo content \xB7 not a live event", ts: Date.now() - 48e3, unread: true }, now: Date.now(), muted: false, onRead: () => {
+} }))), /* @__PURE__ */ React.createElement("div", { className: "spec-row" }, /* @__PURE__ */ React.createElement("span", { className: "l" }, "Bell"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement(NotifBell, null), /* @__PURE__ */ React.createElement("span", { className: "qe-mono", style: { fontSize: "0.56rem", color: "var(--qe-muted)" } }, "+ red unread-count badge when count > 0"))), /* @__PURE__ */ React.createElement("div", { className: "spec-row" }, /* @__PURE__ */ React.createElement("span", { className: "l" }, "Banner \xB7 alert"), /* @__PURE__ */ React.createElement("div", { style: { width: "100%", border: "1px solid var(--qe-line)" } }, /* @__PURE__ */ React.createElement(Banner, { tone: "err", tag: "HALT", title: "EXAMPLE \xB7 halt banner", detail: "demo content \xB7 not a live event \u2014 the real halt banner is ChromeHaltBanner, driven by /api/state", time: "14:31:06", releaseIn: "0d 19h 21m 16s" }))), /* @__PURE__ */ React.createElement("div", { className: "spec-row" }, /* @__PURE__ */ React.createElement("span", { className: "l" }, "Toast"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Toast, { tone: "ok", tag: "FILLS", time: "14:31:06", title: "EXAMPLE \xB7 fill toast", detail: "demo content \xB7 not a live event" }), /* @__PURE__ */ React.createElement(Toast, { tone: "warn", tag: "RISK", time: "14:30:18", title: "EXAMPLE \xB7 risk toast", detail: "demo content \xB7 not a live event" }), /* @__PURE__ */ React.createElement(Toast, { tone: "err", tag: "RISK", time: "14:31:06", title: "EXAMPLE \xB7 halt toast", detail: "demo content \xB7 not a live event" }))), /* @__PURE__ */ React.createElement("div", { className: "spec-row" }, /* @__PURE__ */ React.createElement("span", { className: "l" }, "NotifRow"), /* @__PURE__ */ React.createElement("div", { style: { width: "100%", border: "1px solid var(--qe-line)" } }, /* @__PURE__ */ React.createElement(NotifRow, { ev: { id: "x1", ch: "RISK", pri: "risk", head: "EXAMPLE \xB7 risk notification row", detail: "demo content \xB7 not a live event", ts: Date.now() - 48e3, unread: true }, now: Date.now(), muted: false, onRead: () => {
 }, onDismiss: () => {
 } }), /* @__PURE__ */ React.createElement(NotifRow, { ev: { id: "x2", ch: "SYSTEM", pri: "routine", head: "EXAMPLE \xB7 routine system row", detail: "demo content \xB7 not a live event", ts: Date.now() - 24e4, unread: false }, now: Date.now(), muted: false, onRead: () => {
 }, onDismiss: () => {

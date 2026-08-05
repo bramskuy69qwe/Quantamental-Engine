@@ -415,7 +415,7 @@ workspace page composes the same two components:
 - 24-column grid. Drag a tile by its **pane head**; resize from any **edge/corner**. Positions are applied imperatively to `gs-*` (React never manages them, so content re-renders / live tickers never reset the layout).
 - **Gutter:** tile-to-tile gap AND workspace edge inset are both `--qe-pane-gap` (4px), applied by `GridWorkspace` — pages must not add padding around a workspace (§4).
 - A **`LockButton`** in the top nav freezes/unfreezes drag+resize across all workspaces (`useWorkspaceLock`, persisted).
-- Layouts persist per workspace via `qeWorkspaceSave` / `qeWorkspaceLoad` / `qeWorkspaceReset` (localStorage keyed `qe.ws.layout.${id}` — **NOT account-namespaced**; namespacing is a deferred §1.5 coexistence item, P8 decision point); **⤓ Save / ⤒ Load / +** live in the `WorkspaceBar` (Dashboard only — disabled elsewhere in the reference).
+- Layouts persist per workspace via `qeWorkspaceSave` / `qeWorkspaceLoad` / `qeWorkspaceReset` (localStorage keyed `qe.ws.layout.${id}` — **NOT account-namespaced**; namespacing is a deferred §1.5 coexistence item, P8 decision point); **⤓ Save / ⤒ Load** live in the `WorkspaceBar` (Dashboard only — disabled elsewhere in the reference). The **+** beside them is disabled EVERYWHERE (2026-08-05): multi-workspace is not implemented, and the handler it used to carry just re-ran the same `qeWorkspaceReset` the `Default` preset calls — a misleading label on a duplicate control. Reviving it means real workspace creation (naming, its own `persistId`, a switcher), not re-pointing the old handler.
 
 ---
 

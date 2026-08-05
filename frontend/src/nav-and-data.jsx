@@ -169,7 +169,13 @@ const WorkspaceBar = ({ interactive = false, persistId = 'dashboard' }) => {
   const onLoad = () => say(window.qeWorkspaceHasSaved(persistId)
     ? (window.qeWorkspaceLoad(persistId) ? '✓ Loaded' : 'Load failed')
     : 'No saved layout');
-  const onCreate = () => { window.qeWorkspaceReset(persistId); say('New workspace'); };
+  /* onCreate DELETED 2026-08-05: it was titled "New workspace from default"
+     and flashed "New workspace", but called the SAME qeWorkspaceReset the
+     `Default` preset calls — no registry insert, no new persistId. A label
+     writing a cheque the code doesn't cash, AND a duplicate of a control two
+     inches to its left. The + is now honestly disabled (see below); real
+     multi-workspace is a feature (naming, persistence, a switcher), not a
+     relabel. */
   const onPreset = (p) => {
     setPreset(p);
     // Default restores the baseline layout; the named presets are real layout
@@ -196,12 +202,19 @@ const WorkspaceBar = ({ interactive = false, persistId = 'dashboard' }) => {
         ))}
       </div>
 
-      {/* Save · Load · Create — workspace layout actions (Dashboard only) */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4, opacity: dim, pointerEvents: interactive ? 'auto' : 'none' }}>
-        <button className="qe-btn qe-btn-sm" onClick={guard(onSave)}   title="Save current layout">⤓ Save</button>
-        <button className="qe-btn qe-btn-sm" onClick={guard(onLoad)}   title="Load saved layout">⤒ Load</button>
-        <button className="qe-btn qe-btn-sm" onClick={guard(onCreate)} title="New workspace from default" style={{ width: 22, padding: 0, justifyContent: 'center' }}>+</button>
-        {flash && <span className="qe-mono" style={{ fontSize: '0.54rem', color: flash[0] === '✓' ? 'var(--qe-green)' : 'var(--qe-amber)' }}>{flash}</span>}
+      {/* Save · Load — workspace layout actions (Dashboard only, hence the
+          group dim + pointerEvents). The + sits OUTSIDE that group: it is
+          disabled everywhere, so nesting it here stacked the group's 0.4 on
+          top of `.qe-btn:disabled`'s 0.45 → ~0.18, near-invisible and dimmer
+          than its own siblings, and the group's pointerEvents:none swallowed
+          the tooltip that explains why it is off. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, opacity: dim, pointerEvents: interactive ? 'auto' : 'none' }}>
+          <button className="qe-btn qe-btn-sm" onClick={guard(onSave)}   title="Save current layout">⤓ Save</button>
+          <button className="qe-btn qe-btn-sm" onClick={guard(onLoad)}   title="Load saved layout">⤒ Load</button>
+        </div>
+        <button className="qe-btn qe-btn-sm" disabled title="New workspace — not implemented; Default (left) resets this layout" style={{ width: 22, padding: 0, justifyContent: 'center' }}>+</button>
+        {flash && <span className="qe-mono" style={{ fontSize: '0.54rem', opacity: dim, color: flash[0] === '✓' ? 'var(--qe-green)' : 'var(--qe-amber)' }}>{flash}</span>}
       </div>
 
       {!interactive && (
@@ -278,8 +291,12 @@ const WorkspaceBar = ({ interactive = false, persistId = 'dashboard' }) => {
         ];
       })()} />
 
-      <button className="qe-btn qe-btn-sm" disabled title="Add pane — planned, not wired in this build" style={{ opacity: 0.4, cursor: 'default' }}>⊞ Pane</button>
-      <button className="qe-btn qe-btn-sm" disabled title="Pop out — planned, not wired in this build" style={{ opacity: 0.4, cursor: 'default' }}>⤢ Pop</button>
+      {/* inline opacity/cursor REMOVED 2026-08-05: `.qe-btn:disabled` now owns
+          the disabled look app-wide, and the inline pair both duplicated it and
+          FOUGHT it — `cursor:'default'` here vs `not-allowed` on every other
+          disabled button was two conventions for one state. */}
+      <button className="qe-btn qe-btn-sm" disabled title="Add pane — planned, not wired in this build">⊞ Pane</button>
+      <button className="qe-btn qe-btn-sm" disabled title="Pop out — planned, not wired in this build">⤢ Pop</button>
     </div>
   );
 };

@@ -7,8 +7,10 @@ export const LOCAL_KEYS = [
   'qe.ws.layout.dashboard',
   'qe.v3.calc_state',
   'qe.v3.calc_history',
-  'qe.haltUntil',
-  'qe.haltAt',
+  // ('qe.haltUntil' / 'qe.haltAt' removed 2026-08-05 — the client-side halt
+  //  subsystem that wrote them is deleted; halt is server state now. This list
+  //  documents itself as a VERIFIED inventory, so a superset is still a lie
+  //  even though a stale reset key is functionally harmless.)
 ] as const;
 
 export const SESSION_KEYS = ['qe.v3.calc_result'] as const;

@@ -242,8 +242,11 @@
    the cursor and then swallowed the click. Full-brightness Delete Account /
    Activate / pagination arrows all read as live (LOW batch 2026-08-05).
    Declared AFTER :hover/:active: equal specificity, so source order decides.
-   Panes carrying their own inline dim (nav-and-data's ⊞ Pane / ⤢ Pop) keep it
-   — inline styles win, harmlessly. */
+   This is the ONE disabled convention: nav-and-data's ⊞ Pane / ⤢ Pop had
+   inline `opacity:.4; cursor:'default'` that both duplicated and contradicted
+   it (two cursors for one state) — removed, so they now inherit from here.
+   A few pages still carry an inline `opacity` on disabled buttons; those
+   override the .45 but not the cursor, which reaches every one of them. */
 .qe-btn:disabled,
 .qe-btn:disabled:hover,
 .qe-btn:disabled:active {

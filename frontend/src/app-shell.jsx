@@ -4,7 +4,9 @@
    page is reflected in the URL hash (deep-linkable), but a fresh load of /
    always lands on Dashboard — last-visited is NOT restored (operator call,
    2026-07-30). The whole app lives inside a single NotificationProvider so
-   the bell, banner and toasts work everywhere. */
+   the bell and toasts work everywhere. (No banner: the provider's NotifBanner
+   was deleted 2026-08-05 — halt is server state, rendered chrome-wide by
+   nav-and-data's ChromeHaltBanner.) */
 
 /* ── LiveValueDemo — wraps a LiveValue with a setInterval ticker so the
    Primitives spec card visibly shows live updates. Demo-only. ───────────── */
@@ -503,15 +505,26 @@ data: 93580.40`}</pre>
           <div className="spec-row">
             <span className="l">Banner · alert</span>
             <div style={{width:'100%', border:'1px solid var(--qe-line)'}}>
-              <Banner tone="err" tag="HALT" title="CALCULATOR BLOCKED" detail="Daily hard-stop 5.04% > 5.00% cap · new entries gated" time="14:31:06" releaseIn="0d 19h 21m 16s"/>
+              {/* EXAMPLE-labelled like every other swatch on this page. It used
+                  to render the verbatim hard-stop copy that item 4 deleted from
+                  the demo scenarios as "exactly the string an operator would
+                  screenshot in a panic" — on a DEV page, but the same words.
+                  `releaseIn` is kept ONLY to document the prop: the real
+                  ChromeHaltBanner deliberately passes no countdown, because the
+                  engine publishes no release time. */}
+              <Banner tone="err" tag="HALT" title="EXAMPLE · halt banner" detail="demo content · not a live event — the real halt banner is ChromeHaltBanner, driven by /api/state" time="14:31:06" releaseIn="0d 19h 21m 16s"/>
             </div>
           </div>
           <div className="spec-row">
             <span className="l">Toast</span>
             <div style={{display:'flex', gap:10, flexWrap:'wrap'}}>
               <Toast tone="ok"   tag="FILLS" time="14:31:06" title="EXAMPLE · fill toast" detail="demo content · not a live event"/>
-              <Toast tone="warn" tag="RISK"  time="14:30:18" title="Weekly loss 78% of limit" detail="−$1,840 of −$2,360"/>
-              <Toast tone="err"  tag="RISK"  time="14:31:06" title="CALCULATOR BLOCKED — hard-stop breached" detail="DD 5.04% > 5.00% cap"/>
+              {/* EXAMPLE-labelled like their sibling above. These two carried
+                  the verbatim fabricated risk + hard-stop copy that item 4
+                  deleted from the demo scenarios — a DEV page, but the same
+                  words an operator would screenshot. */}
+              <Toast tone="warn" tag="RISK"  time="14:30:18" title="EXAMPLE · risk toast" detail="demo content · not a live event"/>
+              <Toast tone="err"  tag="RISK"  time="14:31:06" title="EXAMPLE · halt toast" detail="demo content · not a live event"/>
             </div>
           </div>
           <div className="spec-row">
