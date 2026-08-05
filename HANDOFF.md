@@ -1,6 +1,80 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-08-04 (**MERIDIAN v3.1 — THE WIRING-INVENTORY FIX ARC IS NEARLY CLOSED (twelfth block, top): warm hang · H1–H7 · M10 · M6 · the three readout fabrications — 9 commits, every one audited, ALL PUSHED. NEXT SESSION STARTS AT THE DEAD-SETTINGS DECISION TABLE (§ below) + the H3 decision.** Prior: the stale-shown-as-live seam (C1/nav/foots) · wiring inventory filed · Jinja retirement `1afc9f8`.)
+**Date**: 2026-08-04 (**MERIDIAN v3.1 — THE WIRING INVENTORY'S CRIT+HIGH+MED TIERS ARE ALL CLOSED (thirteenth block, top): the dead-settings table · H3 wired · the full MED tail · the backtest-runner RETIREMENT — 12 commits `cf82762..caa3f8f`, every one audited, ALL PUSHED. NEXT = the LOW batch, the primitives lift, the e2e manifest re-accept.** Prior: warm hang + H-series (twelfth block) · the stale-shown-as-live seam · wiring inventory filed · Jinja retirement `1afc9f8`.)
+
+## ▶ SESSION CLOSE 2026-08-04 (thirteenth block) — THE MED TIER FALLS, AND THE RUNNER WITH IT
+
+Same day as the twelfth block, second session. Operator ran the
+decision table ("fix all, as recommended"), then "push and do remaining
+meds", then two calls off ELI15 framings: H3 **Option 1 wire-it-up** and
+backtest-runner **retire**. Twelve commits, every one through the full
+cycle (verify-at-line → fix → executed pins → mutation-ALL-RED →
+independent agent audit → fold → solo gate → commit). Final gate
+**4588 passed / 6 skipped / 3 deselected**, bundle **`f97d4d27fd`**,
+branch in sync with origin. **10 of 13 audits found real defects in MY
+fixes** — folded before each commit; the recurring self-caught class was
+the substring-contains-mutant (5 instances; pins now anchor braces/
+prefixes/ternary-heads).
+
+| commit | what |
+|---|---|
+| `cf82762` | **M2c** — `EXCHANGE_REFRESH_HZ` removed; git-verified consumer-less since its v2.4 birth. Audit caught the batch test file's docstring claiming all seven fixes shipped while one was (the fabricated-provenance class) + an AnnAssign escape in the AST pin. |
+| `01f4cf2` | **M4** — the `position_changes` per-refresh write retired at its only-ever call site; table + 19k rows + DB API kept (the rows also feed a provision wipe-guard). A substring table-pin survived its own rename mutation → replaced with an executed `sqlite_master` check. |
+| `5dff043` | **M2a+M2b** — Config's weekly rows show EFFECTIVE params-derived thresholds (`_cfgEffWeekly`; a two-sided node-vs-real-engine parity test proves the displayed number is where `_do_recalculate_portfolio` flips) + ADVISORY-ONLY constant; the API stopped serving the three dead columns. JSON.stringify maps NaN→null — a deleted isNaN guard was invisible until a replacer made NaN a string. F5 tripwire fired ONCE here — investigated to death (engine off, DB idle-static, exact session re-run twice hash-unchanged): one-shot, not test pollution. |
+| `4ea174d` | **M3** — `week_start_dow` writer: Config ISO select → hoisted 1-7 validation → settings. Audit: the reader pin passed when the `resolve_period` kwarg was dropped (permanent-Monday reinstated silently) → both chain halves pinned. |
+| `5c6ef6f` | **M8** — `analytics_default_period` readers: Analytics seeds its initial period once/mount via pure `_anaSeedPeriod` (touched-guard); + a NAMED-ADDITION Config editor (preset Apply was the only writer left); 3-way parsed parity ANA==CFG==VALID_PERIODS. ★ Audit MED: an offset click didn't mark touched → a slow seed could flip the period UNDER a navigated offset ("weekly @ −1", unreachable by any user path) — nav marks touched now. |
+| `97ed217` | **M1** — bridge link React Config header → `/config?tab=calc-linkage` (knobs verified LIVE; the Jinja editor walked end-to-end first). Pins two-sided incl. the EMITTED BUNDLE + the switchConfigTab registry ARRAY (an onclick string aliased the first draft's pin). Filed + chip spawned: htmx-from-unpkg kills /config panels offline. |
+| `aae0764` | **H3 — Option 1 wired**: manual link CONFIRMS the opening fills (`confirm_fill_exec_link`, by='user'; guards: is_close=0 / same-calc / non-empty eoid; separate WARN lane for partial confirm). ★ Audit MED-1 = MY false provenance: "zero callers EVER" was git-false — Task 142 extracted the helper FROM the History Confirm-Link button, which the 2026-07-30 slim-down deleted. Regression-by-deletion; premise held operationally (4,928 fills, 0 confirmed). ★ MED-2: the widget's matched/linked + terminal-EXPIRED short-circuits preempted the confirmed check → hoisted per `compute_link_window_status`'s own ratified precedence; the React chip's `✓ LINKED (CONFIRMED)` is reachable for the first time. |
+| `da58e3c` | **M13+M12+M5** — badge tells the truth ("DESIGN-SYSTEM REFERENCE · DEMO DATA"); M12 closed WITHOUT code (honest-disable shipped at P0; Save/Load-off-Dashboard deferred by the plan's §7 defer list — audit corrected my citation, the close's decision #3 is ACCOUNT-namespacing); M5 `check_dd_gate_for_order` deleted (observe-only engine has no order to gate; `dd_gate` liveness pinned). |
+| `d74cebb` | **M9** — the page-scope is SAID: DataList `tools.scope`/`scopeTitle`, History passes 'loaded page only' + strip SCOPE item, DESIGN.md usage rule, GLOB-derived pager sweep. ★ Audit: my caption shipped at ~1.7:1 contrast (--qe-faint) — the fix for "nothing on screen said so" was itself near-invisible → --qe-muted; the 4-file sweep vs the sibling's 9-host inventory = the audit-inventory-undercounts class → glob. |
+| `fc07ea6` | **M7** — uploads parse with the SELECTED app's adapter (`MDL_ADAPTERS` parity-pinned vs the registry — whose own docstring said it was "shaped for the upload dropdown"; the consumer that never came). Refuse-before-upload for parserless apps. ★ Audit MED: the refusal rendered "no network — engine unreachable … supports: Mult" (false cause + sliced remedy) → `.local` errors render whole. |
+| `b06ca87` | **M11** — the doors: Audit JSON/PDF on the History drilldown (the slim-down-deleted parity restored) + confirm-gated userTrades recovery on Config▸System (180s named-deviation deadline). ★ Audit MEDs: untagged status → false no-network; the result line would ALWAYS have claimed "N with recovered rows" (the route fills `recovered` for every error-free symbol, zeros included) → counts actual nonzero activity. |
+| `caa3f8f` | **THE RUNNER RETIREMENT (operator decision)** — all six `/api/backtest/*` routes + `core/backtest_runner.py` deleted, −991 lines; the Models import lane untouched and pinned independent. ★ KEPT: `core/ohlcv_fetcher.py` CLI-ONLY — the SOLE writer of `ohlcv_cache`, which the LIVE `btc_rvol_ratio` regime signal reads (deleting a route must not starve a live signal's feed; without periodic `python -m core.ohlcv_fetcher` runs the stored signal goes stale). `db_backtest` whole (6 of 9 methods ARE the import lane). DATA ALL KEPT — recorded consequence: 'macro' + historical Quantower 'microstructure' sessions are unreadable through any door until a reader is added. Pins: zombie-route prefix scan, the feed CHAIN executed per-function, both import forms. |
+
+### Standing decisions recorded this session
+
+- **ELI15 reports**: the operator ratified the plain-language-analogy-first
+  register for decision points ("save this scheme for the reports") — the
+  H3 seatbelt-light text in the twelfth block is the exemplar; memory
+  `feedback-eli15-reports` carries the rule.
+- **Backtesting doctrine**: external report imports via the Models page
+  ARE the backtesting lane; the in-engine runner is gone. Reviving it is
+  a subsystem decision, not a patch (the retirement pins say so).
+
+### NEXT SESSION
+
+1. **The LOW/cosmetic tier** (tenth-block Tier 3: stub controls ⊞ Pane /
+   ⤢ Pop / desktop notifications, dead code NotifBanner / demo panel /
+   `_PagePlaceholder` / data-live-id registry / deferred
+   enforcement-flip) — batch or drop whole, per the filing.
+2. The `_dashFootWorst`/`_ptWorstFoot` **primitives lift** (DESIGN.md).
+3. **Operator owes**: e2e crawl manifest re-accept (4 new control ids:
+   the two audit buttons, the recovery select+button — its designed
+   review loop; the Config backfill button correctly lands
+   mutating-excluded), engine RESTART (lands 12 commits incl. 4 backend
+   changes), testnet account, timezone re-check (acct 1 = UTC from the
+   twelfth block's probe), qre-v3 profile check, Finnhub rotation, and
+   optionally a periodic `python -m core.ohlcv_fetcher` habit (or a
+   scheduler task later) so `btc_rvol_ratio` stays fed.
+
+### Method notes worth carrying (new ones this session)
+
+- **JSON serialization hides NaN** (`JSON.stringify(NaN)` → `null`): a
+  node-bridge pin cannot see a deleted isNaN guard without a replacer
+  mapping NaN to a sentinel string.
+- **The substring-contains-mutant class** (5 catches): a pin asserting
+  `X` survives a mutant containing `X` as a substring (`false && X`,
+  `X_renamed`, prefix matches). Anchor the brace/prefix/ternary-head, or
+  execute.
+- **PS 5.1 here-strings break through the shell tool** — write commit
+  messages to a file (BOM-free; `Set-Content -Encoding utf8` writes a
+  BOM that lands IN the commit subject) and `git commit -F`.
+- **mutate_lib discipline**: byte-level find/replace with hash-verified
+  restore; REFUSE multi-line anchors (CRLF trap) and count≠1 anchors
+  (ANCHOR-MISSING = testing nothing).
+- The F5 tripwire can fire on a one-shot filesystem event in the window
+  after a full gate — disambiguate (engine? idle-static? exact-session
+  re-run with before/after hashes?) before hunting a test writer.
 
 ## ▶ SESSION CLOSE 2026-08-04 (twelfth block) — NINE COMMITS DOWN THE TRUTHFULNESS SEAM
 
@@ -79,7 +153,8 @@ recommended" covers all seven.
   hardcoded `'multicharts'`), M9 (client-side tools on a server-paged table),
   M11 (backfill/audit-export/backtest have no UI), M12 (WorkspaceBar inert
   off-Dashboard), M13 (false DEV badge text). Then the LOW batch. The 3
-  NOT-DEFECTS stay unfixed.
+  NOT-DEFECTS stay unfixed. **[ALL SIX CLOSED same day — thirteenth block;
+  M11's backtest remainder resolved by RETIRING the runner.]**
 - The `_dashFootWorst`/`_ptWorstFoot` **primitives lift** (DESIGN.md names it).
 - Operator owes: **testnet account** (unlocks switch/delete/foreign-banner
   E2E), **timezone re-check** (my probe wrote UTC to account 1), **qre-v3
