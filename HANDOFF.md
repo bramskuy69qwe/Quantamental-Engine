@@ -1,6 +1,6 @@
 # Handoff — next Claude Code session
 
-**Date**: 2026-08-04 (**MERIDIAN v3.1 — THE WIRING INVENTORY'S CRIT+HIGH+MED TIERS ARE ALL CLOSED (thirteenth block, top): the dead-settings table · H3 wired · the full MED tail · the backtest-runner RETIREMENT — 12 commits `cf82762..caa3f8f`, every one audited, ALL PUSHED. NEXT = the LOW batch, the primitives lift, the e2e manifest re-accept.** Prior: warm hang + H-series (twelfth block) · the stale-shown-as-live seam · wiring inventory filed · Jinja retirement `1afc9f8`.)
+**Date**: 2026-08-04 (**MERIDIAN v3.1 — THE WIRING INVENTORY'S CRIT+HIGH+MED TIERS ARE ALL CLOSED (thirteenth block, top): the dead-settings table · H3 wired · the full MED tail · the backtest-runner RETIREMENT — 12 commits `cf82762..caa3f8f`, every one audited, ALL PUSHED. NEXT SESSION STARTS AT THE OPERATOR'S FILED SIGHTING (§ below, UNVERIFIED): "app state in engine log is not updating at all" — debunk checklist first, then debug. Then the LOW batch · primitives lift · e2e manifest re-accept.** Prior: warm hang + H-series (twelfth block) · the stale-shown-as-live seam · wiring inventory filed · Jinja retirement `1afc9f8`.)
 
 ## ▶ SESSION CLOSE 2026-08-04 (thirteenth block) — THE MED TIER FALLS, AND THE RUNNER WITH IT
 
@@ -30,6 +30,52 @@ prefixes/ternary-heads).
 | `fc07ea6` | **M7** — uploads parse with the SELECTED app's adapter (`MDL_ADAPTERS` parity-pinned vs the registry — whose own docstring said it was "shaped for the upload dropdown"; the consumer that never came). Refuse-before-upload for parserless apps. ★ Audit MED: the refusal rendered "no network — engine unreachable … supports: Mult" (false cause + sliced remedy) → `.local` errors render whole. |
 | `b06ca87` | **M11** — the doors: Audit JSON/PDF on the History drilldown (the slim-down-deleted parity restored) + confirm-gated userTrades recovery on Config▸System (180s named-deviation deadline). ★ Audit MEDs: untagged status → false no-network; the result line would ALWAYS have claimed "N with recovered rows" (the route fills `recovered` for every error-free symbol, zeros included) → counts actual nonzero activity. |
 | `caa3f8f` | **THE RUNNER RETIREMENT (operator decision)** — all six `/api/backtest/*` routes + `core/backtest_runner.py` deleted, −991 lines; the Models import lane untouched and pinned independent. ★ KEPT: `core/ohlcv_fetcher.py` CLI-ONLY — the SOLE writer of `ohlcv_cache`, which the LIVE `btc_rvol_ratio` regime signal reads (deleting a route must not starve a live signal's feed; without periodic `python -m core.ohlcv_fetcher` runs the stored signal goes stale). `db_backtest` whole (6 of 9 methods ARE the import lane). DATA ALL KEPT — recorded consequence: 'macro' + historical Quantower 'microstructure' sessions are unreadable through any door until a reader is added. Pins: zombie-route prefix scan, the feed CHAIN executed per-function, both import forms. |
+
+### ▶ NEXT SESSION STARTS HERE — the operator's naked-eye sighting (FILED, UNVERIFIED)
+
+**Operator's words at session close (2026-08-04): "the app state in the
+engine log is not updating at all."** No file, no timestamp, no
+screenshot yet — filed verbatim as a SIGHTING, not a finding. House
+rules apply hard here: the cited mechanism is a hypothesis
+(re-investigation discipline), and a stale-looking surface at audit
+time is its own false-positive class (audit-time-artifact, Task 128).
+
+**Debunk checklist BEFORE any code reading** (cheapest first; several of
+this very day's changes are innocent-explanation candidates):
+
+1. **Which artifact, exactly?** Ask the operator to name the file/surface
+   they watched: `logs/risk_engine.jsonl`? a rotated `logs/*.log`? the
+   per-account `engine_events`/event logs? the `/api/state` JSON in the
+   UI? "App state" and "engine log" are different stores with different
+   writers — the debug forks completely on this answer.
+2. **Engine restart status.** The running engine predates ALL 12 of
+   today's commits (restart is on the owed list, and has been owed since
+   before this session). A pre-batch process + post-batch expectations is
+   the classic artifact shape. Also confirm the process is actually
+   ALIVE (`tasklist | findstr python`, port 8000 answering).
+3. **Windows staleness lens.** Recorded memory: live-log SIZE/MTIME can
+   read stale on this box while content advances — judge by CONTENT
+   (tail the file twice, diff), never by Explorer metadata.
+4. **Was it position_changes?** TODAY'S M4 (`01f4cf2`) deliberately
+   retired the per-refresh open-positions snapshot write — if the
+   operator was watching that table/row-count grow as their "app state
+   updating" signal, the stall is the FIX working as decided, not a bug.
+   (account_snapshots still writes; that lane survived M4 untouched.)
+5. **Pytest-gate side effect?** Under pytest the lifespan gates skip
+   background tasks and DON'T attach the rotating JSON log handler
+   (`TEST_LIFESPAN_GATED`) — if the "engine" they watched was a
+   test-spawned instance, silence is by design.
+6. Only THEN read code: the `data_logger`/snapshot write path
+   (`handle_account_updated` → `insert_account_snapshot` +
+   `log_portfolio_snapshot`), scheduler liveness (15 background loops),
+   and whether `risk:positions_refreshed` / `account_updated` events are
+   firing at all (correlation log / engine_events are the witnesses).
+
+**If it survives the checklist** it is a real stall in the refresh/
+persist chain — debug with the event-bus witnesses first (which link of
+publish → handler → DB write went quiet), and remember the twelfth
+block's lesson: prove liveness by EXECUTING against the real engine,
+not by reading the code.
 
 ### Standing decisions recorded this session
 
