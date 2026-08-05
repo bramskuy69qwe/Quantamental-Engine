@@ -515,7 +515,7 @@ class TestTheUpstreamBudget:
         "/api/price/": "routes_dashboard",
         "/api/state": "routes_dashboard",
         "/api/dashboard/snapshot": "routes_dashboard",
-        "/api/engine/log": "routes_dashboard",
+        "/api/engine/log/live": "routes_dashboard",
         "/api/system": "routes_dashboard",
         "/api/dashboard/equity_ohlc": "routes_dashboard",
         "/api/calculator/orderbook/": "routes_calculator",

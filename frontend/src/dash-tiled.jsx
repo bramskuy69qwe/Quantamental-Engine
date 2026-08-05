@@ -2,7 +2,7 @@
    and WIRED to real engine data:
      · initial state ← GET /api/dashboard/snapshot
      · live values   ← SSE (window.QE_SSE): equity_update / position_update / dd_state
-     · engine log     ← GET /api/engine/log?since= (poll)
+     · engine log     ← GET /api/engine/log/live?off=&eid= (poll — jsonl tail + risk events)
      · macro signals  ← GET /api/regime/signals/latest (poll)
      · halt/state      ← GET /api/state (poll, incl. G-O2 `halted`)
      · equity curve   ← GET /api/dashboard/equity_ohlc
@@ -25,7 +25,10 @@ const QE_DASH = (function () {
     ui: { ddOverride: false },
     macro: [],              // /api/regime/signals/latest
     log: [],                // engine-log lines, newest-first for the prepend feed
-    logCursor: 0,
+    // live-feed cursors (option-3 fix): byte offset into risk_engine.jsonl +
+    // engine_events id — the server owns both semantics, we just echo them.
+    logOff: 0,
+    logEid: 0,
     loaded: false,
     // per-source data-pipe state for qeFootState (DESIGN.md §5 4-tier foots)
     net: { snapshot: {}, st: {}, macro: {}, log: {} },
@@ -82,20 +85,29 @@ const QE_DASH = (function () {
     try { const m = await _json('/api/regime/signals/latest', 'macro'); state.macro = m.signals || []; notify(); }
     catch (e) { /* keep */ }
   }
+  // Overlap guard (live-feed audit MED-2): the poll deadline
+  // (qePollDeadline(4000) = 5 s) exceeds the 4 s interval, so a slow-but-
+  // healthy response overlaps the next tick — two in-flight polls carry the
+  // SAME cursors and would prepend the same lines twice, and a stale
+  // response resolving late would regress the cursors. The deadline
+  // guarantees settlement, so this latch cannot wedge the lane the way the
+  // pre-deadline notification inFlight latch once did (twelfth block).
+  let _logInFlight = false;
   async function loadLog() {
+    if (_logInFlight) return;
+    _logInFlight = true;
     try {
-      const d = await _json('/api/engine/log?since=' + state.logCursor + '&limit=60', 'log');
+      const d = await _json('/api/engine/log/live?off=' + state.logOff + '&eid=' + state.logEid + '&limit=60', 'log');
       const lines = d.lines || [];
+      if (d.off != null) state.logOff = d.off;
+      if (d.eid != null) state.logEid = d.eid;
       if (lines.length) {
         // server returns oldest-first; prepend newest for the feed display
         state.log = [...lines.slice().reverse(), ...state.log].slice(0, 60);
-        state.logCursor = d.latest_id || state.logCursor;
-        notify();
-      } else if (d.latest_id != null) {
-        state.logCursor = d.latest_id;
-        notify();   // quiet poll still refreshes net.log (foot recovery) [foot-audit LOW-5]
       }
-    } catch (e) { /* keep */ }
+      notify();   // quiet poll still refreshes net.log (foot recovery) [foot-audit LOW-5]
+    } catch (e) { /* keep prior feed; net.log carries the error for the foot */ }
+    finally { _logInFlight = false; }
   }
 
   function _wireSSE() {
@@ -898,11 +910,16 @@ const EngineLogBody = () => {
   const rows = d.log;
   return (
     <div style={{ fontFamily: 'var(--qe-mono)', fontSize: '0.62rem', lineHeight: 1.5 }}>
-      {rows.length === 0 && <div style={{ color: 'var(--qe-muted)' }}>— no recent engine events —</div>}
+      {rows.length === 0 && <div style={{ color: 'var(--qe-muted)' }}>— no engine log lines —</div>}
       {rows.map((l, i) => (
-        <div key={`${l.id}-${i}`} style={{ display: 'grid', gridTemplateColumns: '56px 44px 1fr', gap: 6, opacity: i === 0 ? 1 : Math.max(0.45, 1 - i * 0.06) }}>
-          <span style={{ color: 'var(--qe-muted)' }}>{l.t}</span>
-          <span style={{ color: l.tone === 'ok' ? 'var(--qe-green)' : l.tone === 'info' ? 'var(--qe-cyan)' : l.tone === 'err' ? 'var(--qe-red)' : l.tone === 'warn' ? 'var(--qe-amber)' : 'var(--qe-sub)' }}>[{l.tag}]</span>
+        /* risk-event rows (src='event') are the highlighted lane: they skip
+           the age-fade and carry a bold tag — the jsonl flow dims with age,
+           the audit trail does not. Time + tag columns are auto (not fixed
+           56/44px): non-today stamps carry an "MM-DD " prefix and 6-char
+           jsonl tags outgrow the old 44px event-tag budget. */
+        <div key={`${l.id}-${i}`} style={{ display: 'grid', gridTemplateColumns: 'auto auto 1fr', gap: 6, opacity: (l.src === 'event' || i === 0) ? 1 : Math.max(0.45, 1 - i * 0.06) }}>
+          <span style={{ color: 'var(--qe-muted)', whiteSpace: 'nowrap' }}>{l.t}</span>
+          <span style={{ fontWeight: l.src === 'event' ? 700 : 400, color: l.tone === 'ok' ? 'var(--qe-green)' : l.tone === 'info' ? 'var(--qe-cyan)' : l.tone === 'err' ? 'var(--qe-red)' : l.tone === 'warn' ? 'var(--qe-amber)' : 'var(--qe-sub)' }}>[{l.tag}]</span>
           <span style={{ color: 'var(--qe-text-dim)' }}>{l.msg}</span>
         </div>
       ))}
@@ -915,9 +932,16 @@ const EngineLogBody = () => {
    the foot briefly read an unbound `d` inside the memo component.] */
 const EngineLogPane = () => {
   const d = useDash();
+  // The LOG dot mirrors the pipe, not a hardcoded ok (option-3 fix): err →
+  // red, never-answered → off, answered → green. A COARSER summary than the
+  // foot's 4 tiers (the foot alone says "errored · showing last data" vs
+  // "delayed") — the dot answers only "is this pipe alive"; the foot stays
+  // the authority.
+  const logNet = (d.net && d.net.log) || {};
+  const logTone = logNet.err ? 'err' : (logNet.ms != null ? 'ok' : 'off');
   return (
     <Pane title="Engine Log" tag="LIVE" style={{ height: '100%' }}
-      right={<StatusDot tone="ok" label="LOG" />}
+      right={<StatusDot tone={logTone} label="LOG" />}
       foot={_dashFoot(d, 'log', d.log.length > 0)}
       bodyStyle={{ padding: '4px 6px', fontFamily: 'var(--qe-mono)' }}>
       <EngineLogBody />

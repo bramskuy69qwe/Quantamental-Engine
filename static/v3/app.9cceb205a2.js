@@ -2872,7 +2872,10 @@ const QE_DASH = /* @__PURE__ */ function() {
     // /api/regime/signals/latest
     log: [],
     // engine-log lines, newest-first for the prepend feed
-    logCursor: 0,
+    // live-feed cursors (option-3 fix): byte offset into risk_engine.jsonl +
+    // engine_events id — the server owns both semantics, we just echo them.
+    logOff: 0,
+    logEid: 0,
     loaded: false,
     // per-source data-pipe state for qeFootState (DESIGN.md §5 4-tier foots)
     net: { snapshot: {}, st: {}, macro: {}, log: {} }
@@ -2931,19 +2934,22 @@ const QE_DASH = /* @__PURE__ */ function() {
     } catch (e) {
     }
   }
+  let _logInFlight = false;
   async function loadLog() {
+    if (_logInFlight) return;
+    _logInFlight = true;
     try {
-      const d = await _json("/api/engine/log?since=" + state.logCursor + "&limit=60", "log");
+      const d = await _json("/api/engine/log/live?off=" + state.logOff + "&eid=" + state.logEid + "&limit=60", "log");
       const lines = d.lines || [];
+      if (d.off != null) state.logOff = d.off;
+      if (d.eid != null) state.logEid = d.eid;
       if (lines.length) {
         state.log = [...lines.slice().reverse(), ...state.log].slice(0, 60);
-        state.logCursor = d.latest_id || state.logCursor;
-        notify();
-      } else if (d.latest_id != null) {
-        state.logCursor = d.latest_id;
-        notify();
       }
+      notify();
     } catch (e) {
+    } finally {
+      _logInFlight = false;
     }
   }
   function _wireSSE() {
@@ -3495,17 +3501,26 @@ const DashNewsTicker = () => {
 const EngineLogBody = () => {
   const d = useDash();
   const rows = d.log;
-  return /* @__PURE__ */ React.createElement("div", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.62rem", lineHeight: 1.5 } }, rows.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { color: "var(--qe-muted)" } }, "\u2014 no recent engine events \u2014"), rows.map((l, i) => /* @__PURE__ */ React.createElement("div", { key: `${l.id}-${i}`, style: { display: "grid", gridTemplateColumns: "56px 44px 1fr", gap: 6, opacity: i === 0 ? 1 : Math.max(0.45, 1 - i * 0.06) } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)" } }, l.t), /* @__PURE__ */ React.createElement("span", { style: { color: l.tone === "ok" ? "var(--qe-green)" : l.tone === "info" ? "var(--qe-cyan)" : l.tone === "err" ? "var(--qe-red)" : l.tone === "warn" ? "var(--qe-amber)" : "var(--qe-sub)" } }, "[", l.tag, "]"), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-text-dim)" } }, l.msg))));
+  return /* @__PURE__ */ React.createElement("div", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.62rem", lineHeight: 1.5 } }, rows.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { color: "var(--qe-muted)" } }, "\u2014 no engine log lines \u2014"), rows.map((l, i) => (
+    /* risk-event rows (src='event') are the highlighted lane: they skip
+       the age-fade and carry a bold tag — the jsonl flow dims with age,
+       the audit trail does not. Time + tag columns are auto (not fixed
+       56/44px): non-today stamps carry an "MM-DD " prefix and 6-char
+       jsonl tags outgrow the old 44px event-tag budget. */
+    /* @__PURE__ */ React.createElement("div", { key: `${l.id}-${i}`, style: { display: "grid", gridTemplateColumns: "auto auto 1fr", gap: 6, opacity: l.src === "event" || i === 0 ? 1 : Math.max(0.45, 1 - i * 0.06) } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-muted)", whiteSpace: "nowrap" } }, l.t), /* @__PURE__ */ React.createElement("span", { style: { fontWeight: l.src === "event" ? 700 : 400, color: l.tone === "ok" ? "var(--qe-green)" : l.tone === "info" ? "var(--qe-cyan)" : l.tone === "err" ? "var(--qe-red)" : l.tone === "warn" ? "var(--qe-amber)" : "var(--qe-sub)" } }, "[", l.tag, "]"), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--qe-text-dim)" } }, l.msg))
+  )));
 };
 const EngineLogPane = () => {
   const d = useDash();
+  const logNet = d.net && d.net.log || {};
+  const logTone = logNet.err ? "err" : logNet.ms != null ? "ok" : "off";
   return /* @__PURE__ */ React.createElement(
     Pane,
     {
       title: "Engine Log",
       tag: "LIVE",
       style: { height: "100%" },
-      right: /* @__PURE__ */ React.createElement(StatusDot, { tone: "ok", label: "LOG" }),
+      right: /* @__PURE__ */ React.createElement(StatusDot, { tone: logTone, label: "LOG" }),
       foot: _dashFoot(d, "log", d.log.length > 0),
       bodyStyle: { padding: "4px 6px", fontFamily: "var(--qe-mono)" }
     },

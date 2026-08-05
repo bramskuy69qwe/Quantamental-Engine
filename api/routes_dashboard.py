@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time as _time
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -214,8 +214,8 @@ async def api_dashboard_snapshot():
     Aggregates the same per-tile data the Jinja fragments compute (journal via
     the shared _journal_stats_context builder); SSE (/stream/account/{id}) drives
     live updates on top. Equity curve stays on /api/dashboard/equity_ohlc; macro
-    on /api/regime/signals/latest; engine log on /api/engine/log; halt state on
-    /api/state."""
+    on /api/regime/signals/latest; engine log on /api/engine/log/live; halt
+    state on /api/state."""
     acc = app_state.account_state
     pf  = app_state.portfolio
     prm = app_state.params
@@ -507,8 +507,13 @@ _ENGINE_LOG_TAGS = {
 }
 
 
-def _engine_log_line(row: dict, tz=None) -> dict:
-    """Map an engine_events row → the Engine-Log tile shape {id,t,tag,msg,tone}."""
+def _engine_log_line(row: dict, tz=None, today: str | None = None) -> dict:
+    """Map an engine_events row → the Engine-Log tile shape {id,t,tag,msg,tone}.
+
+    `today` (a local-date "YYYY-MM-DD" string in the same tz): when given and
+    the row is from another day, the stamp gains a date prefix — a time-only
+    stamp on a weeks-old audit row reads as TODAY's activity (option-3 fix,
+    2026-08-05). Default None keeps the original time-only shape."""
     import json as _json
     et = row.get("event_type", "") or ""
     tag, tone = _ENGINE_LOG_TAGS.get(et, ("ENG", "sub"))
@@ -524,6 +529,8 @@ def _engine_log_line(row: dict, tz=None) -> dict:
         if tz is not None:
             dt = dt.astimezone(tz)
         t = dt.strftime("%H:%M:%S")
+        if today is not None and dt.strftime("%Y-%m-%d") != today:
+            t = dt.strftime("%m-%d ") + t
     except (ValueError, TypeError):
         t = ts[11:19] if len(ts) >= 19 else ts
     if et == "dd_state_transition":
@@ -558,3 +565,176 @@ async def api_engine_log(since: int = 0, limit: int = 60):
     lines = [_engine_log_line(r, tz) for r in rows]
     latest_id = lines[-1]["id"] if lines else int(since or 0)
     return JSONResponse({"lines": lines, "latest_id": latest_id})
+
+
+# ── Engine-Log LIVE feed (option-3 fix, 2026-08-05) ──────────────────────────
+# The tile used to tail engine_events alone — an audit trail of RARE stateful
+# risk events (dd transitions, blocks, overrides) that on a quiet account goes
+# weeks without a row while the pane wears a LIVE badge (the operator read the
+# stillness as a dead feed — investigated 2026-08-05, the table's newest row
+# was 13 days old). The live feed merges the actual rolling engine log
+# (config.LOG_FILE — the rotating risk_engine.jsonl) with NEW engine_events
+# rows, so the pane moves whenever the engine does and risk events arrive
+# highlighted (src='event').
+
+_LIVE_LEVEL_TONES = {
+    "DEBUG": "sub", "INFO": "sub", "WARNING": "warn",
+    "ERROR": "err", "CRITICAL": "err",
+}
+
+# Per-poll read cap. A burst larger than this drains across successive polls:
+# the offset only advances to the last complete line actually consumed.
+_LIVE_MAX_BYTES = 65536
+
+
+def _tail_jsonl_lines(path: str, off: int, limit: int,
+                      max_bytes: int = _LIVE_MAX_BYTES) -> tuple[list[dict], int]:
+    """Byte-offset tail of a JSONL file → (dicts oldest-first, new_offset).
+
+    - ``off <= 0`` (seed): the last `limit` complete lines from the final
+      `max_bytes` of the file.
+    - ``off > 0`` (poll): complete lines from `off`, up to `max_bytes`.
+    - Rotation-safe: current size < `off` means the file we were tailing was
+      renamed away by the rotating handler — re-seed from the new file. (If
+      the new file has already grown past `off` before we poll again, the
+      read lands mid-stream: the leading fragment fails json-parse and is
+      skipped — self-healing, but the new file's first `off` bytes of lines
+      are never displayed. Audit LOW-3: the bound is `off` bytes, not one
+      line.)
+    - Partial-line-safe: bytes after the last newline are a write in progress
+      and are NOT consumed — the offset stops at the last complete line so
+      the next poll picks up the remainder.
+    """
+    import json as _json
+    import os as _os
+    try:
+        size = _os.path.getsize(path)
+    except OSError:
+        return [], 0
+    off = int(off or 0)
+    if off > size:
+        off = 0  # rotation: the bytes we were tailing were renamed away
+    seed = off <= 0
+    start = max(0, size - max_bytes) if seed else off
+    if start >= size:
+        return [], off
+    with open(path, "rb") as fh:
+        fh.seek(start)
+        chunk = fh.read(min(size - start, max_bytes))
+    if seed and start > 0:
+        # drop the leading partial line the byte-window cut into
+        nl = chunk.find(b"\n")
+        if nl < 0:
+            return [], off
+        start += nl + 1
+        chunk = chunk[nl + 1:]
+    last_nl = chunk.rfind(b"\n")
+    if last_nl < 0:
+        # No complete line in the window. A PARTIAL window (we hit EOF) is a
+        # write in progress — consume nothing. A FULL window is an OVERSIZED
+        # (>max_bytes) line: its newline can never enter a window anchored at
+        # this offset, so refusing to advance would wedge the lane until
+        # rotation (audit MED-1). Skip the window; the line's tail fragment
+        # then fails json-parse and is dropped — the lane heals itself.
+        if len(chunk) >= max_bytes:
+            return [], start + len(chunk)
+        return [], off
+    complete = chunk[: last_nl + 1]
+    new_off = start + last_nl + 1
+    out: list[dict] = []
+    for raw in complete.split(b"\n"):
+        if not raw.strip():
+            continue
+        try:
+            d = _json.loads(raw.decode("utf-8", errors="replace"))
+        except ValueError:
+            continue  # malformed line — skip, never poison the poll loop
+        if isinstance(d, dict):
+            out.append(d)
+    if len(out) > limit:
+        # newest wins on BOTH paths (audit LOW-6): the seed's window cut and a
+        # poll burst alike keep the tail. Dropped lines still advance the
+        # offset — this is a display feed, not an audit lane.
+        out = out[-limit:]
+    return out, new_off
+
+
+def _jsonl_live_line(d: dict, tz=None, today: str | None = None) -> dict:
+    """Map one risk_engine.jsonl record → the Engine-Log tile line shape.
+
+    Carries ``_ts`` (the raw ISO stamp) for the merge sort — the route pops
+    it before responding."""
+    level = str(d.get("level", "") or "").upper()
+    tone = _LIVE_LEVEL_TONES.get(level, "sub")
+    logger_name = str(d.get("logger", "") or "eng")
+    tag = (logger_name.rsplit(".", 1)[-1][:6] or "ENG").upper()
+    msg = " ".join(str(d.get("message", "") or "").split())
+    if len(msg) > 240:
+        msg = msg[:240] + "…"
+    ts = str(d.get("ts", "") or "")
+    try:
+        dt = datetime.fromisoformat(ts)
+        if tz is not None:
+            dt = dt.astimezone(tz)
+        t = dt.strftime("%H:%M:%S")
+        if today is not None and dt.strftime("%Y-%m-%d") != today:
+            t = dt.strftime("%m-%d ") + t
+    except (ValueError, TypeError):
+        t = ts[11:19] if len(ts) >= 19 else ts
+    return {"t": t, "tag": tag, "msg": msg, "tone": tone, "src": "jsonl", "_ts": ts}
+
+
+@router.get("/api/engine/log/live")
+async def api_engine_log_live(off: int = 0, eid: int = 0, limit: int = 60):
+    """Engine-Log tile LIVE feed: risk_engine.jsonl tail merged with new
+    engine_events rows (highlighted ``src='event'``), oldest-first.
+
+    Cursors: ``off`` = byte offset into config.LOG_FILE; ``eid`` =
+    engine_events id. On seed (eid=0) the events lane sets its CURSOR ONLY —
+    no historical rows: the old tail rendered weeks-old audit rows styled as
+    today's activity (the defect this route replaces); from the seed forward,
+    new risk events flow in highlighted. Each lane fails soft (empty page +
+    cursor unchanged) — never a 500 in the poll loop."""
+    from core.event_log import query_events_since
+    aid = app_state.active_account_id
+    limit = max(1, min(int(limit or 60), 500))
+    try:
+        tz = get_account_tz(aid)
+    except Exception:
+        tz = None  # tz is presentation-only — the poll loop must not 500 (audit LOW-7)
+    now = datetime.now(timezone.utc)
+    today = (now.astimezone(tz) if tz is not None else now).strftime("%Y-%m-%d")
+    lines: list[dict] = []
+    new_off = int(off or 0)
+    try:
+        raw, new_off = _tail_jsonl_lines(config.LOG_FILE, int(off or 0), limit)
+        lines.extend(_jsonl_live_line(d, tz, today) for d in raw)
+    except Exception as e:
+        log.warning("[api_engine_log_live] jsonl tail failed: %s", e)
+    new_eid = int(eid or 0)
+    try:
+        if new_eid > 0:
+            rows = query_events_since(aid, since_id=new_eid, limit=limit)
+        elif new_eid < 0:
+            # armed-at-empty (audit LOW-4): the table had NO rows at arming,
+            # so everything present now is new — the id-0 seed query IS the
+            # incremental read here. Without this lane the first-ever event
+            # lands between two arming polls and is swallowed unseen.
+            rows = query_events_since(aid, since_id=0, limit=limit)
+        else:
+            rows = []
+            newest = query_events_since(aid, since_id=0, limit=1)
+            new_eid = newest[-1]["id"] if newest else -1  # -1 = armed at empty
+        for r in rows:
+            line = _engine_log_line(r, tz, today=today)
+            line["src"] = "event"
+            line["_ts"] = str(r.get("timestamp") or "")
+            lines.append(line)
+        if rows:
+            new_eid = rows[-1]["id"]
+    except Exception as e:
+        log.warning("[api_engine_log_live] events lane failed: %s", e)
+    lines.sort(key=lambda x: x.get("_ts", ""))  # stable: ties keep lane order
+    for x in lines:
+        x.pop("_ts", None)
+    return JSONResponse({"lines": lines, "off": new_off, "eid": new_eid})

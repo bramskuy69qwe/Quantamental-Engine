@@ -55,8 +55,9 @@ _FIELD_PIPE = {
     "log": "log",
 }
 # Fields that are not fetched from anywhere: local UI state, the net-tracking
-# map itself, and the log's paging cursor.
-_NOT_A_PIPE = {"ui", "net", "logCursor"}
+# map itself, and the live-log feed's two cursors (byte offset + event id —
+# option-3 fix 2026-08-05; both are echoes of server cursors, not pipes).
+_NOT_A_PIPE = {"ui", "net", "logOff", "logEid"}
 
 
 def _components() -> dict[str, str]:

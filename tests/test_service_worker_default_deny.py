@@ -162,6 +162,7 @@ def _is_immutable(path: str, text: str = _SW, same_origin: bool = True) -> bool:
 # Live doors and mutable files. A True for ANY of these is the CRIT, back.
 _MUST_NOT_CACHE = [
     "/api/state", "/api/dashboard/snapshot", "/api/ready", "/api/engine/log",
+    "/api/engine/log/live",
     "/fragments/ws_status", "/fragments/needs_link_count",
     "/stream/account/1", "/notifications/poll", "/accounts",
     "/context/position/7", "/orders/needs_review", "/orders/needs_link",
