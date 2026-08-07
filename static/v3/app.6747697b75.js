@@ -8799,19 +8799,31 @@ const RegimeTabNews = () => {
   const [calFilter, setCalFilter] = React.useState("");
   const [refreshMsg, setRefreshMsg] = React.useState(null);
   const [, setTick] = React.useState(0);
+  const _calRel = (ts) => {
+    if (!ts) return "never";
+    const ms = Date.parse(String(ts).replace(" ", "T") + (String(ts).endsWith("Z") ? "" : "Z"));
+    if (!Number.isFinite(ms)) return String(ts);
+    const mins = Math.floor((Date.now() - ms) / 6e4);
+    if (mins < 2) return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    if (mins < 1440) return `${Math.floor(mins / 60)}h ago`;
+    return `${Math.floor(mins / 1440)}d ago`;
+  };
   const [calUrl] = React.useState(() => {
     const iso = (ms) => new Date(ms).toISOString().slice(0, 10);
     return `/api/calendar?from_date=${iso(Date.now() - 30 * 864e5)}&to_date=${iso(Date.now() + 30 * 864e5)}`;
   });
   const { data: feedData, err: feedErr, reload: reloadFeed, foot: feedFoot } = useAnaJson("/api/news/feed?limit=80", 15e3);
-  const { data: calData, reload: reloadCal, foot: calFoot } = useAnaJson(calUrl, 6e4);
+  const { data: calData, err: calErr, reload: reloadCal, foot: calFoot } = useAnaJson(calUrl, 6e4);
   React.useEffect(() => {
     const t = setInterval(() => setTick((x) => x + 1), 6e4);
     return () => clearInterval(t);
   }, []);
   const nowMs = Date.now();
   const news = Array.isArray(feedData) ? feedData : [];
-  const calAll = Array.isArray(calData) ? calData : [];
+  const calAll = calData && Array.isArray(calData.events) ? calData.events : [];
+  const calMeta = calData && calData.meta || {};
+  const calHasMeta = typeof calMeta.stored_total === "number";
   const cal = calFilter ? calAll.filter((e) => calFilter.split(",").includes(e.impact)) : calAll;
   const refresh = async () => {
     setRefreshMsg("refreshing\u2026");
@@ -8918,18 +8930,54 @@ const RegimeTabNews = () => {
       count: cal.length,
       style: { height: "100%" },
       tag: "NOW MARKER",
-      right: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(PeriodSelector, { options: [["", "All"], ["high", "High"], ["high,medium", "High+Med"]], value: calFilter, onChange: setCalFilter }), /* @__PURE__ */ React.createElement(LiveClock, { id: "regime-news-clock", style: { fontSize: "0.54rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)" } })),
+      right: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(PeriodSelector, { options: [["", "All"], ["high", "High"], ["high,medium", "High+Med"]], value: calFilter, onChange: setCalFilter }), /* @__PURE__ */ React.createElement("span", { className: "qe-badge qe-mono", style: { fontSize: "0.5rem", color: "var(--qe-muted)", letterSpacing: "0.08em" } }, "US \xB7 FRED"), /* @__PURE__ */ React.createElement(LiveClock, { id: "regime-news-clock", style: { fontSize: "0.54rem", color: "var(--qe-muted)", fontFamily: "var(--qe-mono)" } })),
       bodyStyle: { padding: 6 },
       foot: calFoot
     },
-    cal.length === 0 ? /* @__PURE__ */ React.createElement(
+    calErr && calAll.length === 0 ? /* @__PURE__ */ React.createElement(
+      EmptyState,
+      {
+        fill: true,
+        tone: "err",
+        glyph: "\u2717",
+        msg: "calendar feed unavailable",
+        hint: qeFootCause(calErr),
+        cta: /* @__PURE__ */ React.createElement("button", { className: "qe-btn qe-btn-sm", onClick: reloadCal }, "Retry")
+      }
+    ) : calAll.length === 0 && !calHasMeta ? (
+      /* Nothing has ANSWERED yet (first mount, or a response without the
+         envelope — e.g. a service-worker replay of the old bare-array
+         shape). Saying anything about the store here would be a claim we
+         cannot support: the pre-fix version rendered "undefined stored ·
+         last fetch never" on every single page load, which is the same
+         affirmative-wrong-signal class the rest of this pane fixes. */
+      /* @__PURE__ */ React.createElement(EmptyState, { fill: true, tone: "info", glyph: "\u25EB", msg: "loading calendar\u2026" })
+    ) : calAll.length === 0 && calMeta.stored_total === 0 ? /* @__PURE__ */ React.createElement(
       EmptyState,
       {
         fill: true,
         tone: "info",
         glyph: "\u25EB",
         msg: "no calendar events stored",
-        hint: "press \u21BB on Market News to fetch (finnhub)"
+        hint: "US releases via FRED \u2014 check the FRED key in Config \u25B8 Connections"
+      }
+    ) : calAll.length === 0 ? /* @__PURE__ */ React.createElement(
+      EmptyState,
+      {
+        fill: true,
+        tone: "warn",
+        glyph: "\u25EB",
+        msg: "no events in this \xB130d window",
+        hint: `${calMeta.stored_total} stored \xB7 last fetch ${_calRel(calMeta.last_fetch)} \xB7 ${calMeta.coverage || "US releases via FRED"}`
+      }
+    ) : cal.length === 0 ? /* @__PURE__ */ React.createElement(
+      EmptyState,
+      {
+        fill: true,
+        tone: "info",
+        glyph: "\u25EB",
+        msg: `no ${calFilter === "high" ? "high" : "high or medium"}-impact events in this window`,
+        hint: `${calAll.length} events of all impacts \u2014 clear the filter to see them`
       }
     ) : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4 } }, (() => {
       const out = [];

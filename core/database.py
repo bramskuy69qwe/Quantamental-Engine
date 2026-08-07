@@ -393,6 +393,7 @@ CREATE TABLE IF NOT EXISTS economic_calendar (
     estimate     REAL,
     actual       REAL,
     fetched_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+    source       TEXT    NOT NULL DEFAULT '',
     UNIQUE(event_time, country, event_name)
 );
 CREATE INDEX IF NOT EXISTS idx_calendar_time ON economic_calendar (event_time ASC);
@@ -918,6 +919,25 @@ class DatabaseManager(
             "ALTER TABLE backtest_trades ADD COLUMN contracts REAL NOT NULL DEFAULT 0",
             "ALTER TABLE potential_models ADD COLUMN source_json TEXT NOT NULL DEFAULT '{}'",
             "ALTER TABLE potential_models ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]'",
+            # ── 2026-08-07: economic_calendar provenance ─────────────────
+            # Which provider wrote the row. Legacy rows keep '' — which is
+            # TRUE (provenance unknown), not a guess at Finnhub. The column
+            # exists so the FRED fetcher can rebuild ONLY its own rows in a
+            # window (see db_news.replace_calendar_events) without touching
+            # the 6k legacy rows, and so /api/calendar can state its sources
+            # instead of the UI asserting one. Deliberately NOT added to
+            # UNIQUE(event_time, country, event_name) — that is a different
+            # migration with a different blast radius.
+            # ★ The two vocabularies DO overlap: CPI, PPI, Initial Jobless
+            # Claims, ADP Employment Change and New Home Sales exist under
+            # BOTH providers at IDENTICAL UTC offsets, so they collide on the
+            # unique key exactly. Dormant only because the legacy rows stop at
+            # 2026-06-16, outside any forward window — a wide backfill would
+            # make it live. upsert_calendar_events therefore refuses to update
+            # a row owned by a DIFFERENT known provider (see its WHERE), so a
+            # collision can no longer null out a legacy row's consensus
+            # figures and then have the next rebuild delete it.
+            "ALTER TABLE economic_calendar ADD COLUMN source TEXT NOT NULL DEFAULT ''",
         ]:
             try:
                 await self._conn.execute(migration)

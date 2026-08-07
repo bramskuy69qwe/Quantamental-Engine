@@ -25,6 +25,7 @@ from core.exchange import (
 )
 from core import correlation_log
 from core import ws_manager
+from core.secret_redact import redact as _redact
 from core.data_logger import take_daily_snapshot, take_monthly_snapshot, export_all_to_excel
 from core.event_bus import event_bus, CH_TRADE_CLOSED
 from core import order_manager_singleton
@@ -703,7 +704,7 @@ async def _startup_fetch():
         log.info("Initial regime: %s x%.1f", r.label, r.multiplier)
         app_state.ws_status.add_log(f"Regime (startup): {r.label} x{r.multiplier}")
     except Exception as e:
-        log.warning("Initial regime computation failed: %s", e)
+        log.warning("Initial regime computation failed: %s", _redact(e))
 
     app_state.is_initializing = False
     app_state.ws_status.add_log(f"{config.PROJECT_NAME} fully initialized.")
@@ -829,7 +830,7 @@ async def _regime_refresh_loop():
                 _state["last_tradfi"] = now
                 log.info("Regime: TradFi signals refreshed")
             except Exception as e:
-                log.warning("Regime TradFi signal refresh failed: %s", e)
+                log.warning("Regime TradFi signal refresh failed: %s", _redact(e))
 
         # ── Binance crypto signal refresh (every 4 hours) ─────────────────────
         if now - _state["last_crypto"] >= 4 * 3600:
@@ -850,7 +851,7 @@ async def _regime_refresh_loop():
                     from core.exchange import handle_rate_limit_error
                     handle_rate_limit_error(e)
                 except Exception as e:
-                    log.warning("Regime Binance signal refresh failed: %s", e)
+                    log.warning("Regime Binance signal refresh failed: %s", _redact(e))
 
         # ── Re-classify current regime ────────────────────────────────────────
         try:
@@ -864,17 +865,24 @@ async def _regime_refresh_loop():
                 f"Regime: {regime.label} x{regime.multiplier} ({regime.confidence})"
             )
         except Exception as e:
-            log.warning("Regime computation failed: %s", e)
+            log.warning("Regime computation failed: %s", _redact(e))
 
 
 # ── News + Economic Calendar refresh loops ───────────────────────────────────
 
 async def _news_refresh_loop():
     """
-    Pull Finnhub news every 15s and economic calendar every 10 min.
+    Pull Finnhub NEWS every 15s and the FRED economic CALENDAR every 10 min.
     Non-fatal on errors — just log and continue, like _history_refresh_loop.
+
+    Two providers on purpose (2026-08-07): Finnhub news works, but its
+    /calendar/economic answers 403 on this plan, so the calendar moved to
+    FRED's release dates. Each fetcher already fails soft (returns 0), so the
+    try/except here is belt-and-braces for anything they let escape.
     """
+    from core.news_fetcher import FredCalendarFetcher
     fetcher = FinnhubFetcher()
+    calendar = FredCalendarFetcher()
     last_calendar_ts = 0.0
 
     while True:
@@ -882,17 +890,28 @@ async def _news_refresh_loop():
         try:
             await fetcher.fetch_news(category="general")
         except Exception as e:
-            log.warning("Finnhub news refresh failed: %s", e)
+            log.warning("Finnhub news refresh failed: %s", _redact(e))
 
         now_ts = datetime.now(timezone.utc).timestamp()
         if now_ts - last_calendar_ts >= 10 * 60:
             try:
+                # SAME ±30d window the pane freezes at mount
+                # (pages-regime.jsx). If these drift apart the pane asks for a
+                # window the fetcher never wrote, which is how the calendar
+                # went silently blank in the first place.
                 minus30 = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%d")
                 plus30 = (datetime.now(timezone.utc) + timedelta(days=30)).strftime("%Y-%m-%d")
-                await fetcher.fetch_calendar(minus30, plus30)
-                last_calendar_ts = now_ts
+                wrote = await calendar.fetch_calendar(minus30, plus30)
+                # Only bank the 10-minute cooldown on a fetch that actually
+                # REACHED FRED. fetch_calendar fails soft (returns 0), so
+                # advancing unconditionally made a transient error cost a full
+                # 10 minutes of staleness. `wrote is not None` distinguishes
+                # "reached FRED, legitimately quiet window" (0 rows, cooldown
+                # banked) from "could not reach FRED" (None, retry in 15s).
+                if wrote is not None:
+                    last_calendar_ts = now_ts
             except Exception as e:
-                log.warning("Finnhub calendar refresh failed: %s", e)
+                log.warning("FRED calendar refresh failed: %s", _redact(e))
 
         await asyncio.sleep(15)
 
@@ -934,7 +953,7 @@ async def _order_staleness_loop():
                     app_state.active_account_id,
                 )
         except Exception as e:
-            log.warning("Filled-order reconcile error: %s", e)
+            log.warning("Filled-order reconcile error: %s", _redact(e))
 
 
 # ── Algo/conditional order sync ──────────────────────────────────────────────
@@ -1067,7 +1086,7 @@ async def _funding_refresh_loop(interval_s: int = 300):
                 if result["written"] or result["orphan"] or result.get("reconciled"):
                     log.info("Funding poll: %s", result)
         except Exception as e:
-            log.warning("Funding refresh loop error: %s", e)
+            log.warning("Funding refresh loop error: %s", _redact(e))
         await asyncio.sleep(interval_s)
 
 

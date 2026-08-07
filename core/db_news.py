@@ -115,26 +115,91 @@ class NewsMixin:
         }
 
     async def upsert_calendar_events(self, rows: List[Dict[str, Any]]) -> int:
-        """Bulk upsert economic calendar events keyed on (event_time, country, event_name)."""
+        """Bulk upsert calendar events keyed on (event_time, country, event_name).
+
+        The conflict clause REFUSES to overwrite a row owned by a different
+        known provider (`WHERE source IN ('', excluded.source)`). The two
+        providers' vocabularies genuinely collide — CPI, PPI, Initial Jobless
+        Claims, ADP Employment Change and New Home Sales exist under both at
+        identical UTC offsets — and without the guard a FRED write would null
+        a Finnhub row's previous/estimate/actual, flip its source, and hand it
+        to the next rebuild's DELETE. `''` (legacy, provenance unknown) is
+        adoptable on purpose; two KNOWN providers never clobber each other.
+        """
         if not rows:
             return 0
         await self._conn.executemany(
             """INSERT INTO economic_calendar
                  (event_time, country, event_name, impact, currency, unit,
-                  previous, estimate, actual, fetched_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                  previous, estimate, actual, fetched_at, source)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
                ON CONFLICT(event_time, country, event_name)
                DO UPDATE SET impact=excluded.impact, currency=excluded.currency,
                              unit=excluded.unit, previous=excluded.previous,
                              estimate=excluded.estimate, actual=excluded.actual,
-                             fetched_at=excluded.fetched_at""",
+                             fetched_at=excluded.fetched_at,
+                             source=excluded.source
+                 WHERE economic_calendar.source IN ('', excluded.source)""",
             [(r["event_time"], r["country"], r["event_name"],
               r.get("impact", ""), r.get("currency", ""), r.get("unit", ""),
-              r.get("previous"), r.get("estimate"), r.get("actual"))
+              r.get("previous"), r.get("estimate"), r.get("actual"),
+              r.get("source", ""))
              for r in rows],
         )
         await self._conn.commit()
         return len(rows)
+
+    async def replace_calendar_events(
+        self, source: str, from_iso: str, to_iso: str, rows: List[Dict[str, Any]],
+    ) -> int:
+        """Rebuild ONE provider's events inside a window: delete then insert.
+
+        Why not a plain upsert: the UNIQUE key is
+        (event_time, country, event_name), and a FRED row's event_time is
+        DERIVED from a curated clock time (FRED publishes dates only — 0 of
+        1000 sampled records carried a time). So correcting a wrong release
+        time would MINT a second row and orphan the first, leaving two
+        contradictory entries for one event — and this table never
+        garbage-collects (it still holds 6k rows from a provider that
+        stopped writing in June). Rebuilding the window makes a retime, a
+        rename and a de-listing all idempotent.
+
+        Scoped by `source` so it can never touch another provider's rows,
+        and by the window so it can never delete history outside it.
+        """
+        # ONE transaction for DELETE + INSERT. Committing the delete first
+        # would leave the window EMPTY if the insert then failed (crash,
+        # SQLITE_BUSY) — turning a transient error into exactly the blank
+        # calendar this whole change exists to fix. Note the inner
+        # upsert_calendar_events early-returns without committing when `rows`
+        # is empty, so the explicit commit below is what makes an
+        # empty-window rebuild durable.
+        await self._conn.execute(
+            "DELETE FROM economic_calendar "
+            "WHERE source = ? AND event_time >= ? AND event_time <= ?",
+            (source, from_iso, to_iso),
+        )
+        n = await self.upsert_calendar_events(rows)
+        await self._conn.commit()
+        return n
+
+    async def get_calendar_meta(self) -> Dict[str, Any]:
+        """Provenance for the calendar pane — every field DERIVED, not asserted.
+
+        The pane cannot otherwise tell "nothing is scheduled" from "the feed
+        died in June", which is exactly the state this table was in.
+        """
+        async with self._conn.execute(
+            "SELECT COUNT(*), MAX(fetched_at) FROM economic_calendar"
+        ) as cur:
+            total, last_fetch = await cur.fetchone()
+        async with self._conn.execute(
+            "SELECT DISTINCT source FROM economic_calendar ORDER BY source"
+        ) as cur:
+            sources = [r[0] for r in await cur.fetchall()]
+        return {"stored_total": total or 0,
+                "last_fetch": last_fetch,
+                "sources": sources}
 
     async def get_calendar_events(
         self, from_date: str = "", to_date: str = "", impact: str = "",
@@ -142,7 +207,7 @@ class NewsMixin:
         """Return calendar events sorted by event_time ASC. Optional impact filter (csv)."""
         query = (
             "SELECT id, event_time, country, event_name, impact, currency, unit, "
-            "previous, estimate, actual FROM economic_calendar WHERE 1=1"
+            "previous, estimate, actual, source FROM economic_calendar WHERE 1=1"
         )
         params: list = []
         if from_date:
@@ -162,6 +227,7 @@ class NewsMixin:
         return [
             {"id": r[0], "event_time": r[1], "country": r[2], "event_name": r[3],
              "impact": r[4], "currency": r[5], "unit": r[6],
-             "previous": r[7], "estimate": r[8], "actual": r[9]}
+             "previous": r[7], "estimate": r[8], "actual": r[9],
+             "source": r[10]}
             for r in rows
         ]

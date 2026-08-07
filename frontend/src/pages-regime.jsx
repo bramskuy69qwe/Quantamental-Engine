@@ -897,17 +897,41 @@ const RegimeTabNews = () => {
   const [refreshMsg, setRefreshMsg] = React.useState(null);
   const [, setTick] = React.useState(0);                       // 60s rel-time re-render
 
+  // "last fetch" in words. A raw '2026-06-09 06:12:45' does not read as
+  // ALARMING; "59d ago" does, and that is the whole point of showing it.
+  const _calRel = (ts) => {
+    if (!ts) return 'never';
+    const ms = Date.parse(String(ts).replace(' ', 'T') + (String(ts).endsWith('Z') ? '' : 'Z'));
+    if (!Number.isFinite(ms)) return String(ts);
+    const mins = Math.floor((Date.now() - ms) / 60000);
+    if (mins < 2) return 'just now';
+    if (mins < 60) return `${mins}m ago`;
+    if (mins < 1440) return `${Math.floor(mins / 60)}h ago`;
+    return `${Math.floor(mins / 1440)}d ago`;
+  };
+
   const [calUrl] = React.useState(() => {
     const iso = (ms) => new Date(ms).toISOString().slice(0, 10);
     return `/api/calendar?from_date=${iso(Date.now() - 30 * 86400000)}&to_date=${iso(Date.now() + 30 * 86400000)}`;
   });
   const { data: feedData, err: feedErr, reload: reloadFeed, foot: feedFoot } = useAnaJson('/api/news/feed?limit=80', 15_000);
-  const { data: calData, reload: reloadCal, foot: calFoot } = useAnaJson(calUrl, 60_000);
+  // `err: calErr` was NOT destructured here until 2026-08-07 — the calendar
+  // threw its error state away, which is the root of the whole defect below.
+  const { data: calData, err: calErr, reload: reloadCal, foot: calFoot } = useAnaJson(calUrl, 60_000);
   React.useEffect(() => { const t = setInterval(() => setTick((x) => x + 1), 60_000); return () => clearInterval(t); }, []);
 
   const nowMs = Date.now();
   const news = Array.isArray(feedData) ? feedData : [];
-  const calAll = Array.isArray(calData) ? calData : [];
+  // /api/calendar returns an ENVELOPE now ({events, meta}) — a bare array
+  // could not distinguish "nothing scheduled" from "the feed stopped writing
+  // two months ago", and the pane spent that whole time asserting the former.
+  const calAll = (calData && Array.isArray(calData.events)) ? calData.events : [];
+  const calMeta = (calData && calData.meta) || {};
+  // Has a response with a real envelope ARRIVED? Distinguishes "not answered
+  // yet / old shape" from "answered, and the store is genuinely empty" —
+  // without it `calMeta.stored_total === 0` is `undefined === 0` = false on
+  // first mount and the pane falls through to the stale-window branch.
+  const calHasMeta = typeof calMeta.stored_total === 'number';
   const cal = calFilter ? calAll.filter((e) => calFilter.split(',').includes(e.impact)) : calAll;
 
   const refresh = async () => {
@@ -989,13 +1013,45 @@ const RegimeTabNews = () => {
         <Pane title="Economic Calendar" count={cal.length} style={{ height: '100%' }} tag="NOW MARKER"
           right={<>
             <PeriodSelector options={[['', 'All'], ['high', 'High'], ['high,medium', 'High+Med']]} value={calFilter} onChange={setCalFilter} />
+            {/* Standing provenance: what this calendar IS, always on screen.
+                `qe-badge` is load-bearing, not cosmetic — e2e's headTitle()
+                (e2e/lib/inpage.ts) derives each pane's CONTROL ID from its
+                head text and strips `.qe-badge`. A bare span would rename the
+                pane 'economic calendar us fred - - utc' and orphan all four
+                of its registered control ids in e2e/manifest/controls.json. */}
+            <span className="qe-badge qe-mono" style={{ fontSize: '0.5rem', color: 'var(--qe-muted)', letterSpacing: '0.08em' }}>US · FRED</span>
             <LiveClock id="regime-news-clock" style={{ fontSize: '0.54rem', color: 'var(--qe-muted)', fontFamily: 'var(--qe-mono)' }} />
           </>}
           bodyStyle={{ padding: 6 }}
           foot={calFoot}>
-          {cal.length === 0 ? (
+          {/* FOUR states, because "empty" had four different causes and the
+              pane asserted the same wrong one for all of them. It rendered
+              "no calendar events stored" while 6,278 events WERE stored —
+              just none inside the ±30d window, because the provider had been
+              answering 403 since June. DESIGN.md: an affirmative WRONG signal
+              is worse than no signal. */}
+          {calErr && calAll.length === 0 ? (
+            <EmptyState fill tone="err" glyph="✗" msg="calendar feed unavailable"
+              hint={qeFootCause(calErr)}
+              cta={<button className="qe-btn qe-btn-sm" onClick={reloadCal}>Retry</button>} />
+          ) : calAll.length === 0 && !calHasMeta ? (
+            /* Nothing has ANSWERED yet (first mount, or a response without the
+               envelope — e.g. a service-worker replay of the old bare-array
+               shape). Saying anything about the store here would be a claim we
+               cannot support: the pre-fix version rendered "undefined stored ·
+               last fetch never" on every single page load, which is the same
+               affirmative-wrong-signal class the rest of this pane fixes. */
+            <EmptyState fill tone="info" glyph="◫" msg="loading calendar…" />
+          ) : calAll.length === 0 && calMeta.stored_total === 0 ? (
             <EmptyState fill tone="info" glyph="◫" msg="no calendar events stored"
-              hint="press ↻ on Market News to fetch (finnhub)" />
+              hint="US releases via FRED — check the FRED key in Config ▸ Connections" />
+          ) : calAll.length === 0 ? (
+            <EmptyState fill tone="warn" glyph="◫" msg="no events in this ±30d window"
+              hint={`${calMeta.stored_total} stored · last fetch ${_calRel(calMeta.last_fetch)} · ${calMeta.coverage || 'US releases via FRED'}`} />
+          ) : cal.length === 0 ? (
+            <EmptyState fill tone="info" glyph="◫"
+              msg={`no ${calFilter === 'high' ? 'high' : 'high or medium'}-impact events in this window`}
+              hint={`${calAll.length} events of all impacts — clear the filter to see them`} />
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               {(() => {

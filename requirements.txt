@@ -19,6 +19,12 @@ redis>=5.0.0
 sse-starlette>=2.0.0
 markupsafe>=2.1.5
 concurrent-log-handler>=0.9.20,<1.0
+# IANA tz database for zoneinfo. Windows ships no system tz db, so
+# ZoneInfo("America/New_York") — used to place US economic releases on their
+# Eastern wall clock (core/news_fetcher) — needs this wheel. It was present
+# only TRANSITIVELY via pandas; declared here so a third party's dependency
+# change cannot silently break the economic calendar.
+tzdata>=2024.1; sys_platform == "win32"
 pytest>=8.0.0
 pytest-asyncio>=0.23.0
 pytest-timeout>=2.1.0,<3.0

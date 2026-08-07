@@ -28,6 +28,7 @@ from typing import Any, Callable, Dict, List, Optional
 import httpx
 
 import config
+from core.secret_redact import redact as _redact
 from core.database import db
 
 log = logging.getLogger("regime_fetcher")
@@ -121,7 +122,7 @@ class RegimeFetcher:
                                  {"ticker": "^VIX", "ok": False,
                                   "error_type": type(e).__name__,
                                   "duration_ms": round((time.perf_counter() - _t0) * 1000, 2)})
-            log.error("VIX download error: %s", e)
+            log.error("VIX download error: %s", _redact(e))
             await _progress(progress_cb, 100, f"VIX: error — {e}")
             return 0
         correlation_log.emit("regime_fetcher", "yahoo", "in",
@@ -214,7 +215,7 @@ class RegimeFetcher:
                 "API likely returned an error envelope. error_code=%r "
                 "error_message=%r. Skipping signal write; regime will "
                 "use last-known value until next successful fetch.",
-                series_id, err_code, err_msg,
+                series_id, err_code, _redact(err_msg),
             )
             await _progress(
                 progress_cb, 100,
@@ -538,7 +539,7 @@ class RegimeFetcher:
             results["vix_close"] = 0
             await step_progress(0, 100, "VIX: yfinance not installed")
         except Exception as e:
-            log.error("VIX fetch failed: %s", e)
+            log.error("VIX fetch failed: %s", _redact(e))
             results["vix_close"] = 0
 
         # Step 2: US 10Y Yield (FRED)
@@ -548,7 +549,7 @@ class RegimeFetcher:
                 lambda p, m: step_progress(1, p, m),
             )
         except Exception as e:
-            log.error("US10Y fetch failed: %s", e)
+            log.error("US10Y fetch failed: %s", _redact(e))
             results["us10y_yield"] = 0
 
         # Step 3: HY Spread (FRED)
@@ -558,7 +559,7 @@ class RegimeFetcher:
                 lambda p, m: step_progress(2, p, m),
             )
         except Exception as e:
-            log.error("HY spread fetch failed: %s", e)
+            log.error("HY spread fetch failed: %s", _redact(e))
             results["hy_spread"] = 0
 
         # Step 4: BTC rvol ratio (derived from OHLCV)
@@ -568,7 +569,7 @@ class RegimeFetcher:
                 lambda p, m: step_progress(3, p, m),
             )
         except Exception as e:
-            log.error("BTC rvol ratio computation failed: %s", e)
+            log.error("BTC rvol ratio computation failed: %s", _redact(e))
             results["btc_rvol_ratio"] = 0
 
         # Steps 5+6: Binance OI & Funding (full mode only)
@@ -579,7 +580,7 @@ class RegimeFetcher:
                     lambda p, m: step_progress(4, p, m),
                 )
             except Exception as e:
-                log.error("Binance OI fetch failed: %s", e)
+                log.error("Binance OI fetch failed: %s", _redact(e))
                 results["agg_oi_change"] = 0
 
             try:
@@ -588,7 +589,7 @@ class RegimeFetcher:
                     lambda p, m: step_progress(5, p, m),
                 )
             except Exception as e:
-                log.error("Binance funding fetch failed: %s", e)
+                log.error("Binance funding fetch failed: %s", _redact(e))
                 results["avg_funding"] = 0
 
         await _progress(progress_cb, 100, "All signals fetched")

@@ -17,14 +17,16 @@ import json
 import logging
 import re
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date as _date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 import httpx
 
 import config
 from core import correlation_log
 from core.database import db
+from core.secret_redact import redact as _secret_redact
 
 log = logging.getLogger("news_fetcher")
 
@@ -34,12 +36,47 @@ log = logging.getLogger("news_fetcher")
 # included — in its message, and the error handlers below logged that
 # message verbatim into the root JSON log. Scrub the token before any
 # exception text reaches a log line.
-_TOKEN_RE = re.compile(r"(token=)[A-Za-z0-9_\-]+")
-
-
 def _redact(e: object) -> str:
-    """Exception text with the Finnhub token query param scrubbed."""
-    return _TOKEN_RE.sub(r"\1***", str(e))
+    """Exception text with provider credentials scrubbed from any URL in it.
+
+    Delegates to the SHARED scrubber. It used to be a local `token=`-only
+    regex here; FRED authenticates with `api_key=`, and core/regime_fetcher
+    had been logging that key unredacted since v2.5 — two modules solving one
+    problem privately is exactly how the second site got missed.
+    """
+    return _secret_redact(e)
+
+
+# US market releases are published on an Eastern WALL CLOCK, so the UTC offset
+# moves with DST — a fixed -4/-5 would be an hour wrong for part of the year
+# (and any ±30d window in March or November spans the change).
+# Resolved LAZILY, not at import. `ZoneInfo` needs the IANA database, which on
+# Windows comes from the `tzdata` wheel — and this repo only had it
+# TRANSITIVELY (pandas declares it). A module-scope ZoneInfo() would turn a
+# third party dropping that dependency into "the app does not boot", because
+# api/routes_news.py imports this module. Now the failure is scoped to the
+# calendar fetch, which fails soft and says why. Falling back to UTC would be
+# worse than failing: every release time would be silently 4-5 hours wrong.
+_ET = None
+
+
+def _et_zone():
+    global _ET
+    if _ET is None:
+        _ET = ZoneInfo("America/New_York")   # ZoneInfoNotFoundError → caught by the fetcher
+    return _ET
+
+
+def _fred_event_time(day: str, hh: int, mm: int) -> str:
+    """'YYYY-MM-DD' + curated ET clock → the stored UTC ISO string.
+
+    Format matches the existing rows EXACTLY ('...+00:00', never 'Z', never
+    date-only): event_time is part of UNIQUE(event_time, country, event_name),
+    so a format drift would mint duplicates rather than update in place.
+    """
+    d = _date.fromisoformat(day)
+    local = datetime(d.year, d.month, d.day, hh, mm, tzinfo=_et_zone())
+    return local.astimezone(timezone.utc).isoformat()
 
 
 # ── Finnhub (news + economic calendar) ──────────────────────────────────────
@@ -195,8 +232,216 @@ class FinnhubFetcher:
             })
         if not rows:
             return 0
+        for r in rows:
+            r["source"] = "finnhub"
         count = await db.upsert_calendar_events(rows)
         log.info("Finnhub calendar: upserted %d events (%s → %s)", count, from_date, to_date)
+        return count
+
+
+# ── FRED economic calendar (the shipped calendar provider) ──────────────────
+#
+# WHY THIS EXISTS: Finnhub's /calendar/economic answers
+# 403 {"error":"You don't have access to this resource."} on this account's
+# plan — OBSERVED against the live endpoint 2026-08-07, not inferred. Writes
+# stopped 2026-06-09 and the pane silently rendered an empty ±30d window for
+# two months. FRED's release calendar is free and the key is already stored.
+#
+# TWO THINGS FRED DOES NOT GIVE, both stated in the UI rather than papered
+# over (see api/routes_news.py + the pane's EmptyState hints):
+#   1. NO TIMES. 0 of 1000 sampled records carried a time component — every
+#      record is a bare "YYYY-MM-DD". The clock times below are CURATED
+#      CONSTANTS from the issuing agencies' standard release schedules, NOT
+#      data from FRED. That is why writes go through
+#      db.replace_calendar_events: correcting one of these times rebuilds the
+#      window instead of minting a duplicate under the UNIQUE key.
+#   2. NO CONSENSUS. There is no forecast/previous/actual in a release-date
+#      record, so those columns stay NULL. The pane already renders NULL as
+#      an em-dash with a neutral colour, so nothing is fabricated.
+#
+# ALSO ABSENT (verified: 0 hits across the 330-release catalogue): ISM/PMI,
+# Conference Board Consumer Confidence, and standalone Advance Durable Goods.
+# FRED lists US GOVERNMENT releases; privately-published indicators are not
+# in it at any price. The UI says so.
+_FRED_BASE = "https://api.stlouisfed.org/fred"
+
+# release_id → (display name, impact, ET hour, ET minute, max releases per 30d)
+# All 20 ids below (16 shipped + the 4 excluded) were checked against the live
+# /fred/releases catalogue on 2026-08-07: 20/20 exact-name matches.
+# The ET clock times are NOT from FRED — see the block comment above; they are
+# the issuing agencies' standard release times. The cadence cap is a tripwire: FRED
+# occasionally hangs a daily series off a release, and without it one such
+# change would flood the calendar. A release that breaches its cap is dropped
+# WHOLE and logged, never partially trusted.
+_FRED_RELEASES: dict = {
+    50:  ("Nonfarm Payrolls (Employment Situation)", "high",   8, 30, 2),
+    10:  ("CPI",                                     "high",   8, 30, 2),
+    53:  ("GDP",                                     "high",   8, 30, 2),
+    54:  ("Personal Income & Outlays (PCE)",         "high",   8, 30, 2),
+    46:  ("PPI",                                     "medium", 8, 30, 2),
+    9:   ("Retail Sales (Advance)",                  "medium", 8, 30, 2),
+    192: ("JOLTS Job Openings",                      "medium", 10, 0, 2),
+    194: ("ADP Employment Change",                   "medium", 8, 15, 2),
+    13:  ("Industrial Production",                   "medium", 9, 15, 2),
+    180: ("Initial Jobless Claims",                  "medium", 8, 30, 6),
+    51:  ("Trade Balance",                           "low",    8, 30, 2),
+    11:  ("Employment Cost Index",                   "low",    8, 30, 2),
+    188: ("Import & Export Prices",                  "low",    8, 30, 2),
+    97:  ("New Home Sales",                          "low",    10, 0, 2),
+    229: ("Construction Spending",                   "low",    10, 0, 2),
+    20:  ("Fed Balance Sheet (H.4.1)",               "low",    16, 30, 6),
+}
+
+# DELIBERATELY EXCLUDED — each would put a WRONG row on a risk console:
+#   101 FOMC Press Release — 38 release dates in a 45-day window (measured);
+#       FRED hangs a daily series off it, so its dates cannot locate a
+#       meeting. Real FOMC dates need the Fed's published meeting calendar.
+#   95  M3 Survey — ONE release_id covering two different reports at two
+#       different times (Advance Durable Goods 08:30, Factory Orders 10:00)
+#       with no field to tell them apart.
+#   27  New Residential Construction — two dates a month under one name;
+#       only the first (Housing Starts) is identifiable.
+#   91  Surveys of Consumers — FRED lists only the FINAL reading; the
+#       market-moving preliminary is absent, so shipping it would imply
+#       coverage that does not exist.
+_FRED_EXCLUDED = (101, 95, 27, 91)
+
+
+class FredCalendarFetcher:
+    """US economic-release calendar from FRED `release/dates`.
+
+    Uses the PER-RELEASE endpoint (`/fred/release/dates?release_id=N`), one
+    call per curated release, NOT the bulk `/fred/releases/dates`. That is
+    load-bearing and was found by executing both: for release 50 over the
+    same ±40d window the bulk endpoint returned only ['2026-09-04'] while the
+    per-release endpoint returned ['2026-07-02', '2026-08-07', '2026-09-04'].
+    The bulk endpoint omits same-day and already-passed dates, so it would
+    have hidden an NFP print happening TODAY — the single event the operator
+    most needs to see — and emptied the whole backward half of the window.
+    """
+
+    def __init__(self, api_key: Optional[str] = None) -> None:
+        self._explicit_key = api_key
+
+    def _key_ok(self) -> bool:
+        self.api_key = (self._explicit_key if self._explicit_key is not None
+                        else config.get_api_key("fred"))
+        if not self.api_key:
+            log.warning("FRED_API_KEY not set — economic-calendar fetches skipped")
+            return False
+        return True
+
+    async def _release_dates(self, client, rid: int, from_date: str,
+                            to_date: str) -> List[str]:
+        resp = await client.get(f"{_FRED_BASE}/release/dates", params={
+            "api_key": self.api_key, "file_type": "json", "release_id": rid,
+            "realtime_start": from_date, "realtime_end": to_date,
+            "include_release_dates_with_no_data": "true", "limit": 1000,
+        })
+        resp.raise_for_status()
+        out = []
+        for rec in (resp.json() or {}).get("release_dates", []):
+            d = str(rec.get("date") or "")
+            # Defensive: if FRED ever starts sending a time we would silently
+            # keep overriding it with the curated one. Take only the date part
+            # and let the curated clock apply — but say so loudly.
+            if len(d) > 10:
+                log.warning("FRED release %s returned a TIME component (%r) — "
+                            "the curated clock table may now be redundant", rid, d)
+                d = d[:10]
+            if len(d) == 10:
+                out.append(d)
+        return out
+
+    async def fetch_calendar(self, from_date: str, to_date: str):
+        """Rebuild the FRED-sourced calendar for [from_date, to_date].
+
+        Returns the row count on a fetch that REACHED FRED (0 is a legitimate
+        quiet window), or **None** when it could not — the caller needs that
+        distinction to decide whether to bank its 10-minute cooldown, and a
+        bare 0 conflated "quiet" with "down". Never raises: the news loop that
+        drives this must not die on a FRED outage, and the pane states its own
+        staleness from `last_fetch`.
+        """
+        if not self._key_ok():
+            return None
+        _t0 = time.perf_counter()
+        correlation_log.emit("news_fetcher", "fred", "out",
+                             correlation_log.CAT_HTTP_OUT_CALL,
+                             {"endpoint": "release/dates",
+                              "releases": len(_FRED_RELEASES)})
+        rows: List[Dict[str, Any]] = []
+        failed: List[int] = []
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                for rid, (name, impact, hh, mm, cap) in _FRED_RELEASES.items():
+                    # PER-RELEASE isolation: one 429/500 on the 16th release
+                    # must not discard the 15 already collected and blank the
+                    # calendar. A partial result is strictly better than none
+                    # — but if EVERY release failed we return None below so the
+                    # caller retries instead of banking its cooldown.
+                    try:
+                        dates = await self._release_dates(client, rid, from_date, to_date)
+                    except Exception as e:
+                        failed.append(rid)
+                        log.warning("FRED release %s (%s) failed: %s", rid, name, _redact(e))
+                        continue
+                    span_days = max(1, (_date.fromisoformat(to_date)
+                                        - _date.fromisoformat(from_date)).days)
+                    allowed = cap * max(1, round(span_days / 30))
+                    if len(dates) > allowed:
+                        log.warning("FRED release %s (%s) returned %d dates over %dd "
+                                    "(cap %d) — dropping the whole release rather than "
+                                    "flooding the calendar", rid, name, len(dates),
+                                    span_days, allowed)
+                        continue
+                    for d in dates:
+                        rows.append({
+                            "event_time": _fred_event_time(d, hh, mm),
+                            "country": "US",
+                            "event_name": name,
+                            "impact": impact,
+                            # parity with every stored row: currency is never
+                            # rendered in the calendar block and all 819 live
+                            # US rows carry ''.
+                            "currency": "",
+                            "unit": "",
+                            # FRED release dates carry no consensus data.
+                            "previous": None, "estimate": None, "actual": None,
+                            "source": "fred",
+                        })
+        except Exception as e:
+            correlation_log.emit("news_fetcher", "fred", "in",
+                                 correlation_log.CAT_HTTP_OUT_RETURN,
+                                 {"endpoint": "release/dates", "ok": False,
+                                  "error_type": type(e).__name__,
+                                  "duration_ms": round((time.perf_counter() - _t0) * 1000, 2)})
+            log.error("FRED calendar fetch failed: %s", _redact(e))
+            return None  # fail SOFT: never kill the news loop, never wipe stored rows
+        if failed and len(failed) == len(_FRED_RELEASES):
+            # Every release errored — treat as "could not reach FRED" and keep
+            # the stored window rather than rebuilding it to empty.
+            log.error("FRED calendar: all %d releases failed — keeping stored events",
+                      len(failed))
+            return None
+        correlation_log.emit("news_fetcher", "fred", "in",
+                             correlation_log.CAT_HTTP_OUT_RETURN,
+                             {"endpoint": "release/dates", "ok": True,
+                              "rows": len(rows),
+                              "duration_ms": round((time.perf_counter() - _t0) * 1000, 2)})
+        # Window REBUILD, not upsert — see db.replace_calendar_events. An
+        # empty `rows` is a legitimate result (a quiet fortnight) and must
+        # still clear the window, so this is not guarded on `if rows`.
+        # Bounds are plain UTC day edges, NOT run through the ET clock: every
+        # curated release lands between 12:15Z and 20:30Z, so UTC-day bounds
+        # strictly contain every row this fetcher writes, and they read the
+        # same as the route's `to_date` boundary. (ET-derived bounds worked
+        # but spelled the end of an Aug-31 window as '2026-09-01T03:59' —
+        # correct and unreadable, which is how boundary bugs hide.)
+        frm_iso, to_iso = f"{from_date}T00:00:00+00:00", f"{to_date}T23:59:59+00:00"
+        count = await db.replace_calendar_events("fred", frm_iso, to_iso, rows)
+        log.info("FRED calendar: wrote %d US release events (%s → %s)",
+                 count, from_date, to_date)
         return count
 
 
@@ -262,7 +507,7 @@ class BweWsConsumer:
                             try:
                                 await self._handle_message(raw)
                             except Exception as e:
-                                log.warning("BWE WS: message handler error: %s", e)
+                                log.warning("BWE WS: message handler error: %s", _redact(e))
                     finally:
                         ping_task.cancel()
                         try:
@@ -278,7 +523,7 @@ class BweWsConsumer:
                         cl.CAT_WS_DISCONNECT,
                         {"stream": "news", "reason": str(e)[:200]})
             except Exception as e:
-                log.error("BWE WS: unexpected error: %s", e)
+                log.error("BWE WS: unexpected error: %s", _redact(e))
                 from core import correlation_log as cl
                 cl.emit("news_fetcher", "bwenews", "internal",
                         cl.CAT_WS_DISCONNECT,
