@@ -429,6 +429,10 @@ const TopNavStd = ({page='Dashboard', onChange, variant='line', dense=false}) =>
     fontFamily:'var(--qe-ui)', height: dense ? 32 : 38, flexShrink:0,
   }}>
     <div style={{padding:'0 14px', display:'flex', alignItems:'baseline', gap:8, borderRight:'1px solid var(--qe-line)', alignSelf:'stretch', alignItems:'center'}}>
+      {/* the product mark (brand.js single source of truth). ghost=false: at
+          16px the FIELD's 14%-opacity cells are sub-pixel noise — the mark
+          degrades to the bare M by design at chrome sizes. */}
+      <BrandMark size={16} ghost={false} style={{flexShrink:0, display:'block'}}/>
       <span style={{fontFamily:'var(--qe-mono)', fontSize:'0.7rem', fontWeight:700, color:'var(--qe-cyan)', letterSpacing:'0.08em'}}>{(window.QE_BOOTSTRAP && window.QE_BOOTSTRAP.projectShortName) || 'QRE'}</span>
       <span style={{fontFamily:'var(--qe-mono)', fontSize:'0.56rem', color:'var(--qe-sub)', letterSpacing:'0.06em'}}>{(window.QE_BOOTSTRAP && window.QE_BOOTSTRAP.projectVersion) || 'v3'}</span>
     </div>

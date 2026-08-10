@@ -451,8 +451,15 @@ async def pwa_manifest():
             "theme_color": "#07080f",
             "orientation": "any",
             "icons": [
-                {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
-                {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"},
+                # "any", NOT "any maskable" (brand audit #1, 2026-08-11): a
+                # maskable icon is cropped to a ~80% circular safe zone, and
+                # the mark's four corner cells sit ~90% OUTSIDE that circle —
+                # launchers honoring maskable would render the M with its
+                # corners amputated. Launchers letterbox "any" icons safely;
+                # a padded maskable cut is a deliberate future addition, not a
+                # declaration to fake.
+                {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+                {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
             ],
         },
         media_type="application/manifest+json",

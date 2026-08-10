@@ -1,9 +1,10 @@
 {
-  "hash": "6747697b75",
-  "app": "app.6747697b75.js",
-  "tokens": "tokens.6747697b75.css",
-  "shell": "shell.6747697b75.css",
+  "hash": "0c9abb6323",
+  "app": "app.0c9abb6323.js",
+  "tokens": "tokens.0c9abb6323.css",
+  "shell": "shell.0c9abb6323.css",
   "modules": [
+    "brand.js",
     "primitives.jsx",
     "charts.jsx",
     "grid-workspace.jsx",

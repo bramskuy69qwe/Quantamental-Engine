@@ -2,6 +2,99 @@
    DO NOT EDIT: regenerate with `npm run build`. Concatenated modules share
    window globals in load order (classic React.createElement). */
 
+/* ==== brand.js ==== */
+const QE_BRAND = {
+  name: "MERIDIAN",
+  variant: "10C FIELD",
+  viewBox: "0 0 100 100",
+  cell: 10,
+  // cell edge, viewBox units (grid pitch is 15)
+  bg: "#000000",
+  fg: "#ffffff",
+  accent: "#00e7ff",
+  // == --qe-cyan
+  ghostOpacity: 0.14,
+  // the lit M (12 white cells; [x, y] of each 10-unit cell)
+  cells: [
+    [14, 14],
+    [74, 14],
+    [14, 29],
+    [29, 29],
+    [59, 29],
+    [74, 29],
+    [14, 44],
+    [74, 44],
+    [14, 59],
+    [74, 59],
+    [14, 74],
+    [74, 74]
+  ],
+  // the meridian cell — on the vertical centerline, the only color
+  accentCell: [44, 44],
+  // the powered-off remainder of the 5×5 grid (12 ghost cells)
+  ghostCells: [
+    [29, 14],
+    [44, 14],
+    [59, 14],
+    [44, 29],
+    [29, 44],
+    [59, 44],
+    [29, 59],
+    [44, 59],
+    [59, 59],
+    [29, 74],
+    [44, 74],
+    [59, 74]
+  ]
+};
+const BrandMark = function(props) {
+  props = props || {};
+  const size = props.size || 16;
+  const ghost = props.ghost !== false;
+  const b = QE_BRAND;
+  const kids = [];
+  if (ghost) {
+    kids.push(React.createElement(
+      "g",
+      { key: "ghost", fill: b.fg, opacity: b.ghostOpacity },
+      b.ghostCells.map(function(c, i) {
+        return React.createElement("rect", { key: i, x: c[0], y: c[1], width: b.cell, height: b.cell });
+      })
+    ));
+  }
+  kids.push(React.createElement(
+    "g",
+    { key: "m", fill: b.fg },
+    b.cells.map(function(c, i) {
+      return React.createElement("rect", { key: i, x: c[0], y: c[1], width: b.cell, height: b.cell });
+    })
+  ));
+  kids.push(React.createElement("rect", {
+    key: "meridian",
+    x: b.accentCell[0],
+    y: b.accentCell[1],
+    width: b.cell,
+    height: b.cell,
+    fill: b.accent
+  }));
+  return React.createElement("svg", {
+    viewBox: b.viewBox,
+    width: size,
+    height: size,
+    style: props.style,
+    "aria-label": b.name,
+    role: "img"
+  }, kids);
+};
+if (typeof window !== "undefined") {
+  Object.assign(window, { QE_BRAND, BrandMark });
+}
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { QE_BRAND };
+}
+
+;
+
 /* ==== primitives.jsx ==== */
 const Lbl = ({ children, bracket = false, style = {} }) => /* @__PURE__ */ React.createElement("div", { className: `qe-lbl ${bracket ? "qe-lbl-bracket" : ""}`, style }, children);
 const SecLbl = ({ children, count = null, rule = false, right = null, style = {} }) => /* @__PURE__ */ React.createElement("div", { className: "qe-sec-lbl", style: { marginBottom: 6, ...style } }, /* @__PURE__ */ React.createElement("span", null, children), count != null && /* @__PURE__ */ React.createElement("span", { className: "qe-sec-count" }, "\xB7  ", count), rule && /* @__PURE__ */ React.createElement("span", { className: "qe-sec-rule" }), right && /* @__PURE__ */ React.createElement("span", { style: { marginLeft: "auto" } }, right));
@@ -2038,7 +2131,7 @@ const TopNavStd = ({ page = "Dashboard", onChange, variant = "line", dense = fal
     fontFamily: "var(--qe-ui)",
     height: dense ? 32 : 38,
     flexShrink: 0
-  } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "0 14px", display: "flex", alignItems: "baseline", gap: 8, borderRight: "1px solid var(--qe-line)", alignSelf: "stretch", alignItems: "center" } }, /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.7rem", fontWeight: 700, color: "var(--qe-cyan)", letterSpacing: "0.08em" } }, window.QE_BOOTSTRAP && window.QE_BOOTSTRAP.projectShortName || "QRE"), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.56rem", color: "var(--qe-sub)", letterSpacing: "0.06em" } }, window.QE_BOOTSTRAP && window.QE_BOOTSTRAP.projectVersion || "v3")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignSelf: "stretch" } }, NAV_ITEMS.map((it) => {
+  } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "0 14px", display: "flex", alignItems: "baseline", gap: 8, borderRight: "1px solid var(--qe-line)", alignSelf: "stretch", alignItems: "center" } }, /* @__PURE__ */ React.createElement(BrandMark, { size: 16, ghost: false, style: { flexShrink: 0, display: "block" } }), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.7rem", fontWeight: 700, color: "var(--qe-cyan)", letterSpacing: "0.08em" } }, window.QE_BOOTSTRAP && window.QE_BOOTSTRAP.projectShortName || "QRE"), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "var(--qe-mono)", fontSize: "0.56rem", color: "var(--qe-sub)", letterSpacing: "0.06em" } }, window.QE_BOOTSTRAP && window.QE_BOOTSTRAP.projectVersion || "v3")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignSelf: "stretch" } }, NAV_ITEMS.map((it) => {
     const on = page === it;
     if (variant === "line") return /* @__PURE__ */ React.createElement(React.Fragment, { key: it }, it === "Primitives" && /* @__PURE__ */ React.createElement("div", { style: { width: 1, alignSelf: "center", height: 16, background: "var(--qe-line)", margin: "0 6px" } }), /* @__PURE__ */ React.createElement("button", { onClick: () => nav(it), style: {
       background: "transparent",

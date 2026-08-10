@@ -19,6 +19,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>{{ project_name_ }} {{ project_version_ }}</title>
 
+  {#- Brand (2026-08-11): the shell had NO icon/manifest links — the tab fell
+      back to the browser default glyph. All three assets are GENERATED from
+      frontend/src/brand.js by `npm run build`; never hand-edit them. The SVG
+      favicon is the primary (crisp at any size); the PNG is the fallback and
+      the PWA/apple icon. -#}
+  <link rel="icon" type="image/svg+xml" href="/static/brand/logo.svg"/>
+  <link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png"/>
+  <link rel="apple-touch-icon" href="/static/icon-192.png"/>
+  <link rel="manifest" href="/manifest.json"/>
+  <meta name="theme-color" content="#07080f"/>
+
   {% if v3.app %}
   {#- vendored fonts + deps (offline; no CDN) -#}
   <link rel="stylesheet" href="/static/vendor/fonts/fonts.css"/>
@@ -36,7 +47,10 @@
 </head>
 <body>
   {% if v3.app %}
-  <div id="root"><div id="boot"><span id="boot-spin" style="margin-right:10px; display:inline-flex; line-height:0;"><svg id="boot-sq" width="15" height="15" viewBox="0 0 10 10" fill="#00e7ff"><rect id="bs-TL" x="1" y="1" width="3" height="3"/><rect id="bs-TR" x="6" y="1" width="3" height="3"/><rect id="bs-BR" x="6" y="6" width="3" height="3"/><rect id="bs-BL" x="1" y="6" width="3" height="3"/></svg></span><span>{{ project_name_ }} v3 — LOADING</span></div></div>
+  {#- Boot overlay: the product mark (generated asset — single source of
+      truth) above the braille spinner + text. An <img> so the mark cannot
+      fork from the favicon/PWA cut. -#}
+  <div id="root"><div id="boot" style="flex-direction:column; gap:18px;"><img src="/static/brand/logo.svg" alt="{{ project_name_ }}" width="72" height="72" style="display:block;"/><span style="display:inline-flex; align-items:center;"><span id="boot-spin" style="margin-right:10px; display:inline-flex; line-height:0;"><svg id="boot-sq" width="15" height="15" viewBox="0 0 10 10" fill="#00e7ff"><rect id="bs-TL" x="1" y="1" width="3" height="3"/><rect id="bs-TR" x="6" y="1" width="3" height="3"/><rect id="bs-BR" x="6" y="6" width="3" height="3"/><rect id="bs-BL" x="1" y="6" width="3" height="3"/></svg></span><span>{{ project_name_ }} v3 — LOADING</span></span></div></div>
 
   <script>
     /* boot spinner — the centered square 2×2 braille the engine uses everywhere

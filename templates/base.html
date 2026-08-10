@@ -7,6 +7,9 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="manifest" href="/manifest.json" />
+  {#- Brand (2026-08-11): assets GENERATED from frontend/src/brand.js by
+      `npm run build` — SVG primary, PNG fallback. Do not hand-edit them. -#}
+  <link rel="icon" type="image/svg+xml" href="/static/brand/logo.svg" />
   <link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png" />
   <link rel="apple-touch-icon" href="/static/icon-192.png" />
   <title>{% block title %}{{ project_name }}{% endblock %}</title>

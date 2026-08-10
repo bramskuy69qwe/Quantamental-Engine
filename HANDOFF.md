@@ -66,7 +66,7 @@ LOCAL — push is the operator's call.**
    feed is degraded RIGHT NOW), **timezone re-check** (an earlier probe
    wrote UTC to account 1; a bad/missing tz row is exactly what the HIGH-1
    loop-fix defends against, and it still silently falls back to UTC), e2e
-   crawl manifest re-accept (4 control ids), testnet account, qre-v3
+   crawl manifest re-accept (4 control ids), testnet account, qre-v4 (was v3 — 2026-08-11 brand bump)
    profile check, periodic `python -m core.ohlcv_fetcher` runs.
 
 ## ▶ SESSION CLOSE 2026-08-04 (thirteenth block) — THE MED TIER FALLS, AND THE RUNNER WITH IT
@@ -166,7 +166,7 @@ not by reading the code.
    review loop; the Config backfill button correctly lands
    mutating-excluded), engine RESTART (lands 12 commits incl. 4 backend
    changes), testnet account, timezone re-check (acct 1 = UTC from the
-   twelfth block's probe), qre-v3 profile check, Finnhub rotation, and
+   twelfth block's probe), qre-v4 profile check (was v3 — 2026-08-11 brand bump), Finnhub rotation, and
    optionally a periodic `python -m core.ohlcv_fetcher` habit (or a
    scheduler task later) so `btc_rvol_ratio` stays fed.
 
@@ -270,7 +270,7 @@ recommended" covers all seven.
   M11's backtest remainder resolved by RETIRING the runner.]**
 - The `_dashFootWorst`/`_ptWorstFoot` **primitives lift** (DESIGN.md names it).
 - Operator owes: **testnet account** (unlocks switch/delete/foreign-banner
-  E2E), **timezone re-check** (my probe wrote UTC to account 1), **qre-v3
+  E2E), **timezone re-check** (my probe wrote UTC to account 1), **qre-v4 (was v3)
   check** in the `--app` profile (DevTools ▸ Application ▸ Cache Storage),
   Finnhub key rotation.
 
@@ -337,7 +337,8 @@ Two things the filing did not contain, both from investigating first:
 **★ OPERATOR STEP THAT MATTERS**: load the app once **with the engine up**. The
 repair cannot install during the outage it repairs — the SW script fetch fails
 with everything else, so a poisoned profile keeps qre-v2 and the full CRIT for
-the whole outage. Confirm `qre-v3` in DevTools ▸ Application ▸ Cache Storage
+the whole outage. Confirm the CURRENT generation in DevTools ▸ Application ▸ Cache
+Storage (`qre-v3` then; `qre-v4` since the 2026-08-11 brand bump)
 (Ctrl+Shift+I inside the `--app` window).
 
 ### 2 · `9d2d134` — the nav strip

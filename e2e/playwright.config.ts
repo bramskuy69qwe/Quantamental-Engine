@@ -24,7 +24,7 @@ export default defineConfig({
     ['json', { outputFile: `./ledger/raw/${RUN_ID}/report.json` }],
   ],
   use: {
-    // The service worker (qre-v3 as of 2026-07-31) is cache-first for
+    // The service worker (qre-v4 as of 2026-08-11) is cache-first for
     // /static/vendor, whose filenames are stable, so it would mask stale assets
     // and real 4xx/5xx from the response oracles.
     // NB blocking it here is also why this suite could never have caught the

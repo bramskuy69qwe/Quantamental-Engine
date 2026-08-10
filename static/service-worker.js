@@ -44,7 +44,14 @@
 // notification polls each wrote a fresh entry every few seconds, forever).
 // Keep this token free of dotted version numbers: tests/test_project_meta.py
 // rejects any v-digit-dot-digit substring anywhere in this file.
-const CACHE_NAME = 'qre-v3';
+/* qre-v3 → qre-v4 (2026-08-11): the icon PNGs changed CONTENT under their
+   stable names (the 10C FIELD brand mark, generated from frontend/src/
+   brand.js). They are precached cache-first below, and `activate` purges by
+   NAME only — without this bump every installed client keeps the OLD logo
+   forever. NB /static/brand/logo.svg is deliberately NOT in the immutable
+   lane: it keeps a stable name, so it must stay browser-owned (normal HTTP
+   revalidation) for future logo swaps to show on reload. */
+const CACHE_NAME = 'qre-v4';
 
 // Static assets to pre-cache on install.
 // NB the manifest is served by a ROUTE (/manifest.json — main.py), not from
